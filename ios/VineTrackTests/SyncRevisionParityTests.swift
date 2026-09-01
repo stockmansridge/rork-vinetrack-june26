@@ -155,7 +155,9 @@ struct SyncRevisionParityTests {
             seasonStartYear: 2026,
             disease: .powderyMildew,
             jurisdiction: .australia,
-            crop: .grape
+            crop: .grape,
+            createdAtEpochMs: 1_786_000_000_000,
+            updatedAtEpochMs: 1_786_000_000_000
         )
 
         #expect(unsynced.serverRevision == nil, "never synced means never versioned")
@@ -203,7 +205,9 @@ struct SyncRevisionParityTests {
             seasonStartYear: 2026,
             disease: .powderyMildew,
             jurisdiction: .australia,
-            crop: .grape
+            crop: .grape,
+            createdAtEpochMs: 1_786_000_000_000,
+            updatedAtEpochMs: 1_786_000_000_000
         )
         versioned.serverRevision = Fixture.observedRevision
 
@@ -533,7 +537,9 @@ struct SyncRevisionParityTests {
             seasonStartYear: 2026,
             disease: .powderyMildew,
             jurisdiction: .australia,
-            crop: .grape
+            crop: .grape,
+            createdAtEpochMs: 1_786_000_000_000,
+            updatedAtEpochMs: 1_786_000_000_000
         )
         let season = PruningBlockSetup(
             id: UUID(uuidString: Fixture.rowId)!,
@@ -572,7 +578,9 @@ struct SyncRevisionParityTests {
             seasonStartYear: 2026,
             disease: .powderyMildew,
             jurisdiction: .australia,
-            crop: .grape
+            crop: .grape,
+            createdAtEpochMs: 1_786_000_000_000,
+            updatedAtEpochMs: 1_786_000_000_000
         )
         plan.serverRevision = Fixture.observedRevision
         var season = PruningBlockSetup(

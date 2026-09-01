@@ -488,7 +488,10 @@ struct HistoricalSnapshotReportParityTests {
         #expect(template.isTemplate)
         #expect(deleted.isDeleted)
 
-        let result = ResistanceEventSource.events(from: [completed, unfinished, template, deleted])
+        let result = ResistanceEventSource.events(
+            from: [completed, unfinished, template, deleted],
+            seasonCalendar: ResistanceSeasonCalendar()
+        )
         // Templates and deletions are excluded outright; an unfinished spray is
         // kept but classed as planned rather than counted as an actual.
         #expect(result.templateRecordIds.contains(template.recordId))

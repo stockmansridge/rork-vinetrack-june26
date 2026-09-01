@@ -27,6 +27,9 @@ final class PaddockSyncService {
     private weak var auth: NewBackendAuthService?
     private let repository: any PaddockSyncRepositoryProtocol
     private let metadata: PaddockSyncMetadata
+    /// True when a repository was injected (tests/diagnostics) — those callers
+    /// don't need the shared Supabase client to be configured.
+    private let usesInjectedRepository: Bool
     private var isConfigured: Bool = false
     private var needsForceRepushMigration: Bool = false
     /// When true, the next `sync(vineyardId:)` pulls remote paddocks BEFORE
@@ -39,6 +42,7 @@ final class PaddockSyncService {
         repository: (any PaddockSyncRepositoryProtocol)? = nil,
         metadata: PaddockSyncMetadata? = nil
     ) {
+        self.usesInjectedRepository = repository != nil
         self.repository = repository ?? SupabasePaddockSyncRepository()
         self.metadata = metadata ?? PaddockSyncMetadata()
 
@@ -76,6 +80,23 @@ final class PaddockSyncService {
             UserDefaults.standard.set(true, forKey: varietyRepullKey)
             #if DEBUG
             print("[PaddockSync] variety-repair re-pull v2: cleared lastSync + pending upserts, will pull before push on next sync")
+            #endif
+        }
+
+        // One-time recovery for the 3.0.1 (85) "synced but no blocks" issue:
+        // a device whose local block cache was emptied (e.g. by a cache decode
+        // failure) while `lastSync` stayed set would incrementally pull
+        // nothing, advance the watermark and report success forever. Reset
+        // the watermarks once so every vineyard's next sync is a full pull.
+        // Pending local upserts/deletes are deliberately preserved. The
+        // permanent consistency check in `pullRemotePaddocks` guards against
+        // recurrence — this migration only repairs already-affected installs.
+        let cacheRecoveryKey = "vinetrack_paddock_cache_recovery_v1"
+        if !UserDefaults.standard.bool(forKey: cacheRecoveryKey) {
+            self.metadata.resetAllLastSync()
+            UserDefaults.standard.set(true, forKey: cacheRecoveryKey)
+            #if DEBUG
+            print("[PaddockSync] cache recovery v1: reset all lastSync watermarks — next sync per vineyard is a full pull")
             #endif
         }
     }
@@ -124,10 +145,19 @@ final class PaddockSyncService {
     }
 
     func sync(vineyardId: UUID) async {
-        guard SupabaseClientProvider.shared.isConfigured else {
+        guard usesInjectedRepository || SupabaseClientProvider.shared.isConfigured else {
             errorMessage = "Supabase not configured"
             syncStatus = .failure("Supabase not configured")
             return
+        }
+        // A paddock-cache decode failure was detected since the last sync:
+        // the local cache can no longer be trusted, so drop every watermark
+        // and let this sync re-pull authoritative server data in full.
+        if PaddockCacheRecovery.consumePendingRecovery() {
+            metadata.resetAllLastSync()
+            #if DEBUG
+            print("[PaddockSync] decode-failure recovery: reset all lastSync watermarks before syncing")
+            #endif
         }
         syncStatus = .syncing
         errorMessage = nil
@@ -369,7 +399,55 @@ final class PaddockSyncService {
             applyRemote(backendPaddock, vineyardId: vineyardId, store: store)
         }
 
-        // Reconcile against the authoritative remote id set. Catches:
+        // Authoritative consistency pass. `fetchPaddockIds` is the source of
+        // truth for which block rows exist (and which are soft-deleted) on
+        // the server RIGHT NOW. It drives, strictly in this order:
+        //   1. cache recovery — active server blocks missing locally are
+        //      re-hydrated with a full fetch BEFORE any delete
+        //      reconciliation, so an empty or partial local cache is never
+        //      misread as a set of server deletions;
+        //   2. delete reconciliation — hard deletes (invisible to the
+        //      incremental pull) and stale soft deletes;
+        //   3. the success gate — if active server blocks still aren't
+        //      present locally, this throws so `sync` neither advances the
+        //      `lastSync` watermark nor reports success.
+        // A failure fetching the id set also throws: without it the local
+        // cache cannot be verified, so "synced" would be a lie.
+        let idRows = try await repository.fetchPaddockIds(vineyardId: vineyardId)
+        let liveRemoteIds = Set(idRows.filter { $0.deletedAt == nil }.map { $0.id })
+
+        // 1. Recovery: hydrate active server blocks the local cache lost.
+        //    Works for a completely empty cache and a partially missing one.
+        //    Vineyards with no active server blocks have nothing missing, so
+        //    they are never repeatedly full-fetched.
+        var didRecover = false
+        let missingLocally = liveRemoteIds.subtracting(store.cachedPaddockIds(for: vineyardId))
+        if !missingLocally.isEmpty {
+            #if DEBUG
+            print("[PaddockSync] consistency recovery: \(missingLocally.count) active server block(s) missing locally for vineyard \(vineyardId) — performing full re-fetch")
+            #endif
+            let allRemote = try await repository.fetchAllPaddocks(vineyardId: vineyardId)
+            for backendPaddock in allRemote
+            where backendPaddock.deletedAt == nil && missingLocally.contains(backendPaddock.id) {
+                // Server-authoritative for rows the local cache lost. Rows
+                // that still exist locally with pending edits are untouched
+                // (they're not in `missingLocally`), and pending local
+                // creations are unknown to the server so they stay queued.
+                store.applyRemotePaddockUpsert(backendPaddock.toPaddock())
+                metadata.clearDirty([backendPaddock.id])
+            }
+            didRecover = true
+            let stillMissing = liveRemoteIds.subtracting(store.cachedPaddockIds(for: vineyardId))
+            guard stillMissing.isEmpty else {
+                throw PaddockSyncError.hydrationIncomplete(
+                    vineyardId: vineyardId,
+                    missingCount: stillMissing.count
+                )
+            }
+        }
+
+        // 2. Delete reconciliation — only AFTER recovery, so a missing local
+        // record is never misinterpreted as a server deletion. Catches:
         //   * hard deletes (row removed entirely on Supabase) — incremental
         //     pull can never see these because `fetchPaddocks(since:)` only
         //     returns rows that still exist.
@@ -379,42 +457,34 @@ final class PaddockSyncService {
         // Local rows that haven't been pushed yet (pendingUpserts) are
         // preserved so we don't delete a freshly-created local paddock that
         // is still in flight.
-        do {
-            let idRows = try await repository.fetchPaddockIds(vineyardId: vineyardId)
-            let liveRemoteIds = Set(idRows.filter { $0.deletedAt == nil }.map { $0.id })
-            let pendingLocalCreates = Set(metadata.pendingUpserts.keys)
-            let localForVineyard = store.paddocks.filter { $0.vineyardId == vineyardId }
-            var sweptHardDeletes = 0
-            var sweptSoftDeletes = 0
-            for local in localForVineyard {
-                if liveRemoteIds.contains(local.id) { continue }
-                if pendingLocalCreates.contains(local.id) { continue }
-                store.applyRemotePaddockDelete(local.id)
-                metadata.clearDirty([local.id])
-                metadata.clearDeleted([local.id])
-                if idRows.contains(where: { $0.id == local.id }) {
-                    sweptSoftDeletes += 1
-                } else {
-                    sweptHardDeletes += 1
-                }
+        let pendingLocalCreates = Set(metadata.pendingUpserts.keys)
+        let localForVineyard = store.paddocks.filter { $0.vineyardId == vineyardId }
+        var sweptHardDeletes = 0
+        var sweptSoftDeletes = 0
+        for local in localForVineyard {
+            if liveRemoteIds.contains(local.id) { continue }
+            if pendingLocalCreates.contains(local.id) { continue }
+            store.applyRemotePaddockDelete(local.id)
+            metadata.clearDirty([local.id])
+            metadata.clearDeleted([local.id])
+            if idRows.contains(where: { $0.id == local.id }) {
+                sweptSoftDeletes += 1
+            } else {
+                sweptHardDeletes += 1
             }
-            #if DEBUG
-            if sweptHardDeletes > 0 || sweptSoftDeletes > 0 {
-                print("[PaddockSync] reconciliation removed \(sweptHardDeletes) hard-deleted and \(sweptSoftDeletes) soft-deleted local paddock(s)")
-            }
-            #endif
-        } catch {
-            #if DEBUG
-            print("[PaddockSync] reconciliation id-sweep failed: \(error.localizedDescription)")
-            #endif
         }
+        #if DEBUG
+        if sweptHardDeletes > 0 || sweptSoftDeletes > 0 {
+            print("[PaddockSync] reconciliation removed \(sweptHardDeletes) hard-deleted and \(sweptSoftDeletes) soft-deleted local paddock(s)")
+        }
+        #endif
 
         // After a pull, re-run the local grape variety canonicalisation
         // pass. Pulled paddocks may carry repaired `variety_allocations`
         // from the server (deterministic ids + backfilled names) which
         // the local master variety list also needs to converge on, and
         // any stale local allocations get repaired by id/name match.
-        if !remote.isEmpty {
+        if !remote.isEmpty || didRecover {
             GrapeVarietyCanonicalization.run(store: store)
         }
     }

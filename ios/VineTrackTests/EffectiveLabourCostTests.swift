@@ -443,11 +443,11 @@ struct EffectiveLabourCostTests {
         #expect(rows.count == 2)
 
         let model = PruningActivityAllocationModel.build(rows, includeCost: true)
-        let parent = try #require(model.parentsById[activityKey])
+        let parent = try #require(model.parent(activityKey))
         // The amount being allocated is the task's EFFECTIVE labour cost.
         #expect(Self.close(parent.labourCost, 1_000))
 
-        let shares = rows.compactMap { model.sharesById[$0.id] }
+        let shares = rows.compactMap { model.share(of: $0) }
         #expect(shares.count == 2)
         let allocated = shares.compactMap(\.labourCost)
         #expect(allocated.count == 2)

@@ -475,7 +475,7 @@ final class MigratedDataStore {
 
         settings = settingsRepo.load(for: vineyardId)
 
-        let allPaddocks: [Paddock] = persistence.load(key: Keys.paddocks) ?? []
+        let allPaddocks: [Paddock] = loadAllPaddocksFromDisk()
         paddocks = allPaddocks.filter { $0.vineyardId == vineyardId }
 
         // Equipment: the persisted blobs stay MULTI-vineyard (a device syncs
@@ -908,10 +908,40 @@ final class MigratedDataStore {
 
     private func savePaddocksToDisk() {
         guard let vineyardId = selectedVineyardId else { return }
-        var all: [Paddock] = persistence.load(key: Keys.paddocks) ?? []
+        var all: [Paddock] = loadAllPaddocksFromDisk()
         all.removeAll { $0.vineyardId == vineyardId }
         all.append(contentsOf: paddocks)
         persistence.save(all, key: Keys.paddocks)
+    }
+
+    /// Load the shared multi-vineyard paddock cache from disk, distinguishing
+    /// a missing file (fresh install — genuinely empty) from a corrupt one.
+    /// On decode failure the corrupt payload is quarantined for diagnostics
+    /// (so a subsequent save cannot overwrite the evidence with an empty or
+    /// partial array), the failure is logged with its key and underlying
+    /// error, and a full server recovery is flagged for the next block sync.
+    private func loadAllPaddocksFromDisk() -> [Paddock] {
+        let outcome: PersistenceStore.LoadOutcome<[Paddock]> = persistence.loadOutcome(key: Keys.paddocks)
+        switch outcome {
+        case .decoded(let all):
+            return all
+        case .missing:
+            return []
+        case .failed(let error):
+            PaddockCacheRecovery.noteDecodeFailure(key: Keys.paddocks, error: error)
+            persistence.quarantine(key: Keys.paddocks)
+            return []
+        }
+    }
+
+    /// Locally cached block ids for a vineyard — from memory when it is the
+    /// selected vineyard, otherwise from the persisted multi-vineyard cache.
+    /// Used by the block sync consistency check.
+    func cachedPaddockIds(for vineyardId: UUID) -> Set<UUID> {
+        if selectedVineyardId == vineyardId {
+            return Set(paddocks.filter { $0.vineyardId == vineyardId }.map { $0.id })
+        }
+        return Set(loadAllPaddocksFromDisk().filter { $0.vineyardId == vineyardId }.map { $0.id })
     }
 
     func addPaddock(_ paddock: Paddock) {
@@ -1008,7 +1038,7 @@ final class MigratedDataStore {
             savePaddocksToDisk()
         } else {
             // Persist into the on-disk slice so it surfaces when switching vineyards.
-            var all: [Paddock] = persistence.load(key: Keys.paddocks) ?? []
+            var all: [Paddock] = loadAllPaddocksFromDisk()
             if let idx = all.firstIndex(where: { $0.id == paddock.id }) {
                 all[idx] = paddock
             } else {
@@ -1030,7 +1060,7 @@ final class MigratedDataStore {
         if selectedVineyardId != nil {
             savePaddocksToDisk()
         } else {
-            var all: [Paddock] = persistence.load(key: Keys.paddocks) ?? []
+            var all: [Paddock] = loadAllPaddocksFromDisk()
             all.removeAll { $0.id == paddockId }
             persistence.save(all, key: Keys.paddocks)
         }
