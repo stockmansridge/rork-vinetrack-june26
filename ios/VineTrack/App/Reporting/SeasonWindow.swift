@@ -44,17 +44,14 @@ nonisolated struct SeasonWindow: Equatable, Identifiable, Sendable {
     }
 
     /// True when `date` is inside the season, treating a missing date as
-    /// excluded. Records with no reliable event date are reported separately
-    /// rather than being silently dropped into the current season.
+    /// excluded. Records with no reliable event date are only reachable through
+    /// the "All vintages" scope, which applies no date restriction at all.
     func contains(optional date: Date?) -> Bool {
         guard let date else { return false }
         return contains(date)
     }
 
     // MARK: - Construction
-
-    /// Number of previous seasons offered by the selector alongside the current one.
-    static let previousSeasonCount = 15
 
     /// The window for a specific `vintage`.
     static func window(
@@ -121,27 +118,35 @@ nonisolated struct SeasonWindow: Equatable, Identifiable, Sendable {
         )
     }
 
-    /// Descending vintage options for a season selector: the current season
-    /// plus the previous 15.
+    /// Every vintage actually represented by `dates`, descending.
     ///
-    /// `selected` is always included even when it falls outside that window, so
-    /// a deep link into an old record can never land on a missing option. An
-    /// `earliestRecordVintage` extends the list backwards only as far as data
-    /// actually exists, so a new vineyard isn't offered 15 empty seasons.
-    static func availableVintages(
-        currentVintage: Int,
-        selected: Int? = nil,
-        earliestRecordVintage: Int? = nil
+    /// The selector is driven by real data rather than an arbitrary span: a
+    /// vineyard with twenty years of spray history gets twenty options, and one
+    /// with two months of history gets one. Callers pass the dates of the
+    /// records already visible on that surface, so the list is inherently
+    /// scoped to that vineyard and excludes soft-deleted rows.
+    ///
+    /// Undated records contribute nothing — they are reachable only via the
+    /// "All vintages" scope.
+    static func representedVintages(
+        dates: [Date?],
+        seasonStartMonth: Int,
+        seasonStartDay: Int,
+        timeZone: TimeZone
     ) -> [Int] {
-        var years = Set<Int>([currentVintage])
-        let floor = max(
-            currentVintage - previousSeasonCount,
-            earliestRecordVintage ?? (currentVintage - previousSeasonCount)
-        )
-        if floor <= currentVintage {
-            for year in floor...currentVintage { years.insert(year) }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        var years = Set<Int>()
+        for case let date? in dates {
+            years.insert(
+                VintageResolver.vintageYear(
+                    for: date,
+                    seasonStartMonth: seasonStartMonth,
+                    seasonStartDay: seasonStartDay,
+                    calendar: calendar
+                )
+            )
         }
-        if let selected { years.insert(selected) }
         return years.filter { $0 > 0 }.sorted(by: >)
     }
 
@@ -165,6 +170,112 @@ nonisolated struct SeasonWindow: Equatable, Identifiable, Sendable {
         components.day = min(day, maxDay)
         guard let start = calendar.date(from: components) else { return firstOfMonth }
         return calendar.startOfDay(for: start)
+    }
+}
+
+/// What the operator has chosen in a season selector.
+///
+/// `automatic` is the resting state: it defers to the default rule (the current
+/// season when it holds records, otherwise All) so a screen keeps rolling over
+/// on its own instead of pinning itself to whichever season was current the day
+/// it was first opened.
+nonisolated enum SeasonSelection: Equatable, Sendable {
+    case automatic
+    case all
+    case vintage(Int)
+}
+
+/// A resolved season filter: the option list, the effective window, and the
+/// membership test every list, total, chart and export on a screen shares.
+///
+/// Screens hold a `SeasonSelection` and rebuild a `SeasonScope` from the dates
+/// of the records they are showing. Because the scope carries the predicate,
+/// the selection cannot drift out of sync with a heading.
+nonisolated struct SeasonScope: Equatable, Sendable {
+
+    /// Effective vintage, or `nil` for **All vintages**.
+    let vintage: Int?
+
+    /// Effective window, or `nil` for All vintages (no date restriction).
+    let window: SeasonWindow?
+
+    /// Vintage in progress, vineyard-local.
+    let currentVintage: Int
+
+    /// Vintages that actually hold records on this surface, descending.
+    let available: [Int]
+
+    /// True when no date restriction is applied.
+    var isAll: Bool { window == nil }
+
+    /// Membership test. Under All vintages EVERY record passes — including
+    /// records with no usable event date, which would otherwise be invisible.
+    func contains(_ date: Date?) -> Bool {
+        guard let window else { return true }
+        return window.contains(optional: date)
+    }
+
+    /// "All vintages" or "2027".
+    var title: String { vintage.map { String($0) } ?? SeasonScope.allTitle }
+
+    /// Suffix for summary captions: "· 2027" or "· All vintages".
+    var captionSuffix: String { "· \(title)" }
+
+    static let allTitle = "All vintages"
+
+    /// Builds a scope from the records on a surface.
+    ///
+    /// - Parameters:
+    ///   - eventDates: the operational date of each record currently in scope
+    ///     for this vineyard and surface (soft-deleted rows already excluded).
+    ///     Records with no usable date pass `nil`.
+    ///   - selection: what the operator picked.
+    static func resolve(
+        eventDates: [Date?],
+        selection: SeasonSelection,
+        seasonStartMonth: Int,
+        seasonStartDay: Int,
+        timeZone: TimeZone
+    ) -> SeasonScope {
+        let current = SeasonWindow.currentVintage(
+            seasonStartMonth: seasonStartMonth,
+            seasonStartDay: seasonStartDay,
+            timeZone: timeZone
+        )
+        let available = SeasonWindow.representedVintages(
+            dates: eventDates,
+            seasonStartMonth: seasonStartMonth,
+            seasonStartDay: seasonStartDay,
+            timeZone: timeZone
+        )
+
+        let effective: Int?
+        switch selection {
+        case .all:
+            effective = nil
+        case .vintage(let chosen):
+            // A chosen season that no longer holds records (last record deleted,
+            // or a vineyard switch) falls back to All rather than showing an
+            // empty screen with no way back.
+            effective = available.contains(chosen) ? chosen : nil
+        case .automatic:
+            // Default to the current season only when it has something to show.
+            effective = available.contains(current) ? current : nil
+        }
+
+        return SeasonScope(
+            vintage: effective,
+            window: effective.map {
+                SeasonWindow.window(
+                    vintage: $0,
+                    seasonStartMonth: seasonStartMonth,
+                    seasonStartDay: seasonStartDay,
+                    timeZone: timeZone
+                )
+            },
+            currentVintage: current,
+            available: available
+        )
     }
 }
 
@@ -193,6 +304,18 @@ extension AppSettings {
     nonisolated func seasonWindow(containing date: Date) -> SeasonWindow {
         SeasonWindow.window(
             containing: date,
+            seasonStartMonth: seasonStartMonth,
+            seasonStartDay: seasonStartDay,
+            timeZone: resolvedTimeZone
+        )
+    }
+
+    /// Resolves a season selector's state for a surface, from the event dates
+    /// of the records it is showing.
+    nonisolated func seasonScope(eventDates: [Date?], selection: SeasonSelection) -> SeasonScope {
+        SeasonScope.resolve(
+            eventDates: eventDates,
+            selection: selection,
             seasonStartMonth: seasonStartMonth,
             seasonStartDay: seasonStartDay,
             timeZone: resolvedTimeZone

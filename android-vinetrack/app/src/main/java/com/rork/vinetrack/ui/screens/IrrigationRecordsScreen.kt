@@ -69,6 +69,8 @@ import com.rork.vinetrack.data.IrrigationAllocationConfig
 import com.rork.vinetrack.data.IrrigationAvailableRow
 import com.rork.vinetrack.data.IrrigationBlockResult
 import com.rork.vinetrack.data.IrrigationCapabilities
+import com.rork.vinetrack.data.SeasonScope
+import com.rork.vinetrack.data.SeasonSelection
 import com.rork.vinetrack.data.IrrigationLocalCalc
 import com.rork.vinetrack.data.IrrigationPreviewResult
 import com.rork.vinetrack.data.IrrigationRepository
@@ -450,7 +452,7 @@ private fun LandingContent(
     error: String?,
     capabilities: IrrigationCapabilities?,
     selectedVintage: Int?,
-    onSelectVintage: (Int) -> Unit,
+    onSelectVintage: (Int?) -> Unit,
     onRecord: () -> Unit,
     onHistory: () -> Unit,
     onSetup: () -> Unit,
@@ -485,10 +487,32 @@ private fun LandingContent(
 
         if (currentVintage != null) {
             item {
+                // Irrigation is server-paged: the session list and every summary
+                // RPC fall back to the SERVER's current vintage when no vintage
+                // is passed, so there is no way to ask for all vintages in one
+                // call. The All chip is withheld here rather than shown and
+                // quietly returning a single vintage's numbers under an
+                // "All vintages" heading.
+                val availableVintages = remember(recent, currentVintage) {
+                    (listOf(currentVintage) + recent.map { it.vintageYear })
+                        .filter { it > 0 }
+                        .distinct()
+                        .sortedDescending()
+                }
                 SeasonSelector(
-                    currentVintage = currentVintage,
-                    selectedVintage = reportVintage ?: currentVintage,
-                    onSelect = onSelectVintage,
+                    scope = SeasonScope(
+                        vintage = reportVintage,
+                        window = null,
+                        currentVintage = currentVintage,
+                        available = availableVintages,
+                        zone = state.seasonZone,
+                    ),
+                    onSelect = { selection ->
+                        // Automatic == let the server apply its own current
+                        // vintage, which is what the first load does.
+                        onSelectVintage((selection as? SeasonSelection.Vintage)?.year)
+                    },
+                    allowAll = false,
                 )
             }
         }

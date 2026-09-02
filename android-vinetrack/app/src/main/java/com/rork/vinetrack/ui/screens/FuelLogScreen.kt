@@ -75,7 +75,7 @@ import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.FuelLogRepository
 import com.rork.vinetrack.data.FuelPurchaseRepository
 import com.rork.vinetrack.data.RegionFormatter
-import com.rork.vinetrack.data.SeasonWindow
+import com.rork.vinetrack.data.SeasonSelection
 import com.rork.vinetrack.data.VineyardMachineRepository
 import com.rork.vinetrack.data.model.FuelPurchase
 import com.rork.vinetrack.data.model.TractorFuelLog
@@ -140,41 +140,27 @@ fun FuelLogScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modi
     }
 
     // Season scope — the vineyard's shared season start (sql/108) turned into a
-    // date range, so totals and lists can be filtered by the event-date column
-    // each record already has. `null` follows the current season so the screen
-    // rolls over on its own.
-    var selectedVintage by rememberSaveable { mutableStateOf<Int?>(null) }
-    val currentVintage = remember(state.seasonStartMonth, state.seasonStartDay) {
-        SeasonWindow.currentVintage(state.seasonStartMonth, state.seasonStartDay)
+    // date range, so totals and lists filter on the event-date column each
+    // record already has. Fuel spans two record types, so the option list is
+    // built from BOTH purchases and fills.
+    var seasonSelection by remember { mutableStateOf<SeasonSelection>(SeasonSelection.Automatic) }
+    val fuelEventDates = remember(purchases, state.fuelLogs) {
+        purchases.map { purchaseEpochMs(it.date) } + state.fuelLogs.map { it.fillEpochMs }
     }
-    val reportVintage = selectedVintage ?: currentVintage
-    val seasonWindow = remember(reportVintage, state.seasonStartMonth, state.seasonStartDay) {
-        SeasonWindow.forVintage(reportVintage, state.seasonStartMonth, state.seasonStartDay)
-    }
-    val isCurrentSeason = reportVintage == currentVintage
-
-    // Only offer seasons that actually hold fuel data.
-    val earliestRecordVintage = remember(purchases, state.fuelLogs, state.seasonStartMonth, state.seasonStartDay) {
-        val dates = purchases.mapNotNull { purchaseEpochMs(it.date) } +
-            state.fuelLogs.mapNotNull { it.fillEpochMs }
-        dates.minOrNull()?.let {
-            SeasonWindow.containing(
-                Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate(),
-                state.seasonStartMonth,
-                state.seasonStartDay,
-            ).vintage
-        }
+    val season = remember(fuelEventDates, seasonSelection, state.seasonStartMonth, state.seasonStartDay, state.seasonZone) {
+        state.seasonScope(fuelEventDates, seasonSelection)
     }
 
-    val seasonPurchases = remember(purchases, seasonWindow) {
-        purchases.filter { seasonWindow.containsEpochMs(purchaseEpochMs(it.date)) }
+    val seasonPurchases = remember(purchases, season) {
+        purchases.filter { season.contains(purchaseEpochMs(it.date)) }
     }
     val seasonLitresPurchased = seasonPurchases.sumOf { it.volumeLitres }
     val seasonPurchaseCost = seasonPurchases.sumOf { it.totalCost }
     val seasonAvgCost = weightedFuelCostPerLitre(seasonPurchases)
-    val seasonLitresFilled = remember(state.fuelLogs, seasonWindow) {
-        state.fuelLogs.filter { seasonWindow.containsEpochMs(it.fillEpochMs) }.sumOf { it.litresAdded }
+    val seasonFills = remember(state.fuelLogs, season) {
+        state.fuelLogs.filter { season.contains(it.fillEpochMs) }
     }
+    val seasonLitresFilled = seasonFills.sumOf { it.litresAdded }
 
     Scaffold(
         modifier = modifier,
@@ -209,22 +195,13 @@ fun FuelLogScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modi
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                SeasonSelector(
-                    currentVintage = currentVintage,
-                    selectedVintage = reportVintage,
-                    // Picking the current season clears the override so the
-                    // screen resumes rolling over automatically.
-                    onSelect = { selectedVintage = if (it == currentVintage) null else it },
-                    earliestRecordVintage = earliestRecordVintage,
-                    window = seasonWindow,
-                )
+                SeasonSelector(scope = season, onSelect = { seasonSelection = it })
                 FuelSummaryCard(
                     fmt = fmt,
-                    purchaseCount = purchases.size,
-                    fillCount = state.fuelLogs.size,
-                    seasonStartMs = seasonWindow.startEpochMs(),
-                    isCurrentSeason = isCurrentSeason,
-                    reportVintage = reportVintage,
+                    purchaseCount = seasonPurchases.size,
+                    fillCount = seasonFills.size,
+                    seasonStartMs = season.window?.startEpochMs(season.zone),
+                    seasonTitle = season.title,
                     seasonLitresPurchased = seasonLitresPurchased,
                     seasonPurchaseCost = seasonPurchaseCost,
                     seasonAvgCost = seasonAvgCost,
@@ -299,9 +276,8 @@ private fun FuelSummaryCard(
     fmt: RegionFormatter,
     purchaseCount: Int,
     fillCount: Int,
-    seasonStartMs: Long,
-    isCurrentSeason: Boolean,
-    reportVintage: Int,
+    seasonStartMs: Long?,
+    seasonTitle: String,
     seasonLitresPurchased: Double,
     seasonPurchaseCost: Double,
     seasonAvgCost: Double?,
@@ -323,7 +299,7 @@ private fun FuelSummaryCard(
                 if (canViewFinancials) {
                     Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            if (isCurrentSeason) "Purchased · This Season" else "Purchased · $reportVintage",
+                            "Purchased · $seasonTitle",
                             fontSize = 11.sp,
                             color = vine.textSecondary,
                         )
@@ -333,11 +309,13 @@ private fun FuelSummaryCard(
                             fontWeight = FontWeight.Bold,
                             color = VineColors.LeafGreen,
                         )
-                        Text(
-                            "From " + SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(seasonStartMs)),
-                            fontSize = 10.sp,
-                            color = vine.textSecondary,
-                        )
+                        if (seasonStartMs != null) {
+                            Text(
+                                "From " + SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(seasonStartMs)),
+                                fontSize = 10.sp,
+                                color = vine.textSecondary,
+                            )
+                        }
                     }
                 }
             }

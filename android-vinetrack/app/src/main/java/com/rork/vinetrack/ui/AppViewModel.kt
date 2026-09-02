@@ -17,6 +17,9 @@ import com.rork.vinetrack.data.auth.GoogleSignInHelper
 import com.rork.vinetrack.data.AppConfig
 import com.rork.vinetrack.data.BackendError
 import com.rork.vinetrack.data.VineTrackAccessRepository
+import com.rork.vinetrack.data.SeasonScope
+import com.rork.vinetrack.data.SeasonSelection
+import com.rork.vinetrack.data.SeasonWindow
 import com.rork.vinetrack.data.VintageResolver
 import com.rork.vinetrack.data.chemical.ChemicalSnapshotCapture
 import com.rork.vinetrack.data.model.parseIsoToEpochMs
@@ -267,6 +270,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Instant
+import java.time.ZoneId
 import java.util.UUID
 
 /** Top-level startup route, mirrors the iOS NewBackendRootView state machine. */
@@ -774,6 +778,33 @@ data class AppUiState(
 
     /** Central, region-aware formatter for all display values (units/currency). */
     val regionFormatter: RegionFormatter get() = RegionFormatter(regionSettings)
+
+    /**
+     * The selected vineyard's own timezone (`public.vineyards.timezone`), used
+     * for every season/vintage boundary — matching iOS `AppSettings.resolvedTimeZone`.
+     *
+     * Season boundaries must be vineyard-local, not device-local: an operator
+     * checking sprays from another state must see the same season as the person
+     * standing in the block, and a record logged at 11pm on 30 June must not
+     * jump seasons because the phone is set to a different zone. Falls back to
+     * the device zone only when the vineyard has no timezone recorded.
+     */
+    val seasonZone: ZoneId
+        get() = selectedVineyard?.timezone
+            ?.takeIf { it.isNotBlank() }
+            ?.let { runCatching { ZoneId.of(it) }.getOrNull() }
+            ?: ZoneId.systemDefault()
+
+    /** Vintage in progress for the selected vineyard, vineyard-local. */
+    val currentSeasonVintage: Int
+        get() = SeasonWindow.currentVintage(seasonStartMonth, seasonStartDay, seasonZone)
+
+    /**
+     * Resolves a season selector's state for one surface from the event dates
+     * of the records it is showing. Mirrors iOS `AppSettings.seasonScope`.
+     */
+    fun seasonScope(eventDates: List<Long?>, selection: SeasonSelection): SeasonScope =
+        SeasonScope.resolve(eventDates, selection, seasonStartMonth, seasonStartDay, seasonZone)
 
     /**
      * Local sync/upload visibility for a single pin, derived from the pending

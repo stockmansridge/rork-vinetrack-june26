@@ -4,33 +4,25 @@ import SwiftUI
 /// Yield Reports screen uses, extracted so every dated function shares one
 /// control instead of each inventing its own list.
 ///
-/// The selection is a **date range**, not a stored column: callers take
-/// `SeasonWindow` and filter their records by whichever event-date column they
-/// already have. Changing the selection must refresh lists, totals, charts and
-/// exports together — not just a heading.
+/// Contract (identical on Android):
+/// * **All vintages** is always first and removes the date restriction entirely.
+/// * Only vintages that actually hold non-deleted records for this vineyard and
+///   surface are offered — no fixed span, no empty seasons.
+/// * Every represented vintage appears, however far back it goes.
+/// * The current season is selected by default only when it holds records;
+///   otherwise the screen opens on All.
+///
+/// The selection is a **date range**, not a stored column: callers take the
+/// resolved `SeasonScope` and filter records by whichever event-date column they
+/// already have. Changing the selection refreshes lists, totals, charts and
+/// exports together, because they all read the same scope.
 struct SeasonFilterBar: View {
 
-    /// Vintage in progress, from the vineyard's shared season start.
-    let currentVintage: Int
+    /// Resolved scope — option list, effective window and current season.
+    let scope: SeasonScope
 
-    /// Currently displayed vintage.
-    @Binding var selectedVintage: Int
-
-    /// Oldest vintage with real data, so a young vineyard isn't offered 15
-    /// empty seasons. `nil` offers the full previous-15 window.
-    var earliestRecordVintage: Int?
-
-    /// Season range for the current selection, shown under the chips so the
-    /// operator can see exactly which dates are included.
-    var window: SeasonWindow?
-
-    private var vintages: [Int] {
-        SeasonWindow.availableVintages(
-            currentVintage: currentVintage,
-            selected: selectedVintage,
-            earliestRecordVintage: earliestRecordVintage
-        )
-    }
+    /// The operator's choice. Bound so a screen can reset it to `.automatic`.
+    @Binding var selection: SeasonSelection
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -40,41 +32,70 @@ struct SeasonFilterBar: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(vintages, id: \.self) { vintage in
-                        let isSelected = vintage == selectedVintage
-                        Button {
-                            guard vintage != selectedVintage else { return }
-                            selectedVintage = vintage
-                        } label: {
-                            Text(SeasonWindow.label(for: vintage, currentVintage: currentVintage))
-                                .font(.subheadline.weight(isSelected ? .semibold : .regular))
-                                .foregroundStyle(isSelected ? Color.white : Color.primary)
-                                .padding(.horizontal, 14)
-                                .frame(minHeight: 44)
-                                .background(
-                                    Capsule().fill(isSelected ? Color.accentColor : Color(.secondarySystemBackground))
-                                )
+                    chip(
+                        title: SeasonScope.allTitle,
+                        isSelected: scope.isAll,
+                        accessibilityLabel: "All vintages"
+                    ) {
+                        selection = .all
+                    }
+
+                    ForEach(scope.available, id: \.self) { vintage in
+                        chip(
+                            title: SeasonWindow.label(for: vintage, currentVintage: scope.currentVintage),
+                            isSelected: scope.vintage == vintage,
+                            accessibilityLabel: "Season \(String(vintage))"
+                        ) {
+                            // Choosing the current season returns the screen to
+                            // its automatic state, so it keeps rolling over into
+                            // the next season by itself.
+                            selection = vintage == scope.currentVintage ? .automatic : .vintage(vintage)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Season \(String(vintage))")
-                        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
                     }
                 }
                 .padding(.vertical, 2)
             }
             .contentMargins(.horizontal, 0, for: .scrollContent)
 
-            if let window {
-                Text(seasonRangeText(window))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Text(rangeText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
+    }
+
+    @ViewBuilder
+    private func chip(
+        title: String,
+        isSelected: Bool,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            guard !isSelected else { return }
+            action()
+        } label: {
+            Text(title)
+                .font(.subheadline.weight(isSelected ? .semibold : .regular))
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
+                .padding(.horizontal, 14)
+                .frame(minHeight: 44)
+                .background(
+                    Capsule().fill(isSelected ? Color.accentColor : Color(.secondarySystemBackground))
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     /// "1 Jul 2026 – 30 Jun 2027" — the inclusive dates the operator sees, even
     /// though filtering itself uses the half-open range.
-    private func seasonRangeText(_ window: SeasonWindow) -> String {
+    private var rangeText: String {
+        guard let window = scope.window else {
+            return scope.available.isEmpty
+                ? "No dated records yet"
+                : "Every record, all seasons"
+        }
         let start = window.start.formatted(.dateTime.day().month(.abbreviated).year())
         let end = window.displayEnd.formatted(.dateTime.day().month(.abbreviated).year())
         return "\(start) – \(end)"
