@@ -67,6 +67,37 @@
 --      gets a new updated_at and will be re-pulled once by each device.
 --      Intentional — it is how existing installs learn their vintage — but
 --      it does mean a one-off sync of those two tables after apply.
+--
+-- ---------------------------------------------------------------------------
+-- EXTERNAL STATIC REVIEW ROUND 1 — five blockers closed in this revision
+-- ---------------------------------------------------------------------------
+--  (B1) _pruning_block_estimate is no longer client-callable. It is an
+--       internal helper that reads paddocks / pruning_yield_settings for an
+--       arbitrary vineyard id under SECURITY DEFINER, so EXECUTE is revoked
+--       from public, authenticated and anon (§E). Same for the internal
+--       worker and the allocation readers. Only _refresh_pruning_yield_
+--       estimates calls it. See §C/§E/§F grant blocks.
+--  (B2) get_season_yield_base_overview now distinguishes KNOWN from
+--       CANONICAL tonnes at vineyard, variety and block level (§G).
+--       total_base_estimate_tonnes is NULL until every applicable row is
+--       available, so Grape Allocation can never compute Available or a
+--       shortfall from a partial crop. The empty-vintage branch is now
+--       reachable (explicit row count, not a coalesce over an aggregate
+--       that always returns one row).
+--  (B3) Allocation percentages are parsed without ever raising a cast
+--       error, and the block is reconciled to exactly 100% AFTER duplicate
+--       planting groups are merged (§E). Over-100% totals are normalised
+--       proportionally instead of letting group tonnes exceed the block.
+--  (B4) The public refresh RPC only accepts the vineyard's canonical
+--       CURRENT vintage, resolved from vineyard-local now() (§F). Today's
+--       pruning settings can no longer be written into a historical
+--       vintage. The migration backfill uses the same vineyard-local basis.
+--  (B5) season_yield_estimates is client READ-ONLY (§D): SELECT only for
+--       authenticated; INSERT/UPDATE/DELETE revoked. The insert/update RLS
+--       policies stay as defence-in-depth for future validated RPCs.
+--       refresh_pruning_yield_estimates is the only public write path in
+--       this phase; manual and bunch_count sources will each get their own
+--       validated RPC rather than direct table writes.
 -- =============================================================================
 
 
@@ -320,24 +351,51 @@ as $fn$
    limit 1;
 $fn$;
 
+-- Percentage reader. NEVER raises: the live audit found an allocation whose
+-- percentage is not a number at all, and legacy writers have stored numeric
+-- STRINGS. Anything that is not a finite, sanely-scaled number returns NULL
+-- and the caller records allocation_percent_invalid — an unreadable value is
+-- never silently read as a legitimate zero.
+--
+-- Exception-safety details:
+--   * only 'number' and 'string' jsonb values are considered at all;
+--   * the text is matched against a strict numeric literal pattern with the
+--     exponent capped at three digits, so ::numeric cannot overflow;
+--   * the magnitude is bounded before the ::double precision cast, so the
+--     cast can never raise "value out of range".
 create or replace function public._season_alloc_number(p_elem jsonb, p_keys text[])
 returns double precision
 language sql
 immutable
 as $fn$
-  select (p_elem ->> k.key)::double precision
-    from unnest(p_keys) with ordinality as k(key, ord)
-   where jsonb_typeof(p_elem -> k.key) = 'number'
-   order by k.ord
-   limit 1;
+  with picked as (
+    select p_elem -> k.key as val
+      from unnest(p_keys) with ordinality as k(key, ord)
+     where p_elem ? k.key
+       and jsonb_typeof(p_elem -> k.key) in ('number', 'string')
+     order by k.ord
+     limit 1
+  ),
+  txt as (
+    select btrim(coalesce(p.val #>> '{}', '')) as raw from picked p
+  )
+  select case
+           when t.raw ~ '^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]{1,3})?$'
+                and abs(t.raw::numeric) <= 1000000000::numeric
+           then (t.raw::numeric)::double precision
+           else null
+         end
+    from txt t;
 $fn$;
 
+-- Grants (B1). season_yield_estimate_source_rank is a pure lookup with no
+-- vineyard data and stays available to clients so they can sort consistently.
+-- The allocation readers are internal parsing helpers used only by
+-- _pruning_block_estimate, so no client role gets EXECUTE.
 revoke all on function public.season_yield_estimate_source_rank(text) from public;
-revoke all on function public._season_alloc_text(jsonb, text[]) from public;
-revoke all on function public._season_alloc_number(jsonb, text[]) from public;
+revoke all on function public._season_alloc_text(jsonb, text[]) from public, authenticated, anon;
+revoke all on function public._season_alloc_number(jsonb, text[]) from public, authenticated, anon;
 grant execute on function public.season_yield_estimate_source_rank(text) to authenticated;
-grant execute on function public._season_alloc_text(jsonb, text[]) to authenticated;
-grant execute on function public._season_alloc_number(jsonb, text[]) to authenticated;
 
 
 -- ===========================================================================
@@ -546,7 +604,21 @@ on public.season_yield_estimates for delete
 to authenticated
 using (false);
 
-grant select, insert, update on public.season_yield_estimates to authenticated;
+-- (B5) CLIENT READ-ONLY.
+--
+-- The RLS insert/update policies above are deliberately retained as
+-- defence-in-depth and as scaffolding for the future validated manual /
+-- bunch_count RPCs, but TABLE PRIVILEGES are what actually stop a client
+-- writing here. Without this, any member could POST a row claiming
+-- estimate_source = 'manual' with arbitrary tonnes and an arbitrary
+-- source_session_id, silently outranking the pruning calculator and
+-- corrupting the canonical estimate.
+--
+-- Only SECURITY DEFINER functions owned by the migration role may mutate
+-- this table. In this phase that is refresh_pruning_yield_estimates (write)
+-- and soft_delete_season_yield_estimate (retire).
+grant select on public.season_yield_estimates to authenticated;
+revoke insert, update, delete on public.season_yield_estimates from authenticated, anon;
 
 create or replace function public.soft_delete_season_yield_estimate(p_id uuid)
 returns void
@@ -622,6 +694,10 @@ declare
   v_gkey           text;
   v_idx            integer;
   v_unalloc_key    text;
+  v_total_original double precision := 0;
+  v_group_total    double precision := 0;
+  v_normalized     boolean := false;
+  v_i              integer;
 begin
   select p.id, p.name, p.polygon_points, p.vine_count_override, p.variety_allocations
     into b
@@ -730,14 +806,28 @@ begin
         continue;
       end if;
 
-      v_pct := coalesce(
-        public._season_alloc_number(v_elem, array['percent', 'percentage']), 0
-      );
-      if v_pct <= 0 then
+      -- (B3) Exception-free parse. An unreadable percentage is EXCLUDED and
+      -- named — never silently treated as a legitimate zero. Note there is no
+      -- per-allocation cap here: capping each entry independently is what let
+      -- a block's groups sum above 100%. Over-100% totals are reconciled
+      -- proportionally after merging instead (see "reconcile" below).
+      v_pct := public._season_alloc_number(v_elem, array['percent', 'percentage']);
+
+      if v_pct is null
+         or v_pct = 'NaN'::double precision
+         or v_pct >= 'Infinity'::double precision
+         or v_pct < 0 then
+        v_warnings := v_warnings || 'allocation_percent_invalid';
         continue;
       end if;
+
+      if v_pct = 0 then
+        -- An explicit zero share is legitimate and simply contributes nothing.
+        continue;
+      end if;
+
       if v_pct > 100 then
-        v_pct := 100;
+        -- Informational: normalisation below brings the block back to 100%.
         v_warnings := v_warnings || 'allocation_percent_over_100';
       end if;
 
@@ -816,11 +906,45 @@ begin
     end loop;
   end if;
 
-  -- Residual share of the block: "Unallocated variety".
-  if v_total_pct < 99.9999 then
-    v_unalloc_key := public.planting_group_key('Unallocated variety', null, null);
-    v_idx := array_position(v_keys, v_unalloc_key);
+  -- ---- reconcile the block to exactly 100% (B3) ---------------------------
+  -- Order is deliberate: parse → resolve identity → MERGE duplicates → sum →
+  -- reconcile. Merging before summing is what makes two 60% Shiraz/MV6/101-14
+  -- allocations a single 120% group that normalises to 100%, rather than two
+  -- separately-capped groups whose tonnes overflow the block estimate.
+  v_total_original := v_total_pct;
+  v_unalloc_key := public.planting_group_key('Unallocated variety', null, null);
 
+  if v_total_pct <= 0 then
+    -- Nothing usable at all: the whole block is one unallocated group.
+    v_keys := v_keys || v_unalloc_key;
+    v_groups := v_groups || jsonb_build_object(
+      'planting_group_key', v_unalloc_key,
+      'variety_key', null,
+      'variety_name', 'Unallocated variety',
+      'clone', null,
+      'rootstock', null,
+      'variety_allocation_ids', '[]'::jsonb,
+      'allocation_percent', 100::double precision,
+      'is_unallocated', true
+    );
+    v_warnings := v_warnings || 'block_has_no_variety_allocations';
+
+  elsif v_total_pct > 100 + 1e-6 then
+    -- Proportional normalisation preserves each group's RELATIVE share while
+    -- guaranteeing sum(group tonnes) = block tonnes.
+    for v_i in 1 .. coalesce(array_length(v_groups, 1), 0) loop
+      v_groups[v_i] := v_groups[v_i] || jsonb_build_object(
+        'allocation_percent',
+          (v_groups[v_i] ->> 'allocation_percent')::double precision
+          * 100.0 / v_total_pct
+      );
+    end loop;
+    v_normalized := true;
+    v_warnings := v_warnings || 'block_allocations_over_100_normalized';
+
+  elsif v_total_pct < 100 - 1e-6 then
+    -- Residual share of the block: "Unallocated variety".
+    v_idx := array_position(v_keys, v_unalloc_key);
     if v_idx is null then
       v_keys := v_keys || v_unalloc_key;
       v_groups := v_groups || jsonb_build_object(
@@ -840,13 +964,15 @@ begin
           + (100 - v_total_pct)
       );
     end if;
-
-    if v_total_pct > 0 then
-      v_warnings := v_warnings || 'block_allocations_under_100';
-    else
-      v_warnings := v_warnings || 'block_has_no_variety_allocations';
-    end if;
+    v_warnings := v_warnings || 'block_allocations_under_100';
   end if;
+
+  -- Post-condition, recorded for audit: the groups now sum to 100%.
+  v_group_total := 0;
+  for v_i in 1 .. coalesce(array_length(v_groups, 1), 0) loop
+    v_group_total := v_group_total
+                   + (v_groups[v_i] ->> 'allocation_percent')::double precision;
+  end loop;
 
   return jsonb_build_object(
     'paddock_id', b.id,
@@ -875,14 +1001,26 @@ begin
       'vine_count_override', b.vine_count_override,
       'area_hectares', v_area,
       'block_base_tonnes', v_tonnes,
+      'allocation_percent_total_original', v_total_original,
+      'allocation_percent_total_final', v_group_total,
+      'allocation_percent_normalized', v_normalized,
+      'allocation_group_count', coalesce(array_length(v_groups, 1), 0),
       'formula', 'vines × buds_per_vine × bunches_per_bud × bunch_weight_grams ÷ 1000000'
     )
   );
 end;
 $fn$;
 
-revoke all on function public._pruning_block_estimate(uuid, uuid) from public;
-grant execute on function public._pruning_block_estimate(uuid, uuid) to authenticated;
+-- (B1) INTERNAL ONLY — never client-callable.
+--
+-- This helper is SECURITY DEFINER and reads paddocks + pruning_yield_settings
+-- for whatever vineyard id it is handed, with no membership check of its own
+-- (its single caller, _refresh_pruning_yield_estimates, is itself reached only
+-- through the authorised RPC wrapper). Granting it to `authenticated` would
+-- therefore let any signed-in user read another vineyard's block geometry,
+-- vine counts, variety allocations and pruning settings, bypassing RLS.
+-- EXECUTE is revoked from every client role and deliberately NOT granted back.
+revoke all on function public._pruning_block_estimate(uuid, uuid) from public, authenticated, anon;
 
 
 -- ===========================================================================
@@ -1086,6 +1224,10 @@ language plpgsql
 security definer
 set search_path = public
 as $fn$
+declare
+  v_tz      text;
+  v_found   boolean;
+  v_current integer;
 begin
   if auth.uid() is null then
     raise exception 'Authentication required' using errcode = '42501';
@@ -1100,7 +1242,34 @@ begin
     raise exception 'invalid_vintage' using errcode = '22023';
   end if;
 
-  return public._refresh_pruning_yield_estimates(p_vineyard_id, p_vintage);
+  -- (B4) CURRENT VINTAGE ONLY.
+  --
+  -- The pruning calculator reads TODAY's pruning_yield_settings. Letting a
+  -- client refresh an arbitrary vintage would stamp this season's settings
+  -- onto a historical season's canonical estimate and silently rewrite
+  -- history. The vineyard's own local clock decides which vintage is current,
+  -- identical to the damage/session triggers above.
+  select true, v.timezone into v_found, v_tz
+    from public.vineyards v
+   where v.id = p_vineyard_id;
+
+  if not coalesce(v_found, false) then
+    raise exception 'vineyard_not_found' using errcode = '22023';
+  end if;
+
+  v_current := public.resolve_vineyard_vintage_year(
+    p_vineyard_id,
+    (now() at time zone coalesce(nullif(v_tz, ''), 'UTC'))::date
+  );
+
+  if p_vintage is distinct from v_current then
+    raise exception 'pruning_estimate_refresh_current_vintage_only'
+      using errcode = '22023',
+            detail  = format('requested vintage %s, current vineyard vintage %s',
+                             p_vintage, v_current);
+  end if;
+
+  return public._refresh_pruning_yield_estimates(p_vineyard_id, v_current);
 end;
 $fn$;
 
@@ -1127,6 +1296,7 @@ set search_path = public
 as $fn$
 declare
   v_result jsonb;
+  v_rows   integer;
 begin
   if auth.uid() is null then
     raise exception 'Authentication required' using errcode = '42501';
@@ -1136,6 +1306,52 @@ begin
   end if;
   if p_vintage is null or p_vintage < 2000 or p_vintage > 2100 then
     raise exception 'invalid_vintage' using errcode = '22023';
+  end if;
+
+  -- (B2) The empty-vintage branch must be decided BEFORE the aggregate query:
+  -- an aggregate over zero rows still returns exactly one row, so a trailing
+  -- coalesce() on the result could never fire and an unconfigured vintage was
+  -- reporting a confident 0 t instead of "unknown".
+  select count(*)
+    into v_rows
+    from public.season_yield_estimates e
+   where e.vineyard_id = p_vineyard_id
+     and e.vintage = p_vintage
+     and e.deleted_at is null;
+
+  if v_rows = 0 then
+    return jsonb_build_object(
+      'vineyard_id', p_vineyard_id,
+      'vintage', p_vintage,
+      'is_estimate_complete', false,
+      'known_base_estimate_tonnes', 0,
+      'total_base_estimate_tonnes', null,
+      'blocks_total', 0,
+      'blocks_available', 0,
+      'blocks_unavailable', 0,
+      'estimate_source', 'none',
+      'calculated_at', null,
+      'varieties', '[]'::jsonb,
+      'blocks', '[]'::jsonb,
+      'source_inputs', jsonb_build_object(
+        'summary', jsonb_build_object(
+          'blocks_total', 0,
+          'blocks_available', 0,
+          'blocks_unavailable', 0,
+          'rows_total', 0,
+          'rows_available', 0,
+          'rows_unavailable', 0,
+          'is_estimate_complete', false,
+          'damage_applied', false,
+          'note', 'Base (undamaged) figures only. Apply damage client-side using damage_records filtered to this vintage.'
+        ),
+        'blocks', '{}'::jsonb
+      ),
+      'setup_warnings', jsonb_build_array(
+        jsonb_build_object('code', 'no_estimates_for_vintage',
+                           'paddock_id', null, 'block_name', null)
+      )
+    );
   end if;
 
   with est_rows as (
@@ -1165,6 +1381,13 @@ begin
            max(r.paddock_name) as paddock_name,
            max(r.area_hectares) as area_hectares,
            bool_and(r.is_estimate_available) as is_estimate_available,
+           bool_and(r.is_estimate_available) as is_estimate_complete,
+           -- KNOWN = what we can actually see. CANONICAL stays NULL until the
+           -- whole block is configured, so a half-configured block can never
+           -- be mistaken for a small crop.
+           coalesce(sum(r.base_estimate_tonnes)
+                    filter (where r.is_estimate_available), 0)
+             as known_base_estimate_tonnes,
            case when bool_and(r.is_estimate_available)
                 then sum(r.base_estimate_tonnes) end as base_estimate_tonnes,
            (array_agg(
@@ -1208,7 +1431,11 @@ begin
            (array_agg(r.variety_key order by r.base_estimate_tonnes desc nulls last))[1]
              as variety_key,
            bool_and(r.is_estimate_available) as is_estimate_available,
+           bool_and(r.is_estimate_available) as is_estimate_complete,
            bool_or(r.is_unallocated) as is_unallocated,
+           coalesce(sum(r.base_estimate_tonnes)
+                    filter (where r.is_estimate_available), 0)
+             as known_base_estimate_tonnes,
            case when bool_and(r.is_estimate_available)
                 then sum(r.base_estimate_tonnes) end as base_estimate_tonnes,
            jsonb_agg(distinct r.paddock_id) as paddock_ids,
@@ -1218,10 +1445,10 @@ begin
   ),
   totals as (
     select coalesce(sum(r.base_estimate_tonnes) filter (where r.is_estimate_available), 0)
-             as total_base_estimate_tonnes,
+             as known_base_estimate_tonnes,
+           bool_and(r.is_estimate_available) as is_estimate_complete,
            count(*) as rows_total,
            count(*) filter (where r.is_estimate_available) as rows_available,
-           count(distinct r.paddock_id) as blocks_total,
            max(r.calculated_at) as calculated_at,
            (array_agg(
               r.estimate_source
@@ -1229,11 +1456,26 @@ begin
                        r.calculated_at desc
             ))[1] as estimate_source
       from est_rows r
+  ),
+  block_counts as (
+    select count(*) as blocks_total,
+           count(*) filter (where b.is_estimate_complete) as blocks_available,
+           count(*) filter (where not b.is_estimate_complete) as blocks_unavailable
+      from blocks b
   )
   select jsonb_build_object(
     'vineyard_id', p_vineyard_id,
     'vintage', p_vintage,
-    'total_base_estimate_tonnes', t.total_base_estimate_tonnes,
+    -- CANONICAL: the only figure Grape Allocation may use for Available /
+    -- shortfall. NULL whenever any applicable row is still unconfigured.
+    'total_base_estimate_tonnes',
+      case when t.is_estimate_complete then t.known_base_estimate_tonnes end,
+    -- DIAGNOSTIC: safe to display as "known so far", never to allocate from.
+    'known_base_estimate_tonnes', t.known_base_estimate_tonnes,
+    'is_estimate_complete', t.is_estimate_complete,
+    'blocks_total', bc.blocks_total,
+    'blocks_available', bc.blocks_available,
+    'blocks_unavailable', bc.blocks_unavailable,
     'estimate_source', coalesce(t.estimate_source, 'none'),
     'calculated_at', t.calculated_at,
     'varieties', coalesce((
@@ -1244,6 +1486,8 @@ begin
                  'variety_name', v.variety_name,
                  'is_unallocated', v.is_unallocated,
                  'is_estimate_available', v.is_estimate_available,
+                 'is_estimate_complete', v.is_estimate_complete,
+                 'known_base_estimate_tonnes', v.known_base_estimate_tonnes,
                  'base_estimate_tonnes', v.base_estimate_tonnes,
                  'paddock_ids', v.paddock_ids,
                  'planting_group_keys', v.planting_group_keys
@@ -1260,6 +1504,8 @@ begin
                  'area_hectares', b.area_hectares,
                  'estimate_source', b.estimate_source,
                  'is_estimate_available', b.is_estimate_available,
+                 'is_estimate_complete', b.is_estimate_complete,
+                 'known_base_estimate_tonnes', b.known_base_estimate_tonnes,
                  'base_estimate_tonnes', b.base_estimate_tonnes,
                  'calculated_at', b.calculated_at,
                  'source_inputs', b.source_inputs,
@@ -1276,10 +1522,13 @@ begin
     ), '[]'::jsonb),
     'source_inputs', jsonb_build_object(
       'summary', jsonb_build_object(
-        'blocks_total', t.blocks_total,
+        'blocks_total', bc.blocks_total,
+        'blocks_available', bc.blocks_available,
+        'blocks_unavailable', bc.blocks_unavailable,
         'rows_total', t.rows_total,
         'rows_available', t.rows_available,
         'rows_unavailable', t.rows_total - t.rows_available,
+        'is_estimate_complete', t.is_estimate_complete,
         'damage_applied', false,
         'note', 'Base (undamaged) figures only. Apply damage client-side using damage_records filtered to this vintage.'
       ),
@@ -1289,40 +1538,31 @@ begin
          where b.source_inputs is not null
       ), '{}'::jsonb)
     ),
-    'setup_warnings', coalesce((
-      select jsonb_agg(
-               jsonb_build_object(
-                 'code', bw.code,
-                 'paddock_id', bw.paddock_id,
-                 'block_name', (select b.paddock_name from blocks b where b.paddock_id = bw.paddock_id)
+    'setup_warnings',
+      coalesce((
+        select jsonb_agg(
+                 jsonb_build_object(
+                   'code', bw.code,
+                   'paddock_id', bw.paddock_id,
+                   'block_name', (select b.paddock_name from blocks b where b.paddock_id = bw.paddock_id)
+                 )
+                 order by bw.code, bw.paddock_id
                )
-               order by bw.code, bw.paddock_id
-             )
-        from block_warnings bw
-    ), '[]'::jsonb)
+          from block_warnings bw
+      ), '[]'::jsonb)
+      -- Vineyard-level flag so a caller that only reads the top of the
+      -- payload still learns the crop total is not usable yet.
+      || case when t.is_estimate_complete then '[]'::jsonb
+              else jsonb_build_array(
+                     jsonb_build_object('code', 'estimate_incomplete',
+                                        'paddock_id', null, 'block_name', null)
+                   ) end
   )
   into v_result
-  from totals t;
+  from totals t
+  cross join block_counts bc;
 
-  return coalesce(v_result, jsonb_build_object(
-    'vineyard_id', p_vineyard_id,
-    'vintage', p_vintage,
-    'total_base_estimate_tonnes', 0,
-    'estimate_source', 'none',
-    'calculated_at', null,
-    'varieties', '[]'::jsonb,
-    'blocks', '[]'::jsonb,
-    'source_inputs', jsonb_build_object(
-      'summary', jsonb_build_object(
-        'blocks_total', 0, 'rows_total', 0, 'rows_available', 0,
-        'rows_unavailable', 0, 'damage_applied', false
-      ),
-      'blocks', '{}'::jsonb
-    ),
-    'setup_warnings', jsonb_build_array(
-      jsonb_build_object('code', 'no_estimates_for_vintage', 'paddock_id', null, 'block_name', null)
-    )
-  ));
+  return v_result;
 end;
 $fn$;
 
@@ -1346,11 +1586,18 @@ declare
   v_count   integer := 0;
 begin
   for v in
-    select distinct s.vineyard_id
+    select distinct s.vineyard_id, vy.timezone
       from public.pruning_yield_settings s
+      join public.vineyards vy on vy.id = s.vineyard_id
      where s.deleted_at is null
   loop
-    v_vintage := public.resolve_vineyard_vintage_year(v.vineyard_id, current_date);
+    -- (B4) vineyard-LOCAL current date, not the server session's current_date:
+    -- near the season boundary those differ by a day and would backfill the
+    -- wrong vintage.
+    v_vintage := public.resolve_vineyard_vintage_year(
+      v.vineyard_id,
+      (now() at time zone coalesce(nullif(v.timezone, ''), 'UTC'))::date
+    );
     v_res := public._refresh_pruning_yield_estimates(v.vineyard_id, v_vintage);
     v_count := v_count + 1;
     raise notice 'SQL 221 · pruning backfill vineyard % vintage % → %',

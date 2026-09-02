@@ -20,6 +20,38 @@ revised iOS and Android engines.
 Every platform must produce the numbers below **exactly**, to a tolerance of
 `1e-9`. Round only at render time, never in the calculation.
 
+### Terminology
+
+"**Block**" is the user-facing word used throughout this document and in all
+three apps. "**Paddock**" is the historical *database* name for the same
+thing: the table is `public.paddocks` and every foreign key is `paddock_id`.
+They are the same entity — one growing block. Identifiers in SQL, JSON
+payloads and column names keep `paddock`; prose, labels and UI copy say
+`block`. No renaming is proposed here: the mixed vocabulary is deliberate and
+renaming the table would break every existing client.
+
+### Who owns which half of the calculation
+
+Damage is two separable pieces, and only one of them is new:
+
+- **Geometry (shared, unchanged).** Turning polygons into hectares is
+  `public._paddock_polygon_area_hectares` from **sql/095**. It is a
+  pre-existing shared helper with other consumers, it takes the polygon it is
+  handed as an argument (it reads no vineyard tables of its own), and
+  **SQL 221 does not modify it**. Both block area and damage-polygon area
+  come from this one reference implementation, so all three clients must
+  mirror it exactly: equirectangular shoelace, `mPerDegLat = 111320.0`,
+  `mPerDegLon = 111320 × cos(centroidLat)`.
+- **Arithmetic (this contract).** How those hectares become an adjusted
+  tonnage — `effective_loss_ha`, the per-block `damage_factor`, the 100% cap,
+  and the order of aggregation — is what this document pins, and it is
+  applied **client-side by each app's own damage engine**. SQL 221 stores and
+  serves only the *base* (undamaged) estimate; it never applies damage.
+
+So a parity failure is either a geometry failure (a client's area maths
+diverges from sql/095) or an arithmetic failure (a client's engine diverges
+from §1 below). The fixtures are chosen to tell those two apart.
+
 ---
 
 ## 1. The contract
@@ -28,14 +60,17 @@ For each eligible damage record:
 
 ```text
 mapped_area_ha     = area of the damage polygon
-                     (reference geometry: _paddock_polygon_area_hectares,
-                      sql/095 — equirectangular shoelace, mPerDegLat
-                      111320.0, mPerDegLon 111320·cos(centroidLat))
+                     (SHARED GEOMETRY, not owned by this contract:
+                      _paddock_polygon_area_hectares, sql/095 —
+                      equirectangular shoelace, mPerDegLat 111320.0,
+                      mPerDegLon 111320·cos(centroidLat).
+                      Unchanged by SQL 221.)
 
 effective_loss_ha  = mapped_area_ha × damage_percent ÷ 100
 ```
 
-For each block (calculated **independently per block**):
+For each block (calculated **independently per block**, client-side — the
+database serves base tonnes only):
 
 ```text
 block_effective_loss_ha = Σ effective_loss_ha over the block's eligible records
@@ -93,6 +128,10 @@ and 1 Mar 2027 both resolve to **Vintage 2027** (vineyard-local, per SQL 221).
 
 Base tonnes come from the pruning formula:
 `vines × buds/vine × bunches/bud × bunch weight (g) ÷ 1,000,000`.
+
+Block areas below are the **shared geometry** result (sql/095) for each
+block's polygon; a client whose area maths disagrees will fail every fixture
+for a geometry reason, not an arithmetic one.
 
 | Block | Area (ha) | Vines | Method | Buds/vine | Bunches/bud | Bunch wt (g) | Base tonnes |
 |---|---|---|---|---|---|---|---|

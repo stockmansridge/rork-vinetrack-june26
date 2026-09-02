@@ -26,10 +26,21 @@
 --   T9  Stale groups — a removed allocation soft-deletes only pruning rows
 --   T10 Vintage isolation — refreshing 2027 never touches 2026, and the
 --       overview returns only the requested vintage
---   T11 get_season_yield_base_overview — shape, totals, base-only contract
+--   T11 get_season_yield_base_overview — shape, KNOWN vs CANONICAL totals,
+--       empty vintage, incomplete vineyard, complete vineyard, base-only
 --   T12 Permissions — member reads, operator refreshes, stranger denied,
 --       anonymous denied
---   T13 All fixtures discarded by the final ROLLBACK
+--   T13 (B3) Allocation reconciliation — 101.8% normalised to 100%, merged
+--       duplicates over 100% normalised, numeric-STRING percent parsed,
+--       invalid + negative percents excluded and warned, and group tonnes
+--       reconciling exactly to block tonnes
+--   T14 (B4) Current-vintage-only refresh — public wrapper accepts the
+--       current vineyard vintage, rejects historical and future ones, the
+--       internal worker still builds isolated fixtures, and a vineyard whose
+--       local clock has crossed the boundary resolves locally
+--   T15 (B1/B5) Least privilege — internal helpers are not client-callable
+--       and the canonical table is client READ-ONLY
+--   T16 All fixtures discarded by the final ROLLBACK
 --
 -- Expected final output:
 --   NOTICE: SQL 221 season yield estimate tests: ALL PASSED
@@ -46,16 +57,25 @@ end $$;
 
 do $t221$
 declare
-  u_owner    uuid;
-  u_operator uuid;
-  u_stranger uuid;
+  u_owner      uuid;
+  u_manager    uuid;
+  u_supervisor uuid;
+  u_operator   uuid;
+  u_stranger   uuid;
+  v_user       uuid;
   v1         uuid := gen_random_uuid();
   v2         uuid := gen_random_uuid();
+  v3         uuid := gen_random_uuid();  -- fully configured (complete overview)
+  v4         uuid := gen_random_uuid();  -- timezone crossing the boundary
   bA         uuid := gen_random_uuid();  -- spur, vine override 1000
   bB         uuid := gen_random_uuid();  -- cane, vine override 500
   bC         uuid := gen_random_uuid();  -- no pruning settings
   bD         uuid := gen_random_uuid();  -- mixed variety
   bE         uuid := gen_random_uuid();  -- area × vines_per_ha path
+  bF         uuid := gen_random_uuid();  -- allocations totalling 101.8%
+  bG         uuid := gen_random_uuid();  -- duplicate groups merging to 120%
+  bH         uuid := gen_random_uuid();  -- string / invalid / negative percents
+  bI         uuid := gen_random_uuid();  -- v3's single fully configured block
   d1         uuid := gen_random_uuid();
   d2         uuid := gen_random_uuid();
   d3         uuid := gen_random_uuid();
@@ -73,9 +93,13 @@ declare
   v_res      jsonb;
   v_area     double precision;
   v_caught   boolean;
+  v_sqlstate text;
+  v_current  integer;
   k_shiraz   text;
   k_cab      text;
   k_unalloc  text;
+  k_merlot   text;
+  k_grenache text;
 begin
   -- ---- fixtures ----------------------------------------------------------
   insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
@@ -83,15 +107,23 @@ begin
   values (gen_random_uuid(), '00000000-0000-0000-0000-000000000000', 'authenticated',
           'authenticated', 't221-owner@test.local', 'x', now(), now(), now()),
          (gen_random_uuid(), '00000000-0000-0000-0000-000000000000', 'authenticated',
+          'authenticated', 't221-manager@test.local', 'x', now(), now(), now()),
+         (gen_random_uuid(), '00000000-0000-0000-0000-000000000000', 'authenticated',
+          'authenticated', 't221-supervisor@test.local', 'x', now(), now(), now()),
+         (gen_random_uuid(), '00000000-0000-0000-0000-000000000000', 'authenticated',
           'authenticated', 't221-operator@test.local', 'x', now(), now(), now()),
          (gen_random_uuid(), '00000000-0000-0000-0000-000000000000', 'authenticated',
           'authenticated', 't221-stranger@test.local', 'x', now(), now(), now());
-  select id into u_owner    from auth.users where email = 't221-owner@test.local';
-  select id into u_operator from auth.users where email = 't221-operator@test.local';
-  select id into u_stranger from auth.users where email = 't221-stranger@test.local';
+  select id into u_owner      from auth.users where email = 't221-owner@test.local';
+  select id into u_manager    from auth.users where email = 't221-manager@test.local';
+  select id into u_supervisor from auth.users where email = 't221-supervisor@test.local';
+  select id into u_operator   from auth.users where email = 't221-operator@test.local';
+  select id into u_stranger   from auth.users where email = 't221-stranger@test.local';
 
   insert into public.profiles (id, email)
   values (u_owner, 't221-owner@test.local'),
+         (u_manager, 't221-manager@test.local'),
+         (u_supervisor, 't221-supervisor@test.local'),
          (u_operator, 't221-operator@test.local'),
          (u_stranger, 't221-stranger@test.local')
   on conflict (id) do nothing;
@@ -101,12 +133,18 @@ begin
   -- vineyard-local boundary tests have a real offset to cross.
   insert into public.vineyards (id, name, season_start_month, season_start_day, timezone)
   values (v1, 'T221 Vineyard', 9, 1, 'Australia/Sydney'),
-         (v2, 'T221 Other Vineyard', 9, 1, 'Australia/Sydney');
+         (v2, 'T221 Other Vineyard', 9, 1, 'Australia/Sydney'),
+         (v3, 'T221 Complete Vineyard', 9, 1, 'Australia/Sydney'),
+         (v4, 'T221 Pacific Vineyard', 9, 1, 'Pacific/Auckland');
 
   insert into public.vineyard_members (vineyard_id, user_id, role) values
     (v1, u_owner, 'owner'),
+    (v1, u_manager, 'manager'),
+    (v1, u_supervisor, 'supervisor'),
     (v1, u_operator, 'operator'),
-    (v2, u_stranger, 'owner');
+    (v2, u_stranger, 'owner'),
+    (v3, u_owner, 'owner'),
+    (v4, u_owner, 'owner');
 
   insert into public.paddocks (id, vineyard_id, name, vine_count_override, variety_allocations)
   values
@@ -133,6 +171,38 @@ begin
       jsonb_build_object('latitude', -33.0015, 'longitude', 149.0000)
     ));
 
+  -- (B3) fixtures reproducing the live audit findings.
+  --   Block F: two valid allocations totalling 101.8%.
+  --   Block G: duplicate Shiraz/MV6/101-14 groups merging to 120%.
+  --   Block H: a numeric STRING percent, a non-numeric percent and a
+  --            negative percent alongside one good allocation.
+  insert into public.paddocks (id, vineyard_id, name, vine_count_override, variety_allocations)
+  values
+    (bF, v1, 'T221 Block F', 1000, jsonb_build_array(
+        jsonb_build_object('varietyKey', 'shiraz', 'name', 'Shiraz',
+                           'clone', 'MV6', 'rootstock', '101-14', 'percent', 51.8),
+        jsonb_build_object('varietyKey', 'merlot', 'name', 'Merlot', 'percent', 50)
+      )),
+    (bG, v1, 'T221 Block G', 1000, jsonb_build_array(
+        jsonb_build_object('varietyKey', 'shiraz', 'name', 'Shiraz',
+                           'clone', 'MV6', 'rootstock', '101-14', 'percent', 60),
+        jsonb_build_object('varietyKey', 'shiraz', 'name', 'Shiraz',
+                           'clone', 'MV6', 'rootstock', '101-14', 'percent', 60)
+      )),
+    (bH, v1, 'T221 Block H', 1000, jsonb_build_array(
+        jsonb_build_object('varietyKey', 'shiraz', 'name', 'Shiraz',
+                           'clone', 'MV6', 'rootstock', '101-14', 'percent', '45.5'),
+        jsonb_build_object('varietyKey', 'merlot', 'name', 'Merlot',
+                           'percent', 'not a number'),
+        jsonb_build_object('varietyKey', 'grenache', 'name', 'Grenache',
+                           'percent', -10)
+      ));
+
+  -- v3 is deliberately SMALL and fully configured: every row available, so the
+  -- overview may publish a canonical total.
+  insert into public.paddocks (id, vineyard_id, name, vine_count_override)
+  values (bI, v3, 'T221 Block I', 1000);
+
   insert into public.pruning_yield_settings
     (vineyard_id, paddock_id, prune_method, bunches_per_bud, buds_per_spur,
      spurs_per_vine, buds_per_cane, canes_per_vine, vines_per_ha, bunch_weight_grams)
@@ -140,11 +210,17 @@ begin
     (v1, bA, 'spur', 1.5, 2, 6, 10, 4, null, 120),
     (v1, bB, 'cane', 1.5, 2, 6, 10, 4, null, 120),
     (v1, bD, 'spur', 1.5, 2, 6, 10, 4, null, 120),
-    (v1, bE, 'spur', 1.5, 2, 6, 10, 4, 2000, 120);
+    (v1, bE, 'spur', 1.5, 2, 6, 10, 4, 2000, 120),
+    (v1, bF, 'spur', 1.5, 2, 6, 10, 4, null, 120),
+    (v1, bG, 'spur', 1.5, 2, 6, 10, 4, null, 120),
+    (v1, bH, 'spur', 1.5, 2, 6, 10, 4, null, 120),
+    (v3, bI, 'spur', 1.5, 2, 6, 10, 4, null, 120);
 
-  k_shiraz  := public.planting_group_key('Shiraz', 'MV6', '101-14');
-  k_cab     := public.planting_group_key('Cabernet Sauvignon', null, null);
-  k_unalloc := public.planting_group_key('Unallocated variety', null, null);
+  k_shiraz   := public.planting_group_key('Shiraz', 'MV6', '101-14');
+  k_cab      := public.planting_group_key('Cabernet Sauvignon', null, null);
+  k_unalloc  := public.planting_group_key('Unallocated variety', null, null);
+  k_merlot   := public.planting_group_key('Merlot', null, null);
+  k_grenache := public.planting_group_key('Grenache', null, null);
 
   -- ---- T1. Objects -------------------------------------------------------
   select count(*) into n from information_schema.columns
@@ -395,6 +471,13 @@ begin
   raise notice 'T6 passed';
 
   -- ---- T7. Priority: manual is never downgraded --------------------------
+  -- NOTE (B5): this fixture is written as the migration/test role (postgres),
+  -- NOT as an authenticated client. Since SQL 221 the canonical table is
+  -- client READ-ONLY, so a normal signed-in user CANNOT create a manual
+  -- estimate directly — T15 proves exactly that. Manual and bunch_count
+  -- sources will arrive through their own validated RPCs in a later phase;
+  -- here we simply need a higher-priority row to exist so the pruning refresh
+  -- can be shown to leave it alone.
   update public.season_yield_estimates
      set estimate_source = 'manual',
          base_estimate_tonnes = 9.99,
@@ -475,6 +558,9 @@ begin
   raise notice 'T10 passed';
 
   -- ---- T11. get_season_yield_base_overview -------------------------------
+  -- v3 is the fully-configured control vineyard: every row available.
+  v_res := public._refresh_pruning_yield_estimates(v3, 2027);
+
   perform set_config('request.jwt.claims',
     json_build_object('sub', u_owner, 'role', 'authenticated')::text, true);
   perform set_config('role', 'authenticated', true);
@@ -504,13 +590,71 @@ begin
     raise exception 'T11: overview claims damage was applied';
   end if;
 
-  -- Totals only count available rows; unconfigured Block C contributes nothing.
+  -- (B2) v1 contains unconfigured Block C, so this vineyard is INCOMPLETE.
+  -- The canonical total must be withheld while the known subtotal is still
+  -- published for diagnostics.
+  if (v_res ->> 'is_estimate_complete')::boolean then
+    raise exception 'T11: vineyard with an unconfigured block claims completeness';
+  end if;
+  if v_res -> 'total_base_estimate_tonnes' <> 'null'::jsonb then
+    raise exception 'T11: canonical total published while incomplete (%)',
+      v_res ->> 'total_base_estimate_tonnes';
+  end if;
+
   select coalesce(sum(base_estimate_tonnes), 0) into v_num
     from public.season_yield_estimates
    where vineyard_id = v1 and vintage = 2027 and deleted_at is null and is_estimate_available;
-  if abs((v_res ->> 'total_base_estimate_tonnes')::double precision - v_num) > 1e-9 then
-    raise exception 'T11: total % disagrees with row sum %',
-      v_res ->> 'total_base_estimate_tonnes', v_num;
+  if abs((v_res ->> 'known_base_estimate_tonnes')::double precision - v_num) > 1e-9 then
+    raise exception 'T11: known subtotal % disagrees with row sum %',
+      v_res ->> 'known_base_estimate_tonnes', v_num;
+  end if;
+
+  if not exists (
+    select 1 from jsonb_array_elements(v_res -> 'setup_warnings') w
+     where w ->> 'code' = 'estimate_incomplete'
+  ) then
+    raise exception 'T11: estimate_incomplete warning missing on a partial vineyard';
+  end if;
+
+  -- Block counts must add up and identify the unconfigured block.
+  select count(distinct paddock_id) into n
+    from public.season_yield_estimates
+   where vineyard_id = v1 and vintage = 2027 and deleted_at is null;
+  if (v_res ->> 'blocks_total')::integer <> n then
+    raise exception 'T11: blocks_total % <> % distinct blocks', v_res ->> 'blocks_total', n;
+  end if;
+  if (v_res ->> 'blocks_available')::integer + (v_res ->> 'blocks_unavailable')::integer
+     <> (v_res ->> 'blocks_total')::integer then
+    raise exception 'T11: block counts do not reconcile (%)', v_res;
+  end if;
+  if (v_res ->> 'blocks_unavailable')::integer < 1 then
+    raise exception 'T11: unconfigured Block C not counted as unavailable';
+  end if;
+
+  -- The unconfigured block itself must withhold its canonical figure too,
+  -- and must NOT report 0 t.
+  if not exists (
+    select 1 from jsonb_array_elements(v_res -> 'blocks') b
+     where (b ->> 'paddock_id')::uuid = bC
+       and b -> 'base_estimate_tonnes' = 'null'::jsonb
+       and (b ->> 'is_estimate_complete')::boolean is false
+  ) then
+    raise exception 'T11: unconfigured block did not withhold its canonical estimate';
+  end if;
+
+  -- A variety that draws on an unavailable block withholds its total as well.
+  if exists (
+    select 1 from jsonb_array_elements(v_res -> 'varieties') vv
+     where (vv ->> 'is_estimate_complete')::boolean is false
+       and vv -> 'base_estimate_tonnes' <> 'null'::jsonb
+  ) then
+    raise exception 'T11: an incomplete variety published a canonical total';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(v_res -> 'varieties') vv
+     where vv -> 'known_base_estimate_tonnes' is null
+  ) then
+    raise exception 'T11: variety known subtotal missing';
   end if;
 
   -- Identity is retained per block/group.
@@ -529,22 +673,71 @@ begin
      and pg_get_function_identity_arguments(p.oid) = 'p_vineyard_id uuid, p_vintage integer';
   if n <> 1 then raise exception 'T11: unexpected overview signature'; end if;
 
-  -- A vintage with no rows returns an empty, safe shape (never another vintage).
+  -- (B2) A vintage with NO rows must be unknown, not zero. This branch used to
+  -- be unreachable: the aggregate always produced one row, so the coalesce
+  -- fallback never fired and callers saw a confident 0 t.
   v_res := public.get_season_yield_base_overview(v1, 2099);
-  if jsonb_array_length(v_res -> 'blocks') <> 0
-     or (v_res ->> 'total_base_estimate_tonnes')::double precision <> 0
-     or v_res ->> 'estimate_source' <> 'none' then
-    raise exception 'T11: empty vintage did not return an empty overview (%)', v_res;
+  if jsonb_array_length(v_res -> 'blocks') <> 0 then
+    raise exception 'T11: empty vintage returned blocks (%)', v_res;
+  end if;
+  if v_res -> 'total_base_estimate_tonnes' <> 'null'::jsonb then
+    raise exception 'T11: empty vintage returned a canonical total of % (expected null)',
+      v_res ->> 'total_base_estimate_tonnes';
+  end if;
+  if (v_res ->> 'known_base_estimate_tonnes')::double precision <> 0 then
+    raise exception 'T11: empty vintage known subtotal % (expected 0)',
+      v_res ->> 'known_base_estimate_tonnes';
+  end if;
+  if (v_res ->> 'is_estimate_complete')::boolean then
+    raise exception 'T11: empty vintage claims completeness';
+  end if;
+  if v_res ->> 'estimate_source' <> 'none' then
+    raise exception 'T11: empty vintage source % (expected none)', v_res ->> 'estimate_source';
+  end if;
+  if not exists (
+    select 1 from jsonb_array_elements(v_res -> 'setup_warnings') w
+     where w ->> 'code' = 'no_estimates_for_vintage'
+  ) then
+    raise exception 'T11: no_estimates_for_vintage warning missing (%)', v_res;
+  end if;
+
+  -- (B2) A COMPLETE vineyard publishes a usable canonical total that Grape
+  -- Allocation may consume.
+  v_res := public.get_season_yield_base_overview(v3, 2027);
+  if not (v_res ->> 'is_estimate_complete')::boolean then
+    raise exception 'T11: fully configured vineyard reported incomplete (%)', v_res;
+  end if;
+  if abs((v_res ->> 'total_base_estimate_tonnes')::double precision - 2.16) > 1e-9 then
+    raise exception 'T11: complete canonical total % (expected 2.16)',
+      v_res ->> 'total_base_estimate_tonnes';
+  end if;
+  if abs((v_res ->> 'known_base_estimate_tonnes')::double precision - 2.16) > 1e-9 then
+    raise exception 'T11: complete known subtotal % (expected 2.16)',
+      v_res ->> 'known_base_estimate_tonnes';
+  end if;
+  if (v_res ->> 'blocks_unavailable')::integer <> 0 then
+    raise exception 'T11: complete vineyard reports unavailable blocks';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(v_res -> 'setup_warnings') w
+     where w ->> 'code' in ('estimate_incomplete', 'no_estimates_for_vintage')
+  ) then
+    raise exception 'T11: complete vineyard still carries an incompleteness warning';
   end if;
   perform set_config('role', 'postgres', true);
   raise notice 'T11 passed';
 
   -- ---- T12. Permissions ---------------------------------------------------
-  -- Operator may refresh.
+  -- (B4) The public wrapper only accepts the vineyard's CURRENT vintage, so
+  -- the operator must call it with the runtime-resolved value rather than the
+  -- fixture's 2027.
+  v_current := public.resolve_vineyard_vintage_year(
+    v1, (now() at time zone 'Australia/Sydney')::date);
+
   perform set_config('request.jwt.claims',
     json_build_object('sub', u_operator, 'role', 'authenticated')::text, true);
   perform set_config('role', 'authenticated', true);
-  v_res := public.refresh_pruning_yield_estimates(v1, 2027);
+  v_res := public.refresh_pruning_yield_estimates(v1, v_current);
   if v_res is null then raise exception 'T12: operator refresh returned null'; end if;
   perform set_config('role', 'postgres', true);
 
@@ -562,7 +755,7 @@ begin
 
   v_caught := false;
   begin
-    perform public.refresh_pruning_yield_estimates(v1, 2027);
+    perform public.refresh_pruning_yield_estimates(v1, v_current);
   exception when others then v_caught := true;
   end;
   if not v_caught then raise exception 'T12: stranger refreshed estimates'; end if;
@@ -570,12 +763,22 @@ begin
   select count(*) into n from public.season_yield_estimates where vineyard_id = v1;
   if n <> 0 then raise exception 'T12: RLS leaked % rows to a stranger', n; end if;
 
-  -- Hard delete is denied even for a member's own vineyard.
+  -- Hard delete is denied even for a member's own vineyard. Since B5 the
+  -- table privilege refuses it outright; before that only the RLS policy did.
+  -- Either outcome is acceptable, a deleted row is not.
   perform set_config('request.jwt.claims',
     json_build_object('sub', u_owner, 'role', 'authenticated')::text, true);
-  delete from public.season_yield_estimates where vineyard_id = v1;
-  get diagnostics n = row_count;
-  if n <> 0 then raise exception 'T12: client hard delete succeeded (% rows)', n; end if;
+  v_caught := false;
+  n := -1;
+  begin
+    delete from public.season_yield_estimates where vineyard_id = v1;
+    get diagnostics n = row_count;
+  exception when others then
+    v_caught := true;
+  end;
+  if not v_caught and n <> 0 then
+    raise exception 'T12: client hard delete succeeded (% rows)', n;
+  end if;
   perform set_config('role', 'postgres', true);
 
   -- Anonymous callers are refused.
@@ -588,9 +791,319 @@ begin
   if not v_caught then raise exception 'T12: anonymous read allowed'; end if;
   raise notice 'T12 passed';
 
+  -- ---- T13. (B3) Allocation reconciliation --------------------------------
+  perform set_config('request.jwt.claims', '', true);
+
+  -- Block F: 51.8% + 50% = 101.8% (the shape found in the live audit).
+  -- Groups must be normalised proportionally back to exactly 100%.
+  select coalesce(sum(allocation_percent), 0), coalesce(sum(base_estimate_tonnes), 0)
+    into v_num, v_area
+    from public.season_yield_estimates
+   where vineyard_id = v1 and vintage = 2027 and paddock_id = bF and deleted_at is null;
+  if abs(v_num - 100) > 1e-6 then
+    raise exception 'T13: Block F percentages sum to % (expected 100)', v_num;
+  end if;
+  if abs(v_area - 2.16) > 1e-9 then
+    raise exception 'T13: Block F group tonnes sum to % (expected the block total 2.16)', v_area;
+  end if;
+
+  select allocation_percent, base_estimate_tonnes into v_num, v_area
+    from public.season_yield_estimates
+   where vineyard_id = v1 and vintage = 2027 and paddock_id = bF
+     and planting_group_key = k_shiraz and deleted_at is null;
+  if abs(v_num - (51.8 / 101.8 * 100)) > 1e-9 then
+    raise exception 'T13: Block F Shiraz normalised to % (expected %)',
+      v_num, 51.8 / 101.8 * 100;
+  end if;
+  if abs(v_area - (2.16 * 51.8 / 101.8)) > 1e-9 then
+    raise exception 'T13: Block F Shiraz tonnes % disagree with its normalised share', v_area;
+  end if;
+
+  select setup_warnings, source_inputs into v_json, v_res
+    from public.season_yield_estimates
+   where vineyard_id = v1 and vintage = 2027 and paddock_id = bF
+     and planting_group_key = k_shiraz and deleted_at is null;
+  if not (v_json ? 'block_allocations_over_100_normalized') then
+    raise exception 'T13: Block F missing block_allocations_over_100_normalized (%)', v_json;
+  end if;
+  -- The original total is preserved for explanation/audit.
+  if abs((v_res ->> 'allocation_percent_total_original')::double precision - 101.8) > 1e-9 then
+    raise exception 'T13: Block F original total not preserved (%)',
+      v_res ->> 'allocation_percent_total_original';
+  end if;
+  if abs((v_res ->> 'allocation_percent_total_final')::double precision - 100) > 1e-6 then
+    raise exception 'T13: Block F final total % (expected 100)',
+      v_res ->> 'allocation_percent_total_final';
+  end if;
+
+  -- Block G: duplicates merge FIRST (60 + 60 = 120 as one group), then
+  -- normalise to 100. Merging after capping would have produced two 60%
+  -- groups and 120% of the block's tonnes.
+  select count(*) into n
+    from public.season_yield_estimates
+   where vineyard_id = v1 and vintage = 2027 and paddock_id = bG and deleted_at is null;
+  if n <> 1 then raise exception 'T13: Block G should hold ONE merged group, found %', n; end if;
+
+  select allocation_percent, base_estimate_tonnes, source_inputs
+    into v_num, v_area, v_res
+    from public.season_yield_estimates
+   where vineyard_id = v1 and vintage = 2027 and paddock_id = bG
+     and planting_group_key = k_shiraz and deleted_at is null;
+  if abs(v_num - 100) > 1e-6 then
+    raise exception 'T13: Block G merged group at % (expected 100)', v_num;
+  end if;
+  if abs(v_area - 2.16) > 1e-9 then
+    raise exception 'T13: Block G tonnes % (expected the whole block 2.16)', v_area;
+  end if;
+  if abs((v_res ->> 'allocation_percent_total_original')::double precision - 120) > 1e-9 then
+    raise exception 'T13: Block G original total % (expected 120)',
+      v_res ->> 'allocation_percent_total_original';
+  end if;
+
+  -- Block H: a numeric STRING parses; a non-numeric value and a negative value
+  -- are excluded and named, never read as a legitimate zero.
+  select allocation_percent, base_estimate_tonnes, setup_warnings
+    into v_num, v_area, v_json
+    from public.season_yield_estimates
+   where vineyard_id = v1 and vintage = 2027 and paddock_id = bH
+     and planting_group_key = k_shiraz and deleted_at is null;
+  if abs(v_num - 45.5) > 1e-9 then
+    raise exception 'T13: numeric-string percent parsed as % (expected 45.5)', v_num;
+  end if;
+  if abs(v_area - (2.16 * 0.455)) > 1e-9 then
+    raise exception 'T13: Block H Shiraz tonnes % (expected 0.9828)', v_area;
+  end if;
+  if not (v_json ? 'allocation_percent_invalid') then
+    raise exception 'T13: allocation_percent_invalid warning missing (%)', v_json;
+  end if;
+  if not (v_json ? 'block_allocations_under_100') then
+    raise exception 'T13: Block H residual warning missing (%)', v_json;
+  end if;
+
+  -- The invalid and negative allocations must NOT have produced groups.
+  select count(*) into n
+    from public.season_yield_estimates
+   where vineyard_id = v1 and vintage = 2027 and paddock_id = bH
+     and planting_group_key in (k_merlot, k_grenache) and deleted_at is null;
+  if n <> 0 then
+    raise exception 'T13: invalid/negative allocations produced % group(s)', n;
+  end if;
+
+  -- The residual is preserved as Unallocated, and the block still reconciles.
+  select coalesce(sum(allocation_percent), 0), coalesce(sum(base_estimate_tonnes), 0)
+    into v_num, v_area
+    from public.season_yield_estimates
+   where vineyard_id = v1 and vintage = 2027 and paddock_id = bH and deleted_at is null;
+  if abs(v_num - 100) > 1e-6 then
+    raise exception 'T13: Block H percentages sum to % (expected 100)', v_num;
+  end if;
+  if abs(v_area - 2.16) > 1e-9 then
+    raise exception 'T13: Block H group tonnes sum to % (expected 2.16)', v_area;
+  end if;
+
+  -- Global invariant: no available block may allocate above 100%.
+  if exists (
+    select 1
+      from public.season_yield_estimates
+     where vineyard_id = v1 and vintage = 2027 and deleted_at is null
+       and is_estimate_available
+     group by paddock_id
+    having abs(sum(allocation_percent) - 100) > 1e-6
+  ) then
+    raise exception 'T13: a block''s allocation percentages do not sum to 100';
+  end if;
+  raise notice 'T13 passed';
+
+  -- ---- T14. (B4) Current vintage only -------------------------------------
+  v_current := public.resolve_vineyard_vintage_year(
+    v1, (now() at time zone 'Australia/Sydney')::date);
+
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', u_owner, 'role', 'authenticated')::text, true);
+  perform set_config('role', 'authenticated', true);
+
+  -- Accepts the vineyard's current vintage.
+  v_res := public.refresh_pruning_yield_estimates(v1, v_current);
+  if (v_res ->> 'vintage')::integer <> v_current then
+    raise exception 'T14: refresh echoed vintage % (expected %)',
+      v_res ->> 'vintage', v_current;
+  end if;
+
+  -- Rejects a historical vintage: today's pruning settings must never be
+  -- written into a finished season.
+  v_caught := false;
+  v_txt := null;
+  begin
+    perform public.refresh_pruning_yield_estimates(v1, v_current - 1);
+  exception when others then
+    v_caught := true;
+    v_txt := sqlerrm;
+  end;
+  if not v_caught then
+    raise exception 'T14: historical vintage refresh was allowed';
+  end if;
+  if v_txt not like '%pruning_estimate_refresh_current_vintage_only%' then
+    raise exception 'T14: historical refresh failed with the wrong error (%)', v_txt;
+  end if;
+
+  -- Rejects a future vintage.
+  v_caught := false;
+  v_txt := null;
+  begin
+    perform public.refresh_pruning_yield_estimates(v1, v_current + 1);
+  exception when others then
+    v_caught := true;
+    v_txt := sqlerrm;
+  end;
+  if not v_caught then
+    raise exception 'T14: future vintage refresh was allowed';
+  end if;
+  if v_txt not like '%pruning_estimate_refresh_current_vintage_only%' then
+    raise exception 'T14: future refresh failed with the wrong error (%)', v_txt;
+  end if;
+
+  -- A vineyard on a different local clock resolves with ITS OWN timezone.
+  v_int := public.resolve_vineyard_vintage_year(
+    v4, (now() at time zone 'Pacific/Auckland')::date);
+  v_res := public.refresh_pruning_yield_estimates(v4, v_int);
+  if (v_res ->> 'vintage')::integer <> v_int then
+    raise exception 'T14: vineyard-local current vintage rejected for v4';
+  end if;
+  perform set_config('role', 'postgres', true);
+
+  -- The INTERNAL worker still builds isolated fixtures for any vintage, which
+  -- is what makes vintage-isolation testing (T10) possible.
+  v_res := public._refresh_pruning_yield_estimates(v3, 2024);
+  select count(*) into n from public.season_yield_estimates
+   where vineyard_id = v3 and vintage = 2024 and deleted_at is null;
+  if n = 0 then
+    raise exception 'T14: internal worker could not build an isolated fixture';
+  end if;
+  raise notice 'T14 passed';
+
+  -- ---- T15. (B1/B5) Least privilege ---------------------------------------
+  -- (B1) Internal helpers must not be reachable by any client role. They are
+  -- SECURITY DEFINER and take a vineyard id, so a grant here would hand any
+  -- signed-in user another vineyard's blocks, vine counts and settings.
+  if has_function_privilege('authenticated',
+       'public._pruning_block_estimate(uuid, uuid)', 'EXECUTE') then
+    raise exception 'T15: _pruning_block_estimate is EXECUTE-able by authenticated';
+  end if;
+  if has_function_privilege('anon',
+       'public._pruning_block_estimate(uuid, uuid)', 'EXECUTE') then
+    raise exception 'T15: _pruning_block_estimate is EXECUTE-able by anon';
+  end if;
+  if has_function_privilege('authenticated',
+       'public._refresh_pruning_yield_estimates(uuid, integer)', 'EXECUTE') then
+    raise exception 'T15: _refresh_pruning_yield_estimates is EXECUTE-able by authenticated';
+  end if;
+  if has_function_privilege('authenticated',
+       'public._season_alloc_text(jsonb, text[])', 'EXECUTE')
+     or has_function_privilege('authenticated',
+       'public._season_alloc_number(jsonb, text[])', 'EXECUTE') then
+    raise exception 'T15: allocation readers are EXECUTE-able by authenticated';
+  end if;
+
+  -- The supported public entry points remain callable.
+  if not has_function_privilege('authenticated',
+       'public.refresh_pruning_yield_estimates(uuid, integer)', 'EXECUTE')
+     or not has_function_privilege('authenticated',
+       'public.get_season_yield_base_overview(uuid, integer)', 'EXECUTE') then
+    raise exception 'T15: a public RPC lost its EXECUTE grant';
+  end if;
+
+  -- A stranger cannot reach the internal helper directly.
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', u_stranger, 'role', 'authenticated')::text, true);
+  perform set_config('role', 'authenticated', true);
+  v_caught := false;
+  begin
+    perform public._pruning_block_estimate(v1, bA);
+  exception when others then v_caught := true;
+  end;
+  perform set_config('role', 'postgres', true);
+  if not v_caught then
+    raise exception 'T15: a stranger called _pruning_block_estimate directly';
+  end if;
+
+  -- (B5) Canonical table privileges: read-only for clients.
+  if not has_table_privilege('authenticated', 'public.season_yield_estimates', 'SELECT') then
+    raise exception 'T15: authenticated lost SELECT on season_yield_estimates';
+  end if;
+  if has_table_privilege('authenticated', 'public.season_yield_estimates', 'INSERT')
+     or has_table_privilege('authenticated', 'public.season_yield_estimates', 'UPDATE')
+     or has_table_privilege('authenticated', 'public.season_yield_estimates', 'DELETE') then
+    raise exception 'T15: season_yield_estimates is still client-writable';
+  end if;
+
+  -- Every privileged role is refused a direct write: no client may invent a
+  -- manual estimate, change the source, or set arbitrary tonnes.
+  foreach v_user in array array[u_owner, u_manager, u_supervisor, u_operator]
+  loop
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_user, 'role', 'authenticated')::text, true);
+    perform set_config('role', 'authenticated', true);
+
+    v_caught := false;
+    begin
+      insert into public.season_yield_estimates
+        (vineyard_id, vintage, paddock_id, planting_group_key, variety_name,
+         estimate_source, base_estimate_tonnes, is_estimate_available)
+      values (v1, 2027, bB, k_shiraz, 'Shiraz', 'manual', 999, true);
+    exception when others then v_caught := true;
+    end;
+    if not v_caught then
+      perform set_config('role', 'postgres', true);
+      raise exception 'T15: a client role inserted directly into the canonical table';
+    end if;
+
+    v_caught := false;
+    begin
+      update public.season_yield_estimates
+         set estimate_source = 'manual'
+       where vineyard_id = v1 and vintage = 2027;
+    exception when others then v_caught := true;
+    end;
+    if not v_caught then
+      perform set_config('role', 'postgres', true);
+      raise exception 'T15: a client role changed estimate_source directly';
+    end if;
+
+    v_caught := false;
+    begin
+      update public.season_yield_estimates
+         set base_estimate_tonnes = 999
+       where vineyard_id = v1 and vintage = 2027;
+    exception when others then v_caught := true;
+    end;
+    if not v_caught then
+      perform set_config('role', 'postgres', true);
+      raise exception 'T15: a client role changed tonnes directly';
+    end if;
+
+    perform set_config('role', 'postgres', true);
+  end loop;
+
+  -- The deterministic RPC remains the one supported write path.
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', u_operator, 'role', 'authenticated')::text, true);
+  perform set_config('role', 'authenticated', true);
+  v_res := public.refresh_pruning_yield_estimates(v1, v_current);
+  if v_res is null then raise exception 'T15: operator refresh RPC failed'; end if;
+  perform set_config('role', 'postgres', true);
+
+  -- Nothing above managed to plant a manual 999 t row.
+  if exists (
+    select 1 from public.season_yield_estimates
+     where vineyard_id = v1 and base_estimate_tonnes = 999
+  ) then
+    raise exception 'T15: a direct client write reached the canonical table';
+  end if;
+  raise notice 'T15 passed';
+
   raise notice 'SQL 221 season yield estimate tests: ALL PASSED';
 end
 $t221$;
 
--- ---- T13. Discard everything ------------------------------------------
+-- ---- T16. Discard everything ------------------------------------------
 rollback;
