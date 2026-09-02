@@ -55,6 +55,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -94,6 +95,7 @@ import com.rork.vinetrack.data.IrrigationVintageSummary
 import com.rork.vinetrack.data.IrrigationVintageTrendRow
 import com.rork.vinetrack.data.IrrigationWaterSourceReportRow
 import com.rork.vinetrack.data.PendingIrrigationSession
+import com.rork.vinetrack.ui.components.VintageSelector
 import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.data.VolumeUnit
 import com.rork.vinetrack.ui.AppUiState
@@ -249,6 +251,8 @@ fun IrrigationRecordsScreen(
     var accessDenied by remember { mutableStateOf(false) }
     var capabilities by remember { mutableStateOf<IrrigationCapabilities?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    // null until the operator picks one — the current vintage is the default.
+    var selectedVintage by rememberSaveable { mutableStateOf<Int?>(null) }
 
     suspend fun reload() {
         val vid = vineyardId ?: return
@@ -271,8 +275,15 @@ fun IrrigationRecordsScreen(
             if (s.isOperational) {
                 // The vintage summary is a report — operators do not hold the
                 // reports capability, so the server would (rightly) refuse it.
-                summary = if (caps.canViewIrrigationReports) repo.vintageSummary(vid) else null
-                recent = repo.listSessions(vid, limit = 5).sessions
+                // Scope every figure to the selected vintage. A null selection
+                // lets the server apply its own current vintage, which is what
+                // the very first load (before `status` arrives) must do.
+                summary = if (caps.canViewIrrigationReports) {
+                    repo.vintageSummary(vid, vintageYear = selectedVintage)
+                } else {
+                    null
+                }
+                recent = repo.listSessions(vid, vintageYear = selectedVintage, limit = 5).sessions
             }
             if (nav == IrrigationNav.Landing && !s.isOperational && caps.canManageIrrigationSetup) {
                 nav = IrrigationNav.Wizard
@@ -289,6 +300,9 @@ fun IrrigationRecordsScreen(
     }
 
     LaunchedEffect(vineyardId) { reload() }
+    // Changing the vintage reloads the summary AND the session list, so the
+    // cards, totals and records all move together — not just the heading.
+    LaunchedEffect(selectedVintage) { reload() }
 
     val title = when (nav) {
         IrrigationNav.Landing -> "Irrigation Records"
@@ -339,6 +353,8 @@ fun IrrigationRecordsScreen(
                         pendingCount = pendingCount,
                         error = error,
                         capabilities = capabilities,
+                        selectedVintage = selectedVintage,
+                        onSelectVintage = { selectedVintage = it },
                         onRecord = { nav = IrrigationNav.Record },
                         onHistory = { nav = IrrigationNav.History },
                         onSetup = { nav = IrrigationNav.Setup },
@@ -433,6 +449,8 @@ private fun LandingContent(
     pendingCount: Int,
     error: String?,
     capabilities: IrrigationCapabilities?,
+    selectedVintage: Int?,
+    onSelectVintage: (Int) -> Unit,
     onRecord: () -> Unit,
     onHistory: () -> Unit,
     onSetup: () -> Unit,
@@ -444,6 +462,13 @@ private fun LandingContent(
     val vineyardName = state.vineyards.firstOrNull { it.id == state.selectedVineyardId }?.name ?: "Vineyard"
     val fmt = state.regionFormatter
 
+    // Current vintage as resolved by the SERVER for this vineyard (sql/119),
+    // never a local calendar year — the two only agree for a 1 January season
+    // start.
+    val currentVintage = status?.season?.currentVintageYear
+    val reportVintage = selectedVintage ?: currentVintage
+    val isViewingCurrentVintage = currentVintage == null || reportVintage == currentVintage
+
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -452,9 +477,19 @@ private fun LandingContent(
         item {
             Column {
                 Text(vineyardName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                status?.season?.currentVintageYear?.let {
+                reportVintage?.let {
                     Text("Vintage $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            }
+        }
+
+        if (currentVintage != null) {
+            item {
+                VintageSelector(
+                    currentVintage = currentVintage,
+                    selected = reportVintage ?: currentVintage,
+                    onSelect = onSelectVintage,
+                )
             }
         }
 
@@ -550,7 +585,13 @@ private fun LandingContent(
         }
 
         if (capabilities?.canViewIrrigationReports == true) {
-            item { Text("This Vintage", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
+            item {
+                Text(
+                    if (isViewingCurrentVintage) "This Vintage" else "Vintage $reportVintage",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
 
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -591,7 +632,11 @@ private fun LandingContent(
         if (recent.isEmpty()) {
             item {
                 Text(
-                    "No irrigation recorded yet this vintage.",
+                    if (isViewingCurrentVintage) {
+                        "No irrigation recorded yet this vintage."
+                    } else {
+                        "No irrigation recorded in Vintage $reportVintage."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

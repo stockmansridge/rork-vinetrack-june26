@@ -107,6 +107,8 @@ struct IrrigationRecordsView: View {
     @State private var accessDenied = false
     @State private var errorMessage: String?
     @State private var showWizard = false
+    /// nil until the operator picks one — the current vintage is the default.
+    @State private var selectedVintage: Int?
 
     private let repository = SupabaseIrrigationRepository.shared
 
@@ -116,6 +118,19 @@ struct IrrigationRecordsView: View {
     }
     private var formatter: RegionFormatter {
         RegionFormatter(settings: store.settings.regionSettings)
+    }
+
+    /// Current vintage as resolved by the SERVER for this vineyard (sql/119),
+    /// never a local calendar year — the two only agree for a 1 January season
+    /// start.
+    private var currentVintage: Int? { status?.season.currentVintageYear }
+
+    /// The vintage every figure on this screen is scoped to.
+    private var reportVintage: Int? { selectedVintage ?? currentVintage }
+
+    private var isViewingCurrentVintage: Bool {
+        guard let currentVintage else { return true }
+        return (selectedVintage ?? currentVintage) == currentVintage
     }
 
     var body: some View {
@@ -140,6 +155,9 @@ struct IrrigationRecordsView: View {
         .navigationTitle("Irrigation Records")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: vineyardId) { await reload() }
+        // Changing the vintage reloads the summary AND the session list, so the
+        // cards, totals and records all move together — not just the heading.
+        .task(id: selectedVintage) { await reload() }
         .refreshable { await reload() }
     }
 
@@ -166,6 +184,17 @@ struct IrrigationRecordsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
+
+                if let currentVintage {
+                    VintageSelector(
+                        selection: Binding(
+                            get: { selectedVintage ?? currentVintage },
+                            set: { selectedVintage = $0 }
+                        ),
+                        currentVintage: currentVintage
+                    )
+                    .padding(.horizontal)
+                }
 
                 if pendingCount > 0 {
                     pendingBanner
@@ -197,7 +226,7 @@ struct IrrigationRecordsView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(vineyardName)
                 .font(.headline)
-            if let vintage = status?.season.currentVintageYear {
+            if let vintage = reportVintage {
                 Text("Vintage \(String(vintage))")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -304,7 +333,9 @@ struct IrrigationRecordsView: View {
 
     private var summaryCards: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("This Vintage")
+            Text(isViewingCurrentVintage
+                 ? "This Vintage"
+                 : "Vintage \(String(reportVintage ?? 0))")
                 .font(.headline)
                 .padding(.horizontal)
 
@@ -358,7 +389,9 @@ struct IrrigationRecordsView: View {
                 .padding(.horizontal)
 
             if recent.isEmpty {
-                Text("No irrigation recorded yet this vintage.")
+                Text(isViewingCurrentVintage
+                     ? "No irrigation recorded yet this vintage."
+                     : "No irrigation recorded in Vintage \(String(reportVintage ?? 0)).")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal)
@@ -404,14 +437,21 @@ struct IrrigationRecordsView: View {
             if status.isOperational {
                 // The vintage summary is a report — operators do not hold the
                 // reports capability, so the server would (rightly) refuse it.
+                // Scope every figure to the selected vintage. A nil selection
+                // lets the server apply its own current vintage, which is what
+                // the very first load (before `status` arrives) must do.
+                let vintage = selectedVintage
                 if caps.canViewIrrigationReports {
-                    async let summaryTask = repository.vintageSummary(vineyardId: vineyardId)
-                    async let recentTask = repository.listSessions(vineyardId: vineyardId, limit: 5)
+                    async let summaryTask = repository.vintageSummary(
+                        vineyardId: vineyardId, vintageYear: vintage)
+                    async let recentTask = repository.listSessions(
+                        vineyardId: vineyardId, vintageYear: vintage, limit: 5)
                     self.summary = try await summaryTask
                     self.recent = try await recentTask.sessions
                 } else {
                     self.summary = nil
-                    self.recent = try await repository.listSessions(vineyardId: vineyardId, limit: 5).sessions
+                    self.recent = try await repository.listSessions(
+                        vineyardId: vineyardId, vintageYear: vintage, limit: 5).sessions
                 }
             }
         } catch {
