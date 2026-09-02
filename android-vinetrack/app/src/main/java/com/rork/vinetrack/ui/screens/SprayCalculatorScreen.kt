@@ -1633,6 +1633,38 @@ fun SprayCalculatorScreen(
                     doneAccent = VineColors.Olive,
                     onToggle = { toggleStep(SprayGuidedStep.PRODUCTS) },
                 ) {
+                // Creating comes FIRST, above the products, because "the
+                // product isn't in my list" is discovered while looking for it
+                // — not after scrolling past every line already added. Matches
+                // the iPhone Select Chemical picker, where Add New Chemical is
+                // the first thing above the Chemical Store.
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(
+                        onClick = {
+                            // Snapshot BEFORE the flow opens, so the row it
+                            // creates can be identified by difference.
+                            chemicalIdsBeforeAdd =
+                                state.savedChemicals.map { it.id }.toSet()
+                            showAddChemicalToList = true
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = VineColors.LeafGreen.copy(alpha = 0.12f),
+                            contentColor = VineColors.LeafGreen,
+                        ),
+                    ) {
+                        Icon(Icons.Filled.Science, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Text("  Add New Chemical to List", fontWeight = FontWeight.Medium)
+                    }
+                    if (state.savedChemicals.isEmpty()) {
+                        Text(
+                            "No chemicals configured. Tap \u201CAdd New Chemical to List\u201D to create one.",
+                            fontSize = 12.sp,
+                            color = vine.textSecondary,
+                        )
+                    }
+                }
+
                 chemLines.forEachIndexed { idx, line ->
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         CalcChemicalLineCard(
@@ -1690,6 +1722,8 @@ fun SprayCalculatorScreen(
                     )
                 }
 
+                // Adding another LINE stays with the lines it appends to; only
+                // creating a product moved to the top of the step.
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = {
@@ -1709,30 +1743,6 @@ fun SprayCalculatorScreen(
                     ) {
                         Icon(Icons.Filled.AddCircle, contentDescription = null, modifier = Modifier.size(18.dp))
                         Text("  Add Chemical", fontWeight = FontWeight.Medium)
-                    }
-                    Button(
-                        onClick = {
-                            // Snapshot BEFORE the flow opens, so the row it
-                            // creates can be identified by difference.
-                            chemicalIdsBeforeAdd =
-                                state.savedChemicals.map { it.id }.toSet()
-                            showAddChemicalToList = true
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = VineColors.LeafGreen.copy(alpha = 0.12f),
-                            contentColor = VineColors.LeafGreen,
-                        ),
-                    ) {
-                        Icon(Icons.Filled.Science, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Text("  Add New Chemical to List", fontWeight = FontWeight.Medium)
-                    }
-                    if (state.savedChemicals.isEmpty()) {
-                        Text(
-                            "No chemicals configured. Tap \u201CAdd New Chemical to List\u201D to create one.",
-                            fontSize = 12.sp,
-                            color = vine.textSecondary,
-                        )
                     }
                 }
                 }

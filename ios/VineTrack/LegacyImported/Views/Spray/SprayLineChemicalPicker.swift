@@ -70,6 +70,24 @@ struct SprayLineChemicalPicker: View {
     var body: some View {
         NavigationStack {
             List {
+                // Creating comes FIRST, above the store, because "the product
+                // isn't in my list" is discovered at the top of a search that
+                // found nothing useful — not after scrolling a long store to
+                // the end. A picker that hides its escape route below the list
+                // makes the operator hunt for it mid-task.
+                if canCreateChemical {
+                    Section {
+                        Button {
+                            isCreatingChemical = true
+                        } label: {
+                            Label("Add New Chemical", systemImage: "plus.circle.fill")
+                                .font(.body.weight(.semibold))
+                        }
+                    } footer: {
+                        Text("Opens the full Add Chemical form. Saving brings you straight back here with the new product selected.")
+                    }
+                }
+
                 if candidates.isEmpty {
                     Section {
                         ContentUnavailableView(
@@ -96,19 +114,6 @@ struct SprayLineChemicalPicker: View {
                         Text("Chemical Store")
                     } footer: {
                         Text("The product you pick is recorded by its Chemical Store record, so its activity groups are frozen onto this spray.")
-                    }
-                }
-
-                if canCreateChemical {
-                    Section {
-                        Button {
-                            isCreatingChemical = true
-                        } label: {
-                            Label("Add New Chemical", systemImage: "plus.circle.fill")
-                                .font(.body.weight(.semibold))
-                        }
-                    } footer: {
-                        Text("Opens the full Add Chemical form. Saving brings you straight back here with the new product selected.")
                     }
                 }
 
