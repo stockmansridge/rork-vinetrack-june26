@@ -738,18 +738,18 @@ begin
   -- ---- inputs -------------------------------------------------------------
   if not v_has_settings then
     v_available := false;
-    v_warnings := v_warnings || 'missing_pruning_settings';
+    v_warnings := v_warnings || 'missing_pruning_settings'::text;
   else
     v_method := lower(btrim(coalesce(s.prune_method, 'spur')));
 
     if v_method = 'cane' then
       if coalesce(s.canes_per_vine, 0) <= 0 then
         v_available := false;
-        v_warnings := v_warnings || 'missing_canes_per_vine';
+        v_warnings := v_warnings || 'missing_canes_per_vine'::text;
       end if;
       if coalesce(s.buds_per_cane, 0) <= 0 then
         v_available := false;
-        v_warnings := v_warnings || 'missing_buds_per_cane';
+        v_warnings := v_warnings || 'missing_buds_per_cane'::text;
       end if;
       if v_available then
         v_buds_per_vine := s.canes_per_vine * s.buds_per_cane;
@@ -757,11 +757,11 @@ begin
     else
       if coalesce(s.spurs_per_vine, 0) <= 0 then
         v_available := false;
-        v_warnings := v_warnings || 'missing_spurs_per_vine';
+        v_warnings := v_warnings || 'missing_spurs_per_vine'::text;
       end if;
       if coalesce(s.buds_per_spur, 0) <= 0 then
         v_available := false;
-        v_warnings := v_warnings || 'missing_buds_per_spur';
+        v_warnings := v_warnings || 'missing_buds_per_spur'::text;
       end if;
       if v_available then
         v_buds_per_vine := s.spurs_per_vine * s.buds_per_spur;
@@ -770,12 +770,12 @@ begin
 
     if coalesce(s.bunches_per_bud, 0) <= 0 then
       v_available := false;
-      v_warnings := v_warnings || 'missing_bunches_per_bud';
+      v_warnings := v_warnings || 'missing_bunches_per_bud'::text;
     end if;
 
     if coalesce(s.bunch_weight_grams, 0) <= 0 then
       v_available := false;
-      v_warnings := v_warnings || 'missing_bunch_weight_grams';
+      v_warnings := v_warnings || 'missing_bunch_weight_grams'::text;
     end if;
   end if;
 
@@ -789,12 +789,12 @@ begin
   else
     v_available := false;
     if v_area <= 0 then
-      v_warnings := v_warnings || 'missing_block_area';
+      v_warnings := v_warnings || 'missing_block_area'::text;
     end if;
     if v_has_settings and coalesce(s.vines_per_ha, 0) <= 0 then
-      v_warnings := v_warnings || 'missing_vines_per_ha';
+      v_warnings := v_warnings || 'missing_vines_per_ha'::text;
     end if;
-    v_warnings := v_warnings || 'missing_vine_count';
+    v_warnings := v_warnings || 'missing_vine_count'::text;
   end if;
 
   -- ---- block tonnes -------------------------------------------------------
@@ -831,7 +831,7 @@ begin
          or v_pct = 'NaN'::double precision
          or v_pct >= 'Infinity'::double precision
          or v_pct < 0 then
-        v_warnings := v_warnings || 'allocation_percent_invalid';
+        v_warnings := v_warnings || 'allocation_percent_invalid'::text;
         continue;
       end if;
 
@@ -842,7 +842,7 @@ begin
 
       if v_pct > 100 then
         -- Informational: normalisation below brings the block back to 100%.
-        v_warnings := v_warnings || 'allocation_percent_over_100';
+        v_warnings := v_warnings || 'allocation_percent_over_100'::text;
       end if;
 
       v_vkey := public._season_alloc_text(
@@ -881,7 +881,7 @@ begin
         v_clone := null;
         v_rootstock := null;
         v_vkey := null;
-        v_warnings := v_warnings || 'allocation_missing_variety_identity';
+        v_warnings := v_warnings || 'allocation_missing_variety_identity'::text;
       end if;
 
       v_gkey := public.planting_group_key(v_name, v_clone, v_rootstock);
@@ -896,7 +896,7 @@ begin
       v_idx := array_position(v_keys, v_gkey);
 
       if v_idx is null then
-        v_keys := v_keys || v_gkey;
+        v_keys := v_keys || v_gkey::text;
         v_groups := v_groups || jsonb_build_object(
           'planting_group_key', v_gkey,
           'variety_key', v_vkey,
@@ -930,7 +930,7 @@ begin
 
   if v_total_pct <= 0 then
     -- Nothing usable at all: the whole block is one unallocated group.
-    v_keys := v_keys || v_unalloc_key;
+    v_keys := v_keys || v_unalloc_key::text;
     v_groups := v_groups || jsonb_build_object(
       'planting_group_key', v_unalloc_key,
       'variety_key', null,
@@ -941,7 +941,7 @@ begin
       'allocation_percent', 100::double precision,
       'is_unallocated', true
     );
-    v_warnings := v_warnings || 'block_has_no_variety_allocations';
+    v_warnings := v_warnings || 'block_has_no_variety_allocations'::text;
 
   elsif v_total_pct > 100 + 1e-6 then
     -- Proportional normalisation preserves each group's RELATIVE share while
@@ -954,13 +954,13 @@ begin
       );
     end loop;
     v_normalized := true;
-    v_warnings := v_warnings || 'block_allocations_over_100_normalized';
+    v_warnings := v_warnings || 'block_allocations_over_100_normalized'::text;
 
   elsif v_total_pct < 100 - 1e-6 then
     -- Residual share of the block: "Unallocated variety".
     v_idx := array_position(v_keys, v_unalloc_key);
     if v_idx is null then
-      v_keys := v_keys || v_unalloc_key;
+      v_keys := v_keys || v_unalloc_key::text;
       v_groups := v_groups || jsonb_build_object(
         'planting_group_key', v_unalloc_key,
         'variety_key', null,
@@ -978,7 +978,7 @@ begin
           + (100 - v_total_pct)
       );
     end if;
-    v_warnings := v_warnings || 'block_allocations_under_100';
+    v_warnings := v_warnings || 'block_allocations_under_100'::text;
   end if;
 
   -- Post-condition, recorded for audit: the groups now sum to 100%.
