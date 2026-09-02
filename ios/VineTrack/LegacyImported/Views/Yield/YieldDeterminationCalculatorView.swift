@@ -4,6 +4,9 @@ import UIKit
 struct YieldDeterminationCalculatorView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(NewBackendAuthService.self) private var authService
+    /// Canonical seasonal estimates (sql/221). Saving calculator settings is
+    /// what makes the server re-derive them.
+    @Environment(SeasonYieldEstimateService.self) private var seasonYield
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
 
@@ -283,14 +286,38 @@ struct YieldDeterminationCalculatorView: View {
     /// Autosave the selected block's values into the shared store. Skipped
     /// when nothing changed since the last load/save, so programmatic loads
     /// never create records for blocks the user only looked at.
+    ///
+    /// A real save then asks the server to re-derive the vintage's canonical
+    /// estimates (`refresh_pruning_yield_estimates`) and reloads the overview,
+    /// so Yield Overview and Grape Allocation move the moment the inputs do.
+    /// The refresh never downgrades a bunch_count or manual estimate.
     private func saveSettings(for paddockId: UUID?) {
-        guard let paddockId, store.selectedVineyard != nil else { return }
+        guard let paddockId, let vineyard = store.selectedVineyard else { return }
         let current = currentSettings(for: paddockId)
         if let snapshot = loadedSnapshot, snapshot.paddockId == paddockId, current.inputsEqual(to: snapshot) {
             return
         }
         store.savePruningYieldSettings(current)
         loadedSnapshot = current
+
+        let vintage = currentVintage
+        Task {
+            await seasonYield.refreshAfterPruningSettingsSaved(
+                vineyardId: vineyard.id,
+                vintage: vintage
+            )
+        }
+    }
+
+    /// The vintage the calculator's settings feed. Pruning settings are not
+    /// themselves vintage-scoped, so the refresh always targets the season the
+    /// grower is currently working on.
+    private var currentVintage: Int {
+        VintageResolver.vintageYear(
+            for: Date(),
+            seasonStartMonth: store.settings.seasonStartMonth,
+            seasonStartDay: store.settings.seasonStartDay
+        )
     }
 
     private func apply(_ settings: PruningYieldSettings) {

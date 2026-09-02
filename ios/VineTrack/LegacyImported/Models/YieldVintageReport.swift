@@ -25,7 +25,7 @@ nonisolated enum YieldVintageReport {
         let baseTonnes: Double
         /// Base × current effective damage factor for the block.
         let adjustedTonnes: Double
-        let damageFactor: Double
+        let remainingYieldMultiplier: Double
         let applyDamage: Bool
         let averageBunchesPerVine: Double
         let samplesRecorded: Int
@@ -135,7 +135,7 @@ nonisolated enum YieldVintageReport {
     static func estimateRows(
         sessions: [YieldEstimationSession],
         paddocks: [Paddock],
-        damageFactor: (UUID) -> Double,
+        remainingYieldMultiplier: (UUID) -> Double,
         vintage: Int,
         seasonStartMonth: Int,
         seasonStartDay: Int
@@ -150,7 +150,7 @@ nonisolated enum YieldVintageReport {
                 seasonStartDay: seasonStartDay
             ) else { continue }
             guard let base = baseEstimate(session: session, paddock: paddock) else { continue }
-            let factor = damageFactor(paddock.id)
+            let factor = remainingYieldMultiplier(paddock.id)
             rows.append(EstimateRow(
                 paddockId: paddock.id,
                 blockName: paddock.name,
@@ -158,7 +158,7 @@ nonisolated enum YieldVintageReport {
                 areaHectares: paddock.areaHectares,
                 baseTonnes: base.tonnes,
                 adjustedTonnes: base.tonnes * factor,
-                damageFactor: factor,
+                remainingYieldMultiplier: factor,
                 applyDamage: session.applyDamage,
                 averageBunchesPerVine: base.averageBunchesPerVine,
                 samplesRecorded: base.samplesRecorded,

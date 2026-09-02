@@ -89,7 +89,8 @@ import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.DamageRecord
 import com.rork.vinetrack.data.model.DamageType
 import com.rork.vinetrack.data.model.Paddock
-import com.rork.vinetrack.data.model.damageFactor
+import com.rork.vinetrack.data.VintageResolver
+import com.rork.vinetrack.data.blockDamageForVintage
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
@@ -185,6 +186,15 @@ private fun DamageListView(
     val affected = remember(records, mappablePaddocks) {
         mappablePaddocks.filter { p -> records.any { it.paddockId == p.id } }
     }
+    // Yield Impact is read against the season the grower is in — damage is
+    // vintage-scoped, so an older season's frost must not appear here.
+    val currentVintage = remember(state.seasonStartMonth, state.seasonStartDay) {
+        VintageResolver.vintageYear(
+            java.time.LocalDate.now(),
+            state.seasonStartMonth,
+            state.seasonStartDay,
+        )
+    }
 
     Scaffold(
         containerColor = vine.appBackground,
@@ -236,18 +246,41 @@ private fun DamageListView(
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         affected.forEach { paddock ->
                             val count = records.count { it.paddockId == paddock.id }
-                            val factor = records.damageFactor(paddock.id)
+                            // Area-weighted (sql/221 parity contract): each
+                            // record's MAPPED area × its intensity, against the
+                            // block's own area — never a compounded whole-block
+                            // percentage.
+                            val damage = records.blockDamageForVintage(
+                                paddockId = paddock.id,
+                                blocks = mappablePaddocks,
+                                vintage = currentVintage,
+                                seasonStartMonth = state.seasonStartMonth,
+                                seasonStartDay = state.seasonStartDay,
+                            )
+                            val remaining = damage.remainingYieldMultiplier
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(paddock.name, color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                                     Text("$count record${if (count == 1) "" else "s"}", color = vine.textSecondary, fontSize = 12.sp)
                                 }
-                                Text(
-                                    String.format(Locale.getDefault(), "%.0f%% viable", factor * 100),
-                                    color = if (factor >= 0.8) VineColors.LeafGreen else if (factor >= 0.5) VineColors.Orange else VineColors.Destructive,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                )
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        String.format(Locale.getDefault(), "%.0f%% remaining", remaining * 100),
+                                        color = if (remaining >= 0.8) VineColors.LeafGreen else if (remaining >= 0.5) VineColors.Orange else VineColors.Destructive,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                    Text(
+                                        String.format(
+                                            Locale.getDefault(),
+                                            "%.2f of %.2f ha lost",
+                                            damage.effectiveLossHectares,
+                                            damage.blockAreaHectares ?: 0.0,
+                                        ),
+                                        color = vine.textSecondary,
+                                        fontSize = 11.sp,
+                                    )
+                                }
                             }
                         }
                     }

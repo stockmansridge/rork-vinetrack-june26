@@ -1,13 +1,21 @@
 import SwiftUI
 
-/// Grape Allocation tool (Yields hub): allocate the current Yield Estimate
-/// for a vintage to Own Use destinations or external Sale/Commitment
-/// contracts. Supply always comes from the latest completed Bunch Count
-/// Trip (`YieldVintageReport`), so a new estimate automatically moves every
-/// balance. Money (price, contract values, income) is Owner/Manager only.
+/// Grape Allocation tool (Yields hub): allocate the vintage's canonical
+/// seasonal estimate to Own Use destinations or external Sale/Commitment
+/// contracts.
+///
+/// Supply comes from ONE authority — `get_season_yield_base_overview`
+/// (sql/221) via ``SeasonYieldEstimateService`` — with damage applied per
+/// block by ``SeasonYieldDamage`` when Apply Damage is on. When the DB
+/// withholds the canonical total (any active block still unconfigured) the
+/// screen shows "—" and refuses to compute a balance: allocating against an
+/// invented 0 t is how a grower over-commits a crop nobody has measured.
+///
+/// Money (price, contract values, income) is Owner/Manager only.
 struct GrapeAllocationView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(GrapeAllocationService.self) private var allocationService
+    @Environment(SeasonYieldEstimateService.self) private var seasonYield
     @Environment(\.accessControl) private var accessControl
 
     @State private var selectedVintage: Int?
@@ -46,32 +54,33 @@ struct GrapeAllocationView: View {
         return all.sorted(by: >)
     }
 
-    private var estimateRows: [YieldVintageReport.EstimateRow] {
-        YieldVintageReport.estimateRows(
-            sessions: store.yieldSessions,
-            paddocks: store.paddocks,
-            damageFactor: { store.damageFactor(for: $0) },
-            vintage: reportVintage,
+    /// The canonical contract for the selected vintage, damage applied per
+    /// block when the toggle is on. nil until the overview has loaded.
+    private var projection: SeasonYieldProjection.Result? {
+        guard seasonYield.loadedVintage == reportVintage else { return nil }
+        return seasonYield.projection(
+            damageRecords: store.damageRecords,
             seasonStartMonth: store.settings.seasonStartMonth,
             seasonStartDay: store.settings.seasonStartDay
         )
     }
 
-    private var varietyEstimates: [String: (displayName: String, tonnes: Double)] {
-        GrapeAllocationCalculator.varietyEstimates(estimateRows: estimateRows, paddocks: store.paddocks)
+    private var canonicalSupply: [String: GrapeAllocationCalculator.CanonicalSupply] {
+        guard let projection else { return [:] }
+        return GrapeAllocationCalculator.canonicalSupply(projection: projection)
     }
 
-    private var summary: GrapeAllocationCalculator.Summary {
-        GrapeAllocationCalculator.summary(
-            estimates: varietyEstimates,
+    private var summary: GrapeAllocationCalculator.CanonicalSummary {
+        GrapeAllocationCalculator.canonicalSummary(
+            projection: projection,
             allocations: allocationService.allocations,
             vintage: reportVintage
         )
     }
 
-    private var varietyRows: [GrapeAllocationCalculator.VarietyRow] {
-        GrapeAllocationCalculator.varietyRows(
-            estimates: varietyEstimates,
+    private var varietyRows: [GrapeAllocationCalculator.CanonicalVarietyRow] {
+        GrapeAllocationCalculator.canonicalVarietyRows(
+            supply: canonicalSupply,
             allocations: allocationService.allocations,
             vintage: reportVintage
         )
@@ -129,15 +138,15 @@ struct GrapeAllocationView: View {
             }
             Button("Cancel", role: .cancel) { deleteCandidate = nil }
         }
-        .task {
-            if let vineyardId = store.selectedVineyardId {
-                await allocationService.load(vineyardId: vineyardId)
-            }
+        .task(id: reportVintage) {
+            guard let vineyardId = store.selectedVineyardId else { return }
+            await allocationService.load(vineyardId: vineyardId)
+            await seasonYield.load(vineyardId: vineyardId, vintage: reportVintage)
         }
         .refreshable {
-            if let vineyardId = store.selectedVineyardId {
-                await allocationService.load(vineyardId: vineyardId)
-            }
+            guard let vineyardId = store.selectedVineyardId else { return }
+            await allocationService.load(vineyardId: vineyardId)
+            await seasonYield.load(vineyardId: vineyardId, vintage: reportVintage)
         }
     }
 
@@ -177,18 +186,19 @@ struct GrapeAllocationView: View {
                 summaryStat(title: "Own Use", tonnes: summary.ownUseTonnes, color: .purple)
                 summaryStat(title: "Committed", tonnes: summary.committedTonnes, color: .orange)
             }
+            estimateStatusRow
             Divider()
             HStack {
                 Label(
-                    summary.isShortfall ? "Shortfall" : "Available",
-                    systemImage: summary.isShortfall ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"
+                    availabilityLabel,
+                    systemImage: availabilitySymbol
                 )
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(summary.isShortfall ? .red : VineyardTheme.leafGreen)
+                .foregroundStyle(availabilityColor)
                 Spacer()
-                Text(tonnesText(abs(summary.balanceTonnes)))
+                Text(summary.balanceTonnes.map { tonnesText(abs($0)) } ?? "—")
                     .font(.title3.weight(.bold).monospacedDigit())
-                    .foregroundStyle(summary.isShortfall ? .red : .primary)
+                    .foregroundStyle(balanceColor)
             }
             if canViewFinancials {
                 Divider()
@@ -209,16 +219,83 @@ struct GrapeAllocationView: View {
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 16))
     }
 
-    private func summaryStat(title: String, tonnes: Double, color: Color) -> some View {
+    private func summaryStat(title: String, tonnes: Double?, color: Color) -> some View {
         VStack(spacing: 4) {
-            Text(tonnesText(tonnes))
+            Text(tonnes.map { tonnesText($0) } ?? "—")
                 .font(.headline.monospacedDigit())
-                .foregroundStyle(color)
+                .foregroundStyle(tonnes == nil ? Color.secondary : color)
             Text(title)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private var availabilityLabel: String {
+        if summary.isSupplyUnknown { return "Available" }
+        return summary.isShortfall ? "Shortfall" : "Available"
+    }
+
+    private var availabilitySymbol: String {
+        if summary.isSupplyUnknown { return "questionmark.circle.fill" }
+        return summary.isShortfall ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"
+    }
+
+    private var availabilityColor: Color {
+        if summary.isSupplyUnknown { return Color.secondary }
+        return summary.isShortfall ? Color.red : VineyardTheme.leafGreen
+    }
+
+    private var balanceColor: Color {
+        if summary.isSupplyUnknown { return Color.secondary }
+        return summary.isShortfall ? Color.red : Color.primary
+    }
+
+    /// Why the estimate is "—", or what it is based on when it isn't. This is
+    /// the difference between "you have no crop" and "we don't know your crop
+    /// yet", so it is always spelled out rather than left to the dash.
+    @ViewBuilder
+    private var estimateStatusRow: some View {
+        if seasonYield.isLoading && projection == nil {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text("Loading the seasonal estimate…")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+        } else if let error = seasonYield.lastError {
+            Label(error, systemImage: "exclamationmark.triangle")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else if let projection, !projection.isEstimateComplete {
+            VStack(alignment: .leading, spacing: 3) {
+                Label(
+                    projection.blocksMissingEstimates > 0
+                        ? "\(projection.blocksMissingEstimates) of \(projection.blocksTotal) blocks have no estimate yet"
+                        : "Some blocks are missing calculator inputs",
+                    systemImage: "info.circle"
+                )
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.orange)
+                Text("Allocating needs a complete estimate. \(tonnesText(summary.knownEstimatedTonnes)) is known so far — finish the Pruning Yield Calculator for every block.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else if let projection {
+            Text(estimateBasisText(projection))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func estimateBasisText(_ projection: SeasonYieldProjection.Result) -> String {
+        let source = SeasonYieldFormat.sourceLabel(projection.estimateSource)
+        let damage = projection.damageApplied ? "damage applied" : "before damage"
+        return "\(source) · \(projection.blocksTotal) blocks · \(damage)"
     }
 
     // MARK: - Income (Owner/Manager)
@@ -270,7 +347,7 @@ struct GrapeAllocationView: View {
             Label("Varieties", systemImage: "leaf.fill")
                 .font(.headline)
             if varietyRows.isEmpty {
-                Text("No completed Bunch Count Trip and no allocations for this vintage yet. Complete a trip to see the estimated supply per variety.")
+                Text("No seasonal estimate and no allocations for this vintage yet. Save the Pruning Yield Calculator for your blocks to see the estimated supply per variety.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -284,7 +361,7 @@ struct GrapeAllocationView: View {
         }
     }
 
-    private func varietyCard(_ row: GrapeAllocationCalculator.VarietyRow) -> some View {
+    private func varietyCard(_ row: GrapeAllocationCalculator.CanonicalVarietyRow) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(row.displayName)
@@ -294,6 +371,10 @@ struct GrapeAllocationView: View {
                     Label("Shortfall", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.red)
+                } else if row.isSupplyUnknown {
+                    Label("Estimate incomplete", systemImage: "questionmark.circle")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.orange)
                 }
             }
             HStack(spacing: 0) {
@@ -301,25 +382,34 @@ struct GrapeAllocationView: View {
                 varietyStat("Own Use", row.ownUseTonnes, .purple)
                 varietyStat("External", row.externalTonnes, .orange)
                 VStack(spacing: 2) {
-                    Text(tonnesText(row.balanceTonnes))
+                    Text(row.balanceTonnes.map { tonnesText($0) } ?? "—")
                         .font(.caption.weight(.bold).monospacedDigit())
-                        .foregroundStyle(row.isShortfall ? .red : VineyardTheme.leafGreen)
+                        .foregroundStyle(
+                            row.isSupplyUnknown
+                                ? Color.secondary
+                                : (row.isShortfall ? .red : VineyardTheme.leafGreen)
+                        )
                     Text("Balance")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)
             }
+            if row.isSupplyUnknown && row.knownEstimatedTonnes > 0 {
+                Text("\(tonnesText(row.knownEstimatedTonnes)) known so far — not enough to allocate against.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(12)
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 12))
     }
 
-    private func varietyStat(_ title: String, _ tonnes: Double, _ color: Color) -> some View {
+    private func varietyStat(_ title: String, _ tonnes: Double?, _ color: Color) -> some View {
         VStack(spacing: 2) {
-            Text(tonnesText(tonnes))
+            Text(tonnes.map { tonnesText($0) } ?? "—")
                 .font(.caption.weight(.semibold).monospacedDigit())
-                .foregroundStyle(color)
+                .foregroundStyle(tonnes == nil ? Color.secondary : color)
             Text(title)
                 .font(.caption2)
                 .foregroundStyle(.secondary)

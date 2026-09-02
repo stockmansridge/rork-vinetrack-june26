@@ -600,9 +600,9 @@ struct ChemicalReviewMergeTests {
         #expect(uses.count == 2)
 
         // Each target kept its OWN rate — no cross-contamination.
-        let blackSpot = try #require(uses.first { $0.targetRaw?.localizedCaseInsensitiveContains("black spot") == true })
+        let blackSpot = try #require(uses.first { $0.targetRaw.localizedCaseInsensitiveContains("black spot") })
         #expect(blackSpot.rates.first?.value == 200)
-        let phomopsis = try #require(uses.first { $0.targetRaw?.localizedCaseInsensitiveContains("phomopsis") == true })
+        let phomopsis = try #require(uses.first { $0.targetRaw.localizedCaseInsensitiveContains("phomopsis") })
         #expect(phomopsis.rates.first?.minValue == 150)
         #expect(phomopsis.rates.first?.maxValue == 200)
 

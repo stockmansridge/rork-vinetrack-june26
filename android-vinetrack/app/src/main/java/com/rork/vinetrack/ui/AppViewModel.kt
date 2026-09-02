@@ -110,6 +110,7 @@ import com.rork.vinetrack.data.PickingRecordUpdateSync
 import com.rork.vinetrack.data.PruningYieldSettingsRepository
 import com.rork.vinetrack.data.PruningYieldSettingsStore
 import com.rork.vinetrack.data.PruningYieldSettingsSync
+import com.rork.vinetrack.data.SeasonYieldController
 import com.rork.vinetrack.data.YieldDeterminationPrefsStore
 import com.rork.vinetrack.data.RegionSettings
 import com.rork.vinetrack.data.RegionSettingsRepository
@@ -234,6 +235,7 @@ import com.rork.vinetrack.data.model.CustomPinType
 import com.rork.vinetrack.data.model.CustomPinTypeCreateParams
 import com.rork.vinetrack.data.model.ManualIssue
 import com.rork.vinetrack.data.model.ManualIssueContract
+import com.rork.vinetrack.data.model.SeasonYieldOverview
 import com.rork.vinetrack.data.model.ManualIssueCreateParams
 import com.rork.vinetrack.data.model.ManualIssueScopes
 import com.rork.vinetrack.data.model.ManualIssueStatuses
@@ -523,6 +525,23 @@ data class AppUiState(
     val grapeAllocationError: String? = null,
     val yieldSessionBusy: Boolean = false,
     val yieldSessionError: String? = null,
+    /**
+     * The canonical BASE seasonal yield estimate (sql/221) for
+     * [seasonYieldVintage] — the single authority every yield surface reads
+     * its crop totals from. Damage is applied on top per block by
+     * `SeasonYieldDamage`; nothing here is damage-adjusted.
+     */
+    val seasonYieldOverview: SeasonYieldOverview? = null,
+    /** The vintage [seasonYieldOverview] belongs to. */
+    val seasonYieldVintage: Int? = null,
+    val seasonYieldLoading: Boolean = false,
+    val seasonYieldRefreshing: Boolean = false,
+    val seasonYieldError: String? = null,
+    /**
+     * Apply Damage is OFF by default: the canonical base estimate is what the
+     * user sees first, and damage is an explicit, reversible overlay.
+     */
+    val seasonYieldApplyDamage: Boolean = false,
     /**
      * Shared Bunch Count Trip sampling default
      * (`vineyards.yield_samples_per_hectare`, sql/187). A changed value is
@@ -868,6 +887,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val yieldRepo = YieldRepository(session)
     private val pickingRepo = PickingRecordRepository(session)
     private val grapeAllocationRepo = GrapeAllocationRepository(session)
+    /** Canonical seasonal yield estimates (sql/221) — read-only + refresh RPC. */
+    private val seasonYield = SeasonYieldController(session)
     private val yieldSamplingRepo = YieldSamplingSettingsRepository(session)
     private val pruningYieldSettingsRepo = PruningYieldSettingsRepository(session)
     private val cloneRootstockRepo = CloneRootstockRepository(session)
@@ -5033,7 +5054,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         reportClientTelemetry()
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), grapeAllocations = emptyList(), grapePurchasers = emptyList(), grapeAllocationFinancialAccess = false, workTaskPaddocks = emptyList(), vineyardLabourLines = null, growthStageImages = emptyList()) }
+        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), grapeAllocations = emptyList(), grapePurchasers = emptyList(), grapeAllocationFinancialAccess = false, workTaskPaddocks = emptyList(), vineyardLabourLines = null, growthStageImages = emptyList(), seasonYieldOverview = null, seasonYieldVintage = null, seasonYieldError = null) }
         loadedLogoKey = null
         // Apply the cached region settings instantly so units/currency render
         // correctly on first paint, then refresh from the backend below.
@@ -12357,6 +12378,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
+        // The canonical seasonal estimate is DERIVED from these settings, so a
+        // save must ask the server to re-derive the vintage and then reload the
+        // overview — otherwise Yield Overview and Grape Allocation keep showing
+        // yesterday's crop. The refresh never downgrades a bunch_count or
+        // manual estimate.
+        refreshSeasonYieldAfterPruningSave()
+
         viewModelScope.launch {
             try {
                 when (val outcome = pruningYieldSettingsRepo.upsertSettings(item, now)) {
@@ -12388,6 +12416,101 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } catch (e: Exception) {
                 pruningYieldSettingsSync.enqueue(item, now)
+            }
+        }
+    }
+
+    // ---- Canonical seasonal yield estimates (sql/221) -----------------------
+
+    /**
+     * The vintage the app is currently working on, resolved from the vineyard's
+     * season start. The DATABASE stays authoritative for stored records; this
+     * mirror only decides which vintage to ask for.
+     */
+    fun currentVintage(): Int = VintageResolver.vintageYear(
+        java.time.LocalDate.now(),
+        _ui.value.seasonStartMonth,
+        _ui.value.seasonStartDay,
+    )
+
+    /**
+     * Load the canonical BASE seasonal estimate for [vintage].
+     *
+     * Pass `force = false` to skip when the same vineyard + vintage is already
+     * held. A failed load never blanks a total the user is reading.
+     */
+    fun loadSeasonYieldOverview(vintage: Int, force: Boolean = true) {
+        val vineyardId = _ui.value.selectedVineyardId ?: return
+        val alreadyLoaded = _ui.value.seasonYieldVintage == vintage &&
+            _ui.value.seasonYieldOverview?.vineyardId.equals(vineyardId, ignoreCase = true)
+        if (!force && alreadyLoaded) return
+
+        _ui.update { it.copy(seasonYieldLoading = true) }
+        viewModelScope.launch {
+            applySeasonYieldOutcome(
+                seasonYield.load(vineyardId, vintage),
+                vintage,
+                refreshing = false,
+            )
+        }
+    }
+
+    /** Apply Damage toggle for the yield surfaces. Off by default. */
+    fun setSeasonYieldApplyDamage(enabled: Boolean) {
+        _ui.update { it.copy(seasonYieldApplyDamage = enabled) }
+    }
+
+    /**
+     * Ask the server to re-derive the vintage's pruning estimates, then reload
+     * the overview. Called after Pruning Yield Calculator settings are saved.
+     *
+     * Safe and idempotent: a group already carrying a bunch_count or manual
+     * estimate is skipped, never overwritten.
+     */
+    fun refreshSeasonYieldAfterPruningSave(vintage: Int = currentVintage()) {
+        val vineyardId = _ui.value.selectedVineyardId ?: return
+        if (!_ui.value.isOnline) return
+
+        _ui.update { it.copy(seasonYieldRefreshing = true) }
+        viewModelScope.launch {
+            applySeasonYieldOutcome(
+                seasonYield.refreshAfterPruningSave(vineyardId, vintage),
+                vintage,
+                refreshing = true,
+            )
+        }
+    }
+
+    private fun applySeasonYieldOutcome(
+        outcome: SeasonYieldController.Outcome,
+        vintage: Int,
+        refreshing: Boolean,
+    ) {
+        when (outcome) {
+            is SeasonYieldController.Outcome.Loaded -> _ui.update {
+                it.copy(
+                    seasonYieldOverview = outcome.overview,
+                    seasonYieldVintage = vintage,
+                    seasonYieldLoading = false,
+                    seasonYieldRefreshing = false,
+                    seasonYieldError = null,
+                )
+            }
+            SeasonYieldController.Outcome.Unauthorized -> {
+                _ui.update { it.copy(seasonYieldLoading = false, seasonYieldRefreshing = false) }
+                signOut()
+            }
+            is SeasonYieldController.Outcome.Failed -> _ui.update {
+                // Keep whatever was already loaded for THIS vintage — a failed
+                // load must not blank a total the user is reading.
+                val keep = refreshing || it.seasonYieldVintage == vintage
+                it.copy(
+                    seasonYieldOverview = if (keep) it.seasonYieldOverview else null,
+                    seasonYieldVintage = if (keep) it.seasonYieldVintage else null,
+                    seasonYieldLoading = false,
+                    seasonYieldRefreshing = false,
+                    seasonYieldError = outcome.message,
+                )
             }
         }
     }

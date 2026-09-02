@@ -486,7 +486,7 @@ struct ChemicalReverifyTargetWordingTests {
             ratePer100L: 150,
             costPerUnit: 0.01485,
             unit: .kilograms,
-            rateBasis: .waterVolume,
+            rateBasis: .per100Litres,
             savedChemicalId: Self.chemicalId,
             chemicalSnapshot: snapshot
         )
@@ -521,7 +521,7 @@ struct ChemicalReverifyTargetWordingTests {
         let frozen = try #require(record.tanks.first?.chemicals.first)
         #expect(frozen.name == "Dithane Rainshield Neo Tec Fungicide")
         #expect(frozen.ratePer100L == 150)
-        #expect(frozen.rateBasis == .waterVolume)
+        #expect(frozen.rateBasis == .per100Litres)
         #expect(frozen.savedChemicalId == Self.chemicalId)
         #expect(frozen.chemicalSnapshot?.activityGroupCodes == ["M3"])
         #expect(frozen.chemicalSnapshot?.registrationIdentityKey == "AU:apvma:59688")

@@ -7,7 +7,6 @@ import com.rork.vinetrack.data.model.PickingRecord
 import com.rork.vinetrack.data.model.SampleSite
 import com.rork.vinetrack.data.model.YieldEstimationSession
 import com.rork.vinetrack.data.model.canonicalVarietyName
-import com.rork.vinetrack.data.model.damageFactor
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -36,9 +35,13 @@ object YieldVintageReport {
         val areaHectares: Double,
         /** Raw bunch-count estimate, no damage applied. Always preserved. */
         val baseTonnes: Double,
-        /** Base × current effective damage factor for the block. */
+        /** Base × the block's remaining-yield multiplier. */
         val adjustedTonnes: Double,
-        val damageFactor: Double,
+        /**
+         * Share of the block's crop that SURVIVES recorded damage (0..1),
+         * from the area-weighted engine. 1.0 = undamaged.
+         */
+        val remainingYieldMultiplier: Double,
         val applyDamage: Boolean,
         val averageBunchesPerVine: Double,
         val samplesRecorded: Int,
@@ -143,7 +146,18 @@ object YieldVintageReport {
                 .firstOrNull { it.paddockId.equals(paddock.id, ignoreCase = true) }
                 ?: continue
             if (base.samplesRecorded == 0) continue
-            val factor = damageRecords.damageFactor(paddock.id)
+            // Area-weighted (sql/221 parity contract), scoped to THIS vintage:
+            // Σ(mapped area × intensity) ÷ block area, capped at 100% — never a
+            // compounded whole-block percentage, and never last season's frost.
+            val scopedDamage = damageRecords.filter { record ->
+                record.paddockId.equals(paddock.id, ignoreCase = true) &&
+                    record.resolvedVintage(seasonStartMonth, seasonStartDay) == vintage
+            }
+            val remaining = SeasonYieldDamage.blockDamage(
+                paddockId = paddock.id,
+                blockAreaHectares = paddock.areaHectares,
+                records = scopedDamage,
+            ).remainingYieldMultiplier
             rows.add(
                 EstimateRow(
                     paddockId = paddock.id,
@@ -151,8 +165,8 @@ object YieldVintageReport {
                     varietyLabel = varietyLabel(paddock),
                     areaHectares = paddock.areaHectares,
                     baseTonnes = base.estimatedYieldTonnes,
-                    adjustedTonnes = base.estimatedYieldTonnes * factor,
-                    damageFactor = factor,
+                    adjustedTonnes = base.estimatedYieldTonnes * remaining,
+                    remainingYieldMultiplier = remaining,
                     applyDamage = session.applyDamage,
                     averageBunchesPerVine = base.averageBunchesPerVine,
                     samplesRecorded = base.samplesRecorded,

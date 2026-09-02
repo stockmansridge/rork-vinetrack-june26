@@ -11,8 +11,23 @@ struct YieldReportView: View {
         store.orderedPaddocks.filter { $0.polygonPoints.count >= 3 }
     }
 
+    /// Vintage the trip belongs to — damage is scoped to it so an earlier
+    /// season's frost can never reduce this trip's estimate.
+    private var tripVintage: Int {
+        VintageResolver.vintageYear(
+            for: viewModel.sessionCreatedAt ?? Date(),
+            seasonStartMonth: store.settings.seasonStartMonth,
+            seasonStartDay: store.settings.seasonStartDay
+        )
+    }
+
     private var estimates: [BlockYieldEstimate] {
-        viewModel.calculateYieldEstimates(paddocks: paddocks, damageFactorProvider: { store.damageFactor(for: $0) })
+        viewModel.calculateYieldEstimates(
+            paddocks: paddocks,
+            remainingYieldMultiplierProvider: {
+                store.remainingYieldMultiplier(for: $0, vintage: tripVintage)
+            }
+        )
     }
 
     private var totalYieldTonnes: Double {
@@ -160,7 +175,14 @@ struct YieldReportView: View {
                 estimateRow("Avg Bunches/Vine", value: String(format: "%.2f", est.averageBunchesPerVine))
                 estimateRow("Total Bunches", value: String(format: "%.0f", est.totalBunches))
                 estimateRow("Avg Bunch Weight", value: String(format: "%.0f g", est.averageBunchWeightKg * 1000))
-                estimateRow("Damage Factor", value: String(format: "%.2f (%.0f%% viable)", est.damageFactor, est.damageFactor * 100))
+                estimateRow(
+                    "Damage",
+                    value: String(
+                        format: "%.0f%% lost (%.0f%% remaining)",
+                        (1 - est.remainingYieldMultiplier) * 100,
+                        est.remainingYieldMultiplier * 100
+                    )
+                )
                 estimateRow("Samples", value: "\(est.samplesRecorded)/\(est.samplesTotal)")
             }
 

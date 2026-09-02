@@ -8,6 +8,7 @@ struct YieldHubView: View {
     @Environment(PickingRecordSyncService.self) private var pickingRecordSync
     @Environment(PruningYieldSettingsSyncService.self) private var pruningYieldSettingsSync
     @Environment(GrapeAllocationService.self) private var grapeAllocationService
+    @Environment(SeasonYieldEstimateService.self) private var seasonYieldService
     @State private var showRecordActualSheet: Bool = false
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
@@ -18,6 +19,19 @@ struct YieldHubView: View {
                 headerCard
 
                 VStack(spacing: 12) {
+                    NavigationLink {
+                        SeasonYieldOverviewView()
+                    } label: {
+                        hubOption(
+                            icon: "chart.pie.fill",
+                            iconGradient: [VineyardTheme.leafGreen, .teal],
+                            title: "Yield Overview",
+                            subtitle: "The vintage's canonical crop estimate by block & variety",
+                            detail: seasonYieldDetail
+                        )
+                    }
+                    .buttonStyle(.plain)
+
                     NavigationLink {
                         YieldDeterminationCalculatorView()
                     } label: {
@@ -264,5 +278,19 @@ struct YieldHubView: View {
         let count = grapeAllocationService.allocations.count
         guard count > 0 else { return nil }
         return "\(count) allocation\(count == 1 ? "" : "s")"
+    }
+
+    /// Canonical crop total, or how many blocks are still missing one. Never
+    /// "0 t" — an unknown total says so.
+    private var seasonYieldDetail: String? {
+        guard let overview = seasonYieldService.overview else { return nil }
+        if let total = overview.totalBaseEstimateTonnes {
+            return "V\(String(overview.vintage)) · \(SeasonYieldFormat.tonnes(total))"
+        }
+        if overview.blocksMissingEstimates > 0 {
+            let count = overview.blocksMissingEstimates
+            return "V\(String(overview.vintage)) · \(count) block\(count == 1 ? "" : "s") to set up"
+        }
+        return "V\(String(overview.vintage)) · estimate incomplete"
     }
 }

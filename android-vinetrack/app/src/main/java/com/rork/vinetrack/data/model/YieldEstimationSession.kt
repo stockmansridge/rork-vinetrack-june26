@@ -162,7 +162,12 @@ data class BlockYieldEstimate(
     val averageBunchesPerVine: Double,
     val totalBunches: Double,
     val averageBunchWeightKg: Double,
-    val damageFactor: Double,
+    /**
+     * Share of the block's crop that SURVIVES recorded damage (0..1), from the
+     * area-weighted engine. 1.0 = undamaged. The complement (`1 - this`) is the
+     * loss fraction.
+     */
+    val remainingYieldMultiplier: Double,
     val estimatedYieldKg: Double,
     val estimatedYieldTonnes: Double,
     val samplesRecorded: Int,

@@ -1,7 +1,9 @@
 package com.rork.vinetrack.data.model
 
+import com.rork.vinetrack.data.VintageResolver
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import java.time.LocalDate
 import kotlin.math.abs
 import kotlin.math.cos
 
@@ -39,9 +41,37 @@ data class DamageRecord(
     @SerialName("pin_id") val pinId: String? = null,
     @SerialName("trip_id") val tripId: String? = null,
     @SerialName("photo_urls") val photoUrls: List<String>? = null,
+    /**
+     * Vineyard-local season this damage belongs to, resolved SERVER-side
+     * (`damage_records.vintage`, sql/221) from `date_observed ?: date` in the
+     * vineyard's own timezone.
+     *
+     * Clients must filter damage by this value rather than by a locally
+     * recomputed season — see [resolvedVintage] for the offline fallback used
+     * before a newly created record has synced.
+     */
+    val vintage: Int? = null,
 ) {
     /** Resolved damage type, tolerant of portal label variants (matches iOS). */
     val type: DamageType get() = DamageType.normalize(damageType)
+
+    /**
+     * The vintage this record must be filtered by.
+     *
+     * Prefers the server-resolved [vintage]. Only when that is absent (a record
+     * created offline that has not synced yet) does it fall back to the local
+     * season resolver over `dateObserved ?: date` — the same input the server
+     * uses.
+     */
+    fun resolvedVintage(seasonStartMonth: Int, seasonStartDay: Int): Int {
+        vintage?.let { return it }
+        val iso = (dateObserved ?: date)?.take(10)
+        return if (iso.isNullOrBlank()) {
+            VintageResolver.vintageYear(LocalDate.now(), seasonStartMonth, seasonStartDay)
+        } else {
+            VintageResolver.vintageYearForIsoDate(iso, seasonStartMonth, seasonStartDay)
+        }
+    }
 
     /** Polygon area in hectares (equirectangular projection — matches iOS). */
     val areaHectares: Double
@@ -97,18 +127,14 @@ enum class DamageType(val label: String) {
     }
 }
 
-/**
- * Cumulative viability factor (0..1) for a block based on its damage records.
- * Each record compounds the remaining viability by its damage percent
- * (matches iOS `damageFactor(for:)`).
- */
-fun List<DamageRecord>.damageFactor(paddockId: String): Double {
-    val records = filter { it.paddockId == paddockId }
-    if (records.isEmpty()) return 1.0
-    var factor = 1.0
-    for (record in records) {
-        val pct = record.damagePercent.coerceIn(0.0, 100.0) / 100.0
-        factor *= (1.0 - pct)
-    }
-    return factor.coerceIn(0.0, 1.0)
-}
+// The old multiplicative `List<DamageRecord>.damageFactor(paddockId)` lived
+// here. It compounded every record's percentage over the WHOLE block, turning
+// "20% intensity over 10% of the block" into a 20% block loss instead of the
+// correct 2%, and its name meant the opposite of what half its callers assumed.
+//
+// It is replaced by the area-weighted contract in
+// `com.rork.vinetrack.data.SeasonYieldDamage` — use
+// `SeasonYieldDamage.blockDamage(...)` for the full verdict, or the
+// `List<DamageRecord>.remainingYieldMultiplier(paddockId, blockAreaHectares)`
+// extension for just the surviving share. Both need the block's own area, which
+// is the input the old function was missing.

@@ -68,7 +68,7 @@ nonisolated enum YieldDeterminationFormula {
         var totalVines: Int
         var averageBunchesPerVine: Double  // averaged across recorded sample sites
         var bunchWeightKg: Double
-        var damageFactor: Double           // 1.0 if no damage applied
+        var remainingYieldMultiplier: Double           // 1.0 if no damage applied
     }
 
     nonisolated struct BlockEstimateOutput: Sendable {
@@ -81,10 +81,10 @@ nonisolated enum YieldDeterminationFormula {
     ///
     /// Mirrors `YieldEstimationViewModel.calculateYieldEstimates`:
     /// `totalBunches = totalVines × avgBunchesPerVine` (rounded to 2 dp upstream),
-    /// `yieldKg = totalBunches × bunchWeightKg × damageFactor`.
+    /// `yieldKg = totalBunches × bunchWeightKg × remainingYieldMultiplier`.
     static func blockEstimate(_ inputs: BlockEstimateInputs) -> BlockEstimateOutput {
         let totalBunches = Double(inputs.totalVines) * inputs.averageBunchesPerVine
-        let yieldKg = totalBunches * inputs.bunchWeightKg * inputs.damageFactor
+        let yieldKg = totalBunches * inputs.bunchWeightKg * inputs.remainingYieldMultiplier
         return BlockEstimateOutput(
             totalBunches: totalBunches,
             estimatedYieldKg: yieldKg,

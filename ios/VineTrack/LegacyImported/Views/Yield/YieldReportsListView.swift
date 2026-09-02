@@ -49,7 +49,7 @@ struct YieldReportsListView: View {
         YieldVintageReport.estimateRows(
             sessions: store.yieldSessions,
             paddocks: store.paddocks,
-            damageFactor: { store.damageFactor(for: $0) },
+            remainingYieldMultiplier: { store.remainingYieldMultiplier(for: $0, vintage: reportVintage) },
             vintage: reportVintage,
             seasonStartMonth: store.settings.seasonStartMonth,
             seasonStartDay: store.settings.seasonStartDay
@@ -168,7 +168,7 @@ struct YieldReportsListView: View {
                         Text(fmt.formatYieldPerArea(perHectare: perHa))
                     }
                     Text("\(row.samplesRecorded) samples")
-                    if row.applyDamage, row.damageFactor < 1.0 {
+                    if row.applyDamage, row.remainingYieldMultiplier < 1.0 {
                         Text("damage adj.")
                             .foregroundStyle(.orange)
                     }
@@ -267,9 +267,17 @@ struct YieldReportsListView: View {
             let totalVines = paddock.effectiveVineCount
             let totalBunches = Double(totalVines) * avgBunchesRounded
             // Damage adjustment respects the trip's applyDamage flag; the
-            // base bunch-count observation is never mutated.
-            let damageFactor = session.applyDamage ? store.damageFactor(for: paddock.id) : 1.0
-            let yieldKg = totalBunches * session.bunchWeightKg(for: paddock.id) * damageFactor
+            // base bunch-count observation is never mutated. Damage is scoped
+            // to the trip's own vintage so an older season can't reduce it.
+            let sessionVintage = YieldVintageReport.sessionVintage(
+                session,
+                seasonStartMonth: store.settings.seasonStartMonth,
+                seasonStartDay: store.settings.seasonStartDay
+            )
+            let remainingYieldMultiplier = session.applyDamage
+                ? store.remainingYieldMultiplier(for: paddock.id, vintage: sessionVintage)
+                : 1.0
+            let yieldKg = totalBunches * session.bunchWeightKg(for: paddock.id) * remainingYieldMultiplier
             let yieldTonnes = yieldKg / 1000.0
 
             let latestDate = recorded
@@ -917,8 +925,13 @@ struct YieldReportsListView: View {
             let avgBunchesRounded = (avgBunches * 100).rounded() / 100
             let totalVines = paddock.effectiveVineCount
             let totalBunches = Double(totalVines) * avgBunchesRounded
-            let dmgFactor = store.damageFactor(for: paddockId)
-            totalYieldKg += totalBunches * session.bunchWeightKg(for: paddockId) * dmgFactor
+            let sessionVintage = YieldVintageReport.sessionVintage(
+                session,
+                seasonStartMonth: store.settings.seasonStartMonth,
+                seasonStartDay: store.settings.seasonStartDay
+            )
+            let remaining = store.remainingYieldMultiplier(for: paddockId, vintage: sessionVintage)
+            totalYieldKg += totalBunches * session.bunchWeightKg(for: paddockId) * remaining
         }
 
         return totalYieldKg / 1000.0

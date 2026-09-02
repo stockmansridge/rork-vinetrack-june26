@@ -22,6 +22,17 @@ struct DamageRecordsListView: View {
         store.damageRecords.sorted { $0.date > $1.date }
     }
 
+    /// Yield Impact is always read against the season the grower is in —
+    /// damage is vintage-scoped, so an older season's frost must not appear
+    /// here.
+    private var currentVintage: Int {
+        VintageResolver.vintageYear(
+            for: Date(),
+            seasonStartMonth: store.settings.seasonStartMonth,
+            seasonStartDay: store.settings.seasonStartDay
+        )
+    }
+
     private let blockColors: [Color] = [
         .blue, .green, .orange, .purple, .red, .cyan, .mint, .indigo, .pink, .teal, .yellow, .brown
     ]
@@ -159,7 +170,11 @@ struct DamageRecordsListView: View {
             VStack(spacing: 8) {
                 ForEach(affectedPaddocks) { paddock in
                     let records = store.damageRecords(for: paddock.id)
-                    let factor = store.damageFactor(for: paddock.id)
+                    // Area-weighted (sql/221 parity contract): each record's
+                    // MAPPED area × its intensity, against the block's own
+                    // area — never a compounded whole-block percentage.
+                    let damage = store.blockDamage(for: paddock.id, vintage: currentVintage)
+                    let remaining = damage.remainingYieldMultiplier
                     let color = colorFor(paddock)
 
                     HStack(spacing: 12) {
@@ -177,9 +192,18 @@ struct DamageRecordsListView: View {
 
                         Spacer()
 
-                        Text(String(format: "%.0f%% viable", factor * 100))
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(factor >= 0.8 ? .green : factor >= 0.5 ? .orange : .red)
+                        VStack(alignment: .trailing, spacing: 1) {
+                            Text(String(format: "%.0f%% remaining", remaining * 100))
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(remaining >= 0.8 ? Color.green : remaining >= 0.5 ? Color.orange : Color.red)
+                            Text(String(
+                                format: "%.2f of %.2f ha lost",
+                                damage.effectiveLossHectares,
+                                damage.blockAreaHectares ?? 0
+                            ))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        }
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)

@@ -192,7 +192,10 @@ nonisolated struct BlockYieldEstimate: Sendable {
     let averageBunchesPerVine: Double
     let totalBunches: Double
     let averageBunchWeightKg: Double
-    let damageFactor: Double
+    /// Share of the block's crop that SURVIVES recorded damage (0...1), from
+    /// the area-weighted engine. 1.0 = undamaged. The complement
+    /// (`1 - this`) is the loss fraction.
+    let remainingYieldMultiplier: Double
     let estimatedYieldKg: Double
     let estimatedYieldTonnes: Double
     let samplesRecorded: Int
@@ -247,6 +250,16 @@ nonisolated struct DamageRecord: Codable, Identifiable, Sendable, Hashable {
     var tripId: UUID?
     var photoUrls: [String]?
 
+    /// Vineyard-local season this damage belongs to, resolved SERVER-side
+    /// (`damage_records.vintage`, sql/221) from `date_observed ?? date` in the
+    /// vineyard's own timezone.
+    ///
+    /// Clients must filter damage by this value rather than by a locally
+    /// recomputed season — see
+    /// ``resolvedVintage(seasonStartMonth:seasonStartDay:)`` for the offline
+    /// fallback used before a newly created record has synced.
+    var vintage: Int?
+
     init(
         id: UUID = UUID(),
         vineyardId: UUID = UUID(),
@@ -256,6 +269,7 @@ nonisolated struct DamageRecord: Codable, Identifiable, Sendable, Hashable {
         damageType: DamageType = .frost,
         damagePercent: Double = 20,
         notes: String = "",
+        vintage: Int? = nil,
         rowNumber: Int? = nil,
         side: String? = nil,
         severity: String? = nil,
@@ -276,6 +290,7 @@ nonisolated struct DamageRecord: Codable, Identifiable, Sendable, Hashable {
         self.damageType = damageType
         self.damagePercent = damagePercent
         self.notes = notes
+        self.vintage = vintage
         self.rowNumber = rowNumber
         self.side = side
         self.severity = severity
@@ -287,6 +302,33 @@ nonisolated struct DamageRecord: Codable, Identifiable, Sendable, Hashable {
         self.pinId = pinId
         self.tripId = tripId
         self.photoUrls = photoUrls
+    }
+
+    /// The vintage this record must be filtered by.
+    ///
+    /// Prefers the server-resolved ``vintage``. Only when that is absent (a
+    /// record created offline that has not synced yet) does it fall back to
+    /// the local season resolver over `dateObserved ?? date` — the same input
+    /// the server uses.
+    func resolvedVintage(seasonStartMonth: Int, seasonStartDay: Int) -> Int {
+        if let vintage { return vintage }
+        return VintageResolver.vintageYear(
+            for: dateObserved ?? date,
+            seasonStartMonth: seasonStartMonth,
+            seasonStartDay: seasonStartDay
+        )
+    }
+
+    /// This record reduced to the shared area-weighted damage contract.
+    var damageEngineRecord: SeasonYieldDamage.Record {
+        SeasonYieldDamage.Record(
+            id: id,
+            paddockId: paddockId,
+            damagePercent: damagePercent,
+            polygon: polygonPoints.map {
+                SeasonYieldDamage.Point(latitude: $0.latitude, longitude: $0.longitude)
+            }
+        )
     }
 
     var areaHectares: Double {

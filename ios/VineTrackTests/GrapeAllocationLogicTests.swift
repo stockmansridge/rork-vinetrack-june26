@@ -49,7 +49,7 @@ final class GrapeAllocationLogicTests: XCTestCase {
             areaHectares: 1,
             baseTonnes: tonnes,
             adjustedTonnes: tonnes,
-            damageFactor: 1,
+            remainingYieldMultiplier: 1,
             applyDamage: false,
             averageBunchesPerVine: 0,
             samplesRecorded: 1,

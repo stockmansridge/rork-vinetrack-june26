@@ -56,17 +56,41 @@ extension MigratedDataStore {
         damageRecords.filter { $0.paddockId == paddockId }
     }
 
-    /// Cumulative viability factor (0...1) for a paddock based on its damage records.
-    /// Each damage record reduces remaining viability by `damagePercent`%.
-    func damageFactor(for paddockId: UUID) -> Double {
-        let records = damageRecords(for: paddockId)
-        guard !records.isEmpty else { return 1.0 }
-        var factor = 1.0
-        for record in records {
-            let pct = max(0, min(100, record.damagePercent)) / 100.0
-            factor *= (1.0 - pct)
+    /// Area-weighted damage for a block, scoped to ONE vintage.
+    ///
+    /// This replaces the old multiplicative `damageFactor(for:)`, which
+    /// compounded every record's percentage over the WHOLE block and turned
+    /// "20% intensity over 10% of the block" into a 20% block loss instead of
+    /// the correct 2%. The contract is
+    /// `loss = Σ(mapped area × intensity) ÷ block area`, capped at 100% — see
+    /// `docs/season-yield-damage-parity-fixtures.md`.
+    ///
+    /// Damage is filtered by the server-resolved vintage, so last season's
+    /// frost can never reduce this season's crop.
+    func blockDamage(for paddockId: UUID, vintage: Int) -> SeasonYieldDamage.BlockDamage {
+        let area = paddocks.first { $0.id == paddockId }?.areaHectares ?? 0
+        let scoped = damageRecords(for: paddockId).filter {
+            $0.resolvedVintage(
+                seasonStartMonth: settings.seasonStartMonth,
+                seasonStartDay: settings.seasonStartDay
+            ) == vintage
         }
-        return max(0, min(1, factor))
+        return SeasonYieldDamage.blockDamage(
+            paddockId: paddockId,
+            blockAreaHectares: area,
+            records: scoped.map(\.damageEngineRecord)
+        )
+    }
+
+    /// Share of a block's crop that SURVIVES recorded damage (0...1), where
+    /// 1.0 means undamaged.
+    ///
+    /// Deliberately not called `damageFactor`: the retired name was read by
+    /// some callers as the loss and by others as the remainder, and the two
+    /// are complements. ``SeasonYieldDamage/BlockDamage/damageLossFraction``
+    /// is the loss.
+    func remainingYieldMultiplier(for paddockId: UUID, vintage: Int) -> Double {
+        blockDamage(for: paddockId, vintage: vintage).remainingYieldMultiplier
     }
 
     func addDamageRecord(_ record: DamageRecord) {

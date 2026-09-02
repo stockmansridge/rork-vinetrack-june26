@@ -114,7 +114,7 @@ final class YieldVintageReportTests: XCTestCase {
         let rows = YieldVintageReport.estimateRows(
             sessions: [december, january, newerDraft],
             paddocks: paddocks,
-            damageFactor: { _ in 1.0 },
+            remainingYieldMultiplier: { _ in 1.0 },
             vintage: 2026,
             seasonStartMonth: 7,
             seasonStartDay: 1
@@ -135,11 +135,11 @@ final class YieldVintageReportTests: XCTestCase {
         let v26 = trip(id: UUID(), blockId: blockA, avgBunches: 20, completedAt: date(2026, 1, 20))
 
         let rows25 = YieldVintageReport.estimateRows(
-            sessions: [v25, v26], paddocks: paddocks, damageFactor: { _ in 1.0 },
+            sessions: [v25, v26], paddocks: paddocks, remainingYieldMultiplier: { _ in 1.0 },
             vintage: 2025, seasonStartMonth: 7, seasonStartDay: 1
         )
         let rows26 = YieldVintageReport.estimateRows(
-            sessions: [v25, v26], paddocks: paddocks, damageFactor: { _ in 1.0 },
+            sessions: [v25, v26], paddocks: paddocks, remainingYieldMultiplier: { _ in 1.0 },
             vintage: 2026, seasonStartMonth: 7, seasonStartDay: 1
         )
 
@@ -157,7 +157,7 @@ final class YieldVintageReportTests: XCTestCase {
 
         let rows = YieldVintageReport.estimateRows(
             sessions: [session], paddocks: paddocks,
-            damageFactor: { _ in 0.8 }, // 20% recorded damage
+            remainingYieldMultiplier: { _ in 0.8 }, // 20% recorded damage
             vintage: 2026, seasonStartMonth: 7, seasonStartDay: 1
         )
         let row = rows[0]
@@ -174,7 +174,7 @@ final class YieldVintageReportTests: XCTestCase {
 
         let row = YieldVintageReport.estimateRows(
             sessions: [session], paddocks: paddocks,
-            damageFactor: { _ in 0.5 },
+            remainingYieldMultiplier: { _ in 0.5 },
             vintage: 2026, seasonStartMonth: 7, seasonStartDay: 1
         )[0]
 

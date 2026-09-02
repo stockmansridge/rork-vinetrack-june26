@@ -1144,6 +1144,9 @@ nonisolated struct BackendDamageRecord: Codable, Sendable, Identifiable {
     let pinId: UUID?
     let tripId: UUID?
     let photoUrls: [String]?
+    /// Server-resolved vineyard-local season (sql/221). Clients filter damage
+    /// by this, never by a locally recomputed season.
+    let vintage: Int?
     let createdBy: UUID?
     let createdAt: Date?
     let updatedAt: Date?
@@ -1159,6 +1162,7 @@ nonisolated struct BackendDamageRecord: Codable, Sendable, Identifiable {
         case damagePercent = "damage_percent"
         case polygonPoints = "polygon_points"
         case notes
+        case vintage
         case rowNumber = "row_number"
         case side
         case severity
@@ -1198,6 +1202,7 @@ nonisolated struct BackendDamageRecord: Codable, Sendable, Identifiable {
         self.pinId = try c.decodeIfPresent(UUID.self, forKey: .pinId)
         self.tripId = try c.decodeIfPresent(UUID.self, forKey: .tripId)
         self.photoUrls = try c.decodeIfPresent([String].self, forKey: .photoUrls)
+        self.vintage = try c.decodeIfPresent(Int.self, forKey: .vintage)
         self.createdBy = try c.decodeIfPresent(UUID.self, forKey: .createdBy)
         self.createdAt = Self.flexibleDate(c, .createdAt)
         self.updatedAt = Self.flexibleDate(c, .updatedAt)
@@ -1364,6 +1369,7 @@ extension BackendDamageRecord {
             damageType: BackendDamageRecord.normalizeDamageType(damageType),
             damagePercent: damagePercent ?? 0,
             notes: notes ?? "",
+            vintage: vintage,
             rowNumber: rowNumber,
             side: side,
             severity: severity,

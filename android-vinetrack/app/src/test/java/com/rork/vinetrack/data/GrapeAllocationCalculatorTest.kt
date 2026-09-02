@@ -57,7 +57,7 @@ class GrapeAllocationCalculatorTest {
             areaHectares = 1.0,
             baseTonnes = tonnes,
             adjustedTonnes = tonnes,
-            damageFactor = 1.0,
+            remainingYieldMultiplier = 1.0,
             applyDamage = false,
             averageBunchesPerVine = 0.0,
             samplesRecorded = 1,

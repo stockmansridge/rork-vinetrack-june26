@@ -64,6 +64,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
+import com.rork.vinetrack.data.SeasonYieldProjection
 import com.rork.vinetrack.data.VintageResolver
 import com.rork.vinetrack.data.YieldVintageReport
 import com.rork.vinetrack.data.model.GrapeAllocation
@@ -117,6 +118,9 @@ fun GrapeAllocationScreen(
     var deleteCandidate by remember { mutableStateOf<GrapeAllocation?>(null) }
 
     LaunchedEffect(state.selectedVineyardId) { vm.refreshGrapeAllocations() }
+    LaunchedEffect(state.selectedVineyardId, reportVintage) {
+        vm.loadSeasonYieldOverview(reportVintage)
+    }
 
     val availableVintages = remember(state.yieldSessions, state.yieldRecords, state.pickingRecords, state.grapeAllocations, currentVintage) {
         (
@@ -127,20 +131,37 @@ fun GrapeAllocationScreen(
             ).distinct().sortedDescending()
     }
 
-    val estimateRows = remember(state.yieldSessions, state.paddocks, state.damageRecords, reportVintage) {
-        YieldVintageReport.estimateRows(
-            state.yieldSessions, state.paddocks, state.damageRecords,
-            reportVintage, state.seasonStartMonth, state.seasonStartDay,
+    // Supply comes from ONE authority — `get_season_yield_base_overview`
+    // (sql/221) — with damage applied per block. When the DB withholds the
+    // canonical total (any active block still unconfigured) the screen shows
+    // "—" and refuses to compute a balance: allocating against an invented 0 t
+    // is how a grower over-commits a crop nobody has measured.
+    val overview = state.seasonYieldOverview?.takeIf { state.seasonYieldVintage == reportVintage }
+    val projection = remember(overview, state.damageRecords, state.seasonYieldApplyDamage) {
+        overview?.let {
+            SeasonYieldProjection.make(
+                overview = it,
+                damageRecords = SeasonYieldProjection.damageRecords(
+                    records = state.damageRecords,
+                    vineyardId = it.vineyardId,
+                    vintage = it.vintage,
+                    seasonStartMonth = state.seasonStartMonth,
+                    seasonStartDay = state.seasonStartDay,
+                ),
+                applyDamage = state.seasonYieldApplyDamage,
+            )
+        }
+    }
+    val canonicalSupply = remember(projection) {
+        projection?.let { GrapeAllocationCalculator.canonicalSupply(it) }.orEmpty()
+    }
+    val summary = remember(projection, state.grapeAllocations, reportVintage) {
+        GrapeAllocationCalculator.canonicalSummary(projection, state.grapeAllocations, reportVintage)
+    }
+    val varietyRows = remember(canonicalSupply, state.grapeAllocations, reportVintage) {
+        GrapeAllocationCalculator.canonicalVarietyRows(
+            canonicalSupply, state.grapeAllocations, reportVintage,
         )
-    }
-    val estimates = remember(estimateRows, state.paddocks) {
-        GrapeAllocationCalculator.varietyEstimates(estimateRows, state.paddocks)
-    }
-    val summary = remember(estimates, state.grapeAllocations, reportVintage) {
-        GrapeAllocationCalculator.summary(estimates, state.grapeAllocations, reportVintage)
-    }
-    val varietyRows = remember(estimates, state.grapeAllocations, reportVintage) {
-        GrapeAllocationCalculator.varietyRows(estimates, state.grapeAllocations, reportVintage)
     }
     val vintageAllocations = state.grapeAllocations.filter { it.vintage == reportVintage }
     val fmt = state.regionFormatter
@@ -202,47 +223,22 @@ fun GrapeAllocationScreen(
             }
 
             // Vintage summary.
-            VineyardCard {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SummaryStat("Estimated", summary.estimatedTonnes, VineColors.Indigo, Modifier.weight(1f))
-                        SummaryStat("Own Use", summary.ownUseTonnes, VineColors.Purple, Modifier.weight(1f))
-                        SummaryStat("Committed", summary.committedTonnes, VineColors.Orange, Modifier.weight(1f))
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            if (summary.isShortfall) Icons.Filled.Warning else Icons.Filled.CheckCircle,
-                            contentDescription = null,
-                            tint = if (summary.isShortfall) VineColors.Destructive else VineColors.LeafGreen,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            if (summary.isShortfall) "Shortfall" else "Available",
-                            fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                            color = if (summary.isShortfall) VineColors.Destructive else VineColors.LeafGreen,
-                        )
-                        Spacer(Modifier.weight(1f))
-                        Text(
-                            tonnesText(kotlin.math.abs(summary.balanceTonnes)),
-                            fontSize = 17.sp, fontWeight = FontWeight.Bold,
-                            color = if (summary.isShortfall) VineColors.Destructive else vine.textPrimary,
-                        )
-                    }
-                    if (canViewFinancials) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Contracted Income", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
-                            Spacer(Modifier.weight(1f))
-                            Text(
-                                fmt.formatCurrency(
-                                    GrapeAllocationCalculator.totalContractedIncome(state.grapeAllocations, reportVintage),
-                                ),
-                                fontSize = 17.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary,
-                            )
-                        }
-                    }
-                }
-            }
+            GrapeAllocationSummaryCard(
+                summary = summary,
+                projection = projection,
+                isLoading = state.seasonYieldLoading,
+                errorMessage = state.seasonYieldError,
+                contractedIncome = if (canViewFinancials) {
+                    fmt.formatCurrency(
+                        GrapeAllocationCalculator.totalContractedIncome(
+                            state.grapeAllocations,
+                            reportVintage,
+                        ),
+                    )
+                } else {
+                    null
+                },
+            )
 
             if (canViewFinancials) {
                 val byPurchaser = GrapeAllocationCalculator.incomeByPurchaser(state.grapeAllocations, reportVintage)
@@ -260,7 +256,7 @@ fun GrapeAllocationScreen(
             if (varietyRows.isEmpty()) {
                 VineyardCard {
                     Text(
-                        "No completed Bunch Count Trip and no allocations for this vintage yet. Complete a trip to see the estimated supply per variety.",
+                        "No seasonal estimate and no allocations for this vintage yet. Save the Pruning Yield Calculator for your blocks to see the estimated supply per variety.",
                         fontSize = 12.sp, color = vine.textSecondary,
                     )
                 }
@@ -275,16 +271,26 @@ fun GrapeAllocationScreen(
                                     Icon(Icons.Filled.Warning, contentDescription = null, tint = VineColors.Destructive, modifier = Modifier.size(14.dp))
                                     Spacer(Modifier.width(4.dp))
                                     Text("Shortfall", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Destructive)
+                                } else if (row.isSupplyUnknown) {
+                                    Icon(Icons.Filled.Warning, contentDescription = null, tint = VineColors.Orange, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Estimate incomplete", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Orange)
                                 }
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                SummaryStat("Estimated", row.estimatedTonnes, VineColors.Indigo, Modifier.weight(1f))
-                                SummaryStat("Own Use", row.ownUseTonnes, VineColors.Purple, Modifier.weight(1f))
-                                SummaryStat("External", row.externalTonnes, VineColors.Orange, Modifier.weight(1f))
-                                SummaryStat(
+                                AllocationStat("Estimated", row.estimatedTonnes, VineColors.Indigo, Modifier.weight(1f))
+                                AllocationStat("Own Use", row.ownUseTonnes, VineColors.Purple, Modifier.weight(1f))
+                                AllocationStat("External", row.externalTonnes, VineColors.Orange, Modifier.weight(1f))
+                                AllocationStat(
                                     "Balance", row.balanceTonnes,
                                     if (row.isShortfall) VineColors.Destructive else VineColors.LeafGreen,
                                     Modifier.weight(1f),
+                                )
+                            }
+                            if (row.isSupplyUnknown && row.knownEstimatedTonnes > 0) {
+                                Text(
+                                    "${tonnesText(row.knownEstimatedTonnes)} known so far — not enough to allocate against.",
+                                    fontSize = 11.sp, color = vine.textSecondary,
                                 )
                             }
                         }
@@ -335,15 +341,6 @@ fun GrapeAllocationScreen(
             },
             dismissButton = { TextButton(onClick = { deleteCandidate = null }) { Text("Cancel") } },
         )
-    }
-}
-
-@Composable
-private fun SummaryStat(label: String, tonnes: Double, color: androidx.compose.ui.graphics.Color, modifier: Modifier = Modifier) {
-    val vine = LocalVineColors.current
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(tonnesText(tonnes), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = color)
-        Text(label, fontSize = 10.sp, color = vine.textSecondary)
     }
 }
 

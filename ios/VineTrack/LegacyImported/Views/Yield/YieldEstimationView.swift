@@ -31,6 +31,17 @@ struct YieldEstimationView: View {
         store.settings.samplesPerHectare
     }
 
+    /// The vintage the in-progress / open trip belongs to. Damage is always
+    /// scoped to it, so a previous season's frost can never reduce this
+    /// trip's estimate.
+    private var tripVintage: Int {
+        VintageResolver.vintageYear(
+            for: viewModel.sessionCreatedAt ?? Date(),
+            seasonStartMonth: store.settings.seasonStartMonth,
+            seasonStartDay: store.settings.seasonStartDay
+        )
+    }
+
     private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private let blockColors: [Color] = [
@@ -175,8 +186,15 @@ struct YieldEstimationView: View {
             .filter { p in trip.selectedPaddockIds.contains(p.id) }
             .compactMap { paddock -> Double? in
                 guard let base = YieldVintageReport.baseEstimate(session: trip, paddock: paddock) else { return nil }
-                let factor = trip.applyDamage ? store.damageFactor(for: paddock.id) : 1.0
-                return base.tonnes * factor
+                let tripVintage = YieldVintageReport.sessionVintage(
+                    trip,
+                    seasonStartMonth: store.settings.seasonStartMonth,
+                    seasonStartDay: store.settings.seasonStartDay
+                )
+                let remaining = trip.applyDamage
+                    ? store.remainingYieldMultiplier(for: paddock.id, vintage: tripVintage)
+                    : 1.0
+                return base.tonnes * remaining
             }
             .reduce(0, +)
     }
@@ -897,8 +915,8 @@ struct YieldEstimationView: View {
         VStack(alignment: .leading, spacing: 10) {
             let baseEstimates = viewModel.calculateYieldEstimates(paddocks: paddocks)
             ForEach(baseEstimates.filter { $0.samplesRecorded > 0 }, id: \.paddockId) { est in
-                let factor = store.damageFactor(for: est.paddockId)
-                let display = viewModel.applyDamage ? est.estimatedYieldTonnes * factor : est.estimatedYieldTonnes
+                let remaining = store.remainingYieldMultiplier(for: est.paddockId, vintage: tripVintage)
+                let display = viewModel.applyDamage ? est.estimatedYieldTonnes * remaining : est.estimatedYieldTonnes
                 VStack(alignment: .leading, spacing: 3) {
                     HStack {
                         Text(est.paddockName)
@@ -914,8 +932,8 @@ struct YieldEstimationView: View {
                     Text("\(est.samplesRecorded)/\(est.samplesTotal) samples · \(String(format: "%.1f", est.averageBunchesPerVine)) bunches/vine · \(String(format: "%.0f g", est.averageBunchWeightKg * 1000))/bunch")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                    if viewModel.applyDamage, factor < 1.0 {
-                        Text(String(format: "Base %.1f t → damage adjusted %.1f t", est.estimatedYieldTonnes, est.estimatedYieldTonnes * factor))
+                    if viewModel.applyDamage, remaining < 1.0 {
+                        Text(String(format: "Base %.1f t → damage adjusted %.1f t", est.estimatedYieldTonnes, est.estimatedYieldTonnes * remaining))
                             .font(.caption2)
                             .foregroundStyle(.orange)
                     }
@@ -945,8 +963,8 @@ struct YieldEstimationView: View {
             // is always shown; damage only changes the displayed figure.
             let baseEstimates = viewModel.calculateYieldEstimates(paddocks: paddocks)
             ForEach(baseEstimates.filter { $0.samplesRecorded > 0 }, id: \.paddockId) { est in
-                let factor = store.damageFactor(for: est.paddockId)
-                let display = viewModel.applyDamage ? est.estimatedYieldTonnes * factor : est.estimatedYieldTonnes
+                let remaining = store.remainingYieldMultiplier(for: est.paddockId, vintage: tripVintage)
+                let display = viewModel.applyDamage ? est.estimatedYieldTonnes * remaining : est.estimatedYieldTonnes
                 VStack(alignment: .leading, spacing: 3) {
                     HStack {
                         Text(est.paddockName)
@@ -967,8 +985,8 @@ struct YieldEstimationView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
-                    if viewModel.applyDamage, factor < 1.0 {
-                        Text(String(format: "Base %.1f t → damage adjusted %.1f t", est.estimatedYieldTonnes, est.estimatedYieldTonnes * factor))
+                    if viewModel.applyDamage, remaining < 1.0 {
+                        Text(String(format: "Base %.1f t → damage adjusted %.1f t", est.estimatedYieldTonnes, est.estimatedYieldTonnes * remaining))
                             .font(.caption2)
                             .foregroundStyle(.orange)
                     }

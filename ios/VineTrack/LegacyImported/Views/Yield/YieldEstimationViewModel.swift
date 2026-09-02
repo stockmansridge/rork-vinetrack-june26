@@ -299,14 +299,14 @@ class YieldEstimationViewModel {
 
     // MARK: - Yield Calculation
 
-    func calculateYieldEstimates(paddocks: [Paddock], damageFactorProvider: ((UUID) -> Double)? = nil) -> [BlockYieldEstimate] {
+    func calculateYieldEstimates(paddocks: [Paddock], remainingYieldMultiplierProvider: ((UUID) -> Double)? = nil) -> [BlockYieldEstimate] {
         let selected = paddocks.filter { selectedPaddockIds.contains($0.id) }
         var estimates: [BlockYieldEstimate] = []
 
         for paddock in selected {
             let sitesInPaddock = sampleSites.filter { $0.paddockId == paddock.id }
             let recordedSites = sitesInPaddock.filter { $0.isRecorded }
-            let damageFactor = damageFactorProvider?(paddock.id) ?? 1.0
+            let remainingYieldMultiplier = remainingYieldMultiplierProvider?(paddock.id) ?? 1.0
 
             guard !recordedSites.isEmpty else {
                 estimates.append(BlockYieldEstimate(
@@ -317,7 +317,7 @@ class YieldEstimationViewModel {
                     averageBunchesPerVine: 0,
                     totalBunches: 0,
                     averageBunchWeightKg: bunchWeightKg(for: paddock.id),
-                    damageFactor: damageFactor,
+                    remainingYieldMultiplier: remainingYieldMultiplier,
                     estimatedYieldKg: 0,
                     estimatedYieldTonnes: 0,
                     samplesRecorded: 0,
@@ -333,7 +333,7 @@ class YieldEstimationViewModel {
             let totalVines = paddock.effectiveVineCount
             let totalBunches = Double(totalVines) * avgBunchesRounded
             let blockWeight = bunchWeightKg(for: paddock.id)
-            let yieldKg = totalBunches * blockWeight * damageFactor
+            let yieldKg = totalBunches * blockWeight * remainingYieldMultiplier
             let yieldTonnes = yieldKg / 1000.0
 
             estimates.append(BlockYieldEstimate(
@@ -344,7 +344,7 @@ class YieldEstimationViewModel {
                 averageBunchesPerVine: avgBunchesRounded,
                 totalBunches: totalBunches,
                 averageBunchWeightKg: blockWeight,
-                damageFactor: damageFactor,
+                remainingYieldMultiplier: remainingYieldMultiplier,
                 estimatedYieldKg: yieldKg,
                 estimatedYieldTonnes: yieldTonnes,
                 samplesRecorded: recordedSites.count,

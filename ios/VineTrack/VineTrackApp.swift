@@ -55,6 +55,9 @@ struct VineTrackApp: App {
     @State private var pruningYieldSettingsSyncService = PruningYieldSettingsSyncService()
     /// Grape Allocation tool state (sql/217).
     @State private var grapeAllocationService = GrapeAllocationService()
+    /// Canonical BASE seasonal yield estimates (sql/221) — the single
+    /// authority every yield surface reads its crop totals from.
+    @State private var seasonYieldEstimateService = SeasonYieldEstimateService()
     @State private var pruningSyncService = PruningSyncService()
     @State private var manualIssueSyncService = ManualIssueSyncService()
     /// Unified pin composer (sql/170): vineyard-shared custom pin types +
@@ -137,6 +140,7 @@ struct VineTrackApp: App {
                         .environment(pickingRecordSyncService)
                         .environment(pruningYieldSettingsSyncService)
                         .environment(grapeAllocationService)
+                        .environment(seasonYieldEstimateService)
                         .environment(pruningSyncService)
                         .environment(manualIssueSyncService)
                         .environment(customPinTypeService)

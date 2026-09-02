@@ -132,6 +132,181 @@ nonisolated enum GrapeAllocationCalculator {
         )
     }
 
+    // MARK: - Canonical supply (sql/221)
+
+    /// Supply for ONE variety taken from the canonical seasonal estimate.
+    ///
+    /// `tonnes` is optional on purpose: when the DB withheld the canonical
+    /// figure (any block still unconfigured) the answer is UNKNOWN, and the
+    /// surface must render "—". Substituting 0 would silently invent a
+    /// shortfall and let a grower over-commit a crop nobody has measured.
+    nonisolated struct CanonicalSupply: Sendable, Equatable {
+        let varietyKey: String
+        let displayName: String
+        let tonnes: Double?
+        /// "Known so far", for the diagnostic caption only — never allocatable.
+        let knownTonnes: Double
+        let isEstimateComplete: Bool
+    }
+
+    /// Canonical per-variety supply, honouring the Apply Damage toggle already
+    /// applied per block by ``SeasonYieldProjection``.
+    ///
+    /// Keyed by the same normalised variety name the allocation rows use, so a
+    /// contract written against "Shiraz" matches the estimate for "shiraz".
+    static func canonicalSupply(
+        projection: SeasonYieldProjection.Result
+    ) -> [String: CanonicalSupply] {
+        var result: [String: CanonicalSupply] = [:]
+        for variety in projection.varieties {
+            let key = PickingYieldAggregator.normalisedVariety(variety.displayName)
+            let tonnes = projection.damageApplied ? variety.adjustedTonnes : variety.baseTonnes
+            let known = projection.damageApplied ? variety.knownAdjustedTonnes : variety.knownBaseTonnes
+            if let existing = result[key] {
+                // Two identities that normalise to one display name merge; the
+                // merged total is only knowable when BOTH halves are.
+                let mergedTonnes: Double? = {
+                    guard let a = existing.tonnes, let b = tonnes else { return nil }
+                    return a + b
+                }()
+                result[key] = CanonicalSupply(
+                    varietyKey: key,
+                    displayName: existing.displayName,
+                    tonnes: mergedTonnes,
+                    knownTonnes: existing.knownTonnes + known,
+                    isEstimateComplete: existing.isEstimateComplete && variety.isEstimateComplete
+                )
+            } else {
+                result[key] = CanonicalSupply(
+                    varietyKey: key,
+                    displayName: variety.displayName,
+                    tonnes: tonnes,
+                    knownTonnes: known,
+                    isEstimateComplete: variety.isEstimateComplete
+                )
+            }
+        }
+        return result
+    }
+
+    /// A variety line on the Grape Allocation screen, built from the canonical
+    /// estimate. `estimatedTonnes` and therefore `balanceTonnes` are optional:
+    /// unknown supply means an unknown balance, not a zero one.
+    nonisolated struct CanonicalVarietyRow: Identifiable, Sendable, Equatable {
+        var id: String { varietyKey }
+        let varietyKey: String
+        let displayName: String
+        let estimatedTonnes: Double?
+        let knownEstimatedTonnes: Double
+        let isEstimateComplete: Bool
+        let ownUseTonnes: Double
+        let externalTonnes: Double
+
+        /// nil when supply is unknown — render "—".
+        var balanceTonnes: Double? {
+            guard let estimatedTonnes else { return nil }
+            return estimatedTonnes - ownUseTonnes - externalTonnes
+        }
+
+        /// Unknown supply is never reported as a shortfall: the grower would
+        /// be chasing a deficit the data cannot support.
+        var isShortfall: Bool {
+            guard let balance = balanceTonnes else { return false }
+            return balance < -GrapeAllocationCalculator.shortfallTolerance
+        }
+
+        /// True when there are commitments but no usable estimate to check
+        /// them against.
+        var isSupplyUnknown: Bool { estimatedTonnes == nil }
+    }
+
+    /// One row per variety with canonical supply OR an allocation in the
+    /// vintage, sorted by estimated tonnes descending (unknown last) then name.
+    static func canonicalVarietyRows(
+        supply: [String: CanonicalSupply],
+        allocations: [GrapeAllocation],
+        vintage: Int
+    ) -> [CanonicalVarietyRow] {
+        var names: [String: String] = [:]
+        var own: [String: Double] = [:]
+        var external: [String: Double] = [:]
+
+        for (key, value) in supply { names[key] = value.displayName }
+        for allocation in allocations where allocation.vintage == vintage {
+            let key = PickingYieldAggregator.normalisedVariety(allocation.varietyName)
+            if names[key] == nil { names[key] = allocation.varietyName }
+            switch allocation.allocationType {
+            case .ownUse: own[key, default: 0] += allocation.quantityTonnes
+            case .external: external[key, default: 0] += allocation.quantityTonnes
+            }
+        }
+
+        return names.map { key, displayName in
+            let entry = supply[key]
+            return CanonicalVarietyRow(
+                varietyKey: key,
+                displayName: displayName,
+                estimatedTonnes: entry?.tonnes,
+                knownEstimatedTonnes: entry?.knownTonnes ?? 0,
+                isEstimateComplete: entry?.isEstimateComplete ?? false,
+                ownUseTonnes: own[key] ?? 0,
+                externalTonnes: external[key] ?? 0
+            )
+        }
+        .sorted {
+            switch ($0.estimatedTonnes, $1.estimatedTonnes) {
+            case let (l?, r?) where l != r: return l > r
+            case (_?, nil): return true
+            case (nil, _?): return false
+            default:
+                return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+            }
+        }
+    }
+
+    /// Vintage-level availability, built from the canonical crop total rather
+    /// than a sum of per-variety supply.
+    nonisolated struct CanonicalSummary: Sendable, Equatable {
+        /// nil = the canonical estimate is incomplete. Render "—".
+        let estimatedTonnes: Double?
+        let knownEstimatedTonnes: Double
+        let isEstimateComplete: Bool
+        let ownUseTonnes: Double
+        let committedTonnes: Double
+
+        var balanceTonnes: Double? {
+            guard let estimatedTonnes else { return nil }
+            return estimatedTonnes - ownUseTonnes - committedTonnes
+        }
+
+        var isShortfall: Bool {
+            guard let balance = balanceTonnes else { return false }
+            return balance < -GrapeAllocationCalculator.shortfallTolerance
+        }
+
+        var isSupplyUnknown: Bool { estimatedTonnes == nil }
+
+        /// Committed + own use, always knowable — these are user-entered.
+        var allocatedTonnes: Double { ownUseTonnes + committedTonnes }
+    }
+
+    static func canonicalSummary(
+        projection: SeasonYieldProjection.Result?,
+        allocations: [GrapeAllocation],
+        vintage: Int
+    ) -> CanonicalSummary {
+        let inVintage = allocations.filter { $0.vintage == vintage }
+        return CanonicalSummary(
+            estimatedTonnes: projection?.displayTotalTonnes,
+            knownEstimatedTonnes: (projection?.damageApplied ?? false)
+                ? (projection?.knownAdjustedTonnes ?? 0)
+                : (projection?.knownBaseTonnes ?? 0),
+            isEstimateComplete: projection?.isEstimateComplete ?? false,
+            ownUseTonnes: inVintage.filter { $0.allocationType == .ownUse }.reduce(0.0) { $0 + $1.quantityTonnes },
+            committedTonnes: inVintage.filter { $0.allocationType == .external }.reduce(0.0) { $0 + $1.quantityTonnes }
+        )
+    }
+
     // MARK: - Contracted income (Owner/Manager only inputs)
 
     /// Vintage total contracted income: the SUM of individual contract

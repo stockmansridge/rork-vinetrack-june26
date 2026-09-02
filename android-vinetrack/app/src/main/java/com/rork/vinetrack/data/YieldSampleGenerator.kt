@@ -97,13 +97,13 @@ object YieldSampleGenerator {
     fun calculateYieldEstimates(
         session: YieldEstimationSession,
         paddocks: List<Paddock>,
-        damageFactorProvider: (String) -> Double = { 1.0 },
+        remainingYieldMultiplierProvider: (String) -> Double = { 1.0 },
     ): List<BlockYieldEstimate> {
         val selected = paddocks.filter { session.isPaddockSelected(it.id) }
         return selected.map { paddock ->
             val sitesInPaddock = session.sitesIn(paddock.id)
             val recorded = sitesInPaddock.filter { it.isRecorded }
-            val damageFactor = damageFactorProvider(paddock.id)
+            val remainingYieldMultiplier = remainingYieldMultiplierProvider(paddock.id)
             val totalVines = paddock.effectiveVineCount
             val blockWeight = session.bunchWeightKg(paddock.id)
             if (recorded.isEmpty()) {
@@ -115,7 +115,7 @@ object YieldSampleGenerator {
                     averageBunchesPerVine = 0.0,
                     totalBunches = 0.0,
                     averageBunchWeightKg = blockWeight,
-                    damageFactor = damageFactor,
+                    remainingYieldMultiplier = remainingYieldMultiplier,
                     estimatedYieldKg = 0.0,
                     estimatedYieldTonnes = 0.0,
                     samplesRecorded = 0,
@@ -125,7 +125,7 @@ object YieldSampleGenerator {
                 val avgBunches = recorded.sumOf { it.bunchCountEntry?.bunchesPerVine ?: 0.0 } / recorded.size
                 val avgRounded = round(avgBunches * 100) / 100
                 val totalBunches = totalVines * avgRounded
-                val yieldKg = totalBunches * blockWeight * damageFactor
+                val yieldKg = totalBunches * blockWeight * remainingYieldMultiplier
                 BlockYieldEstimate(
                     paddockId = paddock.id,
                     paddockName = paddock.name,
@@ -134,7 +134,7 @@ object YieldSampleGenerator {
                     averageBunchesPerVine = avgRounded,
                     totalBunches = totalBunches,
                     averageBunchWeightKg = blockWeight,
-                    damageFactor = damageFactor,
+                    remainingYieldMultiplier = remainingYieldMultiplier,
                     estimatedYieldKg = yieldKg,
                     estimatedYieldTonnes = yieldKg / 1000.0,
                     samplesRecorded = recorded.size,

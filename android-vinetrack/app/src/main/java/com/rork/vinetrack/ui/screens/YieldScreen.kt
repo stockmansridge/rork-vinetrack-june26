@@ -137,7 +137,7 @@ import java.util.UUID
  * Mirrors the iOS source-of-truth contract via the shared block_results payload.
  */
 /** Top-level destinations within the Yields surface, mirroring the iOS hub. */
-private enum class YieldDestination { HUB, REPORTS, DETERMINATION, DAMAGE, ESTIMATION, SETTINGS, PICKING_LOG, ALLOCATION }
+private enum class YieldDestination { HUB, OVERVIEW, REPORTS, DETERMINATION, DAMAGE, ESTIMATION, SETTINGS, PICKING_LOG, ALLOCATION }
 
 @Composable
 fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
@@ -164,6 +164,7 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
         targetState = when {
             selected != null -> "detail"
             selectedVariety != null -> "variety"
+            destination == YieldDestination.OVERVIEW -> "overview"
             destination == YieldDestination.REPORTS -> "reports"
             destination == YieldDestination.DETERMINATION -> "determination"
             destination == YieldDestination.DAMAGE -> "damage"
@@ -191,6 +192,11 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
             "variety" -> selectedVariety?.let { variety ->
                 VarietyYieldDetailView(summary = variety, fmt = state.regionFormatter, onBack = { selectedVarietyKey = null })
             }
+            "overview" -> SeasonYieldOverviewScreen(
+                vm = vm,
+                state = state,
+                onBack = { destination = YieldDestination.HUB },
+            )
             "reports" -> YieldListView(
                 state = state,
                 varietySummaries = varietySummaries,
@@ -238,6 +244,7 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
                 onRecordActual = { creatingDetailed = false; creating = true },
                 onPickingLog = { destination = YieldDestination.PICKING_LOG },
                 onEstimate = { destination = YieldDestination.ESTIMATION },
+                onOverview = { destination = YieldDestination.OVERVIEW },
                 onDetermination = { destination = YieldDestination.DETERMINATION },
                 onReports = { destination = YieldDestination.REPORTS },
                 onDamage = { destination = YieldDestination.DAMAGE },
@@ -319,6 +326,7 @@ private fun YieldHubView(
     onRecordActual: () -> Unit,
     onPickingLog: () -> Unit,
     onEstimate: () -> Unit,
+    onOverview: () -> Unit,
     onDetermination: () -> Unit,
     onReports: () -> Unit,
     onDamage: () -> Unit,
@@ -374,6 +382,23 @@ private fun YieldHubView(
                 }
             }
 
+            YieldHubOptionRow(
+                icon = Icons.Filled.Assessment,
+                gradient = listOf(VineColors.LeafGreen, VineColors.Indigo),
+                title = "Yield Overview",
+                subtitle = "The vintage's canonical crop estimate by block & variety",
+                detail = state.seasonYieldOverview?.let { overview ->
+                    val total = overview.totalBaseEstimateTonnes
+                    when {
+                        total != null -> "V${overview.vintage} · ${formatTonnes(total)} t"
+                        overview.blocksMissingEstimates > 0 ->
+                            "V${overview.vintage} · ${overview.blocksMissingEstimates} block" +
+                                (if (overview.blocksMissingEstimates == 1) "" else "s") + " to set up"
+                        else -> "V${overview.vintage} · estimate incomplete"
+                    }
+                },
+                onClick = onOverview,
+            )
             YieldHubOptionRow(
                 icon = Icons.Filled.Calculate,
                 gradient = listOf(VineColors.Purple, VineColors.Pink),
@@ -1231,7 +1256,7 @@ private fun YieldListView(
                             item(key = "vintage-est-total") {
                                 Text(
                                     "Total estimated: ${formatTonnes(estimateRows.sumOf { it.displayTonnes })} t · latest completed trip per block" +
-                                        if (estimateRows.any { it.applyDamage && it.damageFactor < 1.0 }) " · damage adjusted" else "",
+                                        if (estimateRows.any { it.applyDamage && it.remainingYieldMultiplier < 1.0 }) " · damage adjusted" else "",
                                     color = vine.textSecondary, fontSize = 11.sp,
                                 )
                             }
@@ -2609,7 +2634,7 @@ private fun VintageEstimateCard(row: YieldVintageReport.EstimateRow, fmt: Region
                     if (row.areaHectares > 0) add(fmt.formatAreaCompact(row.areaHectares))
                     row.tonnesPerHectare?.let { add(fmt.formatYieldPerArea(it)) }
                     add("${row.samplesRecorded} samples")
-                    if (row.applyDamage && row.damageFactor < 1.0) add("damage adj.")
+                    if (row.applyDamage && row.remainingYieldMultiplier < 1.0) add("damage adj.")
                 }
                 Text(parts.joinToString(" · "), color = vine.textSecondary, fontSize = 11.sp, maxLines = 1)
             }

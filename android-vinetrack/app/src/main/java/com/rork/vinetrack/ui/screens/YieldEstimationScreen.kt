@@ -92,7 +92,7 @@ import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.SampleSite
 import com.rork.vinetrack.data.model.YieldEstimationSession
-import com.rork.vinetrack.data.model.damageFactor
+import com.rork.vinetrack.data.remainingYieldMultiplierForVintage
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
@@ -358,13 +358,26 @@ private fun BunchCountTripHome(
                     Text("Completed trips", color = vine.textSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
                 completedTrips.forEach { trip ->
-                    val estimates = remember(trip, state.paddocks) {
-                        YieldSampleGenerator.calculateYieldEstimates(trip, state.paddocks) {
-                            if (trip.applyDamage) state.damageRecords.damageFactor(it) else 1.0
+                    val tripVintage = YieldVintageReport.sessionVintage(
+                        trip, state.seasonStartMonth, state.seasonStartDay,
+                    )
+                    val estimates = remember(trip, state.paddocks, state.damageRecords, tripVintage) {
+                        YieldSampleGenerator.calculateYieldEstimates(trip, state.paddocks) { paddockId ->
+                            if (trip.applyDamage) {
+                                state.damageRecords.remainingYieldMultiplierForVintage(
+                                    paddockId = paddockId,
+                                    blocks = state.paddocks,
+                                    vintage = tripVintage,
+                                    seasonStartMonth = state.seasonStartMonth,
+                                    seasonStartDay = state.seasonStartDay,
+                                )
+                            } else {
+                                1.0
+                            }
                         }
                     }
                     val tonnes = estimates.sumOf { it.estimatedYieldTonnes }
-                    val vintage = YieldVintageReport.sessionVintage(trip, state.seasonStartMonth, state.seasonStartDay)
+                    val vintage = tripVintage
                     VineyardCard(modifier = Modifier.clickable { onOpenTrip(trip) }) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -804,9 +817,20 @@ private fun TripCompletionScreen(
         YieldSampleGenerator.calculateYieldEstimates(session, blocks) { 1.0 }
     }
     val fmt = state.regionFormatter
+    // Damage is scoped to the trip's own vintage and weighted by each block's
+    // mapped damaged area (sql/221 parity contract).
+    val sessionVintage = YieldVintageReport.sessionVintage(
+        session, state.seasonStartMonth, state.seasonStartDay,
+    )
     val baseTotal = baseEstimates.sumOf { it.estimatedYieldTonnes }
     val adjustedTotal = baseEstimates.sumOf {
-        it.estimatedYieldTonnes * state.damageRecords.damageFactor(it.paddockId)
+        it.estimatedYieldTonnes * state.damageRecords.remainingYieldMultiplierForVintage(
+            paddockId = it.paddockId,
+            blocks = blocks,
+            vintage = sessionVintage,
+            seasonStartMonth = state.seasonStartMonth,
+            seasonStartDay = state.seasonStartDay,
+        )
     }
     val displayTotal = if (session.applyDamage) adjustedTotal else baseTotal
 
@@ -840,8 +864,14 @@ private fun TripCompletionScreen(
             Text("Confirm average bunch weight for each block", color = vine.textSecondary, fontSize = 13.sp)
             selectedBlocks.forEach { block ->
                 val base = baseEstimates.firstOrNull { it.paddockId.equals(block.id, ignoreCase = true) } ?: return@forEach
-                val factor = state.damageRecords.damageFactor(block.id)
-                val adjusted = base.estimatedYieldTonnes * factor
+                val remaining = state.damageRecords.remainingYieldMultiplierForVintage(
+                    paddockId = block.id,
+                    blocks = blocks,
+                    vintage = sessionVintage,
+                    seasonStartMonth = state.seasonStartMonth,
+                    seasonStartDay = state.seasonStartDay,
+                )
+                val adjusted = base.estimatedYieldTonnes * remaining
                 val display = if (session.applyDamage) adjusted else base.estimatedYieldTonnes
                 VineyardCard {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -875,9 +905,9 @@ private fun TripCompletionScreen(
                                 color = VineColors.Info, fontWeight = FontWeight.SemiBold,
                             )
                         }
-                        if (session.applyDamage && factor < 1.0) {
+                        if (session.applyDamage && remaining < 1.0) {
                             Text(
-                                "Base ${formatTonnes(base.estimatedYieldTonnes)} t → damage adjusted ${formatTonnes(adjusted)} t (${((1 - factor) * 100).roundToInt()}% loss)",
+                                "Base ${formatTonnes(base.estimatedYieldTonnes)} t → damage adjusted ${formatTonnes(adjusted)} t (${((1 - remaining) * 100).roundToInt()}% loss)",
                                 color = VineColors.Orange, fontSize = 12.sp,
                             )
                         }
@@ -1014,8 +1044,14 @@ private fun CompletedTripScreen(
             }
 
             baseEstimates.filter { it.samplesRecorded > 0 }.forEach { e ->
-                val factor = state.damageRecords.damageFactor(e.paddockId)
-                val display = if (session.applyDamage) e.estimatedYieldTonnes * factor else e.estimatedYieldTonnes
+                val remaining = state.damageRecords.remainingYieldMultiplierForVintage(
+                    paddockId = e.paddockId,
+                    blocks = blocks,
+                    vintage = vintage,
+                    seasonStartMonth = state.seasonStartMonth,
+                    seasonStartDay = state.seasonStartDay,
+                )
+                val display = if (session.applyDamage) e.estimatedYieldTonnes * remaining else e.estimatedYieldTonnes
                 VineyardCard {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Row {
@@ -1026,7 +1062,7 @@ private fun CompletedTripScreen(
                             "${e.samplesRecorded}/${e.samplesTotal} samples · ${formatBunches(e.averageBunchesPerVine)} bunches/vine · ${formatGrams(e.averageBunchWeightKg)} g/bunch",
                             color = vine.textSecondary, fontSize = 12.sp,
                         )
-                        if (session.applyDamage && factor < 1.0) {
+                        if (session.applyDamage && remaining < 1.0) {
                             Text(
                                 "Base ${formatTonnes(e.estimatedYieldTonnes)} t before damage adjustment",
                                 color = vine.textSecondary, fontSize = 12.sp,

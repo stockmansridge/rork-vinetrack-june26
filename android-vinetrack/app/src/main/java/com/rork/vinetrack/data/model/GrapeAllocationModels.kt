@@ -1,5 +1,6 @@
 package com.rork.vinetrack.data.model
 
+import com.rork.vinetrack.data.SeasonYieldProjection
 import com.rork.vinetrack.data.YieldVintageReport
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -324,6 +325,177 @@ object GrapeAllocationCalculator {
         val inVintage = allocations.filter { it.vintage == vintage }
         return Summary(
             estimatedTonnes = estimates.values.sumOf { it.tonnes },
+            ownUseTonnes = inVintage.filter { !it.isExternal }.sumOf { it.quantityTonnes },
+            committedTonnes = inVintage.filter { it.isExternal }.sumOf { it.quantityTonnes },
+        )
+    }
+
+    // ---- Canonical supply (sql/221) ---------------------------------------
+
+    /**
+     * Supply for ONE variety taken from the canonical seasonal estimate.
+     *
+     * [tonnes] is nullable on purpose: when the DB withheld the canonical
+     * figure (any block still unconfigured) the answer is UNKNOWN, and the
+     * surface must render "—". Substituting 0 would silently invent a shortfall
+     * and let a grower over-commit a crop nobody has measured.
+     */
+    data class CanonicalSupply(
+        val varietyKey: String,
+        val displayName: String,
+        val tonnes: Double?,
+        /** "Known so far", for the diagnostic caption only — never allocatable. */
+        val knownTonnes: Double,
+        val isEstimateComplete: Boolean,
+    )
+
+    /**
+     * Canonical per-variety supply, honouring the Apply Damage toggle already
+     * applied per block by `SeasonYieldProjection`.
+     *
+     * Keyed by the same normalised variety name the allocation rows use, so a
+     * contract written against "Shiraz" matches the estimate for "shiraz".
+     */
+    fun canonicalSupply(projection: SeasonYieldProjection.Result): Map<String, CanonicalSupply> {
+        val result = mutableMapOf<String, CanonicalSupply>()
+        for (variety in projection.varieties) {
+            val key = canonicalVarietyName(variety.displayName)
+            val tonnes = if (projection.damageApplied) variety.adjustedTonnes else variety.baseTonnes
+            val known = if (projection.damageApplied) {
+                variety.knownAdjustedTonnes
+            } else {
+                variety.knownBaseTonnes
+            }
+            val existing = result[key]
+            result[key] = if (existing == null) {
+                CanonicalSupply(key, variety.displayName, tonnes, known, variety.isEstimateComplete)
+            } else {
+                // Two identities that normalise to one display name merge; the
+                // merged total is only knowable when BOTH halves are.
+                CanonicalSupply(
+                    varietyKey = key,
+                    displayName = existing.displayName,
+                    tonnes = if (existing.tonnes != null && tonnes != null) {
+                        existing.tonnes + tonnes
+                    } else {
+                        null
+                    },
+                    knownTonnes = existing.knownTonnes + known,
+                    isEstimateComplete = existing.isEstimateComplete && variety.isEstimateComplete,
+                )
+            }
+        }
+        return result
+    }
+
+    /**
+     * A variety line on the Grape Allocation screen, built from the canonical
+     * estimate. [estimatedTonnes] and therefore [balanceTonnes] are nullable:
+     * unknown supply means an unknown balance, not a zero one.
+     */
+    data class CanonicalVarietyRow(
+        val varietyKey: String,
+        val displayName: String,
+        val estimatedTonnes: Double?,
+        val knownEstimatedTonnes: Double,
+        val isEstimateComplete: Boolean,
+        val ownUseTonnes: Double,
+        val externalTonnes: Double,
+    ) {
+        /** null when supply is unknown — render "—". */
+        val balanceTonnes: Double?
+            get() = estimatedTonnes?.let { it - ownUseTonnes - externalTonnes }
+
+        /**
+         * Unknown supply is never reported as a shortfall: the grower would be
+         * chasing a deficit the data cannot support.
+         */
+        val isShortfall: Boolean
+            get() = balanceTonnes?.let { it < -SHORTFALL_TOLERANCE } == true
+
+        /** True when there are commitments but no usable estimate. */
+        val isSupplyUnknown: Boolean get() = estimatedTonnes == null
+    }
+
+    /**
+     * One row per variety with canonical supply OR an allocation in the
+     * vintage, sorted by estimated tonnes descending (unknown last) then name.
+     */
+    fun canonicalVarietyRows(
+        supply: Map<String, CanonicalSupply>,
+        allocations: List<GrapeAllocation>,
+        vintage: Int,
+    ): List<CanonicalVarietyRow> {
+        val names = mutableMapOf<String, String>()
+        val own = mutableMapOf<String, Double>()
+        val external = mutableMapOf<String, Double>()
+
+        supply.forEach { (key, value) -> names[key] = value.displayName }
+        allocations.filter { it.vintage == vintage }.forEach { allocation ->
+            val key = canonicalVarietyName(allocation.varietyName)
+            names.getOrPut(key) { allocation.varietyName }
+            if (allocation.isExternal) {
+                external[key] = (external[key] ?: 0.0) + allocation.quantityTonnes
+            } else {
+                own[key] = (own[key] ?: 0.0) + allocation.quantityTonnes
+            }
+        }
+
+        return names.map { (key, displayName) ->
+            val entry = supply[key]
+            CanonicalVarietyRow(
+                varietyKey = key,
+                displayName = displayName,
+                estimatedTonnes = entry?.tonnes,
+                knownEstimatedTonnes = entry?.knownTonnes ?: 0.0,
+                isEstimateComplete = entry?.isEstimateComplete ?: false,
+                ownUseTonnes = own[key] ?: 0.0,
+                externalTonnes = external[key] ?: 0.0,
+            )
+        }.sortedWith(
+            compareByDescending<CanonicalVarietyRow> { it.estimatedTonnes ?: Double.NEGATIVE_INFINITY }
+                .thenBy { it.displayName.lowercase() },
+        )
+    }
+
+    /**
+     * Vintage-level availability, built from the canonical crop total rather
+     * than a sum of per-variety supply.
+     */
+    data class CanonicalSummary(
+        /** null = the canonical estimate is incomplete. Render "—". */
+        val estimatedTonnes: Double?,
+        val knownEstimatedTonnes: Double,
+        val isEstimateComplete: Boolean,
+        val ownUseTonnes: Double,
+        val committedTonnes: Double,
+    ) {
+        val balanceTonnes: Double?
+            get() = estimatedTonnes?.let { it - ownUseTonnes - committedTonnes }
+
+        val isShortfall: Boolean
+            get() = balanceTonnes?.let { it < -SHORTFALL_TOLERANCE } == true
+
+        val isSupplyUnknown: Boolean get() = estimatedTonnes == null
+
+        /** Committed + own use, always knowable — these are user-entered. */
+        val allocatedTonnes: Double get() = ownUseTonnes + committedTonnes
+    }
+
+    fun canonicalSummary(
+        projection: SeasonYieldProjection.Result?,
+        allocations: List<GrapeAllocation>,
+        vintage: Int,
+    ): CanonicalSummary {
+        val inVintage = allocations.filter { it.vintage == vintage }
+        return CanonicalSummary(
+            estimatedTonnes = projection?.displayTotalTonnes,
+            knownEstimatedTonnes = if (projection?.damageApplied == true) {
+                projection.knownAdjustedTonnes
+            } else {
+                projection?.knownBaseTonnes ?: 0.0
+            },
+            isEstimateComplete = projection?.isEstimateComplete ?: false,
             ownUseTonnes = inVintage.filter { !it.isExternal }.sumOf { it.quantityTonnes },
             committedTonnes = inVintage.filter { it.isExternal }.sumOf { it.quantityTonnes },
         )
