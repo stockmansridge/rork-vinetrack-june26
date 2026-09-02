@@ -13,14 +13,18 @@
 --
 -- WHAT THIS MIGRATION DELIBERATELY DOES **NOT** DO
 --   * It never calculates, stores or returns a damage-ADJUSTED yield.
---     The damage engines stay exactly where they are today (iOS
---     `MigratedDataStore.damageFactor(for:)`, Android
---     `List<DamageRecord>.damageFactor(paddockId)`, and the portal's own
---     implementation). This migration only tells every client WHICH damage
---     records belong to the selected Vintage and what the BASE tonnes are;
---     each client then runs its existing engine and honours its existing
---     "Apply damage" toggle. Parity is enforced by the shared fixtures in
---     docs/season-yield-damage-parity-fixtures.md, not by a fourth formula.
+--     This migration only tells every client WHICH damage records belong to
+--     the selected Vintage and what the BASE tonnes are; each client applies
+--     the shared damage contract itself and honours its "Apply damage"
+--     toggle. The contract is AREA-WEIGHTED (the portal's existing engine):
+--     effective loss ha = polygon area × percent ÷ 100, and the block
+--     damage factor = min(1, Σ effective loss ha ÷ block area ha). The
+--     currently shipped iOS and Android percent-multiplicative engines are
+--     a pre-existing cross-platform parity DEFECT found during this work;
+--     they are revised to the fixture contract in a post-apply phase (see
+--     docs/season-yield-damage-parity-fixtures.md — the authoritative
+--     behavioural contract for portal, iOS and Android). No fourth formula
+--     is introduced here.
 --   * It does not touch Actual Yield, picking_records, or any cost report.
 --   * It does not add a second vintage resolver. Everything routes through
 --     public.resolve_vineyard_vintage_year(uuid, date) (sql/119).
@@ -44,19 +48,24 @@
 --                         (sql/095 — mirrors the app's areaHectares formula)
 --
 -- ---------------------------------------------------------------------------
--- REVIEW NOTES — please confirm these two judgement calls before applying
+-- DECISIONS CONFIRMED (user sign-off received — no longer open for review)
 -- ---------------------------------------------------------------------------
---  (1) Damage vintage basis uses `coalesce(date_observed, date)::date`
---      exactly as specified. Unlike work_tasks (sql/119 §4) this does NOT
---      convert the timestamptz to the vineyard's local time first. For a
---      record observed within a few hours of the season boundary the two
---      approaches can differ by one Vintage. Say the word and the trigger
---      switches to `(coalesce(date_observed, date) at time zone
---      vineyards.timezone)::date` for exact parity with work-task costing.
---  (2) The backfill UPDATEs fire each table's existing set_updated_at
---      trigger, so every backfilled damage record / session gets a new
---      updated_at and will be re-pulled once by each device. That is
---      intentional — it is how existing installs learn their vintage — but
+--  (1) CONFIRMED: Vintage assignment is VINEYARD-LOCAL, exactly matching
+--      work_tasks (sql/119 §4): the basis timestamp is converted with
+--      `at time zone coalesce(nullif(vineyards.timezone, ''), 'UTC')`
+--      BEFORE the calendar date is taken, so the season boundary falls at
+--      local midnight rather than the UTC-day edge. The backfill and both
+--      triggers use the identical expression.
+--  (2) CONFIRMED: damage reduction is AREA-WEIGHTED (polygon area ×
+--      intensity, capped at 100% per block) — NOT percent-multiplicative.
+--      The shipped iOS/Android engines are a pre-existing parity defect and
+--      will be revised to the fixture contract after this migration is
+--      applied. This migration still stores and returns BASE estimates
+--      only; no server damage engine is added in this phase.
+--  (3) Note (unchanged): the backfill UPDATEs fire each table's existing
+--      set_updated_at trigger, so every backfilled damage record / session
+--      gets a new updated_at and will be re-pulled once by each device.
+--      Intentional — it is how existing installs learn their vintage — but
 --      it does mean a one-off sync of those two tables after apply.
 -- =============================================================================
 
@@ -69,7 +78,7 @@ alter table public.damage_records
   add column if not exists vintage integer null;
 
 comment on column public.damage_records.vintage is
-  'Season (vintage) this damage belongs to, resolved by public.resolve_vineyard_vintage_year(vineyard_id, coalesce(date_observed, date)::date). Server-resolved when a client omits it or sends an implausible value; an explicit plausible client value is preserved. Clients MUST filter damage by this column — never by a locally recomputed season. (SQL 221)';
+  'Season (vintage) this damage belongs to, resolved by public.resolve_vineyard_vintage_year(vineyard_id, (coalesce(date_observed, date) at time zone coalesce(nullif(vineyards.timezone, ''''), ''UTC''))::date) — vineyard-local, exactly as work_tasks. Server-resolved when a client omits it or sends an implausible value; an explicit plausible client value is preserved, and an unrelated edit never moves a user-confirmed record between vintages. Clients MUST filter damage by this column — never by a locally recomputed season. (SQL 221)';
 
 create index if not exists damage_records_vineyard_vintage_idx
   on public.damage_records (vineyard_id, vintage)
@@ -82,12 +91,17 @@ security definer
 set search_path = public
 as $fn$
 declare
+  v_tz              text;
   v_basis           date;
   v_max             integer := extract(year from now())::integer + 5;
   v_basis_changed   boolean := false;
   v_vintage_changed boolean := false;
 begin
-  v_basis := coalesce(new.date_observed, new.date)::date;
+  -- Vineyard-local calendar date of the observation (UTC fallback when the
+  -- vineyard has no timezone) — identical to work_tasks (sql/119 §4).
+  select v.timezone into v_tz from public.vineyards v where v.id = new.vineyard_id;
+  v_basis := (coalesce(new.date_observed, new.date)
+              at time zone coalesce(nullif(v_tz, ''), 'UTC'))::date;
 
   if tg_op = 'UPDATE' then
     v_basis_changed :=
@@ -121,7 +135,7 @@ create trigger damage_records_resolve_vintage
   before insert or update on public.damage_records
   for each row execute function public.damage_records_resolve_vintage();
 
--- Backfill (see review note 2 about updated_at).
+-- Backfill (see confirmed note 3 about updated_at).
 do $backfill_damage$
 declare
   v_before integer;
@@ -132,9 +146,12 @@ begin
   update public.damage_records d
      set vintage = public.resolve_vineyard_vintage_year(
                      d.vineyard_id,
-                     coalesce(d.date_observed, d.date)::date
+                     (coalesce(d.date_observed, d.date)
+                        at time zone coalesce(nullif(v.timezone, ''), 'UTC'))::date
                    )
-   where d.vintage is null;
+    from public.vineyards v
+   where v.id = d.vineyard_id
+     and d.vintage is null;
 
   select count(*) into v_after from public.damage_records where vintage is null;
   raise notice 'SQL 221 · damage_records vintage backfill: % rows needed a vintage, % still null',
@@ -176,7 +193,7 @@ alter table public.yield_estimation_sessions
   add column if not exists vintage integer null;
 
 comment on column public.yield_estimation_sessions.vintage is
-  'Season (vintage) this estimation session belongs to, resolved by public.resolve_vineyard_vintage_year(vineyard_id, coalesce(session_created_at, created_at)::date). Authoritative — never read a vintage out of payload. Incomplete sessions never feed season_yield_estimates. (SQL 221)';
+  'Season (vintage) this estimation session belongs to, resolved by public.resolve_vineyard_vintage_year(vineyard_id, (coalesce(session_created_at, created_at) at time zone coalesce(nullif(vineyards.timezone, ''''), ''UTC''))::date) — vineyard-local, exactly as work_tasks. Authoritative — never read a vintage out of payload. Incomplete sessions never feed season_yield_estimates. (SQL 221)';
 
 create index if not exists yield_estimation_sessions_vineyard_vintage_idx
   on public.yield_estimation_sessions (vineyard_id, vintage)
@@ -189,12 +206,17 @@ security definer
 set search_path = public
 as $fn$
 declare
+  v_tz              text;
   v_basis           date;
   v_max             integer := extract(year from now())::integer + 5;
   v_basis_changed   boolean := false;
   v_vintage_changed boolean := false;
 begin
-  v_basis := coalesce(new.session_created_at, new.created_at, now())::date;
+  -- Vineyard-local calendar date of the session (UTC fallback) — identical
+  -- to work_tasks (sql/119 §4).
+  select v.timezone into v_tz from public.vineyards v where v.id = new.vineyard_id;
+  v_basis := (coalesce(new.session_created_at, new.created_at, now())
+              at time zone coalesce(nullif(v_tz, ''), 'UTC'))::date;
 
   if tg_op = 'UPDATE' then
     v_basis_changed :=
@@ -232,9 +254,12 @@ begin
   update public.yield_estimation_sessions s
      set vintage = public.resolve_vineyard_vintage_year(
                      s.vineyard_id,
-                     coalesce(s.session_created_at, s.created_at)::date
+                     (coalesce(s.session_created_at, s.created_at)
+                        at time zone coalesce(nullif(v.timezone, ''), 'UTC'))::date
                    )
-   where s.vintage is null;
+    from public.vineyards v
+   where v.id = s.vineyard_id
+     and s.vintage is null;
 
   select count(*) into v_after from public.yield_estimation_sessions where vintage is null;
   raise notice 'SQL 221 · yield_estimation_sessions vintage backfill: % rows needed a vintage, % still null',

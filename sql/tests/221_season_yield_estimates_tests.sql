@@ -8,10 +8,13 @@
 -- Test map
 --   T1  Objects: columns, triggers, table, unique index, RPCs, RLS policies
 --   T2  damage_records.vintage — old client omits it (server resolves),
---       new client sends it (preserved), season boundary both sides,
---       moving the observation date re-resolves, implausible value rejected
+--       new client sends it (preserved), VINEYARD-LOCAL season boundary
+--       either side of local midnight (same UTC day, different vintages),
+--       moving the observation date re-resolves, deliberate vintage
+--       restatement honoured, unrelated edits never move a confirmed
+--       vintage, implausible value rejected
 --   T3  yield_estimation_sessions.vintage — session_created_at basis,
---       created_at fallback, payload NEVER consulted
+--       vineyard-local boundary, created_at fallback, payload NEVER consulted
 --   T4  Pruning formula — exact tonnes for spur and cane blocks, and the
 --       vine-count precedence (override beats area × vines_per_ha)
 --   T5  Missing inputs — unavailable estimate + named warnings, NEVER zero
@@ -55,8 +58,12 @@ declare
   bE         uuid := gen_random_uuid();  -- area × vines_per_ha path
   d1         uuid := gen_random_uuid();
   d2         uuid := gen_random_uuid();
+  d3         uuid := gen_random_uuid();
+  d4         uuid := gen_random_uuid();
+  d5         uuid := gen_random_uuid();
   s1         uuid := gen_random_uuid();
   s2         uuid := gen_random_uuid();
+  s3         uuid := gen_random_uuid();
   n          integer;
   v_int      integer;
   v_num      double precision;
@@ -90,9 +97,11 @@ begin
   on conflict (id) do nothing;
 
   -- Season starts 1 September, so 2026-09-02 AND 2027-03-01 are both Vintage 2027.
-  insert into public.vineyards (id, name, season_start_month, season_start_day)
-  values (v1, 'T221 Vineyard', 9, 1),
-         (v2, 'T221 Other Vineyard', 9, 1);
+  -- v1 carries Australia/Sydney (AEST = UTC+10 in late August) so the
+  -- vineyard-local boundary tests have a real offset to cross.
+  insert into public.vineyards (id, name, season_start_month, season_start_day, timezone)
+  values (v1, 'T221 Vineyard', 9, 1, 'Australia/Sydney'),
+         (v2, 'T221 Other Vineyard', 9, 1, 'Australia/Sydney');
 
   insert into public.vineyard_members (vineyard_id, user_id, role) values
     (v1, u_owner, 'owner'),
@@ -203,11 +212,56 @@ begin
     raise exception 'T2: moving date_observed to 2026-08-31 gave % (expected 2026)', v_int;
   end if;
 
+  -- Vineyard-local season boundary: v1 is Australia/Sydney (AEST = UTC+10
+  -- in late August). Both instants below land on 31 August in UTC, so a raw
+  -- session-timezone ::date would classify BOTH as Vintage 2026. Converted
+  -- to vineyard-local time they straddle local midnight 31 Aug / 1 Sep and
+  -- MUST split 2026 / 2027.
+  insert into public.damage_records (id, vineyard_id, paddock_id, date, damage_type, damage_percent)
+  values (d3, v1, bA, timestamptz '2026-08-31 13:30:00+00', 'Frost', 15);
+  select vintage into v_int from public.damage_records where id = d3;
+  if v_int <> 2026 then
+    raise exception 'T2: 13:30 UTC (23:30 local 31 Aug) resolved to % (expected 2026)', v_int;
+  end if;
+
+  insert into public.damage_records (id, vineyard_id, paddock_id, date, damage_type, damage_percent)
+  values (d4, v1, bA, timestamptz '2026-08-31 14:30:00+00', 'Frost', 15);
+  select vintage into v_int from public.damage_records where id = d4;
+  if v_int <> 2027 then
+    raise exception 'T2: 14:30 UTC (00:30 local 1 Sep) resolved to % (expected 2027)', v_int;
+  end if;
+
+  -- The boundary must also work through the date_observed fallback.
+  update public.damage_records
+     set date = timestamptz '2026-08-31 13:30:00+00',
+         date_observed = timestamptz '2026-08-31 14:30:00+00'
+   where id = d3;
+  select vintage into v_int from public.damage_records where id = d3;
+  if v_int <> 2027 then
+    raise exception 'T2: date_observed local boundary gave % (expected 2027)', v_int;
+  end if;
+
   -- New client sends an explicit vintage: preserved verbatim.
   insert into public.damage_records (vineyard_id, paddock_id, date, damage_type, damage_percent, vintage)
   values (v1, bB, timestamptz '2026-09-02 04:00:00+00', 'Frost', 5, 2026)
-  returning vintage into v_int;
+  returning id, vintage into d5, v_int;
   if v_int <> 2026 then raise exception 'T2: explicit client vintage overwritten (%)', v_int; end if;
+
+  -- An UNRELATED edit must never move a user-confirmed vintage.
+  update public.damage_records set damage_percent = 25 where id = d5;
+  select vintage into v_int from public.damage_records where id = d5;
+  if v_int <> 2026 then
+    raise exception 'T2: unrelated edit moved a confirmed vintage to %', v_int;
+  end if;
+
+  -- A deliberate restatement alongside a date move is honoured as sent.
+  update public.damage_records
+     set date = timestamptz '2027-03-01 04:00:00+00', vintage = 2028
+   where id = d5;
+  select vintage into v_int from public.damage_records where id = d5;
+  if v_int <> 2028 then
+    raise exception 'T2: deliberate vintage restatement not honoured (%)', v_int;
+  end if;
 
   -- Implausible client value is repaired server-side, never stored.
   insert into public.damage_records (vineyard_id, paddock_id, date, damage_type, damage_percent, vintage)
@@ -229,6 +283,16 @@ begin
           true, timestamptz '2026-09-02 04:00:00+00');
   select vintage into v_int from public.yield_estimation_sessions where id = s1;
   if v_int <> 2027 then raise exception 'T3: session vintage % (expected 2027)', v_int; end if;
+
+  -- Vineyard-local boundary for sessions too: 14:30 UTC on 31 Aug is
+  -- 00:30 local on 1 Sep in Sydney → Vintage 2027, not 2026.
+  insert into public.yield_estimation_sessions
+    (id, vineyard_id, payload, is_completed, session_created_at)
+  values (s3, v1, '{}'::jsonb, true, timestamptz '2026-08-31 14:30:00+00');
+  select vintage into v_int from public.yield_estimation_sessions where id = s3;
+  if v_int <> 2027 then
+    raise exception 'T3: session 14:30 UTC (00:30 local 1 Sep) gave % (expected 2027)', v_int;
+  end if;
 
   -- No session_created_at → created_at fallback.
   insert into public.yield_estimation_sessions
