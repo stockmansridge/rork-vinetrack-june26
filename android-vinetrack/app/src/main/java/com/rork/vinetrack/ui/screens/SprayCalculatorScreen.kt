@@ -54,6 +54,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MenuAnchorType
@@ -192,6 +193,31 @@ private class CalcChemLine(
     var rateUnit by mutableStateOf(rateUnit)
 
     var overrideText by mutableStateOf("")
+}
+
+/**
+ * Re-point this line at [chem], discarding everything rate-shaped the previous
+ * product left behind.
+ *
+ * Amount, unit, basis, selected rate and any manual override are all cleared,
+ * then [chem]'s OWN safe default is loaded if it has one - otherwise the line
+ * is left unresolved for the operator. Carrying the old product's rate across
+ * is how a product gets sprayed at another product's rate, so the clear is
+ * unconditional rather than "only when the units differ".
+ *
+ * Shared by the two ways a line changes product - picking an existing one from
+ * the dropdown, and having a newly created one assigned back to it - so both
+ * routes are protected by the same code rather than by two copies that can
+ * drift apart.
+ */
+private fun CalcChemLine.adoptProduct(chem: SavedChemical) {
+    val replacement = newLineFor(chem)
+    chemicalId = chem.id
+    selectedRateId = replacement.selectedRateId
+    basis = replacement.basis
+    rateAmount = replacement.rateAmount
+    rateUnit = replacement.rateUnit
+    overrideText = ""
 }
 
 /**
@@ -398,6 +424,17 @@ fun SprayCalculatorScreen(
      * would append something the operator never chose.
      */
     var chemicalIdsBeforeAdd by remember { mutableStateOf<Set<String>?>(null) }
+
+    /**
+     * The [CalcChemLine.uid] whose picker launched the add flow, or null when
+     * the flow was launched from the step itself.
+     *
+     * Set means the operator was FILLING an existing line and asked to create
+     * the product for it, so the created product belongs on that line and no
+     * second line may be appended - appending would leave the line they were
+     * filling still empty beside a duplicate.
+     */
+    var pendingChemicalLineUid by remember { mutableStateOf<String?>(null) }
     var notes by remember { mutableStateOf("") }
 
     // Guided flow — Step 3 Target, Step 6 Carrier. Mirrors iOS `SprayCalculatorView`.
@@ -1633,38 +1670,6 @@ fun SprayCalculatorScreen(
                     doneAccent = VineColors.Olive,
                     onToggle = { toggleStep(SprayGuidedStep.PRODUCTS) },
                 ) {
-                // Creating comes FIRST, above the products, because "the
-                // product isn't in my list" is discovered while looking for it
-                // — not after scrolling past every line already added. Matches
-                // the iPhone Select Chemical picker, where Add New Chemical is
-                // the first thing above the Chemical Store.
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Button(
-                        onClick = {
-                            // Snapshot BEFORE the flow opens, so the row it
-                            // creates can be identified by difference.
-                            chemicalIdsBeforeAdd =
-                                state.savedChemicals.map { it.id }.toSet()
-                            showAddChemicalToList = true
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = VineColors.LeafGreen.copy(alpha = 0.12f),
-                            contentColor = VineColors.LeafGreen,
-                        ),
-                    ) {
-                        Icon(Icons.Filled.Science, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Text("  Add New Chemical to List", fontWeight = FontWeight.Medium)
-                    }
-                    if (state.savedChemicals.isEmpty()) {
-                        Text(
-                            "No chemicals configured. Tap \u201CAdd New Chemical to List\u201D to create one.",
-                            fontSize = 12.sp,
-                            color = vine.textSecondary,
-                        )
-                    }
-                }
-
                 chemLines.forEachIndexed { idx, line ->
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         CalcChemicalLineCard(
@@ -1672,6 +1677,19 @@ fun SprayCalculatorScreen(
                             savedChemicals = state.savedChemicals,
                             onChanged = { result = null },
                             onRemove = { chemLines.removeAt(idx); result = null },
+                            // Creating a product from THIS line's picker. The
+                            // line is remembered by uid, not by index: the
+                            // register flow is long enough for the list to
+                            // change underneath it, and an index would then
+                            // point at somebody else's product.
+                            onAddNewChemical = {
+                                // Snapshot BEFORE the flow opens, so the row it
+                                // creates can be identified by difference.
+                                chemicalIdsBeforeAdd =
+                                    state.savedChemicals.map { it.id }.toSet()
+                                pendingChemicalLineUid = line.uid
+                                showAddChemicalToList = true
+                            },
                         )
 
                         // The area question is asked ONLY where it is genuinely
@@ -1722,8 +1740,10 @@ fun SprayCalculatorScreen(
                     )
                 }
 
-                // Adding another LINE stays with the lines it appends to; only
-                // creating a product moved to the top of the step.
+                // "Add Chemical" appends another LINE, so it stays at the
+                // bottom with the lines it appends to. Creating a PRODUCT is a
+                // different action and now lives at the top of every line's
+                // chemical picker.
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = {
@@ -1743,6 +1763,36 @@ fun SprayCalculatorScreen(
                     ) {
                         Icon(Icons.Filled.AddCircle, contentDescription = null, modifier = Modifier.size(18.dp))
                         Text("  Add Chemical", fontWeight = FontWeight.Medium)
+                    }
+
+                    // Retained ONLY for the empty store, and only because
+                    // "Add Chemical" is disabled there: with no products and
+                    // no lines, every picker-based route to a first product is
+                    // unreachable. Once one product exists this disappears and
+                    // creating happens from the picker.
+                    if (state.savedChemicals.isEmpty()) {
+                        Button(
+                            onClick = {
+                                chemicalIdsBeforeAdd =
+                                    state.savedChemicals.map { it.id }.toSet()
+                                // Not launched from a line: this one appends.
+                                pendingChemicalLineUid = null
+                                showAddChemicalToList = true
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = VineColors.LeafGreen.copy(alpha = 0.12f),
+                                contentColor = VineColors.LeafGreen,
+                            ),
+                        ) {
+                            Icon(Icons.Filled.Science, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Text("  Add New Chemical to List", fontWeight = FontWeight.Medium)
+                        }
+                        Text(
+                            "No chemicals configured. Tap \u201CAdd New Chemical to List\u201D to create your first product.",
+                            fontSize = 12.sp,
+                            color = vine.textSecondary,
+                        )
                     }
                 }
                 }
@@ -2073,10 +2123,26 @@ fun SprayCalculatorScreen(
         // Left armed, it would wait indefinitely and then append whatever
         // chemical some unrelated action created later - a product the
         // operator never asked to put in this tank.
-        onCancelled = { chemicalIdsBeforeAdd = null },
+        onCancelled = {
+            chemicalIdsBeforeAdd = null
+            // The line that launched this is released untouched: it keeps
+            // whatever product (or none) it had before.
+            pendingChemicalLineUid = null
+        },
         onAppend = { created ->
             chemicalIdsBeforeAdd = null
-            chemLines.add(newLineFor(created))
+            val targetUid = pendingChemicalLineUid
+            pendingChemicalLineUid = null
+            if (targetUid == null) {
+                chemLines.add(newLineFor(created))
+            } else {
+                // Launched from a line's picker: the product goes ON that
+                // line. If the line was removed while the flow was open there
+                // is nothing to assign and nothing to append either - the
+                // product is still saved to the store, which is what the
+                // operator asked for.
+                chemLines.firstOrNull { it.uid == targetUid }?.adoptProduct(created)
+            }
             result = null
         },
     )
@@ -2680,6 +2746,8 @@ private fun CalcChemicalLineCard(
     savedChemicals: List<SavedChemical>,
     onChanged: () -> Unit,
     onRemove: () -> Unit,
+    /** Create a product for THIS line — opens the Chemical Store registration. */
+    onAddNewChemical: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     val uriHandler = LocalUriHandler.current
@@ -2759,6 +2827,36 @@ private fun CalcChemicalLineCard(
                 Icon(Icons.Filled.SwapVert, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(14.dp))
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                // FIRST, above every product, and separated from them: "the
+                // product I'm holding isn't in my list" is discovered while
+                // looking down this list, not after scrolling to the end of
+                // it. It is also the only route to a first product once the
+                // store is empty, so it is never conditional on having one.
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            "Add New Chemical",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = VineColors.LeafGreen,
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.AddCircle,
+                            contentDescription = null,
+                            tint = VineColors.LeafGreen,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    },
+                    onClick = {
+                        menu = false
+                        onAddNewChemical()
+                    },
+                )
+                if (savedChemicals.isNotEmpty()) {
+                    HorizontalDivider()
+                }
                 savedChemicals.forEach { saved ->
                     DropdownMenuItem(
                         text = {
@@ -2773,20 +2871,8 @@ private fun CalcChemicalLineCard(
                         onClick = {
                             if (line.chemicalId != saved.id) {
                                 // Switching product A to product B must never
-                                // leave A's rate behind. Amount, unit, basis
-                                // and any override are all cleared, then B's
-                                // own safe default is loaded if it has one -
-                                // otherwise the line is left unresolved for the
-                                // operator. Carrying A's rate onto B is how a
-                                // product gets sprayed at another product's
-                                // rate.
-                                val replacement = newLineFor(saved)
-                                line.chemicalId = saved.id
-                                line.selectedRateId = replacement.selectedRateId
-                                line.basis = replacement.basis
-                                line.rateAmount = replacement.rateAmount
-                                line.rateUnit = replacement.rateUnit
-                                line.overrideText = ""
+                                // leave A's rate behind - see adoptProduct.
+                                line.adoptProduct(saved)
                                 onChanged()
                             }
                             menu = false
