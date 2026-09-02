@@ -17,8 +17,26 @@ revised iOS and Android engines.
 > the fixtures below pin values that clearly distinguish the correct
 > area-weighted result from the old multiplicative one.
 
-Every platform must produce the numbers below **exactly**, to a tolerance of
-`1e-9`. Round only at render time, never in the calculation.
+Round only at render time, never in the calculation.
+
+### Tolerances — two different bars
+
+- **Arithmetic fixtures — `1e-9`.** When a fixture supplies the areas
+  (`mapped_area_ha`, `block_area_ha`) as exact numbers, every platform must
+  reproduce the loss fraction, the reduction and the adjusted tonnes to
+  `1e-9`. This is pure arithmetic; there is nothing to disagree about. Feed
+  the supplied areas straight into the engine in these tests — do not route
+  them through polygon maths first.
+- **Geometry fixtures — practical tolerance.** When a fixture starts from
+  polygon coordinates, the hectare figure comes from each platform's own
+  implementation of the sql/095 area algorithm. Identical coordinates and an
+  identical algorithm still differ in the last bits across Postgres numeric,
+  Swift `Double` and Kotlin `Double`. Assert those to a documented practical
+  tolerance — **`1e-6` ha on areas and `1e-6` t on tonnes** — never `1e-9`.
+
+Each platform suite should therefore assert the arithmetic with the supplied
+areas at `1e-9`, and separately assert its own polygon→hectares conversion
+against the reference geometry at `1e-6`. A failure then names its own cause.
 
 ### Terminology
 
@@ -43,7 +61,8 @@ Damage is two separable pieces, and only one of them is new:
   mirror it exactly: equirectangular shoelace, `mPerDegLat = 111320.0`,
   `mPerDegLon = 111320 × cos(centroidLat)`.
 - **Arithmetic (this contract).** How those hectares become an adjusted
-  tonnage — `effective_loss_ha`, the per-block `damage_factor`, the 100% cap,
+  tonnage — `effective_loss_ha`, the per-block `damage_loss_fraction`, the
+  `remaining_yield_multiplier`, the 100% cap,
   and the order of aggregation — is what this document pins, and it is
   applied **client-side by each app's own damage engine**. SQL 221 stores and
   serves only the *base* (undamaged) estimate; it never applies damage.
@@ -73,40 +92,61 @@ For each block (calculated **independently per block**, client-side — the
 database serves base tonnes only):
 
 ```text
-block_effective_loss_ha = Σ effective_loss_ha over the block's eligible records
+block_effective_loss_ha    = Σ effective_loss_ha over the block's eligible records
 
-damage_factor           = min(1, block_effective_loss_ha ÷ block_area_ha)
+damage_loss_fraction       = min(1, block_effective_loss_ha ÷ block_area_ha)
+remaining_yield_multiplier = 1 − damage_loss_fraction
 
-damage_reduction_t      = block_base_estimate_tonnes × damage_factor
-adjusted_estimate_t     = block_base_estimate_tonnes − damage_reduction_t
+damage_reduction_t         = block_base_estimate_tonnes × damage_loss_fraction
+adjusted_estimate_t        = block_base_estimate_tonnes × remaining_yield_multiplier
+                           = block_base_estimate_tonnes − damage_reduction_t
 ```
+
+**Naming, because the old name means the opposite.** The shipped mobile
+engines call their output `damageFactor`, and it is a *remaining-yield*
+number: `0.8` there means "80% of the crop survives". This contract's
+`damage_loss_fraction` is the *loss*: `0.02` means "2% of the crop is lost".
+The two are complements, so a value read under the wrong name inverts the
+answer. Every platform must name both quantities explicitly —
+`damage_loss_fraction` and `remaining_yield_multiplier` — and must not keep a
+variable called `damageFactor` after the correction.
 
 Then — and only then — aggregate:
 
 ```text
 variety adjusted   = Σ adjusted over the block's planting groups
                      (each group gets base × its allocation share, then the
-                      SAME block damage_factor is applied to that share)
+                      SAME block damage_loss_fraction is applied to that share)
 vineyard adjusted  = Σ adjusted over all blocks
 ```
 
 Never apply one vineyard-wide percentage to all blocks, and never blend
-block factors into a vineyard factor.
+block loss fractions into a vineyard loss fraction.
 
 Key rules:
 
 - **Cap each block at 100%.** `min(1, ·)` — a block can never lose more than
-  its whole base estimate, and adjusted tonnes can never go negative.
+  its whole base estimate, the remaining multiplier never goes below `0`, and
+  adjusted tonnes can never go negative.
 - **Polygon overlap may overstate loss.** Overlapping polygons double-count
   the same ground. This is existing behaviour and stays: surfaces must keep
   warning the user about overlaps.
-- **Missing or invalid polygon geometry** on a damage record follows the
-  existing eligibility/warning behaviour: the record is **excluded from the
-  area sums** and surfaces a warning (`damage_record_without_polygon`). It
-  must never become a whole-block percentage loss, and it must never be
-  treated as full-block loss.
+- **Polygon validity.** A damage record's polygon is eligible only when ALL
+  of the following hold:
+  - it is an array of **at least 3 points** — fewer than 3 encloses no area;
+  - every point carries both a latitude and a longitude that are **numeric
+    and finite** — no null, blank, non-numeric, NaN or infinite value;
+  - every **latitude lies within −90…90** and every **longitude within
+    −180…180**.
+
+  A polygon that fails any of these — or is missing entirely — is
+  **invalid**: the record is **excluded from the area sums** and the block
+  surfaces the `damage_record_without_polygon` warning. An invalid polygon
+  must never become a whole-block percentage loss, never a full-block loss,
+  and never a silent zero without the warning. Validate BEFORE calling the
+  area function, so a bad shape cannot contribute a nonsense hectare figure.
 - **Block area unavailable** (block has no polygon and no stored area): the
-  factor cannot be computed — show base only with a
+  loss fraction cannot be computed — show base only with a
   `block_area_unavailable` warning. Never assume 100% or 0% loss.
 - **Vintage matching.** Only records whose `damage_records.vintage` equals
   the selected Vintage are eligible (read the column added by SQL 221 —
@@ -160,13 +200,14 @@ Block A, Vintage 2027, no damage records.
 |---|---|
 | Mapped area (ha) | 0 |
 | Effective loss area (ha) | 0 |
-| Damage factor | 0 |
+| Damage loss fraction | 0 |
+| Remaining yield multiplier | 1 |
 | Base tonnes | 2.16 |
 | Reduction tonnes | 0 |
 | Adjusted tonnes | 2.16 |
 
-With no eligible records the factor is exactly `0`, so Apply Damage on and
-off must show the identical number.
+With no eligible records the loss fraction is exactly `0` (multiplier exactly
+`1`), so Apply Damage on and off must show the identical number.
 
 ### Fixture 2 — 20% intensity over 10% of the block *(defect distinguisher)*
 
@@ -177,15 +218,19 @@ Block A (2.0 ha), V2027. One record: 20% intensity, polygon covering
 |---|---|
 | Mapped area (ha) | 0.2 |
 | Effective loss area (ha) | 0.04 |
-| Damage factor | 0.02 |
+| Damage loss fraction | 0.02 |
+| Remaining yield multiplier | 0.98 |
 | Base tonnes | 2.16 |
 | Reduction tonnes | 0.0432 |
 | Adjusted tonnes | 2.1168 |
 
 **A 20% intensity record over 10% of a block must produce a 2% block yield
-reduction — not 20%.** The old multiplicative engines would return a factor
-of 0.8 and an adjusted 1.728 t (a 20% reduction). If a platform prints
-1.728 here, it is still running the defective engine.
+reduction — not 20%.** The old multiplicative engines return a *remaining*
+`damageFactor` of 0.8 and an adjusted 1.728 t (a 20% reduction). If a
+platform prints 1.728 here, it is still running the defective engine.
+
+Areas are supplied here, so this is an **arithmetic fixture**: assert to
+`1e-9`.
 
 ### Fixture 3 — Multiple non-overlapping records
 
@@ -195,7 +240,8 @@ Block A (2.0 ha), V2027. Two records: 20% over 0.2 ha, and 10% over 0.3 ha.
 |---|---|
 | Mapped area (ha) | 0.5 |
 | Effective loss area (ha) | 0.07 |
-| Damage factor | 0.035 |
+| Damage loss fraction | 0.035 |
+| Remaining yield multiplier | 0.965 |
 | Base tonnes | 2.16 |
 | Reduction tonnes | 0.0756 |
 | Adjusted tonnes | 2.0844 |
@@ -213,13 +259,15 @@ naive `1 − (0.20 + 0.10)` either. Record order must not change the sum.
 |---|---|
 | Mapped area (ha) | 4.0 |
 | Effective loss area (ha) | 2.6 |
-| Damage factor | 1.0 (capped from 1.3) |
+| Damage loss fraction | 1.0 (capped from 1.3) |
+| Remaining yield multiplier | 0.0 |
 | Base tonnes | 2.16 |
 | Reduction tonnes | 2.16 |
 | Adjusted tonnes | 0.0 |
 
-Effective loss (2.6 ha) exceeds the block area, so the factor caps at 1.0
-and the block loses its whole base estimate — never more.
+Effective loss (2.6 ha) exceeds the block area, so the loss fraction caps at
+`1.0` (multiplier `0.0`) and the block loses its whole base estimate — never
+more.
 
 **4b — total loss without the cap being engaged.** Same block, single
 record: 100% over 2.0 ha.
@@ -228,7 +276,8 @@ record: 100% over 2.0 ha.
 |---|---|
 | Mapped area (ha) | 2.0 |
 | Effective loss area (ha) | 2.0 |
-| Damage factor | 1.0 |
+| Damage loss fraction | 1.0 |
+| Remaining yield multiplier | 0.0 |
 | Base tonnes | 2.16 |
 | Reduction tonnes | 2.16 |
 | Adjusted tonnes | 0.0 |
@@ -246,7 +295,8 @@ Selected Vintage **2026** (base 1.8):
 |---|---|
 | Mapped area (ha) | 0.2 |
 | Effective loss area (ha) | 0.04 |
-| Damage factor | 0.02 |
+| Damage loss fraction | 0.02 |
+| Remaining yield multiplier | 0.98 |
 | Base tonnes | 1.8 |
 | Reduction tonnes | 0.036 |
 | Adjusted tonnes | 1.764 |
@@ -257,7 +307,8 @@ Selected Vintage **2027** (base 2.16):
 |---|---|
 | Mapped area (ha) | 0 |
 | Effective loss area (ha) | 0 |
-| Damage factor | 0 |
+| Damage loss fraction | 0 |
+| Remaining yield multiplier | 1 |
 | Base tonnes | 2.16 |
 | Reduction tonnes | 0 |
 | Adjusted tonnes | 2.16 |
@@ -278,7 +329,8 @@ Block A (2.0 ha), V2027, three records that must all be excluded:
 |---|---|
 | Mapped area (ha) | 0 |
 | Effective loss area (ha) | 0 |
-| Damage factor | 0 |
+| Damage loss fraction | 0 |
+| Remaining yield multiplier | 1 |
 | Base tonnes | 2.16 |
 | Reduction tonnes | 0 |
 | Adjusted tonnes | 2.16 |
@@ -296,21 +348,22 @@ has none.
 |---|---|---|---|
 | Mapped area (ha) | 0.2 | 0 | 0.2 |
 | Effective loss area (ha) | 0.04 | 0 | 0.04 |
-| Damage factor | 0.02 | 0 | n/a |
+| Damage loss fraction | 0.02 | 0 | n/a |
+| Remaining yield multiplier | 0.98 | 1 | n/a |
 | Base tonnes | 2.16 | 3.6 | 5.76 |
 | Reduction tonnes | 0.0432 | 0 | 0.0432 |
 | Adjusted tonnes | 2.1168 | 3.6 | 5.7168 |
 
-Each block is calculated independently; a vineyard-level damage factor is
-never computed. Totals are always the sum of per-block figures.
+Each block is calculated independently; a vineyard-level damage loss fraction
+is never computed. Totals are always the sum of per-block figures.
 
 ### Fixture 8 — Mixed-variety block, factor applied proportionally
 
-Block D (2.0 ha), V2027, one 20% record over 0.2 ha. The factor is worked
-out **once for the block** (`0.04 ÷ 2.0 = 0.02`) and then applied to each
-planting group's share of the base.
+Block D (2.0 ha), V2027, one 20% record over 0.2 ha. The loss fraction is
+worked out **once for the block** (`0.04 ÷ 2.0 = 0.02`) and then applied to
+each planting group's share of the base.
 
-| Planting group | Base tonnes | Damage factor | Reduction tonnes | Adjusted tonnes |
+| Planting group | Base tonnes | Damage loss fraction | Reduction tonnes | Adjusted tonnes |
 |---|---|---|---|---|
 | Shiraz · MV6 · 101-14 (60%) | 1.296 | 0.02 | 0.02592 | 1.27008 |
 | Cabernet Sauvignon (30%) | 0.648 | 0.02 | 0.01296 | 0.63504 |
@@ -328,6 +381,32 @@ Damage is per block, then split by variety — never matched to a variety by
 polygon overlap, and never recomputed per variety. The three adjusted values
 must sum to the block adjusted total.
 
+### Fixture 9 — Invalid polygons are excluded, never guessed
+
+Block A (2.0 ha), V2027. Four records, each 50% intensity, each with a
+polygon that fails validity in a different way:
+
+- 2 points only (`[{-33.0,149.0},{-33.0,149.002}]`)
+- a point whose longitude is the string `"east"` (non-numeric)
+- a point with latitude `-91.5` (outside −90…90)
+- a point with longitude `null`
+
+| Value | Expected |
+|---|---|
+| Eligible records | 0 |
+| Mapped area (ha) | 0 |
+| Effective loss area (ha) | 0 |
+| Damage loss fraction | 0 |
+| Remaining yield multiplier | 1 |
+| Base tonnes | 2.16 |
+| Reduction tonnes | 0 |
+| Adjusted tonnes | 2.16 |
+| Warnings | `damage_record_without_polygon` (once per excluded record) |
+
+None of the four may reach the area function, and none may be read as a 50%
+whole-block loss. The block still shows its full base estimate, with the
+warning making the exclusion visible rather than silent.
+
 ---
 
 ## 4. What each platform asserts
@@ -338,9 +417,10 @@ must sum to the block adjusted total.
   the database stores base estimates only.
 - **iOS** — a `VineTrackTests` case feeding these fixtures through the
   revised area-weighted engine (replacing
-  `MigratedDataStore.damageFactor(for:)`).
+  `MigratedDataStore.damageFactor(for:)`), asserting the supplied-area
+  arithmetic at `1e-9` and its own polygon area at `1e-6`.
 - **Android** — the equivalent over a revised engine (replacing
-  `List<DamageRecord>.damageFactor(...)`).
+  `List<DamageRecord>.damageFactor(...)`), with the same two tolerances.
 - **Portal** — Lovable's existing area-weighted engine against the same
   table, asserting the same numbers.
 

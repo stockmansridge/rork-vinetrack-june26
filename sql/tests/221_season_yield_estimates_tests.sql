@@ -38,9 +38,14 @@
 --       current vineyard vintage, rejects historical and future ones, the
 --       internal worker still builds isolated fixtures, and a vineyard whose
 --       local clock has crossed the boundary resolves locally
---   T15 (B1/B5) Least privilege — internal helpers are not client-callable
---       and the canonical table is client READ-ONLY
---   T16 All fixtures discarded by the final ROLLBACK
+--   T15 (B1/B5/B7) Least privilege — internal helpers are not client-callable,
+--       the canonical table is client READ-ONLY, and the soft delete is not
+--       reachable by any client role
+--   T16 (B6) Active-block completeness — a block ADDED after the last refresh
+--       withholds the canonical total and is named in the warnings, a refresh
+--       restores it, and a block DELETED before the next refresh stops
+--       counting immediately
+--   T17 All fixtures discarded by the final ROLLBACK
 --
 -- Expected final output:
 --   NOTICE: SQL 221 season yield estimate tests: ALL PASSED
@@ -76,6 +81,7 @@ declare
   bG         uuid := gen_random_uuid();  -- duplicate groups merging to 120%
   bH         uuid := gen_random_uuid();  -- string / invalid / negative percents
   bI         uuid := gen_random_uuid();  -- v3's single fully configured block
+  bJ         uuid := gen_random_uuid();  -- (B6) added to v3 after a refresh
   d1         uuid := gen_random_uuid();
   d2         uuid := gen_random_uuid();
   d3         uuid := gen_random_uuid();
@@ -616,12 +622,18 @@ begin
     raise exception 'T11: estimate_incomplete warning missing on a partial vineyard';
   end if;
 
-  -- Block counts must add up and identify the unconfigured block.
-  select count(distinct paddock_id) into n
-    from public.season_yield_estimates
-   where vineyard_id = v1 and vintage = 2027 and deleted_at is null;
+  -- (B6) Block counts are measured against the ACTIVE block list, and must
+  -- add up and identify the unconfigured block.
+  select count(*) into n
+    from public.paddocks
+   where vineyard_id = v1 and deleted_at is null;
   if (v_res ->> 'blocks_total')::integer <> n then
-    raise exception 'T11: blocks_total % <> % distinct blocks', v_res ->> 'blocks_total', n;
+    raise exception 'T11: blocks_total % <> % active blocks', v_res ->> 'blocks_total', n;
+  end if;
+  if (v_res ->> 'blocks_with_estimates')::integer
+     + (v_res ->> 'blocks_missing_estimates')::integer
+     <> (v_res ->> 'blocks_total')::integer then
+    raise exception 'T11: coverage counts do not reconcile (%)', v_res;
   end if;
   if (v_res ->> 'blocks_available')::integer + (v_res ->> 'blocks_unavailable')::integer
      <> (v_res ->> 'blocks_total')::integer then
@@ -677,8 +689,33 @@ begin
   -- be unreachable: the aggregate always produced one row, so the coalesce
   -- fallback never fired and callers saw a confident 0 t.
   v_res := public.get_season_yield_base_overview(v1, 2099);
-  if jsonb_array_length(v_res -> 'blocks') <> 0 then
-    raise exception 'T11: empty vintage returned blocks (%)', v_res;
+
+  -- (B6) The active block list is still reported, every block uncovered, so a
+  -- surface can name what needs configuring instead of showing an empty page.
+  select count(*) into n
+    from public.paddocks
+   where vineyard_id = v1 and deleted_at is null;
+  if jsonb_array_length(v_res -> 'blocks') <> n then
+    raise exception 'T11: empty vintage listed % blocks (expected % active)',
+      jsonb_array_length(v_res -> 'blocks'), n;
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(v_res -> 'blocks') b
+     where (b ->> 'has_estimates')::boolean
+        or b -> 'base_estimate_tonnes' <> 'null'::jsonb
+  ) then
+    raise exception 'T11: empty vintage invented an estimate for a block';
+  end if;
+  if (v_res ->> 'blocks_with_estimates')::integer <> 0
+     or (v_res ->> 'blocks_missing_estimates')::integer <> n then
+    raise exception 'T11: empty vintage coverage counts wrong (%)', v_res;
+  end if;
+  if not exists (
+    select 1 from jsonb_array_elements(v_res -> 'setup_warnings') w
+     where w ->> 'code' = 'estimate_missing_for_active_block'
+       and (w ->> 'paddock_id')::uuid = bA
+  ) then
+    raise exception 'T11: empty vintage did not name its uncovered blocks (%)', v_res;
   end if;
   if v_res -> 'total_base_estimate_tonnes' <> 'null'::jsonb then
     raise exception 'T11: empty vintage returned a canonical total of % (expected null)',
@@ -715,8 +752,9 @@ begin
     raise exception 'T11: complete known subtotal % (expected 2.16)',
       v_res ->> 'known_base_estimate_tonnes';
   end if;
-  if (v_res ->> 'blocks_unavailable')::integer <> 0 then
-    raise exception 'T11: complete vineyard reports unavailable blocks';
+  if (v_res ->> 'blocks_unavailable')::integer <> 0
+     or (v_res ->> 'blocks_missing_estimates')::integer <> 0 then
+    raise exception 'T11: complete vineyard reports uncovered blocks (%)', v_res;
   end if;
   if exists (
     select 1 from jsonb_array_elements(v_res -> 'setup_warnings') w
@@ -1012,6 +1050,73 @@ begin
     raise exception 'T15: a public RPC lost its EXECUTE grant';
   end if;
 
+  -- (B7) The soft delete is NOT a client entry point. Every canonical row is
+  -- derived and re-derived by the refresh, so a client-callable retire would
+  -- be a way to drop a block quietly out of the crop total between refreshes.
+  if has_function_privilege('authenticated',
+       'public.soft_delete_season_yield_estimate(uuid)', 'EXECUTE') then
+    raise exception 'T15: soft_delete_season_yield_estimate is EXECUTE-able by authenticated';
+  end if;
+  if has_function_privilege('anon',
+       'public.soft_delete_season_yield_estimate(uuid)', 'EXECUTE') then
+    raise exception 'T15: soft_delete_season_yield_estimate is EXECUTE-able by anon';
+  end if;
+  if has_function_privilege('public',
+       'public.soft_delete_season_yield_estimate(uuid)', 'EXECUTE') then
+    raise exception 'T15: soft_delete_season_yield_estimate is EXECUTE-able by PUBLIC';
+  end if;
+
+  -- Not even the vineyard OWNER — the role the function itself would have
+  -- authorised — can reach it, because the grant is gone.
+  select id into v_user
+    from public.season_yield_estimates
+   where vineyard_id = v1 and vintage = 2027 and deleted_at is null
+   limit 1;
+  if v_user is null then
+    raise exception 'T15: fixture error — no live estimate row to attempt a delete on';
+  end if;
+
+  foreach v_txt in array array['owner', 'stranger']
+  loop
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', case when v_txt = 'owner' then u_owner else u_stranger end,
+                        'role', 'authenticated')::text, true);
+    perform set_config('role', 'authenticated', true);
+    v_caught := false;
+    begin
+      perform public.soft_delete_season_yield_estimate(v_user);
+    exception when others then v_caught := true;
+    end;
+    perform set_config('role', 'postgres', true);
+    if not v_caught then
+      raise exception 'T15: % called soft_delete_season_yield_estimate', v_txt;
+    end if;
+  end loop;
+
+  -- The row survived every attempt.
+  if not exists (
+    select 1 from public.season_yield_estimates
+     where id = v_user and deleted_at is null
+  ) then
+    raise exception 'T15: a client soft-deleted a canonical estimate row';
+  end if;
+
+  -- The function itself still works when called by the migration owner (the
+  -- role SECURITY DEFINER functions run as), so the future validated manual /
+  -- bunch_count write path keeps its retire step. The claims are restored to
+  -- the vineyard owner first: the loop above left the stranger's claims in
+  -- place, and this call must fail for privileges, not for identity.
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', u_owner, 'role', 'authenticated')::text, true);
+  perform set_config('role', 'postgres', true);
+  perform public.soft_delete_season_yield_estimate(v_user);
+  if exists (
+    select 1 from public.season_yield_estimates
+     where id = v_user and deleted_at is null
+  ) then
+    raise exception 'T15: soft_delete_season_yield_estimate no longer retires a row';
+  end if;
+
   -- A stranger cannot reach the internal helper directly.
   perform set_config('request.jwt.claims',
     json_build_object('sub', u_stranger, 'role', 'authenticated')::text, true);
@@ -1101,9 +1206,170 @@ begin
   end if;
   raise notice 'T15 passed';
 
+  -- ---- T16. (B6) Completeness follows the ACTIVE block list ---------------
+  -- v3 is the small control vineyard: one block, every row available.
+  perform set_config('role', 'postgres', true);
+  v_res := public._refresh_pruning_yield_estimates(v3, 2027);
+
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', u_owner, 'role', 'authenticated')::text, true);
+  perform set_config('role', 'authenticated', true);
+  v_res := public.get_season_yield_base_overview(v3, 2027);
+  if not (v_res ->> 'is_estimate_complete')::boolean then
+    raise exception 'T16: control vineyard did not start complete (%)', v_res;
+  end if;
+  if (v_res ->> 'blocks_with_estimates')::integer <> 1
+     or (v_res ->> 'blocks_missing_estimates')::integer <> 0 then
+    raise exception 'T16: control coverage counts wrong (%)', v_res;
+  end if;
+  perform set_config('role', 'postgres', true);
+
+  -- A block is ADDED after that refresh. It has settings but no estimate rows
+  -- yet: the vineyard must stop publishing a usable crop total immediately,
+  -- rather than quietly reporting one block short.
+  insert into public.paddocks (id, vineyard_id, name, vine_count_override)
+  values (bJ, v3, 'T221 Block J', 1000);
+  insert into public.pruning_yield_settings
+    (vineyard_id, paddock_id, prune_method, bunches_per_bud, buds_per_spur,
+     spurs_per_vine, buds_per_cane, canes_per_vine, vines_per_ha, bunch_weight_grams)
+  values (v3, bJ, 'spur', 1.5, 2, 6, 10, 4, null, 120);
+
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', u_owner, 'role', 'authenticated')::text, true);
+  perform set_config('role', 'authenticated', true);
+  v_res := public.get_season_yield_base_overview(v3, 2027);
+
+  if (v_res ->> 'is_estimate_complete')::boolean then
+    raise exception 'T16: a vineyard missing a whole block claims completeness (%)', v_res;
+  end if;
+  if v_res -> 'total_base_estimate_tonnes' <> 'null'::jsonb then
+    raise exception 'T16: canonical total % published while a block has no estimates',
+      v_res ->> 'total_base_estimate_tonnes';
+  end if;
+  if abs((v_res ->> 'known_base_estimate_tonnes')::double precision - 2.16) > 1e-9 then
+    raise exception 'T16: known subtotal % (expected the 2.16 still known)',
+      v_res ->> 'known_base_estimate_tonnes';
+  end if;
+  if (v_res ->> 'blocks_total')::integer <> 2
+     or (v_res ->> 'blocks_with_estimates')::integer <> 1
+     or (v_res ->> 'blocks_missing_estimates')::integer <> 1 then
+    raise exception 'T16: coverage counts wrong after adding a block (%)', v_res;
+  end if;
+  if (v_res ->> 'blocks_available')::integer + (v_res ->> 'blocks_unavailable')::integer
+     <> (v_res ->> 'blocks_total')::integer then
+    raise exception 'T16: block counts do not reconcile (%)', v_res;
+  end if;
+  if not exists (
+    select 1 from jsonb_array_elements(v_res -> 'setup_warnings') w
+     where w ->> 'code' = 'estimate_missing_for_active_block'
+       and (w ->> 'paddock_id')::uuid = bJ
+  ) then
+    raise exception 'T16: estimate_missing_for_active_block warning missing for the added block (%)',
+      v_res;
+  end if;
+
+  -- The added block is still listed — named, uncovered, and with no invented 0 t.
+  if not exists (
+    select 1 from jsonb_array_elements(v_res -> 'blocks') b
+     where (b ->> 'paddock_id')::uuid = bJ
+       and b -> 'base_estimate_tonnes' = 'null'::jsonb
+       and (b ->> 'has_estimates')::boolean is false
+       and b -> 'setup_warnings' ? 'estimate_missing_for_active_block'
+  ) then
+    raise exception 'T16: the added block is missing from blocks[] or reported a total (%)',
+      v_res -> 'blocks';
+  end if;
+
+  -- Varieties withhold their canonical totals too: the uncovered block may be
+  -- planted to the same variety, which would understate it.
+  if exists (
+    select 1 from jsonb_array_elements(v_res -> 'varieties') vv
+     where vv -> 'base_estimate_tonnes' <> 'null'::jsonb
+  ) then
+    raise exception 'T16: a variety published a canonical total while a block was uncovered';
+  end if;
+  perform set_config('role', 'postgres', true);
+
+  -- Refreshing covers the new block, and the vineyard becomes usable again.
+  v_res := public._refresh_pruning_yield_estimates(v3, 2027);
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', u_owner, 'role', 'authenticated')::text, true);
+  perform set_config('role', 'authenticated', true);
+  v_res := public.get_season_yield_base_overview(v3, 2027);
+  if not (v_res ->> 'is_estimate_complete')::boolean then
+    raise exception 'T16: still incomplete after refreshing the added block (%)', v_res;
+  end if;
+  if abs((v_res ->> 'total_base_estimate_tonnes')::double precision - 4.32) > 1e-9 then
+    raise exception 'T16: canonical total % (expected 4.32 across both blocks)',
+      v_res ->> 'total_base_estimate_tonnes';
+  end if;
+  if (v_res ->> 'blocks_total')::integer <> 2
+     or (v_res ->> 'blocks_with_estimates')::integer <> 2
+     or (v_res ->> 'blocks_missing_estimates')::integer <> 0 then
+    raise exception 'T16: coverage counts wrong after the refresh (%)', v_res;
+  end if;
+  perform set_config('role', 'postgres', true);
+
+  -- The block is now DELETED, WITHOUT a refresh. Its estimate rows are still
+  -- live in the table, but they must stop counting immediately — both in the
+  -- total and in completeness.
+  update public.paddocks set deleted_at = now() where id = bJ;
+
+  select count(*) into n
+    from public.season_yield_estimates
+   where vineyard_id = v3 and vintage = 2027 and paddock_id = bJ and deleted_at is null;
+  if n = 0 then
+    raise exception 'T16: fixture error — the deleted block should still have live rows';
+  end if;
+
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', u_owner, 'role', 'authenticated')::text, true);
+  perform set_config('role', 'authenticated', true);
+  v_res := public.get_season_yield_base_overview(v3, 2027);
+  if not (v_res ->> 'is_estimate_complete')::boolean then
+    raise exception 'T16: vineyard incomplete after the extra block was deleted (%)', v_res;
+  end if;
+  if abs((v_res ->> 'total_base_estimate_tonnes')::double precision - 2.16) > 1e-9 then
+    raise exception 'T16: deleted block still counted — total % (expected 2.16)',
+      v_res ->> 'total_base_estimate_tonnes';
+  end if;
+  if (v_res ->> 'blocks_total')::integer <> 1
+     or (v_res ->> 'blocks_with_estimates')::integer <> 1
+     or (v_res ->> 'blocks_missing_estimates')::integer <> 0 then
+    raise exception 'T16: deleted block still counted in coverage (%)', v_res;
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(v_res -> 'blocks') b
+     where (b ->> 'paddock_id')::uuid = bJ
+  ) then
+    raise exception 'T16: deleted block still listed in blocks[]';
+  end if;
+
+  -- An empty vintage on the same vineyard still reports its active block list.
+  v_res := public.get_season_yield_base_overview(v3, 2098);
+  if (v_res ->> 'blocks_total')::integer <> 1
+     or (v_res ->> 'blocks_missing_estimates')::integer <> 1 then
+    raise exception 'T16: empty vintage did not report the active block list (%)', v_res;
+  end if;
+  if not exists (
+    select 1 from jsonb_array_elements(v_res -> 'setup_warnings') w
+     where w ->> 'code' = 'estimate_missing_for_active_block'
+       and (w ->> 'paddock_id')::uuid = bI
+  ) then
+    raise exception 'T16: empty vintage did not name the uncovered block (%)', v_res;
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(v_res -> 'blocks') b
+     where (b ->> 'paddock_id')::uuid = bJ
+  ) then
+    raise exception 'T16: empty vintage listed a deleted block';
+  end if;
+  perform set_config('role', 'postgres', true);
+  raise notice 'T16 passed';
+
   raise notice 'SQL 221 season yield estimate tests: ALL PASSED';
 end
 $t221$;
 
--- ---- T16. Discard everything ------------------------------------------
+-- ---- T17. Discard everything ------------------------------------------
 rollback;

@@ -616,7 +616,8 @@ using (false);
 --
 -- Only SECURITY DEFINER functions owned by the migration role may mutate
 -- this table. In this phase that is refresh_pruning_yield_estimates (write)
--- and soft_delete_season_yield_estimate (retire).
+-- and soft_delete_season_yield_estimate (retire) — and the latter is NOT
+-- reachable by clients either (see the revoke below it).
 grant select on public.season_yield_estimates to authenticated;
 revoke insert, update, delete on public.season_yield_estimates from authenticated, anon;
 
@@ -640,8 +641,21 @@ begin
    where id = p_id;
 end;
 $fn$;
-revoke all on function public.soft_delete_season_yield_estimate(uuid) from public;
-grant execute on function public.soft_delete_season_yield_estimate(uuid) to authenticated;
+-- (B7) NOT CLIENT-CALLABLE in this phase.
+--
+-- The canonical estimate is entirely derived: every row is (re)built by
+-- refresh_pruning_yield_estimates from the block's pruning settings, and stale
+-- rows are retired by that same refresh. A client-callable soft delete would
+-- therefore be a way to silently drop a block out of the crop total between
+-- refreshes — the vineyard would still look "complete" while quietly reporting
+-- fewer tonnes, which is exactly the failure the completeness work above is
+-- meant to make impossible.
+--
+-- The function is retained (owner-callable, and used by the migration and by
+-- the rollback test suite) so a future validated manual / bunch_count write
+-- path has a supported retire step, but no client role may execute it.
+revoke all on function public.soft_delete_season_yield_estimate(uuid)
+  from public, authenticated, anon;
 
 
 -- ===========================================================================
@@ -1295,8 +1309,9 @@ security definer
 set search_path = public
 as $fn$
 declare
-  v_result jsonb;
-  v_rows   integer;
+  v_result        jsonb;
+  v_rows          integer;
+  v_active_blocks integer;
 begin
   if auth.uid() is null then
     raise exception 'Authentication required' using errcode = '42501';
@@ -1312,9 +1327,23 @@ begin
   -- an aggregate over zero rows still returns exactly one row, so a trailing
   -- coalesce() on the result could never fire and an unconfigured vintage was
   -- reporting a confident 0 t instead of "unknown".
+  --
+  -- (B6) Both counts are taken against the vineyard's ACTIVE block list.
+  -- Estimates attached to a deleted block do not count as coverage, and an
+  -- active block with no rows at all leaves the vintage incomplete.
+  select count(*)
+    into v_active_blocks
+    from public.paddocks p
+   where p.vineyard_id = p_vineyard_id
+     and p.deleted_at is null;
+
   select count(*)
     into v_rows
     from public.season_yield_estimates e
+    join public.paddocks p
+      on p.id = e.paddock_id
+     and p.vineyard_id = e.vineyard_id
+     and p.deleted_at is null
    where e.vineyard_id = p_vineyard_id
      and e.vintage = p_vintage
      and e.deleted_at is null;
@@ -1326,18 +1355,46 @@ begin
       'is_estimate_complete', false,
       'known_base_estimate_tonnes', 0,
       'total_base_estimate_tonnes', null,
-      'blocks_total', 0,
+      'blocks_total', v_active_blocks,
       'blocks_available', 0,
-      'blocks_unavailable', 0,
+      'blocks_unavailable', v_active_blocks,
+      'blocks_with_estimates', 0,
+      'blocks_missing_estimates', v_active_blocks,
       'estimate_source', 'none',
       'calculated_at', null,
       'varieties', '[]'::jsonb,
-      'blocks', '[]'::jsonb,
+      'blocks', coalesce((
+        select jsonb_agg(
+                 jsonb_build_object(
+                   'paddock_id', p.id,
+                   'block_name', p.name,
+                   'area_hectares',
+                     coalesce(public._paddock_polygon_area_hectares(p.polygon_points), 0),
+                   'estimate_source', 'none',
+                   'is_estimate_available', false,
+                   'is_estimate_complete', false,
+                   'has_estimates', false,
+                   'known_base_estimate_tonnes', 0,
+                   'base_estimate_tonnes', null,
+                   'calculated_at', null,
+                   'source_inputs', null,
+                   'setup_warnings',
+                     jsonb_build_array('estimate_missing_for_active_block'),
+                   'groups', '[]'::jsonb
+                 )
+                 order by p.name
+               )
+          from public.paddocks p
+         where p.vineyard_id = p_vineyard_id
+           and p.deleted_at is null
+      ), '[]'::jsonb),
       'source_inputs', jsonb_build_object(
         'summary', jsonb_build_object(
-          'blocks_total', 0,
+          'blocks_total', v_active_blocks,
           'blocks_available', 0,
-          'blocks_unavailable', 0,
+          'blocks_unavailable', v_active_blocks,
+          'blocks_with_estimates', 0,
+          'blocks_missing_estimates', v_active_blocks,
           'rows_total', 0,
           'rows_available', 0,
           'rows_unavailable', 0,
@@ -1351,19 +1408,44 @@ begin
         jsonb_build_object('code', 'no_estimates_for_vintage',
                            'paddock_id', null, 'block_name', null)
       )
+      -- Name every active block that is missing entirely, so the surfaces can
+      -- tell the user WHICH blocks still need configuring.
+      || coalesce((
+        select jsonb_agg(
+                 jsonb_build_object('code', 'estimate_missing_for_active_block',
+                                    'paddock_id', p.id, 'block_name', p.name)
+                 order by p.name
+               )
+          from public.paddocks p
+         where p.vineyard_id = p_vineyard_id
+           and p.deleted_at is null
+      ), '[]'::jsonb)
     );
   end if;
 
-  with est_rows as (
-    select e.*,
+  with active_blocks as (
+    -- (B6) The completeness denominator: the vineyard's CURRENT block list.
+    -- Measuring completeness against the rows that happen to exist would let a
+    -- block added after the last refresh disappear from the arithmetic and a
+    -- vineyard missing a whole block report a confident, usable crop total.
+    select p.id as paddock_id,
            p.name as paddock_name,
            coalesce(public._paddock_polygon_area_hectares(p.polygon_points), 0)
              as area_hectares
-      from public.season_yield_estimates e
-      left join public.paddocks p
-        on p.id = e.paddock_id
-       and p.vineyard_id = e.vineyard_id
+      from public.paddocks p
+     where p.vineyard_id = p_vineyard_id
        and p.deleted_at is null
+  ),
+  est_rows as (
+    -- (B6) INNER join, deliberately: an estimate whose block has since been
+    -- deleted is excluded outright. The next refresh retires those rows, but
+    -- until it runs they must not inflate the crop total or stand in for a
+    -- block that no longer exists.
+    select e.*,
+           ab.paddock_name,
+           ab.area_hectares
+      from public.season_yield_estimates e
+      join active_blocks ab on ab.paddock_id = e.paddock_id
      where e.vineyard_id = p_vineyard_id
        and e.vintage = p_vintage
        and e.deleted_at is null
@@ -1424,6 +1506,31 @@ begin
       from est_rows r
      group by r.paddock_id
   ),
+  missing_blocks as (
+    -- (B6) Active blocks with no estimate row for this vintage at all.
+    select ab.paddock_id, ab.paddock_name, ab.area_hectares
+      from active_blocks ab
+     where not exists (
+       select 1 from est_rows r where r.paddock_id = ab.paddock_id
+     )
+  ),
+  all_blocks as (
+    -- Every active block is listed, configured or not, so a surface can show
+    -- the true block list rather than only the blocks that already have rows.
+    select b.paddock_id, b.paddock_name, b.area_hectares, b.estimate_source,
+           b.is_estimate_available, b.is_estimate_complete,
+           b.known_base_estimate_tonnes, b.base_estimate_tonnes,
+           b.calculated_at, b.source_inputs, b.groups,
+           true as has_estimates
+      from blocks b
+    union all
+    select m.paddock_id, m.paddock_name, m.area_hectares, 'none'::text,
+           false, false,
+           0::double precision, null::double precision,
+           null::timestamptz, null::jsonb, '[]'::jsonb,
+           false
+      from missing_blocks m
+  ),
   varieties as (
     select coalesce(nullif(r.variety_key, ''), r.planting_group_key) as variety_identity,
            (array_agg(r.variety_name order by r.base_estimate_tonnes desc nulls last))[1]
@@ -1458,24 +1565,42 @@ begin
       from est_rows r
   ),
   block_counts as (
-    select count(*) as blocks_total,
-           count(*) filter (where b.is_estimate_complete) as blocks_available,
-           count(*) filter (where not b.is_estimate_complete) as blocks_unavailable
-      from blocks b
+    -- blocks_total counts ACTIVE blocks. A missing block is unavailable, and
+    -- is reported separately so "not configured yet" is distinguishable from
+    -- "configured but missing an input".
+    select (select count(*) from active_blocks)   as blocks_total,
+           (select count(*) from blocks)          as blocks_with_estimates,
+           (select count(*) from missing_blocks)  as blocks_missing_estimates,
+           (select count(*) from blocks b where b.is_estimate_complete)
+             as blocks_available,
+           (select count(*) from active_blocks)
+             - (select count(*) from blocks b where b.is_estimate_complete)
+             as blocks_unavailable
+  ),
+  flags as (
+    -- The single completeness verdict: every row available AND every active
+    -- block covered. Both halves are required.
+    select (t.is_estimate_complete and bc.blocks_missing_estimates = 0)
+             as is_complete
+      from totals t
+      cross join block_counts bc
   )
   select jsonb_build_object(
     'vineyard_id', p_vineyard_id,
     'vintage', p_vintage,
     -- CANONICAL: the only figure Grape Allocation may use for Available /
-    -- shortfall. NULL whenever any applicable row is still unconfigured.
+    -- shortfall. NULL whenever any applicable row is still unconfigured OR any
+    -- active block has no estimate rows at all.
     'total_base_estimate_tonnes',
-      case when t.is_estimate_complete then t.known_base_estimate_tonnes end,
+      case when f.is_complete then t.known_base_estimate_tonnes end,
     -- DIAGNOSTIC: safe to display as "known so far", never to allocate from.
     'known_base_estimate_tonnes', t.known_base_estimate_tonnes,
-    'is_estimate_complete', t.is_estimate_complete,
+    'is_estimate_complete', f.is_complete,
     'blocks_total', bc.blocks_total,
     'blocks_available', bc.blocks_available,
     'blocks_unavailable', bc.blocks_unavailable,
+    'blocks_with_estimates', bc.blocks_with_estimates,
+    'blocks_missing_estimates', bc.blocks_missing_estimates,
     'estimate_source', coalesce(t.estimate_source, 'none'),
     'calculated_at', t.calculated_at,
     'varieties', coalesce((
@@ -1486,9 +1611,13 @@ begin
                  'variety_name', v.variety_name,
                  'is_unallocated', v.is_unallocated,
                  'is_estimate_available', v.is_estimate_available,
-                 'is_estimate_complete', v.is_estimate_complete,
+                 -- A variety total is only trustworthy when the whole block
+                 -- list is covered: an uncovered block may be planted to this
+                 -- same variety, which would understate it.
+                 'is_estimate_complete', (v.is_estimate_complete and f.is_complete),
                  'known_base_estimate_tonnes', v.known_base_estimate_tonnes,
-                 'base_estimate_tonnes', v.base_estimate_tonnes,
+                 'base_estimate_tonnes',
+                   case when f.is_complete then v.base_estimate_tonnes end,
                  'paddock_ids', v.paddock_ids,
                  'planting_group_keys', v.planting_group_keys
                )
@@ -1505,6 +1634,7 @@ begin
                  'estimate_source', b.estimate_source,
                  'is_estimate_available', b.is_estimate_available,
                  'is_estimate_complete', b.is_estimate_complete,
+                 'has_estimates', b.has_estimates,
                  'known_base_estimate_tonnes', b.known_base_estimate_tonnes,
                  'base_estimate_tonnes', b.base_estimate_tonnes,
                  'calculated_at', b.calculated_at,
@@ -1513,22 +1643,28 @@ begin
                    select jsonb_agg(bw.code order by bw.code)
                      from block_warnings bw
                     where bw.paddock_id = b.paddock_id
-                 ), '[]'::jsonb),
+                 ), '[]'::jsonb)
+                 || case when b.has_estimates then '[]'::jsonb
+                         else jsonb_build_array('estimate_missing_for_active_block')
+                    end,
                  'groups', b.groups
                )
                order by b.base_estimate_tonnes desc nulls last, b.paddock_name
              )
-        from blocks b
+        from all_blocks b
     ), '[]'::jsonb),
     'source_inputs', jsonb_build_object(
       'summary', jsonb_build_object(
         'blocks_total', bc.blocks_total,
         'blocks_available', bc.blocks_available,
         'blocks_unavailable', bc.blocks_unavailable,
+        'blocks_with_estimates', bc.blocks_with_estimates,
+        'blocks_missing_estimates', bc.blocks_missing_estimates,
         'rows_total', t.rows_total,
         'rows_available', t.rows_available,
         'rows_unavailable', t.rows_total - t.rows_available,
-        'is_estimate_complete', t.is_estimate_complete,
+        'is_estimate_complete', f.is_complete,
+        'all_rows_available', t.is_estimate_complete,
         'damage_applied', false,
         'note', 'Base (undamaged) figures only. Apply damage client-side using damage_records filtered to this vintage.'
       ),
@@ -1550,9 +1686,20 @@ begin
                )
           from block_warnings bw
       ), '[]'::jsonb)
+      -- (B6) One warning per active block that has no estimate rows at all,
+      -- naming the block so the user knows what to configure.
+      || coalesce((
+        select jsonb_agg(
+                 jsonb_build_object('code', 'estimate_missing_for_active_block',
+                                    'paddock_id', m.paddock_id,
+                                    'block_name', m.paddock_name)
+                 order by m.paddock_name
+               )
+          from missing_blocks m
+      ), '[]'::jsonb)
       -- Vineyard-level flag so a caller that only reads the top of the
       -- payload still learns the crop total is not usable yet.
-      || case when t.is_estimate_complete then '[]'::jsonb
+      || case when f.is_complete then '[]'::jsonb
               else jsonb_build_array(
                      jsonb_build_object('code', 'estimate_incomplete',
                                         'paddock_id', null, 'block_name', null)
@@ -1560,7 +1707,8 @@ begin
   )
   into v_result
   from totals t
-  cross join block_counts bc;
+  cross join block_counts bc
+  cross join flags f;
 
   return v_result;
 end;
