@@ -75,6 +75,7 @@ import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.FuelLogRepository
 import com.rork.vinetrack.data.FuelPurchaseRepository
 import com.rork.vinetrack.data.RegionFormatter
+import com.rork.vinetrack.data.SeasonWindow
 import com.rork.vinetrack.data.VineyardMachineRepository
 import com.rork.vinetrack.data.model.FuelPurchase
 import com.rork.vinetrack.data.model.TractorFuelLog
@@ -88,12 +89,14 @@ import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.EmptyState
+import com.rork.vinetrack.ui.components.SeasonSelector
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.text.SimpleDateFormat
 import java.time.Instant
+import java.time.ZoneId
 import java.util.Date
 import java.util.Locale
 
@@ -136,18 +139,41 @@ fun FuelLogScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modi
         state.fuelPurchases.filter { it.deletedAt == null }.sortedByDescending { it.date ?: "" }
     }
 
-    // Season scope — same shared vineyard season boundary as Work Tasks.
-    val seasonStartMs = remember(state.seasonStartMonth, state.seasonStartDay) {
-        seasonStartDate(state.seasonStartMonth, state.seasonStartDay)
+    // Season scope — the vineyard's shared season start (sql/108) turned into a
+    // date range, so totals and lists can be filtered by the event-date column
+    // each record already has. `null` follows the current season so the screen
+    // rolls over on its own.
+    var selectedVintage by rememberSaveable { mutableStateOf<Int?>(null) }
+    val currentVintage = remember(state.seasonStartMonth, state.seasonStartDay) {
+        SeasonWindow.currentVintage(state.seasonStartMonth, state.seasonStartDay)
     }
-    val seasonPurchases = remember(purchases, seasonStartMs) {
-        purchases.filter { (purchaseEpochMs(it.date) ?: 0L) >= seasonStartMs }
+    val reportVintage = selectedVintage ?: currentVintage
+    val seasonWindow = remember(reportVintage, state.seasonStartMonth, state.seasonStartDay) {
+        SeasonWindow.forVintage(reportVintage, state.seasonStartMonth, state.seasonStartDay)
+    }
+    val isCurrentSeason = reportVintage == currentVintage
+
+    // Only offer seasons that actually hold fuel data.
+    val earliestRecordVintage = remember(purchases, state.fuelLogs, state.seasonStartMonth, state.seasonStartDay) {
+        val dates = purchases.mapNotNull { purchaseEpochMs(it.date) } +
+            state.fuelLogs.mapNotNull { it.fillEpochMs }
+        dates.minOrNull()?.let {
+            SeasonWindow.containing(
+                Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate(),
+                state.seasonStartMonth,
+                state.seasonStartDay,
+            ).vintage
+        }
+    }
+
+    val seasonPurchases = remember(purchases, seasonWindow) {
+        purchases.filter { seasonWindow.containsEpochMs(purchaseEpochMs(it.date)) }
     }
     val seasonLitresPurchased = seasonPurchases.sumOf { it.volumeLitres }
     val seasonPurchaseCost = seasonPurchases.sumOf { it.totalCost }
     val seasonAvgCost = weightedFuelCostPerLitre(seasonPurchases)
-    val seasonLitresFilled = remember(state.fuelLogs, seasonStartMs) {
-        state.fuelLogs.filter { (it.fillEpochMs ?: 0L) >= seasonStartMs }.sumOf { it.litresAdded }
+    val seasonLitresFilled = remember(state.fuelLogs, seasonWindow) {
+        state.fuelLogs.filter { seasonWindow.containsEpochMs(it.fillEpochMs) }.sumOf { it.litresAdded }
     }
 
     Scaffold(
@@ -183,11 +209,22 @@ fun FuelLogScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modi
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
+                SeasonSelector(
+                    currentVintage = currentVintage,
+                    selectedVintage = reportVintage,
+                    // Picking the current season clears the override so the
+                    // screen resumes rolling over automatically.
+                    onSelect = { selectedVintage = if (it == currentVintage) null else it },
+                    earliestRecordVintage = earliestRecordVintage,
+                    window = seasonWindow,
+                )
                 FuelSummaryCard(
                     fmt = fmt,
                     purchaseCount = purchases.size,
                     fillCount = state.fuelLogs.size,
-                    seasonStartMs = seasonStartMs,
+                    seasonStartMs = seasonWindow.startEpochMs(),
+                    isCurrentSeason = isCurrentSeason,
+                    reportVintage = reportVintage,
                     seasonLitresPurchased = seasonLitresPurchased,
                     seasonPurchaseCost = seasonPurchaseCost,
                     seasonAvgCost = seasonAvgCost,
@@ -263,6 +300,8 @@ private fun FuelSummaryCard(
     purchaseCount: Int,
     fillCount: Int,
     seasonStartMs: Long,
+    isCurrentSeason: Boolean,
+    reportVintage: Int,
     seasonLitresPurchased: Double,
     seasonPurchaseCost: Double,
     seasonAvgCost: Double?,
@@ -283,7 +322,11 @@ private fun FuelSummaryCard(
                 }
                 if (canViewFinancials) {
                     Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("Purchased · This Season", fontSize = 11.sp, color = vine.textSecondary)
+                        Text(
+                            if (isCurrentSeason) "Purchased · This Season" else "Purchased · $reportVintage",
+                            fontSize = 11.sp,
+                            color = vine.textSecondary,
+                        )
                         Text(
                             fmt.formatCurrency(seasonPurchaseCost),
                             fontSize = 20.sp,

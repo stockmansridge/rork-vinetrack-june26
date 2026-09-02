@@ -26,24 +26,36 @@ struct FuelLogHubView: View {
     @State private var showAddFill: Bool = false
     @State private var editingLog: TractorFuelLog?
 
+    /// Season being reported on. `nil` follows the vineyard's current season, so
+    /// the hub keeps rolling over on its own once a new season starts.
+    @State private var selectedVintage: Int?
+
     private var fmt: RegionFormatter { store.settings.regionFormatter }
     private var canManageSetup: Bool { accessControl?.canManageSetup ?? false }
     private var canViewFinancials: Bool { accessControl?.canViewFinancials ?? false }
 
-    // MARK: - Season boundary (same rule as the Work Tasks hub)
+    // MARK: - Season scope
 
-    /// Start of the current season — the most recent occurrence of the
-    /// vineyard's configured season start (default 1 July) on or before today.
-    private var currentSeasonStart: Date {
-        let cal = Calendar.current
-        let now = Date()
-        var comps = cal.dateComponents([.year], from: now)
-        comps.month = store.settings.seasonStartMonth
-        comps.day = store.settings.seasonStartDay
-        guard let thisYear = cal.date(from: comps) else { return cal.startOfDay(for: now) }
-        if thisYear <= now { return cal.startOfDay(for: thisYear) }
-        comps.year = (comps.year ?? 0) - 1
-        return cal.startOfDay(for: cal.date(from: comps) ?? now)
+    /// Vintage in progress, from the vineyard's shared season start and its own
+    /// timezone — never the device's calendar year.
+    private var currentVintage: Int { store.settings.currentSeasonVintage }
+
+    /// Season being displayed (selection, or the current season by default).
+    private var reportVintage: Int { selectedVintage ?? currentVintage }
+
+    /// Vineyard-local date range for the displayed season. Every total, list and
+    /// export on this screen is filtered through this one window.
+    private var seasonWindow: SeasonWindow { store.settings.seasonWindow(for: reportVintage) }
+
+    private var isCurrentSeason: Bool { reportVintage == currentVintage }
+
+    /// Oldest season that actually holds a fuel record, so a new vineyard isn't
+    /// offered 15 empty seasons.
+    private var earliestRecordVintage: Int? {
+        let purchaseDates = purchases.map(\.date)
+        let fillDates = logs.map(\.fillDateTime)
+        guard let oldest = (purchaseDates + fillDates).min() else { return nil }
+        return store.settings.seasonWindow(containing: oldest).vintage
     }
 
     // MARK: - Data
@@ -52,8 +64,11 @@ struct FuelLogHubView: View {
         store.currentFuelPurchases.sorted { $0.date > $1.date }
     }
 
+    /// Purchases inside the displayed season. Half-open range — a purchase
+    /// stamped in the season's final second still counts.
     private var seasonPurchases: [FuelPurchase] {
-        purchases.filter { $0.date >= currentSeasonStart }
+        let window = seasonWindow
+        return purchases.filter { window.contains($0.date) }
     }
 
     private var logs: [TractorFuelLog] {
@@ -61,7 +76,8 @@ struct FuelLogHubView: View {
     }
 
     private var seasonLogs: [TractorFuelLog] {
-        logs.filter { $0.fillDateTime >= currentSeasonStart }
+        let window = seasonWindow
+        return logs.filter { window.contains($0.fillDateTime) }
     }
 
     /// Fills grouped by machine (machineId preferred, legacy tractor fallback)
@@ -110,6 +126,17 @@ struct FuelLogHubView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
+                SeasonFilterBar(
+                    currentVintage: currentVintage,
+                    selectedVintage: Binding(
+                        get: { reportVintage },
+                        // Selecting the current season clears the override so the
+                        // hub resumes rolling over automatically.
+                        set: { selectedVintage = $0 == currentVintage ? nil : $0 }
+                    ),
+                    earliestRecordVintage: earliestRecordVintage,
+                    window: seasonWindow
+                )
                 summaryCard
                 tabPicker
                 if tab == .purchases {
@@ -177,13 +204,13 @@ struct FuelLogHubView: View {
                 Spacer()
                 if canViewFinancials {
                     VStack(alignment: .trailing, spacing: 2) {
-                        Text("Purchased · This Season")
+                        Text(isCurrentSeason ? "Purchased · This Season" : "Purchased · \(String(reportVintage))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Text(fmt.formatCurrency(seasonPurchaseCost))
                             .font(.title2.weight(.bold).monospacedDigit())
                             .foregroundStyle(VineyardTheme.leafGreen)
-                        Text("From \(currentSeasonStart.formatted(.dateTime.day().month(.abbreviated).year()))")
+                        Text("From \(seasonWindow.start.formatted(.dateTime.day().month(.abbreviated).year()))")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }

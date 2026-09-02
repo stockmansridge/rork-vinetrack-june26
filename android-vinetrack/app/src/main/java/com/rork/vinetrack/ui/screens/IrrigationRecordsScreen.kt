@@ -95,7 +95,7 @@ import com.rork.vinetrack.data.IrrigationVintageSummary
 import com.rork.vinetrack.data.IrrigationVintageTrendRow
 import com.rork.vinetrack.data.IrrigationWaterSourceReportRow
 import com.rork.vinetrack.data.PendingIrrigationSession
-import com.rork.vinetrack.ui.components.VintageSelector
+import com.rork.vinetrack.ui.components.SeasonSelector
 import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.data.VolumeUnit
 import com.rork.vinetrack.ui.AppUiState
@@ -485,9 +485,9 @@ private fun LandingContent(
 
         if (currentVintage != null) {
             item {
-                VintageSelector(
+                SeasonSelector(
                     currentVintage = currentVintage,
-                    selected = reportVintage ?: currentVintage,
+                    selectedVintage = reportVintage ?: currentVintage,
                     onSelect = onSelectVintage,
                 )
             }
