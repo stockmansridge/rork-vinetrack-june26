@@ -74,6 +74,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -115,6 +116,7 @@ import java.text.SimpleDateFormat
 import java.time.Instant
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 /**
  * Agronomy surface — Growth Stage observations (E-L scale, backed by
@@ -135,22 +137,19 @@ fun GrowthScreen(
     onBack: (() -> Unit)? = null,
     onOpenStageImages: (() -> Unit)? = null,
 ) {
-    var tab by remember { mutableStateOf(GrowthTab.Growth) }
     var selectedId by remember { mutableStateOf<String?>(null) }
-    var selectedVarietyKey by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<GrowthStageRecord?>(null) }
 
     val selected = state.growthRecords.firstOrNull { it.id == selectedId }
-    val selectedVariety = state.grapeVarieties.firstOrNull { it.varietyKey == selectedVarietyKey }
     val canExport = state.currentRole == "owner" || state.currentRole == "manager"
 
     AnimatedContent(
-        targetState = selected to selectedVariety,
+        targetState = selected,
         transitionSpec = { fadeIn() togetherWith fadeOut() },
         label = "growth-nav",
         modifier = modifier,
-    ) { (record, variety) ->
+    ) { record ->
         when {
             record != null -> GrowthDetailView(
                 vm = vm,
@@ -159,32 +158,14 @@ fun GrowthScreen(
                 onBack = { selectedId = null },
                 onEdit = { editing = record },
             )
-            variety != null -> VarietyDetailView(
+            else -> GrowthListView(
+                vm = vm,
                 state = state,
-                variety = variety,
-                onBack = { selectedVarietyKey = null },
+                onBack = onBack,
+                onOpen = { selectedId = it.id },
+                onCreate = { creating = true },
+                canExport = canExport,
             )
-            else -> when (tab) {
-                GrowthTab.Growth -> GrowthListView(
-                    vm = vm,
-                    state = state,
-                    tab = tab,
-                    onBack = onBack,
-                    onTabChange = { tab = it },
-                    onOpen = { selectedId = it.id },
-                    onCreate = { creating = true },
-                    onOpenStageImages = onOpenStageImages,
-                    canExport = canExport,
-                )
-                GrowthTab.Varieties -> VarietiesCatalogView(
-                    vm = vm,
-                    state = state,
-                    tab = tab,
-                    onBack = onBack,
-                    onTabChange = { tab = it },
-                    onOpenVariety = { selectedVarietyKey = it.varietyKey },
-                )
-            }
         }
     }
 
@@ -250,17 +231,39 @@ private fun GrowthTabRow(tab: GrowthTab, onTabChange: (GrowthTab) -> Unit) {
 private fun GrowthListView(
     vm: AppViewModel,
     state: AppUiState,
-    tab: GrowthTab,
     onBack: (() -> Unit)?,
-    onTabChange: (GrowthTab) -> Unit,
     onOpen: (GrowthStageRecord) -> Unit,
     onCreate: () -> Unit,
-    onOpenStageImages: (() -> Unit)? = null,
     canExport: Boolean = false,
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
-    val records = state.growthRecords
+    val heatmapModel = rememberElRipenessHeatmapViewModel()
+    val heatmapUi by heatmapModel.ui.collectAsStateWithLifecycle()
+    val timeZone = remember(state.seasonZone) { TimeZone.getTimeZone(state.seasonZone) }
+    LaunchedEffect(state.selectedVineyardId, state.paddocks, state.isOnline) {
+        state.selectedVineyardId?.let { vineyardId ->
+            heatmapModel.load(
+                vineyardId = vineyardId,
+                paddocks = state.paddocks,
+                pendingRecords = emptyList(),
+                localRecords = state.growthRecords,
+                seasonStartMonth = state.seasonStartMonth,
+                seasonStartDay = state.seasonStartDay,
+                timeZone = timeZone,
+                isOnline = state.isOnline,
+            )
+        }
+    }
+    LaunchedEffect(state.growthRecords) {
+        heatmapModel.refreshLocal(state.growthRecords, emptyList(), timeZone)
+    }
+    val resolvedRecords = heatmapModel.summaryRecords()
+    val records = if (resolvedRecords.isNotEmpty() || heatmapUi.availableVintages.isNotEmpty()) {
+        resolvedRecords
+    } else {
+        state.growthRecords
+    }
     var viewMode by remember { mutableStateOf(GrowthRecordsViewMode.SUMMARY) }
     var exporting by remember { mutableStateOf(false) }
 
@@ -272,35 +275,21 @@ private fun GrowthListView(
     fun runExport() {
         if (exporting) return
         exporting = true
-        val blocks = buildBlockReports(
-            paddocks = state.paddocks,
-            filteredRecords = records,
-            selectedPaddockId = null,
-            seasonMonth = state.seasonStartMonth,
-            seasonDay = state.seasonStartDay,
-        )
-        GrowthStageReportPdfExporter.exportAndShare(
+        val entries = buildGrowthStageRecordEntries(records, state.paddocks)
+        GrowthStageReportPdfExporter.exportRecordsAndShare(
             context = context,
-            blocks = blocks,
+            records = entries,
             vineyardName = state.selectedVineyard?.name ?: "Vineyard",
-            seasonStartMonth = state.seasonStartMonth,
-            seasonStartDay = state.seasonStartDay,
             dateFormat = RegionDateFormat.from(state.regionSettings.dateFormat),
+            timeZoneId = state.seasonZone.id,
             logo = state.selectedVineyardLogo,
         )
         exporting = false
     }
-    // Show every block so dates can be set even when none exist yet; blocks with
-    // dates are surfaced first.
-    val phenologyBlocks = remember(state.paddocks) {
-        state.paddocks.sortedByDescending { it.hasPhenology }
-    }
-    var editingBlock by remember { mutableStateOf<Paddock?>(null) }
-
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Growth & Phenology") },
+                title = { Text("Growth Stage Records") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 actions = {
                     // Shown only when it performs a real export.
@@ -324,14 +313,16 @@ private fun GrowthListView(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            GrowthTabRow(tab = tab, onTabChange = onTabChange)
-
             // Summary and Heatmap are two views of the same read feed, reached
             // from here rather than from a separate report screen.
             GrowthRecordsViewSelector(viewMode) { viewMode = it }
 
             if (viewMode == GrowthRecordsViewMode.HEATMAP) {
-                ElRipenessHeatmapContent(state = state, modifier = Modifier.weight(1f))
+                ElRipenessHeatmapContent(
+                    state = state,
+                    modifier = Modifier.weight(1f),
+                    sharedModel = heatmapModel,
+                )
                 return@Column
             }
 
@@ -358,39 +349,6 @@ private fun GrowthListView(
                     }
                 }
 
-                if (onOpenStageImages != null) {
-                    item {
-                        VineyardCard {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenStageImages).padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                Icon(Icons.Filled.PhotoCamera, contentDescription = null, tint = VineColors.LeafGreen)
-                                Column(Modifier.weight(1f)) {
-                                    Text("Growth Stage Images", color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                                    Text("E-L reference photos shared with your team", color = vine.textSecondary, fontSize = 12.sp)
-                                }
-                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = vine.textSecondary)
-                            }
-                        }
-                    }
-                }
-
-                if (phenologyBlocks.isNotEmpty()) {
-                    item { SectionHeader("Block Phenology", onLight = true) }
-                    item {
-                        VineyardCard {
-                            phenologyBlocks.forEachIndexed { idx, block ->
-                                PhenologyBlockRow(block, onEdit = { editingBlock = block })
-                                if (idx < phenologyBlocks.lastIndex) {
-                                    Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(vine.cardBorder))
-                                }
-                            }
-                        }
-                    }
-                }
-
                 item {
                     SectionHeader("Observations · ${records.size}", onLight = true)
                 }
@@ -414,15 +372,6 @@ private fun GrowthListView(
             }
             }
         }
-    }
-
-    editingBlock?.let { block ->
-        PhenologyEditSheet(
-            vm = vm,
-            block = block,
-            onDismiss = { editingBlock = null },
-            onSaved = { editingBlock = null },
-        )
     }
 }
 

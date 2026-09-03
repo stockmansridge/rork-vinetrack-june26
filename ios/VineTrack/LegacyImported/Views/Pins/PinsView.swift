@@ -25,9 +25,8 @@ struct PinsView: View {
     @State private var showFilterSheet: Bool = false
     @State private var isExporting: Bool = false
     @State private var showExportOptions: Bool = false
-    /// Season/vintage restriction. `.automatic` rests on the current season
-    /// while it holds pins, so the screen rolls over on its own at the boundary.
-    @State private var seasonSelection: SeasonSelection = .automatic
+    /// Pins open unscoped. A Vintage applies only after the operator chooses it.
+    @State private var seasonSelection: SeasonSelection = .all
 
     /// Source pins: real `store.pins` plus a fallback synthesis for any
     /// `growth_stage_records` rows that don't yet have a matching local pin.
@@ -167,6 +166,9 @@ struct PinsView: View {
                 }
             }
             .navigationTitle("Pins")
+        .onChange(of: store.selectedVineyardId) { _, _ in
+            seasonSelection = .all
+        }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     if canExport {

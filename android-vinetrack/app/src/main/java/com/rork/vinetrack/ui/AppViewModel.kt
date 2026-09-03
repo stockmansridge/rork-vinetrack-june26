@@ -13386,6 +13386,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun loadVineyardData(vineyardId: String) {
         _ui.update { it.copy(isLoadingVineyardData = true) }
         val userId = session.userId
+        val cachedPaddocks = domainCache.loadPaddocks(userId, vineyardId)
+            ?.filter { it.vineyardId.equals(vineyardId, ignoreCase = true) }
+        if (_ui.value.selectedVineyardId == vineyardId && cachedPaddocks != null) {
+            val hydrated = PendingWriteOverlay.overlayPaddocks(
+                cachedPaddocks,
+                pendingWrites.list(),
+                vineyardId,
+            )
+            _ui.update {
+                it.copy(
+                    paddocks = hydrated,
+                    isUsingCachedFieldData = true,
+                    cachedFieldDataLastSyncedAt = domainCache.paddocksSyncedAt(userId, vineyardId),
+                )
+            }
+        }
         var paddockError: String? = null
         var pinError: String? = null
         var paddocksFromServer = false
@@ -13393,18 +13409,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         var paddocksFromCache = false
         var pinsFromCache = false
         val paddocks = try {
-            repo.listPaddocks(vineyardId).also { paddocksFromServer = true }
+            repo.listPaddocks(vineyardId)
+                .filter { it.vineyardId.equals(vineyardId, ignoreCase = true) }
+                .also {
+                    paddocksFromServer = true
+                    paddocksFromCache = false
+                }
         } catch (e: BackendError) {
             paddockError = e.message
-            // Prefer existing in-memory data; otherwise hydrate from the read-cache (Stage 6B).
-            _ui.value.paddocks.ifEmpty {
-                domainCache.loadPaddocks(userId, vineyardId)?.also { paddocksFromCache = true } ?: emptyList()
-            }
+            cachedPaddocks?.also { paddocksFromCache = true } ?: emptyList()
         } catch (e: Exception) {
             paddockError = "Couldn't load blocks. Check your connection."
-            _ui.value.paddocks.ifEmpty {
-                domainCache.loadPaddocks(userId, vineyardId)?.also { paddocksFromCache = true } ?: emptyList()
-            }
+            cachedPaddocks?.also { paddocksFromCache = true } ?: emptyList()
         }
         val pins = try {
             repo.listPins(vineyardId).also { pinsFromServer = true }
@@ -13797,6 +13813,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) {
             _ui.value.appNotices
         }
+        // A slow response for the previous vineyard must never replace the
+        // currently selected vineyard's cache-first state.
+        if (_ui.value.selectedVineyardId != vineyardId) return
         _ui.update {
             it.copy(
                 paddocks = overlaidPaddocks,
@@ -13853,10 +13872,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 appNotices = appNotices,
                 // Showing saved field data when either launch-critical list came
                 // from the cache; cleared once a fresh server read replaces it.
-                isUsingCachedFieldData = it.isUsingCachedFieldData ||
+                isUsingCachedFieldData = if (paddocksFromServer && pinsFromServer) {
+                    maintenanceFromCache || growthFromCache || yieldFromCache ||
+                        fuelFromCache || sprayFromCache || workTasksFromCache || tripsFromCache
+                } else {
                     paddocksFromCache || pinsFromCache ||
                     maintenanceFromCache || growthFromCache || yieldFromCache ||
-                    fuelFromCache || sprayFromCache || workTasksFromCache || tripsFromCache,
+                        maintenanceFromCache || growthFromCache || yieldFromCache ||
+                        fuelFromCache || sprayFromCache || workTasksFromCache || tripsFromCache
+                },
                 cachedFieldDataLastSyncedAt = if (
                     paddocksFromCache || pinsFromCache ||
                     maintenanceFromCache || growthFromCache || yieldFromCache ||

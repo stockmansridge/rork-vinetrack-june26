@@ -5,12 +5,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -505,6 +508,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ChemicalRow(
     chemical: SavedChemical,
@@ -572,8 +576,12 @@ private fun ChemicalRow(
                     chemical.modeOfAction.takeIf { it.isNotBlank() }?.let { add("MOA $it") }
                 }
                 if (chips.isNotEmpty()) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        chips.take(3).forEach { ChemChip(it) }
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        chips.forEach { ChemChip(it) }
                     }
                 }
                 // The OPERATIONAL rate line.
@@ -718,10 +726,14 @@ private fun ChemChip(text: String) {
         fontSize = 11.sp,
         fontWeight = FontWeight.Medium,
         color = ChemTint,
+        maxLines = 1,
+        softWrap = false,
+        lineHeight = 14.sp,
         modifier = Modifier
+            .heightIn(min = 24.dp)
             .clip(RoundedCornerShape(6.dp))
             .background(ChemTint.copy(alpha = 0.12f))
-            .padding(horizontal = 7.dp, vertical = 2.dp),
+            .padding(horizontal = 8.dp, vertical = 5.dp),
     )
 }
 

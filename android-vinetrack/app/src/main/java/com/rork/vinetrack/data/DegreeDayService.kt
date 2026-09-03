@@ -61,6 +61,8 @@ class DegreeDayService {
         fun openMeteoKey(latitude: Double, longitude: Double): String =
             String.format(Locale.US, "openmeteo:%.4f,%.4f", latitude, longitude)
 
+        fun davisKey(stationId: String): String = "davis:${stationId.trim()}"
+
         private val compactFmt: SimpleDateFormat
             get() = SimpleDateFormat("yyyyMMdd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
 
@@ -87,6 +89,13 @@ class DegreeDayService {
 
     /** True when at least one usable day is cached for a source. */
     fun hasUsableData(sourceKey: String): Boolean = !tempsBySource[sourceKey].isNullOrEmpty()
+
+    /** Installs daily data fetched through the shared vineyard Davis integration. */
+    fun installDailyTemps(sourceKey: String, temperatures: Map<String, DailyTemp>): Boolean {
+        tempsBySource[sourceKey] = temperatures.toMutableMap()
+        lastSourceKey = sourceKey
+        return temperatures.isNotEmpty()
+    }
 
     /**
      * Fetches & caches daily temps for [latitude]/[longitude] from [seasonStartMs]

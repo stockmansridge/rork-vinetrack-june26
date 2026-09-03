@@ -71,6 +71,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.DegreeDayService
+import com.rork.vinetrack.data.DavisWeatherLinkRepository
+import com.rork.vinetrack.data.OptimalRipenessCacheStore
+import com.rork.vinetrack.data.OptimalRipenessSnapshot
+import com.rork.vinetrack.data.OptimalRipenessSnapshotRow
+import com.rork.vinetrack.data.VineyardWeatherIntegrationRepository
+import com.rork.vinetrack.data.WeatherIntegrationProvider
+import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.GddResetMode
 import com.rork.vinetrack.data.PaddockRepository
 import com.rork.vinetrack.data.GddSettingsStore
@@ -128,6 +135,8 @@ private data class RipenessRow(
 private data class RipenessResult(
     val sourceConfigured: Boolean,
     val rows: List<RipenessRow>,
+    val sourceLabel: String = "Open-Meteo Archive",
+    val sourceFingerprint: String = "",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -156,6 +165,10 @@ fun OptimalRipenessScreen(
     val vine = LocalVineColors.current
     val context = LocalContext.current
     val service = remember { DegreeDayService() }
+    val session = remember { SessionStore(context) }
+    val integrationRepository = remember { VineyardWeatherIntegrationRepository(session) }
+    val davisRepository = remember { DavisWeatherLinkRepository(session) }
+    val resultCache = remember { OptimalRipenessCacheStore(context) }
     val gddSettings = remember { GddSettingsStore(context).load() }
 
     // Resolve GDD source coordinates: vineyard coords, else first mapped block centroid.
@@ -174,31 +187,78 @@ fun OptimalRipenessScreen(
         seasonStartDate(state.seasonStartMonth, state.seasonStartDay)
     }
 
-    // Fetch + compute. Recomputes when the inputs change.
+    val vineyardId = state.selectedVineyardId
+    val cachedResult = remember(vineyardId, state.paddocks) {
+        vineyardId?.let { resultCache.load(session.userId, it) }
+            ?.toRipenessResult(state.paddocks)
+    }
+
+    // Cache-first stale-while-revalidate: keep the last successful cards visible
+    // while the shared vineyard weather source refreshes in the background.
     val resultState = produceState<RipenessResult?>(
-        initialValue = null,
+        initialValue = cachedResult,
+        vineyardId,
         coords,
         state.paddocks,
         state.grapeVarieties,
         seasonStartMs,
     ) {
+        val id = vineyardId ?: return@produceState
         val c = coords
         if (c == null) {
-            value = RipenessResult(sourceConfigured = false, rows = emptyList())
+            if (value == null) value = RipenessResult(sourceConfigured = false, rows = emptyList())
             return@produceState
         }
-        value = null // loading
-        service.fetchSeasonOpenMeteo(c.first, c.second, seasonStartMs)
-        value = computeRows(
+        val davis = runCatching {
+            integrationRepository.fetch(id, WeatherIntegrationProvider.DAVIS)
+        }.getOrNull()?.takeIf {
+            it.isActive && it.hasApiKey && it.hasApiSecret && !it.stationId.isNullOrBlank()
+        }
+        val desiredFingerprint = davis?.stationId?.let { "davis:$it" }
+            ?: DegreeDayService.openMeteoKey(c.first, c.second)
+        if (cachedResult != null && cachedResult.sourceFingerprint != desiredFingerprint) {
+            resultCache.remove(id)
+            value = null
+        }
+
+        val sourceKey: String
+        val sourceLabel: String
+        val latitude: Double
+        val loaded = if (davis != null) {
+            sourceKey = DegreeDayService.davisKey(davis.stationId!!)
+            sourceLabel = "Davis WeatherLink"
+            latitude = davis.stationLatitude ?: c.first
+            val daily = runCatching {
+                davisRepository.fetchHistoricDailyTemps(
+                    vineyardId = id,
+                    stationId = davis.stationId,
+                    fromEpochMs = seasonStartMs,
+                    toEpochMs = System.currentTimeMillis(),
+                )
+            }.getOrNull().orEmpty()
+            service.installDailyTemps(sourceKey, daily)
+        } else {
+            sourceKey = DegreeDayService.openMeteoKey(c.first, c.second)
+            sourceLabel = "Open-Meteo Archive"
+            latitude = c.first
+            service.fetchSeasonOpenMeteo(c.first, c.second, seasonStartMs)
+        }
+        if (!loaded) {
+            if (value == null) value = RipenessResult(sourceConfigured = true, rows = emptyList(), sourceLabel, desiredFingerprint)
+            return@produceState
+        }
+        val fresh = computeRows(
             service = service,
-            sourceKey = DegreeDayService.openMeteoKey(c.first, c.second),
-            latitude = c.first,
+            sourceKey = sourceKey,
+            latitude = latitude,
             paddocks = state.paddocks,
             grapeVarieties = state.grapeVarieties,
             seasonStartMs = seasonStartMs,
             useBEDD = gddSettings.calculationMode.useBEDD,
             globalResetMode = gddSettings.resetMode,
-        )
+        ).copy(sourceLabel = sourceLabel, sourceFingerprint = desiredFingerprint)
+        value = fresh
+        resultCache.save(fresh.toSnapshot(session.userId.orEmpty(), id))
     }
 
     Scaffold(
@@ -246,7 +306,7 @@ fun OptimalRipenessScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    item { GddSourceCard() }
+                    item { GddSourceCard(result.sourceLabel) }
                     if (onOpenTool != null) {
                         item {
                             SetupChecklistCard(
@@ -272,7 +332,7 @@ fun OptimalRipenessScreen(
                     }
                     item {
                         Text(
-                            "Status uses each block's reset date (budburst when set, otherwise season start) and the allocated variety's optimal GDD target. Days to target is projected from the last 14 days of accumulation. Source: Open-Meteo Archive.",
+                            "Status uses each block's reset date (budburst when set, otherwise season start) and the allocated variety's optimal GDD target. Days to target is projected from the last 14 days of accumulation. Source: ${result.sourceLabel}.",
                             color = vine.textSecondary,
                             fontSize = 12.sp,
                         )
@@ -301,13 +361,13 @@ fun OptimalRipenessScreen(
 }
 
 @Composable
-private fun GddSourceCard() {
+private fun GddSourceCard(sourceLabel: String) {
     val vine = LocalVineColors.current
     VineyardCard {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Icon(Icons.Filled.WbSunny, contentDescription = null, tint = VineColors.Orange, modifier = Modifier.size(18.dp))
             Text("GDD source", color = vine.textSecondary, fontSize = 13.sp, modifier = Modifier.weight(1f))
-            Text("Open-Meteo Archive", color = vine.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text(sourceLabel, color = vine.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -567,6 +627,49 @@ private fun monthSymbol(month: Int): String {
     cal.set(Calendar.MONTH, (month - 1).coerceIn(0, 11))
     return SimpleDateFormat("MMMM", Locale.getDefault()).format(cal.time)
 }
+
+private fun OptimalRipenessSnapshot.toRipenessResult(paddocks: List<Paddock>): RipenessResult {
+    val blocks = paddocks.associateBy { it.id }
+    return RipenessResult(
+        sourceConfigured = true,
+        sourceLabel = sourceLabel,
+        sourceFingerprint = sourceFingerprint,
+        rows = rows.mapNotNull { cached ->
+            val block = blocks[cached.blockId] ?: return@mapNotNull null
+            RipenessRow(
+                block = block,
+                varietyName = cached.varietyName,
+                allocationPercent = cached.allocationPercent,
+                multiVariety = cached.multiVariety,
+                resetDateMs = cached.resetDateMs,
+                total = cached.total,
+                target = cached.target,
+                daysToTarget = cached.daysToTarget,
+            )
+        },
+    )
+}
+
+private fun RipenessResult.toSnapshot(ownerId: String, vineyardId: String): OptimalRipenessSnapshot =
+    OptimalRipenessSnapshot(
+        ownerId = ownerId,
+        vineyardId = vineyardId,
+        sourceFingerprint = sourceFingerprint,
+        sourceLabel = sourceLabel,
+        cachedAtEpochMs = System.currentTimeMillis(),
+        rows = rows.map { row ->
+            OptimalRipenessSnapshotRow(
+                blockId = row.block.id,
+                varietyName = row.varietyName,
+                allocationPercent = row.allocationPercent,
+                multiVariety = row.multiVariety,
+                resetDateMs = row.resetDateMs,
+                total = row.total,
+                target = row.target,
+                daysToTarget = row.daysToTarget,
+            )
+        },
+    )
 
 // MARK: - Computation
 

@@ -10,6 +10,88 @@ struct GrowthStageReportPDFService {
         let entries: [Int: [String: Date]]
     }
 
+    struct RecordEntry: Sendable {
+        let observedAt: Date
+        let blockName: String
+        let stage: String
+        let recorder: String
+    }
+
+    /// Simple printable E-L record report used by the operational screen.
+    static func generateRecordPDF(
+        records: [RecordEntry],
+        vineyardName: String,
+        logoData: Data?,
+        timeZone: TimeZone,
+        dateFormat: String,
+        localeIdentifier: String?
+    ) -> Data {
+        let page = CGRect(x: 0, y: 0, width: 595, height: 842)
+        let margin: CGFloat = 40
+        let contentWidth: CGFloat = page.width - margin * 2
+        let renderer = UIGraphicsPDFRenderer(bounds: page)
+        let formatter = DateFormatter()
+        formatter.dateFormat = dateFormat
+        formatter.timeZone = timeZone
+        if let localeIdentifier { formatter.locale = Locale(identifier: localeIdentifier) }
+
+        return renderer.pdfData { context in
+            var y: CGFloat = margin
+            func beginPage() {
+                context.beginPage()
+                y = margin
+                PDFHeaderHelper.drawHeader(
+                    vineyardName: vineyardName,
+                    logoData: logoData,
+                    title: "Growth Stage Records",
+                    accentColor: VineyardTheme.uiOlive,
+                    margin: margin,
+                    contentWidth: contentWidth,
+                    y: &y
+                )
+                let header = CGRect(x: margin, y: y, width: contentWidth, height: 24)
+                VineyardTheme.uiOlive.setFill()
+                UIBezierPath(rect: header).fill()
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 9, weight: .bold),
+                    .foregroundColor: UIColor.white
+                ]
+                let labels = ["DATE", "BLOCK", "E-L STAGE", "RECORDED BY"]
+                let widths: [CGFloat] = [92, 145, 92, 186]
+                var x = margin
+                for (index, label) in labels.enumerated() {
+                    (label as NSString).draw(in: CGRect(x: x + 6, y: y + 6, width: widths[index] - 12, height: 16), withAttributes: attrs)
+                    x += widths[index]
+                }
+                y += 24
+            }
+
+            beginPage()
+            let body: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 9),
+                .foregroundColor: UIColor.black
+            ]
+            let widths: [CGFloat] = [92, 145, 92, 186]
+            for (index, record) in records.sorted(by: { $0.observedAt > $1.observedAt }).enumerated() {
+                if y + 24 > page.height - margin - 24 { beginPage() }
+                if index.isMultiple(of: 2) {
+                    UIColor(white: 0.96, alpha: 1).setFill()
+                    UIBezierPath(rect: CGRect(x: margin, y: y, width: contentWidth, height: 24)).fill()
+                }
+                let values = [formatter.string(from: record.observedAt), record.blockName, record.stage, record.recorder]
+                var x = margin
+                for column in values.indices {
+                    (values[column] as NSString).draw(
+                        in: CGRect(x: x + 6, y: y + 6, width: widths[column] - 12, height: 14),
+                        withAttributes: body
+                    )
+                    x += widths[column]
+                }
+                y += 24
+            }
+        }
+    }
+
     static func generatePDF(
         blocks: [BlockReport],
         vineyardName: String,

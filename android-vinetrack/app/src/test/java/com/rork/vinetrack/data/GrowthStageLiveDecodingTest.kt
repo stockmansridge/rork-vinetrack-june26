@@ -5,6 +5,8 @@ import com.rork.vinetrack.data.ripeness.ElRipenessObservationAdapter
 import com.rork.vinetrack.data.ripeness.ElRipenessSeason
 import com.rork.vinetrack.data.ripeness.RipenessObservationRow
 import com.rork.vinetrack.ui.screens.VintageYearText
+import com.rork.vinetrack.ui.screens.buildGrowthStageRecordEntries
+import com.rork.vinetrack.data.model.GrowthStageRecord
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -64,6 +66,19 @@ class GrowthStageLiveDecodingTest {
         assertEquals(8, blocks.count { it.polygon.size >= 3 })
         assertEquals(3, diagnostics.remoteRowsDecoded)
         assertEquals(3, diagnostics.qualifyingObservations)
+    }
+
+    @Test
+    fun `Growth Stage export payload contains the three visible EL records`() {
+        val records = Json { ignoreUnknownKeys = true }
+            .decodeFromString<List<GrowthStageRecord>>(productionJson())
+        val entries = buildGrowthStageRecordEntries(records, emptyList())
+
+        assertEquals(3, entries.size)
+        assertTrue(entries.all { it.stage == "EL2" })
+        assertTrue(entries.all { it.blockName == "—" })
+        assertTrue(entries.all { it.recorder == "Operator" })
+        assertTrue(entries.all { it.observedAtEpochMs > 0L })
     }
 
     @Test

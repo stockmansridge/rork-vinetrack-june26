@@ -17,6 +17,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -111,6 +112,52 @@ class DavisWeatherLinkRepository(private val session: SessionStore) {
             put("action", "stations")
         })
         parseStations(json)
+    }
+
+    /** Fetch WeatherLink historic temperatures and aggregate daily highs/lows in Celsius. */
+    suspend fun fetchHistoricDailyTemps(
+        vineyardId: String,
+        stationId: String,
+        fromEpochMs: Long,
+        toEpochMs: Long,
+    ): Map<String, DailyTemp> = withContext(Dispatchers.IO) {
+        val formatter = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }
+        val highs = mutableMapOf<String, Double>()
+        val lows = mutableMapOf<String, Double>()
+        var start = fromEpochMs
+        while (start < toEpochMs) {
+            val end = minOf(start + 24L * 60L * 60L * 1000L, toEpochMs)
+            val json = invoke(buildJsonObject {
+                put("vineyardId", vineyardId)
+                put("action", "historic")
+                put("stationId", stationId)
+                put("startEpoch", start / 1000L)
+                put("endEpoch", end / 1000L)
+            })
+            json["sensors"]?.jsonArray?.forEach { sensorElement ->
+                val sensor = sensorElement.jsonObject
+                val sensorType = sensor["sensor_type"]?.jsonPrimitive?.intOrNull
+                if (sensorType != null && sensorType in internalSensorTypes) return@forEach
+                sensor["data"]?.jsonArray?.forEach { recordElement ->
+                    val record = recordElement.jsonObject
+                    val timestamp = record["ts"]?.jsonPrimitive?.longOrNull ?: return@forEach
+                    val highF = listOf("temp_hi", "temp_out_hi", "temp_last_hi", "temp_avg", "temp_out_avg", "temp_last")
+                        .firstNotNullOfOrNull { record[it]?.jsonPrimitive?.doubleOrNull }
+                    val lowF = listOf("temp_lo", "temp_out_lo", "temp_last_lo", "temp_avg", "temp_out_avg", "temp_last")
+                        .firstNotNullOfOrNull { record[it]?.jsonPrimitive?.doubleOrNull }
+                    if (highF == null || lowF == null || highF !in -100.0..200.0 || lowF !in -100.0..200.0) return@forEach
+                    val day = formatter.format(java.util.Date(timestamp * 1000L))
+                    val highC = (maxOf(highF, lowF) - 32.0) * 5.0 / 9.0
+                    val lowC = (minOf(highF, lowF) - 32.0) * 5.0 / 9.0
+                    highs[day] = maxOf(highs[day] ?: -Double.MAX_VALUE, highC)
+                    lows[day] = minOf(lows[day] ?: Double.MAX_VALUE, lowC)
+                }
+            }
+            start = end
+        }
+        highs.mapNotNull { (day, high) -> lows[day]?.let { day to DailyTemp(high, it) } }.toMap()
     }
 
     /**

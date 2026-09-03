@@ -28,6 +28,26 @@ final class GrowthStageLiveDecodingTests: XCTestCase {
         XCTAssertEqual(ELRipenessSeason.vintage(forDayKey: observations[0].dateISO, month: 7, day: 1), 2027)
     }
 
+    func testSimpleGrowthStageRecordPDFContainsVisibleFields() {
+        let records = (1...3).map { index in
+            GrowthStageReportPDFService.RecordEntry(
+                observedAt: Date(timeIntervalSince1970: 1_756_772_179 + Double(index)),
+                blockName: "Grüner Veltliner",
+                stage: "EL2",
+                recorder: "Operator"
+            )
+        }
+        let pdf = GrowthStageReportPDFService.generateRecordPDF(
+            records: records,
+            vineyardName: "Stockmans Ridge",
+            logoData: nil,
+            timeZone: TimeZone(secondsFromGMT: 0)!,
+            dateFormat: "dd/MM/yyyy",
+            localeIdentifier: "en_AU"
+        )
+        XCTAssertGreaterThan(pdf.count, 1_000)
+    }
+
     func testStockmansFixtureAcceptanceCountsAndSurface() throws {
         let sources = try JSONDecoder().decode([RipenessObservationRow].self, from: productionJSON()).map(\.sourceRecord)
         let observations = ELRipenessObservationAdapter.observations(from: sources, selectedVineyardId: vineyardId)

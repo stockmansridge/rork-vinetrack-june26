@@ -184,9 +184,10 @@ fun PinsScreen(
     // and blocks, chosen from the Filters sheet opened by the bar's button.
     var selectedNames by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showFilterSheet by remember { mutableStateOf(false) }
-    // Season/vintage restriction. Automatic rests on the current season while it
-    // holds pins, so the screen rolls over on its own at the season boundary.
-    var seasonSelection by remember { mutableStateOf<SeasonSelection>(SeasonSelection.Automatic) }
+    // Pins open unscoped. A Vintage applies only after the operator chooses it.
+    var seasonSelection by remember(state.selectedVineyardId) {
+        mutableStateOf<SeasonSelection>(SeasonSelection.All)
+    }
 
     // Per-pin action state (iOS list-row parity).
     var photoTarget by remember { mutableStateOf<Pin?>(null) }

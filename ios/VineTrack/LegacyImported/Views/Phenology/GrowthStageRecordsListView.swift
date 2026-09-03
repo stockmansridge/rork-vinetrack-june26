@@ -400,13 +400,10 @@ struct GrowthStageRecordsListView: View {
         guard !isExporting else { return }
         isExporting = true
 
-        let pins = store.pins.filter {
-            $0.vineyardId == store.selectedVineyardId && $0.mode == .growth
-        }
+        let records = filteredRecords
         let paddocks = store.paddocks.filter { $0.vineyardId == store.selectedVineyardId }
         let vineyardName = store.selectedVineyard?.name ?? "Vineyard"
-        let seasonMonth = store.settings.seasonStartMonth
-        let seasonDay = store.settings.seasonStartDay
+        let logoData = store.selectedVineyard?.logoData
         let exportTimeZone = timeZone
         let dateFormat = store.settings.regionSettings.dateStyle.dateFormatTemplate
         let localeIdentifier = "en_\(store.settings.regionSettings.countryCode.uppercased())"
@@ -414,11 +411,10 @@ struct GrowthStageRecordsListView: View {
         Task.detached {
             do {
                 let url = try GrowthStageReportExport.export(
-                    pins: pins,
+                    records: records,
                     paddocks: paddocks,
                     vineyardName: vineyardName,
-                    seasonStartMonth: seasonMonth,
-                    seasonStartDay: seasonDay,
+                    logoData: logoData,
                     timeZone: exportTimeZone,
                     dateFormat: dateFormat,
                     localeIdentifier: localeIdentifier

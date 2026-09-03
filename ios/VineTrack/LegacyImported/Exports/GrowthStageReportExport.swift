@@ -107,7 +107,42 @@ nonisolated enum GrowthStageReportExport {
         }
     }
 
-    /// Renders the PDF and returns a temporary file URL ready to share.
+    /// Renders the simple visible-record report and returns a shareable file.
+    static func export(
+        records: [GrowthStageRecord],
+        paddocks: [Paddock],
+        vineyardName: String,
+        logoData: Data?,
+        timeZone: TimeZone,
+        dateFormat: String,
+        localeIdentifier: String?
+    ) throws -> URL {
+        let names = Dictionary(uniqueKeysWithValues: paddocks.map { ($0.id, $0.name) })
+        let entries = records.compactMap { record -> GrowthStageReportPDFService.RecordEntry? in
+            guard !record.stageCode.isEmpty else { return nil }
+            return GrowthStageReportPDFService.RecordEntry(
+                observedAt: record.observedAt,
+                blockName: record.paddockId.flatMap { names[$0] } ?? "—",
+                stage: record.stageCode,
+                recorder: record.recordedByName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                    ? record.recordedByName!
+                    : "—"
+            )
+        }
+        guard !entries.isEmpty else { throw ExportError.noData }
+        let data = GrowthStageReportPDFService.generateRecordPDF(
+            records: entries,
+            vineyardName: vineyardName,
+            logoData: logoData,
+            timeZone: timeZone,
+            dateFormat: dateFormat,
+            localeIdentifier: localeIdentifier
+        )
+        let fileName = "GrowthStageRecords_\(Date().formatted(.iso8601.year().month().day()))"
+        return GrowthStageReportPDFService.savePDFToTemp(data: data, fileName: fileName)
+    }
+
+    /// Legacy timeline renderer retained for existing report callers.
     static func export(
         pins: [VinePin],
         paddocks: [Paddock],

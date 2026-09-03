@@ -12,10 +12,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -57,7 +59,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.LatLng
@@ -124,19 +125,10 @@ private fun rememberReduceMotion(): Boolean {
  *
  * Mirrors the Swift `ELRipenessHeatmapView`.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ElRipenessHeatmapContent(
-    state: AppUiState,
-    modifier: Modifier = Modifier,
-) {
-    val vine = LocalVineColors.current
+internal fun rememberElRipenessHeatmapViewModel(): ElRipenessHeatmapViewModel {
     val context = LocalContext.current
-    val vineyardId = state.selectedVineyardId
-    val reduceMotion = rememberReduceMotion()
-
-    val owner = LocalViewModelStoreOwner.current
-    val model: ElRipenessHeatmapViewModel = viewModel(
+    return viewModel(
         key = "el-ripeness-heatmap",
         factory = remember {
             object : ViewModelProvider.Factory {
@@ -149,6 +141,20 @@ fun ElRipenessHeatmapContent(
             }
         },
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ElRipenessHeatmapContent(
+    state: AppUiState,
+    modifier: Modifier = Modifier,
+    sharedModel: ElRipenessHeatmapViewModel? = null,
+) {
+    val vine = LocalVineColors.current
+    val vineyardId = state.selectedVineyardId
+    val reduceMotion = rememberReduceMotion()
+
+    val model = sharedModel ?: rememberElRipenessHeatmapViewModel()
     val ui by model.ui.collectAsStateWithLifecycle()
 
     // The vineyard's own timezone keeps the field-capture day intact.
@@ -230,17 +236,25 @@ fun ElRipenessHeatmapContent(
             }
 
             is ElRipenessLoadState.Ready -> {
-                VintageBar(ui, model, vine.textPrimary)
-                BlockFilterBar(ui, model)
-                HeatMap(
-                    ui = ui,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    onObservationTap = { sheetObservation = it },
-                )
-                NoticeStrip(ui.notices)
-                TimelineBar(ui, model)
-                StatusRow(ui, vine.textSecondary)
-                RipenessLegend()
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    VintageBar(ui, model, vine.textPrimary)
+                    BlockFilterBar(ui, model)
+                    HeatMap(
+                        ui = ui,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 380.dp),
+                        onObservationTap = { sheetObservation = it },
+                    )
+                    NoticeStrip(ui.notices)
+                    TimelineBar(ui, model)
+                    StatusRow(ui, vine.textSecondary)
+                    RipenessLegend()
+                }
             }
         }
     }

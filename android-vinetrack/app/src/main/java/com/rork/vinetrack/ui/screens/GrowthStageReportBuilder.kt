@@ -20,6 +20,23 @@ import java.util.TimeZone
  */
 private fun calendar(): Calendar = Calendar.getInstance(TimeZone.getDefault())
 
+/** Flat E-L rows for the release report; preserves the visible feed exactly. */
+internal fun buildGrowthStageRecordEntries(
+    records: List<GrowthStageRecord>,
+    paddocks: List<Paddock>,
+): List<GrowthStageReportPdfExporter.RecordEntry> {
+    val blockNames = paddocks.associate { it.id to it.name }
+    return records.mapNotNull { record ->
+        val observedAt = record.observedEpochMs ?: return@mapNotNull null
+        GrowthStageReportPdfExporter.RecordEntry(
+            observedAtEpochMs = observedAt,
+            blockName = record.paddockId?.let { blockNames[it] } ?: "—",
+            stage = GrowthStage.byCode(record.stageCode)?.code ?: record.stageCode.ifBlank { return@mapNotNull null },
+            recorder = record.recordedByName?.takeIf { it.isNotBlank() } ?: "—",
+        )
+    }.sortedByDescending { it.observedAtEpochMs }
+}
+
 /** Vintage year for an observation date relative to the season start (month/day). */
 internal fun vintageYear(epochMs: Long, seasonMonth: Int, seasonDay: Int): Int {
     val cal = calendar().apply { timeInMillis = epochMs }
