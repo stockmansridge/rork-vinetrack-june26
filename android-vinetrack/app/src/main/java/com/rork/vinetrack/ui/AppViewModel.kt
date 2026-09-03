@@ -5744,6 +5744,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             latitude = latitude,
             longitude = longitude,
             createdBy = session.userId,
+            // Stamp capture time here, at the moment of the drop, so an
+            // offline pin keeps the day (and therefore the vintage) it was
+            // actually recorded on instead of the day its queue drained.
+            createdAt = java.time.Instant.now().toString(),
         )
         val canonicalSegments = segments
             ?.takeIf { locationScope == ManualIssueScopes.ROW }
@@ -6005,6 +6009,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             snappedLongitude = input.snappedLongitude,
             snappedToRow = input.snappedToRow,
             rowSegments = segments?.map { PinRowSegmentValue(it.row, it.segment) },
+            // Show the offline pin under its capture date immediately, and
+            // match what the queued payload will persist on replay.
+            createdAt = input.createdAt,
+            createdBy = input.createdBy,
         )
         _ui.update { st ->
             st.copy(

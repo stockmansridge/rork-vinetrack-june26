@@ -111,6 +111,9 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.rork.vinetrack.data.PinDuplicateChecker
 import com.rork.vinetrack.data.PinExporter
+import com.rork.vinetrack.data.SeasonScope
+import com.rork.vinetrack.data.SeasonSelection
+import com.rork.vinetrack.ui.components.SeasonSelector
 import com.rork.vinetrack.data.PinPlacement
 import com.rork.vinetrack.data.RowAttachment
 import com.rork.vinetrack.data.model.CoordinatePoint
@@ -171,6 +174,9 @@ fun PinsScreen(
     var selectedNames by remember { mutableStateOf<Set<String>>(emptySet()) }
     var selectedPaddockIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showFilterSheet by remember { mutableStateOf(false) }
+    // Season/vintage restriction. Automatic rests on the current season while it
+    // holds pins, so the screen rolls over on its own at the season boundary.
+    var seasonSelection by remember { mutableStateOf<SeasonSelection>(SeasonSelection.Automatic) }
 
     // Per-pin action state (iOS list-row parity).
     var photoTarget by remember { mutableStateOf<Pin?>(null) }
@@ -217,9 +223,17 @@ fun PinsScreen(
     val sourcePins = remember(state.pins, state.growthRecords) {
         state.pins + synthesizeGrowthPins(state.pins, state.growthRecords)
     }
-    val visiblePins = remember(sourcePins, modeFilter, statusFilter, selectedNames, selectedPaddockIds) {
+    // Season scope built from EVERY non-deleted pin on this vineyard — never
+    // from the already-filtered list — so selecting one vintage can't remove
+    // the others from the selector. Pins use `created_at` as their event date
+    // (the capture instant stamped at drop time, including offline).
+    val season = remember(sourcePins, seasonSelection, state.seasonStartMonth, state.seasonStartDay, state.seasonZone) {
+        state.seasonScope(sourcePins.map { parseIsoMillis(it.createdAt) }, seasonSelection)
+    }
+    val visiblePins = remember(sourcePins, modeFilter, statusFilter, selectedNames, selectedPaddockIds, season) {
         sourcePins.filter { pin ->
-            (modeFilter == null || pin.mode == modeFilter) &&
+            season.contains(parseIsoMillis(pin.createdAt)) &&
+                (modeFilter == null || pin.mode == modeFilter) &&
                 (statusFilter == null || pin.isCompleted == statusFilter) &&
                 (selectedNames.isEmpty() || pin.displayTitle in selectedNames) &&
                 (selectedPaddockIds.isEmpty() || (pin.paddockId != null && pin.paddockId in selectedPaddockIds))
@@ -351,7 +365,9 @@ fun PinsScreen(
             PinsFilterBar(
                 modeFilter = modeFilter,
                 statusFilter = statusFilter,
-                activeFilterCount = (if (selectedNames.isEmpty()) 0 else 1) + (if (selectedPaddockIds.isEmpty()) 0 else 1),
+                activeFilterCount = (if (selectedNames.isEmpty()) 0 else 1) +
+                    (if (selectedPaddockIds.isEmpty()) 0 else 1) +
+                    (if (season.isAll) 0 else 1),
                 onModeFilter = { modeFilter = it },
                 onStatusFilter = { statusFilter = it },
                 onOpenFilters = { showFilterSheet = true },
@@ -508,6 +524,8 @@ fun PinsScreen(
             uniqueNames = uniqueNames,
             colorMap = colorMap,
             paddocks = uniquePaddocks,
+            season = season,
+            onSeason = { seasonSelection = it },
             onNames = { selectedNames = it },
             onPaddocks = { selectedPaddockIds = it },
             onDismiss = { showFilterSheet = false },
@@ -679,13 +697,16 @@ private fun PinFilterSheet(
     uniqueNames: kotlin.collections.List<String>,
     colorMap: Map<String, String>,
     paddocks: kotlin.collections.List<Paddock>,
+    /** Resolved season filter shared by the list, map, stats and exports. */
+    season: SeasonScope,
+    onSeason: (SeasonSelection) -> Unit,
     onNames: (Set<String>) -> Unit,
     onPaddocks: (Set<String>) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
-    val hasActiveFilters = selectedNames.isNotEmpty() || selectedPaddockIds.isNotEmpty()
+    val hasActiveFilters = selectedNames.isNotEmpty() || selectedPaddockIds.isNotEmpty() || !season.isAll
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = vine.cardBackground) {
         Column(
             modifier = Modifier
@@ -700,6 +721,7 @@ private fun PinFilterSheet(
                         onClick = {
                             onNames(emptySet())
                             onPaddocks(emptySet())
+                            onSeason(SeasonSelection.All)
                         },
                         modifier = Modifier.align(Alignment.CenterStart),
                     ) { Text("Reset") }
@@ -715,6 +737,8 @@ private fun PinFilterSheet(
                     Text("Done", fontWeight = FontWeight.SemiBold)
                 }
             }
+
+            SeasonSelector(scope = season, onSelect = onSeason)
 
             Text("ISSUE / GROWTH", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = vine.textSecondary)
             Row(

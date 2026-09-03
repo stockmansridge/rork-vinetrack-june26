@@ -109,8 +109,16 @@ nonisolated struct BackendPin: Codable, Sendable, Identifiable {
 }
 
 /// Encodable payload used when upserting a pin from the client. Fields that
-/// the server fills in (created_at, updated_at, deleted_at, sync_version,
-/// updated_by) are intentionally omitted so the client cannot spoof them.
+/// the server fills in (updated_at, deleted_at, sync_version, updated_by) are
+/// intentionally omitted so the client cannot spoof them.
+///
+/// `created_at` is the deliberate exception: it is the pin's CAPTURE time, not
+/// its upload time. A pin dropped in an unconnected block may not reach the
+/// server for hours, and letting the column default to the insert moment would
+/// file it under the wrong day — and, across a vintage boundary, the wrong
+/// season. The client therefore sends `VinePin.timestamp` (stamped when the
+/// user dropped the pin) and re-sends the same value on every later upsert, so
+/// a sync retry or an edit can never move it forward.
 nonisolated struct BackendPinUpsert: Encodable, Sendable {
     let id: UUID
     let vineyardId: UUID
@@ -138,6 +146,8 @@ nonisolated struct BackendPinUpsert: Encodable, Sendable {
     let completedAt: Date?
     let photoPath: String?
     let createdBy: UUID?
+    /// Capture time — when the user dropped the pin, never when it synced.
+    let createdAt: Date
     let clientUpdatedAt: Date
     // Attachment geometry (added in 041).
     let drivingRowNumber: Double?
@@ -172,6 +182,7 @@ nonisolated struct BackendPinUpsert: Encodable, Sendable {
         case completedAt = "completed_at"
         case photoPath = "photo_path"
         case createdBy = "created_by"
+        case createdAt = "created_at"
         case clientUpdatedAt = "client_updated_at"
         case drivingRowNumber = "driving_row_number"
         case pinRowNumber = "pin_row_number"
@@ -221,6 +232,9 @@ extension BackendPin {
             completedAt: pin.completedAt,
             photoPath: pin.photoPath,
             createdBy: pin.createdByUserId,
+            // Capture time, so an offline pin keeps the day (and vintage) it
+            // was dropped on rather than the day it managed to upload.
+            createdAt: pin.timestamp,
             clientUpdatedAt: clientUpdatedAt,
             drivingRowNumber: pin.drivingRowNumber,
             pinRowNumber: pin.pinRowNumber.map(Double.init),

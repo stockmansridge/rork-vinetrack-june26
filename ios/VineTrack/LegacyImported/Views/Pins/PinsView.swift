@@ -25,6 +25,9 @@ struct PinsView: View {
     @State private var showFilterSheet: Bool = false
     @State private var isExporting: Bool = false
     @State private var showExportOptions: Bool = false
+    /// Season/vintage restriction. `.automatic` rests on the current season
+    /// while it holds pins, so the screen rolls over on its own at the boundary.
+    @State private var seasonSelection: SeasonSelection = .automatic
 
     /// Source pins: real `store.pins` plus a fallback synthesis for any
     /// `growth_stage_records` rows that don't yet have a matching local pin.
@@ -74,8 +77,21 @@ struct PinsView: View {
         return store.pins + synthesized
     }
 
+    /// Season scope built from EVERY non-deleted pin on this vineyard — never
+    /// from the already-filtered list — so selecting one vintage cannot remove
+    /// the others from the selector. Pins use their capture instant
+    /// (`VinePin.timestamp`, persisted as `pins.created_at`) as the event date.
+    private var season: SeasonScope {
+        store.settings.seasonScope(
+            eventDates: sourcePins.map { $0.timestamp },
+            selection: seasonSelection
+        )
+    }
+
     private var filteredPins: [VinePin] {
-        sourcePins.filter { pin in
+        let season = season
+        return sourcePins.filter { pin in
+            if !season.contains(pin.timestamp) { return false }
             switch completionFilter {
             case .done:
                 if !pin.isCompleted { return false }
@@ -95,7 +111,9 @@ struct PinsView: View {
     }
 
     private var activeFilterCount: Int {
-        (selectedNames.isEmpty ? 0 : 1) + (selectedPaddockIds.isEmpty ? 0 : 1)
+        (selectedNames.isEmpty ? 0 : 1)
+            + (selectedPaddockIds.isEmpty ? 0 : 1)
+            + (season.isAll ? 0 : 1)
     }
 
     private var nameColorMap: [String: String] {
@@ -193,12 +211,15 @@ struct PinsView: View {
                 PinFilterSheet(
                     selectedNames: $selectedNames,
                     selectedPaddockIds: $selectedPaddockIds,
+                    seasonSelection: $seasonSelection,
+                    season: season,
                     uniqueNames: uniqueNames,
                     nameColorMap: nameColorMap,
                     uniquePaddocks: uniquePaddocks
                 )
-                .presentationDetents([.medium])
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+                .presentationContentInteraction(.scrolls)
             }
         }
     }
@@ -1746,6 +1767,10 @@ struct PinDetailSheet: View {
 struct PinFilterSheet: View {
     @Binding var selectedNames: Set<String>
     @Binding var selectedPaddockIds: Set<UUID>
+    /// The operator's season choice, shared with the list, map, summary and export.
+    @Binding var seasonSelection: SeasonSelection
+    /// Resolved scope — option list and effective window for this surface.
+    let season: SeasonScope
     let uniqueNames: [String]
     let nameColorMap: [String: String]
     let uniquePaddocks: [(id: UUID, name: String)]
@@ -1754,12 +1779,16 @@ struct PinFilterSheet: View {
     private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var hasActiveFilters: Bool {
-        !selectedNames.isEmpty || !selectedPaddockIds.isEmpty
+        !selectedNames.isEmpty || !selectedPaddockIds.isEmpty || !season.isAll
     }
 
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    SeasonFilterBar(scope: season, selection: $seasonSelection)
+                }
+
                 Section("Issue / Growth") {
                     ScrollView(.horizontal) {
                         HStack(spacing: 8) {
@@ -1830,6 +1859,7 @@ struct PinFilterSheet: View {
                         Button("Reset") {
                             selectedNames = []
                             selectedPaddockIds = []
+                            seasonSelection = .all
                         }
                     }
                 }

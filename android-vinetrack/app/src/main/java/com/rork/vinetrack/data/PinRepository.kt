@@ -79,6 +79,18 @@ class PinRepository(private val session: SessionStore) {
         val latitude: Double? = null,
         val longitude: Double? = null,
         @SerialName("created_by") val createdBy: String? = null,
+        /**
+         * Capture time — the instant the user dropped the pin, stamped by the
+         * caller before the row is either POSTed or queued.
+         *
+         * Without this the column falls back to the database default, which
+         * fires when the INSERT lands. For a pin created in an unconnected
+         * block that can be hours (or, across a vintage rollover, a whole
+         * season) later, so the record would file itself under the day it
+         * synced rather than the day it was captured. Re-sent verbatim on
+         * replay, so a retry never moves the date forward.
+         */
+        @SerialName("created_at") val createdAt: String? = null,
     )
 
     /** Subset of editable fields used for PATCH updates (no created_by overwrite). */
@@ -169,6 +181,11 @@ class PinRepository(private val session: SessionStore) {
         val body = input.copy(
             id = input.id ?: UUID.randomUUID().toString(),
             createdBy = input.createdBy ?: session.userId,
+            // Safety net for callers that don't stamp capture time themselves.
+            // Queued payloads always arrive with createdAt already set, so a
+            // replay keeps its original capture instant rather than taking
+            // "now" at the moment connectivity returned.
+            createdAt = input.createdAt ?: Instant.now().toString(),
         )
         val response = SupabaseClient.http.post(SupabaseClient.restUrl("pins")) {
             authHeaders(token)

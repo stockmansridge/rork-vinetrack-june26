@@ -41,6 +41,11 @@ struct IrrigationReportsCentreView: View {
     @State private var trendRows: [IrrigationVintageTrendRow] = []
     @State private var warnings: [IrrigationReportWarning] = []
     @State private var resolvedVintage: Int?
+    /// Vintages the SERVER reports as actually holding irrigation sessions,
+    /// loaded once from the vintage-trends RPC. Empty until that lands, at
+    /// which point the picker falls back to the vineyard's own current vintage
+    /// rather than an invented span.
+    @State private var reportedVintages: [Int] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var drillDown: DrillDownContext?
@@ -56,9 +61,45 @@ struct IrrigationReportsCentreView: View {
         return f
     }
 
+    /// The vintage in progress for THIS vineyard — derived from its shared
+    /// season start (SQL 108) in its own timezone, not from the device's
+    /// calendar year. A vineyard whose season opens on 1 July is already in
+    /// vintage 2027 in August 2026, so the calendar year was simply the wrong
+    /// number to show or send.
+    private var currentVintage: Int {
+        store.settings.currentSeasonVintage
+    }
+
+    /// Selectable vintages, newest first.
+    ///
+    /// Driven by the data the server reports rather than a fixed span: a
+    /// vineyard with two seasons of irrigation gets two options, one with
+    /// twelve gets twelve. Until the trends call returns, only the current
+    /// vintage is offered — never a run of empty future/past seasons.
     private var vintageOptions: [Int] {
-        let year = Calendar.current.component(.year, from: Date())
-        return ((year - 5)...(year + 1)).reversed()
+        var years = Set(reportedVintages)
+        years.insert(currentVintage)
+        // A vintage that was explicitly chosen stays listed even if the trends
+        // window doesn't reach it, so the picker can't drop its own selection.
+        if let vintageYear { years.insert(vintageYear) }
+        return years.sorted(by: >)
+    }
+
+    /// "Vintage 2027 · Current" for the season in progress, otherwise
+    /// "Vintage 2026" — same wording rule as `SeasonWindow.label`.
+    private func vintageLabel(_ year: Int) -> String {
+        year == currentVintage
+            ? "Vintage \(String(year)) · Current"
+            : "Vintage \(String(year))"
+    }
+
+    /// Inclusive date range of `year` under this vineyard's season settings,
+    /// e.g. "1 Jul 2026 – 30 Jun 2027".
+    private func vintageRangeText(_ year: Int) -> String {
+        let window = store.settings.seasonWindow(for: year)
+        let start = window.start.formatted(.dateTime.day().month(.abbreviated).year())
+        let end = window.displayEnd.formatted(.dateTime.day().month(.abbreviated).year())
+        return "\(start) – \(end)"
     }
 
     var body: some View {
@@ -114,9 +155,11 @@ struct IrrigationReportsCentreView: View {
                 ForEach(Section.allCases) { Text($0.rawValue).tag($0) }
             }
             Picker("Vintage", selection: $vintageYear) {
+                // Nil keeps the existing server contract: the RPCs resolve it
+                // to the vineyard's current vintage.
                 Text("Current").tag(Int?.none)
                 ForEach(vintageOptions, id: \.self) { year in
-                    Text("Vintage \(String(year))").tag(Int?.some(year))
+                    Text(vintageLabel(year)).tag(Int?.some(year))
                 }
             }
             Picker("Source", selection: $sourceGroup) {
@@ -133,8 +176,13 @@ struct IrrigationReportsCentreView: View {
                 }
             }
             if let resolvedVintage {
-                LabeledContent("Showing", value: "Vintage \(String(resolvedVintage))")
+                LabeledContent("Showing", value: vintageLabel(resolvedVintage))
                     .font(.footnote)
+                // The season's real boundaries, so "Vintage 2027" is never
+                // mistaken for the 2027 calendar year.
+                LabeledContent("Season", value: vintageRangeText(resolvedVintage))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -592,14 +640,34 @@ struct IrrigationReportsCentreView: View {
                                                              vintageCount: 5)
                 trendRows = env.rows
                 resolvedVintage = env.vintageYear
+                reportedVintages = env.rows.map { $0.vintageYear }
                 warnings = []
             }
+            await loadReportedVintagesIfNeeded(vineyardId: vineyardId)
         } catch {
             let text = error.localizedDescription
             errorMessage = text.contains("irrigation_access_denied")
                 ? "Irrigation reports are limited to System Administrators during validation."
                 : "This report could not be loaded. \(text)"
         }
+    }
+
+    /// Populate the vintage picker from the seasons the server actually holds
+    /// sessions for, so the options are data-driven instead of a fixed span.
+    ///
+    /// Best-effort and silent: a failure simply leaves the picker on the
+    /// vineyard's current vintage, and never surfaces an error over a report
+    /// that loaded fine.
+    private func loadReportedVintagesIfNeeded(vineyardId: UUID) async {
+        guard reportedVintages.isEmpty else { return }
+        var trendFilter = IrrigationReportFilter()
+        trendFilter.sourceGroup = sourceGroup
+        guard let env = try? await repository.vintageTrends(
+            vineyardId: vineyardId,
+            filter: trendFilter,
+            vintageCount: 12
+        ) else { return }
+        reportedVintages = env.rows.map { $0.vintageYear }
     }
 }
 
