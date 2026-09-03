@@ -2,8 +2,18 @@ import SwiftUI
 import UIKit
 
 struct GrowthStageReportView: View {
+    /// The two ways of reading the same growth-stage data: the existing
+    /// date-by-stage summary, and the spatial ripeness surface.
+    enum ViewMode: String, CaseIterable, Identifiable {
+        case summary = "Summary"
+        case heatmap = "Ripeness Heatmap"
+
+        var id: String { rawValue }
+    }
+
     @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
+    @State private var viewMode: ViewMode = .summary
     @State private var selectedVintages: Set<Int> = []
     @State private var selectedPaddockId: UUID?
     @State private var sharePDFURL: SharePDFURL?
@@ -109,32 +119,29 @@ struct GrowthStageReportView: View {
     }
 
     var body: some View {
-        Group {
-            if growthPins.isEmpty {
-                ContentUnavailableView {
-                    Label { Text("No Growth Data") } icon: { GrapeLeafIcon(size: 44) }
-                } description: {
-                    Text("Drop growth stage pins from the Home tab to build your vintage report.")
+        VStack(spacing: 0) {
+            Picker("View", selection: $viewMode) {
+                ForEach(ViewMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
                 }
-            } else if availableVintages.isEmpty {
-                ContentUnavailableView {
-                    Label { Text("No Matching Data") } icon: { GrapeLeafIcon(size: 44) }
-                } description: {
-                    Text("No growth stage entries found for the selected block.")
-                }
-            } else {
-                List {
-                    paddockFilterSection
-                    vintageFilterSection
-                    reportSection
-                }
-                .listStyle(.insetGrouped)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+            .accessibilityLabel("Report view")
+
+            switch viewMode {
+            case .summary:
+                summaryReport
+            case .heatmap:
+                ELRipenessHeatmapView()
             }
         }
-        .navigationTitle("Export PDF")
+        .navigationTitle(viewMode == .summary ? "Growth Stage Report" : "Ripeness Heatmap")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if accessControl.canExport {
+            if accessControl.canExport, viewMode == .summary {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         exportPDF()
@@ -156,6 +163,31 @@ struct GrowthStageReportView: View {
             Button("OK", role: .cancel) { exportError = nil }
         } message: {
             Text(exportError ?? "")
+        }
+    }
+
+    private var summaryReport: some View {
+        Group {
+            if growthPins.isEmpty {
+                ContentUnavailableView {
+                    Label { Text("No Growth Data") } icon: { GrapeLeafIcon(size: 44) }
+                } description: {
+                    Text("Drop growth stage pins from the Home tab to build your vintage report.")
+                }
+            } else if availableVintages.isEmpty {
+                ContentUnavailableView {
+                    Label { Text("No Matching Data") } icon: { GrapeLeafIcon(size: 44) }
+                } description: {
+                    Text("No growth stage entries found for the selected block.")
+                }
+            } else {
+                List {
+                    paddockFilterSection
+                    vintageFilterSection
+                    reportSection
+                }
+                .listStyle(.insetGrouped)
+            }
         }
     }
 
