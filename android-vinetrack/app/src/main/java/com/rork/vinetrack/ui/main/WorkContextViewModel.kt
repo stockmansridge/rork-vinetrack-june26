@@ -2,8 +2,10 @@ package com.rork.vinetrack.ui.main
 
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
+import com.rork.vinetrack.ui.screens.PinsViewMode
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
 /** Which quick-action pin-drop workflow the operator is in. */
@@ -22,6 +24,26 @@ enum class PinWorkflow(val modeName: String) {
 }
 
 /**
+ * The outcome of binding the work context to an authenticated identity.
+ *
+ * Reported so the caller (and the tests) can distinguish "we deliberately kept
+ * the restored state" from "we deliberately threw it away".
+ */
+sealed interface WorkContextBinding {
+    /** No authenticated user yet — nothing was written or cleared. */
+    data object Unbound : WorkContextBinding
+
+    /** Same user and vineyard (or a first bind) — restored state was kept. */
+    data object Retained : WorkContextBinding
+
+    /** Same user, different vineyard — vineyard-scoped state was cleared. */
+    data object VineyardChanged : WorkContextBinding
+
+    /** A different user — the whole work context was cleared. */
+    data object UserChanged : WorkContextBinding
+}
+
+/**
  * The authoritative owner of "where the user is" in VineTrack.
  *
  * Everything here is a small ID, flag or enum name held in a
@@ -34,6 +56,9 @@ enum class PinWorkflow(val modeName: String) {
  * Deliberately NO large objects: vineyards, blocks, pin collections, map state
  * and database models are never written to the saved-state Bundle. Screens are
  * reconstructed from these identifiers against VineTrack's offline/local data.
+ *
+ * The context is scoped to an identity via [bindIdentity]: it belongs to one
+ * user working one vineyard, and must never bleed across either boundary.
  */
 class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
 
@@ -51,17 +76,49 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
     /**
      * The Repairs/Growth quick-action launcher currently open — i.e. the user
      * IS in the pin-drop workflow. Null when closed.
+     *
+     * This is the SINGLE source of truth for the launcher's Repairs/Growth
+     * toggle. The launcher screen renders from it and writes straight back to
+     * it, so switching mode mid-workflow is preserved across recreation and is
+     * seen by the screen-awake controller.
      */
     val launcherMode: StateFlow<String?> = handle.getStateFlow(KEY_LAUNCHER_MODE, null)
 
     /**
+     * The same Repairs/Growth launcher opened as an overlay on the live trip
+     * HUD. Kept separate from [launcherMode] because it renders OVER the trip
+     * map instead of replacing the whole surface.
+     */
+    val tripHudLauncherMode: StateFlow<String?> = handle.getStateFlow(KEY_TRIP_HUD_LAUNCHER, null)
+
+    /**
      * Which pin-drop workflow is active, if any. Read by the screen-awake
      * controller so Repairs/Growth pin dropping forces the display on.
+     *
+     * Covers the HUD launcher as well as the tab one: dropping pins from the
+     * live trip HUD is the same job in the same weather, and must hold the
+     * screen on the same way.
      */
-    val pinWorkflow: StateFlow<PinWorkflow?> = launcherMode.mapState { PinWorkflow.fromModeName(it) }
+    val pinWorkflow: StateFlow<PinWorkflow?> =
+        launcherMode.combineState(tripHudLauncherMode) { tabMode, hudMode ->
+            PinWorkflow.fromModeName(tabMode ?: hudMode)
+        }
 
-    /** Block/paddock the current workflow is scoped to, when one was chosen. */
-    val selectedBlockId: StateFlow<String?> = handle.getStateFlow(KEY_BLOCK_ID, null)
+    /**
+     * Blocks the operator has narrowed the Pins map/list down to.
+     *
+     * Vineyard-scoped: these IDs are meaningless against another vineyard, so
+     * [clearVineyardScopedState] drops them on a vineyard switch. Only the IDs
+     * are stored — blocks themselves are resolved from the local/offline
+     * paddock store on the way back in.
+     */
+    val pinsBlockIds: StateFlow<Set<String>> =
+        handle.getStateFlow<ArrayList<String>?>(KEY_PINS_BLOCK_IDS, null)
+            .mapState { ids -> ids?.toSet() ?: emptySet() }
+
+    /** Map / List / Stats on the Pins surface. */
+    val pinsViewMode: StateFlow<PinsViewMode> = handle.getStateFlow(KEY_PINS_VIEW_MODE, PinsViewMode.Map.name)
+        .mapState { name -> PinsViewMode.entries.firstOrNull { it.name == name } ?: PinsViewMode.Map }
 
     /** Trip to auto-open on the Trips tab. */
     val tripsSelection: StateFlow<String?> = handle.getStateFlow(KEY_TRIP_SELECTION, null)
@@ -71,9 +128,6 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
 
     /** Spray record/template id pre-filling the Spray Calculator. */
     val programCalculatorPrefill: StateFlow<String?> = handle.getStateFlow(KEY_PROGRAM_PREFILL, null)
-
-    /** Open the Pins tab in List view rather than Map. */
-    val pinsOpenInList: StateFlow<Boolean> = handle.getStateFlow(KEY_PINS_LIST, false)
 
     /** Setup Wizard shown as a full-screen overlay. */
     val showSetupWizard: StateFlow<Boolean> = handle.getStateFlow(KEY_SETUP_WIZARD, false)
@@ -85,11 +139,12 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
     fun setTool(value: ToolRoute?) { handle[KEY_TOOL] = value?.name }
     fun setPinMode(value: String?) { handle[KEY_PIN_MODE] = value }
     fun setLauncherMode(value: String?) { handle[KEY_LAUNCHER_MODE] = value }
-    fun setSelectedBlockId(value: String?) { handle[KEY_BLOCK_ID] = value }
+    fun setTripHudLauncherMode(value: String?) { handle[KEY_TRIP_HUD_LAUNCHER] = value }
+    fun setPinsBlockIds(value: Set<String>) { handle[KEY_PINS_BLOCK_IDS] = ArrayList(value) }
+    fun setPinsViewMode(value: PinsViewMode) { handle[KEY_PINS_VIEW_MODE] = value.name }
     fun setTripsSelection(value: String?) { handle[KEY_TRIP_SELECTION] = value }
     fun setProgramOpenCalculator(value: Boolean) { handle[KEY_PROGRAM_CALC] = value }
     fun setProgramCalculatorPrefill(value: String?) { handle[KEY_PROGRAM_PREFILL] = value }
-    fun setPinsOpenInList(value: Boolean) { handle[KEY_PINS_LIST] = value }
     fun setShowSetupWizard(value: Boolean) { handle[KEY_SETUP_WIZARD] = value }
     fun setShowAddPinComposer(value: Boolean) { handle[KEY_ADD_PIN] = value }
 
@@ -99,8 +154,96 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
         setTool(null)
         setPinMode(null)
         setLauncherMode(null)
-        setPinsOpenInList(false)
+        setTripHudLauncherMode(null)
         setShowAddPinComposer(false)
+    }
+
+    /**
+     * Everything MainScaffold needs to decide what to show, as one immutable
+     * snapshot. Exposed so the surface decision can be exercised without a
+     * device (see [MainSurface]).
+     */
+    fun snapshot(): WorkSnapshot = WorkSnapshot(
+        tab = tab.value,
+        tool = tool.value,
+        pinMode = pinMode.value,
+        launcherMode = launcherMode.value,
+        tripHudLauncherMode = tripHudLauncherMode.value,
+        pinsBlockIds = pinsBlockIds.value,
+        pinsViewMode = pinsViewMode.value,
+        tripsSelection = tripsSelection.value,
+        programOpenCalculator = programOpenCalculator.value,
+        programCalculatorPrefill = programCalculatorPrefill.value,
+        showSetupWizard = showSetupWizard.value,
+        showAddPinComposer = showAddPinComposer.value,
+    )
+
+    // ---- Identity scoping ---------------------------------------------------
+
+    /**
+     * Bind this context to the signed-in [userId] and active [vineyardId],
+     * clearing only what the identity change actually invalidates.
+     *
+     * Deliberately NOT `LaunchedEffect(userId) { reset() }`: the binding is
+     * itself part of the saved state, so the first bind after process death
+     * sees the SAME identity it was saved with and keeps the restored work
+     * context. Only a genuine change to a different user or vineyard clears
+     * anything, and re-binding the same identity (a cache rehydrate, a
+     * refresh, a reconnect) writes nothing at all.
+     */
+    fun bindIdentity(userId: String?, vineyardId: String?): WorkContextBinding {
+        // Never bind a half-known identity: during Restoring / hydration the
+        // user is transiently null, and treating that as "signed out" is the
+        // exact bug this whole pass exists to prevent.
+        if (userId == null) return WorkContextBinding.Unbound
+
+        val boundUser = handle.get<String?>(KEY_BOUND_USER)
+        if (boundUser != null && boundUser != userId) {
+            reset()
+            handle[KEY_BOUND_USER] = userId
+            handle[KEY_BOUND_VINEYARD] = vineyardId
+            return WorkContextBinding.UserChanged
+        }
+        if (boundUser == null) handle[KEY_BOUND_USER] = userId
+
+        // A null vineyard is "not resolved yet", not "no vineyard" — hold the
+        // existing binding rather than dropping the operator's block context.
+        if (vineyardId == null) return WorkContextBinding.Retained
+
+        val boundVineyard = handle.get<String?>(KEY_BOUND_VINEYARD)
+        if (boundVineyard != null && boundVineyard != vineyardId) {
+            clearVineyardScopedState()
+            handle[KEY_BOUND_VINEYARD] = vineyardId
+            return WorkContextBinding.VineyardChanged
+        }
+        if (boundVineyard == null) handle[KEY_BOUND_VINEYARD] = vineyardId
+        return WorkContextBinding.Retained
+    }
+
+    /** The identity this context currently belongs to, for diagnostics/tests. */
+    fun boundIdentity(): Pair<String?, String?> =
+        handle.get<String?>(KEY_BOUND_USER) to handle.get<String?>(KEY_BOUND_VINEYARD)
+
+    /**
+     * Drop everything tied to the previous vineyard while keeping the operator
+     * on a safe top-level surface (tab / tool / Repairs-Growth launcher), which
+     * is meaningful in any vineyard.
+     */
+    private fun clearVineyardScopedState() {
+        setPinsBlockIds(emptySet())
+        setTripHudLauncherMode(null)
+        setTripsSelection(null)
+        setProgramOpenCalculator(false)
+        setProgramCalculatorPrefill(null)
+        setShowSetupWizard(false)
+        setShowAddPinComposer(false)
+    }
+
+    /** Explicit logout: clear the context AND its identity binding. */
+    fun resetForSignOut() {
+        reset()
+        handle[KEY_BOUND_USER] = null
+        handle[KEY_BOUND_VINEYARD] = null
     }
 
     /** Clear the whole work context (sign-out, or switching user). */
@@ -109,11 +252,12 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
         setTool(null)
         setPinMode(null)
         setLauncherMode(null)
-        setSelectedBlockId(null)
+        setTripHudLauncherMode(null)
+        setPinsBlockIds(emptySet())
+        setPinsViewMode(PinsViewMode.Map)
         setTripsSelection(null)
         setProgramOpenCalculator(false)
         setProgramCalculatorPrefill(null)
-        setPinsOpenInList(false)
         setShowSetupWizard(false)
         setShowAddPinComposer(false)
     }
@@ -132,17 +276,40 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
             }
         }
 
+    /**
+     * Combine two [StateFlow]s into a derived one, again without a coroutine
+     * scope. Deliberately not `stateIn(viewModelScope)`: that would make the
+     * derived value depend on a Main dispatcher existing and on a coroutine
+     * having been scheduled, which is exactly the kind of timing this class is
+     * supposed to be free of — the screen-awake controller reads
+     * [pinWorkflow] synchronously during composition.
+     */
+    private fun <A, B, R> StateFlow<A>.combineState(
+        other: StateFlow<B>,
+        transform: (A, B) -> R,
+    ): StateFlow<R> = object : StateFlow<R> {
+        override val value: R get() = transform(this@combineState.value, other.value)
+        override val replayCache: List<R> get() = listOf(value)
+        override suspend fun collect(collector: kotlinx.coroutines.flow.FlowCollector<R>): Nothing {
+            combine(this@combineState, other, transform).distinctUntilChanged().collect { collector.emit(it) }
+            error("StateFlow collection never completes")
+        }
+    }
+
     private companion object {
         const val KEY_TAB = "work_tab"
         const val KEY_TOOL = "work_tool"
         const val KEY_PIN_MODE = "work_pin_mode"
         const val KEY_LAUNCHER_MODE = "work_launcher_mode"
-        const val KEY_BLOCK_ID = "work_block_id"
+        const val KEY_TRIP_HUD_LAUNCHER = "work_trip_hud_launcher"
+        const val KEY_PINS_BLOCK_IDS = "work_pins_block_ids"
+        const val KEY_PINS_VIEW_MODE = "work_pins_view_mode"
         const val KEY_TRIP_SELECTION = "work_trip_selection"
         const val KEY_PROGRAM_CALC = "work_program_calc"
         const val KEY_PROGRAM_PREFILL = "work_program_prefill"
-        const val KEY_PINS_LIST = "work_pins_list"
         const val KEY_SETUP_WIZARD = "work_setup_wizard"
         const val KEY_ADD_PIN = "work_add_pin"
+        const val KEY_BOUND_USER = "work_bound_user"
+        const val KEY_BOUND_VINEYARD = "work_bound_vineyard"
     }
 }

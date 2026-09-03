@@ -247,6 +247,14 @@ fun TripsScreen(
     modifier: Modifier = Modifier,
     initialSelectedTripId: String? = null,
     onSelectionConsumed: () -> Unit = {},
+    /**
+     * Repairs/Growth launcher drawn over the live trip HUD, owned by the saved
+     * work context. Dropping pins from the HUD is the same pin-drop workflow as
+     * the tab launcher, so it has to survive recreation and hold the screen on
+     * in the same way — neither of which local state could do.
+     */
+    hudLauncherMode: String? = null,
+    onHudLauncherModeChange: (String?) -> Unit = {},
     onStartSprayTrip: (prefillRecordId: String?) -> Unit = {},
     onGoHome: () -> Unit = {},
 ) {
@@ -301,6 +309,8 @@ fun TripsScreen(
             )
         } else {
             TripDetailView(
+                hudLauncherMode = hudLauncherMode,
+                onHudLauncherModeChange = onHudLauncherModeChange,
                 vm = vm,
                 state = state,
                 tripId = trip.id,
@@ -930,6 +940,8 @@ private fun TripDetailView(
     state: AppUiState,
     tripId: String,
     onBack: () -> Unit,
+    hudLauncherMode: String? = null,
+    onHudLauncherModeChange: (String?) -> Unit = {},
     onGoHome: () -> Unit = {},
 ) {
     val vine = LocalVineColors.current
@@ -971,6 +983,8 @@ private fun TripDetailView(
             onBack = onBack,
             onShowDetails = { showLiveHud = false },
             onEndConfirmed = { ending = true },
+            hudLauncherMode = hudLauncherMode,
+            onHudLauncherModeChange = onHudLauncherModeChange,
             onGoHome = onGoHome,
         )
     } else {
@@ -1649,6 +1663,8 @@ private fun ActiveTripHud(
     onBack: () -> Unit,
     onShowDetails: () -> Unit,
     onEndConfirmed: () -> Unit,
+    hudLauncherMode: String?,
+    onHudLauncherModeChange: (String?) -> Unit,
     onGoHome: () -> Unit = {},
 ) {
     val vine = LocalVineColors.current
@@ -1679,8 +1695,6 @@ private fun ActiveTripHud(
     val hudContext = LocalContext.current
     val rowTrackingEnabled = remember { AppPreferencesStore(hudContext).load().rowTrackingEnabled }
     var panelExpanded by remember { mutableStateOf(false) }
-    // Repairs/Growth quick-pin launcher shown over the HUD (iOS sheet parity).
-    var hudLauncherMode by remember { mutableStateOf<String?>(null) }
     var hybrid by remember { mutableStateOf(true) }
     var hudMapLoaded by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -1956,8 +1970,8 @@ private fun ActiveTripHud(
             HudGpsPill(accuracy)
             // Repairs / Growth quick-pin actions (iOS tripInfoBar parity).
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                HudActionPill(Icons.Filled.Place, "Repairs", VineColors.Orange, Modifier.weight(1f)) { hudLauncherMode = "Repairs" }
-                HudActionPill(Icons.Filled.Place, "Growth", VineColors.LeafGreen, Modifier.weight(1f)) { hudLauncherMode = "Growth" }
+                HudActionPill(Icons.Filled.Place, "Repairs", VineColors.Orange, Modifier.weight(1f)) { onHudLauncherModeChange("Repairs") }
+                HudActionPill(Icons.Filled.Place, "Growth", VineColors.LeafGreen, Modifier.weight(1f)) { onHudLauncherModeChange("Growth") }
             }
         }
 
@@ -2126,14 +2140,15 @@ private fun ActiveTripHud(
         // Repairs/Growth quick-pin launcher over the HUD — mirrors the iOS
         // RepairsGrowthView sheets. Back (or Cancel) returns to the live map.
         hudLauncherMode?.let { mode ->
-            BackHandler { hudLauncherMode = null }
+            BackHandler { onHudLauncherModeChange(null) }
             Surface(modifier = Modifier.fillMaxSize(), color = vine.appBackground) {
                 PinCategoryLauncherScreen(
                     vm = vm,
                     state = state,
-                    initialMode = mode,
-                    onBack = { hudLauncherMode = null },
-                    onOpenList = { hudLauncherMode = null },
+                    mode = if (mode == "Growth") "Growth" else "Repairs",
+                    onModeChange = { onHudLauncherModeChange(it) },
+                    onBack = { onHudLauncherModeChange(null) },
+                    onOpenList = { onHudLauncherModeChange(null) },
                 )
             }
         }

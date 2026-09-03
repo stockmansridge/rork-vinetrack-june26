@@ -5,6 +5,7 @@ import com.rork.vinetrack.ui.main.MainTab
 import com.rork.vinetrack.ui.main.PinWorkflow
 import com.rork.vinetrack.ui.main.ToolRoute
 import com.rork.vinetrack.ui.main.WorkContextViewModel
+import com.rork.vinetrack.ui.screens.PinsViewMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -29,36 +30,72 @@ class WorkContextRestorationTest {
         WorkContextViewModel(SavedStateHandle(handle.keys().associateWith { handle.get<Any?>(it) }))
 
     @Test
-    fun `growth block and pin workflow survive activity recreation`() {
+    fun `growth pin-drop workflow survives activity recreation`() {
         val handle = SavedStateHandle()
         val work = WorkContextViewModel(handle)
 
-        // Growth -> selected block -> pin-drop workflow.
         work.setTool(ToolRoute.Growth)
-        work.setSelectedBlockId("block-42")
         work.setLauncherMode("Growth")
 
         val restored = recreate(handle)
 
         assertEquals(ToolRoute.Growth, restored.tool.value)
-        assertEquals("block-42", restored.selectedBlockId.value)
         assertEquals("Growth", restored.launcherMode.value)
         assertEquals(PinWorkflow.Growth, restored.pinWorkflow.value)
     }
 
     @Test
-    fun `repairs block and pin workflow survive activity recreation`() {
+    fun `switching mode inside the launcher is what gets restored`() {
+        // The operator opened Repairs and then toggled to Growth mid-workflow.
+        // The toggle is the launcher's only mode state, so Growth — not the
+        // mode it was opened with — is what must come back.
+        val handle = SavedStateHandle()
+        val work = WorkContextViewModel(handle)
+        work.setLauncherMode("Repairs")
+        work.setLauncherMode("Growth")
+
+        val restored = recreate(handle)
+
+        assertEquals("Growth", restored.launcherMode.value)
+        assertEquals(PinWorkflow.Growth, restored.pinWorkflow.value)
+    }
+
+    @Test
+    fun `repairs pin workflow and block selection survive activity recreation`() {
         val handle = SavedStateHandle()
         val work = WorkContextViewModel(handle)
 
         work.setTab(MainTab.Pins)
-        work.setSelectedBlockId("block-7")
+        work.setPinsBlockIds(setOf("block-7"))
         work.setLauncherMode("Repairs")
 
         val restored = recreate(handle)
 
         assertEquals(MainTab.Pins, restored.tab.value)
-        assertEquals("block-7", restored.selectedBlockId.value)
+        assertEquals(setOf("block-7"), restored.pinsBlockIds.value)
+        assertEquals(PinWorkflow.Repairs, restored.pinWorkflow.value)
+    }
+
+    @Test
+    fun `pins view mode survives recreation`() {
+        val handle = SavedStateHandle()
+        WorkContextViewModel(handle).setPinsViewMode(PinsViewMode.List)
+
+        assertEquals(PinsViewMode.List, recreate(handle).pinsViewMode.value)
+    }
+
+    @Test
+    fun `trip HUD pin-drop workflow survives recreation and holds the screen awake`() {
+        val handle = SavedStateHandle()
+        val work = WorkContextViewModel(handle)
+        work.setTab(MainTab.Trip)
+        work.setTripHudLauncherMode("Repairs")
+
+        val restored = recreate(handle)
+
+        assertEquals("Repairs", restored.tripHudLauncherMode.value)
+        // Dropping pins from the live trip HUD is the same job as dropping them
+        // from the tab launcher, so it must present as a pin workflow.
         assertEquals(PinWorkflow.Repairs, restored.pinWorkflow.value)
     }
 
@@ -92,7 +129,8 @@ class WorkContextRestorationTest {
         assertNull(work.tool.value)
         assertNull(work.launcherMode.value)
         assertNull(work.pinWorkflow.value)
-        assertNull(work.selectedBlockId.value)
+        assertTrue(work.pinsBlockIds.value.isEmpty())
+        assertEquals(PinsViewMode.Map, work.pinsViewMode.value)
         assertFalse(work.showAddPinComposer.value)
     }
 
@@ -111,6 +149,7 @@ class WorkContextRestorationTest {
         val work = WorkContextViewModel(SavedStateHandle())
         work.setTool(ToolRoute.Growth)
         work.setLauncherMode("Growth")
+        work.setTripHudLauncherMode("Repairs")
         work.setShowAddPinComposer(true)
 
         work.openTab(MainTab.Trip)
@@ -128,16 +167,22 @@ class WorkContextRestorationTest {
         val work = WorkContextViewModel(handle)
         work.setTab(MainTab.Pins)
         work.setTool(ToolRoute.Growth)
-        work.setSelectedBlockId("block-42")
+        work.setPinsBlockIds(setOf("block-42", "block-43"))
+        work.setPinsViewMode(PinsViewMode.Stats)
         work.setLauncherMode("Growth")
         work.setTripsSelection("trip-9")
+        work.bindIdentity("user-1", "vineyard-b")
 
         handle.keys().forEach { key ->
             val value = handle.get<Any?>(key)
-            assertTrue(
-                "saved state must hold only ids/enums/flags, found ${value?.javaClass} for $key",
-                value == null || value is String || value is Boolean || value is Int || value is Long,
-            )
+            val ok = when (value) {
+                null, is String, is Boolean, is Int, is Long -> true
+                // Block IDs are a collection, but strictly of Strings — no
+                // paddock, pin or map object may ever reach the Bundle.
+                is ArrayList<*> -> value.all { it is String }
+                else -> false
+            }
+            assertTrue("saved state must hold only ids/enums/flags, found ${value?.javaClass} for $key", ok)
         }
     }
 
@@ -147,13 +192,15 @@ class WorkContextRestorationTest {
         work.setTab(MainTab.Program)
         work.setTool(ToolRoute.Yield)
         work.setLauncherMode("Repairs")
-        work.setSelectedBlockId("block-1")
+        work.setPinsBlockIds(setOf("block-1"))
+        work.setPinsViewMode(PinsViewMode.List)
 
         work.reset()
 
         assertEquals(MainTab.Home, work.tab.value)
         assertNull(work.tool.value)
         assertNull(work.launcherMode.value)
-        assertNull(work.selectedBlockId.value)
+        assertTrue(work.pinsBlockIds.value.isEmpty())
+        assertEquals(PinsViewMode.Map, work.pinsViewMode.value)
     }
 }

@@ -103,6 +103,8 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
     val pinMode by work.pinMode.collectAsStateWithLifecycle()
     // Repairs/Growth quick-action category launcher ("Repairs"/"Growth"). Null = closed.
     val launcherMode by work.launcherMode.collectAsStateWithLifecycle()
+    // The same launcher opened over the live trip HUD.
+    val tripHudLauncherMode by work.tripHudLauncherMode.collectAsStateWithLifecycle()
     // A trip to auto-open on the Trips tab (e.g. a spray job just started from Spray Detail).
     val tripsSelection by work.tripsSelection.collectAsStateWithLifecycle()
     // When true, the Program tab opens straight into the Spray Calculator
@@ -111,9 +113,11 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
     // Optional spray record/template id to pre-fill the Spray Calculator with
     // (e.g. "Start from Template" in the Spray Trip setup chooser).
     val programCalculatorPrefill by work.programCalculatorPrefill.collectAsStateWithLifecycle()
-    // When true, opening the Pins tab starts in List view (e.g. the Home
-    // "pins need attention" banner), mirroring iOS PinsView(initialViewMode: .list).
-    val pinsOpenInList by work.pinsOpenInList.collectAsStateWithLifecycle()
+    // Map / List / Stats on the Pins surface, and the blocks the operator has
+    // narrowed to. Both are real working state the operator set by hand, so
+    // they live in the saved work context rather than in screen-local state.
+    val pinsViewMode by work.pinsViewMode.collectAsStateWithLifecycle()
+    val pinsBlockIds by work.pinsBlockIds.collectAsStateWithLifecycle()
     // When true, the Setup Wizard is shown as a full-screen overlay (opened from
     // the Home wizard card). Mirrors the iOS SetupWizardView sheet.
     val showSetupWizard by work.showSetupWizard.collectAsStateWithLifecycle()
@@ -189,13 +193,33 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
         ) {
         OfflineBanner(isOnline = state.isOnline)
         val modifier = Modifier
-        val openTool = tool
-        val openLauncher = launcherMode
-        if (showSetupWizard) {
-            BackHandler { work.setShowSetupWizard(false) }
-            SetupWizardScreen(vm, state, modifier, onBack = { work.setShowSetupWizard(false) })
-        } else if (showAddPinComposer) {
-            UnifiedPinComposerScreen(
+
+        // The one place the restored work context is turned into a screen.
+        // Resolving through MainSurface (rather than re-deriving the branch
+        // conditions inline) is what makes the restore path assertable off-device.
+        val surface = MainSurface.of(
+            WorkSnapshot(
+                tab = tab,
+                tool = tool,
+                pinMode = pinMode,
+                launcherMode = launcherMode,
+                tripHudLauncherMode = tripHudLauncherMode,
+                pinsBlockIds = pinsBlockIds,
+                pinsViewMode = pinsViewMode,
+                tripsSelection = tripsSelection,
+                programOpenCalculator = programOpenCalculator,
+                programCalculatorPrefill = programCalculatorPrefill,
+                showSetupWizard = showSetupWizard,
+                showAddPinComposer = showAddPinComposer,
+            )
+        )
+
+        when (surface) {
+            MainSurface.SetupWizard -> {
+                BackHandler { work.setShowSetupWizard(false) }
+                SetupWizardScreen(vm, state, modifier, onBack = { work.setShowSetupWizard(false) })
+            }
+            MainSurface.AddPinComposer -> UnifiedPinComposerScreen(
                 vm = vm,
                 state = state,
                 modifier = modifier,
@@ -207,31 +231,39 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
                     work.openTab(MainTab.Pins)
                 },
             )
-        } else if (openLauncher != null) {
-            BackHandler { work.setLauncherMode(null) }
-            PinCategoryLauncherScreen(
-                vm = vm,
-                state = state,
-                modifier = modifier,
-                initialMode = openLauncher,
-                onBack = { work.setLauncherMode(null) },
-                onOpenList = { work.openTab(MainTab.Pins) },
-            )
-        } else if (openTool != null) {
-            BackHandler { work.setTool(null) }
-            ToolHost(
-                openTool, vm, state, modifier,
-                onBack = { work.setTool(null) },
-                pinMode = pinMode,
-                onOpenLauncher = { mode -> work.setLauncherMode(mode) },
-                onOpenTrip = { tripId ->
-                    work.setTripsSelection(tripId)
-                    work.openTab(MainTab.Trip)
-                },
-                onOpenTool = { route -> work.setTool(route); work.setPinMode(null) },
-            )
-        } else when (tab) {
-            MainTab.Home -> HomeDashboard(
+            is MainSurface.PinLauncher -> {
+                BackHandler { work.setLauncherMode(null) }
+                PinCategoryLauncherScreen(
+                    vm = vm,
+                    state = state,
+                    modifier = modifier,
+                    // Controlled: the saved work context is the only home for
+                    // the Repairs/Growth toggle, so switching mode mid-workflow
+                    // survives recreation and is seen by the awake controller.
+                    mode = surface.mode,
+                    onModeChange = { work.setLauncherMode(it) },
+                    onBack = { work.setLauncherMode(null) },
+                    onOpenList = { work.openTab(MainTab.Pins) },
+                )
+            }
+            is MainSurface.Tool -> {
+                BackHandler { work.setTool(null) }
+                ToolHost(
+                    surface.route, vm, state, modifier,
+                    onBack = { work.setTool(null) },
+                    pinMode = surface.pinMode,
+                    pins = surface.pins,
+                    onPinsViewMode = { work.setPinsViewMode(it) },
+                    onPinsBlockIds = { work.setPinsBlockIds(it) },
+                    onOpenLauncher = { mode -> work.setLauncherMode(mode) },
+                    onOpenTrip = { tripId ->
+                        work.setTripsSelection(tripId)
+                        work.openTab(MainTab.Trip)
+                    },
+                    onOpenTool = { route -> work.setTool(route); work.setPinMode(null) },
+                )
+            }
+            MainSurface.HomeTab -> HomeDashboard(
                 vm = vm,
                 state = state,
                 modifier = modifier,
@@ -248,20 +280,25 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
                 },
                 onOpenPinsList = {
                     work.openTab(MainTab.Pins)
-                    work.setPinsOpenInList(true)
+                    work.setPinsViewMode(PinsViewMode.List)
                 },
             )
-            MainTab.Pins -> PinsScreen(
+            is MainSurface.PinsTab -> PinsScreen(
                 vm, state, modifier,
                 onBack = null,
-                initialMode = pinMode,
-                initialViewMode = if (pinsOpenInList) PinsViewMode.List else PinsViewMode.Map,
+                initialMode = surface.pinMode,
+                viewMode = surface.pins.viewMode,
+                onViewModeChange = { work.setPinsViewMode(it) },
+                selectedBlockIds = surface.pins.selectedBlockIds,
+                onSelectedBlockIdsChange = { work.setPinsBlockIds(it) },
                 onOpenLauncher = { mode -> work.setLauncherMode(mode) },
             )
-            MainTab.Trip -> TripsScreen(
+            is MainSurface.TripTab -> TripsScreen(
                 vm, state, modifier,
-                initialSelectedTripId = tripsSelection,
+                initialSelectedTripId = surface.selectedTripId,
                 onSelectionConsumed = { work.setTripsSelection(null) },
+                hudLauncherMode = surface.hudLauncherMode,
+                onHudLauncherModeChange = { work.setTripHudLauncherMode(it) },
                 onStartSprayTrip = { prefillId ->
                     work.setProgramCalculatorPrefill(prefillId)
                     work.setProgramOpenCalculator(true)
@@ -271,11 +308,11 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
                 // recording; the Trip tab re-opens it via the active banner.
                 onGoHome = { work.openTab(MainTab.Home) },
             )
-            MainTab.Program -> SpraysScreen(
+            is MainSurface.ProgramTab -> SpraysScreen(
                 vm, state, modifier,
                 onBack = null,
-                initialOpenCalculator = programOpenCalculator,
-                initialCalculatorPrefillId = programCalculatorPrefill,
+                initialOpenCalculator = surface.openCalculator,
+                initialCalculatorPrefillId = surface.prefillId,
                 onCalculatorConsumed = {
                     work.setProgramOpenCalculator(false)
                     work.setProgramCalculatorPrefill(null)
@@ -285,7 +322,7 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
                     work.setTab(MainTab.Trip)
                 },
             )
-            MainTab.Settings -> SettingsScreen(
+            MainSurface.SettingsTab -> SettingsScreen(
                 vm, state, modifier,
                 onBack = null,
                 onOpenTool = { route -> work.setTool(route); work.setPinMode(null) },
@@ -410,12 +447,23 @@ private fun ToolHost(
     modifier: Modifier,
     onBack: () -> Unit,
     pinMode: String?,
+    pins: PinsInputs,
+    onPinsViewMode: (PinsViewMode) -> Unit,
+    onPinsBlockIds: (Set<String>) -> Unit,
     onOpenLauncher: (String) -> Unit,
     onOpenTrip: (String) -> Unit,
     onOpenTool: (ToolRoute) -> Unit,
 ) {
     when (route) {
-        ToolRoute.Pins -> PinsScreen(vm, state, modifier, onBack, initialMode = pinMode, onOpenLauncher = onOpenLauncher)
+        ToolRoute.Pins -> PinsScreen(
+            vm, state, modifier, onBack,
+            initialMode = pinMode,
+            viewMode = pins.viewMode,
+            onViewModeChange = onPinsViewMode,
+            selectedBlockIds = pins.selectedBlockIds,
+            onSelectedBlockIdsChange = onPinsBlockIds,
+            onOpenLauncher = onOpenLauncher,
+        )
         ToolRoute.Blocks -> BlocksScreen(vm, state, modifier, onBack = onBack, onOpenTool = onOpenTool)
         ToolRoute.WorkTasks -> WorkTasksScreen(vm, state, modifier, onBack = onBack)
         ToolRoute.Growth -> GrowthScreen(vm, state, modifier, onBack, onOpenStageImages = { onOpenTool(ToolRoute.GrowthStageImages) })

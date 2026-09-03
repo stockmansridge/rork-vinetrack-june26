@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,6 +69,28 @@ fun RootScreen() {
 
     // THE single owner of FLAG_KEEP_SCREEN_ON for the whole app.
     ScreenAwakeHost()
+
+    // Scope the work context to whoever is actually signed in, and to the
+    // vineyard they are actually working.
+    //
+    // This is deliberately a bind, not a reset: the binding is itself part of
+    // the saved state, so the first bind after process death sees the same
+    // identity it was saved with and KEEPS the restored context. A plain
+    // `LaunchedEffect(userId) { reset() }` would destroy exactly the state we
+    // are trying to preserve. Only a real change of user (full clear) or of
+    // vineyard (vineyard-scoped clear) throws anything away, and re-binding an
+    // unchanged identity — a cache rehydrate, a refresh, a reconnect — writes
+    // nothing at all.
+    LaunchedEffect(state.currentUserId, state.selectedVineyardId) {
+        work.bindIdentity(state.currentUserId, state.selectedVineyardId)
+    }
+
+    // Explicit logout is the one path that clears the binding too, so the next
+    // person to sign in on this device starts from a clean Home tab even if
+    // they happen to be the same user.
+    LaunchedEffect(state.route) {
+        if (state.route == AppRoute.Login) work.resetForSignOut()
+    }
 
     // Repairs / Growth pin dropping forces the display on regardless of the
     // user's Keep Screen Awake preference. Held here — above the route table —

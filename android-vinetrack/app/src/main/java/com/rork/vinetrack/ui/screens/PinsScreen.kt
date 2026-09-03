@@ -150,7 +150,19 @@ fun PinsScreen(
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
     initialMode: String? = null,
-    initialViewMode: PinsViewMode = PinsViewMode.Map,
+    /**
+     * Map / List / Stats, owned by the saved work context so the operator's
+     * chosen view survives rotation, Activity recreation and process death.
+     */
+    viewMode: PinsViewMode = PinsViewMode.Map,
+    onViewModeChange: (PinsViewMode) -> Unit = {},
+    /**
+     * Blocks the operator has narrowed to. Held as IDs in the work context and
+     * resolved against the local/offline paddock store here, so no block object
+     * is ever written to the saved-state Bundle.
+     */
+    selectedBlockIds: Set<String> = emptySet(),
+    onSelectedBlockIdsChange: (Set<String>) -> Unit = {},
     onOpenLauncher: ((String) -> Unit)? = null,
 ) {
     val vine = LocalVineColors.current
@@ -161,8 +173,6 @@ fun PinsScreen(
     var detailPinId by rememberSaveable { mutableStateOf<String?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    // Map / List / Stats, mirroring the iOS segmented picker.
-    var viewMode by remember { mutableStateOf(initialViewMode) }
     // List ordering; survives view-mode switches and rotation.
     var pinSort by rememberSaveable { mutableStateOf(PinSort.NEWEST) }
     // null = All; otherwise a PinMode raw value ("Repairs" / "Growth").
@@ -173,7 +183,6 @@ fun PinsScreen(
     // Advanced filters (iOS PinFilterSheet parity): specific issue/growth names
     // and blocks, chosen from the Filters sheet opened by the bar's button.
     var selectedNames by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var selectedPaddockIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showFilterSheet by remember { mutableStateOf(false) }
     // Season/vintage restriction. Automatic rests on the current season while it
     // holds pins, so the screen rolls over on its own at the season boundary.
@@ -231,13 +240,13 @@ fun PinsScreen(
     val season = remember(sourcePins, seasonSelection, state.seasonStartMonth, state.seasonStartDay, state.seasonZone) {
         state.seasonScope(sourcePins.map { parseIsoMillis(it.createdAt) }, seasonSelection)
     }
-    val visiblePins = remember(sourcePins, modeFilter, statusFilter, selectedNames, selectedPaddockIds, season) {
+    val visiblePins = remember(sourcePins, modeFilter, statusFilter, selectedNames, selectedBlockIds, season) {
         sourcePins.filter { pin ->
             season.contains(parseIsoMillis(pin.createdAt)) &&
                 (modeFilter == null || pin.mode == modeFilter) &&
                 (statusFilter == null || pin.isCompleted == statusFilter) &&
                 (selectedNames.isEmpty() || pin.displayTitle in selectedNames) &&
-                (selectedPaddockIds.isEmpty() || (pin.paddockId != null && pin.paddockId in selectedPaddockIds))
+                (selectedBlockIds.isEmpty() || (pin.paddockId != null && pin.paddockId in selectedBlockIds))
         }
             // Newest first, mirroring the iOS pin list ordering.
             .sortedByDescending { parseIsoMillis(it.createdAt) ?: Long.MIN_VALUE }
@@ -356,7 +365,7 @@ fun PinsScreen(
                             Icon(Icons.Filled.Share, contentDescription = "Export pins", tint = vine.textSecondary)
                         }
                     }
-                    PinsViewModeControl(viewMode) { viewMode = it }
+                    PinsViewModeControl(viewMode) { onViewModeChange(it) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
@@ -367,7 +376,7 @@ fun PinsScreen(
                 modeFilter = modeFilter,
                 statusFilter = statusFilter,
                 activeFilterCount = (if (selectedNames.isEmpty()) 0 else 1) +
-                    (if (selectedPaddockIds.isEmpty()) 0 else 1) +
+                    (if (selectedBlockIds.isEmpty()) 0 else 1) +
                     (if (season.isAll) 0 else 1),
                 onModeFilter = { modeFilter = it },
                 onStatusFilter = { statusFilter = it },
@@ -521,14 +530,14 @@ fun PinsScreen(
     if (showFilterSheet) {
         PinFilterSheet(
             selectedNames = selectedNames,
-            selectedPaddockIds = selectedPaddockIds,
+            selectedPaddockIds = selectedBlockIds,
             uniqueNames = uniqueNames,
             colorMap = colorMap,
             paddocks = uniquePaddocks,
             season = season,
             onSeason = { seasonSelection = it },
             onNames = { selectedNames = it },
-            onPaddocks = { selectedPaddockIds = it },
+            onPaddocks = { onSelectedBlockIdsChange(it) },
             onDismiss = { showFilterSheet = false },
         )
     }
@@ -1443,13 +1452,22 @@ fun PinCategoryLauncherScreen(
     vm: AppViewModel,
     state: AppUiState,
     modifier: Modifier = Modifier,
-    initialMode: String = "Repairs",
+    /**
+     * Repairs or Growth, owned by the saved work context.
+     *
+     * Controlled rather than screen-local: the launcher IS the pin-drop
+     * workflow, so "which mode am I dropping in" is the state that has to come
+     * back after Activity or process recreation. It also has to be visible to
+     * the screen-awake controller, which registers the forced hold from the
+     * same value — a second copy in here could disagree with it.
+     */
+    mode: String,
+    onModeChange: (String) -> Unit,
     onBack: () -> Unit,
     onOpenList: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
-    var mode by rememberSaveable { mutableStateOf(if (initialMode == "Growth") "Growth" else "Repairs") }
     var editing by remember { mutableStateOf<PinEditTarget?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -1701,8 +1719,8 @@ fun PinCategoryLauncherScreen(
                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(vine.textSecondary.copy(alpha = 0.12f)).padding(4.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                ModeToggleButton("Repairs", mode == "Repairs", Modifier.weight(1f)) { mode = "Repairs" }
-                ModeToggleButton("Growth", mode == "Growth", Modifier.weight(1f)) { mode = "Growth" }
+                ModeToggleButton("Repairs", mode == "Repairs", Modifier.weight(1f)) { onModeChange("Repairs") }
+                ModeToggleButton("Growth", mode == "Growth", Modifier.weight(1f)) { onModeChange("Growth") }
             }
 
             // Growth Stage full-width button (Growth mode only). Opens the
