@@ -14,7 +14,7 @@ data class WorkSnapshot(
     val tripHudLauncherMode: String?,
     val pinsBlockIds: Set<String>,
     val pinsViewMode: PinsViewMode,
-    val tripsSelection: String?,
+    val selectedTripId: String?,
     val programOpenCalculator: Boolean,
     val programCalculatorPrefill: String?,
     val showSetupWizard: Boolean,
@@ -48,9 +48,12 @@ sealed interface MainSurface {
 
     data class PinsTab(val pinMode: String?, val pins: PinsInputs) : MainSurface
     /**
+     * [selectedTripId] is the trip the operator has open, so a recreation
+     * returns to that trip's detail/HUD rather than to the trip list.
+     *
      * [hudLauncherMode] is the Repairs/Growth launcher drawn over the live trip
      * map, so a recreation mid-workflow returns to the launcher rather than to
-     * a bare HUD.
+     * a bare HUD. It is never non-null without a [selectedTripId] — see [of].
      */
     data class TripTab(val selectedTripId: String?, val hudLauncherMode: String?) : MainSurface
     data class ProgramTab(val openCalculator: Boolean, val prefillId: String?) : MainSurface
@@ -76,7 +79,13 @@ sealed interface MainSurface {
                 else -> when (work.tab) {
                     MainTab.Home -> HomeTab
                     MainTab.Pins -> PinsTab(work.pinMode, pins)
-                    MainTab.Trip -> TripTab(work.tripsSelection, work.tripHudLauncherMode)
+                    // The HUD launcher is drawn over a trip's live map, so it
+                    // fails safe here as well as in the work context: without a
+                    // trip to host it there is no launcher to restore.
+                    MainTab.Trip -> TripTab(
+                        selectedTripId = work.selectedTripId,
+                        hudLauncherMode = work.tripHudLauncherMode?.takeIf { work.selectedTripId != null },
+                    )
                     MainTab.Program -> ProgramTab(work.programOpenCalculator, work.programCalculatorPrefill)
                     MainTab.Settings -> SettingsTab
                 }

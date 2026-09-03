@@ -19,6 +19,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -105,8 +106,10 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
     val launcherMode by work.launcherMode.collectAsStateWithLifecycle()
     // The same launcher opened over the live trip HUD.
     val tripHudLauncherMode by work.tripHudLauncherMode.collectAsStateWithLifecycle()
-    // A trip to auto-open on the Trips tab (e.g. a spray job just started from Spray Detail).
-    val tripsSelection by work.tripsSelection.collectAsStateWithLifecycle()
+    // The trip the operator currently has open. Authoritative working state,
+    // not a one-shot navigation request: it is what puts them back inside the
+    // right trip (and its live HUD) after recreation.
+    val selectedTripId by work.selectedTripId.collectAsStateWithLifecycle()
     // When true, the Program tab opens straight into the Spray Calculator
     // (e.g. the "Spray Trip" option from the Trips start-trip chooser).
     val programOpenCalculator by work.programOpenCalculator.collectAsStateWithLifecycle()
@@ -134,6 +137,20 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
         enabled = state.activeTrip != null,
         reason = ScreenAwakeController.Reason.ActiveTrip,
     )
+
+    // Keep the restored trip context honest as the trip list loads and changes:
+    // a selected trip that was deleted, or a HUD launcher whose trip has ended,
+    // is dropped here rather than left holding the screen awake for a workflow
+    // that is no longer on screen. Only IDs cross this boundary.
+    val tripsKnowledge = remember(state.trips, state.locallyEndedTripIds) {
+        TripsKnowledge(
+            knownIds = state.trips.mapTo(mutableSetOf()) { it.id },
+            activeIds = state.trips
+                .filter { it.isActive && it.id !in state.locallyEndedTripIds }
+                .mapTo(mutableSetOf()) { it.id },
+        )
+    }
+    LaunchedEffect(tripsKnowledge) { work.reconcileTripContext(tripsKnowledge) }
 
     // One-time reconciliation between this device's legacy local season start
     // and the shared vineyard value (owners/managers only — sql/108).
@@ -206,7 +223,7 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
                 tripHudLauncherMode = tripHudLauncherMode,
                 pinsBlockIds = pinsBlockIds,
                 pinsViewMode = pinsViewMode,
-                tripsSelection = tripsSelection,
+                selectedTripId = selectedTripId,
                 programOpenCalculator = programOpenCalculator,
                 programCalculatorPrefill = programCalculatorPrefill,
                 showSetupWizard = showSetupWizard,
@@ -257,7 +274,7 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
                     onPinsBlockIds = { work.setPinsBlockIds(it) },
                     onOpenLauncher = { mode -> work.setLauncherMode(mode) },
                     onOpenTrip = { tripId ->
-                        work.setTripsSelection(tripId)
+                        work.setSelectedTripId(tripId)
                         work.openTab(MainTab.Trip)
                     },
                     onOpenTool = { route -> work.setTool(route); work.setPinMode(null) },
@@ -295,8 +312,10 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
             )
             is MainSurface.TripTab -> TripsScreen(
                 vm, state, modifier,
-                initialSelectedTripId = surface.selectedTripId,
-                onSelectionConsumed = { work.setTripsSelection(null) },
+                // Controlled, and never "consumed": the selected trip is where
+                // the operator IS, so it stays until they leave it.
+                selectedTripId = surface.selectedTripId,
+                onSelectedTripIdChange = { work.setSelectedTripId(it) },
                 hudLauncherMode = surface.hudLauncherMode,
                 onHudLauncherModeChange = { work.setTripHudLauncherMode(it) },
                 onStartSprayTrip = { prefillId ->
@@ -318,7 +337,7 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
                     work.setProgramCalculatorPrefill(null)
                 },
                 onOpenTrip = { tripId ->
-                    work.setTripsSelection(tripId)
+                    work.setSelectedTripId(tripId)
                     work.setTab(MainTab.Trip)
                 },
             )

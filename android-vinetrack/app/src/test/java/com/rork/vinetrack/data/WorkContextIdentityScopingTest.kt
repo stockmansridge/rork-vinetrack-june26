@@ -150,7 +150,7 @@ class WorkContextIdentityScopingTest {
         val work = WorkContextViewModel(SavedStateHandle())
         work.bindIdentity("user-a", "vineyard-a")
         work.setPinsBlockIds(setOf("block-in-vineyard-a"))
-        work.setTripsSelection("trip-in-vineyard-a")
+        work.setSelectedTripId("trip-in-vineyard-a")
         work.setProgramCalculatorPrefill("spray-in-vineyard-a")
         work.setTripHudLauncherMode("Repairs")
 
@@ -158,7 +158,7 @@ class WorkContextIdentityScopingTest {
 
         assertEquals(WorkContextBinding.VineyardChanged, binding)
         assertTrue("block IDs belong to the old vineyard", work.pinsBlockIds.value.isEmpty())
-        assertNull(work.tripsSelection.value)
+        assertNull(work.selectedTripId.value)
         assertNull(work.programCalculatorPrefill.value)
         assertNull(work.tripHudLauncherMode.value)
     }
@@ -188,7 +188,7 @@ class WorkContextIdentityScopingTest {
         val work = WorkContextViewModel(SavedStateHandle())
         work.bindIdentity("user-a", "vineyard-b")
         work.enterGrowthWorkflow()
-        work.setTripsSelection("trip-1")
+        work.setSelectedTripId("trip-1")
 
         // Cache read, network refresh, reconnect, foreground revalidation —
         // each re-publishes the same identity.
@@ -197,7 +197,7 @@ class WorkContextIdentityScopingTest {
         }
 
         assertEquals(setOf("block-7"), work.pinsBlockIds.value)
-        assertEquals("trip-1", work.tripsSelection.value)
+        assertEquals("trip-1", work.selectedTripId.value)
         assertEquals("Growth", work.launcherMode.value)
         assertEquals(PinsViewMode.List, work.pinsViewMode.value)
     }

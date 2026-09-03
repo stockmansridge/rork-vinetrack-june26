@@ -245,8 +245,17 @@ fun TripsScreen(
     vm: AppViewModel,
     state: AppUiState,
     modifier: Modifier = Modifier,
-    initialSelectedTripId: String? = null,
-    onSelectionConsumed: () -> Unit = {},
+    /**
+     * The trip currently open, owned by the saved work context.
+     *
+     * Controlled state, and deliberately NOT consumed after opening: it is
+     * where the operator actually is, so it has to survive Activity and process
+     * recreation. Local state could not do that — a recreation mid-trip would
+     * drop them back to the trip list while the HUD launcher mode survived,
+     * leaving the screen held awake for a launcher nobody could see.
+     */
+    selectedTripId: String? = null,
+    onSelectedTripIdChange: (String?) -> Unit = {},
     /**
      * Repairs/Growth launcher drawn over the live trip HUD, owned by the saved
      * work context. Dropping pins from the HUD is the same pin-drop workflow as
@@ -258,22 +267,14 @@ fun TripsScreen(
     onStartSprayTrip: (prefillRecordId: String?) -> Unit = {},
     onGoHome: () -> Unit = {},
 ) {
-    var selectedId by remember { mutableStateOf<String?>(null) }
     var choosing by remember { mutableStateOf(false) }
     var starting by remember { mutableStateOf(false) }
     // Spray Trip setup chooser (template / custom / resume), mirroring iOS.
     var sprayTripSetup by remember { mutableStateOf(false) }
 
-    // When navigated here with a specific trip (e.g. just-started spray job),
-    // open that trip's detail once, then clear the external request.
-    LaunchedEffect(initialSelectedTripId) {
-        if (initialSelectedTripId != null) {
-            selectedId = initialSelectedTripId
-            onSelectionConsumed()
-        }
-    }
-
-    val selected = state.trips.firstOrNull { it.id == selectedId }
+    // A selected trip that isn't in the list yet (still loading after a process
+    // restart) simply shows the list; it opens as soon as the trip arrives.
+    val selected = state.trips.firstOrNull { it.id == selectedTripId }
 
     if (sprayTripSetup) {
         androidx.activity.compose.BackHandler { sprayTripSetup = false }
@@ -288,24 +289,27 @@ fun TripsScreen(
             },
             onOpenTrip = { tripId ->
                 sprayTripSetup = false
-                selectedId = tripId
+                onSelectedTripIdChange(tripId)
             },
         )
         return
     }
 
+    // Animate on the trip's IDENTITY, not on the trip object: an active trip is
+    // rewritten every GPS tick, and animating that would crossfade the HUD
+    // once a second.
     AnimatedContent(
-        targetState = selected,
+        targetState = selected?.id,
         transitionSpec = { fadeIn() togetherWith fadeOut() },
         label = "trip-nav",
         modifier = modifier,
-    ) { trip ->
-        if (trip == null) {
+    ) { tripId ->
+        if (tripId == null) {
             TripListView(
                 state = state,
-                onSelect = { selectedId = it.id },
+                onSelect = { onSelectedTripIdChange(it.id) },
                 onStart = { choosing = true },
-                onSelectActive = { selectedId = it.id },
+                onSelectActive = { onSelectedTripIdChange(it.id) },
             )
         } else {
             TripDetailView(
@@ -313,8 +317,8 @@ fun TripsScreen(
                 onHudLauncherModeChange = onHudLauncherModeChange,
                 vm = vm,
                 state = state,
-                tripId = trip.id,
-                onBack = { selectedId = null },
+                tripId = tripId,
+                onBack = { onSelectedTripIdChange(null) },
                 onGoHome = onGoHome,
             )
         }
@@ -338,7 +342,7 @@ fun TripsScreen(
             vm = vm,
             state = state,
             onDismiss = { starting = false },
-            onStarted = { id -> starting = false; selectedId = id },
+            onStarted = { id -> starting = false; onSelectedTripIdChange(id) },
         )
     }
 

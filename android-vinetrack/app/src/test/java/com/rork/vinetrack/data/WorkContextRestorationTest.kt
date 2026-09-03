@@ -89,10 +89,14 @@ class WorkContextRestorationTest {
         val handle = SavedStateHandle()
         val work = WorkContextViewModel(handle)
         work.setTab(MainTab.Trip)
+        // The HUD launcher is drawn over a trip's live map, so the trip is part
+        // of the workflow — see TripHudRestorationTest for that invariant.
+        work.setSelectedTripId("trip-42")
         work.setTripHudLauncherMode("Repairs")
 
         val restored = recreate(handle)
 
+        assertEquals("trip-42", restored.selectedTripId.value)
         assertEquals("Repairs", restored.tripHudLauncherMode.value)
         // Dropping pins from the live trip HUD is the same job as dropping them
         // from the tab launcher, so it must present as a pin workflow.
@@ -170,7 +174,7 @@ class WorkContextRestorationTest {
         work.setPinsBlockIds(setOf("block-42", "block-43"))
         work.setPinsViewMode(PinsViewMode.Stats)
         work.setLauncherMode("Growth")
-        work.setTripsSelection("trip-9")
+        work.setSelectedTripId("trip-9")
         work.bindIdentity("user-1", "vineyard-b")
 
         handle.keys().forEach { key ->

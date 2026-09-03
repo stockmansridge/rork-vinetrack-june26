@@ -107,7 +107,7 @@ class MainSurfaceRestorationTest {
         val handle = SavedStateHandle()
         val work = WorkContextViewModel(handle)
         work.setTab(MainTab.Trip)
-        work.setTripsSelection("trip-9")
+        work.setSelectedTripId("trip-9")
         work.setTripHudLauncherMode("Growth")
 
         assertEquals(MainSurface.TripTab("trip-9", "Growth"), surfaceOf(recreate(handle)))

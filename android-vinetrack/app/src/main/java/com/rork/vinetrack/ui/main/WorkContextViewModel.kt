@@ -85,11 +85,38 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
     val launcherMode: StateFlow<String?> = handle.getStateFlow(KEY_LAUNCHER_MODE, null)
 
     /**
+     * The trip the operator currently has open — the authoritative answer to
+     * "which trip am I in", not a one-shot navigation request.
+     *
+     * The Trips screen renders from this and writes straight back to it, so
+     * being inside a trip (and inside its live HUD) survives recreation. It is
+     * cleared by going back, by the trip disappearing, and by a vineyard or
+     * user change — never by simply having been read.
+     *
+     * Declared before the HUD launcher because that launcher is derived from
+     * it: a HUD mode is only real while a trip is there to host it.
+     */
+    val selectedTripId: StateFlow<String?> = handle.getStateFlow(KEY_SELECTED_TRIP, null)
+
+    /**
      * The same Repairs/Growth launcher opened as an overlay on the live trip
      * HUD. Kept separate from [launcherMode] because it renders OVER the trip
      * map instead of replacing the whole surface.
+     *
+     * Only meaningful while [selectedTripId] names a trip to host it — see
+     * [liveTripHudLauncherMode] and [TripContextRules].
      */
     val tripHudLauncherMode: StateFlow<String?> = handle.getStateFlow(KEY_TRIP_HUD_LAUNCHER, null)
+
+    /**
+     * The HUD launcher, but only while a trip is actually selected to draw it
+     * over. A HUD mode with no selected trip is stale state: the launcher is
+     * nowhere on screen, so it must not count as an active workflow.
+     */
+    private val liveTripHudLauncherMode: StateFlow<String?> =
+        tripHudLauncherMode.combineState(selectedTripId) { mode, tripId ->
+            mode?.takeIf { tripId != null }
+        }
 
     /**
      * Which pin-drop workflow is active, if any. Read by the screen-awake
@@ -97,10 +124,11 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
      *
      * Covers the HUD launcher as well as the tab one: dropping pins from the
      * live trip HUD is the same job in the same weather, and must hold the
-     * screen on the same way.
+     * screen on the same way — but only while that HUD is really there, so a
+     * stale HUD mode can never hold the display on invisibly.
      */
     val pinWorkflow: StateFlow<PinWorkflow?> =
-        launcherMode.combineState(tripHudLauncherMode) { tabMode, hudMode ->
+        launcherMode.combineState(liveTripHudLauncherMode) { tabMode, hudMode ->
             PinWorkflow.fromModeName(tabMode ?: hudMode)
         }
 
@@ -119,9 +147,6 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
     /** Map / List / Stats on the Pins surface. */
     val pinsViewMode: StateFlow<PinsViewMode> = handle.getStateFlow(KEY_PINS_VIEW_MODE, PinsViewMode.Map.name)
         .mapState { name -> PinsViewMode.entries.firstOrNull { it.name == name } ?: PinsViewMode.Map }
-
-    /** Trip to auto-open on the Trips tab. */
-    val tripsSelection: StateFlow<String?> = handle.getStateFlow(KEY_TRIP_SELECTION, null)
 
     /** Open the Program tab straight into the Spray Calculator. */
     val programOpenCalculator: StateFlow<Boolean> = handle.getStateFlow(KEY_PROGRAM_CALC, false)
@@ -142,7 +167,18 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
     fun setTripHudLauncherMode(value: String?) { handle[KEY_TRIP_HUD_LAUNCHER] = value }
     fun setPinsBlockIds(value: Set<String>) { handle[KEY_PINS_BLOCK_IDS] = ArrayList(value) }
     fun setPinsViewMode(value: PinsViewMode) { handle[KEY_PINS_VIEW_MODE] = value.name }
-    fun setTripsSelection(value: String?) { handle[KEY_TRIP_SELECTION] = value }
+
+    /**
+     * Open [value] as the current trip, or clear the selection with null.
+     *
+     * Leaving a trip (or moving to a different one) always drops the HUD
+     * launcher with it: that launcher belongs to the trip it was drawn over.
+     */
+    fun setSelectedTripId(value: String?) {
+        if (handle.get<String?>(KEY_SELECTED_TRIP) == value) return
+        handle[KEY_SELECTED_TRIP] = value
+        handle[KEY_TRIP_HUD_LAUNCHER] = null
+    }
     fun setProgramOpenCalculator(value: Boolean) { handle[KEY_PROGRAM_CALC] = value }
     fun setProgramCalculatorPrefill(value: String?) { handle[KEY_PROGRAM_PREFILL] = value }
     fun setShowSetupWizard(value: Boolean) { handle[KEY_SETUP_WIZARD] = value }
@@ -171,12 +207,36 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
         tripHudLauncherMode = tripHudLauncherMode.value,
         pinsBlockIds = pinsBlockIds.value,
         pinsViewMode = pinsViewMode.value,
-        tripsSelection = tripsSelection.value,
+        selectedTripId = selectedTripId.value,
         programOpenCalculator = programOpenCalculator.value,
         programCalculatorPrefill = programCalculatorPrefill.value,
         showSetupWizard = showSetupWizard.value,
         showAddPinComposer = showAddPinComposer.value,
     )
+
+    /**
+     * Re-check the trip context against what is now known about the trip list.
+     *
+     * Called as the trip list loads and changes, so a selected trip that was
+     * deleted, or a HUD launcher whose trip has ended, is dropped rather than
+     * left holding the screen awake for a workflow that is no longer on screen.
+     * Writes only when something actually changes.
+     */
+    fun reconcileTripContext(knowledge: TripsKnowledge) {
+        val resolved = TripContextRules.reconcile(
+            selectedTripId = selectedTripId.value,
+            hudLauncherMode = tripHudLauncherMode.value,
+            knowledge = knowledge,
+        )
+        // Written field-by-field rather than through setSelectedTripId: this is
+        // a correction of existing state, not the operator opening a trip.
+        if (resolved.selectedTripId != selectedTripId.value) {
+            handle[KEY_SELECTED_TRIP] = resolved.selectedTripId
+        }
+        if (resolved.hudLauncherMode != tripHudLauncherMode.value) {
+            handle[KEY_TRIP_HUD_LAUNCHER] = resolved.hudLauncherMode
+        }
+    }
 
     // ---- Identity scoping ---------------------------------------------------
 
@@ -232,7 +292,7 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
     private fun clearVineyardScopedState() {
         setPinsBlockIds(emptySet())
         setTripHudLauncherMode(null)
-        setTripsSelection(null)
+        setSelectedTripId(null)
         setProgramOpenCalculator(false)
         setProgramCalculatorPrefill(null)
         setShowSetupWizard(false)
@@ -255,7 +315,7 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
         setTripHudLauncherMode(null)
         setPinsBlockIds(emptySet())
         setPinsViewMode(PinsViewMode.Map)
-        setTripsSelection(null)
+        setSelectedTripId(null)
         setProgramOpenCalculator(false)
         setProgramCalculatorPrefill(null)
         setShowSetupWizard(false)
@@ -304,7 +364,7 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
         const val KEY_TRIP_HUD_LAUNCHER = "work_trip_hud_launcher"
         const val KEY_PINS_BLOCK_IDS = "work_pins_block_ids"
         const val KEY_PINS_VIEW_MODE = "work_pins_view_mode"
-        const val KEY_TRIP_SELECTION = "work_trip_selection"
+        const val KEY_SELECTED_TRIP = "work_selected_trip"
         const val KEY_PROGRAM_CALC = "work_program_calc"
         const val KEY_PROGRAM_PREFILL = "work_program_prefill"
         const val KEY_SETUP_WIZARD = "work_setup_wizard"
