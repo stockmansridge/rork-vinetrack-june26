@@ -28,12 +28,13 @@ class DamageMapInteractionRegressionTest {
     }
 
     @Test
-    fun `damage map explicitly enables precise touch navigation and close zoom`() {
-        val editor = editor(source())
+    fun `damage map enables precise touch navigation without imposing a zoom cap`() {
+        val source = source()
+        val editor = editor(source)
 
         assertTrue(editor.contains("mapType = MapType.HYBRID"))
-        assertTrue(editor.contains("maxZoomPreference = DAMAGE_MAP_MAX_ZOOM"))
-        assertTrue(source().contains("private const val DAMAGE_MAP_MAX_ZOOM = 21f"))
+        assertFalse(editor.contains("maxZoomPreference"))
+        assertFalse(source.contains("DAMAGE_MAP_MAX_ZOOM"))
         assertTrue(editor.contains("scrollGesturesEnabled = true"))
         assertTrue(editor.contains("zoomGesturesEnabled = true"))
         assertTrue(editor.contains("rotationGesturesEnabled = true"))

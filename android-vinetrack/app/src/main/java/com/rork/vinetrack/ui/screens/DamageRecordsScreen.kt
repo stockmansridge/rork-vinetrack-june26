@@ -518,10 +518,7 @@ private fun RecordDamageView(
                 GoogleMap(
                     modifier = Modifier.fillMaxSize(),
                     cameraPositionState = cameraPositionState,
-                    properties = MapProperties(
-                        mapType = MapType.HYBRID,
-                        maxZoomPreference = DAMAGE_MAP_MAX_ZOOM,
-                    ),
+                    properties = MapProperties(mapType = MapType.HYBRID),
                     uiSettings = MapUiSettings(
                         scrollGesturesEnabled = true,
                         zoomGesturesEnabled = true,
@@ -768,8 +765,6 @@ private fun RecordDamageView(
 }
 
 // MARK: - Helpers
-
-private const val DAMAGE_MAP_MAX_ZOOM = 21f
 
 /** Stable native marker plus the last coordinate committed to polygon state. */
 private class DamageVertex(initialPosition: LatLng) {
