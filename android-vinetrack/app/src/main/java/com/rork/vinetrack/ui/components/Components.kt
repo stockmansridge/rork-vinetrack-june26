@@ -61,9 +61,20 @@ fun VineyardCard(
     ) { content() }
 }
 
-/** Uppercase section header on tinted backgrounds (iOS `plainSectionHeader`). */
+/**
+ * Uppercase section header on tinted backgrounds (iOS `plainSectionHeader`).
+ *
+ * Set [fillWidth] to false when the header shares a row with a trailing control
+ * (for example a ⓘ help button) that should sit directly beside the text
+ * rather than at the far edge.
+ */
 @Composable
-fun SectionHeader(title: String, onLight: Boolean = false, modifier: Modifier = Modifier) {
+fun SectionHeader(
+    title: String,
+    onLight: Boolean = false,
+    modifier: Modifier = Modifier,
+    fillWidth: Boolean = true,
+) {
     val vine = LocalVineColors.current
     Text(
         text = title.uppercase(),
@@ -71,7 +82,7 @@ fun SectionHeader(title: String, onLight: Boolean = false, modifier: Modifier = 
         fontWeight = FontWeight.SemiBold,
         letterSpacing = 0.5.sp,
         color = if (onLight) vine.textSecondary else Color.White.copy(alpha = 0.95f),
-        modifier = modifier.fillMaxWidth(),
+        modifier = if (fillWidth) modifier.fillMaxWidth() else modifier,
     )
 }
 

@@ -66,6 +66,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -110,7 +111,9 @@ import com.rork.vinetrack.data.model.UnifiedPinContract
 import com.rork.vinetrack.data.model.Vineyard
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
+import com.rork.vinetrack.ui.components.HelpSheet
 import com.rork.vinetrack.ui.components.OverviewStat
+import com.rork.vinetrack.ui.components.QuickActionsHelp
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.main.MainTab
@@ -846,11 +849,25 @@ private fun WeatherCard(onClick: () -> Unit) {
 
 @Composable
 private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, onAddPinAction: () -> Unit) {
+    var showHelp by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        SectionHeader("Quick Actions")
+        // Heading + ⓘ help entry point (iOS parity: `plainSectionHeaderWithInfo`).
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            SectionHeader("Quick Actions", fillWidth = false)
+            IconButton(onClick = { showHelp = true }, modifier = Modifier.size(44.dp)) {
+                Icon(
+                    Icons.Filled.Info,
+                    contentDescription = "How to use Quick Actions",
+                    tint = Color.White.copy(alpha = 0.85f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            Spacer(Modifier.weight(1f))
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             QuickActionCard(
                 title = "Repairs",
@@ -897,6 +914,14 @@ private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, onA
             }
             Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
         }
+    }
+
+    if (showHelp) {
+        HelpSheet(
+            title = QuickActionsHelp.TITLE,
+            pages = QuickActionsHelp.pages,
+            onDismiss = { showHelp = false },
+        )
     }
 }
 

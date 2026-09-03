@@ -627,6 +627,7 @@ private struct NewHomeTabView: View {
     @State private var showStartTrip: Bool = false
     @State private var showSpraySetup: Bool = false
     @State private var showSetupWizard: Bool = false
+    @State private var showQuickActionsHelp: Bool = false
     @AppStorage("setupWizardEnabled") private var setupWizardEnabled: Bool = true
     #if DEBUG
     @State private var showBackendDiagnostic: Bool = false
@@ -701,6 +702,13 @@ private struct NewHomeTabView: View {
             }
             .sheet(isPresented: $showSetupWizard) {
                 SetupWizardView()
+            }
+            .sheet(isPresented: $showQuickActionsHelp) {
+                HelpSheetView(
+                    navigationTitle: QuickActionsHelp.navigationTitle,
+                    pages: QuickActionsHelp.pages
+                )
+                .presentationDetents([.large])
             }
             #if DEBUG
             .sheet(isPresented: $showBackendDiagnostic) {
@@ -841,6 +849,38 @@ private struct NewHomeTabView: View {
         .frame(maxWidth: .infinity)
         .padding(.horizontal)
         .padding(.top, 4)
+    }
+
+    /// `plainSectionHeader` plus a trailing ⓘ button. Used where a section has
+    /// an explanatory help sheet; the icon inherits the header's secondary
+    /// on-image styling and carries a full 44pt touch target.
+    private func plainSectionHeaderWithInfo(
+        _ title: String,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 2) {
+            Text(title.uppercased())
+                .font(.subheadline.weight(.semibold))
+                .tracking(0.5)
+                .foregroundStyle(.white.opacity(0.95))
+                .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
+            Button(action: action) {
+                Image(systemName: "info.circle")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
+                    .frame(width: 44, height: 44)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(accessibilityLabel)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal)
+        // Keep the header's visual height despite the 44pt hit target.
+        .padding(.vertical, -10)
     }
 
     private func plainSectionHeader(_ title: String) -> some View {
@@ -986,7 +1026,12 @@ private struct NewHomeTabView: View {
 
     private var quickActionsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            plainSectionHeader("Quick Actions")
+            plainSectionHeaderWithInfo(
+                "Quick Actions",
+                accessibilityLabel: "How to use Quick Actions"
+            ) {
+                showQuickActionsHelp = true
+            }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 NavigationLink {
