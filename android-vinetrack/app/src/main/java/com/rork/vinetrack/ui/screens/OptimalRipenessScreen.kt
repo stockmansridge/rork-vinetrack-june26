@@ -120,7 +120,7 @@ import kotlin.math.min
  */
 
 /** A resolved per-block ripeness row. */
-private data class RipenessRow(
+internal data class RipenessRow(
     val block: Paddock,
     val varietyName: String?,
     val allocationPercent: Double?,
@@ -129,15 +129,21 @@ private data class RipenessRow(
     val total: Double,
     val target: Double,
     val daysToTarget: Int?,
+    val hasGddValue: Boolean = true,
 ) {
     val progress: Double get() = if (target > 0) min(1.0, max(0.0, total / target)) else 0.0
 }
 
-private data class RipenessResult(
+internal data class RipenessResult(
     val sourceConfigured: Boolean,
     val rows: List<RipenessRow>,
     val sourceLabel: String = "Open-Meteo Archive",
     val sourceFingerprint: String = "",
+)
+
+internal data class OptimalRipenessScreenState(
+    val result: RipenessResult,
+    val isUpdatingWeather: Boolean,
 )
 
 /** Source decision made only from a conclusive shared-configuration read. */
@@ -233,15 +239,27 @@ fun OptimalRipenessScreen(
     }
 
     val vineyardId = state.selectedVineyardId
-    val cachedResult = remember(vineyardId, state.paddocks) {
+    val cachedSnapshot = remember(vineyardId, state.paddocks) {
         vineyardId?.let { resultCache.load(session.userId, it) }
-            ?.toRipenessResult(state.paddocks)
+    }
+    val immediateResult = remember(cachedSnapshot, coords, state.paddocks, state.grapeVarieties, seasonStartMs) {
+        buildImmediateRipenessResult(
+            paddocks = state.paddocks,
+            grapeVarieties = state.grapeVarieties,
+            seasonStartMs = seasonStartMs,
+            globalResetMode = gddSettings.resetMode,
+            cachedSnapshot = cachedSnapshot,
+            fallbackSourceLabel = if (coords == null) "Weather source required" else "Checking weather source…",
+        )
     }
 
-    // Cache-first stale-while-revalidate: keep the last successful cards visible
-    // while the shared vineyard weather source refreshes in the background.
-    val resultState = produceState<RipenessResult?>(
-        initialValue = cachedResult,
+    // Block identity and setup come from local vineyard state immediately. Weather
+    // only enriches those rows, so a slow refresh can never blank the operation UI.
+    val resultState = produceState(
+        initialValue = OptimalRipenessScreenState(
+            result = immediateResult,
+            isUpdatingWeather = coords != null,
+        ),
         vineyardId,
         coords,
         state.paddocks,
@@ -251,35 +269,48 @@ fun OptimalRipenessScreen(
         val id = vineyardId ?: return@produceState
         val c = coords
         if (c == null) {
-            if (value == null) value = RipenessResult(sourceConfigured = false, rows = emptyList())
+            value = value.copy(
+                result = value.result.copy(sourceConfigured = false, sourceLabel = "Weather source required"),
+                isUpdatingWeather = false,
+            )
             return@produceState
         }
         val integrationRead = runCatching {
             integrationRepository.fetch(id, WeatherIntegrationProvider.DAVIS)
         }
         val refreshPlan = planOptimalRipenessRefresh(
-            cachedSnapshot = resultCache.load(session.userId, id),
+            cachedSnapshot = cachedSnapshot,
             integrationRead = integrationRead,
             latitude = c.first,
             longitude = c.second,
         )
         if (!refreshPlan.shouldRefresh) {
-            refreshPlan.cachedSnapshot?.let { value = it.toRipenessResult(state.paddocks) }
+            value = value.copy(isUpdatingWeather = false)
             return@produceState
-        }
-        if (refreshPlan.shouldRemoveCachedSnapshot) {
-            resultCache.remove(id)
-            value = null
         }
         val davis = refreshPlan.davisIntegration
         val desiredFingerprint = requireNotNull(refreshPlan.desiredFingerprint)
+        val sourceLabel = if (davis != null) "Davis WeatherLink" else "Open-Meteo Archive"
+        if (refreshPlan.shouldRemoveCachedSnapshot) {
+            resultCache.remove(id)
+        }
+        value = OptimalRipenessScreenState(
+            result = buildImmediateRipenessResult(
+                paddocks = state.paddocks,
+                grapeVarieties = state.grapeVarieties,
+                seasonStartMs = seasonStartMs,
+                globalResetMode = gddSettings.resetMode,
+                cachedSnapshot = refreshPlan.cachedSnapshot,
+                fallbackSourceLabel = sourceLabel,
+                sourceFingerprint = desiredFingerprint,
+            ),
+            isUpdatingWeather = true,
+        )
 
         val sourceKey: String
-        val sourceLabel: String
         val latitude: Double
         val loaded = if (davis != null) {
             sourceKey = DegreeDayService.davisKey(davis.stationId!!)
-            sourceLabel = "Davis WeatherLink"
             latitude = davis.stationLatitude ?: c.first
             val daily = runCatching {
                 davisRepository.fetchHistoricDailyTemps(
@@ -292,12 +323,11 @@ fun OptimalRipenessScreen(
             service.installDailyTemps(sourceKey, daily)
         } else {
             sourceKey = DegreeDayService.openMeteoKey(c.first, c.second)
-            sourceLabel = "Open-Meteo Archive"
             latitude = c.first
             service.fetchSeasonOpenMeteo(c.first, c.second, seasonStartMs)
         }
         if (!loaded) {
-            if (value == null) value = RipenessResult(sourceConfigured = true, rows = emptyList(), sourceLabel, desiredFingerprint)
+            value = value.copy(isUpdatingWeather = false)
             return@produceState
         }
         val fresh = computeRows(
@@ -310,7 +340,7 @@ fun OptimalRipenessScreen(
             useBEDD = gddSettings.calculationMode.useBEDD,
             globalResetMode = gddSettings.resetMode,
         ).copy(sourceLabel = sourceLabel, sourceFingerprint = desiredFingerprint)
-        value = fresh
+        value = OptimalRipenessScreenState(result = fresh, isUpdatingWeather = false)
         resultCache.save(fresh.toSnapshot(session.userId.orEmpty(), id))
     }
 
@@ -325,7 +355,8 @@ fun OptimalRipenessScreen(
             )
         },
     ) { padding ->
-        val result = resultState.value
+        val screenState = resultState.value
+        val result = screenState.result
         when {
             state.paddocks.isEmpty() -> {
                 Column(modifier = Modifier.fillMaxSize().padding(padding), verticalArrangement = Arrangement.Center) {
@@ -336,30 +367,12 @@ fun OptimalRipenessScreen(
                     )
                 }
             }
-            result == null -> {
-                Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        CircularProgressIndicator(color = VineColors.Primary)
-                        Text("Fetching season weather…", color = vine.textSecondary, fontSize = 13.sp)
-                    }
-                }
-            }
-            !result.sourceConfigured -> {
-                Column(modifier = Modifier.fillMaxSize().padding(padding), verticalArrangement = Arrangement.Center) {
-                    EmptyState(
-                        icon = Icons.Filled.WbSunny,
-                        title = "Weather source required",
-                        message = "Add vineyard coordinates or map a block boundary so we can pull season temperatures and project ripeness.",
-                    )
-                }
-            }
             else -> {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize().padding(padding),
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    item { GddSourceCard(result.sourceLabel) }
                     if (onOpenTool != null) {
                         item {
                             SetupChecklistCard(
@@ -372,6 +385,7 @@ fun OptimalRipenessScreen(
                             )
                         }
                     }
+                    item { GddSourceCard(result.sourceLabel, screenState.isUpdatingWeather) }
                     item { SectionHeader("Blocks · ${result.rows.size}", onLight = true) }
                     items(result.rows) { row ->
                         val varietyKey = row.varietyName?.let { name ->
@@ -380,6 +394,7 @@ fun OptimalRipenessScreen(
                         }
                         BlockRipenessCard(
                             row = row,
+                            isUpdatingWeather = screenState.isUpdatingWeather,
                             onClick = if (varietyKey != null) ({ openVarietyKey = varietyKey }) else null,
                         )
                     }
@@ -414,19 +429,28 @@ fun OptimalRipenessScreen(
 }
 
 @Composable
-private fun GddSourceCard(sourceLabel: String) {
+private fun GddSourceCard(sourceLabel: String, isUpdatingWeather: Boolean) {
     val vine = LocalVineColors.current
     VineyardCard {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Icon(Icons.Filled.WbSunny, contentDescription = null, tint = VineColors.Orange, modifier = Modifier.size(18.dp))
             Text("GDD source", color = vine.textSecondary, fontSize = 13.sp, modifier = Modifier.weight(1f))
-            Text(sourceLabel, color = vine.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Column(horizontalAlignment = Alignment.End) {
+                Text(sourceLabel, color = vine.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                if (isUpdatingWeather) {
+                    Text("Updating season weather…", color = vine.textSecondary, fontSize = 11.sp)
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun BlockRipenessCard(row: RipenessRow, onClick: (() -> Unit)? = null) {
+private fun BlockRipenessCard(
+    row: RipenessRow,
+    isUpdatingWeather: Boolean,
+    onClick: (() -> Unit)? = null,
+) {
     val vine = LocalVineColors.current
     val status = ripenessStatus(row)
     VineyardCard(modifier = if (onClick != null) Modifier.clickable { onClick() } else Modifier) {
@@ -452,16 +476,21 @@ private fun BlockRipenessCard(row: RipenessRow, onClick: (() -> Unit)? = null) {
                 }
                 if (row.target > 0) {
                     Column(horizontalAlignment = Alignment.End) {
-                        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text("${row.total.toInt()}", color = status.color, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                            Text("/ ${row.target.toInt()}", color = vine.textSecondary, fontSize = 11.sp)
+                        if (row.hasGddValue) {
+                            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text("${row.total.toInt()}", color = status.color, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                Text("/ ${row.target.toInt()}", color = vine.textSecondary, fontSize = 11.sp)
+                            }
+                            Text("${(row.progress * 100).toInt()}%", color = status.color, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        } else {
+                            Text("Updating…", color = vine.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Target ${row.target.toInt()}", color = vine.textSecondary, fontSize = 11.sp)
                         }
-                        Text("${(row.progress * 100).toInt()}%", color = status.color, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
 
-            // Progress bar.
+            // Progress bar remains present while weather is loading so card geometry is stable.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -471,7 +500,7 @@ private fun BlockRipenessCard(row: RipenessRow, onClick: (() -> Unit)? = null) {
             ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth(row.progress.toFloat().coerceIn(0.02f, 1f))
+                        .fillMaxWidth(if (row.hasGddValue) row.progress.toFloat().coerceIn(0.02f, 1f) else 0.02f)
                         .height(6.dp)
                         .clip(CircleShape)
                         .background(Brush.horizontalGradient(listOf(status.color.copy(alpha = 0.7f), status.color))),
@@ -479,8 +508,9 @@ private fun BlockRipenessCard(row: RipenessRow, onClick: (() -> Unit)? = null) {
             }
 
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val visibleStatus = if (!row.hasGddValue && isUpdatingWeather) "Waiting for season weather" else status.label
                 Icon(status.icon, contentDescription = null, tint = status.color, modifier = Modifier.size(14.dp))
-                Text(status.label, color = status.color, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(visibleStatus, color = status.color, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 val days = row.daysToTarget
                 if (days != null && days > 0) {
                     Icon(Icons.Filled.CalendarMonth, contentDescription = null, tint = VineColors.Orange, modifier = Modifier.size(13.dp))
@@ -698,8 +728,59 @@ private fun OptimalRipenessSnapshot.toRipenessResult(paddocks: List<Paddock>): R
                 total = cached.total,
                 target = cached.target,
                 daysToTarget = cached.daysToTarget,
+                hasGddValue = true,
             )
         },
+    )
+}
+
+internal fun buildImmediateRipenessResult(
+    paddocks: List<Paddock>,
+    grapeVarieties: List<GrapeVarietyRow>,
+    seasonStartMs: Long,
+    globalResetMode: GddResetMode,
+    cachedSnapshot: OptimalRipenessSnapshot?,
+    fallbackSourceLabel: String,
+    sourceFingerprint: String = cachedSnapshot?.sourceFingerprint.orEmpty(),
+): RipenessResult {
+    val rows = paddocks.flatMap { block ->
+        val effectiveReset = block.resetModeOverride?.takeIf { it.isNotBlank() }
+            ?.let { GddResetMode.fromKey(it) } ?: globalResetMode
+        val stageMs = when (effectiveReset) {
+            GddResetMode.SEASON_START -> null
+            GddResetMode.BUDBURST -> parseIsoToEpochMs(block.budburstDate)
+            GddResetMode.FLOWERING -> parseIsoToEpochMs(block.floweringDate)
+            GddResetMode.VERAISON -> parseIsoToEpochMs(block.veraisonDate)
+        }
+        val resetMs = stageMs ?: seasonStartMs
+        val allocations = block.varietyAllocations.orEmpty().sortedByDescending { it.displayPercent ?: 0.0 }
+        val rowInputs = if (allocations.isEmpty()) listOf<PaddockVarietyAllocation?>(null) else allocations
+        rowInputs.map { allocation ->
+            val varietyName = allocation?.displayName
+            val cached = cachedSnapshot?.rows?.firstOrNull { cachedRow ->
+                cachedRow.blockId.equals(block.id, ignoreCase = true) &&
+                    canonicalVarietyName(cachedRow.varietyName.orEmpty()) == canonicalVarietyName(varietyName.orEmpty())
+            }
+            RipenessRow(
+                block = block,
+                varietyName = varietyName,
+                allocationPercent = allocation?.displayPercent,
+                multiVariety = allocations.size > 1,
+                resetDateMs = resetMs,
+                total = cached?.total ?: 0.0,
+                target = allocation?.let {
+                    resolveTargetForAllocationList(it.varietyKey, it.displayName, grapeVarieties)
+                } ?: 0.0,
+                daysToTarget = cached?.daysToTarget,
+                hasGddValue = cached != null,
+            )
+        }
+    }
+    return RipenessResult(
+        sourceConfigured = true,
+        rows = rows,
+        sourceLabel = cachedSnapshot?.sourceLabel ?: fallbackSourceLabel,
+        sourceFingerprint = sourceFingerprint,
     )
 }
 

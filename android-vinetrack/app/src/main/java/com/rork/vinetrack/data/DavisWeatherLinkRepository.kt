@@ -11,6 +11,9 @@ import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -47,6 +50,21 @@ data class DavisSensorSummary(
  * Result of `test_saved` — re-validating the credentials already stored for
  * the vineyard. Mirrors the iOS `test_saved` contract.
  */
+internal data class DavisHistoricWindow(val startEpochMs: Long, val endEpochMs: Long)
+
+/** WeatherLink v2 accepts at most 24 hours per historic request. */
+internal fun davisHistoricWindows(fromEpochMs: Long, toEpochMs: Long): List<DavisHistoricWindow> {
+    if (fromEpochMs >= toEpochMs) return emptyList()
+    val windows = mutableListOf<DavisHistoricWindow>()
+    var start = fromEpochMs
+    while (start < toEpochMs) {
+        val end = minOf(start + 86_400_000L, toEpochMs)
+        windows.add(DavisHistoricWindow(start, end))
+        start = end
+    }
+    return windows
+}
+
 data class DavisTestSavedResult(
     val success: Boolean,
     val status: String,
@@ -126,16 +144,26 @@ class DavisWeatherLinkRepository(private val session: SessionStore) {
         }
         val highs = mutableMapOf<String, Double>()
         val lows = mutableMapOf<String, Double>()
-        var start = fromEpochMs
-        while (start < toEpochMs) {
-            val end = minOf(start + 24L * 60L * 60L * 1000L, toEpochMs)
-            val json = invoke(buildJsonObject {
-                put("vineyardId", vineyardId)
-                put("action", "historic")
-                put("stationId", stationId)
-                put("startEpoch", start / 1000L)
-                put("endEpoch", end / 1000L)
-            })
+        // The upstream range limit is genuinely 24 hours. Keep that maximum
+        // range, but process a small bounded group concurrently instead of
+        // serially waiting once per season day.
+        val responses = mutableListOf<JsonObject>()
+        for (batch in davisHistoricWindows(fromEpochMs, toEpochMs).chunked(6)) {
+            responses += coroutineScope {
+                batch.map { window ->
+                    async {
+                        invoke(buildJsonObject {
+                            put("vineyardId", vineyardId)
+                            put("action", "historic")
+                            put("stationId", stationId)
+                            put("startEpoch", window.startEpochMs / 1000L)
+                            put("endEpoch", window.endEpochMs / 1000L)
+                        })
+                    }
+                }.awaitAll()
+            }
+        }
+        responses.forEach { json ->
             json["sensors"]?.jsonArray?.forEach { sensorElement ->
                 val sensor = sensorElement.jsonObject
                 val sensorType = sensor["sensor_type"]?.jsonPrimitive?.intOrNull
@@ -155,7 +183,6 @@ class DavisWeatherLinkRepository(private val session: SessionStore) {
                     lows[day] = minOf(lows[day] ?: Double.MAX_VALUE, lowC)
                 }
             }
-            start = end
         }
         highs.mapNotNull { (day, high) -> lows[day]?.let { day to DailyTemp(high, it) } }.toMap()
     }
