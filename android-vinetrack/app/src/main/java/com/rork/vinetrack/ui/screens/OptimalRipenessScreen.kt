@@ -75,6 +75,7 @@ import com.rork.vinetrack.data.DavisWeatherLinkRepository
 import com.rork.vinetrack.data.OptimalRipenessCacheStore
 import com.rork.vinetrack.data.OptimalRipenessSnapshot
 import com.rork.vinetrack.data.OptimalRipenessSnapshotRow
+import com.rork.vinetrack.data.VineyardWeatherIntegration
 import com.rork.vinetrack.data.VineyardWeatherIntegrationRepository
 import com.rork.vinetrack.data.WeatherIntegrationProvider
 import com.rork.vinetrack.data.auth.SessionStore
@@ -138,6 +139,50 @@ private data class RipenessResult(
     val sourceLabel: String = "Open-Meteo Archive",
     val sourceFingerprint: String = "",
 )
+
+/** Source decision made only from a conclusive shared-configuration read. */
+internal data class OptimalRipenessRefreshPlan(
+    val cachedSnapshot: OptimalRipenessSnapshot?,
+    val davisIntegration: VineyardWeatherIntegration?,
+    val desiredFingerprint: String?,
+    val shouldRefresh: Boolean,
+    val shouldRemoveCachedSnapshot: Boolean,
+)
+
+/**
+ * Keeps the last successful source and rows when shared configuration is unavailable.
+ * A cache may be invalidated only after a successful read positively resolves a new source.
+ */
+internal fun planOptimalRipenessRefresh(
+    cachedSnapshot: OptimalRipenessSnapshot?,
+    integrationRead: Result<VineyardWeatherIntegration?>,
+    latitude: Double,
+    longitude: Double,
+): OptimalRipenessRefreshPlan {
+    if (integrationRead.isFailure) {
+        return OptimalRipenessRefreshPlan(
+            cachedSnapshot = cachedSnapshot,
+            davisIntegration = null,
+            desiredFingerprint = cachedSnapshot?.sourceFingerprint,
+            shouldRefresh = false,
+            shouldRemoveCachedSnapshot = false,
+        )
+    }
+
+    val davis = integrationRead.getOrNull()?.takeIf {
+        it.isActive && it.hasApiKey && it.hasApiSecret && !it.stationId.isNullOrBlank()
+    }
+    val desiredFingerprint = davis?.stationId?.let { "davis:$it" }
+        ?: DegreeDayService.openMeteoKey(latitude, longitude)
+    val sourceChanged = cachedSnapshot != null && cachedSnapshot.sourceFingerprint != desiredFingerprint
+    return OptimalRipenessRefreshPlan(
+        cachedSnapshot = cachedSnapshot.takeUnless { sourceChanged },
+        davisIntegration = davis,
+        desiredFingerprint = desiredFingerprint,
+        shouldRefresh = true,
+        shouldRemoveCachedSnapshot = sourceChanged,
+    )
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -209,17 +254,25 @@ fun OptimalRipenessScreen(
             if (value == null) value = RipenessResult(sourceConfigured = false, rows = emptyList())
             return@produceState
         }
-        val davis = runCatching {
+        val integrationRead = runCatching {
             integrationRepository.fetch(id, WeatherIntegrationProvider.DAVIS)
-        }.getOrNull()?.takeIf {
-            it.isActive && it.hasApiKey && it.hasApiSecret && !it.stationId.isNullOrBlank()
         }
-        val desiredFingerprint = davis?.stationId?.let { "davis:$it" }
-            ?: DegreeDayService.openMeteoKey(c.first, c.second)
-        if (cachedResult != null && cachedResult.sourceFingerprint != desiredFingerprint) {
+        val refreshPlan = planOptimalRipenessRefresh(
+            cachedSnapshot = resultCache.load(session.userId, id),
+            integrationRead = integrationRead,
+            latitude = c.first,
+            longitude = c.second,
+        )
+        if (!refreshPlan.shouldRefresh) {
+            refreshPlan.cachedSnapshot?.let { value = it.toRipenessResult(state.paddocks) }
+            return@produceState
+        }
+        if (refreshPlan.shouldRemoveCachedSnapshot) {
             resultCache.remove(id)
             value = null
         }
+        val davis = refreshPlan.davisIntegration
+        val desiredFingerprint = requireNotNull(refreshPlan.desiredFingerprint)
 
         val sourceKey: String
         val sourceLabel: String
