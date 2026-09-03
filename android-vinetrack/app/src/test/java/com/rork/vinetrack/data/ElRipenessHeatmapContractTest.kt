@@ -17,31 +17,29 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDate
 import kotlin.math.abs
 
 /**
  * Equivalence test against the shipped Portal E-L Ripeness Heatmap, driven by
  * the canonical contract package (`el-ripeness-heatmap-fixture.json` +
- * `el-ripeness-heatmap-expected.json`, contract v1.0.0).
+ * `el-ripeness-heatmap-expected.json`, contract **v1.1.0**).
  *
  * The same fixture drives `ELRipenessHeatmapContractTests` on iOS. Both suites
  * must agree with the Portal and therefore with each other.
  *
- * ## Two documented defects in the supplied companion files
+ * ## What 1.1.0 changed, and what this suite now pins
  *
- * 1. **`cell_weight` in halo / gradient modes** was generated from the
- *    *rounded* `max_influence_deg` published in the same file (6 decimal
- *    places) rather than from the full-precision radius. Affects `sp-C-near`,
- *    `sp-B-centre` and `sp-B-near-shared-edge`, each by ~1e-4. It never changes
- *    a rendered alpha, so it is cosmetic — but a correct implementation cannot
- *    reproduce those three numbers at full precision. This suite pins the
- *    published value through the documented rounded-radius path AND pins the
- *    full-precision value, so neither can drift unnoticed.
- * 2. **`excluded_reason` for the two northern records** is reported as
- *    `no_observation_date`, but both carry a valid `date`. The real cause is
- *    vineyard scoping (contract section 10: "Wrong vineyard — never fetched").
- *    Their `vintage` values are correct and are pinned here, because they are
- *    what proves the 1 January boundary.
+ * 1. **Vintage is the shared [VintageResolver]** — the mirror of the database
+ *    `resolve_vintage_year` (SQL 119). A 1 January season start resolves to the
+ *    observation's own calendar year. There is no second Vintage implementation.
+ * 2. **Full IEEE-754 precision throughout.** The expected file now publishes
+ *    `*_full_precision` siblings for every value that drives a calculation;
+ *    those are asserted exactly, and the six-decimal display copies to 1e-6.
+ *    No rounded value is ever fed back into a calculation.
+ * 3. **The two northern records are `wrong_vineyard`**, not a date error — both
+ *    carry valid dates and resolve to a valid Vintage under their own vineyard's
+ *    1 January season settings.
  */
 class ElRipenessHeatmapContractTest {
 
@@ -97,12 +95,17 @@ class ElRipenessHeatmapContractTest {
         return flag == true && warning != "unassigned_location"
     }
 
-    private fun rawRecords(vineyardId: String = southVineyardId): List<ElRipenessHeatmap.RawRecord> =
+    /**
+     * EVERY fixture record, including the two that belong to another vineyard.
+     * Scoping is the core's job (`selectedVineyardId`), not the test's — that is
+     * what lets `wrong_vineyard` be asserted as a real outcome.
+     */
+    private fun rawRecords(): List<ElRipenessHeatmap.RawRecord> =
         fixture.arr("observations").map { it.jsonObject }
-            .filter { it.str("vineyard_id") == vineyardId }
             .map { o ->
                 ElRipenessHeatmap.RawRecord(
                     id = o.str("id"),
+                    vineyardId = o.strOrNull("vineyard_id"),
                     paddockId = o.strOrNull("paddock_id"),
                     stageCode = o.strOrNull("growth_stage_code"),
                     latitude = o.dblOrNull("latitude"),
@@ -112,9 +115,8 @@ class ElRipenessHeatmapContractTest {
                 )
             }
 
-    private fun assignedById(vineyardId: String = southVineyardId): Map<String, Boolean> =
+    private fun assignedById(): Map<String, Boolean> =
         fixture.arr("observations").map { it.jsonObject }
-            .filter { it.str("vineyard_id") == vineyardId }
             .mapNotNull { o ->
                 explicitAssigned(o["placement"]?.jsonObject)?.let { o.str("id") to it }
             }.toMap()
@@ -132,7 +134,7 @@ class ElRipenessHeatmapContractTest {
 
     /** Season-filtered observations for the southern fixture vineyard, Vintage 2026. */
     private fun seasonObservations(): List<ElRipenessHeatmap.Observation> {
-        val all = ElRipenessHeatmap.toObservations(rawRecords(), assignedById())
+        val all = ElRipenessHeatmap.toObservations(rawRecords(), assignedById(), southVineyardId)
         return ElRipenessSeason.filterToVintage(all, 2026, 7, 1)
     }
 
@@ -276,52 +278,132 @@ class ElRipenessHeatmapContractTest {
 
     @Test
     fun `observation normalisation matches the contract record by record`() {
-        val southRaw = rawRecords()
-        val included = ElRipenessHeatmap.toObservations(southRaw, assignedById()).associateBy { it.id }
-        val northIds = fixture.arr("observations").map { it.jsonObject }
-            .filter { it.str("vineyard_id") != southVineyardId }.map { it.str("id") }.toSet()
+        val raw = rawRecords().associateBy { it.id }
+        val included = ElRipenessHeatmap
+            .toObservations(rawRecords(), assignedById(), southVineyardId)
+            .associateBy { it.id }
 
         for (case in expected.arr("observation_normalisation").map { it.jsonObject }) {
             val id = case.str("id")
             val shouldInclude = case.bool("included_in_observations")
+            val record = raw[id] ?: error("fixture is missing $id")
 
-            if (id in northIds) {
-                // Contract section 10: another vineyard's records are never
-                // fetched. The file labels this `no_observation_date`, which is
-                // wrong (both records carry a `date`) — the scoping outcome is
-                // what matters and is asserted here.
-                assertTrue("$id belongs to another vineyard and must not be included", !shouldInclude)
-                continue
+            assertEquals("$id owning vineyard", case.str("vineyard_id"), record.vineyardId)
+            assertEquals("$id inclusion", shouldInclude, included[id] != null)
+
+            // Vintage is resolved under the record's OWN vineyard's season
+            // settings, which is why a wrong-vineyard record still has a valid one.
+            val (sm, sd) = case.str("season_settings_used").split("/").map { it.toInt() }
+            val date = ElRipenessHeatmap.observationDate(record)
+            if (date != null) {
+                assertEquals(
+                    "$id vintage under ${case.str("season_settings_used")}",
+                    case.int("vintage"),
+                    ElRipenessSeason.vintageForDayKey(date, sm, sd),
+                )
             }
 
-            val obs = included[id]
-            assertEquals("$id inclusion", shouldInclude, obs != null)
-
             if (!shouldInclude) {
-                val reason = ElRipenessHeatmap.exclusionReason(southRaw.first { it.id == id })
+                val reason = ElRipenessHeatmap.exclusionReason(record, southVineyardId)
                 assertNotNull("$id must have an exclusion reason", reason)
                 assertEquals("$id exclusion reason", case.str("excluded_reason"), reason!!.wire)
                 continue
             }
 
-            requireNotNull(obs)
+            val obs = included.getValue(id)
             approx("$id parsed E-L", case.dbl("parsed_el"), obs.el, 1e-12)
             assertEquals("$id assigned", case.bool("assigned"), obs.assigned)
             assertEquals("$id resolved block", case.strOrNull("resolved_paddock_id"), obs.paddockId)
+        }
+    }
+
+    @Test
+    fun `the northern records are wrong_vineyard, not a date error`() {
+        val raw = rawRecords().associateBy { it.id }
+        for (id in listOf("obs-n1-north", "obs-n2-north")) {
+            val record = raw.getValue(id)
+            assertNotNull("$id carries a valid date", ElRipenessHeatmap.observationDate(record))
             assertEquals(
-                "$id vintage",
-                case.int("vintage"),
-                ElRipenessSeason.vintageForDayKey(obs.dateIso, 7, 1),
+                "$id is excluded by scoping, not by its date",
+                ElRipenessHeatmap.ExclusionReason.WRONG_VINEYARD,
+                ElRipenessHeatmap.exclusionReason(record, southVineyardId),
+            )
+            // Under its OWN vineyard it is a perfectly good observation.
+            assertNull(
+                "$id is valid within its own vineyard",
+                ElRipenessHeatmap.exclusionReason(record, "vy-fixture-north"),
             )
         }
     }
 
     @Test
-    fun `the northern records pin the 1 January vintage boundary`() {
-        // Season start 1/1: 31 Dec 2025 closes Vintage 2026; 1 Jan 2026 opens
-        // Vintage 2027. The boundary is inclusive of the start day.
-        assertEquals(2026, ElRipenessSeason.vintageForDayKey("2025-12-31T00:00:00Z", 1, 1))
-        assertEquals(2027, ElRipenessSeason.vintageForDayKey("2026-01-01T00:00:00Z", 1, 1))
+    fun `no_observation_date is used only when all three timestamps are absent`() {
+        val dated = ElRipenessHeatmap.RawRecord(
+            id = "x", vineyardId = southVineyardId, paddockId = "BLOCK_A",
+            stageCode = "23", latitude = -34.5, longitude = 138.5, date = "2026-01-25",
+        )
+        assertNull(ElRipenessHeatmap.exclusionReason(dated, southVineyardId))
+        assertEquals(
+            ElRipenessHeatmap.ExclusionReason.NO_OBSERVATION_DATE,
+            ElRipenessHeatmap.exclusionReason(dated.copy(date = null), southVineyardId),
+        )
+        // Falls back through completed_at and created_at before giving up.
+        assertNull(
+            ElRipenessHeatmap.exclusionReason(
+                dated.copy(date = null, completedAt = "2026-01-25T04:00:00Z"), southVineyardId,
+            ),
+        )
+        assertNull(
+            ElRipenessHeatmap.exclusionReason(
+                dated.copy(date = null, createdAt = "2026-01-25T04:00:00Z"), southVineyardId,
+            ),
+        )
+    }
+
+    // ---- Vintage authority: the shared resolver, and only the shared resolver ----
+
+    @Test
+    fun `heatmap vintage is the shared VintageResolver, never a second rule`() {
+        for (case in expected.arr("vintage_assignment").map { it.jsonObject }) {
+            val m = case.int("season_start_month")
+            val d = case.int("season_start_day")
+            val date = CivilDate.parse(case.str("date"))!!
+            assertEquals(
+                "${case.str("config")} @ ${case.str("date")} must come from VintageResolver",
+                VintageResolver.vintageYear(LocalDate.of(date.year, date.month, date.day), m, d),
+                ElRipenessSeason.vintageForDate(date, m, d),
+            )
+        }
+    }
+
+    @Test
+    fun `a 1 January season start makes the Vintage the calendar year`() {
+        // The SQL 119 rule. 2026-02-15 under a 1 Jan start is Vintage 2026 — an
+        // implementation that answers 2027 is non-conformant (contract 1.1.0 s4).
+        assertEquals(2025, ElRipenessSeason.vintageForDayKey("2025-12-31T00:00:00Z", 1, 1))
+        assertEquals(2026, ElRipenessSeason.vintageForDayKey("2026-01-01T00:00:00Z", 1, 1))
+        assertEquals(2026, ElRipenessSeason.vintageForDayKey("2026-02-15", 1, 1))
+        assertEquals(2026, ElRipenessSeason.vintageForDayKey("2026-12-31", 1, 1))
+        assertEquals(2027, ElRipenessSeason.vintageForDayKey("2027-01-01", 1, 1))
+    }
+
+    @Test
+    fun `an assigned Vintage range always contains the observation date`() {
+        // The invariant contract 1.1.0 s4 states explicitly. Exhaustive over every
+        // season start and a full two-year span of dates.
+        var day = CivilDate.parse("2025-01-01")!!
+        val end = CivilDate.parse("2027-01-01")!!
+        while (day < end) {
+            for ((m, d) in listOf(1 to 1, 2 to 29, 7 to 1, 11 to 1, 12 to 31)) {
+                val vintage = ElRipenessSeason.vintageForDate(day, m, d)
+                val range = ElRipenessSeason.seasonRangeForVintage(m, d, vintage)
+                assertTrue(
+                    "${day.iso} (start $m/$d, Vintage $vintage) must fall inside ${range.startIso}..${range.endIso}",
+                    day.iso >= range.startIso && day.iso <= range.endIso,
+                )
+            }
+            day = day.adding(1)
+        }
     }
 
     @Test
@@ -447,7 +529,12 @@ class ElRipenessHeatmapContractTest {
 
                 val maxInf = eb.dblOrNull("max_influence_deg")
                 if (maxInf == null) assertNull("$tag maxInfluence", block.maxInfluenceDeg)
-                else approx("$tag maxInfluence", maxInf, block.maxInfluenceDeg!!, 5e-7)
+                else approx("$tag maxInfluence (display)", maxInf, block.maxInfluenceDeg!!, 1e-6)
+
+                // The value that actually drove the calculation — no rounding.
+                val maxInfFull = eb.dblOrNull("max_influence_deg_full_precision")
+                if (maxInfFull == null) assertNull("$tag maxInfluence full", block.maxInfluenceDeg)
+                else approx("$tag maxInfluence (full precision)", maxInfFull, block.maxInfluenceDeg!!, 1e-12)
 
                 assertEquals("$tag grid present", eb.bool("grid_present"), block.grid != null)
                 if (eb.bool("grid_present")) {
@@ -499,7 +586,11 @@ class ElRipenessHeatmapContractTest {
 
                 val wantEl = sp.dblOrNull("idw_el")
                 if (wantEl == null) assertNull("$tag idw", sample.value)
-                else approx("$tag idw", wantEl, sample.value!!)
+                else approx("$tag idw (display)", wantEl, sample.value!!, 1e-6)
+
+                val wantElFull = sp.dblOrNull("idw_el_full_precision")
+                if (wantElFull == null) assertNull("$tag idw full", sample.value)
+                else approx("$tag idw (full precision)", wantElFull, sample.value!!, 1e-12)
 
                 val wantRgb = sp["rgb"]?.takeIf { it !is JsonNull }?.jsonObject
                 if (wantRgb == null) {
@@ -524,39 +615,50 @@ class ElRipenessHeatmapContractTest {
     }
 
     /**
-     * Pins `cell_weight` against the published file while accounting for
-     * defect 1 (see the class comment): in halo / gradient modes the file's
-     * value was generated from the rounded `max_influence_deg`. Both the
-     * published number and the full-precision number are asserted, so a real
-     * regression in either still fails.
+     * Pins `cell_weight` at BOTH published precisions. 1.1.0 regenerated these
+     * from full-precision intermediates, so the full-precision sibling must match
+     * exactly and the six-decimal display copy to within 1e-6.
      */
     private fun assertSampleWeight(
         tag: String,
         sp: JsonObject,
-        block: ElRipenessHeatmap.BlockHeat,
+        @Suppress("UNUSED_PARAMETER") block: ElRipenessHeatmap.BlockHeat,
         sample: ElRipenessHeatmap.CellSample,
-        lat: Double,
-        lng: Double,
+        @Suppress("UNUSED_PARAMETER") lat: Double,
+        @Suppress("UNUSED_PARAMETER") lng: Double,
     ) {
         val want = sp.dblOrNull("cell_weight")
         if (want == null) {
             assertNull("$tag weight", sample.weight)
+            assertNull("$tag weight full", sp.dblOrNull("cell_weight_full_precision"))
             return
         }
-        val actual = sample.weight!!
-        if (abs(want - actual) <= 1e-6) return
+        approx("$tag cell weight (display)", want, sample.weight!!, 1e-6)
 
-        // Only a falloff-bearing cell may differ, and only via the rounding artifact.
-        val radius = block.maxInfluenceDeg
-        assertNotNull("$tag weight differs but the block has no finite radius", radius)
-        val rounded = ElRipenessHeatmap.jsRound(radius!! * 1e6) / 1e6
-        val viaRounded = ElRipenessHeatmap.evaluateCell(lat, lng, block.points, rounded).weight
-        assertNotNull("$tag rounded-radius weight", viaRounded)
-        approx("$tag weight via published rounded radius", want, viaRounded!!)
-        assertTrue(
-            "$tag artifact must stay cosmetic (<2e-4), got ${abs(want - actual)}",
-            abs(want - actual) < 2e-4,
-        )
+        val wantFull = sp.dblOrNull("cell_weight_full_precision")
+        assertNotNull("$tag must publish a full-precision cell weight", wantFull)
+        approx("$tag cell weight (full precision)", wantFull!!, sample.weight, 1e-12)
+    }
+
+    @Test
+    fun `rounded display values are never fed back into a calculation`() {
+        // Contract 1.1.0 s12a. Re-running a sparse cell through the ROUNDED radius
+        // must give a different answer than the shipped path — proving the shipped
+        // path is the full-precision one.
+        val model = ElRipenessHeatmap.buildHeatModel(seasonObservations(), blocks(), "2026-01-25")
+        val blockC = model.blocks.first { it.paddockId == "BLOCK_C" }
+        val full = blockC.maxInfluenceDeg!!
+        val rounded = ElRipenessHeatmap.jsRound(full * 1e6) / 1e6
+        assertTrue("the fixture radius must actually have digits past 1e-6", abs(full - rounded) > 0.0)
+
+        val viaFull = ElRipenessHeatmap.evaluateCell(-34.5058, 138.5042, blockC.points, full).weight
+        val viaRounded = ElRipenessHeatmap.evaluateCell(-34.5058, 138.5042, blockC.points, rounded).weight
+        if (viaFull != null && viaRounded != null) {
+            assertTrue(
+                "a rounded radius must not reproduce the full-precision weight",
+                abs(viaFull - viaRounded) > 0.0,
+            )
+        }
     }
 
     // ---- Block isolation ----

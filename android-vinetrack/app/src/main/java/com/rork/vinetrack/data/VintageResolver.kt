@@ -23,21 +23,62 @@ import java.time.ZoneId
  */
 object VintageResolver {
 
-    /** Production/costing vintage year for [date] under the given season start. */
-    fun vintageYear(date: LocalDate, seasonStartMonth: Int, seasonStartDay: Int): Int {
+    /**
+     * Season-year offset — the SQL 119 rule expressed as a single number.
+     *
+     * A 1 January season start is contained within one calendar year, so its
+     * Vintage label IS that year (offset `0`). Every other start spans a year
+     * boundary and is labelled with the year the season ENDS (offset `1`).
+     *
+     * This is the ONE place the 1 January special case is expressed. Both the
+     * year assignment and [seasonBounds] derive from it, which is what makes
+     * `seasonBounds(vintageYear(d)) ∋ d` hold for every date and configuration.
+     */
+    fun seasonYearOffset(seasonStartMonth: Int, seasonStartDay: Int): Int =
+        if (seasonStartMonth.coerceIn(1, 12) == 1 && seasonStartDay.coerceAtLeast(1) == 1) 0 else 1
+
+    /**
+     * The season start day-of-month in [year], clamped to the month's real
+     * length (leap-day safe: a 29 Feb start behaves as 28 Feb in non-leap years).
+     */
+    fun clampedStartDay(year: Int, month: Int, day: Int): Int {
+        val ym = YearMonth.of(year, month.coerceIn(1, 12))
+        return day.coerceIn(1, ym.lengthOfMonth())
+    }
+
+    /**
+     * Vintage year for a civil (timezone-free) calendar date. Authoritative;
+     * every other overload delegates here so a timezone cannot change a Vintage.
+     */
+    fun vintageYear(year: Int, monthOfDate: Int, dayOfDate: Int, seasonStartMonth: Int, seasonStartDay: Int): Int {
+        val startMonth = seasonStartMonth.coerceIn(1, 12)
+        val startDay = seasonStartDay.coerceAtLeast(1)
+        val offset = seasonYearOffset(startMonth, startDay)
+        val clamped = clampedStartDay(year, startMonth, startDay)
+        // Inclusive of the start day: on the start day the new season has begun.
+        val onOrAfterStart = monthOfDate > startMonth || (monthOfDate == startMonth && dayOfDate >= clamped)
+        return if (onOrAfterStart) year + offset else year - 1 + offset
+    }
+
+    /** Inclusive start / exclusive end of a Vintage's season. */
+    fun seasonBounds(vintage: Int, seasonStartMonth: Int, seasonStartDay: Int): Pair<LocalDate, LocalDate> {
         val month = seasonStartMonth.coerceIn(1, 12)
         val day = seasonStartDay.coerceAtLeast(1)
-
-        // 1 January start: the season is contained in a single calendar year
-        // and ends 31 December, so the vintage IS the calendar year.
-        if (month == 1 && day == 1) return date.year
-
-        // Clamp the configured day to the month's real length in this year
-        // (leap-day safe: a 29 Feb start behaves as 28 Feb in non-leap years).
-        val yearMonth = YearMonth.of(date.year, month)
-        val start = yearMonth.atDay(minOf(day, yearMonth.lengthOfMonth()))
-        return if (!date.isBefore(start)) date.year + 1 else date.year
+        val startYear = vintage - seasonYearOffset(month, day)
+        val start = LocalDate.of(startYear, month, clampedStartDay(startYear, month, day))
+        val endExclusive = LocalDate.of(startYear + 1, month, clampedStartDay(startYear + 1, month, day))
+        return start to endExclusive
     }
+
+    /** Inclusive season date range for a Vintage label. */
+    fun seasonRange(vintage: Int, seasonStartMonth: Int, seasonStartDay: Int): Pair<LocalDate, LocalDate> {
+        val (start, endExclusive) = seasonBounds(vintage, seasonStartMonth, seasonStartDay)
+        return start to endExclusive.minusDays(1)
+    }
+
+    /** Production/costing vintage year for [date] under the given season start. */
+    fun vintageYear(date: LocalDate, seasonStartMonth: Int, seasonStartDay: Int): Int =
+        vintageYear(date.year, date.monthValue, date.dayOfMonth, seasonStartMonth, seasonStartDay)
 
     /** Vintage year for an epoch-millisecond timestamp in [zone]. */
     fun vintageYearForEpochMs(

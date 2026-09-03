@@ -1,42 +1,32 @@
 import Foundation
 
-/// Season / Vintage resolution for the E-L Ripeness Heatmap, transcribed from
-/// the Portal cross-platform contract v1.0.0 (section 4).
+/// Season / Vintage resolution for the E-L Ripeness Heatmap.
 ///
-/// The anchor is the vineyard's stored `season_start_month` / `season_start_day`
-/// only. There is no hemisphere field driving Vintage anywhere in this type.
+/// Contract v1.1.0 section 4 makes the authoritative database resolver
+/// (`resolve_vintage_year`, SQL 119) the single Vintage authority for the Portal,
+/// iOS and Android alike:
 ///
-/// ## Why this is not `VintageResolver`
+/// > **The database / shared VintageResolver is authoritative.** No platform may
+/// > invent its own season logic.
 ///
-/// `VintageResolver` mirrors the authoritative database function
-/// `resolve_vintage_year` (sql/119), which contains an explicit special case:
+/// This type therefore owns **no** Vintage arithmetic. It resolves the season
+/// settings fallbacks the contract specifies and then delegates every year
+/// decision and every range to `VintageResolver`, which is the same helper Yield,
+/// Costing, Pruning and the Growth Stage Summary already use. There is exactly one
+/// Vintage implementation on this platform.
 ///
-/// ```sql
-/// if v_month = 1 and v_day = 1 then return v_year; end if;
-/// ```
-///
-/// The Portal contract has **no such special case**. For a `season_start = 1/1`
-/// vineyard the two rules therefore disagree by exactly one year:
-///
-/// | Date | `VintageResolver` (database) | Portal contract |
-/// |---|---|---|
-/// | 2026-02-15, start 1/1 | Vintage 2026 | Vintage 2027 |
-/// | 2026-01-01, start 1/1 | Vintage 2026 | Vintage 2027 |
-/// | 2025-12-31, start 1/1 | Vintage 2025 | Vintage 2026 |
-///
-/// Every other configuration (1 July, 1 November, and any month ≥ 2) agrees
-/// exactly. This type exists so the heatmap reproduces the Portal numerically,
-/// as the contract and its fixture require, **without** altering the
-/// server-authoritative vintage used by Yield, Costing, Pruning and the Growth
-/// Stage Summary report. Resolving that disagreement needs a product decision
-/// and, most likely, a SQL change — neither of which is authorised here.
+/// The 1 January case is the one that used to diverge: under SQL 119 a 1 January
+/// season start makes the Vintage the observation's own calendar year, so
+/// `2026-02-15` is Vintage 2026 (not 2027). Contract 1.1.0 adopts that rule.
 nonisolated enum ELRipenessSeason {
 
     static let defaultSeasonStartMonth = 7
     static let defaultSeasonStartDay = 1
 
     /// Contract: Feb → 29, Apr/Jun/Sep/Nov → 30, otherwise 31. Deliberately
-    /// year-independent, matching the Portal's `maxDayForMonth`.
+    /// year-independent, matching the Portal's `maxDayForMonth`. Used only to
+    /// normalise the stored *setting*; the per-year leap clamp lives in
+    /// `VintageResolver`.
     static func maxDayForMonth(_ month: Int) -> Int {
         if month == 2 { return 29 }
         if [4, 6, 9, 11].contains(month) { return 30 }
@@ -55,26 +45,41 @@ nonisolated enum ELRipenessSeason {
         return (m, d)
     }
 
-    /// Portal rule: `now >= start ? now.year + 1 : now.year`, where `start` is
-    /// the season start in the observation's own calendar year. The boundary is
-    /// inclusive of the start day.
+    /// Vintage for an ISO day key, or `nil` when the key cannot be parsed.
     static func vintage(forDayKey dayKey: String, month: Int?, day: Int?) -> Int? {
         guard let date = CivilDate(dayKey: ELRipeness.dayKey(dayKey)) else { return nil }
         return vintage(for: date, month: month, day: day)
     }
 
+    /// Delegates to the shared, database-mirroring resolver.
     static func vintage(for date: CivilDate, month: Int?, day: Int?) -> Int {
         let settings = normaliseSeasonSettings(month: month, day: day)
-        let start = CivilDate(year: date.year, month: settings.month, day: settings.day)
-        return date < start ? date.year : date.year + 1
+        return VintageResolver.vintageYear(
+            year: date.year,
+            month: date.month,
+            day: date.day,
+            seasonStartMonth: settings.month,
+            seasonStartDay: settings.day
+        )
     }
 
-    /// Inclusive season range for a Vintage label. The label is the *exclusive*
-    /// end year: a season starting 1 July 2025 is Vintage 2026.
+    /// Inclusive season range for a Vintage label, derived from the same shared
+    /// resolver as `vintage(for:month:day:)`. Because both come from
+    /// `VintageResolver.seasonYearOffset`, the range for a date's own Vintage is
+    /// guaranteed to contain that date.
     static func seasonRange(month: Int?, day: Int?, vintage: Int) -> (startISO: String, endISO: String) {
         let settings = normaliseSeasonSettings(month: month, day: day)
-        let start = CivilDate(year: vintage - 1, month: settings.month, day: settings.day)
-        let endExclusive = CivilDate(year: vintage, month: settings.month, day: settings.day)
+        let bounds = VintageResolver.seasonBounds(
+            forVintage: vintage,
+            seasonStartMonth: settings.month,
+            seasonStartDay: settings.day
+        )
+        let start = CivilDate(year: bounds.start.year, month: bounds.start.month, day: bounds.start.day)
+        let endExclusive = CivilDate(
+            year: bounds.endExclusive.year,
+            month: bounds.endExclusive.month,
+            day: bounds.endExclusive.day
+        )
         return (start.iso, endExclusive.adding(days: -1).iso)
     }
 

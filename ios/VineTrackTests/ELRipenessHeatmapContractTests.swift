@@ -2,26 +2,23 @@ import XCTest
 @testable import VineTrack
 
 /// Equivalence test against the shipped Portal E-L Ripeness Heatmap, driven by
-/// the canonical contract package (contract v1.0.0).
+/// the canonical contract package (contract **v1.1.0**).
 ///
 /// The same fixture drives `ElRipenessHeatmapContractTest` on Android. Both
 /// suites must agree with the Portal and therefore with each other.
 ///
-/// ## Two documented defects in the supplied companion files
+/// ## What 1.1.0 changed, and what this suite now pins
 ///
-/// 1. **`cell_weight` in halo / gradient modes** was generated from the
-///    *rounded* `max_influence_deg` published in the same file (6 decimal
-///    places) rather than from the full-precision radius. Affects `sp-C-near`,
-///    `sp-B-centre` and `sp-B-near-shared-edge`, each by ~1e-4. It never
-///    changes a rendered alpha, so it is cosmetic — but a correct
-///    implementation cannot reproduce those three numbers at full precision.
-///    This suite pins the published value through the documented
-///    rounded-radius path AND pins the full-precision value.
-/// 2. **`excluded_reason` for the two northern records** is reported as
-///    `no_observation_date`, but both carry a valid `date`. The real cause is
-///    vineyard scoping (contract section 10: "Wrong vineyard — never fetched").
-///    Their `vintage` values are correct and are pinned here, because they are
-///    what proves the 1 January boundary.
+/// 1. **Vintage is the shared `VintageResolver`** — the mirror of the database
+///    `resolve_vintage_year` (SQL 119). A 1 January season start resolves to
+///    the observation's own calendar year. There is no second implementation.
+/// 2. **Full IEEE-754 precision throughout.** The expected file now publishes
+///    `*_full_precision` siblings for every value that drives a calculation;
+///    those are asserted exactly, and the six-decimal display copies to 1e-6.
+///    No rounded value is ever fed back into a calculation.
+/// 3. **The two northern records are `wrong_vineyard`**, not a date error —
+///    both carry valid dates and resolve to a valid Vintage under their own
+///    vineyard's 1 January season settings.
 final class ELRipenessHeatmapContractTests: XCTestCase {
 
     private var fixture: [String: Any] = [:]
@@ -87,15 +84,14 @@ final class ELRipenessHeatmapContractTests: XCTestCase {
         return flag == true && warning != "unassigned_location"
     }
 
-    private func fixtureObservations(vineyardId: String? = nil) -> [[String: Any]] {
-        let target = vineyardId ?? southVineyardId
-        return arr(fixture, "observations").filter { str($0, "vineyard_id") == target }
-    }
-
+    /// EVERY fixture record, including the two that belong to another vineyard.
+    /// Scoping is the core's job (`selectedVineyardId`), not the test's — that is
+    /// what lets `wrong_vineyard` be asserted as a real outcome.
     private func rawRecords() -> [ELRipeness.RawRecord] {
-        fixtureObservations().map { o in
+        arr(fixture, "observations").map { o in
             ELRipeness.RawRecord(
                 id: str(o, "id"),
+                vineyardId: strOrNil(o, "vineyard_id"),
                 paddockId: strOrNil(o, "paddock_id"),
                 stageCode: strOrNil(o, "growth_stage_code"),
                 latitude: dblOrNil(o, "latitude"),
@@ -108,7 +104,7 @@ final class ELRipenessHeatmapContractTests: XCTestCase {
 
     private func assignedById() -> [String: Bool] {
         var out: [String: Bool] = [:]
-        for o in fixtureObservations() {
+        for o in arr(fixture, "observations") {
             if let explicit = explicitAssigned(o["placement"] as? [String: Any]) {
                 out[str(o, "id")] = explicit
             }
@@ -130,7 +126,11 @@ final class ELRipenessHeatmapContractTests: XCTestCase {
 
     /// Season-filtered observations for the southern fixture vineyard, Vintage 2026.
     private func seasonObservations() -> [ELRipeness.Observation] {
-        let all = ELRipeness.toObservations(rawRecords(), assignedById: assignedById())
+        let all = ELRipeness.toObservations(
+            rawRecords(),
+            assignedById: assignedById(),
+            selectedVineyardId: southVineyardId
+        )
         return ELRipenessSeason.filter(all, toVintage: 2026, month: 7, day: 1)
     }
 
@@ -265,47 +265,86 @@ final class ELRipenessHeatmapContractTests: XCTestCase {
         XCTAssertEqual(ELRipenessSeason.normaliseSeasonSettings(month: 4, day: 31).day, 30)
     }
 
-    func testNorthernRecordsPinTheFirstOfJanuaryVintageBoundary() {
-        // Season start 1/1: 31 Dec 2025 closes Vintage 2026; 1 Jan 2026 opens
-        // Vintage 2027. The boundary is inclusive of the start day.
-        XCTAssertEqual(ELRipenessSeason.vintage(forDayKey: "2025-12-31T00:00:00Z", month: 1, day: 1), 2026)
-        XCTAssertEqual(ELRipenessSeason.vintage(forDayKey: "2026-01-01T00:00:00Z", month: 1, day: 1), 2027)
+    // MARK: - Vintage authority: the shared resolver, and only the shared resolver
+
+    func testHeatmapVintageIsTheSharedVintageResolver() throws {
+        for c in arr(expected, "vintage_assignment") {
+            let m = int(c, "season_start_month")
+            let d = int(c, "season_start_day")
+            let date = try XCTUnwrap(CivilDate(dayKey: str(c, "date")))
+            XCTAssertEqual(
+                ELRipenessSeason.vintage(for: date, month: m, day: d),
+                VintageResolver.vintageYear(
+                    year: date.year, month: date.month, day: date.day,
+                    seasonStartMonth: m, seasonStartDay: d
+                ),
+                "\(str(c, "config")) @ \(str(c, "date")) must come from VintageResolver"
+            )
+        }
+    }
+
+    func testFirstOfJanuarySeasonStartMakesTheVintageTheCalendarYear() {
+        // The SQL 119 rule. 2026-02-15 under a 1 Jan start is Vintage 2026 — an
+        // implementation that answers 2027 is non-conformant (contract 1.1.0 s4).
+        XCTAssertEqual(ELRipenessSeason.vintage(forDayKey: "2025-12-31T00:00:00Z", month: 1, day: 1), 2025)
+        XCTAssertEqual(ELRipenessSeason.vintage(forDayKey: "2026-01-01T00:00:00Z", month: 1, day: 1), 2026)
+        XCTAssertEqual(ELRipenessSeason.vintage(forDayKey: "2026-02-15", month: 1, day: 1), 2026)
+        XCTAssertEqual(ELRipenessSeason.vintage(forDayKey: "2026-12-31", month: 1, day: 1), 2026)
+        XCTAssertEqual(ELRipenessSeason.vintage(forDayKey: "2027-01-01", month: 1, day: 1), 2027)
+    }
+
+    func testAnAssignedVintageRangeAlwaysContainsTheObservationDate() throws {
+        // The invariant contract 1.1.0 s4 states explicitly. Exhaustive over every
+        // season start and a full two-year span of dates.
+        var day = try XCTUnwrap(CivilDate(dayKey: "2025-01-01"))
+        let end = try XCTUnwrap(CivilDate(dayKey: "2027-01-01"))
+        while day < end {
+            for (m, d) in [(1, 1), (2, 29), (7, 1), (11, 1), (12, 31)] {
+                let vintage = ELRipenessSeason.vintage(for: day, month: m, day: d)
+                let range = ELRipenessSeason.seasonRange(month: m, day: d, vintage: vintage)
+                XCTAssertTrue(
+                    day.iso >= range.startISO && day.iso <= range.endISO,
+                    "\(day.iso) (start \(m)/\(d), Vintage \(vintage)) must fall inside \(range.startISO)..\(range.endISO)"
+                )
+            }
+            day = day.adding(days: 1)
+        }
     }
 
     // MARK: - Section 10: normalisation and assignment
 
     func testObservationNormalisationMatchesRecordByRecord() {
-        let southRaw = rawRecords()
+        var raw: [String: ELRipeness.RawRecord] = [:]
+        for r in rawRecords() { raw[r.id] = r }
         var included: [String: ELRipeness.Observation] = [:]
-        for o in ELRipeness.toObservations(southRaw, assignedById: assignedById()) { included[o.id] = o }
-        let northIds = Set(
-            arr(fixture, "observations")
-                .filter { str($0, "vineyard_id") != southVineyardId }
-                .map { str($0, "id") }
-        )
+        for o in ELRipeness.toObservations(
+            rawRecords(), assignedById: assignedById(), selectedVineyardId: southVineyardId
+        ) { included[o.id] = o }
 
         for c in arr(expected, "observation_normalisation") {
             let id = str(c, "id")
             let shouldInclude = bool(c, "included_in_observations")
-
-            if northIds.contains(id) {
-                // Contract section 10: another vineyard's records are never
-                // fetched. The file labels this `no_observation_date`, which is
-                // wrong (both records carry a `date`) — the scoping outcome is
-                // what matters and is asserted here.
-                XCTAssertFalse(shouldInclude, "\(id) belongs to another vineyard")
+            guard let record = raw[id] else {
+                XCTFail("fixture is missing \(id)")
                 continue
             }
 
-            let obs = included[id]
-            XCTAssertEqual(obs != nil, shouldInclude, "\(id) inclusion")
+            XCTAssertEqual(record.vineyardId, str(c, "vineyard_id"), "\(id) owning vineyard")
+            XCTAssertEqual(included[id] != nil, shouldInclude, "\(id) inclusion")
 
-            guard shouldInclude, let obs else {
-                guard let record = southRaw.first(where: { $0.id == id }) else {
-                    XCTFail("missing fixture record \(id)")
-                    continue
-                }
-                let reason = ELRipeness.exclusionReason(record)
+            // Vintage is resolved under the record's OWN vineyard's season
+            // settings, which is why a wrong-vineyard record still has a valid one.
+            let parts = str(c, "season_settings_used").split(separator: "/").compactMap { Int($0) }
+            if parts.count == 2, let date = ELRipeness.observationDate(record) {
+                XCTAssertEqual(
+                    ELRipenessSeason.vintage(forDayKey: date, month: parts[0], day: parts[1]),
+                    int(c, "vintage"),
+                    "\(id) vintage under \(str(c, "season_settings_used"))"
+                )
+            }
+
+            guard shouldInclude, let obs = included[id] else {
+                let reason = ELRipeness.exclusionReason(record, selectedVineyardId: southVineyardId)
                 XCTAssertNotNil(reason, "\(id) must have an exclusion reason")
                 XCTAssertEqual(reason?.rawValue, str(c, "excluded_reason"), "\(id) exclusion reason")
                 continue
@@ -314,17 +353,66 @@ final class ELRipenessHeatmapContractTests: XCTestCase {
             XCTAssertEqual(obs.el, dbl(c, "parsed_el"), accuracy: 1e-12, "\(id) parsed E-L")
             XCTAssertEqual(obs.assigned, bool(c, "assigned"), "\(id) assigned")
             XCTAssertEqual(obs.paddockId, strOrNil(c, "resolved_paddock_id"), "\(id) resolved block")
+        }
+    }
+
+    func testNorthernRecordsAreWrongVineyardNotADateError() throws {
+        var raw: [String: ELRipeness.RawRecord] = [:]
+        for r in rawRecords() { raw[r.id] = r }
+
+        for id in ["obs-n1-north", "obs-n2-north"] {
+            let record = try XCTUnwrap(raw[id])
+            XCTAssertNotNil(ELRipeness.observationDate(record), "\(id) carries a valid date")
             XCTAssertEqual(
-                ELRipenessSeason.vintage(forDayKey: obs.dateISO, month: 7, day: 1),
-                int(c, "vintage"), "\(id) vintage"
+                ELRipeness.exclusionReason(record, selectedVineyardId: southVineyardId),
+                .wrongVineyard,
+                "\(id) is excluded by scoping, not by its date"
+            )
+            // Under its OWN vineyard it is a perfectly good observation.
+            XCTAssertNil(
+                ELRipeness.exclusionReason(record, selectedVineyardId: "vy-fixture-north"),
+                "\(id) is valid within its own vineyard"
             )
         }
     }
 
+    func testNoObservationDateIsUsedOnlyWhenAllThreeTimestampsAreAbsent() {
+        let dated = ELRipeness.RawRecord(
+            id: "x", vineyardId: southVineyardId, paddockId: "BLOCK_A",
+            stageCode: "23", latitude: -34.5, longitude: 138.5, date: "2026-01-25"
+        )
+        XCTAssertNil(ELRipeness.exclusionReason(dated, selectedVineyardId: southVineyardId))
+
+        let undated = ELRipeness.RawRecord(
+            id: "x", vineyardId: southVineyardId, paddockId: "BLOCK_A",
+            stageCode: "23", latitude: -34.5, longitude: 138.5
+        )
+        XCTAssertEqual(
+            ELRipeness.exclusionReason(undated, selectedVineyardId: southVineyardId),
+            .noObservationDate
+        )
+
+        // Falls back through completed_at and created_at before giving up.
+        let viaCompleted = ELRipeness.RawRecord(
+            id: "x", vineyardId: southVineyardId, paddockId: "BLOCK_A",
+            stageCode: "23", latitude: -34.5, longitude: 138.5,
+            completedAt: "2026-01-25T04:00:00Z"
+        )
+        XCTAssertNil(ELRipeness.exclusionReason(viaCompleted, selectedVineyardId: southVineyardId))
+
+        let viaCreated = ELRipeness.RawRecord(
+            id: "x", vineyardId: southVineyardId, paddockId: "BLOCK_A",
+            stageCode: "23", latitude: -34.5, longitude: 138.5,
+            createdAt: "2026-01-25T04:00:00Z"
+        )
+        XCTAssertNil(ELRipeness.exclusionReason(viaCreated, selectedVineyardId: southVineyardId))
+    }
+
     func testRevokedPlacementLeavesAVisibleButUnassignedObservation() throws {
         let obs = try XCTUnwrap(
-            ELRipeness.toObservations(rawRecords(), assignedById: assignedById())
-                .first { $0.id == "obs-u1-unassigned" }
+            ELRipeness.toObservations(
+                rawRecords(), assignedById: assignedById(), selectedVineyardId: southVineyardId
+            ).first { $0.id == "obs-u1-unassigned" }
         )
         XCTAssertEqual(obs.el, 25, "still a normalised, visible pin")
         XCTAssertFalse(obs.assigned, "placement revoked the assignment")
@@ -453,9 +541,22 @@ final class ELRipenessHeatmapContractTests: XCTestCase {
                 }
 
                 if let maxInf = dblOrNil(eb, "max_influence_deg") {
-                    XCTAssertEqual(block.maxInfluenceDeg ?? .nan, maxInf, accuracy: 5e-7, "\(tag) maxInfluence")
+                    XCTAssertEqual(
+                        block.maxInfluenceDeg ?? .nan, maxInf, accuracy: 1e-6,
+                        "\(tag) maxInfluence (display)"
+                    )
                 } else {
                     XCTAssertNil(block.maxInfluenceDeg, "\(tag) maxInfluence")
+                }
+
+                // The value that actually drove the calculation — no rounding.
+                if let maxInfFull = dblOrNil(eb, "max_influence_deg_full_precision") {
+                    XCTAssertEqual(
+                        block.maxInfluenceDeg ?? .nan, maxInfFull, accuracy: 1e-12,
+                        "\(tag) maxInfluence (full precision)"
+                    )
+                } else {
+                    XCTAssertNil(block.maxInfluenceDeg, "\(tag) maxInfluence full")
                 }
 
                 XCTAssertEqual(block.grid != nil, bool(eb, "grid_present"), "\(tag) grid present")
@@ -510,9 +611,18 @@ final class ELRipenessHeatmapContractTests: XCTestCase {
                     : ELRipeness.CellSample.empty
 
                 if let wantEl = dblOrNil(sp, "idw_el") {
-                    XCTAssertEqual(sample.value ?? .nan, wantEl, accuracy: 1e-6, "\(tag) idw")
+                    XCTAssertEqual(sample.value ?? .nan, wantEl, accuracy: 1e-6, "\(tag) idw (display)")
                 } else {
                     XCTAssertNil(sample.value, "\(tag) idw")
+                }
+
+                if let wantElFull = dblOrNil(sp, "idw_el_full_precision") {
+                    XCTAssertEqual(
+                        sample.value ?? .nan, wantElFull, accuracy: 1e-12,
+                        "\(tag) idw (full precision)"
+                    )
+                } else {
+                    XCTAssertNil(sample.value, "\(tag) idw full")
                 }
 
                 if let wantRgb = sp["rgb"] as? [String: Any], let value = sample.value {
@@ -535,11 +645,9 @@ final class ELRipenessHeatmapContractTests: XCTestCase {
         }
     }
 
-    /// Pins `cell_weight` against the published file while accounting for
-    /// defect 1 (see the type comment): in halo / gradient modes the file's
-    /// value was generated from the rounded `max_influence_deg`. Both the
-    /// published number and the full-precision number are asserted, so a real
-    /// regression in either still fails.
+    /// Pins `cell_weight` at BOTH published precisions. 1.1.0 regenerated these
+    /// from full-precision intermediates, so the full-precision sibling must
+    /// match exactly and the six-decimal display copy to within 1e-6.
     private func assertSampleWeight(
         tag: String,
         sp: [String: Any],
@@ -550,27 +658,49 @@ final class ELRipenessHeatmapContractTests: XCTestCase {
     ) {
         guard let want = dblOrNil(sp, "cell_weight") else {
             XCTAssertNil(sample.weight, "\(tag) weight")
+            XCTAssertNil(dblOrNil(sp, "cell_weight_full_precision"), "\(tag) weight full")
             return
         }
         guard let actual = sample.weight else {
             XCTFail("\(tag) expected a cell weight")
             return
         }
-        if abs(want - actual) <= 1e-6 { return }
+        XCTAssertEqual(actual, want, accuracy: 1e-6, "\(tag) cell weight (display)")
 
-        // Only a falloff-bearing cell may differ, and only via the rounding artifact.
-        guard let radius = block.maxInfluenceDeg else {
-            XCTFail("\(tag) weight differs but the block has no finite radius")
+        guard let wantFull = dblOrNil(sp, "cell_weight_full_precision") else {
+            XCTFail("\(tag) must publish a full-precision cell weight")
             return
         }
-        let rounded = ELRipeness.jsRound(radius * 1e6) / 1e6
-        let viaRounded = ELRipeness.evaluateCell(
-            lat: lat, lng: lng, points: block.points, maxInfluence: rounded
+        XCTAssertEqual(actual, wantFull, accuracy: 1e-12, "\(tag) cell weight (full precision)")
+    }
+
+    func testRoundedDisplayValuesAreNeverFedBackIntoACalculation() throws {
+        // Contract 1.1.0 s12a. Re-running a sparse cell through the ROUNDED radius
+        // must give a different answer than the shipped path — proving the shipped
+        // path is the full-precision one.
+        let model = ELRipeness.buildHeatModel(
+            observations: seasonObservations(), blocks: blocks(), atDateISO: "2026-01-25"
+        )
+        let blockC = try XCTUnwrap(model.blocks.first { $0.paddockId == "BLOCK_C" })
+        let full = try XCTUnwrap(blockC.maxInfluenceDeg)
+        let rounded = ELRipeness.jsRound(full * 1e6) / 1e6
+        XCTAssertGreaterThan(
+            abs(full - rounded), 0,
+            "the fixture radius must actually have digits past 1e-6"
+        )
+
+        let viaFull = ELRipeness.evaluateCell(
+            lat: -34.5058, lng: 138.5042, points: blockC.points, maxInfluence: full
         ).weight
-        XCTAssertNotNil(viaRounded, "\(tag) rounded-radius weight")
-        XCTAssertEqual(viaRounded ?? .nan, want, accuracy: 1e-6,
-                       "\(tag) weight via published rounded radius")
-        XCTAssertLessThan(abs(want - actual), 2e-4, "\(tag) artifact must stay cosmetic")
+        let viaRounded = ELRipeness.evaluateCell(
+            lat: -34.5058, lng: 138.5042, points: blockC.points, maxInfluence: rounded
+        ).weight
+        if let viaFull, let viaRounded {
+            XCTAssertGreaterThan(
+                abs(viaFull - viaRounded), 0,
+                "a rounded radius must not reproduce the full-precision weight"
+            )
+        }
     }
 
     // MARK: - Block isolation

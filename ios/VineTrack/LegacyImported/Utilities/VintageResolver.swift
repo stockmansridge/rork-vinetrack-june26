@@ -16,6 +16,78 @@ import Foundation
 /// this mirror exists for display and offline grouping only.
 nonisolated enum VintageResolver {
 
+    // MARK: - Pure civil core (timezone-free, single source of truth)
+
+    /// Season-year offset — the SQL 119 rule expressed as a single number.
+    ///
+    /// A 1 January season start is contained within one calendar year, so its
+    /// Vintage label IS that year (offset `0`). Every other start spans a year
+    /// boundary and is labelled with the year the season ENDS (offset `1`).
+    ///
+    /// This is the ONE place the 1 January special case is expressed. Both the
+    /// year assignment and `seasonBounds` derive from it, which is what makes
+    /// `seasonBounds(forVintage: vintageYear(of: d))` contain `d` for every
+    /// date and every season configuration.
+    static func seasonYearOffset(seasonStartMonth: Int, seasonStartDay: Int) -> Int {
+        let month = min(max(seasonStartMonth, 1), 12)
+        let day = max(seasonStartDay, 1)
+        return (month == 1 && day == 1) ? 0 : 1
+    }
+
+    /// Gregorian day count for a month, leap-year aware.
+    static func daysInMonth(year: Int, month: Int) -> Int {
+        switch min(max(month, 1), 12) {
+        case 2:
+            let isLeap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+            return isLeap ? 29 : 28
+        case 4, 6, 9, 11: return 30
+        default: return 31
+        }
+    }
+
+    /// The season start day-of-month in `year`, clamped to the month's real
+    /// length (leap-day safe — 29 Feb behaves as 28 Feb in non-leap years).
+    static func clampedStartDay(year: Int, month: Int, day: Int) -> Int {
+        min(max(day, 1), daysInMonth(year: year, month: month))
+    }
+
+    /// Vintage year for a civil (timezone-free) calendar date.
+    ///
+    /// Authoritative; every other overload delegates here so a timezone can
+    /// never change a Vintage.
+    static func vintageYear(
+        year: Int,
+        month: Int,
+        day: Int,
+        seasonStartMonth: Int,
+        seasonStartDay: Int
+    ) -> Int {
+        let startMonth = min(max(seasonStartMonth, 1), 12)
+        let startDay = max(seasonStartDay, 1)
+        let offset = seasonYearOffset(seasonStartMonth: startMonth, seasonStartDay: startDay)
+        let clamped = clampedStartDay(year: year, month: startMonth, day: startDay)
+        // Inclusive of the start day: on the start day the new season has begun.
+        let onOrAfterStart = month > startMonth || (month == startMonth && day >= clamped)
+        return onOrAfterStart ? year + offset : year - 1 + offset
+    }
+
+    /// Inclusive-start / exclusive-end civil components of a Vintage's season.
+    static func seasonBounds(
+        forVintage vintage: Int,
+        seasonStartMonth: Int,
+        seasonStartDay: Int
+    ) -> (start: (year: Int, month: Int, day: Int), endExclusive: (year: Int, month: Int, day: Int)) {
+        let month = min(max(seasonStartMonth, 1), 12)
+        let day = max(seasonStartDay, 1)
+        let startYear = vintage - seasonYearOffset(seasonStartMonth: month, seasonStartDay: day)
+        return (
+            (startYear, month, clampedStartDay(year: startYear, month: month, day: day)),
+            (startYear + 1, month, clampedStartDay(year: startYear + 1, month: month, day: day))
+        )
+    }
+
+    // MARK: - Foundation entry points
+
     /// Production/costing vintage year for a record date under the given
     /// season-start setting.
     static func vintageYear(
@@ -25,18 +97,17 @@ nonisolated enum VintageResolver {
         calendar: Calendar = .current
     ) -> Int {
         let day = calendar.startOfDay(for: date)
-        let year = calendar.component(.year, from: day)
-        let month = min(max(seasonStartMonth, 1), 12)
-        let startDay = max(seasonStartDay, 1)
-
-        // 1 January start: the season is contained in a single calendar year
-        // and ends 31 December, so the vintage IS the calendar year.
-        if month == 1 && startDay == 1 { return year }
-
-        guard let start = seasonStart(inYear: year, month: month, day: startDay, calendar: calendar) else {
-            return year
+        let parts = calendar.dateComponents([.year, .month, .day], from: day)
+        guard let y = parts.year, let m = parts.month, let d = parts.day else {
+            return calendar.component(.year, from: day)
         }
-        return day >= start ? year + 1 : year
+        return vintageYear(
+            year: y,
+            month: m,
+            day: d,
+            seasonStartMonth: seasonStartMonth,
+            seasonStartDay: seasonStartDay
+        )
     }
 
     /// "2026 Winter Pruning · Vintage 2027"-style pairing helper: the
@@ -56,18 +127,27 @@ nonisolated enum VintageResolver {
         return "Vintage \(String(vintage))"
     }
 
-    /// Season start date in `year`, with the configured day clamped to the
-    /// month's real length (leap-day safe — 29 Feb behaves as 28 Feb in
-    /// non-leap years).
-    private static func seasonStart(inYear year: Int, month: Int, day: Int, calendar: Calendar) -> Date? {
-        guard let firstOfMonth = calendar.date(from: DateComponents(year: year, month: month, day: 1)) else {
-            return nil
-        }
-        let maxDay = calendar.range(of: .day, in: .month, for: firstOfMonth)?.count ?? 28
-        let clamped = min(day, maxDay)
-        guard let start = calendar.date(from: DateComponents(year: year, month: month, day: clamped)) else {
-            return nil
-        }
-        return calendar.startOfDay(for: start)
+    /// Inclusive season date range for a Vintage label.
+    static func seasonRange(
+        forVintage vintage: Int,
+        seasonStartMonth: Int,
+        seasonStartDay: Int,
+        calendar: Calendar = .current
+    ) -> (start: Date, endInclusive: Date)? {
+        let bounds = seasonBounds(
+            forVintage: vintage,
+            seasonStartMonth: seasonStartMonth,
+            seasonStartDay: seasonStartDay
+        )
+        guard
+            let start = calendar.date(from: DateComponents(
+                year: bounds.start.year, month: bounds.start.month, day: bounds.start.day
+            )),
+            let endExclusive = calendar.date(from: DateComponents(
+                year: bounds.endExclusive.year, month: bounds.endExclusive.month, day: bounds.endExclusive.day
+            )),
+            let endInclusive = calendar.date(byAdding: .day, value: -1, to: endExclusive)
+        else { return nil }
+        return (calendar.startOfDay(for: start), calendar.startOfDay(for: endInclusive))
     }
 }

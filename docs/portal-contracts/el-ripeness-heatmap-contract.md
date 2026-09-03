@@ -1,6 +1,14 @@
 # VineTrack — E-L Ripeness Heatmap Cross-Platform Contract
 
-Contract version **1.0.0** · Fixture version **1.0.0** · Implementation-neutral.
+Contract version **1.1.0** · Fixture version **1.1.0** · Implementation-neutral.
+
+> **Revision 1.1.0** corrects three defects found during mobile verification:
+> (1) the 1 January Vintage rule now matches the authoritative database resolver
+> (`resolve_vintage_year`, SQL 119) — a 1 January season start returns the
+> observation's **calendar year**; (2) published sample weights are regenerated from
+> **full-precision** intermediate values (the previous file used a rounded influence
+> radius for three cells); (3) the two northern fixture records are classified
+> `wrong_vineyard`, not `no_observation_date` — their dates are valid.
 
 This document defines the *exact* deterministic behaviour of the shipped VineTrack Portal
 E-L Ripeness Heatmap so that iOS and Android can reproduce it numerically without access
@@ -212,7 +220,9 @@ date makes it influencing again.
 
 ## 4. Vintage
 
-The Vintage anchor is the vineyard's stored **`season_start_month`** and
+**The database / shared VintageResolver is authoritative.** The Portal, iOS and Android
+must all reproduce `resolve_vintage_year` (SQL 119); no platform may invent its own season
+logic. The Vintage anchor is the vineyard's stored **`season_start_month`** and
 **`season_start_day`** only. There is **no stored hemisphere field driving Vintage**. (A
 hemisphere value exists in the Portal solely as a display label, resolved from vineyard
 latitude → block-polygon mean latitude → country; it never affects any Vintage or heatmap
@@ -221,36 +231,56 @@ calculation.)
 ### Rules
 
 ```
+// Season-year offset — the SQL 119 rule.
+seasonYearOffset(month, day) = (month == 1 && day == 1) ? 0 : 1
+
 currentVintageForSeason(month, day, now):
-    start = local civil date (now.year, month, day)
-    return now >= start ? now.year + 1 : now.year
+    offset = seasonYearOffset(month, day)
+    start  = local civil date (now.year, month, day)
+    return now >= start ? now.year + offset : now.year - 1 + offset
 
 vintageForDate(date, month, day) = currentVintageForSeason(month, day, date)
 
 seasonRangeForVintage(month, day, vintage):
-    startISO        = civil date (vintage - 1, month, day)
-    endExclusive    = civil date (vintage,     month, day)
+    startYear       = vintage - seasonYearOffset(month, day)
+    startISO        = civil date (startYear,     month, day)
+    endExclusive    = civil date (startYear + 1, month, day)
     endISO          = endExclusive - 1 day        // inclusive display end
 ```
+
+Invariant: for every season configuration and every date,
+`seasonRangeForVintage(m, d, vintageForDate(date, m, d))` contains `date`.
 
 All comparisons are civil-calendar, using the device's local calendar; no timezone
 conversion is applied to the ISO date keys used for filtering.
 
-The Vintage **label** is the ending year: a season starting 1 July 2025 is Vintage **2026**.
+The Vintage **label** is the ending year for every season start except 1 January: a season
+starting 1 July 2025 is Vintage **2026**. A **1 January season start is the calendar year
+itself** — the season starting 1 January 2026 is Vintage **2026**.
 
 ### Configurations
 
 * **Southern (typical AU), `season_start = 7/1`:** Vintage 2026 = `2025-07-01` →
   `2026-06-30`. A 2026-01-10 observation is Vintage 2026.
 * **Northern, `season_start = 11/1`:** Vintage 2026 = `2025-11-01` → `2026-10-31`.
-* **Northern calendar-year, `season_start = 1/1`:** Vintage 2026 = `2025-01-01` →
-  `2025-12-31`; Vintage 2027 = `2026-01-01` → `2026-12-31`.
+* **Calendar-year, `season_start = 1/1`:** Vintage 2026 = `2026-01-01` → `2026-12-31`;
+  Vintage 2027 = `2027-01-01` → `2027-12-31`.
 
-### 1 January boundary case
+### 1 January boundary case (SQL 119)
 
-With `season_start = 1/1`, a `2025-12-31` observation belongs to Vintage **2026** and a
-`2026-01-01` observation belongs to Vintage **2027** — the boundary is inclusive of the
-start day (`now >= start`).
+With `season_start = 1/1` the Vintage **is the observation's calendar year**:
+
+| Observation date | Vintage |
+|---|---|
+| `2025-12-31` | **2025** |
+| `2026-01-01` | **2026** |
+| `2026-02-15` | **2026** |
+| `2026-12-31` | **2026** |
+| `2027-01-01` | **2027** |
+
+This matches the database resolver and the Yield, Costing and Pruning surfaces. Any
+implementation that assigns `2026-02-15` to Vintage 2027 under a 1 January season start is
+non-conformant.
 
 ### Missing season settings
 
@@ -502,9 +532,9 @@ identity itself always comes from `paddock_id`.
 | Case | Behaviour |
 |---|---|
 | `deleted_at` set | Excluded entirely (not a pin, not counted). |
-| Wrong vineyard | Never fetched: every query is scoped to the selected vineyard id. |
+| Wrong vineyard | Never fetched: every query is scoped to the selected vineyard id. Exclusion reason **`wrong_vineyard`**. This is *not* a date error — such records may carry perfectly valid dates and a valid Vintage under their own vineyard's season settings. |
 | Missing / invalid coordinates | Excluded entirely. Valid latitude: finite number in `[-90, 90]` **and not exactly 0**. Valid longitude: finite number in `[-180, 180]` **and not exactly 0**. (Exact 0 is treated as an unset sentinel — Null Island is not a vineyard.) |
-| No usable timestamp | Excluded entirely. |
+| No usable timestamp | Excluded entirely. Exclusion reason **`no_observation_date`**, used **only** when all of `date`, `completed_at` and `created_at` are absent. |
 | E-L outside 1–43 or unparseable | Excluded entirely (see section 1). |
 | Unassigned (per placement contract) | **Included** as a visible pin and counted in "recorded observations available", rendered with an outlined (transparent-fill) marker; contributes to **no** block, **no** median and **no** surface. |
 | Future relative to the timeline date | Hidden completely at that date. |
@@ -583,7 +613,28 @@ the stored polygon points.
   normalisation is recommended, but the cache must retain the raw stage code and all three
   timestamp candidates so re-normalisation stays possible) and merges pending local
   records for offline operation. Locally-pending records follow identical rules.
+* Mobile Vintage logic reproduces the authoritative database rule, including the
+  1 January calendar-year case.
+* **Full-precision intermediate values drive every calculation; rounded values are
+  presentation-only and are never fed back in.**
 * **No SQL or backend changes are authorised.**
+
+---
+
+## 12a. Numeric precision policy
+
+* Every intermediate value — polygon diagonal, sparse influence radius
+  (`diagonal * 0.22` or `* 0.35`), distances, IDW numerator/denominator, recency weights
+  and cell weights — is carried at **full IEEE-754 double precision**. Nothing is rounded
+  before being used in a further calculation.
+* Rounding exists **only** at presentation and publication boundaries: `*_display`
+  strings, the 0–255 alpha channel, and the six-decimal fields in the expected file
+  (`polygon_diagonal_deg`, `max_influence_deg`, `idw_el`, `cell_weight`, `alpha_float`).
+* The expected file additionally publishes `max_influence_deg_full_precision`,
+  `idw_el_full_precision` and `cell_weight_full_precision`. Those are the values that
+  actually drove the calculation; the six-decimal siblings are display copies.
+* A conformant implementation reproduces the full-precision fields; the rounded fields may
+  be compared to within 1e-6.
 
 ---
 
@@ -592,7 +643,9 @@ the stored polygon points.
 `el-ripeness-heatmap-fixture.json` provides a southern vineyard (`season_start 7/1`) with
 six blocks — two adjacent (`BLOCK_A` / `BLOCK_B` sharing longitude `138.5040`), a
 single-observation block, a no-observation block, a polygon-less block and an even-count
-median block — plus a northern `season_start 1/1` vineyard for the 1 January boundary and
+median block — plus a northern `season_start 1/1` vineyard for the 1 January calendar-year boundary
+(its two observations are excluded from the southern vineyard as `wrong_vineyard`, with
+their own 1 January Vintages recorded) and
 a vineyard with no season settings for the 1 July fallback. Observations cover E-L 1,
 E-L 43, intermediates, stale, exactly-day-84, future, deleted, invalid, E-L 47, missing
 coordinates and unassigned cases.
@@ -941,17 +994,23 @@ export function maxDayForMonth(month: number): number {
   return 31;
 }
 
+function seasonYearOffset(month: number, day: number): number {
+  return month === 1 && day === 1 ? 0 : 1; // SQL 119 resolve_vintage_year
+}
+
 export function currentVintageForSeason(month: number, day: number, now: Date = new Date()): number {
   const y = now.getFullYear();
+  const offset = seasonYearOffset(month, day);
   const start = new Date(y, month - 1, day);
-  return now >= start ? y + 1 : y;
+  return now >= start ? y + offset : y - 1 + offset;
 }
 
 export function seasonRangeForVintage(month: number, day: number, vintage: number) {
   const iso = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const start = new Date(vintage - 1, month - 1, day);
-  const endExclusive = new Date(vintage, month - 1, day);
+  const startYear = vintage - seasonYearOffset(month, day);
+  const start = new Date(startYear, month - 1, day);
+  const endExclusive = new Date(startYear + 1, month - 1, day);
   const end = new Date(endExclusive.getTime() - 24 * 60 * 60 * 1000);
   return { startISO: iso(start), endISO: iso(end) };
 }

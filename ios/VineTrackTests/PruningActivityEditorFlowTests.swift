@@ -199,8 +199,11 @@ struct PruningActivityEditorFlowTests {
         let first = RecordPruningActivityParams(from: d, clientUpdatedAt: day(2026, 8, 4))
         let second = RecordPruningActivityParams(from: replayed, clientUpdatedAt: day(2026, 8, 5))
         // Deterministic allocation ids — a replay recreates the same rows.
-        #expect(first.allocations.map(\.id).sorted { $0.uuidString < $1.uuidString }
-                == second.allocations.map(\.id).sorted { $0.uuidString < $1.uuidString })
+        // Sorted into locals first: inlining both sides made the expression
+        // too complex for the type-checker to solve inside the #expect macro.
+        let firstIds: [String] = first.allocations.map { $0.id.uuidString }.sorted()
+        let secondIds: [String] = second.allocations.map { $0.id.uuidString }.sorted()
+        #expect(firstIds == secondIds)
         #expect(second.allocations.count == 2)
     }
 

@@ -1062,6 +1062,7 @@ struct ResistancePlannerTests {
     // MARK: - Local persistence (item 23)
 
     @Test("A plan saves, reloads and keeps its positions and stamps")
+    @MainActor
     func planPersistsLocally() throws {
         let suite = "resistance-plan-tests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -1077,15 +1078,19 @@ struct ResistancePlannerTests {
         original = original.stampingRuleset(id: "AU_GRAPE_POWDERY_2026_07_22", version: "2026.07.22")
         original = original.settingNotes("Rotate away from 3 after Christmas", atEpochMs: day(1))
 
-        let store = ResistancePlanStore(defaults: defaults)
-        store.load(vineyardId: vineyard)
-        store.save(original)
+        // `load`/`save`/`plans(seasonId:disease:)` live on the repository;
+        // `ResistancePlanStore` is the UserDefaults-backed local store it reads
+        // through (`loadAll`/`saveAll`). Inject the store so the round trip still
+        // goes through real persistence.
+        let repository = ResistancePlanRepository(local: ResistancePlanStore(defaults: defaults))
+        repository.load(vineyardId: vineyard)
+        repository.save(original)
 
-        // A fresh store, as though the app had been restarted.
-        let reloaded = ResistancePlanStore(defaults: defaults)
+        // A fresh repository over the same defaults, as though the app had restarted.
+        let reloaded = ResistancePlanRepository(local: ResistancePlanStore(defaults: defaults))
         reloaded.load(vineyardId: vineyard)
         let restored = try #require(
-            reloaded.plans(seasonId: season.id, disease: .powderyMildew).first
+            reloaded.plans(seasonId: season.id, disease: ResistanceDisease.powderyMildew).first
         )
 
         #expect(restored == original)
@@ -1118,13 +1123,20 @@ struct ResistancePlannerTests {
         #expect(before.historyChecks == after.historyChecks)
     }
 
-    @Test("The local-only limitation is stated and never implies sync")
-    func localOnlyNotice() {
-        #expect(ResistancePlanStore.localOnlyNotice.contains("this device only"))
-        #expect(ResistancePlanStore.localOnlyNotice.contains("do not yet sync"))
+    @Test("The local-only limitation is reported and never implies sync")
+    @MainActor
+    func localOnlyIsReportedNotImplied() {
+        // Originally asserted a `ResistancePlanStore.localOnlyNotice` string that
+        // no longer exists in production. The behaviour it guarded — a planner
+        // with no remote must never claim to be synced — is asserted here against
+        // the real API instead of reintroducing copy.
+        let withoutRemote = ResistancePlanRepository(local: ResistancePlanStore())
+        #expect(withoutRemote.syncState == .localOnly)
+        #expect(withoutRemote.syncState != .synced)
     }
 
     @Test("A decode failure leaves the stored blob alone instead of wiping plans")
+    @MainActor
     func decodeFailureIsNonDestructive() throws {
         let suite = "resistance-plan-tests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -1134,10 +1146,10 @@ struct ResistancePlannerTests {
         let corrupt = Data("not a plan".utf8)
         defaults.set(corrupt, forKey: key)
 
-        let store = ResistancePlanStore(defaults: defaults)
-        store.load(vineyardId: vineyard)
+        let repository = ResistancePlanRepository(local: ResistancePlanStore(defaults: defaults))
+        repository.load(vineyardId: vineyard)
 
-        #expect(store.plans.isEmpty)
+        #expect(repository.plans.isEmpty)
         // The blob survives, so a later version with a migration can still read it.
         #expect(defaults.data(forKey: key) == corrupt)
     }

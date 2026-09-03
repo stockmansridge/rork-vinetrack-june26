@@ -762,7 +762,9 @@ struct PruningActivityCacheTests {
                 rows: PruningCalculator.rowRefs(paddock: Self.cabFranc, setup: Self.cabFrancSetup)
             )
         ]
-        let reportRows = PruningActivityRow.rows(
+        // `rows(...)` is a `PruningActivityReport` factory; `PruningActivityRow`
+        // is the value type it returns.
+        let reportRows = PruningActivityReport.rows(
             entries: store.auditEntries(forVineyard: Self.vineyardId),
             blocks: blocks,
             workTaskTitles: [:],

@@ -242,6 +242,9 @@ nonisolated enum ELRipeness {
     /// three timestamp candidates so the offline cache can re-normalise.
     nonisolated struct RawRecord: Equatable, Sendable {
         let id: String
+        /// Owning vineyard. Every query is scoped to the selected vineyard, so a
+        /// record from another vineyard is `wrong_vineyard` — never a date error.
+        let vineyardId: String?
         let paddockId: String?
         let stageCode: String?
         let latitude: Double?
@@ -253,6 +256,7 @@ nonisolated enum ELRipeness {
 
         init(
             id: String,
+            vineyardId: String? = nil,
             paddockId: String? = nil,
             stageCode: String? = nil,
             latitude: Double? = nil,
@@ -263,6 +267,7 @@ nonisolated enum ELRipeness {
             deletedAt: String? = nil
         ) {
             self.id = id
+            self.vineyardId = vineyardId
             self.paddockId = paddockId
             self.stageCode = stageCode
             self.latitude = latitude
@@ -288,9 +293,15 @@ nonisolated enum ELRipeness {
     /// Why a raw record never became an observation. Mirrors the
     /// `excluded_reason` values in the contract's expected file.
     nonisolated enum ExclusionReason: String, Equatable, Sendable {
+        /// Contract 1.1.0 section 10: the record belongs to a different vineyard
+        /// and is never fetched. This is *not* a date error — such records may
+        /// carry perfectly valid dates and a valid Vintage under their own
+        /// vineyard's season settings.
+        case wrongVineyard = "wrong_vineyard"
         case deleted
         case elOutOfRangeOrUnparseable = "el_out_of_range_or_unparseable"
         case missingCoordinates = "missing_coordinates"
+        /// Used **only** when all of `date`, `completed_at` and `created_at` are absent.
         case noObservationDate = "no_observation_date"
     }
 
@@ -336,11 +347,13 @@ nonisolated enum ELRipeness {
     /// to the first matching observation in this order.
     static func toObservations(
         _ records: [RawRecord],
-        assignedById: [String: Bool] = [:]
+        assignedById: [String: Bool] = [:],
+        selectedVineyardId: String? = nil
     ) -> [Observation] {
         var out: [Observation] = []
         out.reserveCapacity(records.count)
         for record in records {
+            if isWrongVineyard(record, selectedVineyardId: selectedVineyardId) { continue }
             if let deleted = record.deletedAt, !deleted.isEmpty { continue }
             guard let el = parseElStage(record.stageCode) else { continue }
             guard isValidLatitude(record.latitude), isValidLongitude(record.longitude),
@@ -367,7 +380,17 @@ nonisolated enum ELRipeness {
 
     /// The reason a record was excluded, for diagnostics and contract tests.
     /// Evaluated in the same order as `toObservations`.
-    static func exclusionReason(_ record: RawRecord) -> ExclusionReason? {
+    static func isWrongVineyard(_ record: RawRecord, selectedVineyardId: String?) -> Bool {
+        guard let selectedVineyardId, let owner = record.vineyardId else { return false }
+        return owner != selectedVineyardId
+    }
+
+    static func exclusionReason(
+        _ record: RawRecord,
+        selectedVineyardId: String? = nil
+    ) -> ExclusionReason? {
+        // Scoping happens at the query boundary, so it precedes every other rule.
+        if isWrongVineyard(record, selectedVineyardId: selectedVineyardId) { return .wrongVineyard }
         if let deleted = record.deletedAt, !deleted.isEmpty { return .deleted }
         if parseElStage(record.stageCode) == nil { return .elOutOfRangeOrUnparseable }
         if !isValidLatitude(record.latitude) || !isValidLongitude(record.longitude) {

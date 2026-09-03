@@ -242,6 +242,11 @@ object ElRipenessHeatmap {
      */
     data class RawRecord(
         val id: String,
+        /**
+         * Owning vineyard. Every query is scoped to the selected vineyard, so a
+         * record from another vineyard is `wrong_vineyard` — never a date error.
+         */
+        val vineyardId: String? = null,
         val paddockId: String? = null,
         val stageCode: String? = null,
         val latitude: Double? = null,
@@ -265,9 +270,21 @@ object ElRipenessHeatmap {
 
     /** Mirrors the `excluded_reason` values in the contract's expected file. */
     enum class ExclusionReason(val wire: String) {
+        /**
+         * Contract 1.1.0 section 10: the record belongs to a different vineyard
+         * and is never fetched. This is *not* a date error — such records may
+         * carry perfectly valid dates and a valid Vintage under their own
+         * vineyard's season settings.
+         */
+        WRONG_VINEYARD("wrong_vineyard"),
         DELETED("deleted"),
         EL_OUT_OF_RANGE_OR_UNPARSEABLE("el_out_of_range_or_unparseable"),
         MISSING_COORDINATES("missing_coordinates"),
+
+        /**
+         * Used **only** when all of `date`, `completed_at` and `created_at` are
+         * absent.
+         */
         NO_OBSERVATION_DATE("no_observation_date"),
     }
 
@@ -309,9 +326,11 @@ object ElRipenessHeatmap {
     fun toObservations(
         records: List<RawRecord>,
         assignedById: Map<String, Boolean> = emptyMap(),
+        selectedVineyardId: String? = null,
     ): List<Observation> {
         val out = ArrayList<Observation>(records.size)
         for (r in records) {
+            if (isWrongVineyard(r, selectedVineyardId)) continue
             if (!r.deletedAt.isNullOrEmpty()) continue
             val el = parseElStage(r.stageCode) ?: continue
             if (!isValidLatitude(r.latitude) || !isValidLongitude(r.longitude)) continue
@@ -336,7 +355,14 @@ object ElRipenessHeatmap {
      * The reason a record was excluded, for diagnostics and contract tests.
      * Evaluated in the same order as [toObservations].
      */
-    fun exclusionReason(record: RawRecord): ExclusionReason? {
+    fun isWrongVineyard(record: RawRecord, selectedVineyardId: String?): Boolean =
+        selectedVineyardId != null &&
+            record.vineyardId != null &&
+            record.vineyardId != selectedVineyardId
+
+    fun exclusionReason(record: RawRecord, selectedVineyardId: String? = null): ExclusionReason? {
+        // Scoping happens at the query boundary, so it precedes every other rule.
+        if (isWrongVineyard(record, selectedVineyardId)) return ExclusionReason.WRONG_VINEYARD
         if (!record.deletedAt.isNullOrEmpty()) return ExclusionReason.DELETED
         if (parseElStage(record.stageCode) == null) return ExclusionReason.EL_OUT_OF_RANGE_OR_UNPARSEABLE
         if (!isValidLatitude(record.latitude) || !isValidLongitude(record.longitude)) {
