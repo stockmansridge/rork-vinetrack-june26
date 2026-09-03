@@ -1304,6 +1304,14 @@ data class Pin(
     @SerialName("completed_at") val completedAt: String? = null,
     @SerialName("completed_by") val completedBy: String? = null,
     /**
+     * Author of the pin — the `pins.created_by` uuid written at insert time
+     * (see `PinRepository.createPin`, which stamps the signed-in user). Decoded
+     * for display only; never sent on edit PATCHes, so the original author
+     * survives every later edit. Null on legacy rows saved before the column
+     * was populated, which the Details sheet renders as "—".
+     */
+    @SerialName("created_by") val createdBy: String? = null,
+    /**
      * Structured row selection (`pin_row_segments`, sql/169/171) — the
      * authoritative location for row-scope pins, embedded by the delta-sync
      * select. Null for point/block pins and for cached records synced before
@@ -1357,6 +1365,54 @@ data class Pin(
 /** Formats a row number, preserving fractional values (19.5) and trimming whole ones (15). */
 private fun formatRowNumber(row: Double): String =
     if (row % 1.0 == 0.0) row.toInt().toString() else row.toString()
+
+private val userIdRegex =
+    Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\$")
+
+/**
+ * True when a stored `created_by`/`completed_by` value is an account id rather
+ * than a human name, so raw UUIDs are never shown to an operator.
+ */
+fun looksLikeUserId(value: String): Boolean = userIdRegex.matches(value)
+
+/** Neutral placeholder used across VineTrack detail rows for unknown values. */
+const val UNKNOWN_VALUE_PLACEHOLDER: String = "\u2014"
+
+/**
+ * Display name for a pin's original author, mirroring the iOS
+ * `resolveDisplayName(userId:fallbackText:)` resolver behind the "Created by"
+ * row in `PinDetailSheet`: a stored text snapshot wins, then the vineyard
+ * member directory looked up by the pin's OWN [Pin.createdBy] id, then the
+ * signed-in user's name when the pin genuinely is theirs.
+ *
+ * The author is always resolved from the pin row, never from who is looking at
+ * it, so a pin dropped by another member keeps showing that member on every
+ * device. When the id resolves to nobody (removed member, or a legacy row saved
+ * before the column was populated) this returns [UNKNOWN_VALUE_PLACEHOLDER]
+ * rather than falsely crediting the current user.
+ */
+fun resolvePinCreatorName(
+    pin: Pin,
+    members: List<VineyardMember>,
+    currentUserId: String?,
+    currentUserName: String?,
+): String {
+    val raw = pin.createdBy?.trim().orEmpty()
+    if (raw.isEmpty()) return UNKNOWN_VALUE_PLACEHOLDER
+    // Rows that stored a name rather than an account id display it verbatim.
+    if (!looksLikeUserId(raw)) return raw
+    members.firstOrNull { it.userId.equals(raw, ignoreCase = true) }?.let { member ->
+        val name = member.displayName?.takeIf { it.isNotBlank() }
+            ?: member.fullName?.takeIf { it.isNotBlank() }
+            ?: member.email?.takeIf { it.isNotBlank() }
+        if (name != null) return name
+    }
+    // Self only when the pin's own author id matches the signed-in user.
+    if (currentUserId != null && raw.equals(currentUserId, ignoreCase = true)) {
+        currentUserName?.takeIf { it.isNotBlank() }?.let { return it }
+    }
+    return UNKNOWN_VALUE_PLACEHOLDER
+}
 
 /**
  * A per-day, per-worker-type labour entry for a work task — backs

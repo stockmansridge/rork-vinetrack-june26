@@ -117,6 +117,8 @@ import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.LauncherButton
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
+import com.rork.vinetrack.data.model.looksLikeUserId
+import com.rork.vinetrack.data.model.resolvePinCreatorName
 import com.rork.vinetrack.data.model.PinPlacementContract
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
@@ -411,6 +413,12 @@ fun PinsScreen(
             color = pinColor(detailPin, colorMap),
             paddockName = state.paddocks.firstOrNull { it.id == detailPin.paddockId }?.name,
             sync = state.pinSyncState(detailPin.id),
+            createdByLabel = resolvePinCreatorName(
+                pin = detailPin,
+                members = state.members,
+                currentUserId = state.currentUserId,
+                currentUserName = vm.userName,
+            ),
             canDelete = canDelete,
             photoBusy = uploadingPinId == detailPin.id,
             // Synthesized growth-record pins have no backing pins row, so their
@@ -2842,6 +2850,8 @@ private fun PinDetailSheet(
     color: Color,
     paddockName: String?,
     sync: PinSyncState,
+    /** Resolved author of this pin (iOS "Created by" parity); "\u2014" when unknown. */
+    createdByLabel: String,
     canDelete: Boolean,
     photoBusy: Boolean,
     canEditNotes: Boolean,
@@ -3015,6 +3025,7 @@ private fun PinDetailSheet(
                     PinDetailRow("Driving path", pinFacingLine(pin))
                 }
                 pin.heading?.let { PinDetailRow("Facing", "${compassAbbrev(it)} (${it.roundToInt()}\u00b0)") }
+                PinDetailRow("Created by", createdByLabel)
                 PinDetailRow("Created", pinCreatedText(pin))
                 pin.latitude?.let { PinDetailRow("Latitude", String.format(java.util.Locale.US, "%.6f", it)) }
                 pin.longitude?.let { PinDetailRow("Longitude", String.format(java.util.Locale.US, "%.6f", it)) }
@@ -3189,6 +3200,5 @@ private fun PinDetailPhoto(vm: AppViewModel, photoPath: String?) {
 /** Completed-by label, hiding raw UUID values (iOS resolveDisplayName parity). */
 private fun completedByLabel(pin: Pin): String? {
     val raw = pin.completedBy?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-    val uuidRegex = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-    return raw.takeUnless { uuidRegex.matches(it) }
+    return raw.takeUnless { looksLikeUserId(it) }
 }
