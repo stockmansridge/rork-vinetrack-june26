@@ -31,6 +31,9 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -85,6 +88,7 @@ fun GrowthStageReportScreen(
     var selectedPaddockId by remember { mutableStateOf<String?>(null) }
     var selectedVintages by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var exporting by remember { mutableStateOf(false) }
+    var viewMode by remember { mutableStateOf(GrowthReportViewMode.SUMMARY) }
 
     // Growth observations carrying a real E-L code and date (pins are already
     // mirrored into growthRecords).
@@ -138,7 +142,10 @@ fun GrowthStageReportScreen(
                 title = { Text("Export PDF") },
                 navigationIcon = { BackNavIcon(onBack) },
                 actions = {
-                    if (canExport) {
+                    // The PDF export is a Summary artefact; the heatmap has no
+                    // paper equivalent, so the action hides rather than
+                    // exporting something the operator didn't ask for.
+                    if (canExport && viewMode == GrowthReportViewMode.SUMMARY) {
                         IconButton(
                             onClick = { runExport() },
                             enabled = !exporting && growthRecords.isNotEmpty() && availableVintages.isNotEmpty(),
@@ -152,15 +159,23 @@ fun GrowthStageReportScreen(
             )
         },
     ) { padding ->
-        when {
-            growthRecords.isEmpty() -> Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            GrowthReportViewSelector(viewMode) { viewMode = it }
+
+            if (viewMode == GrowthReportViewMode.HEATMAP) {
+                ElRipenessHeatmapContent(state = state, modifier = Modifier.weight(1f))
+                return@Column
+            }
+
+            when {
+            growthRecords.isEmpty() -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 EmptyState(
                     icon = Icons.Filled.Spa,
                     title = "No growth data",
                     message = "Record growth-stage observations to build your vintage report.",
                 )
             }
-            availableVintages.isEmpty() -> Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+            availableVintages.isEmpty() -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 EmptyState(
                     icon = Icons.Filled.Spa,
                     title = "No matching data",
@@ -168,7 +183,7 @@ fun GrowthStageReportScreen(
                 )
             }
             else -> LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
+                modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
@@ -257,6 +272,39 @@ fun GrowthStageReportScreen(
                     )
                 }
             }
+            }
+        }
+    }
+}
+
+/** The two ways to read a vintage's growth-stage data. */
+enum class GrowthReportViewMode { SUMMARY, HEATMAP }
+
+/**
+ * Switches between the stage-by-vintage Summary and the spatial Ripeness
+ * Heatmap. Both read the same vintage of observations; only the Summary has a
+ * PDF export.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GrowthReportViewSelector(
+    mode: GrowthReportViewMode,
+    onSelect: (GrowthReportViewMode) -> Unit,
+) {
+    val options = listOf(
+        GrowthReportViewMode.SUMMARY to "Summary",
+        GrowthReportViewMode.HEATMAP to "Ripeness Heatmap",
+    )
+    SingleChoiceSegmentedButtonRow(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        options.forEachIndexed { index, (value, label) ->
+            SegmentedButton(
+                selected = mode == value,
+                onClick = { onSelect(value) },
+                shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+                label = { Text(label) },
+            )
         }
     }
 }

@@ -208,7 +208,10 @@ final class ELRipenessSnapshotHarnessTests: XCTestCase {
 
             // Pins, above the surface.
             guard let dateISO = model.currentDateISO else { return }
-            func drawPin(_ observation: ELRipeness.Observation, _ style: ELRipenessObservationAnnotation.Style) {
+            // A closure literal, not a nested `func`: nested functions declared
+            // inside a closure do not inherit the enclosing actor isolation, so
+            // a `func` here could not call the main-actor-isolated `project`.
+            let drawPin: (ELRipeness.Observation, ELRipenessObservationAnnotation.Style) -> Void = { observation, style in
                 let image = ELRipenessPinFactory.observationImage(el: observation.el, style: style)
                 let centre = project(CLLocationCoordinate2D(latitude: observation.lat, longitude: observation.lng))
                 image.draw(at: CGPoint(x: centre.x - image.size.width / 2, y: centre.y - image.size.height / 2))
