@@ -41,8 +41,13 @@ import com.rork.vinetrack.R
 import com.rork.vinetrack.ui.auth.BiometricLockScreen
 import com.rork.vinetrack.ui.auth.LoginScreen
 import com.rork.vinetrack.ui.auth.OnboardingScreen
+import com.rork.vinetrack.ui.components.ForceScreenAwake
 import com.rork.vinetrack.ui.components.LoginVineyardBackground
+import com.rork.vinetrack.ui.components.ScreenAwakeController
+import com.rork.vinetrack.ui.components.ScreenAwakeHost
 import com.rork.vinetrack.ui.main.MainScaffold
+import com.rork.vinetrack.ui.main.PinWorkflow
+import com.rork.vinetrack.ui.main.WorkContextViewModel
 import com.rork.vinetrack.ui.screens.NoVineyardMembershipScreen
 import com.rork.vinetrack.ui.screens.RestrictedVineyardScreen
 import com.rork.vinetrack.ui.screens.SubscriptionScreen
@@ -51,9 +56,31 @@ import com.rork.vinetrack.ui.theme.VineColors
 @Composable
 fun RootScreen() {
     val vm: AppViewModel = viewModel()
+    // Created here rather than inside MainScaffold so its SavedStateHandle is
+    // registered for the whole Activity lifetime. MainScaffold is not in
+    // composition during the Restoring phase after a process restart, so a
+    // ViewModel created there would miss the saved state it needs to restore.
+    val work: WorkContextViewModel = viewModel()
     val state by vm.ui.collectAsStateWithLifecycle()
     val authState by vm.authState.collectAsStateWithLifecycle()
     val subscriptionState by vm.subscription.collectAsStateWithLifecycle()
+    val pinWorkflow by work.pinWorkflow.collectAsStateWithLifecycle()
+
+    // THE single owner of FLAG_KEEP_SCREEN_ON for the whole app.
+    ScreenAwakeHost()
+
+    // Repairs / Growth pin dropping forces the display on regardless of the
+    // user's Keep Screen Awake preference. Held here — above the route table —
+    // so it survives the launcher screen recomposing or briefly leaving
+    // composition mid-workflow.
+    ForceScreenAwake(
+        enabled = pinWorkflow == PinWorkflow.Repairs,
+        reason = ScreenAwakeController.Reason.RepairPinDrop,
+    )
+    ForceScreenAwake(
+        enabled = pinWorkflow == PinWorkflow.Growth,
+        reason = ScreenAwakeController.Reason.GrowthPinDrop,
+    )
 
     // Silently revalidate/refresh the Supabase session whenever the app
     // returns to the foreground, so a stale token never bounces the user to
@@ -128,7 +155,7 @@ fun RootScreen() {
         )
         AppRoute.Main ->
             if (!state.onboardingCompleted) OnboardingScreen(onComplete = vm::completeOnboarding)
-            else MainScaffold(vm, state)
+            else MainScaffold(vm, state, work)
     }
     }
 }

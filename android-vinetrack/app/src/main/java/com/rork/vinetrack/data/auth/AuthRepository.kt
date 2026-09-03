@@ -100,20 +100,72 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
         saved
     }
 
+    /** Outcome of restoring the persisted session at startup. */
+    sealed interface RestoreResult {
+        /** Session is valid and confirmed by the server. */
+        data class Online(val user: AppUser) : RestoreResult
+
+        /**
+         * Tokens exist locally but the server could not be reached. The user
+         * stays signed in and works offline — this is NOT a sign-out.
+         */
+        data class Offline(val user: AppUser) : RestoreResult
+
+        /** No tokens stored, or the server definitively rejected them. */
+        data object SignedOut : RestoreResult
+    }
+
     /**
-     * Restore a persisted session. Returns the user if a valid session exists,
-     * null if genuinely signed out, and keeps offline users signed in.
+     * Restore a persisted session at startup.
+     *
+     * Never throws: a missing Supabase config or an unreachable server both
+     * resolve to [RestoreResult.Offline] when local tokens exist, so a cold
+     * launch in a no-service block keeps the user signed in.
+     * [RestoreResult.SignedOut] is returned ONLY when there is nothing stored
+     * or the refresh token was actively rejected.
      */
-    suspend fun restoreSession(): AppUser? = withContext(Dispatchers.IO) {
-        if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
+    suspend fun restoreSession(): RestoreResult = withContext(Dispatchers.IO) {
         if (session.refreshToken == null) {
             Log.d(TAG, "restoreSession: no persisted session")
-            return@withContext null
+            return@withContext RestoreResult.SignedOut
+        }
+        val cached = cachedUser()
+        if (!SupabaseClient.isConfigured) {
+            // Misconfiguration is an app/environment problem, never a reason to
+            // destroy a valid local session.
+            Log.w(TAG, "restoreSession: Supabase not configured — staying offline-authenticated")
+            return@withContext cached?.let { RestoreResult.Offline(it) } ?: RestoreResult.SignedOut
         }
         when (val result = performRefresh(session.accessToken)) {
-            is RefreshResult.Success -> result.user ?: cachedUser()
-            RefreshResult.Rejected -> null // session already cleared by performRefresh
-            RefreshResult.Transient -> cachedUser() // offline: stay signed in
+            is RefreshResult.Success -> {
+                val user = result.user ?: cached
+                user?.let { RestoreResult.Online(it) } ?: RestoreResult.SignedOut
+            }
+            // Session already cleared by performRefresh.
+            RefreshResult.Rejected -> RestoreResult.SignedOut
+            // Offline: stay signed in against the cached identity.
+            RefreshResult.Transient -> cached?.let { RestoreResult.Offline(it) } ?: RestoreResult.SignedOut
+        }
+    }
+
+    /**
+     * Ask the server to confirm whether the stored session is still valid.
+     *
+     * Used as the gate before any automatic sign-out: a 401/403 from a data
+     * request is not proof on its own (it may be an RLS/permission denial, or
+     * a token that simply needed refreshing), so the caller re-checks here and
+     * only signs out on [SessionValidity.Rejected].
+     *
+     * Forces a real refresh exchange (rather than reusing a concurrently
+     * refreshed token) so the answer always comes from the server.
+     */
+    suspend fun revalidateSession(): SessionValidity = withContext(Dispatchers.IO) {
+        if (session.refreshToken == null) return@withContext SessionValidity.Rejected
+        if (!SupabaseClient.isConfigured) return@withContext SessionValidity.Unreachable
+        when (performRefresh(tokenBefore = null)) {
+            is RefreshResult.Success -> SessionValidity.Valid
+            RefreshResult.Rejected -> SessionValidity.Rejected
+            RefreshResult.Transient -> SessionValidity.Unreachable
         }
     }
 

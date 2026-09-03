@@ -128,6 +128,7 @@ import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.PinSyncState
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.KeepScreenAwake
+import com.rork.vinetrack.ui.components.ScreenAwakeController
 import com.rork.vinetrack.ui.components.compassTrueHeading
 import com.rork.vinetrack.ui.components.AutoPhotoPromptSheet
 import com.rork.vinetrack.ui.components.rememberCompassHeading
@@ -1467,7 +1468,12 @@ fun PinCategoryLauncherScreen(
     // Operators keep this launcher open while working rows (often mid-trip):
     // hold the screen awake exactly like the active-trip screen, gated by the
     // same "Keep screen awake during trips" preference.
-    KeepScreenAwake(enabled = true)
+    //
+    // The FORCED hold for Repairs/Growth pin dropping is registered by
+    // RootScreen from the saved work context, so it can't be dropped by this
+    // screen recomposing. This preference-gated hold is additive only — the
+    // window flag itself is owned solely by ScreenAwakeHost.
+    KeepScreenAwake(enabled = true, reason = ScreenAwakeController.Reason.PinLauncherOpen)
 
     // Quick-pin workflow state (iOS RepairsGrowthView parity).
     // Pending duplicate confirmation sheet for a quick-tapped pin.

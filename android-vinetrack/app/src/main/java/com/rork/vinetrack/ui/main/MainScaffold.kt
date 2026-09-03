@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -40,6 +41,7 @@ import com.rork.vinetrack.ui.theme.VineColors
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.KeepScreenAwake
+import com.rork.vinetrack.ui.components.ScreenAwakeController
 import com.rork.vinetrack.ui.screens.BlocksScreen
 import com.rork.vinetrack.ui.screens.CostReportsScreen
 import com.rork.vinetrack.ui.screens.CustomiseToolsScreen
@@ -90,37 +92,44 @@ import com.rork.vinetrack.ui.screens.WorkTasksScreen
 import com.rork.vinetrack.ui.screens.YieldScreen
 
 @Composable
-fun MainScaffold(vm: AppViewModel, state: AppUiState) {
-    var tab by rememberSaveable { mutableStateOf(MainTab.Home) }
+fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel) {
+    // Navigation / workflow context lives in a SavedStateHandle-backed
+    // ViewModel, not in `remember`, so Activity recreation, "Don't keep
+    // activities" and process death all return the operator to the same place.
+    val tab by work.tab.collectAsStateWithLifecycle()
     // Secondary surface opened on top of the More hub. Null = showing a tab root.
-    var tool by rememberSaveable { mutableStateOf<ToolRoute?>(null) }
+    val tool by work.tool.collectAsStateWithLifecycle()
     // Optional Observations mode ("Repairs"/"Growth") when opening the Pins tool.
-    var pinMode by rememberSaveable { mutableStateOf<String?>(null) }
+    val pinMode by work.pinMode.collectAsStateWithLifecycle()
     // Repairs/Growth quick-action category launcher ("Repairs"/"Growth"). Null = closed.
-    var launcherMode by rememberSaveable { mutableStateOf<String?>(null) }
+    val launcherMode by work.launcherMode.collectAsStateWithLifecycle()
     // A trip to auto-open on the Trips tab (e.g. a spray job just started from Spray Detail).
-    var tripsSelection by rememberSaveable { mutableStateOf<String?>(null) }
+    val tripsSelection by work.tripsSelection.collectAsStateWithLifecycle()
     // When true, the Program tab opens straight into the Spray Calculator
     // (e.g. the "Spray Trip" option from the Trips start-trip chooser).
-    var programOpenCalculator by rememberSaveable { mutableStateOf(false) }
+    val programOpenCalculator by work.programOpenCalculator.collectAsStateWithLifecycle()
     // Optional spray record/template id to pre-fill the Spray Calculator with
     // (e.g. "Start from Template" in the Spray Trip setup chooser).
-    var programCalculatorPrefill by rememberSaveable { mutableStateOf<String?>(null) }
+    val programCalculatorPrefill by work.programCalculatorPrefill.collectAsStateWithLifecycle()
     // When true, opening the Pins tab starts in List view (e.g. the Home
     // "pins need attention" banner), mirroring iOS PinsView(initialViewMode: .list).
-    var pinsOpenInList by rememberSaveable { mutableStateOf(false) }
+    val pinsOpenInList by work.pinsOpenInList.collectAsStateWithLifecycle()
     // When true, the Setup Wizard is shown as a full-screen overlay (opened from
     // the Home wizard card). Mirrors the iOS SetupWizardView sheet.
-    var showSetupWizard by rememberSaveable { mutableStateOf(false) }
+    val showSetupWizard by work.showSetupWizard.collectAsStateWithLifecycle()
     // Unified "Add Pin / Action" composer (sql/170): full-screen overlay
     // opened from the Home Quick Action. Mirrors the iOS composer.
-    var showAddPinComposer by rememberSaveable { mutableStateOf(false) }
+    val showAddPinComposer by work.showAddPinComposer.collectAsStateWithLifecycle()
 
     // Live trip mode holds the screen awake app-wide — not just while the trip
     // detail screen is open — so the display never dims mid-trip while the
     // operator is on another tab (e.g. dropping Repairs/Growth pins). Gated by
-    // the "Keep screen awake during trips" preference, like iOS.
-    KeepScreenAwake(enabled = state.activeTrip != null)
+    // the "Keep screen awake during trips" preference, like iOS. The flag
+    // itself is owned solely by ScreenAwakeHost.
+    KeepScreenAwake(
+        enabled = state.activeTrip != null,
+        reason = ScreenAwakeController.Reason.ActiveTrip,
+    )
 
     // One-time reconciliation between this device's legacy local season start
     // and the shared vineyard value (owners/managers only — sql/108).
@@ -157,7 +166,7 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
                 MainTab.entries.forEach { entry ->
                     NavigationBarItem(
                         selected = tab == entry && tool == null && launcherMode == null,
-                        onClick = { tab = entry; tool = null; pinMode = null; launcherMode = null; pinsOpenInList = false; showAddPinComposer = false },
+                        onClick = { work.openTab(entry) },
                         icon = {
                             if (entry == MainTab.Trip) {
                                 SteeringWheelIcon(Modifier.size(24.dp))
@@ -183,69 +192,63 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
         val openTool = tool
         val openLauncher = launcherMode
         if (showSetupWizard) {
-            BackHandler { showSetupWizard = false }
-            SetupWizardScreen(vm, state, modifier, onBack = { showSetupWizard = false })
+            BackHandler { work.setShowSetupWizard(false) }
+            SetupWizardScreen(vm, state, modifier, onBack = { work.setShowSetupWizard(false) })
         } else if (showAddPinComposer) {
             UnifiedPinComposerScreen(
                 vm = vm,
                 state = state,
                 modifier = modifier,
-                onBack = { showAddPinComposer = false },
+                onBack = { work.setShowAddPinComposer(false) },
                 onSaved = {
                     // Return to the existing Pins map/list — the new pin shows
                     // through normal pin sync; no separate Manual Issues list.
-                    showAddPinComposer = false
-                    tab = MainTab.Pins
-                    tool = null
-                    pinMode = null
-                    launcherMode = null
+                    work.setShowAddPinComposer(false)
+                    work.openTab(MainTab.Pins)
                 },
             )
         } else if (openLauncher != null) {
-            BackHandler { launcherMode = null }
+            BackHandler { work.setLauncherMode(null) }
             PinCategoryLauncherScreen(
                 vm = vm,
                 state = state,
                 modifier = modifier,
                 initialMode = openLauncher,
-                onBack = { launcherMode = null },
-                onOpenList = { launcherMode = null; tab = MainTab.Pins; tool = null; pinMode = null },
+                onBack = { work.setLauncherMode(null) },
+                onOpenList = { work.openTab(MainTab.Pins) },
             )
         } else if (openTool != null) {
-            BackHandler { tool = null }
+            BackHandler { work.setTool(null) }
             ToolHost(
                 openTool, vm, state, modifier,
-                onBack = { tool = null },
+                onBack = { work.setTool(null) },
                 pinMode = pinMode,
-                onOpenLauncher = { mode -> launcherMode = mode },
+                onOpenLauncher = { mode -> work.setLauncherMode(mode) },
                 onOpenTrip = { tripId ->
-                    tripsSelection = tripId
-                    tool = null
-                    pinMode = null
-                    launcherMode = null
-                    tab = MainTab.Trip
+                    work.setTripsSelection(tripId)
+                    work.openTab(MainTab.Trip)
                 },
-                onOpenTool = { route -> tool = route; pinMode = null },
+                onOpenTool = { route -> work.setTool(route); work.setPinMode(null) },
             )
         } else when (tab) {
             MainTab.Home -> HomeDashboard(
                 vm = vm,
                 state = state,
                 modifier = modifier,
-                onOpenTab = { tab = it; tool = null; pinMode = null },
-                onOpenTool = { tool = it; pinMode = null },
-                onOpenSetupWizard = { showSetupWizard = true },
-                onOpenAddPinAction = { showAddPinComposer = true },
+                onOpenTab = { work.setTab(it); work.setTool(null); work.setPinMode(null) },
+                onOpenTool = { work.setTool(it); work.setPinMode(null) },
+                onOpenSetupWizard = { work.setShowSetupWizard(true) },
+                onOpenAddPinAction = { work.setShowAddPinComposer(true) },
                 onOpenObservations = { mode ->
                     if (mode == null) {
-                        tab = MainTab.Pins; tool = null; pinMode = null
+                        work.setTab(MainTab.Pins); work.setTool(null); work.setPinMode(null)
                     } else {
-                        launcherMode = mode
+                        work.setLauncherMode(mode)
                     }
                 },
                 onOpenPinsList = {
-                    tab = MainTab.Pins; tool = null; pinMode = null; launcherMode = null
-                    pinsOpenInList = true
+                    work.openTab(MainTab.Pins)
+                    work.setPinsOpenInList(true)
                 },
             )
             MainTab.Pins -> PinsScreen(
@@ -253,22 +256,20 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
                 onBack = null,
                 initialMode = pinMode,
                 initialViewMode = if (pinsOpenInList) PinsViewMode.List else PinsViewMode.Map,
-                onOpenLauncher = { mode -> launcherMode = mode },
+                onOpenLauncher = { mode -> work.setLauncherMode(mode) },
             )
             MainTab.Trip -> TripsScreen(
                 vm, state, modifier,
                 initialSelectedTripId = tripsSelection,
-                onSelectionConsumed = { tripsSelection = null },
+                onSelectionConsumed = { work.setTripsSelection(null) },
                 onStartSprayTrip = { prefillId ->
-                    programCalculatorPrefill = prefillId
-                    programOpenCalculator = true
-                    tab = MainTab.Program
+                    work.setProgramCalculatorPrefill(prefillId)
+                    work.setProgramOpenCalculator(true)
+                    work.setTab(MainTab.Program)
                 },
                 // Emergency escape from the live trip HUD — the trip keeps
                 // recording; the Trip tab re-opens it via the active banner.
-                onGoHome = {
-                    tab = MainTab.Home; tool = null; pinMode = null; launcherMode = null; pinsOpenInList = false
-                },
+                onGoHome = { work.openTab(MainTab.Home) },
             )
             MainTab.Program -> SpraysScreen(
                 vm, state, modifier,
@@ -276,18 +277,18 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
                 initialOpenCalculator = programOpenCalculator,
                 initialCalculatorPrefillId = programCalculatorPrefill,
                 onCalculatorConsumed = {
-                    programOpenCalculator = false
-                    programCalculatorPrefill = null
+                    work.setProgramOpenCalculator(false)
+                    work.setProgramCalculatorPrefill(null)
                 },
                 onOpenTrip = { tripId ->
-                    tripsSelection = tripId
-                    tab = MainTab.Trip
+                    work.setTripsSelection(tripId)
+                    work.setTab(MainTab.Trip)
                 },
             )
             MainTab.Settings -> SettingsScreen(
                 vm, state, modifier,
                 onBack = null,
-                onOpenTool = { route -> tool = route; pinMode = null },
+                onOpenTool = { route -> work.setTool(route); work.setPinMode(null) },
             )
         }
         }

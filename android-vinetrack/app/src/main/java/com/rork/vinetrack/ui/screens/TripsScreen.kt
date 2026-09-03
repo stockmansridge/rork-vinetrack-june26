@@ -222,6 +222,7 @@ import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.TripSyncBadge
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.KeepScreenAwake
+import com.rork.vinetrack.ui.components.ScreenAwakeController
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.components.StatusBadge
@@ -950,7 +951,7 @@ private fun TripDetailView(
     // iOS parity: ActiveTripView disables the idle timer while it is on screen
     // (including paused trips), gated by the "Keep screen awake during trips"
     // preference. Cleared automatically when the trip ends or the user leaves.
-    KeepScreenAwake(enabled = trip.isActive)
+    KeepScreenAwake(enabled = trip.isActive, reason = ScreenAwakeController.Reason.ActiveTrip)
 
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(trip.isActive, trip.isPaused) {

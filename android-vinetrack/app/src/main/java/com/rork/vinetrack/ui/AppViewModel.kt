@@ -66,6 +66,7 @@ import com.rork.vinetrack.data.calculateRowLines
 import com.rork.vinetrack.data.DomainCacheRepository
 import com.rork.vinetrack.data.PendingPhotoRepository
 import com.rork.vinetrack.data.ActiveTripStore
+import com.rork.vinetrack.data.ActiveVineyardResolver
 import com.rork.vinetrack.data.FertiliserStore
 import com.rork.vinetrack.data.FertiliserSyncCoordinator
 import com.rork.vinetrack.data.FertiliserSyncRepository
@@ -189,7 +190,12 @@ import com.rork.vinetrack.data.YieldRecordUpdateSync
 import com.rork.vinetrack.data.YieldRepository
 import com.rork.vinetrack.data.auth.AuthRepository
 import com.rork.vinetrack.data.auth.BiometricStore
+import com.rork.vinetrack.data.model.AppUser
+import com.rork.vinetrack.data.auth.SessionPhase
+import com.rork.vinetrack.data.auth.SessionDecision
+import com.rork.vinetrack.data.auth.SessionDecisions
 import com.rork.vinetrack.data.auth.SessionStore
+import com.rork.vinetrack.ui.components.ScreenAwakeController
 import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.GrapeVarietyRow
 import com.rork.vinetrack.data.model.DamageRecord
@@ -303,6 +309,9 @@ private const val REMOTE_SNAPSHOT_MIN_INTERVAL_MS = 60_000L
 /** Log tag for System Admin status resolution (gates admin-only surfaces). */
 private const val ADMIN_TAG = "VineTrackAdmin"
 
+/** Log tag for session restoration / authentication lifecycle decisions. */
+private const val SESSION_TAG = "VineTrackSession"
+
 enum class PendingSyncDisplayState(val label: String) {
     /** Enqueued, not yet attempted. */
     Pending("Waiting to sync"),
@@ -406,6 +415,13 @@ data class SeasonMigrationPrompt(
 
 data class AppUiState(
     val route: AppRoute = AppRoute.Restoring,
+    /**
+     * Explicit authentication lifecycle. Distinguishing "still restoring" and
+     * "authenticated but offline" from "signed out" is what prevents a
+     * transiently-null user (hydration race) or a connectivity failure from
+     * being mistaken for a logout.
+     */
+    val sessionPhase: SessionPhase = SessionPhase.Restoring,
     /**
      * Whether the first-launch welcome carousel has been completed on this
      * device (mirrors iOS `OnboardingState`). Gates the intro shown once after
@@ -3523,7 +3539,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun observeConnectivity() {
         viewModelScope.launch {
             connectivity.observe().collect { online ->
-                _ui.update { it.copy(isOnline = online) }
+                // Connectivity is a TRANSPORT fact, never an authentication
+                // fact: losing the network only moves an authenticated user
+                // between the online and offline phases. It must never clear
+                // the session or the active vineyard.
+                _ui.update { st ->
+                    st.copy(
+                        isOnline = online,
+                        sessionPhase = SessionDecisions.onConnectivityChange(st.sessionPhase, online),
+                    )
+                }
                 // Reconnected (or first known status is online): flush any queued
                 // pin creates, then queued completion toggles. No-op when the
                 // outbox is empty or no session yet.
@@ -3582,16 +3607,49 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Startup session restoration.
+     *
+     * The ONLY route to Login is [AuthRepository.RestoreResult.SignedOut] —
+     * nothing stored, or the refresh token actively rejected by a reachable
+     * server. Every other outcome (offline, DNS failure, Supabase unavailable,
+     * misconfiguration, unexpected exception) keeps the persisted session and
+     * continues into the app as [SessionPhase.AuthenticatedOffline].
+     */
     private fun restore() {
         viewModelScope.launch {
-            val user = try {
+            val result = try {
                 auth.restoreSession()
             } catch (e: Exception) {
-                null
+                // Defensive: restoreSession is written not to throw, but an
+                // unexpected failure must never be read as a sign-out while
+                // local tokens still exist.
+                Log.w(SESSION_TAG, "restoreSession threw unexpectedly: ${e.message}")
+                if (session.hasSession) {
+                    AuthRepository.RestoreResult.Offline(
+                        AppUser(id = session.userId.orEmpty(), email = session.userEmail),
+                    )
+                } else {
+                    AuthRepository.RestoreResult.SignedOut
+                }
             }
-            if (user == null) {
-                _ui.update { it.copy(route = AppRoute.Login) }
-            } else if (biometricStore.isEnabled) {
+            when (result) {
+                is AuthRepository.RestoreResult.SignedOut -> {
+                    _ui.update { it.copy(route = AppRoute.Login, sessionPhase = SessionPhase.SignedOut) }
+                    return@launch
+                }
+                is AuthRepository.RestoreResult.Online ->
+                    _ui.update {
+                        it.copy(sessionPhase = SessionPhase.AuthenticatedOnline, currentUserId = session.userId)
+                    }
+                is AuthRepository.RestoreResult.Offline -> {
+                    Log.d(SESSION_TAG, "Restored session offline — continuing on local data")
+                    _ui.update {
+                        it.copy(sessionPhase = SessionPhase.AuthenticatedOffline, currentUserId = session.userId)
+                    }
+                }
+            }
+            if (biometricStore.isEnabled) {
                 // Session restored, but the user gated this device behind a
                 // biometric/device-credential unlock (parity with iOS
                 // BiometricLockView). Hold here until they pass the prompt.
@@ -3599,6 +3657,53 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 _ui.update { it.copy(route = AppRoute.VineyardLoading) }
                 loadVineyards()
+            }
+        }
+    }
+
+    /**
+     * Single funnel for every [BackendError.Unauthorized] raised by a data
+     * request. **No data-layer error path may call [signOut] directly.**
+     *
+     * A 401/403 from a repository is not proof the user should be logged out.
+     * The same error is produced by an RLS/permission denial, by a request
+     * issued while the access token was momentarily absent mid-hydration, and
+     * by a token that merely needed refreshing. So we ask the auth server for
+     * a definitive answer and sign out only on an explicit rejection.
+     *
+     * Offline, or when the auth server can't be reached, the session is kept
+     * and the app drops to [SessionPhase.AuthenticatedOffline] so the user
+     * carries on against the local database and outbox.
+     */
+    /**
+     * Fire-and-forget entry point to [handleUnauthorized] for the many
+     * non-suspending `catch (e: BackendError.Unauthorized)` arms. Callers keep
+     * their synchronous rollback/`onResult(false)` behaviour; the session
+     * decision resolves on the ViewModel scope.
+     */
+    private fun onUnauthorized(context: String) {
+        viewModelScope.launch { handleUnauthorized(context) }
+    }
+
+    private suspend fun handleUnauthorized(context: String) {
+        val isOnline = _ui.value.isOnline
+        // Only ask the auth server when there is any point: a known-offline
+        // device can't produce a definitive rejection.
+        val validity = if (isOnline) auth.revalidateSession() else null
+        when (SessionDecisions.onUnauthorized(isOnline, validity)) {
+            SessionDecision.KeepOnline -> {
+                // Credentials are fine — this was a permission/RLS denial or a
+                // stale-token race. Never sign out for those.
+                Log.d(SESSION_TAG, "Unauthorized during '$context' but session revalidated — staying signed in")
+                _ui.update { it.copy(sessionPhase = SessionPhase.AuthenticatedOnline) }
+            }
+            SessionDecision.KeepOffline -> {
+                Log.w(SESSION_TAG, "Unauthorized during '$context' with no definitive rejection — keeping session")
+                _ui.update { it.copy(sessionPhase = SessionPhase.AuthenticatedOffline) }
+            }
+            SessionDecision.SignOut -> {
+                Log.w(SESSION_TAG, "Session definitively rejected during '$context' — signing out")
+                signOut("Your session expired. Please sign in again.")
             }
         }
     }
@@ -3744,7 +3849,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Drop the in-memory tool layout so the next account starts from
             // its own cached/served layout (the per-user cache stays on disk).
             runCatching { operationalToolLayoutStore.signOut() }
-            _ui.value = AppUiState(route = AppRoute.Login)
+            // Drop every keep-awake hold so the next account starts clean.
+            runCatching { ScreenAwakeController.reset() }
+            _ui.value = AppUiState(route = AppRoute.Login, sessionPhase = SessionPhase.SignedOut)
             _auth.value = AuthFormState(error = message)
         }
     }
@@ -3787,8 +3894,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // default to "still valid" on any unexpected error.
             val valid = try { auth.ensureFreshSession() } catch (_: Exception) { true }
             if (!valid) {
-                signOut("Your session expired. Please sign in again.")
-                return@launch
+                // ensureFreshSession only reports false on a definitive
+                // rejection, but re-confirm through the single funnel so an
+                // unreachable auth server can never end the session here.
+                handleUnauthorized("onAppForegrounded")
+                if (!_ui.value.sessionPhase.isAuthenticated) return@launch
             }
             // Re-resolve System Admin status on foreground (parity with iOS,
             // which refreshes SystemAdminService on every root-view activation).
@@ -4685,7 +4795,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 loadVineyards()
                 onResult(true, null)
             } catch (e: BackendError.Unauthorized) {
-                signOut()
+                onUnauthorized("createVineyard")
                 onResult(false, null)
             } catch (_: Exception) {
                 onResult(
@@ -4722,7 +4832,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     .distinctBy { it.vineyardId }
                 onResult(false, invites, null)
             } catch (e: BackendError.Unauthorized) {
-                signOut()
+                onUnauthorized("checkForVineyardAccess")
             } catch (_: Exception) {
                 onResult(
                     false,
@@ -4746,7 +4856,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 loadVineyards()
                 onResult(true, null)
             } catch (e: BackendError.Unauthorized) {
-                signOut()
+                onUnauthorized("acceptVineyardInvitation")
                 onResult(false, null)
             } catch (_: Exception) {
                 onResult(
@@ -4793,7 +4903,51 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Monotonic counter bumped by every EXPLICIT user vineyard switch.
+     * An in-flight [loadVineyards] captures it before its network work and
+     * refuses to overwrite the active vineyard if the value moved on
+     * meanwhile — this is what stops a late account/default-vineyard response
+     * dragging the user out of the vineyard they just opened.
+     */
+    private var vineyardSelectionEpoch: Long = 0L
+
+    /**
+     * The single authoritative writer of the active vineyard.
+     *
+     * Every other path (bootstrap, cache hydration, invitation accept,
+     * vineyard create, manual switch) funnels through here so persisted state
+     * and in-memory state can never disagree, and so the async-overwrite guard
+     * is applied in exactly one place.
+     *
+     * Returns the vineyard that is actually active afterwards.
+     */
+    private fun resolveActiveVineyard(
+        memberIds: Set<String>,
+        defaultId: String?,
+        firstAvailable: String?,
+        epoch: Long,
+    ): String? {
+        val isStale = epoch != vineyardSelectionEpoch
+        if (isStale) {
+            Log.d(SESSION_TAG, "Stale vineyard resolution (epoch $epoch != $vineyardSelectionEpoch) — user choice wins")
+        }
+        val selected = ActiveVineyardResolver.resolve(
+            ActiveVineyardResolver.Input(
+                memberIds = memberIds,
+                persistedActiveId = session.selectedVineyardId,
+                defaultId = defaultId,
+                firstAvailableId = firstAvailable,
+                liveSelectionId = _ui.value.selectedVineyardId ?: session.selectedVineyardId,
+                isStale = isStale,
+            ),
+        )
+        session.selectedVineyardId = selected
+        return selected
+    }
+
     private suspend fun loadVineyards() {
+        val epoch = vineyardSelectionEpoch
         try {
             loadAdminStatus()
             refreshProfileDisplayName()
@@ -4820,17 +4974,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             session.defaultVineyardId = defaultId
 
-            // Selection priority (matches iOS applyDefaultVineyardSelection):
-            // 1. profile default if still a member,
-            // 2. existing local selection if still valid,
-            // 3. first available vineyard.
-            val previous = session.selectedVineyardId
-            val selected = when {
-                defaultId != null && defaultId in memberIds -> defaultId
-                previous != null && previous in memberIds -> previous
-                else -> vineyards.firstOrNull()?.id
-            }
-            session.selectedVineyardId = selected
+            // Active vineyard restoration. The vineyard the user is WORKING IN
+            // is not their profile Default Vineyard: if they switched to B, a
+            // lock/unlock, backgrounding, Activity or process recreation must
+            // bring them back to B, never to default A.
+            //
+            // Priority:
+            //   1. persisted active vineyard, if still locally valid,
+            //   2. profile default (first login / no persisted active vineyard,
+            //      or the previous one is no longer accessible),
+            //   3. first available vineyard.
+            //
+            // `epoch` guards the async race: this profile/default fetch may
+            // land AFTER the user has switched vineyards by hand, and a stale
+            // response must never overwrite the newer choice.
+            val selected = resolveActiveVineyard(
+                memberIds = memberIds,
+                defaultId = defaultId,
+                firstAvailable = vineyards.firstOrNull()?.id,
+                epoch = epoch,
+            )
             // Post-auth telemetry heartbeat (SQL 154). Best-effort — never
             // blocks the sign-in / bootstrap flow.
             reportClientTelemetry()
@@ -4926,22 +5089,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 replayPendingYieldSessions()
             }
         } catch (e: BackendError.Unauthorized) {
-            signOut()
+            // Ask the server whether this is genuinely a dead session. Only a
+            // definitive rejection signs the user out; an RLS denial, a
+            // stale-token race or an unreachable auth server must leave the
+            // user working on local data instead of stranding them on the
+            // vineyard-loading spinner.
+            handleUnauthorized("loadVineyards")
+            if (_ui.value.sessionPhase.isAuthenticated) {
+                fallBackToLocalVineyards()
+            }
         } catch (e: Exception) {
             // Offline / transient. A restored session is still required (this
             // catch is only reached after auth succeeded), so falling back to
             // the local read-cache never bypasses authentication.
-            if (!hydrateVineyardsFromCache()) {
-                // Offline with in-memory vineyards: honour the local-only access
-                // check (free window / offline grace) so previously valid users
-                // are never locked out by a transient outage.
-                val offlineAccess = hasLocalOfflineAccess()
-                _ui.update {
-                    if (it.vineyards.isEmpty()) it.copy(route = AppRoute.VineyardLoadFailed)
-                    else it.copy(route = if (offlineAccess) AppRoute.Main else AppRoute.Paywall)
-                }
-                if (!offlineAccess && _ui.value.route == AppRoute.Paywall) refreshPaywall()
+            fallBackToLocalVineyards()
+        }
+    }
+
+    /**
+     * Shared offline landing for a failed vineyard load: prefer the local
+     * read-cache, otherwise keep whatever vineyards are already in memory and
+     * honour the local-only access check so a transient outage never locks out
+     * a previously valid user.
+     */
+    private suspend fun fallBackToLocalVineyards() {
+        if (!hydrateVineyardsFromCache()) {
+            // Offline with in-memory vineyards: honour the local-only access
+            // check (free window / offline grace) so previously valid users
+            // are never locked out by a transient outage.
+            val offlineAccess = hasLocalOfflineAccess()
+            _ui.update {
+                if (it.vineyards.isEmpty()) it.copy(route = AppRoute.VineyardLoadFailed)
+                else it.copy(route = if (offlineAccess) AppRoute.Main else AppRoute.Paywall)
             }
+            if (!offlineAccess && _ui.value.route == AppRoute.Paywall) refreshPaywall()
         }
     }
 
@@ -4960,13 +5141,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (cached.isNullOrEmpty()) return false
         val memberIds = cached.map { it.id }.toSet()
         val defaultId = session.defaultVineyardId?.takeIf { it in memberIds }
-        val previous = session.selectedVineyardId
-        val selected = when {
-            defaultId != null -> defaultId
-            previous != null && previous in memberIds -> previous
-            else -> cached.firstOrNull()?.id
-        }
-        session.selectedVineyardId = selected
+        // Same contract as the online path: the persisted ACTIVE vineyard wins
+        // over the profile default. A cold offline launch must reopen the
+        // vineyard the user was last working in — lack of connectivity is never
+        // a reason to invalidate it.
+        val selected = resolveActiveVineyard(
+            memberIds = memberIds,
+            defaultId = defaultId,
+            firstAvailable = cached.firstOrNull()?.id,
+            epoch = vineyardSelectionEpoch,
+        )
         // Offline launch: evaluate access from local state only (free window /
         // offline grace snapshot) — no network calls, never locks out a
         // previously verified subscriber (iOS parity).
@@ -5080,6 +5264,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectVineyard(id: String) {
+        // Explicit user choice: bump the epoch so any vineyard load still in
+        // flight (profile default, membership refresh) can no longer overwrite
+        // this selection when it lands.
+        vineyardSelectionEpoch += 1
         session.selectedVineyardId = id
         // Vineyard changed — material telemetry change, report it (throttled).
         reportClientTelemetry()
@@ -5808,7 +5996,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onCreatedPin(created)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut()
+                onUnauthorized("createPin")
                 onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / server rejection — surface, don't queue.
@@ -6112,7 +6300,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(pins = st.pins.map { if (it.id == pinId) updated else it }) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut()
+                onUnauthorized("updatePin")
                 onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(pins = previous, pinError = friendlyWriteError(e.code)) }
@@ -6167,7 +6355,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(pins = st.pins.map { if (it.id == pinId) updated else it }) }
                 onResult(true, null)
             } catch (e: BackendError.Unauthorized) {
-                signOut()
+                onUnauthorized("updatePinType")
                 onResult(false, null)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(pins = previous, pinError = friendlyWriteError(e.code)) }
@@ -6207,7 +6395,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val updated = pinRepo.updatePinCompletion(pin.id, target)
                 _ui.update { st -> st.copy(pins = st.pins.map { if (it.id == pin.id) updated else it }) }
             } catch (e: BackendError.Unauthorized) {
-                signOut()
+                onUnauthorized("togglePinCompleted")
             } catch (e: BackendError.Server) {
                 if (e.code in 500..599) {
                     // Transient server failure — keep the flip and queue for replay.
@@ -6275,7 +6463,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 pinRepo.softDeletePin(pinId)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut()
+                onUnauthorized("deletePin")
                 onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll back, surface, don't queue.
@@ -6318,7 +6506,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(pinPhotoBusy = false) }
-                signOut()
+                onUnauthorized("uploadPinPhoto")
                 onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(pinPhotoBusy = false, pinError = friendlyWriteError(e.code)) }
@@ -6363,7 +6551,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(pinPhotoBusy = false) }
-                signOut()
+                onUnauthorized("attachQuickPinPhoto")
                 onResult(false)
             } catch (e: Exception) {
                 // Transient/network failure — retain the photo against the pin so it
@@ -6400,7 +6588,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(pinPhotoBusy = false) }
-                signOut()
+                onUnauthorized("removePinPhoto")
                 onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(pinPhotoBusy = false, pinError = friendlyWriteError(e.code)) }
@@ -6457,7 +6645,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(vineyardLogoBusy = false) }
-                signOut()
+                onUnauthorized("uploadVineyardLogo")
                 onResult(false)
             } catch (e: Exception) {
                 _ui.update { it.copy(vineyardLogoBusy = false) }
@@ -6492,7 +6680,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(vineyardLogoBusy = false) }
-                signOut()
+                onUnauthorized("removeVineyardLogo")
                 onResult(false)
             } catch (e: Exception) {
                 _ui.update { it.copy(vineyardLogoBusy = false) }
@@ -6593,7 +6781,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(growthStageImageBusyCode = null) }
-                signOut()
+                onUnauthorized("uploadGrowthStageImage")
                 onResult(false)
             } catch (e: Exception) {
                 _ui.update { it.copy(growthStageImageBusyCode = null) }
@@ -6621,7 +6809,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(growthStageImageBusyCode = null) }
-                signOut()
+                onUnauthorized("removeGrowthStageImage")
                 onResult(false)
             } catch (e: Exception) {
                 _ui.update { it.copy(growthStageImageBusyCode = null) }
@@ -6764,7 +6952,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(tripBusy = false) }
-                signOut(); onResult(false)
+                onUnauthorized("startTrip"); onResult(false)
             } catch (e: Exception) {
                 // Transient (network / server) while we believed we were online:
                 // fall back to the local provisional start with the same id and
@@ -6862,7 +7050,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 persistActiveTripSnapshot()
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("updateTripMetadata"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(trips = previous, tripError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -6985,7 +7173,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(tripBusy = false) }
-                signOut(); onResult(false)
+                onUnauthorized("endTrip"); onResult(false)
             } catch (e: Exception) {
                 // Transient (network / server) while we believed we were online:
                 // keep the optimistic ended state and queue the markers rather
@@ -7100,7 +7288,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 persistActiveTripSnapshot()
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(tripBusy = false) }
-                signOut(); onResult(false); return@launch
+                onUnauthorized("endTripWithRowReview"); onResult(false); return@launch
             } catch (e: Exception) {
                 // Transient: keep the optimistic review coverage and queue a
                 // TRIP_ROW marker so it lands; the TRIP_END dependency gate will
@@ -7155,7 +7343,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     tripRepo.softDeleteTrip(tripId)
                     onResult(true)
                 } catch (e: BackendError.Unauthorized) {
-                    signOut(); onResult(false)
+                    onUnauthorized("deleteTrip"); onResult(false)
                 } catch (e: BackendError.Server) {
                     _ui.update { it.copy(trips = previous, tripError = friendlyWriteError(e.code)) }
                     persistActiveTripSnapshot()
@@ -7199,7 +7387,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 tripRepo.softDeleteTrip(tripId)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteTrip"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll back, surface, don't queue.
                 _ui.update { it.copy(trips = previous, tripError = friendlyWriteError(e.code)) }
@@ -7720,7 +7908,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(workTaskBusy = false) }
-                signOut(); onResult(false)
+                onUnauthorized("createWorkTask"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll the optimistic row
                 // back, surface, don't queue as retryable.
@@ -7822,7 +8010,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         val saved = workTaskPaddockRepo.insert(joinId, taskId, vineyardId, pid, areaHa, clientUpdatedAt)
                         _ui.update { st -> st.copy(workTaskPaddocks = st.workTaskPaddocks.map { if (it.id == joinId) saved else it }) }
                     } catch (e: BackendError.Unauthorized) {
-                        signOut()
+                        onUnauthorized("reconcileWorkTaskPaddocks")
                     } catch (e: BackendError.Server) {
                         // Permission/validation — roll the optimistic add back.
                         _ui.update { st -> st.copy(workTaskPaddocks = st.workTaskPaddocks.filterNot { it.id == joinId }) }
@@ -7845,7 +8033,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     try {
                         workTaskPaddockRepo.softDelete(rowToRemove.id)
                     } catch (e: BackendError.Unauthorized) {
-                        signOut()
+                        onUnauthorized("reconcileWorkTaskPaddocks")
                     } catch (e: Exception) {
                         workTaskPaddockSync.enqueueDelete(rowToRemove.id, taskId)
                     }
@@ -7947,7 +8135,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(workTasks = st.workTasks.map { if (it.id == taskId) updated else it }) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("updateWorkTask"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll the optimistic edit
                 // back, surface, don't queue as retryable.
@@ -8035,7 +8223,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("setWorkTaskCosting"); onResult(false)
             } catch (e: Exception) {
                 // Pricing is never left optimistically applied on failure — a
                 // rate the server did not accept must not look agreed.
@@ -8107,7 +8295,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(workTasks = st.workTasks.map { if (it.id == taskId) updated else it }) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("setWorkTaskComplete"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(workTasks = previous, workTaskError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -8194,7 +8382,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 sweepWorkTaskChildMarkers(taskId)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteWorkTask"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll back, surface, don't queue.
                 // No child-marker sweep: the delete didn't happen, so any queued
@@ -8279,14 +8467,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val serverLabour = try {
                 workTaskLineRepo.listLabourLines(taskId)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); return@launch
+                onUnauthorized("loadTaskLines"); return@launch
             } catch (_: Exception) {
                 null
             }
             val serverMachine = try {
                 workTaskLineRepo.listMachineLines(taskId)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); return@launch
+                onUnauthorized("loadTaskLines"); return@launch
             } catch (_: Exception) {
                 null
             }
@@ -8479,7 +8667,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(taskLineBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(taskLineBusy = false) }; onUnauthorized("queueOffline"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — restore previous lines,
                 // surface, don't queue as retryable.
@@ -8535,7 +8723,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 workTaskLineRepo.deleteLabourLine(lineId)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteLabourLine"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(taskLabourLines = previous, taskLineError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -8677,7 +8865,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(taskLineBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(taskLineBusy = false) }; onUnauthorized("queueOffline"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — restore previous lines,
                 // surface, don't queue as retryable.
@@ -8733,7 +8921,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 workTaskLineRepo.deleteMachineLine(lineId)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteMachineLine"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(taskMachineLines = previous, taskLineError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -8814,7 +9002,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(sprayRecords = st.sprayRecords.map { if (it.id == id) created else it }, sprayBusy = false) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(sprayBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(sprayBusy = false) }; onUnauthorized("createSprayRecord"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll the optimistic row
                 // back, surface, don't queue as retryable.
@@ -8892,7 +9080,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(sprayBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(sprayBusy = false) }; onUnauthorized("createSprayJobForLater"); onResult(false)
             } catch (e: Exception) {
                 // Roll back the orphan trip so no empty "Not Started" job lingers.
                 trip?.let { t ->
@@ -8940,7 +9128,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 beginTracking(activated)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(tripBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(tripBusy = false) }; onUnauthorized("startSprayJob"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(tripBusy = false, sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -9022,7 +9210,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 beginTracking(seededTrip)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(sprayBusy = false, tripBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(sprayBusy = false, tripBusy = false) }; onUnauthorized("startSprayJobNow"); onResult(false)
             } catch (e: Exception) {
                 // Roll back the orphan trip so no empty active job lingers.
                 trip?.let { t ->
@@ -9153,7 +9341,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == tripId) updated else it }) }
                 persistActiveTripSnapshot()
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(trips = previous) }; signOut()
+                _ui.update { it.copy(trips = previous) }; onUnauthorized("persistCoverage")
             } catch (e: Exception) {
                 // Server write failed while we believed we were online. Keep the
                 // optimistic coverage and queue a coalesced marker so the row
@@ -9354,7 +9542,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == tripId) updated else it }) }
                 persistActiveTripSnapshot()
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(trips = previous) }; signOut()
+                _ui.update { it.copy(trips = previous) }; onUnauthorized("persistTankSessions")
             } catch (e: Exception) {
                 // Server write failed while we believed we were online. Keep the
                 // optimistic tank state and queue a coalesced marker so the tank
@@ -9445,7 +9633,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(sprayRecords = st.sprayRecords.map { if (it.id == id) updated else it }, sprayBusy = false) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(sprayBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(sprayBusy = false) }; onUnauthorized("updateSprayRecord"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll the optimistic edit
                 // back, surface, don't queue as retryable.
@@ -9514,7 +9702,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: SprayProgramStepNotPermitted) {
                 onResult(e.message ?: SprayProgramStepWriteMessages.NOT_PERMITTED)
             } catch (e: BackendError.Unauthorized) {
-                signOut()
+                onUnauthorized("updateProgramStep")
                 onResult(SprayProgramStepWriteMessages.NOT_PERMITTED)
             } catch (e: BackendError.Server) {
                 onResult("Couldn't save the Program Step. Please try again.")
@@ -9710,7 +9898,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 sprayRepo.softDeleteSprayRecord(id)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteSprayRecord"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll back, surface, don't queue.
                 _ui.update { it.copy(sprayRecords = previous, sprayError = friendlyWriteError(e.code)) }
@@ -9743,7 +9931,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("createSavedChemical"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -9767,7 +9955,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("updateSavedChemical"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(savedChemicals = previous, sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -9787,7 +9975,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 savedChemicalRepo.softDelete(id)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteSavedChemical"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(savedChemicals = previous, sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -9819,7 +10007,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(outcome)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(null)
+                onUnauthorized("hardDeleteSavedChemical"); onResult(null)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(savedChemicals = previous, sprayError = friendlyWriteError(e.code)) }
                 onResult(null)
@@ -9868,7 +10056,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(null)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult("Your session expired. Please sign in again.")
+                onUnauthorized("saveGrapeVariety"); onResult("Your session expired. Please sign in again.")
             } catch (e: BackendError.Server) {
                 onResult("Couldn't save to the shared catalogue (${e.code}). Tap Save to retry.")
             } catch (e: Exception) {
@@ -9890,7 +10078,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 repo.archiveVineyardVariety(id)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("archiveGrapeVariety"); onResult(false)
             } catch (e: Exception) {
                 _ui.update { it.copy(grapeVarieties = previous) }
                 onResult(false)
@@ -9918,7 +10106,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(outcome)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(null)
+                onUnauthorized("hardDeleteGrapeVariety"); onResult(null)
             } catch (e: Exception) {
                 _ui.update { it.copy(grapeVarieties = previous) }
                 onResult(null)
@@ -9987,7 +10175,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == tripId) updated else it }) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("updateTripSeedingDetails"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(trips = previous, tripError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10012,7 +10200,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("createSavedInput"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10036,7 +10224,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("updateSavedInput"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(savedInputs = previous, sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10056,7 +10244,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 savedInputRepo.softDelete(id)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteSavedInput"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(savedInputs = previous, sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10081,7 +10269,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("createOperatorCategory"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10105,7 +10293,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("updateOperatorCategory"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(operatorCategories = previous, sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10125,7 +10313,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 operatorCategoryRepo.softDelete(id)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteOperatorCategory"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(operatorCategories = previous, sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10178,7 +10366,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(vineyardTripFunctions = st.vineyardTripFunctions + created) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("createTripFunction"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10210,7 +10398,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(vineyardTripFunctions = st.vineyardTripFunctions.map { if (it.id == id) updated else it }) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("renameTripFunction"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(vineyardTripFunctions = previous, sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10234,7 +10422,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 tripFunctionRepo.archive(id)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("archiveTripFunction"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(vineyardTripFunctions = previous, sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10258,7 +10446,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 tripFunctionRepo.restore(id)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("restoreTripFunction"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(vineyardTripFunctions = previous, sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10320,7 +10508,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(teamBusy = false, teamNotice = notice) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("inviteMember"); onResult(false)
             } catch (e: BackendError.Server) {
                 val message = if (e.message?.contains("Worker type not found", ignoreCase = true) == true) {
                     "This worker type is no longer available for this vineyard. Select another worker type and try again."
@@ -10355,7 +10543,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 loadPendingInvitations()
                 _ui.update { it.copy(teamBusy = false, teamNotice = notice) }
             } catch (e: BackendError.Unauthorized) {
-                signOut()
+                onUnauthorized("resendInvitation")
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(teamBusy = false, teamError = friendlyWriteError(e.code)) }
             } catch (e: Exception) {
@@ -10381,7 +10569,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(teamBusy = false) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("updateMember"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(teamBusy = false, teamError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10403,7 +10591,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(teamBusy = false) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("removeMember"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(teamBusy = false, teamError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10425,7 +10613,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(teamBusy = false) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("transferOwnership"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(teamBusy = false, teamError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10447,7 +10635,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val loaded = alertPrefsRepo.load(vineyardId) ?: AlertPreferences.defaults(vineyardId)
                 _ui.update { it.copy(alertPreferences = loaded, alertPrefsLoading = false) }
             } catch (e: BackendError.Unauthorized) {
-                signOut()
+                onUnauthorized("loadAlertPreferences")
             } catch (e: Exception) {
                 _ui.update {
                     it.copy(
@@ -10468,7 +10656,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(alertPreferences = saved, alertPrefsBusy = false) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("saveAlertPreferences"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(alertPrefsBusy = false, alertPrefsError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10498,7 +10686,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("createSprayEquipment"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10522,7 +10710,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("updateSprayEquipment"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(sprayEquipment = previous, sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10542,7 +10730,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 sprayEquipmentRepo.softDelete(id)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteSprayEquipment"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(sprayEquipment = previous, sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10567,7 +10755,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(machines = (st.machines + created).sortedBy { it.displayName.lowercase() }) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("createVineyardMachine"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(equipmentError = friendlyWriteError(e.code)) }; onResult(false)
             } catch (e: Exception) {
@@ -10586,7 +10774,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(machines = st.machines.map { if (it.id == id) updated else it }.sortedBy { it.displayName.lowercase() }) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("updateVineyardMachine"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(machines = previous, equipmentError = friendlyWriteError(e.code)) }; onResult(false)
             } catch (e: Exception) {
@@ -10603,7 +10791,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 machineRepo.softDelete(id); onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteVineyardMachine"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(machines = previous, equipmentError = friendlyWriteError(e.code)) }; onResult(false)
             } catch (e: Exception) {
@@ -10622,7 +10810,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(equipmentItems = (st.equipmentItems + created).sortedBy { it.displayName.lowercase() }) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("createEquipmentItem"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(equipmentError = friendlyWriteError(e.code)) }; onResult(false)
             } catch (e: Exception) {
@@ -10641,7 +10829,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(equipmentItems = st.equipmentItems.map { if (it.id == id) updated else it }.sortedBy { it.displayName.lowercase() }) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("updateEquipmentItem"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(equipmentItems = previous, equipmentError = friendlyWriteError(e.code)) }; onResult(false)
             } catch (e: Exception) {
@@ -10658,7 +10846,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 equipmentItemRepo.softDelete(id); onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteEquipmentItem"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(equipmentItems = previous, equipmentError = friendlyWriteError(e.code)) }; onResult(false)
             } catch (e: Exception) {
@@ -10677,7 +10865,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(fuelPurchases = (st.fuelPurchases + created).sortedByDescending { it.date ?: "" }) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("createFuelPurchase"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(equipmentError = friendlyWriteError(e.code)) }; onResult(false)
             } catch (e: Exception) {
@@ -10696,7 +10884,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(fuelPurchases = st.fuelPurchases.map { if (it.id == id) updated else it }.sortedByDescending { it.date ?: "" }) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("updateFuelPurchase"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(fuelPurchases = previous, equipmentError = friendlyWriteError(e.code)) }; onResult(false)
             } catch (e: Exception) {
@@ -10713,7 +10901,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 fuelPurchaseRepo.softDelete(id); onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteFuelPurchase"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(fuelPurchases = previous, equipmentError = friendlyWriteError(e.code)) }; onResult(false)
             } catch (e: Exception) {
@@ -10736,7 +10924,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("createSavedSprayPreset"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10760,7 +10948,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("updateSavedSprayPreset"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(savedSprayPresets = previous, sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10780,7 +10968,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 savedSprayPresetRepo.softDelete(id)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteSavedSprayPreset"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(savedSprayPresets = previous, sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -10921,7 +11109,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         sprayRecords = createdRecords + it.sprayRecords,
                     )
                 }
-                signOut()
+                onUnauthorized("importSprayRecords")
                 onResult(SprayImportOutcome(imported, rows.size - imported))
             }
         }
@@ -10990,7 +11178,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (photoUri != null) uploadMaintenancePhoto(created, photoUri) {}
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(maintenanceBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(maintenanceBusy = false) }; onUnauthorized("createMaintenanceLog"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll the optimistic row
                 // back, surface, don't queue as retryable.
@@ -11049,7 +11237,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(maintenanceLogs = st.maintenanceLogs.map { if (it.id == id) updated else it }, maintenanceBusy = false) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(maintenanceBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(maintenanceBusy = false) }; onUnauthorized("updateMaintenanceLog"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — restore the previous list,
                 // surface, don't queue as retryable.
@@ -11132,7 +11320,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 maintenanceRepo.softDeleteMaintenanceLog(id)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteMaintenanceLog"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — restore, surface, don't queue.
                 _ui.update { it.copy(maintenanceLogs = previous, maintenanceError = friendlyWriteError(e.code)) }
@@ -11174,7 +11362,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(maintenancePhotoBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(maintenancePhotoBusy = false) }; onUnauthorized("uploadMaintenancePhoto"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(maintenancePhotoBusy = false, maintenanceError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -11202,7 +11390,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(maintenancePhotoBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(maintenancePhotoBusy = false) }; onUnauthorized("removeMaintenancePhoto"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(maintenancePhotoBusy = false, maintenanceError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -11279,7 +11467,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(fuelLogs = st.fuelLogs.map { if (it.id == id) created else it }, fuelBusy = false) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(fuelBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(fuelBusy = false) }; onUnauthorized("createFuelLog"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll the optimistic row
                 // back, surface, don't queue as retryable.
@@ -11360,7 +11548,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(fuelLogs = st.fuelLogs.map { if (it.id == id) updated else it }, fuelBusy = false) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(fuelBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(fuelBusy = false) }; onUnauthorized("updateFuelLog"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll the optimistic edit
                 // back, surface, don't queue as retryable.
@@ -11433,7 +11621,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 fuelRepo.softDeleteFuelLog(id)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteFuelLog"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll back, surface, don't queue.
                 _ui.update { it.copy(fuelLogs = previous, fuelError = friendlyWriteError(e.code)) }
@@ -11496,7 +11684,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(growthRecords = st.growthRecords.map { if (it.id == id) created else it }, growthBusy = false) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(growthBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(growthBusy = false) }; onUnauthorized("createGrowthStageRecord"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll the optimistic row
                 // back, surface, don't queue as retryable.
@@ -11556,7 +11744,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(growthRecords = st.growthRecords.map { if (it.id == id) updated else it }, growthBusy = false) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(growthBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(growthBusy = false) }; onUnauthorized("updateGrowthStageRecord"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — restore the previous list,
                 // surface, don't queue as retryable.
@@ -11619,7 +11807,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 growthRepo.softDeleteGrowthStageRecord(id)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteGrowthStageRecord"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — restore, surface, don't queue.
                 _ui.update { it.copy(growthRecords = previous, growthError = friendlyWriteError(e.code)) }
@@ -11666,7 +11854,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(growthPhotoBusy = false) }
-                signOut(); onResult(false)
+                onUnauthorized("uploadGrowthPhoto"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(growthPhotoBusy = false, growthError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -11696,7 +11884,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(growthPhotoBusy = false) }
-                signOut(); onResult(false)
+                onUnauthorized("removeGrowthPhoto"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(growthPhotoBusy = false, growthError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -11751,7 +11939,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(paddocks = st.paddocks.map { if (it.id == paddockId) updated else it }) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(paddocks = previous) }; signOut(); onResult(false)
+                _ui.update { it.copy(paddocks = previous) }; onUnauthorized("updatePaddockPhenologyDates"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(paddocks = previous, growthError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -11797,7 +11985,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(paddocks = st.paddocks.map { if (it.id == paddockId) updated else it }) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(paddocks = previous) }; signOut(); onResult(false)
+                _ui.update { it.copy(paddocks = previous) }; onUnauthorized("updatePaddockVarietyAllocations"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(paddocks = previous, growthError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -11930,7 +12118,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 session.userId?.let { uid -> domainCache.savePaddocks(uid, vineyardId, _ui.value.paddocks) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(paddocks = previous) }; signOut(); onResult(false)
+                _ui.update { it.copy(paddocks = previous) }; onUnauthorized("savePaddock"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(paddocks = previous, blockEditError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -11986,7 +12174,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 session.userId?.let { uid -> domainCache.savePaddocks(uid, vineyardId, _ui.value.paddocks) }
                 onResult(parse.summary, null)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(paddocks = previous) }; signOut(); onResult(null, "Your session expired. Sign in and try again.")
+                _ui.update { it.copy(paddocks = previous) }; onUnauthorized("importPaddocks"); onResult(null, "Your session expired. Sign in and try again.")
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(paddocks = previous) }
                 onResult(null, friendlyWriteError(e.code))
@@ -12007,7 +12195,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 session.userId?.let { uid -> _ui.value.selectedVineyardId?.let { vid -> domainCache.savePaddocks(uid, vid, _ui.value.paddocks) } }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(paddocks = previous) }; signOut(); onResult(false)
+                _ui.update { it.copy(paddocks = previous) }; onUnauthorized("archivePaddock"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(paddocks = previous, blockEditError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -12028,7 +12216,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 session.userId?.let { uid -> _ui.value.selectedVineyardId?.let { vid -> domainCache.savePaddocks(uid, vid, _ui.value.paddocks) } }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(paddocks = previous) }; signOut(); onResult(false)
+                _ui.update { it.copy(paddocks = previous) }; onUnauthorized("hardDeletePaddock"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(paddocks = previous, blockEditError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -12098,7 +12286,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(yieldRecords = st.yieldRecords.map { if (it.id == id) created else it }, yieldBusy = false) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(yieldBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(yieldBusy = false) }; onUnauthorized("createYieldRecord"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll the optimistic row
                 // back, surface, don't queue as retryable.
@@ -12156,7 +12344,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
             } catch (e: BackendError.Unauthorized) {
-                signOut()
+                onUnauthorized("refreshGrapeAllocations")
             } catch (e: Exception) {
                 _ui.update {
                     it.copy(
@@ -12195,7 +12383,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 grapeAllocationRepo.upsertAllocation(allocation, now)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("saveGrapeAllocation"); onResult(false)
             } catch (e: Exception) {
                 _ui.update {
                     it.copy(
@@ -12229,7 +12417,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("saveGrapePurchaser"); onResult(false)
             } catch (e: Exception) {
                 _ui.update {
                     it.copy(grapeAllocationError = "Couldn't save the purchaser. Check your connection and try again.")
@@ -12248,7 +12436,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 grapeAllocationRepo.softDeleteAllocation(id)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteGrapeAllocation"); onResult(false)
             } catch (e: Exception) {
                 _ui.update {
                     it.copy(
@@ -12285,7 +12473,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 persistPickingCache()
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("createPickingRecord"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.filterNot { it.id == record.id }, yieldError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -12337,7 +12525,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 persistPickingCache()
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("updatePickingRecord"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(pickingRecords = previous, yieldError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -12376,7 +12564,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 persistPickingCache()
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deletePickingRecord"); onResult(false)
             } catch (e: BackendError.Server) {
                 if (e.code == 404) {
                     onResult(true)
@@ -12446,7 +12634,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
             } catch (e: BackendError.Unauthorized) {
-                signOut()
+                onUnauthorized("savePruningYieldSettings")
             } catch (e: BackendError.Server) {
                 if (e.code in 500..599) {
                     pruningYieldSettingsSync.enqueue(item, now)
@@ -12537,7 +12725,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             SeasonYieldController.Outcome.Unauthorized -> {
                 _ui.update { it.copy(seasonYieldLoading = false, seasonYieldRefreshing = false) }
-                signOut()
+                // Route through the single funnel, never straight to sign-out:
+                // this outcome is also produced by an RLS denial on the season
+                // yield RPC and by an offline request.
+                onUnauthorized("seasonYieldOverview")
             }
             is SeasonYieldController.Outcome.Failed -> _ui.update {
                 // Keep whatever was already loaded for THIS vintage — a failed
@@ -12584,7 +12775,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(yieldRecords = st.yieldRecords.map { if (it.id == id) created else it }, yieldBusy = false) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(yieldBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(yieldBusy = false) }; onUnauthorized("createYieldEstimate"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { st -> st.copy(yieldBusy = false, yieldRecords = st.yieldRecords.filterNot { it.id == id }, yieldError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -12636,7 +12827,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(yieldRecords = st.yieldRecords.map { if (it.id == record.id) saved else it }, yieldBusy = false) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(yieldRecords = previous, yieldBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(yieldRecords = previous, yieldBusy = false) }; onUnauthorized("updateYieldEstimate"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(yieldRecords = previous, yieldBusy = false, yieldError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -12712,7 +12903,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(yieldRecords = st.yieldRecords.map { if (it.id == record.id) saved else it }, yieldBusy = false) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(yieldRecords = previous, yieldBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(yieldRecords = previous, yieldBusy = false) }; onUnauthorized("updateYieldActuals"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(yieldRecords = previous, yieldBusy = false, yieldError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -12766,7 +12957,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 yieldRepo.softDeleteYieldRecord(id)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteYieldRecord"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — restore, surface, don't queue.
                 _ui.update { it.copy(yieldRecords = previous, yieldError = friendlyWriteError(e.code)) }
@@ -12827,7 +13018,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(damageBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(damageBusy = false) }; onUnauthorized("saveDamageRecord"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll the optimistic change
                 // back, surface, don't queue as retryable.
@@ -12899,7 +13090,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 damageRepo.softDeleteDamageRecord(id)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteDamageRecord"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(damageRecords = previous, damageError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -12966,7 +13157,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(yieldSessionBusy = false) }; signOut(); onResult(false)
+                _ui.update { it.copy(yieldSessionBusy = false) }; onUnauthorized("saveYieldSession"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(yieldSessions = previous, yieldSessionBusy = false, yieldSessionError = friendlyWriteError(e.code)) }
                 onResult(false)
@@ -13000,7 +13191,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 yieldSessionRepo.softDeleteSession(id)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
-                signOut(); onResult(false)
+                onUnauthorized("deleteYieldSession"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(yieldSessions = previous, yieldSessionError = friendlyWriteError(e.code)) }
                 onResult(false)
