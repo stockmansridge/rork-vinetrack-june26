@@ -138,6 +138,7 @@ class ElRipenessHeatmapViewModel(
     private var seasonStartMonth: Int = ElRipenessSeason.DEFAULT_SEASON_START_MONTH
     private var seasonStartDay: Int = ElRipenessSeason.DEFAULT_SEASON_START_DAY
     private var today: CivilDate = CivilDate(2000, 1, 1)
+    private var loadJob: Job? = null
     private var renderJob: Job? = null
     private var remoteRowsReturned: Int = 0
 
@@ -152,13 +153,18 @@ class ElRipenessHeatmapViewModel(
         timeZone: TimeZone,
         isOnline: Boolean,
     ) {
+        // Only the newest vineyard/source load may publish UI. This also makes
+        // repeated lifecycle delivery safe on Activity recreation.
+        loadJob?.cancel()
+        renderJob?.cancel()
+        renderJob = null
         this.seasonStartMonth = seasonStartMonth
         this.seasonStartDay = seasonStartDay
         this.today = civilToday(timeZone)
         this.loadedVineyardId = vineyardId
         _ui.value = _ui.value.copy(loadState = ElRipenessLoadState.Loading, notices = emptyList())
 
-        viewModelScope.launch {
+        loadJob = viewModelScope.launch {
             var resolvedBlocks = ElRipenessObservationAdapter.blockInputs(paddocks)
             pendingSources = ElRipenessObservationAdapter.pendingRecords(
                 records = pendingRecords,
@@ -505,8 +511,10 @@ class ElRipenessHeatmapViewModel(
         return next
     }
 
-    /** Drops rasters and cancels rendering when the screen goes away. */
+    /** Drops rasters and cancels loading/rendering when the owning screen goes away. */
     fun teardown() {
+        loadJob?.cancel()
+        loadJob = null
         renderJob?.cancel()
         renderJob = null
         _ui.value = _ui.value.copy(
@@ -519,6 +527,7 @@ class ElRipenessHeatmapViewModel(
 
     override fun onCleared() {
         super.onCleared()
+        loadJob?.cancel()
         renderJob?.cancel()
     }
 

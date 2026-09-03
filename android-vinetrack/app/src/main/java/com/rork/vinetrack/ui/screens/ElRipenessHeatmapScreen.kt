@@ -12,12 +12,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -154,14 +152,17 @@ fun ElRipenessHeatmapContent(
     val vineyardId = state.selectedVineyardId
     val reduceMotion = rememberReduceMotion()
 
+    val ownsModel = sharedModel == null
     val model = sharedModel ?: rememberElRipenessHeatmapViewModel()
     val ui by model.ui.collectAsStateWithLifecycle()
 
     // The vineyard's own timezone keeps the field-capture day intact.
     val timeZone = remember(state.seasonZone) { TimeZone.getTimeZone(state.seasonZone) }
 
-    LaunchedEffect(vineyardId, state.paddocks, state.isOnline) {
-        if (vineyardId != null) {
+    // A shared model is loaded by the parent Growth surface. Keeping exactly
+    // one loader prevents duplicate network/render jobs from racing each other.
+    LaunchedEffect(ownsModel, vineyardId, state.paddocks, state.isOnline) {
+        if (ownsModel && vineyardId != null) {
             model.load(
                 vineyardId = vineyardId,
                 paddocks = state.paddocks,
@@ -175,8 +176,14 @@ fun ElRipenessHeatmapContent(
         }
     }
 
-    LaunchedEffect(state.growthRecords) {
-        model.refreshLocal(localRecords = state.growthRecords, pendingRecords = emptyList(), timeZone = timeZone)
+    LaunchedEffect(ownsModel, state.growthRecords) {
+        if (ownsModel) {
+            model.refreshLocal(
+                localRecords = state.growthRecords,
+                pendingRecords = emptyList(),
+                timeZone = timeZone,
+            )
+        }
     }
 
     // Playback ticker.
@@ -187,9 +194,12 @@ fun ElRipenessHeatmapContent(
         }
     }
 
-    // Free rasters and stop rendering the moment the surface leaves the tree.
-    DisposableEffect(Unit) {
-        onDispose { model.teardown() }
+    // A standalone surface owns its model lifecycle. A shared model belongs to
+    // GrowthListView and must survive Summary/Heatmap mode switches.
+    DisposableEffect(model, ownsModel) {
+        onDispose {
+            if (ownsModel) model.teardown()
+        }
     }
 
     var sheetObservation by remember { mutableStateOf<ElRipenessHeatmap.Observation?>(null) }
@@ -236,25 +246,19 @@ fun ElRipenessHeatmapContent(
             }
 
             is ElRipenessLoadState.Ready -> {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState()),
-                ) {
-                    VintageBar(ui, model, vine.textPrimary)
-                    BlockFilterBar(ui, model)
-                    HeatMap(
-                        ui = ui,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 380.dp),
-                        onObservationTap = { sheetObservation = it },
-                    )
-                    NoticeStrip(ui.notices)
-                    TimelineBar(ui, model)
-                    StatusRow(ui, vine.textSecondary)
-                    RipenessLegend()
-                }
+                VintageBar(ui, model, vine.textPrimary)
+                BlockFilterBar(ui, model)
+                HeatMap(
+                    ui = ui,
+                    // GoogleMap is an Android view and must receive finite
+                    // constraints. Weight binds it to the remaining viewport.
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    onObservationTap = { sheetObservation = it },
+                )
+                NoticeStrip(ui.notices)
+                TimelineBar(ui, model)
+                StatusRow(ui, vine.textSecondary)
+                RipenessLegend()
             }
         }
     }

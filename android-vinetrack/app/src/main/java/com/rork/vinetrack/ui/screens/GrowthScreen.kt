@@ -68,6 +68,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -240,6 +241,11 @@ private fun GrowthListView(
     val context = LocalContext.current
     val heatmapModel = rememberElRipenessHeatmapViewModel()
     val heatmapUi by heatmapModel.ui.collectAsStateWithLifecycle()
+    // This parent owns the shared Summary/Heatmap model. Toggling between the
+    // two views must not dispose it; leaving Growth Stage Records should.
+    DisposableEffect(heatmapModel) {
+        onDispose { heatmapModel.teardown() }
+    }
     val timeZone = remember(state.seasonZone) { TimeZone.getTimeZone(state.seasonZone) }
     LaunchedEffect(state.selectedVineyardId, state.paddocks, state.isOnline) {
         state.selectedVineyardId?.let { vineyardId ->
