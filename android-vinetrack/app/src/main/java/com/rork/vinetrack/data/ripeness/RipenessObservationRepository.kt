@@ -26,19 +26,24 @@ data class RipenessObservationRow(
     val id: String,
     @SerialName("vineyard_id") val vineyardId: String? = null,
     @SerialName("paddock_id") val paddockId: String? = null,
-    @SerialName("growth_stage_code") val growthStageCode: String? = null,
+    @SerialName("pin_id") val pinId: String? = null,
+    @SerialName("stage_code") val stageCode: String? = null,
+    @SerialName("stage_label") val stageLabel: String? = null,
+    val variety: String? = null,
+    @SerialName("variety_id") val varietyId: String? = null,
+    @SerialName("observed_at") val observedAt: String? = null,
     val latitude: Double? = null,
     val longitude: Double? = null,
-    val date: String? = null,
-    @SerialName("completed_at") val completedAt: String? = null,
+    @SerialName("row_number") val rowNumber: Int? = null,
+    val side: String? = null,
+    val notes: String? = null,
+    @SerialName("photo_paths") val photoPaths: List<String>? = null,
+    @SerialName("recorded_by_name") val recordedByName: String? = null,
+    @SerialName("created_by") val createdBy: String? = null,
+    @SerialName("updated_by") val updatedBy: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
-    @SerialName("deleted_at") val deletedAt: String? = null,
-    @SerialName("is_location_assigned") val isLocationAssigned: Boolean? = null,
-    /**
-     * Present when the view exposes the originating pin. Defaulted so a view
-     * without the column still decodes cleanly.
-     */
-    @SerialName("pin_id") val pinId: String? = null,
+    @SerialName("updated_at") val updatedAt: String? = null,
+    val source: String? = null,
 ) {
     /** Tagged as a remote source record for the adapter's merge. */
     fun sourceRecord(): ElRipenessObservationAdapter.SourceRecord =
@@ -47,21 +52,25 @@ data class RipenessObservationRow(
                 id = id.lowercase(),
                 vineyardId = vineyardId?.lowercase(),
                 paddockId = paddockId?.lowercase(),
-                stageCode = growthStageCode,
+                stageCode = stageCode,
                 latitude = latitude,
                 longitude = longitude,
-                date = date,
-                completedAt = completedAt,
+                observedAt = observedAt,
                 createdAt = createdAt,
-                deletedAt = deletedAt,
             ),
             origin = ElRipenessObservationAdapter.Origin.REMOTE,
-            placementAssigned = isLocationAssigned,
+            placementAssigned = null,
             pinId = pinId?.lowercase(),
         )
 }
 
 /** Seam so the view model and tests can swap the network out. */
+sealed class RipenessObservationRepositoryException(message: String, cause: Throwable? = null) : Exception(message, cause) {
+    class Permission : RipenessObservationRepositoryException("You do not have permission to read growth-stage observations.")
+    class Query(status: Int) : RipenessObservationRepositoryException("Growth-stage observation query failed ($status).")
+    class Decoding(cause: Throwable) : RipenessObservationRepositoryException("Growth-stage observations could not be decoded.", cause)
+}
+
 interface RipenessObservationRepositoryProtocol {
     suspend fun fetchObservations(vineyardId: String): List<RipenessObservationRow>
 }
@@ -84,8 +93,7 @@ class RipenessObservationRepository(
             val token = session.accessToken ?: throw IllegalStateException("Not signed in")
             val url = "${SupabaseClient.baseUrl}/rest/v1/v_growth_stage_observations" +
                 "?select=$SELECT" +
-                "&vineyard_id=eq.$vineyardId" +
-                "&deleted_at=is.null"
+                "&vineyard_id=eq.$vineyardId"
 
             val response = SupabaseClient.http.get(url) {
                 headers {
@@ -95,16 +103,24 @@ class RipenessObservationRepository(
                 }
             }
             if (!response.status.isSuccess()) {
-                // Body is read for the status line only; never logged verbatim.
+                // Consume but never log the body: it may contain server detail.
                 response.bodyAsText()
-                throw IllegalStateException("Observation fetch failed (${response.status.value})")
+                if (response.status.value == 401 || response.status.value == 403) {
+                    throw RipenessObservationRepositoryException.Permission()
+                }
+                throw RipenessObservationRepositoryException.Query(response.status.value)
             }
-            response.body()
+            try {
+                response.body()
+            } catch (error: Exception) {
+                throw RipenessObservationRepositoryException.Decoding(error)
+            }
         }
 
     private companion object {
         const val SELECT =
-            "id,vineyard_id,paddock_id,growth_stage_code,latitude,longitude,date," +
-                "completed_at,created_at,deleted_at,is_location_assigned"
+            "id,vineyard_id,paddock_id,pin_id,stage_code,stage_label,variety,variety_id," +
+                "observed_at,latitude,longitude,row_number,side,notes,photo_paths," +
+                "recorded_by_name,created_by,updated_by,created_at,updated_at,source"
     }
 }

@@ -14,10 +14,12 @@ nonisolated struct ELRipenessCachedRecord: Codable, Sendable, Equatable {
     let latitude: Double?
     let longitude: Double?
     let date: String?
+    let observedAt: String?
     let completedAt: String?
     let createdAt: String?
     let deletedAt: String?
     let placementAssigned: Bool?
+    let pinId: String?
 
     var rawRecord: ELRipeness.RawRecord {
         ELRipeness.RawRecord(
@@ -28,6 +30,7 @@ nonisolated struct ELRipenessCachedRecord: Codable, Sendable, Equatable {
             latitude: latitude,
             longitude: longitude,
             date: date,
+            observedAt: observedAt,
             completedAt: completedAt,
             createdAt: createdAt,
             deletedAt: deletedAt
@@ -38,7 +41,8 @@ nonisolated struct ELRipenessCachedRecord: Codable, Sendable, Equatable {
         ELRipenessObservationAdapter.SourceRecord(
             record: rawRecord,
             origin: .cached,
-            placementAssigned: placementAssigned
+            placementAssigned: placementAssigned,
+            pinId: pinId
         )
     }
 
@@ -51,10 +55,12 @@ nonisolated struct ELRipenessCachedRecord: Codable, Sendable, Equatable {
         self.latitude = record.latitude
         self.longitude = record.longitude
         self.date = record.date
+        self.observedAt = record.observedAt
         self.completedAt = record.completedAt
         self.createdAt = record.createdAt
         self.deletedAt = record.deletedAt
         self.placementAssigned = source.placementAssigned
+        self.pinId = source.pinId
     }
 }
 

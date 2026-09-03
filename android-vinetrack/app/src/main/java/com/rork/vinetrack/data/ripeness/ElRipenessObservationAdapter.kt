@@ -120,6 +120,49 @@ object ElRipenessObservationAdapter {
         return order.mapNotNull { byId[it] }
     }
 
+    data class DiagnosticCounts(
+        val remoteRowsReturned: Int,
+        val remoteRowsDecoded: Int,
+        val localRecords: Int,
+        val cachedObservations: Int,
+        val pendingObservations: Int,
+        val deduplicatedObservations: Int,
+        val invalidStageExclusions: Int,
+        val missingDateExclusions: Int,
+        val missingCoordinateExclusions: Int,
+        val wrongVineyardExclusions: Int,
+        val futureExclusions: Int,
+        val qualifyingObservations: Int,
+    )
+
+    fun diagnosticCounts(
+        sources: List<SourceRecord>,
+        selectedVineyardId: String?,
+        remoteRowsReturned: Int,
+        atDateIso: String? = null,
+    ): DiagnosticCounts {
+        val merged = merge(sources)
+        val raw = merged.map { it.record }
+        val normalized = observations(sources, selectedVineyardId)
+        val future = atDateIso?.let { date ->
+            normalized.count { ElRipenessHeatmap.dayKey(it.dateIso) > ElRipenessHeatmap.dayKey(date) }
+        } ?: 0
+        return DiagnosticCounts(
+            remoteRowsReturned = remoteRowsReturned,
+            remoteRowsDecoded = sources.count { it.origin == Origin.REMOTE },
+            localRecords = sources.count { it.origin == Origin.LOCAL_RECORD },
+            cachedObservations = sources.count { it.origin == Origin.CACHED },
+            pendingObservations = sources.count { it.origin == Origin.PENDING_LOCAL },
+            deduplicatedObservations = merged.size,
+            invalidStageExclusions = raw.count { ElRipenessHeatmap.exclusionReason(it, selectedVineyardId) == ElRipenessHeatmap.ExclusionReason.EL_OUT_OF_RANGE_OR_UNPARSEABLE },
+            missingDateExclusions = raw.count { ElRipenessHeatmap.exclusionReason(it, selectedVineyardId) == ElRipenessHeatmap.ExclusionReason.NO_OBSERVATION_DATE },
+            missingCoordinateExclusions = raw.count { ElRipenessHeatmap.exclusionReason(it, selectedVineyardId) == ElRipenessHeatmap.ExclusionReason.MISSING_COORDINATES },
+            wrongVineyardExclusions = raw.count { ElRipenessHeatmap.exclusionReason(it, selectedVineyardId) == ElRipenessHeatmap.ExclusionReason.WRONG_VINEYARD },
+            futureExclusions = future,
+            qualifyingObservations = normalized.size - future,
+        )
+    }
+
     /** Full pipeline: merge, then run the contract normalisation. */
     fun observations(
         sources: List<SourceRecord>,
@@ -172,7 +215,8 @@ object ElRipenessObservationAdapter {
                 stageCode = record.stageCode,
                 latitude = record.latitude,
                 longitude = record.longitude,
-                date = observedIso,
+                date = null,
+                observedAt = observedIso,
                 completedAt = null,
                 createdAt = record.createdAt,
                 deletedAt = record.deletedAt,

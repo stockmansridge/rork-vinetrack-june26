@@ -152,14 +152,15 @@ fun ElRipenessHeatmapContent(
     val ui by model.ui.collectAsStateWithLifecycle()
 
     // The vineyard's own timezone keeps the field-capture day intact.
-    val timeZone = remember(state.regionSettings) { TimeZone.getDefault() }
+    val timeZone = remember(state.seasonZone) { TimeZone.getTimeZone(state.seasonZone) }
 
     LaunchedEffect(vineyardId, state.paddocks, state.isOnline) {
         if (vineyardId != null) {
             model.load(
                 vineyardId = vineyardId,
                 paddocks = state.paddocks,
-                pendingRecords = state.growthRecords,
+                pendingRecords = emptyList(),
+                localRecords = state.growthRecords,
                 seasonStartMonth = state.seasonStartMonth,
                 seasonStartDay = state.seasonStartDay,
                 timeZone = timeZone,
@@ -169,7 +170,7 @@ fun ElRipenessHeatmapContent(
     }
 
     LaunchedEffect(state.growthRecords) {
-        model.refreshPending(state.growthRecords, timeZone)
+        model.refreshLocal(localRecords = state.growthRecords, pendingRecords = emptyList(), timeZone = timeZone)
     }
 
     // Playback ticker.
@@ -280,12 +281,12 @@ private fun VintageBar(
                 FilterChip(
                     selected = selected,
                     onClick = { model.selectVintage(vintage) },
-                    label = { Text(vintage.toString()) },
+                    label = { Text(VintageYearText.format(vintage)) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = VineColors.LeafGreen.copy(alpha = 0.22f),
                     ),
                     modifier = Modifier.semantics {
-                        contentDescription = "Vintage $vintage${if (selected) ", selected" else ""}"
+                        contentDescription = "Vintage ${VintageYearText.format(vintage)}${if (selected) ", selected" else ""}"
                     },
                 )
             }

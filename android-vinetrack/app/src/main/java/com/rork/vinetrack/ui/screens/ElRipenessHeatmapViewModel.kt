@@ -1,6 +1,8 @@
 package com.rork.vinetrack.ui.screens
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
+import com.rork.vinetrack.BuildConfig
 import androidx.lifecycle.viewModelScope
 import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.Paddock
@@ -98,6 +100,7 @@ data class ElRipenessUiState(
     val overlays: List<ElRipenessOverlay> = emptyList(),
     val statusCounts: ElRipenessStatusCounts = ElRipenessStatusCounts(),
     val seasonRangeText: String? = null,
+    val diagnostics: ElRipenessObservationAdapter.DiagnosticCounts? = null,
 ) {
     val currentDay: CivilDate? get() = timelineDays.getOrNull(timelineIndex)
     val currentDateIso: String? get() = currentDay?.iso
@@ -136,6 +139,7 @@ class ElRipenessHeatmapViewModel(
     private var seasonStartDay: Int = ElRipenessSeason.DEFAULT_SEASON_START_DAY
     private var today: CivilDate = CivilDate(2000, 1, 1)
     private var renderJob: Job? = null
+    private var remoteRowsReturned: Int = 0
 
     /** Set once per vineyard. Safe to call again; re-fetches. */
     fun load(
@@ -177,6 +181,7 @@ class ElRipenessHeatmapViewModel(
                     val rows = withContext(Dispatchers.IO) {
                         repository.fetchObservations(vineyardId)
                     }
+                    remoteRowsReturned = rows.size
                     remoteSources = rows.map { it.sourceRecord() }
                     loadedFromNetwork = true
                 } catch (e: Exception) {
@@ -184,11 +189,13 @@ class ElRipenessHeatmapViewModel(
                     // laundered into "no observations" — that reads to the
                     // operator as a clean empty Vintage and hides a real outage.
                     fetchFailure = e.message ?: e::class.simpleName ?: "Unknown error"
+                    remoteRowsReturned = 0
                     remoteSources = emptyList()
                 }
             }
 
             if (!loadedFromNetwork) {
+                remoteRowsReturned = 0
                 val cached = withContext(Dispatchers.IO) { cache.load(vineyardId) }
                 if (cached != null) {
                     remoteSources = cached.sourceRecords
@@ -219,24 +226,44 @@ class ElRipenessHeatmapViewModel(
         }
     }
 
-    /** Re-merges local records without touching the network. */
-    fun refreshPending(records: List<GrowthStageRecord>, timeZone: TimeZone) {
+    /** Re-merges observable local and pending records without touching the network. */
+    fun refreshLocal(
+        localRecords: List<GrowthStageRecord>,
+        pendingRecords: List<GrowthStageRecord>,
+        timeZone: TimeZone,
+    ) {
         val vineyardId = loadedVineyardId ?: return
-        pendingSources = ElRipenessObservationAdapter.pendingRecords(records, vineyardId, timeZone)
-        localRecordSources = ElRipenessObservationAdapter.localRecords(records, vineyardId, timeZone)
-        rebuildEnrichment(records, vineyardId)
+        pendingSources = ElRipenessObservationAdapter.pendingRecords(pendingRecords, vineyardId, timeZone)
+        localRecordSources = ElRipenessObservationAdapter.localRecords(localRecords, vineyardId, timeZone)
+        rebuildEnrichment(localRecords + pendingRecords, vineyardId)
         rebuildObservationSet(vineyardId)
         vintageDidChange()
+    }
+
+    /** Compatibility entry point for callers that only have optimistic records. */
+    fun refreshPending(records: List<GrowthStageRecord>, timeZone: TimeZone) {
+        refreshLocal(localRecords = emptyList(), pendingRecords = records, timeZone = timeZone)
     }
 
     private fun rebuildObservationSet(vineyardId: String) {
         // Order is only a tie-break; precedence decides the winner. Local
         // records come first so a row the remote view has not published yet
         // still contributes, and is replaced in place once it has.
+        val sources = localRecordSources + remoteSources + pendingSources
         allObservations = ElRipenessObservationAdapter.observations(
-            sources = localRecordSources + remoteSources + pendingSources,
+            sources = sources,
             selectedVineyardId = vineyardId,
         )
+        val diagnostics = ElRipenessObservationAdapter.diagnosticCounts(
+            sources = sources,
+            selectedVineyardId = vineyardId,
+            remoteRowsReturned = remoteRowsReturned,
+            atDateIso = _ui.value.currentDateIso ?: today.iso,
+        )
+        _ui.value = _ui.value.copy(diagnostics = diagnostics)
+        if (BuildConfig.DEBUG) {
+            Log.d("VineTrackRipeness", "returned=${diagnostics.remoteRowsReturned} decoded=${diagnostics.remoteRowsDecoded} local=${diagnostics.localRecords} cached=${diagnostics.cachedObservations} pending=${diagnostics.pendingObservations} deduped=${diagnostics.deduplicatedObservations} invalidStage=${diagnostics.invalidStageExclusions} missingDate=${diagnostics.missingDateExclusions} missingCoordinate=${diagnostics.missingCoordinateExclusions} wrongVineyard=${diagnostics.wrongVineyardExclusions} future=${diagnostics.futureExclusions} qualifying=${diagnostics.qualifyingObservations}")
+        }
     }
 
     /**

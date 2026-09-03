@@ -19,10 +19,12 @@ data class ElRipenessCachedRecord(
     val latitude: Double? = null,
     val longitude: Double? = null,
     val date: String? = null,
+    val observedAt: String? = null,
     val completedAt: String? = null,
     val createdAt: String? = null,
     val deletedAt: String? = null,
     val placementAssigned: Boolean? = null,
+    val pinId: String? = null,
 ) {
     val rawRecord: ElRipenessHeatmap.RawRecord
         get() = ElRipenessHeatmap.RawRecord(
@@ -33,6 +35,7 @@ data class ElRipenessCachedRecord(
             latitude = latitude,
             longitude = longitude,
             date = date,
+            observedAt = observedAt,
             completedAt = completedAt,
             createdAt = createdAt,
             deletedAt = deletedAt,
@@ -43,6 +46,7 @@ data class ElRipenessCachedRecord(
             record = rawRecord,
             origin = ElRipenessObservationAdapter.Origin.CACHED,
             placementAssigned = placementAssigned,
+            pinId = pinId,
         )
 
     companion object {
@@ -56,10 +60,12 @@ data class ElRipenessCachedRecord(
                 latitude = r.latitude,
                 longitude = r.longitude,
                 date = r.date,
+                observedAt = r.observedAt,
                 completedAt = r.completedAt,
                 createdAt = r.createdAt,
                 deletedAt = r.deletedAt,
                 placementAssigned = source.placementAssigned,
+                pinId = source.pinId,
             )
         }
     }

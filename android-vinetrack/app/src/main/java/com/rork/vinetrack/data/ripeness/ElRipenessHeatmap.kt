@@ -252,6 +252,7 @@ object ElRipenessHeatmap {
         val latitude: Double? = null,
         val longitude: Double? = null,
         val date: String? = null,
+        val observedAt: String? = null,
         val completedAt: String? = null,
         val createdAt: String? = null,
         val deletedAt: String? = null,
@@ -282,18 +283,19 @@ object ElRipenessHeatmap {
         MISSING_COORDINATES("missing_coordinates"),
 
         /**
-         * Used **only** when all of `date`, `completed_at` and `created_at` are
-         * absent.
+         * Used only when `date`, `observed_at`, `completed_at` and `created_at`
+         * are absent.
          */
         NO_OBSERVATION_DATE("no_observation_date"),
     }
 
     /**
-     * Observation timestamp precedence: `date` -> `completed_at` ->
-     * `created_at`. `updated_at` is **never** used.
+     * Observation timestamp precedence: `date` -> `observed_at` ->
+     * `completed_at` -> `created_at`. `updated_at` is never used.
      */
     fun observationDate(record: RawRecord): String? =
         record.date?.takeIf { it.isNotEmpty() }
+            ?: record.observedAt?.takeIf { it.isNotEmpty() }
             ?: record.completedAt?.takeIf { it.isNotEmpty() }
             ?: record.createdAt?.takeIf { it.isNotEmpty() }
 

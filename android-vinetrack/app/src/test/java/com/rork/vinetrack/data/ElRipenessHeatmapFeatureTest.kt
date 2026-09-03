@@ -495,15 +495,14 @@ class ElRipenessHeatmapFeatureTest {
             id = "OBS-1",
             vineyardId = "VY-SOUTH",
             paddockId = "BLK-A",
-            growthStageCode = "E-L 35",
+            stageCode = "E-L 35",
             latitude = -34.5,
             longitude = 138.5,
-            date = "2026-02-10",
-            isLocationAssigned = false,
+            observedAt = "2026-02-10",
         )
         val source = row.sourceRecord()
         assertEquals(Origin.REMOTE, source.origin)
-        assertEquals(false, source.placementAssigned)
+        assertNull(source.placementAssigned)
         // Identifiers are lowercased so they match locally-minted ones.
         assertEquals("obs-1", source.record.id)
         assertEquals("vy-south", source.record.vineyardId)
@@ -534,10 +533,10 @@ class ElRipenessHeatmapFeatureTest {
                 id = "obs-1",
                 vineyardId = vineyard,
                 paddockId = "blk-a",
-                growthStageCode = "E-L 35",
+                stageCode = "E-L 35",
                 latitude = -34.5,
                 longitude = 138.5,
-                date = "2026-02-10",
+                observedAt = "2026-02-10",
             )
         )
 
@@ -660,10 +659,10 @@ class ElRipenessHeatmapFeatureTest {
             id = "obs-1",
             vineyardId = vineyard,
             paddockId = "blk-a",
-            growthStageCode = "E-L 2",
+            stageCode = "E-L 2",
             latitude = -34.5,
             longitude = 138.5,
-            date = "2026-02-10",
+            observedAt = "2026-02-10",
             pinId = pin,
         ).sourceRecord()
         val pending = SourceRecord(

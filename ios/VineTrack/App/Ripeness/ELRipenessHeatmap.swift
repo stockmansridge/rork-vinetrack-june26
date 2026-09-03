@@ -250,6 +250,7 @@ nonisolated enum ELRipeness {
         let latitude: Double?
         let longitude: Double?
         let date: String?
+        let observedAt: String?
         let completedAt: String?
         let createdAt: String?
         let deletedAt: String?
@@ -262,6 +263,7 @@ nonisolated enum ELRipeness {
             latitude: Double? = nil,
             longitude: Double? = nil,
             date: String? = nil,
+            observedAt: String? = nil,
             completedAt: String? = nil,
             createdAt: String? = nil,
             deletedAt: String? = nil
@@ -273,6 +275,7 @@ nonisolated enum ELRipeness {
             self.latitude = latitude
             self.longitude = longitude
             self.date = date
+            self.observedAt = observedAt
             self.completedAt = completedAt
             self.createdAt = createdAt
             self.deletedAt = deletedAt
@@ -301,14 +304,15 @@ nonisolated enum ELRipeness {
         case deleted
         case elOutOfRangeOrUnparseable = "el_out_of_range_or_unparseable"
         case missingCoordinates = "missing_coordinates"
-        /// Used **only** when all of `date`, `completed_at` and `created_at` are absent.
+        /// Used only when `date`, `observed_at`, `completed_at` and `created_at` are absent.
         case noObservationDate = "no_observation_date"
     }
 
-    /// Observation timestamp precedence: `date` → `completed_at` →
-    /// `created_at`. `updated_at` is **never** used.
+    /// Observation timestamp precedence: `date` → `observed_at` →
+    /// `completed_at` → `created_at`. `updated_at` is **never** used.
     static func observationDate(_ record: RawRecord) -> String? {
         if let d = record.date, !d.isEmpty { return d }
+        if let d = record.observedAt, !d.isEmpty { return d }
         if let d = record.completedAt, !d.isEmpty { return d }
         if let d = record.createdAt, !d.isEmpty { return d }
         return nil

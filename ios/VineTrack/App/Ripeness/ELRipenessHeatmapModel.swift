@@ -74,6 +74,13 @@ final class ELRipenessHeatmapModel {
     private(set) var blocks: [ELRipeness.BlockInput] = []
     private(set) var coveredVintages: Set<Int> = []
     private(set) var cachedAt: Date?
+    private(set) var diagnostics = ELRipenessObservationAdapter.DiagnosticCounts(
+        remoteRowsReturned: 0, remoteRowsDecoded: 0, localRecords: 0,
+        cachedObservations: 0, pendingObservations: 0, deduplicatedObservations: 0,
+        invalidStageExclusions: 0, missingDateExclusions: 0,
+        missingCoordinateExclusions: 0, wrongVineyardExclusions: 0,
+        futureExclusions: 0, qualifyingObservations: 0
+    )
 
     private(set) var availableVintages: [Int] = []
     private(set) var timelineDays: [CivilDate] = []
@@ -199,6 +206,7 @@ final class ELRipenessHeatmapModel {
     private var localRecordSources: [ELRipenessObservationAdapter.SourceRecord] = []
     private var vineyardIdString: String?
     private var today: CivilDate = CivilDate(year: 2000, month: 1, day: 1)
+    private var remoteRowsReturned: Int = 0
 
     /// Loads a vineyard. Network is attempted only when `isOnline`; otherwise
     /// the cache is authoritative and a missing cache is reported honestly.
@@ -246,6 +254,7 @@ final class ELRipenessHeatmapModel {
         if isOnline {
             do {
                 let rows = try await repository.fetchObservations(vineyardId: vineyardId)
+                remoteRowsReturned = rows.count
                 remoteSources = rows.map(\.sourceRecord)
                 loadedFromNetwork = true
             } catch {
@@ -254,9 +263,11 @@ final class ELRipenessHeatmapModel {
                 // as a clean empty Vintage and hides a real outage.
                 print("[Ripeness] remote fetch failed: \(error.localizedDescription)")
                 fetchFailure = error.localizedDescription
+                remoteRowsReturned = 0
                 remoteSources = cached?.sourceRecords ?? []
             }
         } else {
+            remoteRowsReturned = 0
             remoteSources = cached?.sourceRecords ?? []
         }
 
@@ -392,6 +403,16 @@ final class ELRipenessHeatmapModel {
             month: seasonStartMonth,
             day: seasonStartDay
         )
+        let sources = localRecordSources + remoteSources + pendingSources
+        diagnostics = ELRipenessObservationAdapter.diagnosticCounts(
+            sources: sources,
+            selectedVineyardId: vineyardIdString,
+            remoteRowsReturned: remoteRowsReturned,
+            atDateISO: currentDateISO ?? today.iso
+        )
+        #if DEBUG
+        print("[RipenessCounts] returned=\(diagnostics.remoteRowsReturned) decoded=\(diagnostics.remoteRowsDecoded) local=\(diagnostics.localRecords) cached=\(diagnostics.cachedObservations) pending=\(diagnostics.pendingObservations) deduped=\(diagnostics.deduplicatedObservations) invalidStage=\(diagnostics.invalidStageExclusions) missingDate=\(diagnostics.missingDateExclusions) missingCoordinate=\(diagnostics.missingCoordinateExclusions) wrongVineyard=\(diagnostics.wrongVineyardExclusions) future=\(diagnostics.futureExclusions) qualifying=\(diagnostics.qualifyingObservations)")
+        #endif
     }
 
     private func currentVintage() -> Int {

@@ -108,6 +108,49 @@ nonisolated enum ELRipenessObservationAdapter {
         return order.compactMap { byId[$0] }
     }
 
+    nonisolated struct DiagnosticCounts: Equatable, Sendable {
+        let remoteRowsReturned: Int
+        let remoteRowsDecoded: Int
+        let localRecords: Int
+        let cachedObservations: Int
+        let pendingObservations: Int
+        let deduplicatedObservations: Int
+        let invalidStageExclusions: Int
+        let missingDateExclusions: Int
+        let missingCoordinateExclusions: Int
+        let wrongVineyardExclusions: Int
+        let futureExclusions: Int
+        let qualifyingObservations: Int
+    }
+
+    static func diagnosticCounts(
+        sources: [SourceRecord],
+        selectedVineyardId: String?,
+        remoteRowsReturned: Int,
+        atDateISO: String? = nil
+    ) -> DiagnosticCounts {
+        let merged = merge(sources)
+        let raw = merged.map(\.record)
+        let normalized = observations(from: sources, selectedVineyardId: selectedVineyardId)
+        let future = atDateISO.map { date in
+            normalized.filter { ELRipeness.dayKey($0.dateISO) > ELRipeness.dayKey(date) }.count
+        } ?? 0
+        return DiagnosticCounts(
+            remoteRowsReturned: remoteRowsReturned,
+            remoteRowsDecoded: sources.filter { $0.origin == .remote }.count,
+            localRecords: sources.filter { $0.origin == .localRecord }.count,
+            cachedObservations: sources.filter { $0.origin == .cached }.count,
+            pendingObservations: sources.filter { $0.origin == .pendingLocal }.count,
+            deduplicatedObservations: merged.count,
+            invalidStageExclusions: raw.filter { ELRipeness.exclusionReason($0, selectedVineyardId: selectedVineyardId) == .elOutOfRangeOrUnparseable }.count,
+            missingDateExclusions: raw.filter { ELRipeness.exclusionReason($0, selectedVineyardId: selectedVineyardId) == .noObservationDate }.count,
+            missingCoordinateExclusions: raw.filter { ELRipeness.exclusionReason($0, selectedVineyardId: selectedVineyardId) == .missingCoordinates }.count,
+            wrongVineyardExclusions: raw.filter { ELRipeness.exclusionReason($0, selectedVineyardId: selectedVineyardId) == .wrongVineyard }.count,
+            futureExclusions: future,
+            qualifyingObservations: normalized.count - future
+        )
+    }
+
     /// Full pipeline: merge, then run the contract normalisation.
     static func observations(
         from sources: [SourceRecord],
@@ -192,7 +235,8 @@ nonisolated enum ELRipenessObservationAdapter {
             stageCode: record.stageCode,
             latitude: record.latitude,
             longitude: record.longitude,
-            date: isoString(record.observedAt, in: timeZone),
+            date: nil,
+            observedAt: isoString(record.observedAt, in: timeZone),
             completedAt: nil,
             createdAt: isoString(record.createdAt, in: timeZone),
             deletedAt: nil

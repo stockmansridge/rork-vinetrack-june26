@@ -24,6 +24,7 @@ struct GrowthStageRecordsListView: View {
     @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(NetworkMonitor.self) private var network
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var feed = ELRipenessHeatmapModel()
     @State private var viewMode: ViewMode = .summary
@@ -91,19 +92,26 @@ struct GrowthStageRecordsListView: View {
             await growthStageRecordSync.syncForSelectedVineyard()
             await load()
         }
-        .onChange(of: growthStageRecordSync.records.count) {
+        .onChange(of: growthStageRecordSync.records) {
             feed.refreshLocal(
                 pins: store.pins,
                 localRecords: growthStageRecordSync.records,
                 timeZone: timeZone
             )
         }
-        .onChange(of: store.pins.count) {
+        .onChange(of: store.pins) {
             feed.refreshLocal(
                 pins: store.pins,
                 localRecords: growthStageRecordSync.records,
                 timeZone: timeZone
             )
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task {
+                await growthStageRecordSync.syncForSelectedVineyard()
+                await load(force: true)
+            }
         }
         .onDisappear { feed.teardown() }
         .toolbar {
@@ -209,7 +217,7 @@ struct GrowthStageRecordsListView: View {
         return VStack(spacing: 12) {
             HStack {
                 Label(
-                    feed.selectedVintage.map { "Vintage \($0)" } ?? "Vintage —",
+                    feed.selectedVintage.map(VintageYearText.label) ?? "Vintage —",
                     systemImage: "calendar"
                 )
                 .font(.subheadline.weight(.semibold))
@@ -253,7 +261,7 @@ struct GrowthStageRecordsListView: View {
             if feed.availableVintages.count > 1 {
                 Picker("Vintage", selection: vintageBinding) {
                     ForEach(feed.availableVintages, id: \.self) { vintage in
-                        Text(String(vintage)).tag(vintage)
+                        Text(verbatim: VintageYearText.format(vintage)).tag(vintage)
                     }
                 }
                 .pickerStyle(.segmented)

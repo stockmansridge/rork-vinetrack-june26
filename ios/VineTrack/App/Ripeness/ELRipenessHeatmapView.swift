@@ -231,13 +231,13 @@ struct ELRipenessHeatmapContent: View {
             if model.availableVintages.count > 1 {
                 Picker("Vintage", selection: vintageBinding) {
                     ForEach(model.availableVintages, id: \.self) { vintage in
-                        Text(String(vintage)).tag(vintage)
+                        Text(verbatim: VintageYearText.format(vintage)).tag(vintage)
                     }
                 }
                 .pickerStyle(.segmented)
                 .accessibilityLabel("Vintage")
             } else if let vintage = model.selectedVintage {
-                Text("Vintage \(String(vintage))")
+                Text(verbatim: VintageYearText.label(vintage))
                     .font(.subheadline.weight(.semibold))
             }
 
@@ -380,7 +380,7 @@ struct ELRipenessHeatmapContent: View {
             if model.availableVintages.count > 1 {
                 Picker("Vintage", selection: vintageBinding) {
                     ForEach(model.availableVintages, id: \.self) { vintage in
-                        Text(String(vintage)).tag(vintage)
+                        Text(verbatim: VintageYearText.format(vintage)).tag(vintage)
                     }
                 }
                 .pickerStyle(.segmented)
