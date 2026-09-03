@@ -63,6 +63,7 @@ import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
 import com.rork.vinetrack.data.chemical.ChemicalJurisdictionSuitability
 import com.rork.vinetrack.data.chemical.ChemicalManualEntry
+import com.rork.vinetrack.data.chemical.ChemicalManualRateConfirmation
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalReverification
 import com.rork.vinetrack.data.chemical.ChemicalReverifyFlow
@@ -88,6 +89,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
@@ -1699,10 +1702,24 @@ internal fun ChemicalFormSheet(
             // compatibility but must never be presented as the authority —
             // `rate_per_ha` has no link back to a registered direction, so a
             // number typed there proves nothing about what the label permits.
-            val isStructuredRecord = existing != null &&
-                ChemicalDefaultRateDisplay.isStructured(existing)
+            //
+            // A MANUALLY typed rate (sql/222 contract) is the exception: the
+            // operator authored it, so this form offers to confirm it as the
+            // vineyard's rate and it persists as a `manual` default through
+            // the one factory that can build one — rather than staying only
+            // in `registered_uses` and reading "Rate confirmation required".
+            val proposedForRates = remember(chemistryDraft, existing?.id) {
+                ChemicalManualEntry.proposedIntelligence(chemistryDraft, existing?.storedIntelligence)
+            }
+            val manualCandidates = remember(proposedForRates) {
+                ChemicalManualRateConfirmation.candidates(proposedForRates)
+            }
+            val isStructuredRecord = (
+                existing != null &&
+                    ChemicalDefaultRateDisplay.isStructured(existing)
+                ) || manualCandidates.isNotEmpty()
             if (isStructuredRecord) {
-                val confirmedSlots = ChemicalDefaultRateDisplay.slotDisplays(defaultRatesDraft)
+                val confirmedSlots = ChemicalManualRateConfirmation.confirmedDisplays(defaultRatesDraft)
                 if (confirmedSlots.isNotEmpty()) {
                     Text(
                         "Confirmed rate for this vineyard",
@@ -1754,6 +1771,13 @@ internal fun ChemicalFormSheet(
                             fontSize = 11.sp,
                             color = vine.textSecondary,
                         )
+                    } else if (manualCandidates.isNotEmpty()) {
+                        Text(
+                            "Confirm one of the rates you entered below to use this " +
+                                "product in Spray Program.",
+                            fontSize = 11.sp,
+                            color = vine.textSecondary,
+                        )
                     } else {
                         Text(
                             ChemicalDefaultRateDisplay.CONFIRMATION_REQUIRED,
@@ -1768,6 +1792,60 @@ internal fun ChemicalFormSheet(
                             color = vine.textSecondary,
                         )
                     }
+                }
+                if (manualCandidates.isNotEmpty()) {
+                    Text(
+                        "Rates you entered",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = vine.textSecondary,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    manualCandidates.forEach { candidate ->
+                        val isConfirmed = ChemicalManualRateConfirmation.isConfirmed(defaultRatesDraft, candidate)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .semantics { contentDescription = "manualRateCandidate:${candidate.display}" },
+                        ) {
+                            Text(
+                                candidate.display,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = vine.textPrimary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (isConfirmed) {
+                                Text(
+                                    "User-confirmed",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = VineColors.Orange,
+                                )
+                            } else {
+                                TextButton(
+                                    onClick = {
+                                        // Persisted as a MANUAL default: empty identity,
+                                        // `entry_method = manual`, the typed shape exactly.
+                                        defaultRatesDraft = ChemicalManualRateConfirmation.confirm(
+                                            defaultRatesDraft,
+                                            candidate,
+                                        )
+                                        defaultRatesEdited = true
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 4.dp),
+                                ) { Text("Confirm for this vineyard", fontSize = 13.sp) }
+                            }
+                        }
+                    }
+                    Text(
+                        "A rate you typed is saved as a user-confirmed rate, not as label " +
+                            "evidence. A range is saved as the range; the exact rate is chosen " +
+                            "when planning each spray.",
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                    )
                 }
             }
 

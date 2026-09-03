@@ -365,8 +365,14 @@ struct EditSavedChemicalSheet: View {
                 // then the operator may deliberately record an optional
                 // vineyard default, and removing the only way to do so would
                 // strand every record that already has one.
-                if session.isRegisteredForGrapevine {
-                    if isChemicalStoreSetup {
+                //
+                // A MANUAL record is the exception (sql/222): the operator typed
+                // the rate themselves, so the same screen offers to confirm it
+                // as this vineyard's rate — optionally — and it persists as a
+                // `manual` default rather than staying only in `registered_uses`.
+                // A lookup review stays read-only.
+                if offersDefaultRateDecision {
+                    if isReviewingLookup {
                         registeredRateSection
                     } else {
                         defaultRatesSection
@@ -901,8 +907,20 @@ struct EditSavedChemicalSheet: View {
     /// Whether the Default Rates section is on screen. It owns the missing-rate
     /// notice whenever it is, so the notice is never drawn twice.
     private var defaultRatesSectionIsVisible: Bool {
-        session.isRegisteredForGrapevine
+        offersDefaultRateDecision
     }
+
+    /// Whether any rate is on record that a vineyard default could be chosen
+    /// from — a registered grapevine rate, or a product-level rate the
+    /// operator typed.
+    private var offersDefaultRateDecision: Bool {
+        session.isRegisteredForGrapevine || session.offersDefaultRateDecision
+    }
+
+    /// Whether this screen is reviewing a looked-up product. Only that path
+    /// keeps the registered rate read-only; a manual record and a stored
+    /// record both offer the optional default-rate decision.
+    private var isReviewingLookup: Bool { prefill != nil }
 
     private var vineyardUseCount: Int {
         session.chemistryDraft.uses.count(where: \.isViticultural)
@@ -1042,6 +1060,7 @@ struct EditSavedChemicalSheet: View {
                 plan: session.defaultRatePlan,
                 selectedIds: session.selectedDefaultRateIds,
                 values: session.defaultRateValues,
+                manualOptionIds: session.manualDefaultOptionIds,
                 onSelect: { basis, option in
                     session.selectDefaultRate(option, for: basis)
                 },
@@ -1069,6 +1088,11 @@ struct EditSavedChemicalSheet: View {
         var base = "The rate VineTrack will start a spray calculation from. "
             + "Chosen from the registered grapevine rates below — the two bases "
             + "are decided separately and never converted into one another."
+        if !session.manualDefaultOptionIds.isEmpty {
+            base += " A rate you typed is saved as a user-confirmed rate, not as "
+                + "label evidence; a range is saved as the range and the exact "
+                + "dose is chosen when planning each spray."
+        }
         // Optional, and said so. Saving is not held back by it: the rule is
         // `session.isValid`, which asks only for a name and no blocking
         // violation, and a registered range satisfies that on its own.

@@ -183,6 +183,11 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// Absent means "start from the bottom of the band", which is the safe end.
     var defaultRateValues: [ChemicalDefaultRateBasis: Double]
 
+    /// `selected_at` of a MANUAL default recovered from the stored record, per
+    /// basis, so re-saving an untouched manual confirmation rewrites exactly
+    /// what it already had rather than re-stamping the moment of the save.
+    var manualDefaultSelectedAt: [ChemicalDefaultRateBasis: String]
+
     /// The vineyard's state/territory, when it is known.
     ///
     /// Drives step 1 of the recommendation rule. `nil` is honest and safe: it
@@ -393,6 +398,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
             // overwrite a deliberate choice every time the record was viewed.
             selectedDefaultRateIds: recovered.ids,
             defaultRateValues: recovered.values,
+            manualDefaultSelectedAt: recovered.manualSelectedAt,
             jurisdiction: jurisdiction,
             serverDefaultRateOptions: serverDefaultRateOptions,
             baselineViolationCodes: baseline
@@ -412,14 +418,19 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         from source: SavedChemical,
         chemistry: ChemicalManualDraft,
         stored: ChemicalIntelligence?
-    ) -> (ids: [ChemicalDefaultRateBasis: String], values: [ChemicalDefaultRateBasis: Double]) {
-        let grapevine = ChemicalManualEntry
-            .proposedIntelligence(from: chemistry, existing: stored)
-            .registeredUses.statedUses.viticultural
-        guard !grapevine.isEmpty else { return ([:], [:]) }
+    ) -> (
+        ids: [ChemicalDefaultRateBasis: String],
+        values: [ChemicalDefaultRateBasis: Double],
+        manualSelectedAt: [ChemicalDefaultRateBasis: String]
+    ) {
+        let grapevine = defaultRateSourceUses(
+            in: ChemicalManualEntry.proposedIntelligence(from: chemistry, existing: stored)
+        )
+        guard !grapevine.isEmpty else { return ([:], [:], [:]) }
 
         var ids: [ChemicalDefaultRateBasis: String] = [:]
         var values: [ChemicalDefaultRateBasis: Double] = [:]
+        var manualSelectedAt: [ChemicalDefaultRateBasis: String] = [:]
 
         // The CONFIRMED default (sql/214) is the authority when one exists.
         //
@@ -434,6 +445,36 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
             for basis in ChemicalDefaultRateBasis.allCases {
                 guard let slot = confirmed.slot(basis) else { continue }
                 let options = ChemicalDefaultRate.options(basis, from: grapevine)
+
+                // A MANUAL slot (sql/222 contract) carries no register identity
+                // by design. It is reconstructed by matching the exact shape the
+                // operator typed — same unit, same scalar or same band — against
+                // the label rates they typed it from. Nothing is minted, nothing
+                // is narrowed: a stored `2–3` matches only the `2–3` option, and
+                // its `selected_at` is carried forward verbatim.
+                if slot.isManualEntry {
+                    guard let valid = ChemicalDefaultRateValidity.validSlot(confirmed, basis: basis)
+                    else { continue }
+                    let storedUnit = slot.unit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    let match = options.first { option in
+                        guard option.rate.unit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                            == storedUnit
+                        else { return false }
+                        switch valid.amount {
+                        case .scalar(let value):
+                            guard let optionValue = option.rate.value, !option.isLabelRange else { return false }
+                            return abs(optionValue - value) < 0.000_001
+                        case .range(let min, let max):
+                            guard let lo = option.rate.minValue, let hi = option.rate.maxValue else { return false }
+                            return abs(lo - min) < 0.000_001 && abs(hi - max) < 0.000_001
+                        }
+                    }
+                    guard let match else { continue }
+                    ids[basis] = match.id
+                    if let selectedAt = slot.selectedAt { manualSelectedAt[basis] = selectedAt }
+                    continue
+                }
+
                 // Re-matching a STORED slot to a display option.
                 //
                 // This used to re-mint the option key from the label and
@@ -516,7 +557,21 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
                 values[basis] = unit.fromBase(row.value)
             }
         }
-        return (ids, values)
+        return (ids, values, manualSelectedAt)
+    }
+
+    /// The registered uses a default rate may be built from: the GRAPEVINE
+    /// stated uses, plus product-level rate carriers.
+    ///
+    /// A product-level carrier (no crop, no target) is how a manually entered
+    /// product states its rate before the operator knows which registered use
+    /// it belongs to. It is what the Spray Calculator already offers for a
+    /// vineyard spray, so it is what the vineyard may confirm a default from —
+    /// excluding it here would leave a typed `2–3 L/100 L` with nothing to
+    /// confirm. Other crops are never candidates.
+    static func defaultRateSourceUses(in intelligence: ChemicalIntelligence) -> [ChemicalRegisteredUse] {
+        let uses = intelligence.registeredUses
+        return uses.statedUses.viticultural + uses.filter(ChemicalManualEntry.isProductRateCarrier)
     }
 
     /// Lift a legacy record's scalar rates into structured label rates.
@@ -586,6 +641,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         masterSourceRevision: Int? = nil,
         selectedDefaultRateIds: [ChemicalDefaultRateBasis: String] = [:],
         defaultRateValues: [ChemicalDefaultRateBasis: Double] = [:],
+        manualDefaultSelectedAt: [ChemicalDefaultRateBasis: String] = [:],
         jurisdiction: ChemicalRateJurisdiction? = nil,
         serverDefaultRateOptions: ChemicalServerDefaultRateOptions? = nil,
         baselineViolationCodes: Set<ChemicalSaveViolationCode> = []
@@ -623,6 +679,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         self.masterSourceRevision = masterSourceRevision
         self.selectedDefaultRateIds = selectedDefaultRateIds
         self.defaultRateValues = defaultRateValues
+        self.manualDefaultSelectedAt = manualDefaultSelectedAt
         self.jurisdiction = jurisdiction
     }
 
@@ -673,6 +730,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         if productIdentityKey != previousIdentity {
             selectedDefaultRateIds = [:]
             defaultRateValues = [:]
+            manualDefaultSelectedAt = [:]
         } else {
             // Same product, re-verified. A choice survives only while the new
             // label still states the rate it was made from, and an exact dose
@@ -834,6 +892,16 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// True when the label registers this product on grapevines at all.
     var isRegisteredForGrapevine: Bool { !grapevineUses.isEmpty }
 
+    /// The uses a vineyard default may be chosen from — grapevine stated uses
+    /// plus product-level rate carriers. See `defaultRateSourceUses(in:)`.
+    var defaultRateSourceUses: [ChemicalRegisteredUse] {
+        ChemicalReviewSession.defaultRateSourceUses(in: proposedIntelligence)
+    }
+
+    /// True when there is any rate on record a vineyard default could be
+    /// confirmed from, including a product-level rate typed by hand.
+    var offersDefaultRateDecision: Bool { !defaultRateSourceUses.isEmpty }
+
     // MARK: - Derived: the default-rate decision (task §5)
 
     /// The per-basis default-rate decision, built ONLY from authoritative
@@ -854,7 +922,43 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         // carried forward — `recoveredDefaults` re-attaches the stored slot's
         // own identity, so re-saving an untouched record rewrites exactly what
         // it already had.
-        return ChemicalDefaultRate.plan(grapevineUses: grapevineUses, jurisdiction: jurisdiction)
+        return ChemicalDefaultRate.plan(grapevineUses: defaultRateSourceUses, jurisdiction: jurisdiction)
+    }
+
+    /// True when confirming `option` records a MANUAL default (sql/222).
+    ///
+    /// An option is manual when it carries no register identity at all: no
+    /// server twin and not one `rate_id` behind any direction it merges. That
+    /// is exactly a rate the operator typed. An option built from looked-up
+    /// directions that merely lacks its server twin on this path is NOT manual
+    /// — persisting it would lend a typed-rate provenance to label evidence —
+    /// and keeps its existing refusal.
+    func isManualDefaultOption(_ option: ChemicalDefaultRateOption) -> Bool {
+        guard option.server == nil else { return false }
+        // The editor's draft carries no `rate_id`, so the STORED record is what
+        // says whether this amount was ever read from a register. A stored
+        // rate with a server citation is label evidence, whatever the draft
+        // now looks like; so is any rate on a record whose provenance names an
+        // authoritative source, because a lookup wrote it.
+        guard let stored = seedIntelligence, !stored.isEmpty else { return true }
+        let storedUses = ChemicalReviewSession.defaultRateSourceUses(in: stored)
+        if !ChemicalDefaultRate.rateIDs(for: option, from: storedUses).isEmpty { return false }
+        let statedByLookup = storedUses.contains { use in
+            use.rates.contains { ChemicalDefaultRate.distinctnessKey($0) == option.id }
+        }
+        let hasAuthoritativeProvenance = stored.verification.sources.contains { $0.kind.isAuthoritative }
+        return !(statedByLookup && hasAuthoritativeProvenance)
+    }
+
+    /// Every option in the current plan that would persist as a manual entry.
+    var manualDefaultOptionIds: Set<String> {
+        var ids = Set<String>()
+        for group in defaultRatePlan.groups {
+            for option in group.options where isManualDefaultOption(option) {
+                ids.insert(option.id)
+            }
+        }
+        return ids
     }
 
     /// The default in force for a basis: the operator's choice if they made
@@ -940,7 +1044,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// the database — that is the difference between suggesting a rate and
     /// claiming the operator chose it.
     var storedDefaultRates: StoredChemicalDefaultRates? {
-        let uses = grapevineUses
+        let uses = defaultRateSourceUses
         guard !uses.isEmpty else { return nil }
         let labelVersion = intelligenceToPersist?.registration?.labelVersion
 
@@ -949,16 +1053,45 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
             guard let selectedId = selectedDefaultRateIds[basis] else { continue }
             let group = defaultRatePlan.group(basis)
             guard let option = group.options.first(where: { $0.id == selectedId }) else { continue }
-            let slot = StoredChemicalDefaultRate.confirmed(
-                option: option,
-                basis: basis,
-                grapevineUses: uses,
-                confirmedValue: defaultRateValues[basis],
-                labelVersion: labelVersion
-            )
+            let slot: StoredChemicalDefaultRate?
+            if isManualDefaultOption(option) {
+                slot = manualSlot(for: option, basis: basis)
+            } else {
+                slot = StoredChemicalDefaultRate.confirmed(
+                    option: option,
+                    basis: basis,
+                    grapevineUses: uses,
+                    confirmedValue: defaultRateValues[basis],
+                    labelVersion: labelVersion
+                )
+            }
             stored = stored.withSlot(basis, slot)
         }
         return stored.isEmpty ? nil : stored
+    }
+
+    /// The persisted record of a confirmed MANUAL option (sql/222).
+    ///
+    /// Built through the ONE factory that hard-codes an empty identity, so
+    /// nothing here can mint an `option_key`. The amount is the typed shape
+    /// exactly: a scalar stays a scalar, and a band stays a band — the exact
+    /// dose inside a band is chosen when the spray is planned, never here.
+    /// Nothing is converted between units or bases.
+    private func manualSlot(
+        for option: ChemicalDefaultRateOption,
+        basis: ChemicalDefaultRateBasis
+    ) -> StoredChemicalDefaultRate? {
+        let rate = option.rate
+        guard ChemicalDefaultRateBasis.of(rate.basis) == basis else { return nil }
+        guard let unit = ChemicalDefaultRateValidity.canonicalUnit(rate.unit) else { return nil }
+        let selectedAt = manualDefaultSelectedAt[basis]
+            ?? Date().iso8601ManualDefaultTimestamp
+        if let min = rate.minValue, let max = rate.maxValue {
+            guard min.isFinite, max.isFinite, min > 0, max >= min else { return nil }
+            return .manual(basis: basis, unit: unit, minValue: min, maxValue: max, selectedAt: selectedAt)
+        }
+        guard let value = rate.value, value.isFinite, value > 0 else { return nil }
+        return .manual(basis: basis, unit: unit, value: value, selectedAt: selectedAt)
     }
 
     // MARK: - The first-add rate confirmation gate
@@ -985,9 +1118,14 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         guard let selectedId = selectedDefaultRateIds[basis] else { return false }
         let group = defaultRatePlan.group(basis)
         guard let option = group.options.first(where: { $0.id == selectedId }) else { return false }
-        // A device-assembled option carries no register identity and can never
-        // be persisted, so confirming one would enable a Save that then wrote
-        // no default at all.
+        // A typed rate the operator confirmed persists as a MANUAL default. A
+        // band is confirmed as a band: the dose inside it is a spray decision.
+        if isManualDefaultOption(option) {
+            return manualSlot(for: option, basis: basis) != nil
+        }
+        // A device-assembled option that merely lacks its server twin carries
+        // no register identity and can never be persisted, so confirming one
+        // would enable a Save that then wrote no default at all.
         guard let server = option.server, server.isValid, server.decisionBasis == basis else {
             return false
         }
@@ -1287,5 +1425,15 @@ extension ProductCategory {
             if collapsed == key + "s" || collapsed == label + "s" { return option }
         }
         return nil
+    }
+}
+
+private extension Date {
+    /// ISO-8601 with fractional seconds — the same provenance format a
+    /// canonical default's `selected_at` is written in.
+    var iso8601ManualDefaultTimestamp: String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: self)
     }
 }

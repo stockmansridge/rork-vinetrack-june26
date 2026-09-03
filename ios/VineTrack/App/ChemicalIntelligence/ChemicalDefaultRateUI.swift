@@ -24,6 +24,10 @@ struct ChemicalDefaultRatesView: View {
     /// This vineyard's exact dose per basis, in the rate's own unit, where one
     /// has been named inside a label band.
     var values: [ChemicalDefaultRateBasis: Double] = [:]
+    /// Options that persist as a MANUAL (user-confirmed) default rather than
+    /// a register-cited one. Tagged so a typed rate never reads as label
+    /// evidence, and a typed band keeps its exact dose for the spray.
+    var manualOptionIds: Set<String> = []
     let onSelect: (ChemicalDefaultRateBasis, ChemicalDefaultRateOption) -> Void
     /// Records an exact dose. Returns false when the label does not authorise
     /// it, which is what drives the out-of-range message.
@@ -80,6 +84,7 @@ struct ChemicalDefaultRatesView: View {
                     // would invite an off-label figure.
                     if option.isLabelRange,
                        isInForce(option, in: group),
+                       !manualOptionIds.contains(option.id),
                        onSetValue != nil {
                         ChemicalExactDoseField(
                             option: option,
@@ -153,9 +158,17 @@ struct ChemicalDefaultRatesView: View {
                                 .foregroundStyle(Color.accentColor)
                         }
                         if option.isLabelRange {
-                            Text("label range")
+                            Text(manualOptionIds.contains(option.id) ? "range" : "label range")
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
+                        }
+                        if manualOptionIds.contains(option.id) {
+                            Text("User-entered")
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.14), in: Capsule())
+                                .foregroundStyle(Color.orange)
                         }
                     }
 
@@ -165,6 +178,12 @@ struct ChemicalDefaultRatesView: View {
                     // is not a condition.
                     ForEach(option.conditions) { condition in
                         Text(condition.summary)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if manualOptionIds.contains(option.id), option.isLabelRange, isInForce {
+                        Text("Saved as the range you entered. The exact rate is chosen when planning each spray.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

@@ -3746,15 +3746,15 @@ struct SprayCalculatorView: View {
     /// grapevine rate the line still opens — with no rate selected — so the
     /// operator establishes it rather than inheriting another crop's.
     private func appendChemicalLine(for chemical: SavedChemical) {
-        let selection = SprayRegisteredUseRates.defaultSelection(
-            for: chemical, preferring: preferredRateBases
-        )
+        // The product's CONFIRMED rate (`default_rates`) leads: a confirmed
+        // scalar populates the line, a confirmed band selects the band and
+        // waits for the dose. Only when nothing is confirmed does the
+        // registered-use seeding apply as before.
         chemicalLines.append(
-            ChemicalLine(
-                chemicalId: chemical.id,
-                selectedRateId: selection?.id ?? UUID(),
-                basis: selection?.basis
-                    ?? SprayRateBasisPreference.fallbackBasis(for: effectiveCarrierBasis)
+            SprayConfirmedRateSeeding.seededLine(
+                for: chemical,
+                preferring: preferredRateBases,
+                fallbackBasis: SprayRateBasisPreference.fallbackBasis(for: effectiveCarrierBasis)
             )
         )
     }
@@ -3838,7 +3838,7 @@ struct SprayCalculatorView: View {
     /// Returns `nil` for a product with nothing structured, so a line stays
     /// honestly empty rather than implying knowledge that never existed.
     private func chemicalSnapshot(for line: ChemicalLine, planLine: SprayProductLineResult) -> ChemicalLineSnapshot? {
-        ChemicalSnapshotCapture.captureForNewApplication(
+        let captured = ChemicalSnapshotCapture.captureForNewApplication(
             savedChemicalId: line.chemicalId,
             productName: planLine.name,
             library: store.savedChemicals,
@@ -3850,6 +3850,18 @@ struct SprayCalculatorView: View {
             // stipulation into a verified classification nobody established.
             allowNameMatch: false
         ).snapshot
+        guard let chemical = store.savedChemicals.first(where: { $0.id == line.chemicalId }) else {
+            return captured
+        }
+        // The applied dose and its provenance are frozen on the line (sql/222
+        // contract): 2.5 chosen inside a confirmed 2–3 band is what went in
+        // THIS tank, and the Chemical Store keeps its band untouched.
+        return SprayConfirmedRateSeeding.snapshot(
+            base: captured,
+            chemical: chemical,
+            line: line,
+            planLine: planLine
+        )
     }
 
     /// Builds the tanks that get persisted onto the started trip's
@@ -4172,6 +4184,19 @@ private struct CalcChemicalLineCard: View {
 
     @Environment(\.openURL) private var openURL
     @State private var overrideText: String = ""
+    /// Why the typed dose was refused against the confirmed band, if it was.
+    @State private var rangeRejection: String?
+
+    /// The CONFIRMED rate governing this line's basis, from `default_rates`.
+    private var confirmedResolution: ChemicalSprayRateHandoff.Resolution? {
+        guard let chem = selectedChemical else { return nil }
+        return SprayConfirmedRateSeeding.resolution(for: chem, basis: line.basis)
+    }
+
+    /// The confirmed band the operator must choose a dose inside, if any.
+    private var confirmedRange: ChemicalSprayRateHandoff.RangeSelection? {
+        confirmedResolution?.rangeSelection
+    }
 
     private static func normalizedLabelURL(_ raw: String) -> URL? {
         var trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -4403,6 +4428,15 @@ private struct CalcChemicalLineCard: View {
     /// in kilograms, is an invitation to enter a rate 1000× wrong.
     private var appliedRateUnit: String {
         guard let chem = selectedChemical else { return "" }
+        // A confirmed rate's own unit leads: the operator confirmed `2–3 L`
+        // and must answer in litres.
+        if let confirmed = confirmedResolution {
+            let unit = confirmed.prefill?.unit ?? confirmed.rangeSelection?.unit ?? ""
+            if !unit.isEmpty,
+               SprayRegisteredUseRates.baseValue(1, labelUnit: unit, chemical: chem) != nil {
+                return unit
+            }
+        }
         if let labelUnit = selectedOfferedRate?.labelUnit.trimmedNonEmpty,
            SprayRegisteredUseRates.baseValue(1, labelUnit: labelUnit, chemical: chem) != nil {
             return labelUnit
@@ -4603,15 +4637,18 @@ private struct CalcChemicalLineCard: View {
                     ForEach(chemicals) { chem in
                         Button {
                             if line.chemicalId != chem.id {
-                                line.chemicalId = chem.id
-                                // Re-seed from the NEW product's own rates. Left
-                                // alone, a stale `selectedRateId` keeps pointing
-                                // at the previous product's rate and the line
-                                // silently keeps that product's basis.
-                                let selection = SprayRegisteredUseRates
-                                    .defaultSelection(for: chem, preferring: preferredRateBases)
-                                line.selectedRateId = selection?.id ?? UUID()
-                                if let basis = selection?.basis { line.basis = basis }
+                                // Re-seed from the NEW product's confirmed rate,
+                                // then its own registered rates. Left alone, a
+                                // stale `selectedRateId` keeps pointing at the
+                                // previous product's rate and the line silently
+                                // keeps that product's basis.
+                                SprayConfirmedRateSeeding.seed(
+                                    &line,
+                                    from: chem,
+                                    preferring: preferredRateBases,
+                                    fallbackBasis: line.basis
+                                )
+                                rangeRejection = nil
                             }
                         } label: {
                             HStack {
@@ -4756,7 +4793,37 @@ private struct CalcChemicalLineCard: View {
                 .clipShape(.rect(cornerRadius: 8))
             }
 
-            if let rangeText = appliedRateRangeText {
+            if let range = confirmedRange {
+                // The CONFIRMED band from the Chemical Store, named as such.
+                // The operator must enter a rate inside it; nothing here
+                // selects an endpoint or the midpoint on their behalf.
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text("Confirmed rate range: \(SprayRateFormatter.format(range.min))–\(SprayRateFormatter.format(range.max)) \(range.unit)\(basisLabel)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(range.isUserEntered ? "User-confirmed" : "From label")
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background((range.isUserEntered ? Color.orange : VineyardTheme.leafGreen).opacity(0.14), in: Capsule())
+                            .foregroundStyle(range.isUserEntered ? Color.orange : VineyardTheme.leafGreen)
+                    }
+                    Text("Enter the application rate you are using, within this range.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("confirmedRateRange")
+            } else if let prefill = confirmedResolution?.prefill {
+                HStack(spacing: 6) {
+                    Text("Confirmed rate: \(SprayRateFormatter.format(prefill.rate)) \(prefill.unit)\(basisLabel)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(prefill.isUserEntered ? "User-confirmed" : "From label")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(prefill.isUserEntered ? Color.orange : VineyardTheme.leafGreen)
+                }
+            } else if let rangeText = appliedRateRangeText {
                 Text("Label range: \(rangeText)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -4764,9 +4831,12 @@ private struct CalcChemicalLineCard: View {
 
             HStack(spacing: 8) {
                 TextField(
-                    recommendedRateDisplay.map { SprayRateFormatter.format($0) } ?? "Enter rate",
+                    confirmedRange != nil
+                        ? "Application rate"
+                        : (recommendedRateDisplay.map { SprayRateFormatter.format($0) } ?? "Enter rate"),
                     text: $overrideText
                 )
+                .accessibilityIdentifier("applicationRateField")
                 .keyboardType(.decimalPad)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
@@ -4774,9 +4844,29 @@ private struct CalcChemicalLineCard: View {
                 .clipShape(.rect(cornerRadius: 8))
                 .onChange(of: overrideText) { _, newValue in
                     let trimmed = newValue.trimmingCharacters(in: .whitespaces)
+                    let typed = Double(trimmed.replacingOccurrences(of: ",", with: "."))
                     if trimmed.isEmpty {
                         line.overrideRate = nil
-                    } else if let typed = Double(trimmed), typed > 0 {
+                        rangeRejection = nil
+                    } else if let range = confirmedRange {
+                        // A confirmed band is a gate, not a warning: a dose
+                        // outside it is refused and the line stays unresolved,
+                        // so the spray cannot be saved off the confirmed range.
+                        let outcome = SprayConfirmedRateSeeding.validate(typed: typed ?? 0, against: range)
+                        if let accepted = outcome.acceptedValue {
+                            line.overrideRate = SprayRegisteredUseRates.baseValue(
+                                accepted,
+                                labelUnit: unitLabel,
+                                chemical: chem
+                            ) ?? accepted
+                            rangeRejection = nil
+                        } else {
+                            line.overrideRate = nil
+                            rangeRejection = SprayConfirmedRateSeeding.rejectionMessage(
+                                outcome, range: range, basisSuffix: basisLabel
+                            )
+                        }
+                    } else if let typed, typed > 0 {
                         // Stored in BASE units, the same space
                         // `SprayRegisteredUseRates.seedValue` returns, so the
                         // typed and the seeded paths cannot mean different
@@ -4793,10 +4883,18 @@ private struct CalcChemicalLineCard: View {
                     .foregroundStyle(.secondary)
             }
 
+            if let rangeRejection {
+                Label(rangeRejection, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("applicationRateRejection")
+            }
+
             // An off-label rate is the operator's call to make and to record.
             // It is NOT presented as though the regulator sanctioned it, and
             // the band is never rewritten to fit what was typed.
-            if let warning = appliedRateRangeWarning {
+            if rangeRejection == nil, let warning = appliedRateRangeWarning {
                 Label(warning, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.orange)
@@ -4820,7 +4918,10 @@ private struct CalcChemicalLineCard: View {
     /// (`basis:"other"`) entry says so in the label's own words.
     @ViewBuilder
     private func rateGuidanceText(chem: SavedChemical, basisLabel: String) -> some View {
-        if let rate = selectedOfferedRate, rate.isRangePreset {
+        if confirmedRange != nil {
+            Text("This product's confirmed rate is a range. Type the rate you are "
+                 + "applying in \(appliedRateUnit)\(basisLabel) — it must fall within the range.")
+        } else if let rate = selectedOfferedRate, rate.isRangePreset {
             // The point came from VineTrack's arithmetic on the label's band,
             // and says so. Calling it "Recommended" would attribute a choice to
             // the regulator that the regulator explicitly left open.
