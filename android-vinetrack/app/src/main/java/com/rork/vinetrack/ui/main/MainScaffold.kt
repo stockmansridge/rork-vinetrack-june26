@@ -142,12 +142,22 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
     // a selected trip that was deleted, or a HUD launcher whose trip has ended,
     // is dropped here rather than left holding the screen awake for a workflow
     // that is no longer on screen. Only IDs cross this boundary.
-    val tripsKnowledge = remember(state.trips, state.locallyEndedTripIds) {
+    val tripsKnowledge = remember(
+        state.trips,
+        state.tripsListKnowledge,
+        state.locallyEndedTripIds,
+        state.locallyDeletedTripIds,
+    ) {
         TripsKnowledge(
             knownIds = state.trips.mapTo(mutableSetOf()) { it.id },
             activeIds = state.trips
                 .filter { it.isActive && it.id !in state.locallyEndedTripIds }
                 .mapTo(mutableSetOf()) { it.id },
+            // Provenance travels with the ids: an empty list from a successful
+            // server read clears a stale selection, an empty list that simply
+            // hasn't loaded yet does not.
+            listKnowledge = state.tripsListKnowledge,
+            locallyRemovedIds = state.locallyDeletedTripIds,
         )
     }
     LaunchedEffect(tripsKnowledge) { work.reconcileTripContext(tripsKnowledge) }

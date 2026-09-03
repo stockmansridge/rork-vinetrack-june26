@@ -270,6 +270,7 @@ import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.WorkTaskMachineLine
 import com.rork.vinetrack.data.model.WorkTaskPaddock
+import com.rork.vinetrack.ui.main.TripsListKnowledge
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -480,6 +481,12 @@ data class AppUiState(
     /** Vineyard-shared custom pin types (sql/170) offered by the Custom tab. */
     val customPinTypes: List<CustomPinType> = emptyList(),
     val trips: List<Trip> = emptyList(),
+    /**
+     * Provenance of [trips], so a consumer can tell "not loaded yet" from "the
+     * server authoritatively returned nothing". Only [TripsListKnowledge.Authoritative]
+     * makes a missing trip proof of a deleted trip — see [TripsKnowledge].
+     */
+    val tripsListKnowledge: TripsListKnowledge = TripsListKnowledge.Unknown,
     val machines: List<VineyardMachine> = emptyList(),
     val workTasks: List<WorkTask> = emptyList(),
     val members: List<VineyardMember> = emptyList(),
@@ -789,6 +796,16 @@ data class AppUiState(
      * until the end marker successfully syncs.
      */
     val locallyEndedTripIds: Set<String> = emptySet(),
+    /**
+     * Trip ids this device deleted (optimistically hidden, possibly with a
+     * queued offline TRIP/DELETE marker still to replay). In-memory only.
+     *
+     * Genuine local positive evidence of removal, so trip-context reconciliation
+     * can drop a selected trip immediately without waiting for a fresh server
+     * list — which matters offline, where the next authoritative read may be
+     * hours away. Cleared again if the delete is rolled back.
+     */
+    val locallyDeletedTripIds: Set<String> = emptySet(),
 ) {
     val selectedVineyard: Vineyard? get() = vineyards.firstOrNull { it.id == selectedVineyardId }
 
@@ -5273,7 +5290,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         reportClientTelemetry()
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), grapeAllocations = emptyList(), grapePurchasers = emptyList(), grapeAllocationFinancialAccess = false, workTaskPaddocks = emptyList(), vineyardLabourLines = null, growthStageImages = emptyList(), seasonYieldOverview = null, seasonYieldVintage = null, seasonYieldError = null) }
+        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), tripsListKnowledge = TripsListKnowledge.Unknown, machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), grapeAllocations = emptyList(), grapePurchasers = emptyList(), grapeAllocationFinancialAccess = false, workTaskPaddocks = emptyList(), vineyardLabourLines = null, growthStageImages = emptyList(), seasonYieldOverview = null, seasonYieldVintage = null, seasonYieldError = null) }
         loadedLogoKey = null
         // Apply the cached region settings instantly so units/currency render
         // correctly on first paint, then refresh from the backend below.
@@ -7335,7 +7352,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(isTracking = false) }
                 clearRowLockState()
             }
-            _ui.update { st -> st.copy(trips = st.trips.filterNot { it.id == tripId }) }
+            _ui.update { st ->
+                st.copy(
+                    trips = st.trips.filterNot { it.id == tripId },
+                    locallyDeletedTripIds = st.locallyDeletedTripIds + tripId,
+                )
+            }
             // Drop the local snapshot if the deleted trip was the active one.
             persistActiveTripSnapshot()
             viewModelScope.launch {
@@ -7345,11 +7367,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 } catch (e: BackendError.Unauthorized) {
                     onUnauthorized("deleteTrip"); onResult(false)
                 } catch (e: BackendError.Server) {
-                    _ui.update { it.copy(trips = previous, tripError = friendlyWriteError(e.code)) }
+                    _ui.update {
+                        it.copy(
+                            trips = previous,
+                            locallyDeletedTripIds = it.locallyDeletedTripIds - tripId,
+                            tripError = friendlyWriteError(e.code),
+                        )
+                    }
                     persistActiveTripSnapshot()
                     onResult(false)
                 } catch (e: Exception) {
-                    _ui.update { it.copy(trips = previous, tripError = "Couldn't delete the trip. Check your connection.") }
+                    _ui.update {
+                        it.copy(
+                            trips = previous,
+                            locallyDeletedTripIds = it.locallyDeletedTripIds - tripId,
+                            tripError = "Couldn't delete the trip. Check your connection.",
+                        )
+                    }
                     persistActiveTripSnapshot()
                     onResult(false)
                 }
@@ -7371,8 +7405,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
-        // Eligible ended trip: optimistic hide, then queue or send.
-        _ui.update { st -> st.copy(trips = st.trips.filterNot { it.id == tripId }) }
+        // Eligible ended trip: optimistic hide, then queue or send. The id is
+        // recorded as locally removed so trip-context reconciliation can drop a
+        // selected trip immediately, without waiting on a fresh server list that
+        // may be a long way off when the delete was queued offline.
+        _ui.update { st ->
+            st.copy(
+                trips = st.trips.filterNot { it.id == tripId },
+                locallyDeletedTripIds = st.locallyDeletedTripIds + tripId,
+            )
+        }
 
         // Known-offline: queue the soft-delete marker without touching the network.
         if (!_ui.value.isOnline) {
@@ -7390,7 +7432,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onUnauthorized("deleteTrip"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll back, surface, don't queue.
-                _ui.update { it.copy(trips = previous, tripError = friendlyWriteError(e.code)) }
+                _ui.update {
+                    it.copy(
+                        trips = previous,
+                        locallyDeletedTripIds = it.locallyDeletedTripIds - tripId,
+                        tripError = friendlyWriteError(e.code),
+                    )
+                }
                 onResult(false)
             } catch (e: Exception) {
                 // Transient network failure — keep the optimistic hide and queue a
@@ -13754,6 +13802,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 paddocks = overlaidPaddocks,
                 pins = pins,
                 trips = trips,
+                // Provenance, not size: only a successful fresh server read makes
+                // a missing trip proof of a deleted trip. A soft-failed load that
+                // fell back to the existing list or the snapshot cache is useful
+                // for rendering but must never be read as absence.
+                tripsListKnowledge = when {
+                    tripsFromServer -> TripsListKnowledge.Authoritative
+                    tripsFromCache || trips.isNotEmpty() -> TripsListKnowledge.Cached
+                    else -> TripsListKnowledge.Unknown
+                },
                 machines = machines,
                 workTasks = overlaidWorkTasks,
                 workTaskPaddocks = PendingWriteOverlay.overlayWorkTaskPaddocks(
