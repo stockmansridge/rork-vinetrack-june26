@@ -67,6 +67,14 @@ nonisolated final class ELRipenessBlockLabelAnnotation: NSObject, MKAnnotation, 
 struct ELRipenessMapView: UIViewRepresentable {
     let overlays: [ELRipenessHeatOverlay]
     let blocks: [ELRipeness.BlockHeat]
+    /// Every block in the vineyard, from the cached paddock polygons — the
+    /// same source the vineyard/pins map draws from.
+    ///
+    /// Framing and outlines are driven by this rather than by `blocks`: the
+    /// heat model resolves asynchronously, so framing off it left the camera
+    /// at MapKit's default world position on first paint. It also means blocks
+    /// with no observations are still outlined and still count towards the fit.
+    let allBlocks: [ELRipeness.BlockInput]
     let annotations: [ELRipenessObservationAnnotation]
     let labels: [ELRipenessBlockLabelAnnotation]
     let selectedBlockId: String?
@@ -98,11 +106,14 @@ struct ELRipenessMapView: UIViewRepresentable {
         mapView.removeOverlays(mapView.overlays)
         mapView.removeAnnotations(mapView.annotations.filter { !($0 is MKUserLocation) })
 
-        for block in blocks where block.polygon.count >= 3 {
+        // Outline every active block, including those with no observations,
+        // so the operator sees the whole vineyard rather than only the parts
+        // that happen to carry data.
+        for block in allBlocks where block.polygon.count >= 3 {
             var coords = block.polygon.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
             let outline = ELRipenessBlockOutline(coordinates: &coords, count: coords.count)
-            outline.paddockId = block.paddockId
-            outline.isSelected = block.paddockId == selectedBlockId
+            outline.paddockId = block.id
+            outline.isSelected = block.id == selectedBlockId
             mapView.addOverlay(outline, level: .aboveRoads)
         }
         for overlay in overlays {
@@ -112,7 +123,7 @@ struct ELRipenessMapView: UIViewRepresentable {
         mapView.addAnnotations(labels)
         mapView.addAnnotations(annotations)
 
-        let focusKey = "\(selectedBlockId ?? "all")-\(blocks.map(\.paddockId).joined(separator: ","))"
+        let focusKey = "\(selectedBlockId ?? "all")-\(allBlocks.map(\.id).joined(separator: ","))"
         if context.coordinator.focusKey != focusKey {
             context.coordinator.focusKey = focusKey
             focus(mapView)
@@ -126,9 +137,21 @@ struct ELRipenessMapView: UIViewRepresentable {
         mapView.removeAnnotations(mapView.annotations)
     }
 
+    /// Frames the selected block, or the whole vineyard for "All Blocks".
+    ///
+    /// Falls back to observation pins only when no polygon exists at all. If
+    /// even that is empty the camera is left alone rather than pointed at
+    /// MapKit's country-wide default; the screen shows a missing-boundaries
+    /// notice instead.
     private func focus(_ mapView: MKMapView) {
+        let framing = allBlocks.filter { block in
+            guard block.polygon.count >= 3 else { return false }
+            guard let selectedBlockId else { return true }
+            return block.id == selectedBlockId
+        }
+
         var rect = MKMapRect.null
-        for block in blocks where block.polygon.count >= 3 {
+        for block in framing {
             for point in block.polygon {
                 let mapPoint = MKMapPoint(CLLocationCoordinate2D(latitude: point.lat, longitude: point.lng))
                 rect = rect.union(MKMapRect(x: mapPoint.x, y: mapPoint.y, width: 0, height: 0))
@@ -141,6 +164,17 @@ struct ELRipenessMapView: UIViewRepresentable {
             }
         }
         guard !rect.isNull else { return }
+
+        // A lone point has zero extent, which MapKit reads as "zoom in as far
+        // as possible". Give it a real footprint so it lands at block scale.
+        if rect.size.width < 1, rect.size.height < 1 {
+            let metresPerPoint = MKMapPointsPerMeterAtLatitude(
+                MKMapPoint(x: rect.origin.x, y: rect.origin.y).coordinate.latitude
+            )
+            let padding = metresPerPoint * 120
+            rect = rect.insetBy(dx: -padding, dy: -padding)
+        }
+
         mapView.setVisibleMapRect(
             rect,
             edgePadding: UIEdgeInsets(top: 48, left: 32, bottom: 48, right: 32),

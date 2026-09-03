@@ -40,6 +40,13 @@ final class ELRipenessHeatmapModel {
         case missingPolygon([String])
         /// Rendering from cache with no network — tiles may be unavailable.
         case offlineCache(Date)
+        /// The remote fetch or decode failed, but local and cached data were
+        /// enough to still draw a surface. The operator is told the data may
+        /// be behind rather than being shown a silently partial map.
+        case remoteFailed
+        /// No block in this vineyard has a usable boundary, so there is
+        /// nothing to frame the map against.
+        case noBoundaries
     }
 
     // MARK: - Inputs
@@ -104,6 +111,62 @@ final class ELRipenessHeatmapModel {
     /// Observations for the selected Vintage only.
     private(set) var vintageObservations: [ELRipeness.Observation] = []
 
+    /// Full detail for observations that came from a local record or pin,
+    /// registered under every id the feed might resolve them to.
+    private var enrichmentByRecordId: [String: GrowthStageRecord] = [:]
+
+    /// The Summary list, derived from the *same* merged feed as the heat
+    /// surface so the two can never disagree about what exists.
+    ///
+    /// Every entry corresponds to exactly one observation in the current
+    /// Vintage. Where a local `growth_stage_records` row or pin is known the
+    /// full detail (notes, photos, variety) is used; otherwise a minimal
+    /// record is synthesised from the observation so a remote-only row is
+    /// still listed rather than silently dropped.
+    var summaryRecords: [GrowthStageRecord] {
+        vintageObservations
+            .map { observation in
+                if let existing = enrichmentByRecordId[observation.id] { return existing }
+                return synthesisedRecord(for: observation)
+            }
+            .sorted { $0.observedAt > $1.observedAt }
+    }
+
+    private func synthesisedRecord(for observation: ELRipeness.Observation) -> GrowthStageRecord {
+        let code = ELRipeness.formatEl(observation.el)
+        let date = Self.date(fromISO: observation.dateISO) ?? Date()
+        return GrowthStageRecord(
+            id: UUID(uuidString: observation.id) ?? UUID(),
+            vineyardId: loadedVineyardId ?? UUID(),
+            paddockId: observation.paddockId.flatMap { UUID(uuidString: $0) },
+            pinId: nil,
+            stageCode: code,
+            stageLabel: GrowthStage.allStages.first { $0.code == code }?.description,
+            variety: nil,
+            observedAt: date,
+            latitude: observation.lat,
+            longitude: observation.lng,
+            rowNumber: nil,
+            side: nil,
+            notes: nil,
+            photoPaths: [],
+            recordedByName: nil,
+            createdAt: date,
+            updatedAt: date
+        )
+    }
+
+    /// Parses the leading calendar day of an ISO timestamp without applying a
+    /// timezone shift — the string already carries the field-capture day.
+    static func date(fromISO iso: String) -> Date? {
+        guard iso.count >= 10 else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: String(iso.prefix(10)))
+    }
+
     /// Contract section 9 counts. `recorded` includes stale and unassigned
     /// observations; `influencing` and `stale` are assigned-only, so the three
     /// are not meant to sum.
@@ -133,6 +196,7 @@ final class ELRipenessHeatmapModel {
     private var seasonStartDay: Int = ELRipenessSeason.defaultSeasonStartDay
     private var pendingSources: [ELRipenessObservationAdapter.SourceRecord] = []
     private var remoteSources: [ELRipenessObservationAdapter.SourceRecord] = []
+    private var localRecordSources: [ELRipenessObservationAdapter.SourceRecord] = []
     private var vineyardIdString: String?
     private var today: CivilDate = CivilDate(year: 2000, month: 1, day: 1)
 
@@ -142,14 +206,15 @@ final class ELRipenessHeatmapModel {
         vineyardId: UUID,
         paddocks: [Paddock],
         pins: [VinePin],
+        localRecords: [GrowthStageRecord] = [],
         seasonStartMonth: Int,
         seasonStartDay: Int,
         timeZone: TimeZone,
         isOnline: Bool,
         force: Bool = false
     ) async {
-        if loadedVineyardId == vineyardId, !force, loadState == .ready { 
-            refreshPending(pins: pins, timeZone: timeZone)
+        if loadedVineyardId == vineyardId, !force, loadState == .ready {
+            refreshLocal(pins: pins, localRecords: localRecords, timeZone: timeZone)
             return
         }
 
@@ -167,9 +232,16 @@ final class ELRipenessHeatmapModel {
             vineyardId: vineyardId,
             timeZone: timeZone
         )
+        localRecordSources = ELRipenessObservationAdapter.localRecords(
+            localRecords,
+            vineyardId: vineyardId,
+            timeZone: timeZone
+        )
+        rebuildEnrichment(localRecords: localRecords, pins: pins, vineyardId: vineyardId)
 
         let cached = cache.load(vineyardId: vineyardId)
         var loadedFromNetwork = false
+        var fetchFailure: String?
 
         if isOnline {
             do {
@@ -177,7 +249,11 @@ final class ELRipenessHeatmapModel {
                 remoteSources = rows.map(\.sourceRecord)
                 loadedFromNetwork = true
             } catch {
-                print("[Ripeness] remote fetch failed, falling back to cache: \(error.localizedDescription)")
+                // A fetch or decode failure is a failure. It must never be
+                // laundered into "no observations" — that reads to the operator
+                // as a clean empty Vintage and hides a real outage.
+                print("[Ripeness] remote fetch failed: \(error.localizedDescription)")
+                fetchFailure = error.localizedDescription
                 remoteSources = cached?.sourceRecords ?? []
             }
         } else {
@@ -206,7 +282,21 @@ final class ELRipenessHeatmapModel {
 
         loadedVineyardId = vineyardId
 
-        if remoteSources.isEmpty, pendingSources.isEmpty, !loadedFromNetwork, cached == nil {
+        // Only a successful fetch can prove a Vintage is genuinely empty.
+        // If the fetch failed and nothing local could stand in for it, report
+        // the failure rather than an empty map.
+        if let fetchFailure, allObservations.isEmpty {
+            loadState = .failed(fetchFailure)
+            return
+        }
+        if fetchFailure != nil {
+            notices.append(.remoteFailed)
+        }
+        if blocks.allSatisfy({ $0.polygon.count < 3 }) {
+            notices.append(.noBoundaries)
+        }
+
+        if allObservations.isEmpty, !loadedFromNetwork, cached == nil {
             loadState = .unavailableOffline
             return
         }
@@ -219,14 +309,41 @@ final class ELRipenessHeatmapModel {
     /// Re-merges pending local pins without touching the network. Called when
     /// the operator drops or edits a growth-stage pin while the screen is open.
     func refreshPending(pins: [VinePin], timeZone: TimeZone) {
+        refreshLocal(pins: pins, localRecords: nil, timeZone: timeZone)
+    }
+
+    /// Re-merges both local sources — unsynced pins and the synced
+    /// `growth_stage_records` store the Summary reads — with no network call.
+    ///
+    /// Passing `nil` for `localRecords` leaves the record set as it is.
+    func refreshLocal(
+        pins: [VinePin],
+        localRecords: [GrowthStageRecord]?,
+        timeZone: TimeZone
+    ) {
         guard let vineyardId = loadedVineyardId else { return }
         let next = ELRipenessObservationAdapter.pendingRecords(
             pins: pins,
             vineyardId: vineyardId,
             timeZone: timeZone
         )
-        guard next != pendingSources else { return }
+        let nextRecords = localRecords.map {
+            ELRipenessObservationAdapter.localRecords(
+                $0,
+                vineyardId: vineyardId,
+                timeZone: timeZone
+            )
+        }
+        let recordsChanged = nextRecords != nil && nextRecords != localRecordSources
+        guard next != pendingSources || recordsChanged else { return }
         pendingSources = next
+        if let nextRecords { localRecordSources = nextRecords }
+        rebuildEnrichment(
+            localRecords: localRecords ?? [],
+            pins: pins,
+            vineyardId: vineyardId,
+            merge: localRecords == nil
+        )
         let previousVintage = selectedVintage
         rebuildObservationSet()
         if let previousVintage, availableVintages.contains(previousVintage) {
@@ -237,9 +354,37 @@ final class ELRipenessHeatmapModel {
         scheduleRebuild()
     }
 
+    /// Indexes full record detail under every id an observation might resolve
+    /// to — the record's own id and its pin's id — so the Summary can show
+    /// notes, photos and variety no matter which source won the dedupe.
+    private func rebuildEnrichment(
+        localRecords: [GrowthStageRecord],
+        pins: [VinePin],
+        vineyardId: UUID,
+        merge: Bool = false
+    ) {
+        var index: [String: GrowthStageRecord] = merge ? enrichmentByRecordId : [:]
+        for pin in pins where pin.vineyardId == vineyardId {
+            guard let record = GrowthStageRecord.mirroring(pin) else { continue }
+            index[pin.id.uuidString.lowercased()] = record
+        }
+        // Synced records are indexed last so their richer server-side detail
+        // wins over the pin they mirror.
+        for record in localRecords where record.vineyardId == vineyardId {
+            index[record.id.uuidString.lowercased()] = record
+            if let pinId = record.pinId {
+                index[pinId.uuidString.lowercased()] = record
+            }
+        }
+        enrichmentByRecordId = index
+    }
+
     private func rebuildObservationSet() {
+        // Order is only a tie-break; precedence decides the winner. Local
+        // records come first so a row the remote view has not published yet
+        // still contributes, and is replaced in place once it has.
         allObservations = ELRipenessObservationAdapter.observations(
-            from: remoteSources + pendingSources,
+            from: localRecordSources + remoteSources + pendingSources,
             selectedVineyardId: vineyardIdString
         )
         availableVintages = ELRipenessSeason.availableVintages(

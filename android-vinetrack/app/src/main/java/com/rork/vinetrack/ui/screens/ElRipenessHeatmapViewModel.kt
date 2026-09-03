@@ -58,6 +58,19 @@ sealed interface ElRipenessNotice {
 
     /** Drawn from the offline cache written at this instant. */
     data class OfflineCache(val cachedAtEpochMs: Long) : ElRipenessNotice
+
+    /**
+     * The remote fetch or decode failed, but local and cached data were
+     * enough to still draw a surface. The operator is told the data may be
+     * behind rather than being shown a silently partial map.
+     */
+    data object RemoteFailed : ElRipenessNotice
+
+    /**
+     * No block in this vineyard has a usable boundary, so there is nothing to
+     * frame the map against.
+     */
+    data object NoBoundaries : ElRipenessNotice
 }
 
 /** Counts shown under the timeline. See contract section 9 — they do not balance. */
@@ -115,6 +128,9 @@ class ElRipenessHeatmapViewModel(
     private var vintageObservations: List<ElRipenessHeatmap.Observation> = emptyList()
     private var remoteSources: List<ElRipenessObservationAdapter.SourceRecord> = emptyList()
     private var pendingSources: List<ElRipenessObservationAdapter.SourceRecord> = emptyList()
+    private var localRecordSources: List<ElRipenessObservationAdapter.SourceRecord> = emptyList()
+    /** Full detail keyed by every id an observation might resolve to. */
+    private var enrichmentByRecordId: Map<String, GrowthStageRecord> = emptyMap()
     private var loadedVineyardId: String? = null
     private var seasonStartMonth: Int = ElRipenessSeason.DEFAULT_SEASON_START_MONTH
     private var seasonStartDay: Int = ElRipenessSeason.DEFAULT_SEASON_START_DAY
@@ -126,6 +142,7 @@ class ElRipenessHeatmapViewModel(
         vineyardId: String,
         paddocks: List<Paddock>,
         pendingRecords: List<GrowthStageRecord>,
+        localRecords: List<GrowthStageRecord> = emptyList(),
         seasonStartMonth: Int,
         seasonStartDay: Int,
         timeZone: TimeZone,
@@ -144,9 +161,16 @@ class ElRipenessHeatmapViewModel(
                 vineyardId = vineyardId,
                 timeZone = timeZone,
             )
+            localRecordSources = ElRipenessObservationAdapter.localRecords(
+                records = localRecords,
+                vineyardId = vineyardId,
+                timeZone = timeZone,
+            )
+            rebuildEnrichment(localRecords + pendingRecords, vineyardId)
 
-            var notices = mutableListOf<ElRipenessNotice>()
+            val notices = mutableListOf<ElRipenessNotice>()
             var loadedFromNetwork = false
+            var fetchFailure: String? = null
 
             if (isOnline) {
                 try {
@@ -156,6 +180,10 @@ class ElRipenessHeatmapViewModel(
                     remoteSources = rows.map { it.sourceRecord() }
                     loadedFromNetwork = true
                 } catch (e: Exception) {
+                    // A fetch or decode failure is a failure. It must never be
+                    // laundered into "no observations" — that reads to the
+                    // operator as a clean empty Vintage and hides a real outage.
+                    fetchFailure = e.message ?: e::class.simpleName ?: "Unknown error"
                     remoteSources = emptyList()
                 }
             }
@@ -166,13 +194,22 @@ class ElRipenessHeatmapViewModel(
                     remoteSources = cached.sourceRecords
                     if (resolvedBlocks.isEmpty()) resolvedBlocks = cached.blockInputs
                     notices.add(ElRipenessNotice.OfflineCache(cached.cachedAtEpochMs))
-                } else if (pendingSources.isEmpty()) {
+                } else if (pendingSources.isEmpty() && localRecordSources.isEmpty()) {
                     _ui.value = _ui.value.copy(
-                        loadState = ElRipenessLoadState.UnavailableOffline,
+                        loadState = if (fetchFailure != null) {
+                            ElRipenessLoadState.Failed(fetchFailure)
+                        } else {
+                            ElRipenessLoadState.UnavailableOffline
+                        },
                         blocks = resolvedBlocks,
                     )
                     return@launch
                 }
+                if (fetchFailure != null) notices.add(ElRipenessNotice.RemoteFailed)
+            }
+
+            if (resolvedBlocks.none { it.polygon.size >= 3 }) {
+                notices.add(ElRipenessNotice.NoBoundaries)
             }
 
             _ui.value = _ui.value.copy(blocks = resolvedBlocks, notices = notices)
@@ -186,16 +223,58 @@ class ElRipenessHeatmapViewModel(
     fun refreshPending(records: List<GrowthStageRecord>, timeZone: TimeZone) {
         val vineyardId = loadedVineyardId ?: return
         pendingSources = ElRipenessObservationAdapter.pendingRecords(records, vineyardId, timeZone)
+        localRecordSources = ElRipenessObservationAdapter.localRecords(records, vineyardId, timeZone)
+        rebuildEnrichment(records, vineyardId)
         rebuildObservationSet(vineyardId)
         vintageDidChange()
     }
 
     private fun rebuildObservationSet(vineyardId: String) {
+        // Order is only a tie-break; precedence decides the winner. Local
+        // records come first so a row the remote view has not published yet
+        // still contributes, and is replaced in place once it has.
         allObservations = ElRipenessObservationAdapter.observations(
-            sources = remoteSources + pendingSources,
+            sources = localRecordSources + remoteSources + pendingSources,
             selectedVineyardId = vineyardId,
         )
     }
+
+    /**
+     * Indexes full record detail under the record id and its pin id, so the
+     * Summary can show notes, photos and variety no matter which source won
+     * the dedupe.
+     */
+    private fun rebuildEnrichment(records: List<GrowthStageRecord>, vineyardId: String) {
+        val index = HashMap<String, GrowthStageRecord>(records.size * 2)
+        for (record in records) {
+            if (!record.vineyardId.equals(vineyardId, ignoreCase = true)) continue
+            index[record.id.lowercase()] = record
+            record.pinId?.let { index[it.lowercase()] = record }
+        }
+        enrichmentByRecordId = index
+    }
+
+    /**
+     * The Summary list, derived from the *same* merged feed as the heat
+     * surface so the two can never disagree about what exists.
+     *
+     * Where a local record is known its full detail is used; otherwise a
+     * minimal record is synthesised from the observation so a remote-only row
+     * is still listed rather than silently dropped.
+     */
+    fun summaryRecords(): List<GrowthStageRecord> = vintageObservations
+        .map { observation ->
+            enrichmentByRecordId[observation.id] ?: GrowthStageRecord(
+                id = observation.id,
+                vineyardId = loadedVineyardId.orEmpty(),
+                paddockId = observation.paddockId,
+                stageCode = ElRipenessHeatmap.formatEl(observation.el),
+                observedAt = observation.dateIso,
+                latitude = observation.lat,
+                longitude = observation.lng,
+            )
+        }
+        .sortedByDescending { it.observedEpochMs ?: 0L }
 
     private fun persistCache(vineyardId: String, blocks: List<ElRipenessHeatmap.BlockInput>) {
         val payload = ElRipenessCachePayload(

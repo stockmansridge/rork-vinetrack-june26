@@ -51,6 +51,9 @@ import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -80,10 +83,13 @@ import coil3.compose.AsyncImage
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.GrowthStageRecordRepository
+import com.rork.vinetrack.data.GrowthStageReportPdfExporter
+import com.rork.vinetrack.data.RegionDateFormat
 import com.rork.vinetrack.data.GrapeVarietyDeleteOutcome
 import com.rork.vinetrack.data.PaddockRepository
 import com.rork.vinetrack.data.RowAttachment
@@ -134,24 +140,18 @@ fun GrowthScreen(
     var selectedVarietyKey by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<GrowthStageRecord?>(null) }
-    var showingReport by remember { mutableStateOf(false) }
 
     val selected = state.growthRecords.firstOrNull { it.id == selectedId }
     val selectedVariety = state.grapeVarieties.firstOrNull { it.varietyKey == selectedVarietyKey }
     val canExport = state.currentRole == "owner" || state.currentRole == "manager"
 
     AnimatedContent(
-        targetState = Triple(selected, selectedVariety, showingReport),
+        targetState = selected to selectedVariety,
         transitionSpec = { fadeIn() togetherWith fadeOut() },
         label = "growth-nav",
         modifier = modifier,
-    ) { (record, variety, reporting) ->
+    ) { (record, variety) ->
         when {
-            reporting -> GrowthStageReportScreen(
-                state = state,
-                onBack = { showingReport = false },
-                canExport = canExport,
-            )
             record != null -> GrowthDetailView(
                 vm = vm,
                 state = state,
@@ -175,7 +175,6 @@ fun GrowthScreen(
                     onCreate = { creating = true },
                     onOpenStageImages = onOpenStageImages,
                     canExport = canExport,
-                    onOpenReport = { showingReport = true },
                 )
                 GrowthTab.Varieties -> VarietiesCatalogView(
                     vm = vm,
@@ -197,6 +196,36 @@ fun GrowthScreen(
             onDismiss = { creating = false; editing = null },
             onSaved = { creating = false; editing = null },
         )
+    }
+}
+
+/** The two views over the shared growth-stage read feed. */
+enum class GrowthRecordsViewMode { SUMMARY, HEATMAP }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GrowthRecordsViewSelector(
+    mode: GrowthRecordsViewMode,
+    onSelect: (GrowthRecordsViewMode) -> Unit,
+) {
+    val options = listOf(
+        GrowthRecordsViewMode.SUMMARY to "Summary",
+        GrowthRecordsViewMode.HEATMAP to "Ripeness Heatmap",
+    )
+    SingleChoiceSegmentedButtonRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        options.forEachIndexed { index, (value, label) ->
+            SegmentedButton(
+                selected = mode == value,
+                onClick = { onSelect(value) },
+                shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+            ) {
+                Text(label, fontSize = 13.sp)
+            }
+        }
     }
 }
 
@@ -228,10 +257,39 @@ private fun GrowthListView(
     onCreate: () -> Unit,
     onOpenStageImages: (() -> Unit)? = null,
     canExport: Boolean = false,
-    onOpenReport: () -> Unit = {},
 ) {
     val vine = LocalVineColors.current
+    val context = LocalContext.current
     val records = state.growthRecords
+    var viewMode by remember { mutableStateOf(GrowthRecordsViewMode.SUMMARY) }
+    var exporting by remember { mutableStateOf(false) }
+
+    /**
+     * Real export, run straight from the toolbar. The share control used to
+     * open a report screen, which made it read as navigation rather than an
+     * export action.
+     */
+    fun runExport() {
+        if (exporting) return
+        exporting = true
+        val blocks = buildBlockReports(
+            paddocks = state.paddocks,
+            filteredRecords = records,
+            selectedPaddockId = null,
+            seasonMonth = state.seasonStartMonth,
+            seasonDay = state.seasonStartDay,
+        )
+        GrowthStageReportPdfExporter.exportAndShare(
+            context = context,
+            blocks = blocks,
+            vineyardName = state.selectedVineyard?.name ?: "Vineyard",
+            seasonStartMonth = state.seasonStartMonth,
+            seasonStartDay = state.seasonStartDay,
+            dateFormat = RegionDateFormat.from(state.regionSettings.dateFormat),
+            logo = state.selectedVineyardLogo,
+        )
+        exporting = false
+    }
     // Show every block so dates can be set even when none exist yet; blocks with
     // dates are surfaced first.
     val phenologyBlocks = remember(state.paddocks) {
@@ -245,8 +303,9 @@ private fun GrowthListView(
                 title = { Text("Growth & Phenology") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 actions = {
-                    if (canExport && records.isNotEmpty()) {
-                        IconButton(onClick = onOpenReport) {
+                    // Shown only when it performs a real export.
+                    if (canExport && records.isNotEmpty() && viewMode == GrowthRecordsViewMode.SUMMARY) {
+                        IconButton(onClick = { runExport() }, enabled = !exporting) {
                             Icon(Icons.Filled.IosShare, contentDescription = "Export PDF report", tint = VineColors.LeafGreen)
                         }
                     }
@@ -266,6 +325,16 @@ private fun GrowthListView(
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             GrowthTabRow(tab = tab, onTabChange = onTabChange)
+
+            // Summary and Heatmap are two views of the same read feed, reached
+            // from here rather than from a separate report screen.
+            GrowthRecordsViewSelector(viewMode) { viewMode = it }
+
+            if (viewMode == GrowthRecordsViewMode.HEATMAP) {
+                ElRipenessHeatmapContent(state = state, modifier = Modifier.weight(1f))
+                return@Column
+            }
+
             if (records.isEmpty() && state.paddocks.isEmpty()) {
                 Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
                     EmptyState(

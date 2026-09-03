@@ -372,10 +372,13 @@ private fun HeatMap(
                 }
             }
 
-            // Block outlines.
-            heat?.blocks?.forEach { block ->
+            // Outline every active block, including those with no
+            // observations, so the operator sees the whole vineyard rather
+            // than only the parts that happen to carry data. Keyed on paddock
+            // id, never name — two blocks may share a name.
+            ui.blocks.forEach { block ->
                 if (block.polygon.size >= 3) {
-                    val selected = block.paddockId == ui.selectedBlockId
+                    val selected = block.id == ui.selectedBlockId
                     Polygon(
                         points = block.polygon.map { LatLng(it.lat, it.lng) },
                         fillColor = Color.Transparent,
@@ -518,6 +521,14 @@ private fun NoticeStrip(notices: List<ElRipenessNotice>) {
                         .format(Date(notice.cachedAtEpochMs))
                     Icons.Filled.CloudOff to "Offline — showing data saved $stamp."
                 }
+
+                is ElRipenessNotice.RemoteFailed ->
+                    Icons.Filled.WarningAmber to
+                        "Showing locally stored data — the server could not be reached."
+
+                is ElRipenessNotice.NoBoundaries ->
+                    Icons.Filled.WarningAmber to
+                        "No block boundaries for this vineyard — the map cannot be positioned."
             }
             Row(
                 Modifier.fillMaxWidth().padding(vertical = 3.dp),

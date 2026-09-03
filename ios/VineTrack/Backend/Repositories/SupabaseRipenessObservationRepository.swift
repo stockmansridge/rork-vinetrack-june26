@@ -20,11 +20,15 @@ nonisolated struct RipenessObservationRow: Decodable, Sendable, Equatable {
     let createdAt: String?
     let deletedAt: String?
     let isLocationAssigned: Bool?
+    /// Present when the view exposes the originating pin. Optional because the
+    /// column is not guaranteed — decoding must never fail on its absence.
+    let pinId: String?
 
     enum CodingKeys: String, CodingKey {
         case id
         case vineyardId = "vineyard_id"
         case paddockId = "paddock_id"
+        case pinId = "pin_id"
         case growthStageCode = "growth_stage_code"
         case latitude
         case longitude
@@ -53,6 +57,7 @@ nonisolated struct RipenessObservationRow: Decodable, Sendable, Equatable {
         createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
         deletedAt = try c.decodeIfPresent(String.self, forKey: .deletedAt)
         isLocationAssigned = try c.decodeIfPresent(Bool.self, forKey: .isLocationAssigned)
+        pinId = try Self.decodeIdentifier(c, .pinId)
     }
 
     private static func decodeIdentifier(
@@ -83,7 +88,8 @@ nonisolated struct RipenessObservationRow: Decodable, Sendable, Equatable {
                 deletedAt: deletedAt
             ),
             origin: .remote,
-            placementAssigned: isLocationAssigned
+            placementAssigned: isLocationAssigned,
+            pinId: pinId
         )
     }
 }

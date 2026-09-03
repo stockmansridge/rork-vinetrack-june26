@@ -13,6 +13,8 @@ import com.rork.vinetrack.data.ripeness.ElRipenessObservationAdapter.SourceRecor
 import com.rork.vinetrack.data.ripeness.ElRipenessObservationCaching
 import com.rork.vinetrack.data.ripeness.RipenessObservationRepositoryProtocol
 import com.rork.vinetrack.data.ripeness.RipenessObservationRow
+import com.rork.vinetrack.data.model.GrowthStageRecord
+import java.util.TimeZone
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -602,5 +604,132 @@ class ElRipenessHeatmapFeatureTest {
         assertEquals(2, model.qualifying.size)
         assertEquals(1, model.influencing.size)
         assertEquals(1, model.unassigned.size)
+    }
+
+    // ---- Shared read feed (Summary and Heatmap must agree) ----
+
+    private val adelaide: TimeZone = TimeZone.getTimeZone("Australia/Adelaide")
+
+    private fun syncedRecord(
+        id: String,
+        pinId: String? = null,
+        stage: String = "E-L 2",
+        paddockId: String? = "blk-a",
+    ) = GrowthStageRecord(
+        id = id,
+        vineyardId = vineyard,
+        paddockId = paddockId,
+        pinId = pinId,
+        stageCode = stage,
+        observedAt = "2026-02-10T09:00:00+10:30",
+        latitude = -34.5,
+        longitude = 138.5,
+    )
+
+    /**
+     * The exact reported defect: the Summary listed records the map could not
+     * see, because the map only ever read the remote view. A synced record
+     * must reach the heat feed even when the remote view returns nothing.
+     */
+    @Test
+    fun `a synced record reaches the heatmap when the remote view is empty`() {
+        val sources = ElRipenessObservationAdapter.localRecords(
+            records = listOf(
+                syncedRecord("rec-1"),
+                syncedRecord("rec-2"),
+                syncedRecord("rec-3"),
+            ),
+            vineyardId = vineyard,
+            timeZone = adelaide,
+        )
+        val observations = ElRipenessObservationAdapter.observations(sources, vineyard)
+        assertEquals(3, observations.size)
+        assertTrue(observations.all { it.el == 2.0 })
+    }
+
+    /**
+     * The same physical observation arrives under three different primary
+     * keys. Without pin-based dedupe the map would triple-count it.
+     */
+    @Test
+    fun `a record, its remote row and its pin collapse to one observation`() {
+        val pin = "pin-1"
+        val local = ElRipenessObservationAdapter
+            .localRecord(syncedRecord("rec-1", pinId = pin), adelaide)!!
+        val remote = RipenessObservationRow(
+            id = "obs-1",
+            vineyardId = vineyard,
+            paddockId = "blk-a",
+            growthStageCode = "E-L 2",
+            latitude = -34.5,
+            longitude = 138.5,
+            date = "2026-02-10",
+            pinId = pin,
+        ).sourceRecord()
+        val pending = SourceRecord(
+            record = record("pin-1", stage = "E-L 4"),
+            origin = Origin.PENDING_LOCAL,
+            pinId = pin,
+        )
+
+        val merged = ElRipenessObservationAdapter.merge(listOf(local, remote, pending))
+        assertEquals(1, merged.size)
+        // The unsynced local edit is the freshest truth.
+        assertEquals(Origin.PENDING_LOCAL, merged.single().origin)
+
+        val observations = ElRipenessObservationAdapter
+            .observations(listOf(local, remote, pending), vineyard)
+        assertEquals(1, observations.size)
+    }
+
+    /** Records without a pin still dedupe on their own id, as before. */
+    @Test
+    fun `records with no pin keep id-based dedupe`() {
+        val a = ElRipenessObservationAdapter.localRecord(syncedRecord("rec-1"), adelaide)!!
+        val b = ElRipenessObservationAdapter.localRecord(syncedRecord("rec-2"), adelaide)!!
+        assertEquals(2, ElRipenessObservationAdapter.merge(listOf(a, b)).size)
+    }
+
+    /**
+     * Summary and Heatmap read one feed, so their counts are the same numbers.
+     * Mirrors the live Stockmans Ridge expectation: three records, all current,
+     * typical stage E-L 2, painted red.
+     */
+    @Test
+    fun `summary and heatmap counts come from the same merged feed`() {
+        val sources = ElRipenessObservationAdapter.localRecords(
+            records = listOf(
+                syncedRecord("rec-1", pinId = "pin-1"),
+                syncedRecord("rec-2", pinId = "pin-2"),
+                syncedRecord("rec-3", pinId = "pin-3"),
+            ),
+            vineyardId = vineyard,
+            timeZone = adelaide,
+        )
+        val observations = ElRipenessObservationAdapter.observations(sources, vineyard)
+        val model = ElRipenessHeatmap.buildHeatModel(
+            observations = observations,
+            blocks = listOf(
+                ElRipenessHeatmap.BlockInput(
+                    "blk-a", "Gr\u00fcner Veltliner",
+                    listOf(
+                        LatLng(-34.5010, 138.4990),
+                        LatLng(-34.5010, 138.5010),
+                        LatLng(-34.4990, 138.5010),
+                        LatLng(-34.4990, 138.4990),
+                    ),
+                )
+            ),
+            atDateIso = "2026-02-10",
+        )
+
+        assertEquals(3, model.qualifying.size)
+        assertEquals(3, model.influencing.size)
+        assertEquals(0, model.stale.size)
+        assertEquals(0, model.unassigned.size)
+        assertEquals(2.0, model.medianEl!!, 1e-9)
+        // A red surface: E-L 2 sits at the hot end of the ramp.
+        val colour = ElRipenessHeatmap.elColour(2.0)
+        assertTrue("expected red-dominant, got $colour", colour.r > 200 && colour.g < 90)
     }
 }

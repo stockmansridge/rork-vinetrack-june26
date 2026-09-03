@@ -34,6 +34,11 @@ data class RipenessObservationRow(
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
     @SerialName("is_location_assigned") val isLocationAssigned: Boolean? = null,
+    /**
+     * Present when the view exposes the originating pin. Defaulted so a view
+     * without the column still decodes cleanly.
+     */
+    @SerialName("pin_id") val pinId: String? = null,
 ) {
     /** Tagged as a remote source record for the adapter's merge. */
     fun sourceRecord(): ElRipenessObservationAdapter.SourceRecord =
@@ -52,6 +57,7 @@ data class RipenessObservationRow(
             ),
             origin = ElRipenessObservationAdapter.Origin.REMOTE,
             placementAssigned = isLocationAssigned,
+            pinId = pinId?.lowercase(),
         )
 }
 

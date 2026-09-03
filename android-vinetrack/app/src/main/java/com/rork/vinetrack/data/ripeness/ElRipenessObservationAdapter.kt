@@ -39,6 +39,13 @@ object ElRipenessObservationAdapter {
         /** Replayed from the on-disk offline cache. */
         CACHED,
 
+        /**
+         * A row from the locally-synced `growth_stage_records` store — the
+         * same store the Growth Stage Summary reads. Included so the two
+         * surfaces can never disagree about how many observations exist.
+         */
+        LOCAL_RECORD,
+
         /** A local growth-stage record that has not yet reached the server. */
         PENDING_LOCAL,
     }
@@ -55,13 +62,36 @@ object ElRipenessObservationAdapter {
         val record: ElRipenessHeatmap.RawRecord,
         val origin: Origin,
         val placementAssigned: Boolean? = null,
-    )
+        /**
+         * The originating growth-stage pin, when this record mirrors one.
+         *
+         * The same physical observation reaches us under a different primary
+         * key depending on the path it took: the remote view keys on its own
+         * row id, `growth_stage_records` keys on the record id, and an
+         * unsynced pin keys on the pin id. Deduping on the pin is the only
+         * way those collapse to a single observation.
+         */
+        val pinId: String? = null,
+    ) {
+        /**
+         * Identity for dedupe. Falls back to the record id when no pin is
+         * known, which preserves the original id-only behaviour exactly.
+         */
+        val dedupeKey: String get() = pinId ?: record.id
+    }
 
-    /** Higher wins a dedupe collision. */
+    /**
+     * Higher wins a dedupe collision.
+     *
+     * `LOCAL_RECORD` sits below `REMOTE` because the remote view is canonical
+     * when reachable, but above `CACHED` because the local store is kept fresh
+     * by its own sync service.
+     */
     fun precedence(origin: Origin): Int = when (origin) {
         Origin.CACHED -> 0
-        Origin.REMOTE -> 1
-        Origin.PENDING_LOCAL -> 2
+        Origin.LOCAL_RECORD -> 1
+        Origin.REMOTE -> 2
+        Origin.PENDING_LOCAL -> 3
     }
 
     /**
@@ -76,7 +106,7 @@ object ElRipenessObservationAdapter {
         val byId = LinkedHashMap<String, SourceRecord>(sources.size)
 
         for (source in sources) {
-            val id = source.record.id
+            val id = source.dedupeKey
             val existing = byId[id]
             if (existing != null) {
                 if (precedence(source.origin) > precedence(existing.origin)) {
@@ -152,8 +182,33 @@ object ElRipenessObservationAdapter {
             // none; there is no separate placement row to consult yet, so the
             // signal is only ever a revocation when the block is absent.
             placementAssigned = null,
+            pinId = record.pinId?.lowercase(),
         )
     }
+
+    /**
+     * Converts a synced `growth_stage_records` row into a raw record.
+     *
+     * This is the bridge that stops the Summary and the Heatmap disagreeing:
+     * the Summary's own store now feeds the same contract pipeline the map
+     * uses. Placement is left as "no signal" rather than guessed, because the
+     * local store carries no `pin_placements` row — under the contract that
+     * means *not revoked*, so a record with a block keeps it.
+     */
+    fun localRecord(
+        record: GrowthStageRecord,
+        timeZone: TimeZone,
+    ): SourceRecord? = pendingRecord(record, timeZone)
+        ?.copy(origin = Origin.LOCAL_RECORD)
+
+    /** All synced growth-stage records for a vineyard. */
+    fun localRecords(
+        records: List<GrowthStageRecord>,
+        vineyardId: String?,
+        timeZone: TimeZone,
+    ): List<SourceRecord> = records
+        .filter { vineyardId == null || it.vineyardId.equals(vineyardId, ignoreCase = true) }
+        .mapNotNull { localRecord(it, timeZone) }
 
     /** All pending local growth-stage observations for a vineyard. */
     fun pendingRecords(

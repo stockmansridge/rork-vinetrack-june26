@@ -27,6 +27,10 @@ nonisolated enum ELRipenessObservationAdapter {
         case remote
         /// Replayed from the on-disk offline cache.
         case cached
+        /// A row from the locally-synced `growth_stage_records` store — the
+        /// same store the Growth Stage Summary reads. Included so the two
+        /// surfaces can never disagree about how many observations exist.
+        case localRecord
         /// A local growth-stage pin that has not yet round-tripped to the server.
         case pendingLocal
     }
@@ -39,20 +43,43 @@ nonisolated enum ELRipenessObservationAdapter {
         /// carries no placement row at all. `nil` means "no signal", which the
         /// contract treats as *not revoked* — it is not the same as `false`.
         let placementAssigned: Bool?
+        /// The originating growth-stage pin, when this record mirrors one.
+        ///
+        /// The same physical observation reaches us with a different primary
+        /// key depending on the path it took: the remote view keys on its own
+        /// row id, `growth_stage_records` keys on the record id, and an
+        /// unsynced pin keys on the pin id. Deduping on the pin is the only
+        /// way those three collapse to one observation.
+        let pinId: String?
 
-        init(record: ELRipeness.RawRecord, origin: Origin, placementAssigned: Bool? = nil) {
+        init(
+            record: ELRipeness.RawRecord,
+            origin: Origin,
+            placementAssigned: Bool? = nil,
+            pinId: String? = nil
+        ) {
             self.record = record
             self.origin = origin
             self.placementAssigned = placementAssigned
+            self.pinId = pinId
         }
+
+        /// Identity for dedupe. Falls back to the record id when no pin is
+        /// known, which preserves the original id-only behaviour exactly.
+        var dedupeKey: String { pinId ?? record.id }
     }
 
     /// Higher wins a dedupe collision.
+    ///
+    /// `localRecord` sits below `remote` because the remote view is canonical
+    /// when we can reach it, but above `cached` because the local store is
+    /// kept fresh by its own sync service.
     static func precedence(_ origin: Origin) -> Int {
         switch origin {
         case .cached: return 0
-        case .remote: return 1
-        case .pendingLocal: return 2
+        case .localRecord: return 1
+        case .remote: return 2
+        case .pendingLocal: return 3
         }
     }
 
@@ -68,7 +95,7 @@ nonisolated enum ELRipenessObservationAdapter {
         byId.reserveCapacity(sources.count)
 
         for source in sources {
-            let id = source.record.id
+            let id = source.dedupeKey
             if let existing = byId[id] {
                 if precedence(source.origin) > precedence(existing.origin) {
                     byId[id] = source
@@ -93,6 +120,7 @@ nonisolated enum ELRipenessObservationAdapter {
                 assignedById[source.record.id] = assigned
             }
         }
+
         return ELRipeness.toObservations(
             merged.map(\.record),
             assignedById: assignedById,
@@ -140,8 +168,55 @@ nonisolated enum ELRipenessObservationAdapter {
         return SourceRecord(
             record: record,
             origin: .pendingLocal,
-            placementAssigned: placement.isAssigned
+            placementAssigned: placement.isAssigned,
+            pinId: pin.id.uuidString.lowercased()
         )
+    }
+
+    /// Converts a locally-synced `growth_stage_records` row into a raw record.
+    ///
+    /// This is the bridge that stops the Summary and the Heatmap disagreeing:
+    /// the Summary's own store now feeds the same contract pipeline the map
+    /// uses. Placement is left as "no signal" rather than guessed, because the
+    /// local store carries no `pin_placements` row — under the contract that
+    /// means *not revoked*, so a record with a block keeps it.
+    static func localRecord(
+        for record: GrowthStageRecord,
+        timeZone: TimeZone
+    ) -> SourceRecord? {
+        guard !record.stageCode.isEmpty else { return nil }
+        let raw = ELRipeness.RawRecord(
+            id: record.id.uuidString.lowercased(),
+            vineyardId: record.vineyardId.uuidString.lowercased(),
+            paddockId: record.paddockId?.uuidString.lowercased(),
+            stageCode: record.stageCode,
+            latitude: record.latitude,
+            longitude: record.longitude,
+            date: isoString(record.observedAt, in: timeZone),
+            completedAt: nil,
+            createdAt: isoString(record.createdAt, in: timeZone),
+            deletedAt: nil
+        )
+        return SourceRecord(
+            record: raw,
+            origin: .localRecord,
+            placementAssigned: nil,
+            pinId: record.pinId?.uuidString.lowercased()
+        )
+    }
+
+    /// All locally-synced growth-stage records for a vineyard.
+    static func localRecords(
+        _ records: [GrowthStageRecord],
+        vineyardId: UUID?,
+        timeZone: TimeZone
+    ) -> [SourceRecord] {
+        records
+            .filter { record in
+                guard let vineyardId else { return true }
+                return record.vineyardId == vineyardId
+            }
+            .compactMap { localRecord(for: $0, timeZone: timeZone) }
     }
 
     /// All pending local growth-stage observations for a vineyard.

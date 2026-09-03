@@ -1,56 +1,47 @@
 import SwiftUI
 
-/// Read-only debug/validation view for the new `growth_stage_records` sync
-/// store. Lets us verify that mirrored rows from growth-stage pins are being
-/// created, synced and displayed correctly before we migrate the existing
-/// Growth Stage Report flow off pins.
+/// Growth Stage Records.
+///
+/// Two views over **one** read feed: a Summary (statistics + record list) and
+/// the E-L Ripeness Heatmap. Both are driven by the same
+/// `ELRipenessHeatmapModel`, which merges the locally-synced
+/// `growth_stage_records` store, the remote `v_growth_stage_observations`
+/// view, the offline cache and not-yet-synced pins into a single deduplicated
+/// set. That shared feed is the whole point: previously the Summary read the
+/// local store and the map read the remote view, so the two could disagree
+/// about how many observations existed.
 struct GrowthStageRecordsListView: View {
+
+    /// Which view of the same feed is on screen.
+    private enum ViewMode: String, CaseIterable, Identifiable {
+        case summary = "Summary"
+        case heatmap = "Ripeness Heatmap"
+
+        var id: String { rawValue }
+    }
+
     @Environment(MigratedDataStore.self) private var store
     @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
     @Environment(BackendAccessControl.self) private var accessControl
+    @Environment(NetworkMonitor.self) private var network
 
+    @State private var feed = ELRipenessHeatmapModel()
+    @State private var viewMode: ViewMode = .summary
     @State private var searchText: String = ""
-    @State private var showPDFExport: Bool = false
+    @State private var isExporting: Bool = false
+    @State private var exportError: String?
+    @State private var sharePDF: SharePDFURL?
+
+    private struct SharePDFURL: Identifiable {
+        let url: URL
+        var id: String { url.absoluteString }
+    }
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
+    private var timeZone: TimeZone { store.settings.resolvedTimeZone }
 
-    private var vineyardRecords: [GrowthStageRecord] {
-        guard let vineyardId = store.selectedVineyardId else { return [] }
-        let mirrored = growthStageRecordSync.records.filter { $0.vineyardId == vineyardId }
-        // Fallback: synthesize ephemeral records for any growth-stage pins
-        // that haven't been mirrored yet (e.g. legacy pins created before
-        // the sync service existed). This guarantees the new list is never
-        // empty when the old Growth Stage Report can see records.
-        let mirroredPinIds = Set(mirrored.compactMap { $0.pinId })
-        let legacy: [GrowthStageRecord] = store.pins.compactMap { pin in
-            guard pin.vineyardId == vineyardId,
-                  pin.mode == .growth,
-                  let code = pin.growthStageCode, !code.isEmpty,
-                  !mirroredPinIds.contains(pin.id) else { return nil }
-            let label = GrowthStage.allStages.first { $0.code == code }?.description
-            let variety = paddockVariety(for: pin.paddockId)
-            return GrowthStageRecord(
-                id: pin.id, // ephemeral, stable per pin
-                vineyardId: pin.vineyardId,
-                paddockId: pin.paddockId,
-                pinId: pin.id,
-                stageCode: code,
-                stageLabel: label,
-                variety: variety,
-                observedAt: pin.timestamp,
-                latitude: pin.latitude,
-                longitude: pin.longitude,
-                rowNumber: pin.rowNumber,
-                side: nil, // intentionally hidden for growth-stage display
-                notes: pin.notes,
-                photoPaths: pin.photoPath.map { [$0] } ?? [],
-                recordedByName: pin.createdBy,
-                createdAt: pin.timestamp,
-                updatedAt: pin.timestamp
-            )
-        }
-        return (mirrored + legacy).sorted { $0.observedAt > $1.observedAt }
-    }
+    /// The single source of truth for both views.
+    private var vineyardRecords: [GrowthStageRecord] { feed.summaryRecords }
 
     private var filteredRecords: [GrowthStageRecord] {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -68,20 +59,102 @@ struct GrowthStageRecordsListView: View {
         }
     }
 
-    private var mirroredFromPinsCount: Int {
-        vineyardRecords.filter { $0.pinId != nil }.count
-    }
-
-    private var withPhotosCount: Int {
-        vineyardRecords.filter { !$0.photoPaths.isEmpty }.count
-    }
-
     var body: some View {
+        Group {
+            switch viewMode {
+            case .summary:
+                summaryList
+            case .heatmap:
+                ELRipenessHeatmapContent(
+                    model: feed,
+                    isOnline: network.isOnline,
+                    formatter: fmt,
+                    timeZone: timeZone,
+                    onRetry: { await load(force: true) }
+                )
+            }
+        }
+        .safeAreaInset(edge: .top) {
+            Picker("View", selection: $viewMode) {
+                ForEach(ViewMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(.bar)
+        }
+        .navigationTitle("Growth Stage Records")
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: store.selectedVineyardId) {
+            await growthStageRecordSync.syncForSelectedVineyard()
+            await load()
+        }
+        .onChange(of: growthStageRecordSync.records.count) {
+            feed.refreshLocal(
+                pins: store.pins,
+                localRecords: growthStageRecordSync.records,
+                timeZone: timeZone
+            )
+        }
+        .onChange(of: store.pins.count) {
+            feed.refreshLocal(
+                pins: store.pins,
+                localRecords: growthStageRecordSync.records,
+                timeZone: timeZone
+            )
+        }
+        .onDisappear { feed.teardown() }
+        .toolbar {
+            // Only shown when it performs a real export.
+            if accessControl.canExport, !vineyardRecords.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        exportPDF()
+                    } label: {
+                        if isExporting {
+                            ProgressView()
+                        } else {
+                            Label("Export PDF", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                    .disabled(isExporting)
+                }
+            }
+        }
+        .sheet(item: $sharePDF) { item in
+            ShareSheet(items: [item.url])
+        }
+        .alert(
+            "Export Failed",
+            isPresented: Binding(
+                get: { exportError != nil },
+                set: { if !$0 { exportError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { exportError = nil }
+        } message: {
+            Text(exportError ?? "")
+        }
+    }
+
+    // MARK: - Summary
+
+    private var summaryList: some View {
         List {
             Section {
                 summaryCard
                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     .listRowBackground(Color.clear)
+            }
+
+            if let message = feedProblem {
+                Section {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
             }
 
             if filteredRecords.isEmpty {
@@ -98,66 +171,103 @@ struct GrowthStageRecordsListView: View {
                     }
                 } header: {
                     Text("Records (\(filteredRecords.count))")
-                } footer: {
-                    Text("Read-only. Mirrored from growth-stage pins via pin_id where applicable.")
-                        .font(.caption2)
                 }
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle("Growth Stage Records")
-        .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search variety, block, stage, notes")
-        .task { await growthStageRecordSync.syncForSelectedVineyard() }
-        .refreshable { await growthStageRecordSync.syncForSelectedVineyard() }
-        .toolbar {
-            if accessControl.canExport {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showPDFExport = true
-                    } label: {
-                        Label("Export PDF", systemImage: "square.and.arrow.up")
-                    }
-                }
-            }
-        }
-        .sheet(isPresented: $showPDFExport) {
-            NavigationStack {
-                GrowthStageReportView()
-                    .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button("Done") { showPDFExport = false }
-                        }
-                    }
-            }
+        .refreshable {
+            await growthStageRecordSync.syncForSelectedVineyard()
+            await load(force: true)
         }
     }
 
-    // MARK: - Summary
+    /// A load problem worth telling the operator about, phrased for the
+    /// Summary. A failure must never render as "no records".
+    private var feedProblem: String? {
+        switch feed.loadState {
+        case .failed(let message):
+            return "Could not load observations: \(message)"
+        case .unavailableOffline:
+            return "Not downloaded to this device yet — connect once to see this Vintage."
+        default:
+            break
+        }
+        for notice in feed.notices {
+            if case .remoteFailed = notice {
+                return "Showing locally stored data — the server could not be reached."
+            }
+            if case .offlineCache(let date) = notice {
+                return "Offline — showing data cached \(fmt.formatDate(date))."
+            }
+        }
+        return nil
+    }
 
     private var summaryCard: some View {
-        HStack(spacing: 0) {
-            summaryStat(
-                value: "\(vineyardRecords.count)",
-                label: "Total",
-                icon: "leaf.fill",
-                color: .green
-            )
-            summaryStat(
-                value: "\(mirroredFromPinsCount)",
-                label: "From Pins",
-                icon: "mappin.and.ellipse",
-                color: .orange
-            )
-            summaryStat(
-                value: "\(withPhotosCount)",
-                label: "With Photos",
-                icon: "photo.fill",
-                color: .blue
-            )
+        let counts = feed.statusCounts
+        return VStack(spacing: 12) {
+            HStack {
+                Label(
+                    feed.selectedVintage.map { "Vintage \($0)" } ?? "Vintage —",
+                    systemImage: "calendar"
+                )
+                .font(.subheadline.weight(.semibold))
+                Spacer()
+                if let median = feed.medianEl {
+                    Text("Typical stage \(ELRipeness.formatEl(median))")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.green)
+                }
+            }
+
+            HStack(spacing: 0) {
+                summaryStat(
+                    value: "\(counts.recorded)",
+                    label: "recorded",
+                    icon: "leaf.fill",
+                    color: .green
+                )
+                summaryStat(
+                    value: "\(counts.influencing)",
+                    label: "current",
+                    icon: "target",
+                    color: .blue
+                )
+                summaryStat(
+                    value: "\(counts.stale)",
+                    label: "stale",
+                    icon: "clock.arrow.circlepath",
+                    color: .secondary
+                )
+                if counts.unassigned > 0 {
+                    summaryStat(
+                        value: "\(counts.unassigned)",
+                        label: "unassigned",
+                        icon: "mappin.slash",
+                        color: .orange
+                    )
+                }
+            }
+
+            if feed.availableVintages.count > 1 {
+                Picker("Vintage", selection: vintageBinding) {
+                    ForEach(feed.availableVintages, id: \.self) { vintage in
+                        Text(String(vintage)).tag(vintage)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
         }
-        .padding(.vertical, 14)
+        .padding(14)
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
+    }
+
+    private var vintageBinding: Binding<Int> {
+        Binding(
+            get: { feed.selectedVintage ?? feed.availableVintages.first ?? 0 },
+            set: { feed.selectedVintage = $0 }
+        )
     }
 
     private func summaryStat(value: String, label: String, icon: String, color: Color) -> some View {
@@ -172,6 +282,8 @@ struct GrowthStageRecordsListView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(value) \(label)")
     }
 
     // MARK: - Row
@@ -234,14 +346,6 @@ struct GrowthStageRecordsListView: View {
                         .font(.caption2)
                         .foregroundStyle(.blue)
                 }
-                if record.pinId != nil {
-                    Label("from pin", systemImage: "mappin.and.ellipse")
-                        .font(.caption2)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.orange.opacity(0.15), in: .capsule)
-                        .foregroundStyle(.orange)
-                }
                 Spacer()
             }
         }
@@ -258,7 +362,7 @@ struct GrowthStageRecordsListView: View {
             Text(searchText.isEmpty ? "No growth stage records yet" : "No matches")
                 .font(.headline)
             Text(searchText.isEmpty
-                 ? "Add a growth-stage pin in the field — it will mirror here once synced."
+                 ? "Add a growth-stage pin in the field — it will appear here immediately, before it syncs."
                  : "Try a different search term.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -267,21 +371,67 @@ struct GrowthStageRecordsListView: View {
         }
     }
 
+    // MARK: - Loading & export
+
+    private func load(force: Bool = false) async {
+        guard let vineyardId = store.selectedVineyardId else { return }
+        await feed.load(
+            vineyardId: vineyardId,
+            paddocks: store.paddocks,
+            pins: store.pins,
+            localRecords: growthStageRecordSync.records,
+            seasonStartMonth: store.settings.seasonStartMonth,
+            seasonStartDay: store.settings.seasonStartDay,
+            timeZone: timeZone,
+            isOnline: network.isOnline,
+            force: force
+        )
+    }
+
+    private func exportPDF() {
+        guard !isExporting else { return }
+        isExporting = true
+
+        let pins = store.pins.filter {
+            $0.vineyardId == store.selectedVineyardId && $0.mode == .growth
+        }
+        let paddocks = store.paddocks.filter { $0.vineyardId == store.selectedVineyardId }
+        let vineyardName = store.selectedVineyard?.name ?? "Vineyard"
+        let seasonMonth = store.settings.seasonStartMonth
+        let seasonDay = store.settings.seasonStartDay
+        let exportTimeZone = timeZone
+        let dateFormat = store.settings.regionSettings.dateStyle.dateFormatTemplate
+        let localeIdentifier = "en_\(store.settings.regionSettings.countryCode.uppercased())"
+
+        Task.detached {
+            do {
+                let url = try GrowthStageReportExport.export(
+                    pins: pins,
+                    paddocks: paddocks,
+                    vineyardName: vineyardName,
+                    seasonStartMonth: seasonMonth,
+                    seasonStartDay: seasonDay,
+                    timeZone: exportTimeZone,
+                    dateFormat: dateFormat,
+                    localeIdentifier: localeIdentifier
+                )
+                await MainActor.run {
+                    isExporting = false
+                    sharePDF = SharePDFURL(url: url)
+                }
+            } catch {
+                await MainActor.run {
+                    isExporting = false
+                    exportError = error.localizedDescription
+                }
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private func paddockName(for id: UUID?) -> String? {
         guard let id else { return nil }
         return store.paddocks.first(where: { $0.id == id })?.name
-    }
-
-    private func paddockVariety(for id: UUID?) -> String? {
-        guard let id, let paddock = store.paddocks.first(where: { $0.id == id }) else { return nil }
-        for child in Mirror(reflecting: paddock).children {
-            guard let label = child.label?.lowercased() else { continue }
-            if label == "variety" || label == "grapevariety" || label == "grape" {
-                if let s = child.value as? String, !s.isEmpty { return s }
-            }
-        }
-        return nil
     }
 }

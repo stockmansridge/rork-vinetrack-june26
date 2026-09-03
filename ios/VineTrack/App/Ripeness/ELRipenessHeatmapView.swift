@@ -179,6 +179,7 @@ struct ELRipenessHeatmapContent: View {
             ELRipenessMapView(
                 overlays: model.overlays,
                 blocks: model.heatModel?.blocks ?? [],
+                allBlocks: model.blocks,
                 annotations: observationAnnotations,
                 labels: blockLabels,
                 selectedBlockId: model.selectedBlockId,
@@ -248,6 +249,8 @@ struct ELRipenessHeatmapContent: View {
                     ForEach(model.blocks, id: \.id) { block in
                         FilterChip(
                             title: block.name ?? "Block",
+                            // Selection is keyed on the paddock id, never the
+                            // name — two blocks may share a name.
                             isSelected: model.selectedBlockId == block.id
                         ) {
                             model.selectedBlockId = model.selectedBlockId == block.id ? nil : block.id
@@ -325,6 +328,18 @@ struct ELRipenessHeatmapContent: View {
                 text: "Offline — showing data cached \(fmt.formatDate(date))",
                 systemImage: "wifi.slash",
                 tint: .secondary
+            )
+        case .remoteFailed:
+            noticeLabel(
+                text: "Showing locally stored data — the server could not be reached",
+                systemImage: "exclamationmark.icloud",
+                tint: .orange
+            )
+        case .noBoundaries:
+            noticeLabel(
+                text: "No block boundaries for this vineyard — map cannot be positioned",
+                systemImage: "square.dashed",
+                tint: .orange
             )
         }
     }

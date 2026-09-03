@@ -781,4 +781,133 @@ final class ELRipenessHeatmapFeatureTests: XCTestCase {
         XCTAssertEqual(model.heatModel?.blocks.first?.paddockId, blockAId.uuidString.lowercased())
         XCTAssertEqual(model.medianEl, 30, "Block B's observation must not affect the filtered median")
     }
+
+    // MARK: - Shared read feed (Summary and Heatmap must agree)
+
+    private var adelaide: TimeZone { TimeZone(identifier: "Australia/Adelaide")! }
+
+    private func syncedRecord(
+        id: UUID = UUID(),
+        pinId: UUID? = nil,
+        stage: String = "E-L 2",
+        paddock: UUID? = nil
+    ) -> GrowthStageRecord {
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 1
+        components.day = 20
+        components.hour = 9
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = adelaide
+        return GrowthStageRecord(
+            id: id,
+            vineyardId: vineyardId,
+            paddockId: paddock ?? blockAId,
+            pinId: pinId,
+            stageCode: stage,
+            observedAt: calendar.date(from: components) ?? Date(),
+            latitude: -34.502,
+            longitude: 138.502
+        )
+    }
+
+    /// The exact reported defect: the Summary listed records the map could not
+    /// see, because the map only ever read the remote view. A synced record
+    /// must reach the heat feed even when the remote view returns nothing.
+    func testSyncedRecordReachesHeatmapWhenRemoteViewIsEmpty() {
+        let sources = ELRipenessObservationAdapter.localRecords(
+            [syncedRecord(), syncedRecord(), syncedRecord()],
+            vineyardId: vineyardId,
+            timeZone: adelaide
+        )
+        let observations = ELRipenessObservationAdapter.observations(
+            from: sources,
+            selectedVineyardId: vineyardId.uuidString.lowercased()
+        )
+        XCTAssertEqual(observations.count, 3)
+        XCTAssertTrue(observations.allSatisfy { $0.el == 2 })
+    }
+
+    /// The same physical observation arrives under three different primary
+    /// keys. Without pin-based dedupe the map would triple-count it.
+    func testRecordRemoteRowAndPinCollapseToOneObservation() {
+        let pin = UUID()
+        let local = ELRipenessObservationAdapter.localRecord(
+            for: syncedRecord(pinId: pin),
+            timeZone: adelaide
+        )!
+        let remote = ELRipenessObservationAdapter.SourceRecord(
+            record: raw("obs-1", paddock: blockAId.uuidString.lowercased(), stage: "E-L 2", vineyard: vineyardId.uuidString.lowercased()),
+            origin: .remote,
+            pinId: pin.uuidString.lowercased()
+        )
+        let pending = ELRipenessObservationAdapter.SourceRecord(
+            record: raw(pin.uuidString.lowercased(), paddock: blockAId.uuidString.lowercased(), stage: "E-L 4", vineyard: vineyardId.uuidString.lowercased()),
+            origin: .pendingLocal,
+            pinId: pin.uuidString.lowercased()
+        )
+
+        let merged = ELRipenessObservationAdapter.merge([local, remote, pending])
+        XCTAssertEqual(merged.count, 1)
+        // The unsynced local edit is the freshest truth.
+        XCTAssertEqual(merged.first?.origin, .pendingLocal)
+
+        let observations = ELRipenessObservationAdapter.observations(
+            from: [local, remote, pending],
+            selectedVineyardId: vineyardId.uuidString.lowercased()
+        )
+        XCTAssertEqual(observations.count, 1)
+    }
+
+    /// Records without a pin still dedupe on their own id, as before.
+    func testRecordsWithNoPinKeepIdBasedDedupe() {
+        let a = ELRipenessObservationAdapter.localRecord(for: syncedRecord(), timeZone: adelaide)!
+        let b = ELRipenessObservationAdapter.localRecord(for: syncedRecord(), timeZone: adelaide)!
+        XCTAssertEqual(ELRipenessObservationAdapter.merge([a, b]).count, 2)
+    }
+
+    /// Summary and Heatmap read one feed, so their counts are the same numbers.
+    /// Mirrors the live Stockmans Ridge expectation: three records, all
+    /// current, typical stage E-L 2, painted red.
+    func testSummaryAndHeatmapCountsComeFromTheSameMergedFeed() {
+        let sources = ELRipenessObservationAdapter.localRecords(
+            [
+                syncedRecord(pinId: UUID()),
+                syncedRecord(pinId: UUID()),
+                syncedRecord(pinId: UUID())
+            ],
+            vineyardId: vineyardId,
+            timeZone: adelaide
+        )
+        let observations = ELRipenessObservationAdapter.observations(
+            from: sources,
+            selectedVineyardId: vineyardId.uuidString.lowercased()
+        )
+        let model = ELRipeness.buildHeatModel(
+            observations: observations,
+            blocks: [
+                ELRipeness.BlockInput(
+                    id: blockAId.uuidString.lowercased(),
+                    name: "Gr\u{00FC}ner Veltliner",
+                    polygon: [
+                        ELRipeness.LatLng(lat: -34.503, lng: 138.501),
+                        ELRipeness.LatLng(lat: -34.503, lng: 138.503),
+                        ELRipeness.LatLng(lat: -34.501, lng: 138.503),
+                        ELRipeness.LatLng(lat: -34.501, lng: 138.501)
+                    ]
+                )
+            ],
+            atDateISO: "2026-01-20"
+        )
+
+        XCTAssertEqual(model.qualifying.count, 3)
+        XCTAssertEqual(model.influencing.count, 3)
+        XCTAssertEqual(model.stale.count, 0)
+        XCTAssertEqual(model.unassigned.count, 0)
+        XCTAssertEqual(model.medianEl, 2)
+        // A red surface: E-L 2 sits at the hot end of the ramp.
+        let colour = ELRipeness.elColour(2)
+        XCTAssertGreaterThan(colour.r, 200)
+        XCTAssertLessThan(colour.g, 90)
+    }
 }
