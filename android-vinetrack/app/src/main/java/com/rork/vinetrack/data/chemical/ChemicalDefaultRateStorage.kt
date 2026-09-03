@@ -87,9 +87,17 @@ data class StoredChemicalDefaultRates(
  */
 @Serializable
 data class StoredChemicalDefaultRate(
-    /** Deterministic identity of the grouped choice. See [ChemicalDefaultRateIdentity]. */
+    /**
+     * Deterministic identity of the grouped choice. See [ChemicalDefaultRateIdentity].
+     *
+     * Empty for a `manual` entry, which has no official identity at all.
+     */
     @SerialName("option_key") val optionKey: String,
-    /** Gate D1 `rate_v1_` identities of printed DIRECTIONS. Never UUIDs. At least one. */
+    /**
+     * Gate D1 `rate_v1_` identities of printed DIRECTIONS. Never UUIDs.
+     *
+     * At least one for a `canonical` entry; always empty for a `manual` one.
+     */
     @SerialName("rate_ids") val rateIds: List<String>,
     /** Must equal the slot this selection is stored under. */
     val basis: String,
@@ -121,10 +129,68 @@ data class StoredChemicalDefaultRate(
      * reissued label restating the same direction would orphan the default.
      */
     @SerialName("label_version") val labelVersion: String? = null,
+    /**
+     * How the amount entered VineTrack. Orthogonal to [source], which records
+     * who settled on it.
+     *
+     * * `canonical` — read from a registered label direction, and therefore
+     *   carrying a server-minted `option_key` plus at least one `rate_v1_`
+     *   citation.
+     * * `manual` — typed by the operator because the label reader could not
+     *   extract a rate with confidence. It has NO official identity and never
+     *   acquires one: minting `manual_rate` or `user_rate_1` to satisfy a
+     *   model would invent a citation the regulator never issued.
+     *
+     * A manual rate is still real VineTrack data once a human confirms it
+     * (`source == operator`). It simply is not label evidence, and the two must
+     * stay distinguishable forever.
+     *
+     * Defaulted to `canonical` and ALWAYS encoded: rows written before this
+     * field existed are canonical by construction, because nothing could
+     * persist a default without a server-minted identity at the time.
+     */
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
+    @SerialName("entry_method") val entryMethod: String = ENTRY_CANONICAL,
 ) {
+    /** True when the operator typed this amount rather than reading it off a label. */
+    val isManualEntry: Boolean get() = entryMethod.trim() == ENTRY_MANUAL
+
+    /** True when a human settled on this amount, whatever its origin. */
+    val isConfirmedByOperator: Boolean get() = source.trim() == SOURCE_OPERATOR
+
     companion object {
         const val SOURCE_OPERATOR: String = "operator"
         const val SOURCE_RECOMMENDED: String = "recommended"
+        const val ENTRY_CANONICAL: String = "canonical"
+        const val ENTRY_MANUAL: String = "manual"
+
+        /**
+         * A user-typed, user-confirmed rate. Scalar or range, no official
+         * identity.
+         *
+         * Deliberately the ONLY way to build one: it hard-codes the empty
+         * `optionKey`/`rateIds` so no call site can drift into inventing them.
+         */
+        fun manual(
+            basis: ChemicalDefaultRateBasis,
+            unit: String,
+            value: Double? = null,
+            minValue: Double? = null,
+            maxValue: Double? = null,
+            selectedAt: String? = null,
+        ): StoredChemicalDefaultRate = StoredChemicalDefaultRate(
+            optionKey = "",
+            rateIds = emptyList(),
+            basis = basis.raw,
+            unit = unit,
+            value = value,
+            minValue = minValue,
+            maxValue = maxValue,
+            source = SOURCE_OPERATOR,
+            selectedAt = selectedAt,
+            entryMethod = ENTRY_MANUAL,
+        )
     }
 }
 

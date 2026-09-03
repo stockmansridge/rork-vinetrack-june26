@@ -58,10 +58,69 @@ data class ChemicalLineSnapshot(
      */
     @SerialName("legacy_chemical_group") val legacyChemicalGroup: String? = null,
     @SerialName("captured_at") val capturedAt: String? = null,
+
+    // ---- Applied rate provenance ----
+    //
+    // What was ACTUALLY poured, and where that number came from. Frozen for the
+    // same reason as the chemistry above: a spray must stay readable after the
+    // Chemical Store record moves on.
+    //
+    // This matters most for a confirmed BAND. If the store holds `2-3 L/100 L`
+    // and the operator sprayed 2.5, the record has to say 2.5 — the range alone
+    // cannot reconstruct it, and re-reading the store later would give a band
+    // rather than the dose. Equally the store must keep saying `2-3`: the 2.5
+    // belonged to one tank, not to the product.
+
+    /** The dose actually applied on this line, in [appliedRateUnit]. */
+    @SerialName("applied_rate") val appliedRate: Double? = null,
+    /** The unit that dose was expressed in — never the pack unit. */
+    @SerialName("applied_rate_unit") val appliedRateUnit: String? = null,
+    /**
+     * The basis the dose was quoted against (`per_hectare` / `per_100_litres`),
+     * stored verbatim so no reader has to infer it, and never converted.
+     */
+    @SerialName("applied_rate_basis") val appliedRateBasis: String? = null,
+    /**
+     * Whether the rate this dose came from was a registered label direction
+     * (`canonical`) or one the operator typed and confirmed (`manual`).
+     *
+     * Keeps the official/user-confirmed distinction alive in history: a record
+     * must never later present a typed rate as label evidence.
+     */
+    @SerialName("rate_entry_method") val rateEntryMethod: String? = null,
+    /** The confirmed band this dose was chosen inside, when there was one. */
+    @SerialName("rate_range_min") val rateRangeMin: Double? = null,
+    @SerialName("rate_range_max") val rateRangeMax: Double? = null,
 ) {
     /** Whether this snapshot carries anything the Resistance Engine could use. */
     val hasResistanceData: Boolean
         get() = activityGroupCodes.isNotEmpty() || activeIngredients.any { it.name.isNotEmpty() }
+
+    /** True when the dose on this line came from a rate the operator typed. */
+    val isUserEnteredRate: Boolean
+        get() = rateEntryMethod?.trim() == StoredChemicalDefaultRate.ENTRY_MANUAL
+
+    /**
+     * Records what was actually applied, and where the rate came from.
+     *
+     * Returns a COPY: the saved chemical's own confirmed rate is never touched,
+     * which is what keeps a stored `2-3 L/100 L` band intact after a spray goes
+     * out at 2.5.
+     */
+    fun recordingApplied(
+        rate: Double,
+        unit: String,
+        basis: ChemicalDefaultRateBasis,
+        entryMethod: String,
+        confirmedRange: ChemicalDefaultRateValidity.Amount.Range? = null,
+    ): ChemicalLineSnapshot = copy(
+        appliedRate = rate,
+        appliedRateUnit = unit,
+        appliedRateBasis = basis.raw,
+        rateEntryMethod = entryMethod,
+        rateRangeMin = confirmedRange?.min,
+        rateRangeMax = confirmedRange?.max,
+    )
 
     companion object {
         /**

@@ -101,10 +101,33 @@ nonisolated struct StoredChemicalDefaultRate: Codable, Sendable, Hashable {
     static let sourceOperator: String = "operator"
     static let sourceRecommended: String = "recommended"
 
+    /// How the amount entered VineTrack. Orthogonal to `source`, which records
+    /// who settled on it.
+    ///
+    /// * `canonical` — read from a registered label direction, and therefore
+    ///   carrying a server-minted `option_key` and at least one `rate_v1_`
+    ///   citation.
+    /// * `manual` — typed by the operator because the label reader could not
+    ///   extract a rate with confidence. It has NO official identity and never
+    ///   acquires one: minting `manual_rate` or `user_rate_1` to satisfy a
+    ///   model would be inventing a citation the regulator never issued.
+    ///
+    /// A manual rate is still real VineTrack data once a human confirms it
+    /// (`source == operator`). It is simply not label evidence, and the two
+    /// must stay distinguishable forever — that distinction is the whole
+    /// reason this field exists rather than a blank `option_key` being treated
+    /// as "probably fine".
+    static let entryCanonical: String = "canonical"
+    static let entryManual: String = "manual"
+
     /// Deterministic identity of the grouped choice, minted by the SERVER and
     /// copied here verbatim. Never computed on device.
+    ///
+    /// Empty for a `manual` entry, which has no official identity at all.
     var optionKey: String
-    /// Gate D1 `rate_v1_` identities of printed DIRECTIONS. Never UUIDs. At least one.
+    /// Gate D1 `rate_v1_` identities of printed DIRECTIONS. Never UUIDs.
+    ///
+    /// At least one for a `canonical` entry; always empty for a `manual` one.
     var rateIds: [String]
     /// Must equal the slot this selection is stored under.
     var basis: String
@@ -118,6 +141,10 @@ nonisolated struct StoredChemicalDefaultRate: Codable, Sendable, Hashable {
     var maxValue: Double?
     /// Provenance, never part of identity. `operator` means a human confirmed it.
     var source: String
+    /// `canonical` or `manual`. Absent in rows written before this field
+    /// existed, and those rows are canonical by construction — nothing could
+    /// persist a default without a server-minted identity at the time.
+    var entryMethod: String
     /// Provenance. Optional; never part of identity.
     var selectedAt: String?
     /// The label revision the amount was read from. Provenance for "the label
@@ -134,6 +161,7 @@ nonisolated struct StoredChemicalDefaultRate: Codable, Sendable, Hashable {
         minValue: Double? = nil,
         maxValue: Double? = nil,
         source: String = StoredChemicalDefaultRate.sourceOperator,
+        entryMethod: String = StoredChemicalDefaultRate.entryCanonical,
         selectedAt: String? = nil,
         labelVersion: String? = nil
     ) {
@@ -145,8 +173,60 @@ nonisolated struct StoredChemicalDefaultRate: Codable, Sendable, Hashable {
         self.minValue = minValue
         self.maxValue = maxValue
         self.source = source
+        self.entryMethod = entryMethod
         self.selectedAt = selectedAt
         self.labelVersion = labelVersion
+    }
+
+    /// A user-typed, user-confirmed rate. Scalar or range, no official identity.
+    ///
+    /// Deliberately the ONLY way to build one: it hard-codes the empty
+    /// `optionKey`/`rateIds` so no call site can drift into inventing them.
+    static func manual(
+        basis: ChemicalDefaultRateBasis,
+        unit: String,
+        value: Double? = nil,
+        minValue: Double? = nil,
+        maxValue: Double? = nil,
+        selectedAt: String? = nil
+    ) -> StoredChemicalDefaultRate {
+        StoredChemicalDefaultRate(
+            optionKey: "",
+            rateIds: [],
+            basis: basis.rawValue,
+            unit: unit,
+            value: value,
+            minValue: minValue,
+            maxValue: maxValue,
+            source: StoredChemicalDefaultRate.sourceOperator,
+            entryMethod: StoredChemicalDefaultRate.entryManual,
+            selectedAt: selectedAt
+        )
+    }
+
+    /// True when the operator typed this amount rather than reading it off a
+    /// registered direction.
+    var isManualEntry: Bool {
+        entryMethod.trimmingCharacters(in: .whitespacesAndNewlines) == Self.entryManual
+    }
+
+    nonisolated init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        optionKey = try c.decodeIfPresent(String.self, forKey: .optionKey) ?? ""
+        rateIds = try c.decodeIfPresent([String].self, forKey: .rateIds) ?? []
+        basis = try c.decode(String.self, forKey: .basis)
+        unit = try c.decode(String.self, forKey: .unit)
+        value = try c.decodeIfPresent(Double.self, forKey: .value)
+        minValue = try c.decodeIfPresent(Double.self, forKey: .minValue)
+        maxValue = try c.decodeIfPresent(Double.self, forKey: .maxValue)
+        source = try c.decodeIfPresent(String.self, forKey: .source)
+            ?? StoredChemicalDefaultRate.sourceOperator
+        // Absent means canonical: nothing could persist a default without a
+        // server-minted identity before this field existed.
+        entryMethod = try c.decodeIfPresent(String.self, forKey: .entryMethod)
+            ?? StoredChemicalDefaultRate.entryCanonical
+        selectedAt = try c.decodeIfPresent(String.self, forKey: .selectedAt)
+        labelVersion = try c.decodeIfPresent(String.self, forKey: .labelVersion)
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -158,6 +238,7 @@ nonisolated struct StoredChemicalDefaultRate: Codable, Sendable, Hashable {
         case minValue = "min_value"
         case maxValue = "max_value"
         case source
+        case entryMethod = "entry_method"
         case selectedAt = "selected_at"
         case labelVersion = "label_version"
     }

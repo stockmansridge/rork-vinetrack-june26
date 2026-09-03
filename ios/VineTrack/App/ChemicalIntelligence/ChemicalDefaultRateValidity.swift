@@ -82,6 +82,17 @@ nonisolated enum ChemicalDefaultRateValidity {
             if case .range(let min, let max) = amount { return (min, max) }
             return nil
         }
+
+        /// True when the operator typed this amount rather than reading it off
+        /// a registered direction. Drives wording — "User-confirmed" rather
+        /// than "Verified official rate" — and never weakens validation.
+        var isManualEntry: Bool { slot.isManualEntry }
+
+        /// True when a human settled on this amount, whatever its origin.
+        var isConfirmedByOperator: Bool {
+            slot.source.trimmingCharacters(in: .whitespacesAndNewlines)
+                == StoredChemicalDefaultRate.sourceOperator
+        }
     }
 
     /// The slot stored on `basis`, or `nil` when there is none the contract can
@@ -109,16 +120,30 @@ nonisolated enum ChemicalDefaultRateValidity {
         guard let slot = defaults.slot(basis) else { return nil }
 
         let key = slot.optionKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let keyPrefix = ChemicalServerDefaultRateOption.optionKeyPrefix
-        guard key.hasPrefix(keyPrefix), key.count > keyPrefix.count else { return nil }
-
-        // Trimmed rather than filtered: a blank entry in the citation list is a
-        // malformed row, not a row with one fewer citation.
-        let idPrefix = ChemicalServerDefaultRateOption.rateIDPrefix
         let ids = slot.rateIds.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        guard !ids.isEmpty else { return nil }
-        guard ids.allSatisfy({ $0.hasPrefix(idPrefix) && $0.count > idPrefix.count }) else {
-            return nil
+
+        if slot.isManualEntry {
+            // A manual rate has no official identity, and that is the point.
+            // Demanding one here is exactly what made a user-confirmed
+            // 2–3 L/100 L read as "Rate confirmation required" forever.
+            //
+            // The absence is CHECKED rather than merely tolerated: a row
+            // claiming to be manual while carrying a citation is not a manual
+            // rate expressed oddly, it is a row whose provenance contradicts
+            // itself, and believing either half would lend label authority to
+            // something a human typed.
+            guard key.isEmpty, ids.allSatisfy(\.isEmpty) else { return nil }
+        } else {
+            let keyPrefix = ChemicalServerDefaultRateOption.optionKeyPrefix
+            guard key.hasPrefix(keyPrefix), key.count > keyPrefix.count else { return nil }
+
+            // Trimmed rather than filtered: a blank entry in the citation list
+            // is a malformed row, not a row with one fewer citation.
+            let idPrefix = ChemicalServerDefaultRateOption.rateIDPrefix
+            guard !ids.isEmpty else { return nil }
+            guard ids.allSatisfy({ $0.hasPrefix(idPrefix) && $0.count > idPrefix.count }) else {
+                return nil
+            }
         }
 
         guard slot.basis.trimmingCharacters(in: .whitespacesAndNewlines) == basis.rawValue else {
@@ -154,6 +179,25 @@ nonisolated enum ChemicalDefaultRateValidity {
             validSlot(defaults, basis: .perHectare),
             validSlot(defaults, basis: .per100Litres)
         ].compactMap { $0 }
+    }
+
+    /// Every basis carrying an operator-confirmed amount — scalar OR range.
+    ///
+    /// A confirmed range IS a real decision: the operator has said "this
+    /// product, this band, on this basis". What it does not settle is the dose
+    /// for one particular tank, and that is asked for when the spray is built
+    /// rather than guessed here.
+    static func confirmedSlots(_ defaults: StoredChemicalDefaultRates?) -> [ValidSlot] {
+        validSlots(defaults).filter(\.isConfirmedByOperator)
+    }
+
+    /// Whether `value` lies inside a confirmed band, inclusive of both ends.
+    ///
+    /// Inclusive because a label authorises its own bounds: 2 and 3 are both
+    /// legal doses of a `2–3 L/100 L` direction.
+    static func isWithinRange(_ value: Double, min: Double, max: Double) -> Bool {
+        guard value.isFinite, min.isFinite, max.isFinite else { return false }
+        return value >= min && value <= max
     }
 }
 

@@ -44,6 +44,36 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
     /// When the snapshot was taken.
     var capturedAt: Date?
 
+    // MARK: - Applied rate provenance
+    //
+    // What was ACTUALLY poured, and where that number came from. Frozen for
+    // the same reason as the chemistry above: a spray must stay readable
+    // after the Chemical Store record moves on.
+    //
+    // This matters most for a confirmed BAND. If the store holds
+    // `2–3 L/100 L` and the operator sprayed 2.5, the record has to say 2.5
+    // — the range alone cannot reconstruct it, and re-reading the store later
+    // would give a band rather than the dose. Equally, the store must keep
+    // saying `2–3`: the 2.5 belonged to one tank, not to the product.
+
+    /// The dose actually applied on this line, in `appliedRateUnit`.
+    var appliedRate: Double?
+    /// The unit that dose was expressed in — never the pack unit.
+    var appliedRateUnit: String?
+    /// The basis the dose was quoted against (`per_hectare` / `per_100_litres`).
+    /// Stored verbatim so no reader has to infer it, and never converted.
+    var appliedRateBasis: String?
+    /// Whether the rate this dose came from was a registered label direction
+    /// (`canonical`) or one the operator typed and confirmed (`manual`).
+    ///
+    /// Keeps the official/user-confirmed distinction alive in history: a
+    /// record must never later present a typed rate as label evidence.
+    var rateEntryMethod: String?
+    /// The confirmed band this dose was chosen inside, when there was one.
+    /// Absent for a single confirmed rate.
+    var rateRangeMin: Double?
+    var rateRangeMax: Double?
+
     init(
         savedChemicalId: String? = nil,
         productName: String? = nil,
@@ -55,7 +85,13 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
         schemaVersion: Int = ChemicalIntelligence.currentSchemaVersion,
         activityGroupTableVersion: Int = AuthoritativeActivityGroups.tableVersion,
         legacyChemicalGroup: String? = nil,
-        capturedAt: Date? = nil
+        capturedAt: Date? = nil,
+        appliedRate: Double? = nil,
+        appliedRateUnit: String? = nil,
+        appliedRateBasis: String? = nil,
+        rateEntryMethod: String? = nil,
+        rateRangeMin: Double? = nil,
+        rateRangeMax: Double? = nil
     ) {
         self.savedChemicalId = savedChemicalId
         self.productName = productName
@@ -68,6 +104,18 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
         self.activityGroupTableVersion = activityGroupTableVersion
         self.legacyChemicalGroup = legacyChemicalGroup
         self.capturedAt = capturedAt
+        self.appliedRate = appliedRate
+        self.appliedRateUnit = appliedRateUnit
+        self.appliedRateBasis = appliedRateBasis
+        self.rateEntryMethod = rateEntryMethod
+        self.rateRangeMin = rateRangeMin
+        self.rateRangeMax = rateRangeMax
+    }
+
+    /// True when the dose on this line came from a rate the operator typed.
+    nonisolated var isUserEnteredRate: Bool {
+        rateEntryMethod?.trimmingCharacters(in: .whitespacesAndNewlines)
+            == StoredChemicalDefaultRate.entryManual
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -82,6 +130,12 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
         case activityGroupTableVersion = "activity_group_table_version"
         case legacyChemicalGroup = "legacy_chemical_group"
         case capturedAt = "captured_at"
+        case appliedRate = "applied_rate"
+        case appliedRateUnit = "applied_rate_unit"
+        case appliedRateBasis = "applied_rate_basis"
+        case rateEntryMethod = "rate_entry_method"
+        case rateRangeMin = "rate_range_min"
+        case rateRangeMax = "rate_range_max"
     }
 
     /// One wire format for `captured_at` on both platforms: an ISO-8601 string.
@@ -117,6 +171,12 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
             capturedAt.map { Self.capturedAtFormatter.string(from: $0) },
             forKey: .capturedAt
         )
+        try c.encodeIfPresent(appliedRate, forKey: .appliedRate)
+        try c.encodeIfPresent(appliedRateUnit, forKey: .appliedRateUnit)
+        try c.encodeIfPresent(appliedRateBasis, forKey: .appliedRateBasis)
+        try c.encodeIfPresent(rateEntryMethod, forKey: .rateEntryMethod)
+        try c.encodeIfPresent(rateRangeMin, forKey: .rateRangeMin)
+        try c.encodeIfPresent(rateRangeMax, forKey: .rateRangeMax)
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -140,6 +200,34 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
         } else {
             capturedAt = try? c.decodeIfPresent(Date.self, forKey: .capturedAt)
         }
+        appliedRate = try c.decodeIfPresent(Double.self, forKey: .appliedRate)
+        appliedRateUnit = try c.decodeIfPresent(String.self, forKey: .appliedRateUnit)
+        appliedRateBasis = try c.decodeIfPresent(String.self, forKey: .appliedRateBasis)
+        rateEntryMethod = try c.decodeIfPresent(String.self, forKey: .rateEntryMethod)
+        rateRangeMin = try c.decodeIfPresent(Double.self, forKey: .rateRangeMin)
+        rateRangeMax = try c.decodeIfPresent(Double.self, forKey: .rateRangeMax)
+    }
+
+    /// Records what was actually applied, and where the rate came from.
+    ///
+    /// Returns a COPY: the saved chemical's own confirmed rate is never
+    /// touched, which is what keeps a stored `2–3 L/100 L` band intact after a
+    /// spray goes out at 2.5.
+    nonisolated func recordingApplied(
+        rate: Double,
+        unit: String,
+        basis: ChemicalDefaultRateBasis,
+        entryMethod: String,
+        confirmedRange: (min: Double, max: Double)? = nil
+    ) -> ChemicalLineSnapshot {
+        var copy = self
+        copy.appliedRate = rate
+        copy.appliedRateUnit = unit
+        copy.appliedRateBasis = basis.rawValue
+        copy.rateEntryMethod = entryMethod
+        copy.rateRangeMin = confirmedRange?.min
+        copy.rateRangeMax = confirmedRange?.max
+        return copy
     }
 
     /// Whether this snapshot carries anything the Resistance Engine could use.

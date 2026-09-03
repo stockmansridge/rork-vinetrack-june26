@@ -123,6 +123,19 @@ object ChemicalDefaultRateValidity {
     ) {
         /** The confirmed dose, or null when this slot records an unnarrowed band. */
         val scalar: Double? get() = (amount as? Amount.Scalar)?.value
+
+        /** The confirmed band, or null when this slot records a single dose. */
+        val range: Amount.Range? get() = amount as? Amount.Range
+
+        /**
+         * True when the operator typed this amount rather than reading it off a
+         * registered direction. Drives wording — "User-confirmed" rather than
+         * "Verified official rate" — and never weakens validation.
+         */
+        val isManualEntry: Boolean get() = slot.isManualEntry
+
+        /** True when a human settled on this amount, whatever its origin. */
+        val isConfirmedByOperator: Boolean get() = slot.isConfirmedByOperator
     }
 
     /**
@@ -152,15 +165,30 @@ object ChemicalDefaultRateValidity {
         val slot = defaults.slot(basis) ?: return null
 
         val optionKey = slot.optionKey.trim()
-        if (!optionKey.startsWith(OPTION_KEY_PREFIX)) return null
-        if (optionKey.length <= OPTION_KEY_PREFIX.length) return null
-
-        // Trimmed rather than filtered: a blank entry in the citation list is a
-        // malformed row, not a row with one fewer citation.
         val rateIds = slot.rateIds.map { it.trim() }
-        if (rateIds.isEmpty()) return null
-        if (rateIds.any { it.length <= RATE_ID_PREFIX.length || !it.startsWith(RATE_ID_PREFIX) }) {
-            return null
+
+        if (slot.isManualEntry) {
+            // A manual rate has no official identity, and that is the point.
+            // Demanding one here is exactly what made a user-confirmed
+            // 2–3 L/100 L read as "Rate confirmation required" forever.
+            //
+            // The absence is CHECKED rather than merely tolerated: a row
+            // claiming to be manual while carrying a citation is not a manual
+            // rate expressed oddly, it is a row whose provenance contradicts
+            // itself, and believing either half would lend label authority to
+            // something a human typed.
+            if (optionKey.isNotEmpty()) return null
+            if (rateIds.any { it.isNotEmpty() }) return null
+        } else {
+            if (!optionKey.startsWith(OPTION_KEY_PREFIX)) return null
+            if (optionKey.length <= OPTION_KEY_PREFIX.length) return null
+
+            // Trimmed rather than filtered: a blank entry in the citation list
+            // is a malformed row, not a row with one fewer citation.
+            if (rateIds.isEmpty()) return null
+            if (rateIds.any { it.length <= RATE_ID_PREFIX.length || !it.startsWith(RATE_ID_PREFIX) }) {
+                return null
+            }
         }
 
         if (slot.basis.trim() != basis.raw) return null
@@ -194,4 +222,31 @@ object ChemicalDefaultRateValidity {
             confirmedScalar(defaults, ChemicalDefaultRateBasis.PER_HECTARE),
             confirmedScalar(defaults, ChemicalDefaultRateBasis.PER_100_LITRES),
         )
+
+    /** Every basis carrying a believable slot, per-hectare first. */
+    fun validSlots(defaults: StoredChemicalDefaultRates?): List<ValidSlot> =
+        listOfNotNull(
+            validSlot(defaults, ChemicalDefaultRateBasis.PER_HECTARE),
+            validSlot(defaults, ChemicalDefaultRateBasis.PER_100_LITRES),
+        )
+
+    /**
+     * Every basis carrying an operator-confirmed amount — scalar OR range.
+     *
+     * A confirmed range IS a real decision: the operator has said "this
+     * product, this band, on this basis". What it does not settle is the dose
+     * for one particular tank, and that is asked for when the spray is built
+     * rather than guessed here.
+     */
+    fun confirmedSlots(defaults: StoredChemicalDefaultRates?): List<ValidSlot> =
+        validSlots(defaults).filter { it.isConfirmedByOperator }
+
+    /**
+     * Whether [value] lies inside a confirmed band, inclusive of both ends.
+     *
+     * Inclusive because a label authorises its own bounds: 2 and 3 are both
+     * legal doses of a `2–3 L/100 L` direction.
+     */
+    fun isWithinRange(value: Double, min: Double, max: Double): Boolean =
+        value.isFinite() && min.isFinite() && max.isFinite() && value >= min && value <= max
 }

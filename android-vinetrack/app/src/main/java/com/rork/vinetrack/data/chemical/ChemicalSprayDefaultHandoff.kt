@@ -19,7 +19,65 @@ data class ChemicalSprayPrefill(
     /** The LABEL rate's own unit — `L`, `mL`, `kg` or `g`. Never the pack unit. */
     val unit: String,
     val basis: SprayCalculator.RateBasis,
+    /** True when the operator typed this rather than reading it off a label. */
+    val isUserEntered: Boolean = false,
 )
+
+/**
+ * A confirmed band the operator must choose a dose inside of.
+ *
+ * The band belongs to the SAVED CHEMICAL; the dose chosen inside it belongs to
+ * one spray. Keeping them apart is what stops a 2.5 selected for today's tank
+ * from overwriting a registered 2–3 range the operator relies on next week.
+ */
+data class ChemicalSprayRangeSelection(
+    val min: Double,
+    val max: Double,
+    val unit: String,
+    val basis: SprayCalculator.RateBasis,
+    val isUserEntered: Boolean = false,
+) {
+    /** Whether [value] is a dose this band authorises. Inclusive of both ends. */
+    fun authorises(value: Double): Boolean =
+        ChemicalDefaultRateValidity.isWithinRange(value, min, max)
+}
+
+/** What one confirmed slot resolves to when a spray line is being built. */
+sealed interface ChemicalSprayRateResolution {
+    /** A single confirmed dose. Ready to prefill. */
+    data class Prefilled(val prefill: ChemicalSprayPrefill) : ChemicalSprayRateResolution
+
+    /**
+     * A confirmed band. The chemical is selectable, but the spray cannot
+     * proceed until the operator names the dose they will actually apply.
+     */
+    data class RequiresSelection(
+        val selection: ChemicalSprayRangeSelection,
+    ) : ChemicalSprayRateResolution
+
+    val prefillOrNull: ChemicalSprayPrefill?
+        get() = (this as? Prefilled)?.prefill
+
+    val selectionOrNull: ChemicalSprayRangeSelection?
+        get() = (this as? RequiresSelection)?.selection
+
+    val basis: SprayCalculator.RateBasis
+        get() = when (this) {
+            is Prefilled -> prefill.basis
+            is RequiresSelection -> selection.basis
+        }
+}
+
+/** The outcome of checking a dose the operator typed for a confirmed band. */
+sealed interface ChemicalApplicationRateOutcome {
+    data class Accepted(val value: Double) : ChemicalApplicationRateOutcome
+    data class BelowMinimum(val min: Double) : ChemicalApplicationRateOutcome
+    data class AboveMaximum(val max: Double) : ChemicalApplicationRateOutcome
+    data object NotANumber : ChemicalApplicationRateOutcome
+
+    val acceptedValue: Double? get() = (this as? Accepted)?.value
+    val isAccepted: Boolean get() = this is Accepted
+}
 
 /**
  * Decides whether a saved chemical can safely prefill a spray line.
@@ -75,7 +133,87 @@ object ChemicalSprayDefaultHandoff {
     ): ChemicalSprayPrefill? {
         val valid = ChemicalDefaultRateValidity.confirmedScalar(defaults, basis) ?: return null
         val amount = valid.scalar ?: return null
-        return ChemicalSprayPrefill(rate = amount, unit = valid.unit, basis = basisOf(basis))
+        return ChemicalSprayPrefill(
+            rate = amount,
+            unit = valid.unit,
+            basis = basisOf(basis),
+            isUserEntered = valid.isManualEntry,
+        )
+    }
+
+    /**
+     * Everything a product confirms, per-hectare first.
+     *
+     * Both entry methods qualify. What decides spray-readiness is whether a
+     * HUMAN confirmed the rate, not whether a regulator printed it — a
+     * user-entered rate the operator explicitly confirmed is real VineTrack
+     * data, and refusing it merely because it carries no `rate_v1_` citation is
+     * what left confirmed products stuck behind "Rate confirmation required".
+     */
+    fun resolutions(
+        defaults: StoredChemicalDefaultRates?,
+    ): List<ChemicalSprayRateResolution> =
+        ChemicalDefaultRateValidity.confirmedSlots(defaults).mapNotNull { valid ->
+            val scalar = valid.scalar
+            if (scalar != null) {
+                return@mapNotNull ChemicalSprayRateResolution.Prefilled(
+                    ChemicalSprayPrefill(
+                        rate = scalar,
+                        unit = valid.unit,
+                        basis = basisOf(valid.basis),
+                        isUserEntered = valid.isManualEntry,
+                    ),
+                )
+            }
+            val range = valid.range ?: return@mapNotNull null
+            ChemicalSprayRateResolution.RequiresSelection(
+                ChemicalSprayRangeSelection(
+                    min = range.min,
+                    max = range.max,
+                    unit = valid.unit,
+                    basis = basisOf(valid.basis),
+                    isUserEntered = valid.isManualEntry,
+                ),
+            )
+        }
+
+    /**
+     * The single resolution for a product, or null when the operator must first
+     * choose a basis.
+     *
+     * Two confirmed bases produce NO automatic answer deliberately: per-hectare
+     * and per-100 L are different ways of dosing the same spray.
+     */
+    fun resolutionFor(
+        defaults: StoredChemicalDefaultRates?,
+    ): ChemicalSprayRateResolution? = resolutions(defaults).singleOrNull()
+
+    /**
+     * True when the product carries at least one operator-confirmed rate, so it
+     * may be selected in Spray Program.
+     *
+     * A band counts. It means "choose a dose inside this", not "unconfirmed".
+     */
+    fun isSprayReady(defaults: StoredChemicalDefaultRates?): Boolean =
+        resolutions(defaults).isNotEmpty()
+
+    /**
+     * Checks a chosen application rate against a confirmed band.
+     *
+     * The chosen dose belongs to the SPRAY, never to the saved chemical: a 2.5
+     * selected inside a confirmed 2–3 band is what went in this tank, and
+     * writing it back over the stored range would destroy the registered band
+     * the operator is entitled to keep working from.
+     */
+    fun validateApplicationRate(
+        value: Double?,
+        selection: ChemicalSprayRangeSelection,
+    ): ChemicalApplicationRateOutcome = when {
+        value == null || !value.isFinite() || value <= 0.0 ->
+            ChemicalApplicationRateOutcome.NotANumber
+        value < selection.min -> ChemicalApplicationRateOutcome.BelowMinimum(selection.min)
+        value > selection.max -> ChemicalApplicationRateOutcome.AboveMaximum(selection.max)
+        else -> ChemicalApplicationRateOutcome.Accepted(value)
     }
 
     /**
