@@ -265,7 +265,10 @@ object ChemicalStoreMatching {
         return SavedChemicalRepository.ChemicalInput(
             name = productName.trim().ifBlank { existing?.name.orEmpty() },
             unit = unit,
-            ratePerHa = projected?.ratePerHa ?: existing?.ratePerHa ?: 0.0,
+            // No `?: 0.0`. When neither the projection nor the existing record
+            // has a per-hectare scalar, the honest answer is "none" — and the
+            // writer turns that into an explicit NULL rather than a zero.
+            ratePerHa = projected?.ratePerHa ?: existing?.ratePerHa,
             rates = projected?.rates ?: existing?.rates ?: emptyList(),
             activeIngredient = activeProjection.ifBlank { existing?.activeIngredient },
             chemicalGroup = groupProjection.ifBlank { existing?.chemicalGroup },
@@ -404,8 +407,14 @@ object ChemicalStoreMatching {
     /** The legacy operational-rate columns projected from a default decision. */
     data class ProjectedLegacyRates(
         val rates: List<ChemicalRate>,
-        /** Display-unit per-hectare scalar; `0` means "no rate on record". */
-        val ratePerHa: Double,
+        /**
+         * Display-unit per-hectare scalar, or null when there is none.
+         *
+         * Null rather than `0` (sql/222): a confirmed rate held only on the
+         * per-100 L basis, or held as a band, has no per-hectare scalar at all.
+         * Reporting that as zero is the fabrication this contract removes.
+         */
+        val ratePerHa: Double?,
     )
 
     /**
@@ -441,7 +450,8 @@ object ChemicalStoreMatching {
     ): ProjectedLegacyRates? {
         if (!defaults.hasConfirmedDefault) return null
         val rows = mutableListOf<ChemicalRate>()
-        var perHaDisplay = 0.0
+        // Null until a confirmed per-hectare scalar is actually found.
+        var perHaDisplay: Double? = null
         for (basis in ChemicalDefaultRateBasis.entries) {
             // Confirmed only. A scalar confirms as its printed amount; a band
             // confirms only to the dose the operator typed inside it.

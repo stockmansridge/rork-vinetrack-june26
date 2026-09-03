@@ -288,8 +288,13 @@ struct SprayRecordFormView: View {
             if isProductIdentityChange || discardsManualDosage {
                 line.ratePerHa = 0
             }
-            if line.ratePerHa == 0, chosen.ratePerHa > 0 {
-                line.ratePerHa = chosen.unit.toBase(chosen.ratePerHa)
+            // A nil legacy scalar means the product has no valid per-hectare
+            // number (sql/222) — a confirmed 2–3 L/100 L rate, for instance. The
+            // line is then left unset, which is the honest answer: an operator
+            // entering a rate is a smaller failure than a wrong one they had no
+            // reason to question.
+            if line.ratePerHa == 0, let legacyPerHa = chosen.ratePerHa, legacyPerHa > 0 {
+                line.ratePerHa = chosen.unit.toBase(legacyPerHa)
             }
             // D2.3 — the tank amount is as product-specific as the rate, and
             // was the more dangerous of the two: `bind()` never touched it at

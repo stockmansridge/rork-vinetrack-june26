@@ -165,7 +165,18 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
     let id: UUID
     var vineyardId: UUID
     var name: String
-    var ratePerHa: Double
+    /// LEGACY COMPATIBILITY PROJECTION ONLY (sql/222).
+    ///
+    /// `nil` means "there is no valid per-hectare scalar for this chemical".
+    /// It does **not** mean "this product has no rate" — that question is
+    /// answered by `defaultRates` and `registeredUses`, and only by them.
+    ///
+    /// A confirmed rate of `2–3 L/100 L` has no truthful per-hectare number:
+    /// not 2, not 3, not 2.5, and emphatically not 0. Before sql/222 the
+    /// column was `NOT NULL DEFAULT 0`, so omitting it manufactured a zero
+    /// that read back as a real operator decision. Optionality is what makes
+    /// the honest answer expressible.
+    var ratePerHa: Double?
     var unit: ChemicalUnit
     var chemicalGroup: String
     var use: String
@@ -257,7 +268,7 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         id: UUID = UUID(),
         vineyardId: UUID = UUID(),
         name: String = "",
-        ratePerHa: Double = 0,
+        ratePerHa: Double? = nil,
         unit: ChemicalUnit = .litres,
         chemicalGroup: String = "",
         use: String = "",
@@ -349,7 +360,10 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         id = try container.decode(UUID.self, forKey: .id)
         vineyardId = try container.decode(UUID.self, forKey: .vineyardId)
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
-        ratePerHa = try container.decodeIfPresent(Double.self, forKey: .ratePerHa) ?? 0
+        // No `?? 0`: a missing or null legacy scalar stays absent. Coercing it
+        // to zero here would recreate, on the client, exactly the fabrication
+        // sql/222 removed from the database.
+        ratePerHa = try container.decodeIfPresent(Double.self, forKey: .ratePerHa)
         unit = try container.decodeIfPresent(ChemicalUnit.self, forKey: .unit) ?? .litres
         chemicalGroup = try container.decodeIfPresent(String.self, forKey: .chemicalGroup) ?? ""
         use = try container.decodeIfPresent(String.self, forKey: .use) ?? ""
@@ -476,6 +490,38 @@ extension SavedChemical {
             actives.isEmpty ? activeIngredient : actives,
             groups.isEmpty ? chemicalGroup : groups
         )
+    }
+
+    /// The value `saved_chemicals.rate_per_ha` should carry for this chemical.
+    ///
+    /// The single place the legacy projection rule is expressed on iOS. A
+    /// value is produced **only** when the authoritative confirmed rate is a
+    /// genuine single scalar on the per-hectare basis:
+    ///
+    /// | authoritative rate | projection |
+    /// | ------------------ | ---------- |
+    /// | `2 L/ha`           | `2`        |
+    /// | `2–3 L/ha`         | `nil`      |
+    /// | `2 L/100 L`        | `nil`      |
+    /// | `2–3 L/100 L`      | `nil`      |
+    /// | unconfirmed        | `nil`      |
+    /// | no rate            | `nil`      |
+    ///
+    /// It is never derived from a range minimum, maximum or midpoint, from the
+    /// first available option, from zero, from a per-100 L conversion, from a
+    /// carrier volume, or from a treated area. Those are all ways of inventing
+    /// a number the operator never confirmed.
+    ///
+    /// When the chemical carries no structured default at all, the operator's
+    /// existing legacy value passes through untouched — saving a legacy
+    /// chemical must never rewrite it, and must never invent one either.
+    var legacyRatePerHaProjection: Double? {
+        guard let defaults = defaultRates else { return ratePerHa }
+        // A confirmed scalar on the per-hectare slot is the ONLY thing that
+        // projects. `confirmedScalarAmount` returns nil for a range, for the
+        // wrong basis, and for anything unconfirmed.
+        guard let scalar = defaults.confirmedScalarAmount(for: .perHectare) else { return nil }
+        return scalar
     }
 }
 

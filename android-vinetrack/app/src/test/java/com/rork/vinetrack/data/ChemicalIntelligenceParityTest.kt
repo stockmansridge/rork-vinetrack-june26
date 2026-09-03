@@ -361,7 +361,7 @@ class ChemicalIntelligenceParityTest {
         // stored in base units, so nothing is re-scaled). Mirrors the iOS
         // `ChemicalReviewDraft.productUnit` merge.
         assertEquals("Litres", input.unit)
-        assertEquals(750.0, input.ratePerHa, 0.0001)
+        assertEquals(750.0, input.ratePerHa!!, 0.0001)
         assertEquals(5.0, input.packSize)
         assertEquals(240.0, input.pricePerPack)
         assertEquals(12.0, input.inventoryQuantity)
@@ -389,7 +389,9 @@ class ChemicalIntelligenceParityTest {
         // has no registered uses — so the unit stays UNSET for the operator.
         // An unknown product must never be defaulted to Litres/Liquid.
         assertEquals("", input.unit)
-        assertEquals(0.0, input.ratePerHa, 0.0001)
+        // sql/222: "nothing established a rate" is now stated as NULL rather
+        // than a manufactured 0 — which is the point of the legacy projection.
+        assertNull(input.ratePerHa)
         assertNull(input.packSize)
         assertEquals(listOf("11"), input.intelligence?.activityGroupCodes)
     }

@@ -159,8 +159,10 @@ class ChemicalMatchProjectionTest {
         assertEquals(150.0, row.value, 1e-9)
         // The stored operational rate names the registered condition it came from.
         assertEquals("NSW, Vic, SA", row.label)
-        // No per-ha rate was invented from a /100 L label.
-        assertEquals(0.0, input.ratePerHa, 1e-9)
+        // No per-ha rate was invented from a /100 L label. Since sql/222 that is
+        // stated as NULL rather than 0 — a stronger assertion, because the zero
+        // was itself a fabricated value the column forced writers to send.
+        assertNull(input.ratePerHa)
         // And the authoritative label range was never narrowed.
         val storedRange = input.intelligence!!.registeredUses.single().rates.single()
         assertEquals(100.0, storedRange.minValue)
@@ -193,7 +195,7 @@ class ChemicalMatchProjectionTest {
             defaults = defaults,
         )
         assertTrue(input.rates.isEmpty())
-        assertEquals(0.0, input.ratePerHa, 1e-9)
+        assertNull(input.ratePerHa)
 
         // Naming the dose is what produces the projection.
         val confirmed = defaults.settingValue(40.0, ChemicalDefaultRateBasis.PER_100_LITRES)!!
@@ -236,7 +238,7 @@ class ChemicalMatchProjectionTest {
         assertEquals(CHEMICAL_RATE_PER_HECTARE, row.basis)
         // 2 L/ha -> 2000 mL base, 2.0 in the display-unit legacy scalar.
         assertEquals(2000.0, row.value, 1e-9)
-        assertEquals(2.0, input.ratePerHa, 1e-9)
+        assertEquals(2.0, input.ratePerHa!!, 1e-9)
     }
 
     @Test

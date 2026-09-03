@@ -3,6 +3,8 @@ package com.rork.vinetrack.data.model
 import com.rork.vinetrack.data.chemical.ChemicalActiveIngredient
 import com.rork.vinetrack.data.chemical.ChemicalDataSource
 import com.rork.vinetrack.data.chemical.ChemicalDataSourceKind
+import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
+import com.rork.vinetrack.data.chemical.ChemicalDefaultRateValidity
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalLineSnapshot
 import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
@@ -1912,7 +1914,20 @@ data class SavedChemical(
     val id: String,
     @SerialName("vineyard_id") val vineyardId: String,
     val name: String = "",
-    @SerialName("rate_per_ha") val ratePerHa: Double = 0.0,
+    /**
+     * LEGACY COMPATIBILITY PROJECTION ONLY (sql/222).
+     *
+     * Null means "there is no valid per-hectare scalar for this chemical". It
+     * does NOT mean "this product has no rate" — that question is answered by
+     * [defaultRates] and [registeredUses], and only by them.
+     *
+     * A confirmed rate of `2–3 L/100 L` has no truthful per-hectare number:
+     * not 2, not 3, not 2.5, and emphatically not 0. Before sql/222 the column
+     * was `NOT NULL DEFAULT 0`, so omitting it manufactured a zero that read
+     * back as a real operator decision. Nullability is what makes the honest
+     * answer expressible.
+     */
+    @SerialName("rate_per_ha") val ratePerHa: Double? = null,
     val unit: String = "Litres",
     @SerialName("chemical_group") val chemicalGroup: String = "",
     val use: String = "",
@@ -2017,7 +2032,42 @@ data class SavedChemical(
     val ratePerHaDisplay: Double?
         get() = rates.firstOrNull { it.basis == CHEMICAL_RATE_PER_HECTARE }
             ?.let { chemicalUnitFromBase(unit, it.value) }
-            ?: ratePerHa.takeIf { it > 0 }
+            ?: ratePerHa?.takeIf { it > 0 }
+
+    /**
+     * The value `saved_chemicals.rate_per_ha` should carry for this chemical.
+     *
+     * The single place the legacy projection rule is expressed on Android, and
+     * the exact mirror of iOS `SavedChemical.legacyRatePerHaProjection`. A
+     * value is produced ONLY when the authoritative confirmed rate is a genuine
+     * single scalar on the per-hectare basis:
+     *
+     * ```text
+     * 2 L/ha        -> 2
+     * 2–3 L/ha      -> null
+     * 2 L/100 L     -> null
+     * 2–3 L/100 L   -> null
+     * unconfirmed   -> null
+     * no rate       -> null
+     * ```
+     *
+     * Never derived from a range minimum, maximum or midpoint, from the first
+     * available option, from zero, from a per-100 L conversion, from a carrier
+     * volume, or from a treated area — every one of those invents a number the
+     * operator never confirmed.
+     *
+     * When the chemical carries no structured default at all, the operator's
+     * existing legacy value passes through untouched: saving a legacy chemical
+     * must never rewrite it, and must never invent one either.
+     */
+    val legacyRatePerHaProjection: Double?
+        get() {
+            val defaults = defaultRates ?: return ratePerHa
+            return ChemicalDefaultRateValidity.confirmedScalar(
+                defaults,
+                ChemicalDefaultRateBasis.PER_HECTARE,
+            )?.scalar
+        }
 
     /**
      * Per-100L-water rate in the chemical's display [unit], read from [rates].

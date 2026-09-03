@@ -54,8 +54,11 @@ struct SprayLegacyRateUnitBoundaryTests {
         if isProductIdentityChange || discardsManualDosage {
             line.ratePerHa = 0
         }
-        if line.ratePerHa == 0, chosen.ratePerHa > 0 {
-            line.ratePerHa = chosen.unit.toBase(chosen.ratePerHa)
+        // Mirrors the production guard: a nil legacy scalar means the product
+        // has no valid per-hectare number (sql/222), so the line is left unset
+        // rather than seeded from a fabricated zero.
+        if line.ratePerHa == 0, let legacyPerHa = chosen.ratePerHa, legacyPerHa > 0 {
+            line.ratePerHa = chosen.unit.toBase(legacyPerHa)
         }
         if isProductIdentityChange || discardsManualDosage {
             line.volumePerTank = 0
@@ -101,7 +104,9 @@ struct SprayLegacyRateUnitBoundaryTests {
     ) -> Double? {
         SprayRegisteredUseRates.hasStructuredRates(chemical)
             ? nil
-            : (basis == .perHectare ? chemical.unit.toBase(chemical.ratePerHa) : nil)
+            : (basis == .perHectare
+                ? chemical.ratePerHa.map { chemical.unit.toBase($0) }
+                : nil)
     }
 
     private func saved(
@@ -567,7 +572,7 @@ struct SprayLegacyRateUnitBoundaryTests {
         #expect(line.savedChemicalId == productB.id)
         #expect(line.name == productB.name)
         #expect(line.unit == productB.unit)
-        #expect(abs(line.ratePerHa - productB.unit.toBase(productB.ratePerHa)) < 0.0001)
+        #expect(abs(line.ratePerHa - productB.unit.toBase(productB.ratePerHa ?? 0)) < 0.0001)
 
         // Nothing of Product A remains.
         #expect(line.savedChemicalId != productA.id)

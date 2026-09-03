@@ -211,11 +211,44 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
     }
 }
 
+/// A value that reaches the wire as an explicit JSON `null` when absent.
+///
+/// Swift's synthesized `Encodable` encodes an `Optional` property with
+/// `encodeIfPresent`, which OMITS the key entirely when the value is nil. On an
+/// upsert an omitted key means "leave this column as it is", so a nil optional
+/// silently preserves whatever was already stored — the exact stale-value bug
+/// this contract exists to remove: a chemical edited from `2 L/ha` to
+/// `2–3 L/100 L` would keep projecting `2` forever.
+///
+/// Wrapping the value in a non-optional type forces the parent container to
+/// call `encode`, and the single-value container then writes a real `null`.
+nonisolated struct ExplicitlyNullable<Wrapped: Encodable & Sendable>: Encodable, Sendable {
+    let value: Wrapped?
+
+    init(_ value: Wrapped?) { self.value = value }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        if let value {
+            try container.encode(value)
+        } else {
+            try container.encodeNil()
+        }
+    }
+}
+
 nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
     let id: UUID
     let vineyardId: UUID
     let name: String
-    let ratePerHa: Double
+    /// LEGACY COMPATIBILITY PROJECTION ONLY (sql/222).
+    ///
+    /// Carried as [ExplicitlyNullable] rather than a bare `Double?` so an
+    /// absent projection reaches PostgREST as a literal `"rate_per_ha": null`
+    /// and CLEARS the column. A plain optional would be omitted by
+    /// `encodeIfPresent`, and an omitted key on an upsert leaves the stale
+    /// value untouched.
+    let ratePerHa: ExplicitlyNullable<Double>
     let unit: String
     let chemicalGroup: String
     let use: String
@@ -353,7 +386,11 @@ extension BackendSavedChemical {
             id: c.id,
             vineyardId: c.vineyardId,
             name: c.name,
-            ratePerHa: c.ratePerHa,
+            // The projection rule, not the raw field: a confirmed rate that is
+            // a range, or is held on the per-100 L basis, has no truthful
+            // per-hectare scalar and must clear the legacy column rather than
+            // leave a stale number behind it.
+            ratePerHa: ExplicitlyNullable(c.legacyRatePerHaProjection),
             unit: c.unit.rawValue,
             chemicalGroup: legacy.chemicalGroup,
             use: c.use,
@@ -468,7 +505,9 @@ extension BackendSavedChemical {
             id: id,
             vineyardId: vineyardId,
             name: name ?? "",
-            ratePerHa: ratePerHa ?? 0,
+            // No `?? 0`. A null column means "no valid per-hectare scalar",
+            // which is not the same as a rate of zero.
+            ratePerHa: ratePerHa,
             unit: ChemicalUnit(rawValue: unit ?? "") ?? .litres,
             chemicalGroup: chemicalGroup ?? "",
             use: use ?? "",

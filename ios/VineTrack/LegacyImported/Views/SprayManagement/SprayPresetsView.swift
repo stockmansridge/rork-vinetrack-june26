@@ -95,8 +95,11 @@ struct SprayPresetsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                } else {
-                    Text("\(String(format: "%.2f", chemical.ratePerHa)) \(chemical.unit.rawValue)/Ha")
+                } else if let legacyPerHa = chemical.ratePerHa, legacyPerHa > 0 {
+                    // Legacy per-hectare scalar only. A nil projection means no
+                    // valid per-hectare scalar exists (sql/222), so nothing is
+                    // rendered rather than a fabricated "0.00 L/Ha".
+                    Text("\(String(format: "%.2f", legacyPerHa)) \(chemical.unit.rawValue)/Ha")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

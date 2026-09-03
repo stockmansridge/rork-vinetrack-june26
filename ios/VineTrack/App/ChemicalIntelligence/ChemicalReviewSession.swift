@@ -531,10 +531,14 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
                 valueText: formatRate(source.unit.fromBase(perHa.value)),
                 unit: token
             ))
-        } else if source.ratePerHa > 0 {
+        } else if let legacyPerHa = source.ratePerHa, legacyPerHa > 0 {
+            // Legacy compatibility seed only. A nil projection means there is no
+            // valid per-hectare scalar (sql/222) — a confirmed 2–3 L/100 L rate,
+            // for instance — so no per-hectare draft is seeded rather than one
+            // built from a fabricated zero.
             drafts.append(ChemicalManualRateDraft(
                 basis: .perHectare,
-                valueText: formatRate(source.ratePerHa),
+                valueText: formatRate(legacyPerHa),
                 unit: token
             ))
         }

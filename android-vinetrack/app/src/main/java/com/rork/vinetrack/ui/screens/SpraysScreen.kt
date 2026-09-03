@@ -2075,9 +2075,15 @@ private fun ChemicalNameField(
                     DropdownMenuItem(
                         text = {
                             val sub = buildList {
-                                if (saved.ratePerHa > 0) {
+                                // Legacy per-hectare scalar only. Null means there
+                                // is no valid per-hectare number (sql/222) — a
+                                // confirmed 2–3 L/100 L rate, for instance — so the
+                                // subtitle omits it rather than showing a
+                                // fabricated "0".
+                                val savedPerHa = saved.ratePerHa
+                                if (savedPerHa != null && savedPerHa > 0) {
                                     val region = LocalRegionFormatter.current
-                                    add("${trimNum(region.sprayRateValue(saved.ratePerHa))} ${saved.unit}/${region.sprayRateAreaAbbreviation}")
+                                    add("${trimNum(region.sprayRateValue(savedPerHa))} ${saved.unit}/${region.sprayRateAreaAbbreviation}")
                                 }
                                 if (canEditCost) saved.costPerUnit?.takeIf { it > 0 }?.let { add("${formatSprayCurrency(it, fmt)}/${saved.unit}") }
                             }.joinToString(" · ")
@@ -2104,7 +2110,13 @@ private fun ChemicalNameField(
                             chem.name = saved.displayName
                             chem.savedChemicalId = saved.id
                             chem.unit = saved.unit
-                            if (saved.ratePerHa > 0 && chem.ratePerHa.isBlank()) chem.ratePerHa = trimNum(saved.ratePerHa)
+                            // Only a genuine legacy per-hectare scalar prefills.
+                            // A null projection leaves the field for the operator
+                            // rather than seeding a rate nobody confirmed.
+                            val savedPerHaRate = saved.ratePerHa
+                            if (savedPerHaRate != null && savedPerHaRate > 0 && chem.ratePerHa.isBlank()) {
+                                chem.ratePerHa = trimNum(savedPerHaRate)
+                            }
                             // Prefill cost only for owner/manager and only when
                             // the user hasn't already entered one.
                             if (canEditCost && chem.costPerUnit.isBlank()) {

@@ -3,6 +3,8 @@ package com.rork.vinetrack.data
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.chemical.ChemicalActiveIngredient
 import com.rork.vinetrack.data.chemical.ChemicalDataSource
+import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
+import com.rork.vinetrack.data.chemical.ChemicalDefaultRateValidity
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
 import com.rork.vinetrack.data.chemical.ChemicalVerificationConflict
@@ -25,6 +27,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 import java.time.Instant
 import java.util.UUID
 
@@ -51,8 +56,15 @@ class SavedChemicalRepository(private val session: SessionStore) {
     data class ChemicalInput(
         val name: String,
         val unit: String,
-        /** Legacy per-ha column in display units (kept in sync with [rates]). */
-        val ratePerHa: Double,
+        /**
+         * LEGACY COMPATIBILITY PROJECTION ONLY (sql/222), in display units.
+         *
+         * Null means "there is no valid per-hectare scalar" — a confirmed
+         * `2–3 L/100 L` rate, for instance. On UPDATE that null is written
+         * EXPLICITLY rather than omitted, so a chemical edited away from a
+         * per-hectare scalar does not keep projecting its old number.
+         */
+        val ratePerHa: Double?,
         val rates: List<ChemicalRate>,
         val activeIngredient: String?,
         val chemicalGroup: String?,
@@ -165,7 +177,12 @@ class SavedChemicalRepository(private val session: SessionStore) {
         @SerialName("vineyard_id") val vineyardId: String,
         val name: String,
         val unit: String,
-        @SerialName("rate_per_ha") val ratePerHa: Double,
+        /**
+         * Legacy projection (sql/222). Omitted when null — correct on INSERT,
+         * because the column no longer carries a `DEFAULT 0` to manufacture a
+         * value from an absent key.
+         */
+        @SerialName("rate_per_ha") val ratePerHa: Double? = null,
         val rates: List<ChemicalRate>,
         @SerialName("active_ingredient") val activeIngredient: String,
         @SerialName("chemical_group") val chemicalGroup: String,
@@ -226,7 +243,21 @@ class SavedChemicalRepository(private val session: SessionStore) {
     private data class ChemicalPatch(
         val name: String,
         val unit: String,
-        @SerialName("rate_per_ha") val ratePerHa: Double,
+        /**
+         * Legacy projection (sql/222), carried as a [JsonElement] rather than a
+         * `Double?` **on purpose**.
+         *
+         * The shared client sets `explicitNulls = false`, so a Kotlin null is
+         * OMITTED from the request body. On a PATCH an omitted key means "leave
+         * the stored value alone" — which is precisely the stale-value bug: a
+         * chemical saved as `2 L/ha` and then edited to `2–3 L/100 L` would keep
+         * projecting `2` forever, because the writer never said otherwise.
+         *
+         * A [JsonNull] is not a Kotlin null, so it survives `explicitNulls` and
+         * reaches PostgREST as a literal `"rate_per_ha": null`, clearing the
+         * column. [legacyRatePerHaJson] builds the right element either way.
+         */
+        @SerialName("rate_per_ha") val ratePerHa: JsonElement,
         val rates: List<ChemicalRate>,
         @SerialName("active_ingredient") val activeIngredient: String,
         @SerialName("chemical_group") val chemicalGroup: String,
@@ -301,6 +332,40 @@ class SavedChemicalRepository(private val session: SessionStore) {
 
     private fun nowIso(): String = Instant.now().toString()
 
+    /**
+     * The legacy projection as a JSON element that always serialises.
+     *
+     * A present scalar becomes a number; an absent one becomes an explicit
+     * `null` so the PATCH clears any stale value rather than silently leaving
+     * it in place.
+     */
+    private fun legacyRatePerHaJson(value: Double?): JsonElement =
+        if (value == null) JsonNull else JsonPrimitive(value)
+
+    /**
+     * The value `rate_per_ha` should carry for this write — the single place the
+     * projection rule is applied on the Android write path, and the exact
+     * mirror of iOS `SavedChemical.legacyRatePerHaProjection`.
+     *
+     * When the write carries a confirmed rate decision, the legacy column is
+     * derived from it and ONLY from it: a genuine per-hectare scalar projects,
+     * and everything else (a range, a per-100 L rate, an unconfirmed or
+     * malformed slot) projects null.
+     *
+     * When the write carries no rate decision at all — `defaultRates == null`,
+     * meaning "leave the stored default untouched" — the caller's existing
+     * legacy value passes through. That is what keeps an unrelated edit
+     * (supplier, price, notes) from disturbing a valid `2 L/ha` projection, and
+     * what keeps a historical legacy-only chemical readable.
+     */
+    private fun legacyRatePerHaFor(input: ChemicalInput): Double? {
+        val defaults = input.defaultRates ?: return input.ratePerHa
+        return ChemicalDefaultRateValidity.confirmedScalar(
+            defaults,
+            ChemicalDefaultRateBasis.PER_HECTARE,
+        )?.scalar
+    }
+
     suspend fun create(vineyardId: String, input: ChemicalInput): SavedChemical =
         withContext(Dispatchers.IO) {
             requireConfig()
@@ -311,7 +376,9 @@ class SavedChemicalRepository(private val session: SessionStore) {
                 vineyardId = vineyardId,
                 name = input.name,
                 unit = input.unit,
-                ratePerHa = input.ratePerHa,
+                // Omitted when null. Safe on INSERT now that sql/222 removed the
+                // `DEFAULT 0` that used to manufacture a value from an absent key.
+                ratePerHa = legacyRatePerHaFor(input),
                 rates = input.rates,
                 activeIngredient = input.activeIngredient.orEmpty(),
                 chemicalGroup = input.chemicalGroup.orEmpty(),
@@ -379,7 +446,9 @@ class SavedChemicalRepository(private val session: SessionStore) {
             val patch = ChemicalPatch(
                 name = input.name,
                 unit = input.unit,
-                ratePerHa = input.ratePerHa,
+                // Explicit JSON null when there is no valid per-hectare scalar,
+                // so an authoritative rate change clears the stale legacy value.
+                ratePerHa = legacyRatePerHaJson(legacyRatePerHaFor(input)),
                 rates = input.rates,
                 activeIngredient = input.activeIngredient.orEmpty(),
                 chemicalGroup = input.chemicalGroup.orEmpty(),

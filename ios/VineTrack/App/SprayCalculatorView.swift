@@ -459,9 +459,16 @@ struct SprayCalculatorView: View {
             // Structured rates are NOT converted here — they are already base,
             // and converting them would be the same defect in the other
             // direction.
+            // A nil `ratePerHa` means there is no valid per-hectare scalar at
+            // all (sql/222) — a confirmed 2–3 L/100 L rate, for instance. That
+            // stays nil here rather than collapsing to zero, so the line falls
+            // through to "operator must choose" instead of silently seeding a
+            // tank with a rate nobody confirmed.
             let legacyScalarRate: Double? = SprayRegisteredUseRates.hasStructuredRates(chemical)
                 ? nil
-                : (line.basis == .perHectare ? chemical.unit.toBase(chemical.ratePerHa) : nil)
+                : (line.basis == .perHectare
+                    ? chemical.ratePerHa.map { chemical.unit.toBase($0) }
+                    : nil)
             let rate = line.overrideRate ?? seededRate ?? legacyScalarRate ?? 0
             let chosenAreaBasis = productAreaBasis[line.id]
             let basis: SprayProductRateBasis = {

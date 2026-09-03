@@ -347,8 +347,16 @@ struct ChemicalDetailRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-                if ratesPerHa.isEmpty && ratesPer100L.isEmpty && chemical.ratePerHa > 0 {
-                    Text("\(SprayRateFormatter.format(chemical.ratePerHa)) \(chemical.unit.rawValue)/Ha")
+                // Legacy-only fallback, shown when a historical chemical carries
+                // no structured rates at all. A nil projection means there is no
+                // valid per-hectare scalar (sql/222) — a confirmed 2–3 L/100 L
+                // rate, for instance — so the row stays silent rather than
+                // printing a fabricated "0 L/Ha".
+                if ratesPerHa.isEmpty,
+                   ratesPer100L.isEmpty,
+                   let legacyPerHa = chemical.ratePerHa,
+                   legacyPerHa > 0 {
+                    Text("\(SprayRateFormatter.format(legacyPerHa)) \(chemical.unit.rawValue)/Ha")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
