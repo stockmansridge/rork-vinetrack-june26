@@ -57,13 +57,14 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.SnapshotStateList
-import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -454,10 +455,14 @@ private fun RecordDamageView(
     val isNew = editing == null
     val canDelete = state.currentRole in setOf("owner", "manager", "supervisor")
 
-    // Polygon vertices as draggable marker states (live position drives the overlay).
-    val verts: SnapshotStateList<MarkerState> = remember(editing?.id) {
-        (editing?.polygonPoints ?: emptyList()).map { MarkerState(position = LatLng(it.latitude, it.longitude)) }
-            .toMutableStateList()
+    // Each native marker keeps stable identity while the committed coordinate drives
+    // polygon rendering and persistence only after a drag finishes.
+    val verts: SnapshotStateList<DamageVertex> = remember(editing?.id) {
+        mutableStateListOf<DamageVertex>().apply {
+            editing?.polygonPoints.orEmpty().forEach { point ->
+                add(DamageVertex(LatLng(point.latitude, point.longitude)))
+            }
+        }
     }
     var damageType by remember(editing?.id) { mutableStateOf(editing?.type ?: DamageType.Frost) }
     var percentText by remember(editing?.id) { mutableStateOf(((editing?.damagePercent ?: 20.0)).toInt().toString()) }
@@ -469,21 +474,25 @@ private fun RecordDamageView(
     var confirmDelete by remember { mutableStateOf(false) }
 
     val percent = percentText.toDoubleOrNull() ?: 0.0
-    val livePoints by remember { derivedStateOf { verts.map { it.position } } }
-    val damageAreaHa = polygonAreaHa(livePoints)
+    val committedPoints: List<LatLng> = verts.map { it.committedPosition }
+    val damageAreaHa = polygonAreaHa(committedPoints)
     val pctOfBlock = if (paddock.areaHectares > 0) damageAreaHa / paddock.areaHectares * 100 else 0.0
-    val isValid = livePoints.size >= 3 && percent > 0 && percent <= 100
+    val isValid = committedPoints.size >= 3 && percent > 0 && percent <= 100
 
     val blockPoly = remember(paddock.id) { paddock.polygonPoints?.map { LatLng(it.latitude, it.longitude) } ?: emptyList() }
     val cameraPositionState = rememberCameraPositionState()
     var mapLoaded by remember { mutableStateOf(false) }
+    var initiallyFramed by remember(editing?.id, paddock.id) { mutableStateOf(false) }
 
-    // Frame the block only once the map has a measured size — bounds updates
-    // fail silently on an unmeasured map, leaving the camera at 0,0.
+    // Frame only the initial block/record after the map is measured. Point edits
+    // never key or rerun this effect, so the operator's camera remains untouched.
     LaunchedEffect(mapLoaded, paddock.id) {
-        if (!mapLoaded) return@LaunchedEffect
-        val pts = blockPoly.ifEmpty { livePoints }
-        cameraPositionState.fitToContent(points = pts, paddingPx = 140)
+        if (!mapLoaded || initiallyFramed) return@LaunchedEffect
+        val pointsToFrame: List<LatLng> = blockPoly.ifEmpty { committedPoints }
+        if (pointsToFrame.isNotEmpty()) {
+            cameraPositionState.fitToContent(points = pointsToFrame, paddingPx = 140)
+        }
+        initiallyFramed = true
     }
 
     Scaffold(
@@ -496,23 +505,32 @@ private fun RecordDamageView(
             )
         },
     ) { padding ->
-        Column(
-            modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp).padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Spacer(Modifier.height(0.dp))
-
-            // Map with block boundary + editable damage polygon.
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            // The map is a bounded sibling of the scrolling form. Its MapView owns
+            // every touch that starts here; only gestures below it reach the form.
             Box(
-                modifier = Modifier.fillMaxWidth().height(320.dp).clip(RoundedCornerShape(14.dp)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .height(340.dp)
+                    .clip(RoundedCornerShape(14.dp)),
             ) {
                 GoogleMap(
                     modifier = Modifier.fillMaxSize(),
                     cameraPositionState = cameraPositionState,
-                    properties = MapProperties(mapType = MapType.HYBRID),
-                    uiSettings = MapUiSettings(zoomControlsEnabled = false, mapToolbarEnabled = false),
-                    onMapClick = { latLng -> verts.add(MarkerState(position = latLng)) },
+                    properties = MapProperties(
+                        mapType = MapType.HYBRID,
+                        maxZoomPreference = DAMAGE_MAP_MAX_ZOOM,
+                    ),
+                    uiSettings = MapUiSettings(
+                        scrollGesturesEnabled = true,
+                        zoomGesturesEnabled = true,
+                        rotationGesturesEnabled = true,
+                        tiltGesturesEnabled = false,
+                        zoomControlsEnabled = true,
+                        mapToolbarEnabled = false,
+                    ),
+                    onMapClick = { latLng -> verts.add(DamageVertex(latLng)) },
                     onMapLoaded = { mapLoaded = true },
                 ) {
                     if (blockPoly.size >= 3) {
@@ -538,31 +556,50 @@ private fun RecordDamageView(
                         }
                     }
                     // The polygon being edited.
-                    if (livePoints.size >= 3) {
+                    if (committedPoints.size >= 3) {
                         Polygon(
-                            points = livePoints,
+                            points = committedPoints,
                             fillColor = VineColors.Orange.copy(alpha = 0.25f),
                             strokeColor = VineColors.Orange,
                             strokeWidth = 5f,
                             zIndex = 2f,
                         )
-                    } else if (livePoints.size == 2) {
-                        Polyline(points = livePoints, color = VineColors.Orange, width = 5f, zIndex = 2f)
+                    } else if (committedPoints.size == 2) {
+                        Polyline(points = committedPoints, color = VineColors.Orange, width = 5f, zIndex = 2f)
                     }
-                    verts.forEach { ms ->
-                        Marker(
-                            state = ms,
-                            draggable = true,
-                            icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_ORANGE),
-                            zIndex = 3f,
-                        )
+                    verts.forEach { vertex ->
+                        key(vertex.id) {
+                            LaunchedEffect(vertex.id) {
+                                var wasDragging = false
+                                snapshotFlow { vertex.markerState.isDragging }.collect { isDragging ->
+                                    if (wasDragging && !isDragging) {
+                                        vertex.committedPosition = vertex.markerState.position
+                                    }
+                                    wasDragging = isDragging
+                                }
+                            }
+                            Marker(
+                                state = vertex.markerState,
+                                draggable = true,
+                                icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_ORANGE),
+                                zIndex = 3f,
+                            )
+                        }
                     }
                 }
             }
 
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp)
+                    .padding(top = 12.dp, bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
             Text(
-                if (livePoints.isEmpty()) "Tap the map to drop the damage-zone corners. Drag a pin to fine-tune."
-                else "${livePoints.size} point${if (livePoints.size == 1) "" else "s"} — tap to add more, drag pins to adjust.",
+                if (committedPoints.isEmpty()) "Tap the map to drop the damage-zone corners. Drag a pin to fine-tune."
+                else "${committedPoints.size} point${if (committedPoints.size == 1) "" else "s"} — tap to add more, drag pins to adjust.",
                 color = vine.textSecondary, fontSize = 12.sp,
             )
 
@@ -580,7 +617,7 @@ private fun RecordDamageView(
                 }
                 OutlinedButton(onClick = {
                     val c = cameraPositionState.position.target
-                    verts.add(MarkerState(position = c))
+                    verts.add(DamageVertex(c))
                 }) {
                     Icon(Icons.Filled.Place, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp)); Text("Center")
@@ -588,7 +625,7 @@ private fun RecordDamageView(
             }
 
             // Area info.
-            if (livePoints.size >= 3) {
+            if (committedPoints.size >= 3) {
                 VineyardCard {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         DamageStat("Damage Zone", fmt.formatArea(damageAreaHa, fractionDigits = 4), Icons.Filled.Warning, VineColors.Orange, Modifier.weight(1f))
@@ -675,7 +712,7 @@ private fun RecordDamageView(
 
             Button(
                 onClick = {
-                    val record = buildRecord(editing, paddock, livePoints, dateMs, damageType, percent, notes)
+                    val record = buildRecord(editing, paddock, committedPoints, dateMs, damageType, percent, notes)
                     vm.saveDamageRecord(record, isNew = isNew) { ok -> if (ok) onSaved() }
                 },
                 enabled = isValid && !state.damageBusy,
@@ -695,6 +732,7 @@ private fun RecordDamageView(
                     Spacer(Modifier.width(8.dp))
                     Text("Delete Damage Record")
                 }
+            }
             }
         }
     }
@@ -730,6 +768,15 @@ private fun RecordDamageView(
 }
 
 // MARK: - Helpers
+
+private const val DAMAGE_MAP_MAX_ZOOM = 21f
+
+/** Stable native marker plus the last coordinate committed to polygon state. */
+private class DamageVertex(initialPosition: LatLng) {
+    val id: String = UUID.randomUUID().toString()
+    val markerState: MarkerState = MarkerState(initialPosition)
+    var committedPosition: LatLng by mutableStateOf(initialPosition)
+}
 
 private fun buildRecord(
     editing: DamageRecord?,
