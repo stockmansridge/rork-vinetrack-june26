@@ -188,58 +188,6 @@ struct SprayMultiBlockTripTests {
         #expect(rejected.paddockId == nil)
     }
 
-    @Test("Auto Path completes and advances across later selected blocks")
-    @MainActor
-    func autoPathCompletesAcrossSelectedBlocks() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("spray-auto-path-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let store = MigratedDataStore(persistence: PersistenceStore(directory: directory))
-        store.selectedVineyardId = vineyardId
-        let blocks = [
-            block(id: sauvId, name: "Sauv Blanc", row: 1, longitude: 149.000),
-            block(id: pinotId, name: "Pinot Noir", row: 69, longitude: 149.010),
-            block(id: grisId, name: "Pinot Gris", row: 109, longitude: 149.020),
-        ]
-        blocks.forEach(store.addPaddock)
-        var planned = completeTrip
-        planned.sequenceIndex = 0
-        planned.currentRowNumber = 68.5
-        planned.nextRowNumber = 108.5
-        planned.rowSequence = [68.5, 108.5, 0.5]
-        store.addInactiveTrip(planned)
-
-        let tracking = TripTrackingService()
-        tracking.configure(store: store, locationService: LocationService())
-        tracking.activateSavedTrip(planned, at: Date())
-
-        let latitudes: [Double] = Array(stride(from: -33.00075, through: -32.99925, by: 0.00015))
-        let firstPinotFix = CLLocation(latitude: latitudes[0], longitude: 149.010)
-        tracking.processLocation(firstPinotFix, force: true)
-        #expect(tracking.currentPaddockId == pinotId)
-        #expect(tracking.currentRowNumber == 68.5)
-        for latitude in latitudes.dropFirst() {
-            tracking.processLocation(CLLocation(latitude: latitude, longitude: 149.010), force: true)
-        }
-
-        var active = try #require(store.trips.first { $0.id == planned.id })
-        #expect(active.completedPaths.contains(68.5))
-        #expect(active.sequenceIndex == 1)
-        #expect(active.currentRowNumber == 108.5)
-        #expect(active.nextRowNumber == 0.5)
-
-        for latitude in latitudes {
-            tracking.processLocation(CLLocation(latitude: latitude, longitude: 149.020), force: true)
-        }
-
-        active = try #require(store.trips.first { $0.id == planned.id })
-        #expect(tracking.currentPaddockId == grisId)
-        #expect(active.completedPaths.contains(108.5))
-        #expect(active.sequenceIndex == 2)
-        #expect(active.currentRowNumber == 0.5)
-    }
-
     @Test("Overlapping selected blocks choose the closest valid row")
     func overlappingBlocksChooseClosestRow() {
         let farther = Paddock(
@@ -423,5 +371,84 @@ final class SpraySavedJobActivationIntegrationTests: XCTestCase {
             store: store,
             tracking: tracking
         ).paddockId)
+    }
+
+    func testAutoPathCompletesAcrossSelectedBlocks() throws {
+        let vineyardId = UUID()
+        let ids = [UUID(), UUID(), UUID()]
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("spray-auto-path-xctest-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: directory))
+        store.selectedVineyardId = vineyardId
+        let blocks = [
+            makeBlock(vineyardId: vineyardId, id: ids[0], name: "Sauv Blanc", row: 1, longitude: 149.000),
+            makeBlock(vineyardId: vineyardId, id: ids[1], name: "Pinot Noir", row: 69, longitude: 149.010),
+            makeBlock(vineyardId: vineyardId, id: ids[2], name: "Pinot Gris", row: 109, longitude: 149.020),
+        ]
+        blocks.forEach(store.addPaddock)
+        let planned = Trip(
+            id: UUID(), vineyardId: vineyardId, paddockId: ids[0], paddockName: "Three blocks",
+            paddockIds: ids, currentRowNumber: 68.5, nextRowNumber: 108.5, isActive: false,
+            trackingPattern: .everySecondRow, rowSequence: [68.5, 108.5, 0.5],
+            sequenceIndex: 0, totalTanks: 1
+        )
+        let record = SprayRecord(
+            tripId: planned.id,
+            vineyardId: vineyardId,
+            endTime: nil,
+            sprayReference: "Auto Path three blocks",
+            tanks: [SprayTank(tankNumber: 1, waterVolume: 1_000, sprayRatePerHa: 500)],
+            isTemplate: false
+        )
+        store.addInactiveTrip(planned)
+        store.addSprayRecord(record)
+
+        let tracking = TripTrackingService()
+        tracking.configure(store: store, locationService: LocationService())
+        tracking.activateSavedTrip(planned, at: Date())
+
+        let activated = try XCTUnwrap(tracking.activeTrip)
+        XCTAssertEqual(activated.id, planned.id)
+        XCTAssertTrue(activated.isActive, "Saved Auto Path trip should be active after activation")
+        XCTAssertNil(tracking.errorMessage)
+
+        let latitudes: [Double] = (0...16).map { step in
+            -33.0008 + (Double(step) * 0.0001)
+        }
+        tracking.processLocation(CLLocation(latitude: latitudes[0], longitude: 149.010), force: true)
+        XCTAssertEqual(tracking.currentPaddockId, ids[1])
+        XCTAssertEqual(tracking.currentRowNumber, 68.5)
+        for latitude in latitudes.dropFirst() {
+            tracking.processLocation(CLLocation(latitude: latitude, longitude: 149.010), force: true)
+        }
+
+        var active = try XCTUnwrap(store.trips.first { $0.id == planned.id })
+        XCTAssertTrue(
+            active.completedPaths.contains(68.5),
+            "Pinot path 68.5 should complete; completed=\(active.completedPaths), " +
+            "detected=\(String(describing: tracking.diagLiveDetectedPath)), " +
+            "match=\(tracking.diagPathMatch), corridor=\(tracking.diagInCorridor), " +
+            "accumulated=\(tracking.diagAccumulatedMeters), " +
+            "plannedLength=\(String(describing: tracking.diagPlannedPathLengthMeters)), " +
+            "nearEnd=\(tracking.diagNearRowEnd)"
+        )
+        XCTAssertEqual(active.sequenceIndex, 1)
+        XCTAssertEqual(active.currentRowNumber, 108.5)
+        XCTAssertEqual(active.nextRowNumber, 0.5)
+
+        for latitude in latitudes {
+            tracking.processLocation(CLLocation(latitude: latitude, longitude: 149.020), force: true)
+        }
+
+        active = try XCTUnwrap(store.trips.first { $0.id == planned.id })
+        XCTAssertEqual(tracking.currentPaddockId, ids[2])
+        XCTAssertTrue(
+            active.completedPaths.contains(108.5),
+            "Pinot Gris path 108.5 should complete; completed paths: \(active.completedPaths)"
+        )
+        XCTAssertEqual(active.sequenceIndex, 2)
+        XCTAssertEqual(active.currentRowNumber, 0.5)
     }
 }
