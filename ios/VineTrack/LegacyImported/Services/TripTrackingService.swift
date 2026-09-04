@@ -858,7 +858,7 @@ final class TripTrackingService {
 
         let rowTrackingEnabled = store.settings.rowTrackingEnabled
         if rowTrackingEnabled {
-            updateRowGuidance(for: location.coordinate, trip: &trip, store: store)
+            updateRowGuidance(for: location, trip: &trip, store: store)
         } else {
             currentRowNumber = nil
             currentRowDistance = nil
@@ -975,10 +975,11 @@ final class TripTrackingService {
     // MARK: - Row guidance / coverage
 
     private func updateRowGuidance(
-        for coordinate: CLLocationCoordinate2D,
+        for location: CLLocation,
         trip: inout Trip,
         store: MigratedDataStore
     ) {
+        let coordinate = location.coordinate
         // Resolve all selected paddocks for this trip (multi-block aware).
         var selectedIds: [UUID] = trip.paddockIds
         if selectedIds.isEmpty, let id = trip.paddockId { selectedIds = [id] }
@@ -1077,7 +1078,7 @@ final class TripTrackingService {
         // of the planned row.
         let lockedOrPlanned = lockedPath ?? currentSequencePath
         diagNearRowEnd = lockedOrPlanned.map {
-            isNearPathEnd(path: $0, paddock: paddock, location: locationService?.location, tolerance: nearRowEndTolerance)
+            isNearPathEnd(path: $0, paddock: paddock, location: location, tolerance: nearRowEndTolerance)
         } ?? false
         if let len = diagPlannedPathLengthMeters, len > 0 {
             diagPlannedCompletionPercent = min(100, diagAccumulatedMeters / len * 100)
@@ -1110,7 +1111,7 @@ final class TripTrackingService {
             trip.currentRowNumber = currentRowNumber ?? livePath
 
             if inCorridor, let stable, abs(stable - livePath) < 0.01 {
-                accumulateDistanceAlong(path: stable, location: locationService?.location)
+                accumulateDistanceAlong(path: stable, location: location)
                 let proximity = max(0.5, paddock.rowWidth / 2.0)
                 if match.distance <= proximity {
                     _ = finalizeIfThresholdMet(
@@ -1118,7 +1119,7 @@ final class TripTrackingService {
                         trip: &trip,
                         paddock: paddock,
                         rowWidth: paddock.rowWidth,
-                        location: locationService?.location
+                        location: location
                     )
                     // Free Drive never advances a sequence — there is no
                     // planned ordering to advance through.
@@ -1127,7 +1128,7 @@ final class TripTrackingService {
                 // Off-corridor or candidate not yet stable: reset segment
                 // anchor so the next valid on-path tick doesn't accumulate
                 // the gap distance.
-                lastTrackingLocation = locationService?.location
+                lastTrackingLocation = location
             }
             diagFreeDriveCompletedCount = trip.completedPaths.count
         } else {
@@ -1159,7 +1160,7 @@ final class TripTrackingService {
             // corridor. Driving an off-cycle path or skirting the corridor edge
             // contributes zero progress to the planned path.
             if pathMatch, inCorridor, let target = currentSequencePath {
-                accumulateDistanceAlong(path: target, location: locationService?.location)
+                accumulateDistanceAlong(path: target, location: location)
 
                 // Auto-complete only when we are physically near the planned
                 // row centreline and have covered enough of its length.
@@ -1170,7 +1171,7 @@ final class TripTrackingService {
                         trip: &trip,
                         paddock: paddock,
                         rowWidth: paddock.rowWidth,
-                        location: locationService?.location
+                        location: location
                     )
                     if didComplete {
                         advanceSequenceAfterCompletion(trip: &trip)
@@ -1191,7 +1192,7 @@ final class TripTrackingService {
                     let nearEnd = isNearPathEnd(
                         path: target,
                         paddock: paddock,
-                        location: locationService?.location,
+                        location: location,
                         tolerance: exitCompletionEndTolerance
                     )
                     if nearEnd {
@@ -1216,7 +1217,7 @@ final class TripTrackingService {
                 previousOnPlannedInCorridor = false
                 // Off-cycle: reset last tracking location so the next valid
                 // on-path tick doesn't accumulate the off-path distance.
-                lastTrackingLocation = locationService?.location
+                lastTrackingLocation = location
             }
         }
 

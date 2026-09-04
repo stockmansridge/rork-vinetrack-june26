@@ -198,6 +198,38 @@ class SprayMultiBlockTripTest {
     }
 
     @Test
+    fun `active trip resolution failure clears stale neighbouring placement`() {
+        val pinotTrip = completeTrip(active = true).copy(
+            paddockId = ids[1],
+            paddockIds = listOf(ids[1]),
+        )
+        val neighbour = block("neighbour", 500, 149.010)
+        val stalePlacement = PinPlacement.resolve(
+            paddocks = listOf(neighbour),
+            selectedPaddockId = neighbour.id,
+            latitude = -33.0,
+            longitude = 149.010,
+            side = "left",
+        )
+        assertEquals(neighbour.id, stalePlacement.paddockId)
+
+        val attribution = resolveTripPinAttribution(
+            activeTrip = pinotTrip,
+            paddocks = listOf(neighbour),
+            latitude = -33.0,
+            longitude = 149.010,
+            side = "left",
+            callerPaddockId = neighbour.id,
+            callerRowNumber = 500,
+            callerPlacement = stalePlacement,
+        )
+
+        assertNull(attribution.paddockId)
+        assertNull(attribution.rowNumber)
+        assertNull(attribution.placement)
+    }
+
+    @Test
     fun `overlapping selected polygons choose the block with the closest valid row`() {
         val farther = block(ids[0], 1, 149.010).copy(
             rows = listOf(

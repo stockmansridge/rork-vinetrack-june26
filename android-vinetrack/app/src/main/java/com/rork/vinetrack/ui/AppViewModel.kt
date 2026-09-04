@@ -971,6 +971,13 @@ internal fun resolveTripPinAttribution(
     } else {
         null
     }
+    if (activeTrip != null && tripResolution == null) {
+        return TripPinAttribution(
+            paddockId = null,
+            rowNumber = null,
+            placement = null,
+        )
+    }
     val placement = if (tripResolution != null && latitude != null && longitude != null) {
         PinPlacement.resolve(
             paddocks = listOf(tripResolution.paddock),

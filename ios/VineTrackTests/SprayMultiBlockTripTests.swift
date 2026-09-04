@@ -188,6 +188,58 @@ struct SprayMultiBlockTripTests {
         #expect(rejected.paddockId == nil)
     }
 
+    @Test("Auto Path completes and advances across later selected blocks")
+    @MainActor
+    func autoPathCompletesAcrossSelectedBlocks() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("spray-auto-path-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: directory))
+        store.selectedVineyardId = vineyardId
+        let blocks = [
+            block(id: sauvId, name: "Sauv Blanc", row: 1, longitude: 149.000),
+            block(id: pinotId, name: "Pinot Noir", row: 69, longitude: 149.010),
+            block(id: grisId, name: "Pinot Gris", row: 109, longitude: 149.020),
+        ]
+        blocks.forEach(store.addPaddock)
+        var planned = completeTrip
+        planned.sequenceIndex = 0
+        planned.currentRowNumber = 68.5
+        planned.nextRowNumber = 108.5
+        planned.rowSequence = [68.5, 108.5, 0.5]
+        store.addInactiveTrip(planned)
+
+        let tracking = TripTrackingService()
+        tracking.configure(store: store, locationService: LocationService())
+        tracking.activateSavedTrip(planned, at: Date())
+
+        let latitudes: [Double] = Array(stride(from: -33.00075, through: -32.99925, by: 0.00015))
+        let firstPinotFix = CLLocation(latitude: latitudes[0], longitude: 149.010)
+        tracking.processLocation(firstPinotFix, force: true)
+        #expect(tracking.currentPaddockId == pinotId)
+        #expect(tracking.currentRowNumber == 68.5)
+        for latitude in latitudes.dropFirst() {
+            tracking.processLocation(CLLocation(latitude: latitude, longitude: 149.010), force: true)
+        }
+
+        var active = try #require(store.trips.first { $0.id == planned.id })
+        #expect(active.completedPaths.contains(68.5))
+        #expect(active.sequenceIndex == 1)
+        #expect(active.currentRowNumber == 108.5)
+        #expect(active.nextRowNumber == 0.5)
+
+        for latitude in latitudes {
+            tracking.processLocation(CLLocation(latitude: latitude, longitude: 149.020), force: true)
+        }
+
+        active = try #require(store.trips.first { $0.id == planned.id })
+        #expect(tracking.currentPaddockId == grisId)
+        #expect(active.completedPaths.contains(108.5))
+        #expect(active.sequenceIndex == 2)
+        #expect(active.currentRowNumber == 0.5)
+    }
+
     @Test("Overlapping selected blocks choose the closest valid row")
     func overlappingBlocksChooseClosestRow() {
         let farther = Paddock(
