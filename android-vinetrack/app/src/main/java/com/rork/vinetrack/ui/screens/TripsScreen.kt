@@ -197,6 +197,7 @@ import com.rork.vinetrack.data.TripCostEstimator
 import com.rork.vinetrack.data.TripCsvExporter
 import com.rork.vinetrack.data.TripPdfExporter
 import com.rork.vinetrack.data.TripFuelEstimator
+import com.rork.vinetrack.data.TripPathDisplayProcessor
 import com.rork.vinetrack.data.TripRowSequencePlanner
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.SavedInput
@@ -1361,11 +1362,15 @@ private fun TripDetailView(
             }
 
             // Path map — placed after Row Completion, matching iOS.
-            val path = trip.pathPoints?.mapNotNull { it.toLatLng() } ?: emptyList()
-            if (path.size >= 2) {
+            val pathSegments = remember(trip.pathPoints) {
+                TripPathDisplayProcessor.displaySegments(trip.pathPoints.orEmpty())
+                    .map { segment -> segment.mapNotNull { it.toLatLng() } }
+                    .filter { it.size >= 2 }
+            }
+            if (pathSegments.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     SectionHeader("Path Map", onLight = true)
-                    TripPathMap(path = path, blocks = state.paddocks)
+                    TripPathMap(pathSegments = pathSegments, blocks = state.paddocks)
                 }
             }
 
@@ -1672,8 +1677,13 @@ private fun ActiveTripHud(
     onGoHome: () -> Unit = {},
 ) {
     val vine = LocalVineColors.current
-    val path = remember(trip.pathPoints) { trip.pathPoints?.mapNotNull { it.toLatLng() } ?: emptyList() }
-    val current = path.lastOrNull()
+    val sourcePath = trip.pathPoints.orEmpty()
+    val pathSegments = remember(trip.pathPoints) {
+        TripPathDisplayProcessor.displaySegments(sourcePath)
+            .map { segment -> segment.mapNotNull { it.toLatLng() } }
+            .filter { it.size >= 2 }
+    }
+    val current = sourcePath.lastOrNull()?.toLatLng()
     val blocks = remember(state.paddocks, trip.paddockId, trip.effectivePaddockIds) {
         val ids = buildSet {
             trip.paddockId?.let { add(it) }
@@ -1873,8 +1883,8 @@ private fun ActiveTripHud(
                     )
                 }
             }
-            if (path.size >= 2) {
-                Polyline(points = path, color = VineColors.Cyan, width = 9f, zIndex = 1f)
+            pathSegments.forEach { segment ->
+                Polyline(points = segment, color = VineColors.Cyan, width = 9f, zIndex = 1f)
             }
             current?.let {
                 // Dot/puck for "where I am now" — never a pin, so the live
@@ -4520,16 +4530,17 @@ private fun TripCostingLinksSheet(
 }
 
 @Composable
-private fun TripPathMap(path: List<LatLng>, blocks: List<Paddock>) {
+private fun TripPathMap(pathSegments: List<List<LatLng>>, blocks: List<Paddock>) {
     val cameraPositionState = rememberCameraPositionState()
     var mapLoaded by remember { mutableStateOf(false) }
 
     // Frame the recorded track once the map is laid out (falling back to the
     // trip's block geometry when there is no track), re-framing if the data
     // arrives after the map loads.
-    LaunchedEffect(mapLoaded, path, blocks) {
+    LaunchedEffect(mapLoaded, pathSegments, blocks) {
         if (!mapLoaded) return@LaunchedEffect
-        val pts = path.ifEmpty {
+        val completeDisplayPath = pathSegments.flatten()
+        val pts = completeDisplayPath.ifEmpty {
             blocks.filter { it.hasGeometry }
                 .flatMap { it.polygonPoints ?: emptyList() }
                 .mapNotNull { it.toLatLng() }
@@ -4569,11 +4580,13 @@ private fun TripPathMap(path: List<LatLng>, blocks: List<Paddock>) {
                     )
                 }
             }
-            Polyline(points = path, color = VineColors.Cyan, width = 7f, zIndex = 1f)
-            path.firstOrNull()?.let {
+            pathSegments.forEach { segment ->
+                Polyline(points = segment, color = VineColors.Cyan, width = 7f, zIndex = 1f)
+            }
+            pathSegments.firstOrNull()?.firstOrNull()?.let {
                 Marker(state = MarkerState(position = it), title = "Start", icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN))
             }
-            path.lastOrNull()?.let {
+            pathSegments.lastOrNull()?.lastOrNull()?.let {
                 Marker(state = MarkerState(position = it), title = "End", icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED))
             }
         }
