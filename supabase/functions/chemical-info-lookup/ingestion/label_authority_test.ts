@@ -366,6 +366,28 @@ Deno.test("§12.9 + §12.10: research prose contradicted by the final answer is 
 // §12.7 / §12.12 / §12.13 — the verified-good items must not move
 // ---------------------------------------------------------------------------
 
+Deno.test("register-confirmed eLabel replaces stale Gazette URLs at every response field", () => {
+  const ai = terraStructured();
+  const gazette = "https://www.apvma.gov.au/sites/default/files/gazette_20210209.pdf";
+  ai.registration = {
+    country_code: "AU",
+    registration_number: "59688",
+    label_reference: gazette,
+    regulator_label_url: gazette,
+  };
+  ai.label_urls = {
+    regulator_label_url: gazette,
+    manufacturer_label_url: null,
+    product_url: "https://example.invalid/stale",
+  };
+  const merged = mergeDiscoveryIntoStructured(ai, registration(parsedEvidence()));
+  const label = "https://elabels.apvma.gov.au/59688ELBL.pdf";
+  assertEquals(merged.registration.label_reference, label);
+  assertEquals(merged.registration.regulator_label_url, label);
+  assertEquals(merged.label_urls.regulator_label_url, label);
+  assertFalse(JSON.stringify(merged.label_urls).includes("gazette_20210209"));
+});
+
 Deno.test("§12.7 + §12.13: identity, chemistry, label, WHP and parser version all stand unchanged", () => {
   const merged = mergeDiscoveryIntoStructured(terraStructured(), registration(parsedEvidence()));
 
@@ -378,7 +400,7 @@ Deno.test("§12.7 + §12.13: identity, chemistry, label, WHP and parser version 
   assertEquals(merged.activity_groups, ["M3"]);
   assertEquals(merged.registration.label_reference, "https://elabels.apvma.gov.au/59688ELBL.pdf");
   assertEquals(merged.label_extraction.parser_version, LABEL_PARSER_VERSION);
-  assertEquals(LABEL_PARSER_VERSION, 2);
+  assertEquals(LABEL_PARSER_VERSION, 3);
 
   // Every grapevine use keeps the label's own 30-day withholding period,
   // rate or no rate.

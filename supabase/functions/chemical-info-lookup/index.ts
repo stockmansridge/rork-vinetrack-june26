@@ -2365,6 +2365,7 @@ Deno.serve(async (req: Request) => {
                   scheme: resolved?.scheme ?? null,
                   registration_number: resolved?.registration_number ?? null,
                 },
+                registeredProductName: resolved?.registered_product_name ?? null,
               }),
           );
           applyManufacturerEnrichment(structured, enrichment, {
@@ -2372,6 +2373,9 @@ Deno.serve(async (req: Request) => {
             manufacturerProductUrl: projection.productPageCandidate?.url ?? null,
           });
           Object.assign(stageB, enrichment.diagnostics);
+          stageB.selected_manufacturer_label = enrichment.source === "manufacturer_label"
+            ? (enrichment.fetchedUrl ?? projection.manufacturerLabelCandidate.url)
+            : null;
           if (enrichment.diagnostics.manufacturer_label_fetch === "failure") {
             degradedStages.push("manufacturer_label_fetch_failed");
           }

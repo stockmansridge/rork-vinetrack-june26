@@ -60,7 +60,7 @@ import {
 import { deriveLabelTargetWordings } from "./label_target_wording.ts";
 
 /** Bumped whenever the deterministic grammar changes (refresh comparability). */
-export const LABEL_PARSER_VERSION = 2;
+export const LABEL_PARSER_VERSION = 3;
 
 // ---------------------------------------------------------------------------
 // Default PDF text extractor (production) — unpdf, the serverless pdf.js
@@ -585,7 +585,7 @@ const HEADER_START: ReadonlyArray<RegExp> = [
   // column and `finaliseHeader` rejects the whole header.
   /^(DISEASE|DISEASES|PEST|PESTS|WEED|WEEDS|INSECT|INSECTS)\s+CONTROLLED$/i,
   /^RATE\b/i,
-  /^WHP\b/i,
+  /^(WHP|WITHHOLDING)\b/i,
   /^(CRITICAL\s+COMMENTS|CRITICAL\s+USE\s+COMMENTS|COMMENTS):?$/i,
   /^(STATE|STATES)$/i,
 ];
@@ -596,7 +596,7 @@ const HEADER_START: ReadonlyArray<RegExp> = [
  * not the table's first row — nothing else is ever absorbed into a heading.
  */
 const HEADER_FRAGMENT =
-  /^(?:PER|PER\s+100\s*L|PER\s+HECTARE|100\s*L|100|L|HECTARE|HA|Harvest\s*\(H\)|Grazing\s*\(G\)|\(H\)|\(G\)|\(WHP\)|COMMENTS:?|USE\s+COMMENTS|(?:G|KG|ML|L)\s*\/\s*(?:HA|HECTARE)|(?:G|KG|ML|L)\s*\/\s*100\s*L)$/i;
+  /^(?:PER|PERIOD|PER\s+100\s*L|PER\s+HECTARE|100\s*L|100|L|HECTARE|HA|Harvest\s*\(H\)|Grazing\s*\(G\)|\(H\)|\(G\)|\(WHP\)|COMMENTS:?|USE\s+COMMENTS|(?:G|KG|ML|L)\s*\/\s*(?:HA|HECTARE)|(?:G|KG|ML|L)\s*\/\s*100\s*L)$/i;
 
 /** Classify one FULLY ASSEMBLED heading. */
 function classifyHeader(raw: string): ColumnKind {
@@ -613,7 +613,7 @@ function classifyHeader(raw: string): ColumnKind {
     if (/\b(HECTARE|HA)\b/i.test(text)) return "rate_ha";
     return "rate";
   }
-  if (/^WHP\b/i.test(text)) return "whp";
+  if (/^(WHP|WITHHOLDING)\b/i.test(text)) return "whp";
   if (/COMMENTS/i.test(text)) return "comments";
   return "ignored";
 }

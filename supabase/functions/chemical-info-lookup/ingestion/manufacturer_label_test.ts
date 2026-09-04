@@ -27,6 +27,7 @@ import { whpDaysFromStatement, reentryHoursFromStatement } from "./label.ts";
 import { projectGrapevineUses, selectLabelReferences } from "../grapevine_label.ts";
 import { classifyUrl } from "../research/classify.ts";
 import { selectManufacturerLabel } from "../research/linked_documents.ts";
+import { manufacturerDocumentConfirmsIdentity } from "./manufacturer_enrichment.ts";
 
 const REGISTERED_NAME = "VICOL WINTER OIL INSECTICIDE";
 const PRODUCT_URL = "https://www.vicchem.com/product_detail?pn=19200";
@@ -51,6 +52,24 @@ function grapevineUses(): Record<string, unknown>[] {
 function ratesOf(use: Record<string, unknown>): { basis: string; value?: number; unit: string; label: string; raw_text: string }[] {
   return (use.rates ?? []) as never;
 }
+
+Deno.test("manufacturer PDF bytes must confirm the locked registration or full product identity", () => {
+  assertEquals(manufacturerDocumentConfirmsIdentity({
+    text: "CropSure Greenshield 750 WG Fungicide APVMA Approval No 90279",
+    registrationNumber: "90279",
+    registeredProductName: "CROPSURE GREENSHIELD 750 WG FUNGICIDE",
+  }), true);
+  assertEquals(manufacturerDocumentConfirmsIdentity({
+    text: "CropSure Greenshield 750WG Fungicide Product Label",
+    registrationNumber: "90279",
+    registeredProductName: "CROPSURE GREENSHIELD 750 WG FUNGICIDE",
+  }), true);
+  assertEquals(manufacturerDocumentConfirmsIdentity({
+    text: "Unrelated Fungicide Product Label APVMA 12345",
+    registrationNumber: "90279",
+    registeredProductName: "CROPSURE GREENSHIELD 750 WG FUNGICIDE",
+  }), false);
+});
 
 // ---------------------------------------------------------------------------
 // TEST A — exact identity remains locked

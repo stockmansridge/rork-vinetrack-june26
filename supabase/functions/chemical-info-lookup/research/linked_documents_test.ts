@@ -15,6 +15,12 @@ import {
   evaluateLinkedDocument,
   selectManufacturerLabel,
 } from "./linked_documents.ts";
+import {
+  CROPSURE_CATALOGUE_HTML,
+  CROPSURE_CATALOGUE_URL,
+  CROPSURE_GREENSHIELD_LABEL_URL,
+} from "./cropsure_catalogue_fixture.ts";
+import { extractLinks, extractPageProductName } from "./page_inspector.ts";
 
 const OMNIA_PAGE = "https://www.omnia.com.au/products/sprayseal";
 const OMNIA_LABEL = "https://www.omnia.com.au/files/2025/07/Sprayseal%205L_Digi.pdf";
@@ -237,6 +243,43 @@ Deno.test("the label is chosen from a page of mixed documents", () => {
   // that found nothing, and this is where a future investigation starts.
   assertEquals(selection.rejected.length, 2);
   assert(selection.rejected.every((r) => r.outcome === "rejected_excluded_kind"));
+});
+
+Deno.test("CropSure generic catalogue page promotes only its exact full-product label anchor", () => {
+  const page = extractPageProductName(CROPSURE_CATALOGUE_HTML);
+  const links = extractLinks(CROPSURE_CATALOGUE_HTML, CROPSURE_CATALOGUE_URL).links;
+  assertEquals(page.name, "Fungicide");
+
+  const selection = selectManufacturerLabel({
+    page: { pageUrl: CROPSURE_CATALOGUE_URL, pageProductName: page.name },
+    pageIsTrustedProductPage: classifyUrl(CROPSURE_CATALOGUE_URL, "AU").isInspectableProductPage,
+    pageIsVerifiedRegistrantDomain: classifyUrl(CROPSURE_CATALOGUE_URL, "AU").trust === "registrant",
+    registeredProductName: "CROPSURE GREENSHIELD 750 WG FUNGICIDE",
+    documents: links,
+  });
+  assertEquals(selection.label?.url, CROPSURE_GREENSHIELD_LABEL_URL);
+});
+
+Deno.test("generic catalogue exceptions stay closed to unrelated, reseller and cross-host label links", () => {
+  const base = {
+    page: { pageUrl: CROPSURE_CATALOGUE_URL, pageProductName: "Fungicide" },
+    pageIsTrustedProductPage: true,
+    pageIsVerifiedRegistrantDomain: true,
+    registeredProductName: "CROPSURE GREENSHIELD 750 WG FUNGICIDE",
+  };
+  assertEquals(evaluateLinkedDocument({
+    ...base,
+    document: { url: "https://cropsure.com/unrelated-label.pdf", linkText: "Unrelated Product Label" },
+  }).outcome, "rejected_catalogue_link_identity");
+  assertEquals(evaluateLinkedDocument({
+    ...base,
+    document: { url: "https://reseller.example/greenshield-label.pdf", linkText: "CropSure Greenshield 750WG Fungicide Label" },
+  }).outcome, "rejected_cross_host");
+  assertEquals(evaluateLinkedDocument({
+    ...base,
+    pageIsTrustedProductPage: false,
+    document: { url: CROPSURE_GREENSHIELD_LABEL_URL, linkText: "CropSure Greenshield 750WG Fungicide Label" },
+  }).outcome, "rejected_untrusted_page");
 });
 
 Deno.test("a page with no label link promotes nothing", () => {

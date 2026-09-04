@@ -440,6 +440,7 @@ function promoteFromInspectedPages(input: {
       // is what kept real registrant labels — Vicchem's among them — out of
       // the pipeline entirely.
       pageIsTrustedProductPage: pageClass.isInspectableProductPage,
+      pageIsVerifiedRegistrantDomain: pageClass.trust === "registrant",
       registeredProductName: registeredName,
       documents: page.links.filter((l) => l.url !== page.finalUrl),
     };
@@ -627,8 +628,8 @@ export function projectResearch(
         kind: "product_page",
         isProductPageCandidate: true,
         reason:
-          `identified as the registrant's product page by stating "${source.pageProductName}" ` +
-          `and linking the manufacturer label on its own host`,
+          `identified as the registrant's product/catalogue page after its own-host label link ` +
+          `corresponded to the register-resolved product (page heading "${source.pageProductName}")`,
       };
     }
   }

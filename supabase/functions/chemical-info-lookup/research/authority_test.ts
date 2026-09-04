@@ -239,6 +239,38 @@ Deno.test("§40.7/§15 an SDS can never become the Official Label", () => {
   assert((projection.extraction.unresolved as string[]).includes("label_reference"));
 });
 
+Deno.test("APVMA eLabel is a label while Gazette and registration publications are not", () => {
+  const label = classifyUrl("https://elabels.apvma.gov.au/90279ELBL.pdf", "AU");
+  assertEquals(label.kind, "label_document");
+  assertEquals(label.isOfficialLabelCandidate, true);
+
+  for (const url of [
+    "https://www.apvma.gov.au/sites/default/files/gazette_20210209.pdf",
+    "https://www.apvma.gov.au/publications/registration-notice-90279.pdf",
+    "https://www.apvma.gov.au/news/90279.pdf",
+  ]) {
+    const classified = classifyUrl(url, "AU");
+    assertEquals(classified.kind, "other", url);
+    assertEquals(classified.isOfficialLabelCandidate, false, url);
+  }
+});
+
+Deno.test("a Gazette offered by research never populates regulator label fields", () => {
+  const research = cloneResearch();
+  const gazette = "https://www.apvma.gov.au/sites/default/files/gazette_20210209.pdf";
+  research.documents.official_label_candidates = [{
+    url: gazette,
+    title: "APVMA Gazette",
+    domain: "apvma.gov.au",
+    reason: "registration notice",
+  }];
+  research.sources = research.sources.filter((source) => !source.url.includes("elabels"));
+  const projection = projectResearch(research, "AU", "apvma");
+  assertEquals(projection.extraction.label_reference, null);
+  assertEquals(projection.extraction.regulator_label_url, null);
+  assert(projection.rejected.some((entry) => entry.url === gazette));
+});
+
 Deno.test("§40.8/§13 a real approved label populates registration.labelReference", () => {
   const research = cloneResearch();
   const projection = projectResearch(research, "AU", "apvma");

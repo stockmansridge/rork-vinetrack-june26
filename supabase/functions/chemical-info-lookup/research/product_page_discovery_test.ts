@@ -41,6 +41,11 @@ import { selectManufacturerLabel, selectManufacturerSds } from "./linked_documen
 import { projectResearch } from "./authority.ts";
 import { cloneResearch } from "./test_fixtures.ts";
 import type { ChemicalResearchResult } from "./schema.ts";
+import {
+  CROPSURE_CATALOGUE_HTML,
+  CROPSURE_CATALOGUE_URL,
+  CROPSURE_GREENSHIELD_LABEL_URL,
+} from "./cropsure_catalogue_fixture.ts";
 
 const VICOL_PAGE = "https://www.vicchem.com/product_detail?pn=19200";
 const VICOL_LABEL = "https://www.vicchem.com/prods/label/VICOLWOLabel.pdf";
@@ -141,6 +146,30 @@ function researchWith(productPages: string[], labelCandidates: string[] = []): C
   }));
   return research;
 }
+
+Deno.test("CropSure catalogue page is inspected and earns product/label selection from the exact anchor", async () => {
+  const network = fetchByUrl({ [CROPSURE_CATALOGUE_URL]: CROPSURE_CATALOGUE_HTML });
+  const inspected = await inspectProductPage(
+    { fetchFn: network.fetchFn },
+    CROPSURE_CATALOGUE_URL,
+    "AU",
+  );
+  assertEquals(inspected.outcome, "inspected");
+  if (inspected.outcome !== "inspected") return;
+  assertEquals(inspected.pageProductName, "Fungicide");
+
+  const projection = projectResearch(
+    researchWith([CROPSURE_CATALOGUE_URL], ["https://elabels.apvma.gov.au/90279ELBL.pdf"]),
+    "AU",
+    "apvma",
+    "CROPSURE GREENSHIELD 750 WG FUNGICIDE",
+    [inspected],
+  );
+  assertEquals(projection.manufacturerLabelCandidate?.url, CROPSURE_GREENSHIELD_LABEL_URL);
+  assertEquals(projection.productPageCandidate?.url, CROPSURE_CATALOGUE_URL);
+  assertEquals(projection.extraction.manufacturer_label_url, CROPSURE_GREENSHIELD_LABEL_URL);
+  assertEquals(projection.extraction.productURL, CROPSURE_CATALOGUE_URL);
+});
 
 // ---------------------------------------------------------------------------
 // §1 — underscore product-detail recognition

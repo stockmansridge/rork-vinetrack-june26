@@ -38,6 +38,7 @@ import {
   selectLabelReferences,
 } from "../grapevine_label.ts";
 import { applyRateIdentities, type RateIdentityProduct } from "../rate_identity.ts";
+import { normaliseProductNameLoose } from "./matching.ts";
 
 /** Everything the live path needs to prove what happened, and why. */
 export interface ManufacturerEnrichmentDiagnostics {
@@ -103,6 +104,28 @@ function countGrapevineRows(uses: Record<string, unknown>[]): number {
 }
 
 /**
+ * A catalogue link is only a discovery lead until the fetched PDF confirms
+ * the locked registration or registered product identity from its own text.
+ */
+export function manufacturerDocumentConfirmsIdentity(input: {
+  text: string;
+  registrationNumber?: string | null;
+  registeredProductName?: string | null;
+}): boolean {
+  const documentText = String(input.text ?? "");
+  const number = String(input.registrationNumber ?? "").trim();
+  if (number && new RegExp(`(^|\\D)${number.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}(\\D|$)`).test(documentText)) {
+    return true;
+  }
+
+  const product = normaliseProductNameLoose(String(input.registeredProductName ?? ""));
+  if (!product) return false;
+  const haystack = normaliseProductNameLoose(documentText);
+  const tokens = product.split(" ").filter((token) => token.length > 2);
+  return tokens.length > 0 && tokens.every((token) => haystack.includes(token));
+}
+
+/**
  * Fetch, read and project the manufacturer's label.
  *
  * `regulatorUses` is what the lookup already had. It is returned unchanged on
@@ -125,6 +148,8 @@ export async function enrichFromManufacturerLabel(input: {
    * i.e. inside the projection below, before the one-target-per-row fan-out.
    */
   product?: RateIdentityProduct | null;
+  /** Register-resolved name, used only to verify the fetched document. */
+  registeredProductName?: string | null;
 }): Promise<ManufacturerEnrichmentResult> {
   const regulatorUses = input.regulatorUses ?? [];
 
@@ -217,6 +242,36 @@ export async function enrichFromManufacturerLabel(input: {
     };
   }
 
+  const documentText = assembleTextLines(items).map((line) => line.text).join("\n");
+  if (!manufacturerDocumentConfirmsIdentity({
+    text: documentText,
+    registrationNumber: input.product?.registration_number ?? null,
+    registeredProductName: input.registeredProductName ?? null,
+  })) {
+    return {
+      uses: regulatorUses,
+      source: regulatorUses.length ? "regulator_label" : "none",
+      fetchedUrl: null,
+      withholdingPeriodDays: null,
+      diagnostics: {
+        manufacturer_label_fetch: "success",
+        manufacturer_label_fetch_outcome: fetched.outcome,
+        manufacturer_label_fetch_reason:
+          "the fetched PDF did not confirm the locked registration or registered product identity",
+        manufacturer_label_extract: "failure",
+        manufacturer_label_bytes: fetched.byteSize ?? null,
+        manufacturer_label_sha256: fetched.sha256 ?? null,
+        label_rows_found: 0,
+        grapevine_rows_found: countGrapevineRows(regulatorUses),
+        grapevine_rates_found: countGrapevineRates(regulatorUses),
+        withholding_period_days: null,
+        practical_source: regulatorUses.length ? "regulator_label" : "none",
+        practical_source_reason:
+          "manufacturer document identity was not confirmed, so regulator data carries the lookup",
+      },
+    };
+  }
+
   const parse = extractManufacturerLabelUses(items);
   const whp = readWithholdingPeriod(items);
   const manufacturerUses = manufacturerUsesToRegisteredUses(parse.uses, {
@@ -275,16 +330,18 @@ export function applyManufacturerEnrichment(
 ): void {
   if (!structured) return;
 
-  // URLs are recorded even when the document could not be read: knowing the
-  // registrant publishes a label is useful to an operator, and the link is
-  // openable by hand.
-  const labelUrl = result.fetchedUrl ?? urls.manufacturerLabelUrl ?? null;
+  // A linked URL becomes manufacturer-label evidence only after the fetched
+  // PDF confirms the locked registration/product identity and supplies the
+  // practical manufacturer rows. Discovery leads never populate final fields.
+  const labelUrl = result.source === "manufacturer_label"
+    ? (result.fetchedUrl ?? urls.manufacturerLabelUrl ?? null)
+    : null;
   const refs = selectLabelReferences({
     manufacturerLabelUrl: labelUrl,
-    regulatorLabelUrl: structured.registration?.regulator_label_url ??
-      structured.registration?.label_reference ?? null,
-    productUrl: urls.manufacturerProductUrl ??
-      structured.label_urls?.product_url ?? structured.product_url ?? null,
+    // The register-confirmed legacy reference wins over an unvalidated AI URL.
+    regulatorLabelUrl: structured.registration?.label_reference ??
+      structured.registration?.regulator_label_url ?? null,
+    productUrl: urls.manufacturerProductUrl ?? structured.product_url ?? null,
     sdsUrl: structured.registration?.sds_url ?? null,
   });
 
@@ -292,6 +349,7 @@ export function applyManufacturerEnrichment(
     structured.registration.manufacturer_label_url = refs.manufacturer_label_url;
     structured.registration.regulator_label_url = refs.regulator_label_url;
     structured.registration.manufacturer_product_url = refs.manufacturer_product_url;
+    structured.product_url = refs.manufacturer_product_url;
     // Legacy field keeps pointing at the REGULATOR document for shipped
     // clients; the split is additive, never a replacement.
     structured.registration.label_reference = refs.label_reference ??
@@ -300,7 +358,7 @@ export function applyManufacturerEnrichment(
   structured.label_urls = {
     regulator_label_url: refs.regulator_label_url,
     manufacturer_label_url: refs.manufacturer_label_url,
-    product_url: refs.manufacturer_product_url ?? structured.label_urls?.product_url ?? null,
+    product_url: refs.manufacturer_product_url,
   };
 
   // Practical rows only change when a source actually supplied some.

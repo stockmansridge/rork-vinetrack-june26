@@ -231,6 +231,7 @@ const REGISTRANT_HOSTS = [
   "zelam.com",
   "etec.co.nz",
   "nzagritrade.co.nz",
+  "cropsure.com",
 ];
 
 /** URL path/extension signals for a real label DOCUMENT. */
@@ -261,6 +262,29 @@ function looksLikeSds(url: string): boolean {
 function isPdf(url: string): boolean {
   try {
     return new URL(url).pathname.toLowerCase().endsWith(".pdf");
+  } catch {
+    return false;
+  }
+}
+
+/** Official publications and notices are evidence about registration, not labels. */
+function looksLikeExcludedOfficialPublication(url: string): boolean {
+  try {
+    const value = `${new URL(url).pathname} ${new URL(url).search}`.toLowerCase();
+    return /(^|[/_.?&=-])(gazette|publication|news|registration[-_ ]?notice)([/_.?&=-]|$)/
+      .test(value);
+  } catch {
+    return false;
+  }
+}
+
+/** APVMA's dedicated eLabel host is positive document identity, not a PDF guess. */
+function isApvmaElabel(url: string): boolean {
+  const host = hostOf(url);
+  if (host !== "elabels.apvma.gov.au" || !isPdf(url)) return false;
+  try {
+    return /(?:^|\/)\d{3,8}ELBL\.pdf$/i.test(new URL(url).pathname) ||
+      /^\/\d{3,8}\.pdf$/i.test(new URL(url).pathname);
   } catch {
     return false;
   }
@@ -393,10 +417,18 @@ export function classifyUrl(
   const { trust, reason: trustReason } = trustFor(domain, countryCode);
   const { kind, reason: kindReason } = kindFor(url);
 
-  // A PDF sitting on the register host is a label even without the word
-  // "label" in the path — that is how eLabels serves approved documents.
-  const registerPdf = trust === "official_register" && isPdf(url) && kind !== "safety_data_sheet";
-  const effectiveKind: DocumentKind = registerPdf ? "label_document" : kind;
+  // A regulator-hosted PDF is not automatically a label. APVMA Gazettes,
+  // publications, news attachments and registration notices remain useful
+  // verification sources, but can never occupy a label field. The dedicated
+  // eLabels document identity is recognised positively.
+  const excludedOfficialPublication = looksLikeExcludedOfficialPublication(url);
+  const registerLabel = !excludedOfficialPublication &&
+    (isApvmaElabel(url) || (trust === "official_register" && kind === "label_document"));
+  const effectiveKind: DocumentKind = excludedOfficialPublication
+    ? "other"
+    : registerLabel
+    ? "label_document"
+    : kind;
 
   // # The jurisdiction boundary
   //
@@ -466,7 +498,14 @@ export function classifyUrl(
     (trust === "registrant" || trust === "unknown") &&
     pageShaped;
 
-  const parts = [trustReason, registerPdf ? "PDF on register host" : kindReason];
+  const parts = [
+    trustReason,
+    excludedOfficialPublication
+      ? "official publication/notice, not a product label"
+      : isApvmaElabel(url)
+      ? "APVMA eLabel document"
+      : kindReason,
+  ];
   if (hint?.declaredKind && hint.declaredKind !== effectiveKind) {
     parts.push(`model claimed ${hint.declaredKind}, server classified ${effectiveKind}`);
   }

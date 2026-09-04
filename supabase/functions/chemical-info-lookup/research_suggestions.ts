@@ -28,8 +28,6 @@
 // register does not confirm a number, the number is REMOVED — a wrong number
 // is worse than none, because a number is what downstream resolution trusts.
 
-// deno-lint-ignore-file no-explicit-any
-
 import type { RegisterCandidate } from "./ingestion/contract.ts";
 import { normaliseProductNameLoose } from "./ingestion/matching.ts";
 
@@ -71,7 +69,7 @@ export const MAX_RESEARCH_SUGGESTIONS = 5;
  *   v3  Single capable discovery pass for approximate names (no serial
  *       Terra -> Sol), 24-hour TTL.
  */
-export const CANDIDATE_DISCOVERY_CACHE_VERSION = "candidate-discovery-v3";
+export const CANDIDATE_DISCOVERY_CACHE_VERSION = "candidate-discovery-v4";
 
 /** Wire `source` value for a suggestion the register confirmed. */
 export const VALIDATED_SUGGESTION_SOURCE = "research_validated";
@@ -116,6 +114,24 @@ function isAuthoritativeRow(row: Record<string, unknown>): boolean {
 }
 
 /**
+ * Canonical registration identity for post-validation deduplication.
+ *
+ * Country and scheme are required alongside the number: identical-looking
+ * numbers in two registers are not the same legal product. Registration
+ * typography is not identity, so separators and whitespace are removed.
+ */
+function registrationIdentity(
+  row: Record<string, unknown>,
+  fallbackCountry: string,
+): string | null {
+  const country = (text(row.registration_country) || fallbackCountry).toUpperCase();
+  const inferredScheme = country === "AU" ? "apvma" : country === "NZ" ? "acvm" : "";
+  const scheme = (text(row.registration_scheme) || inferredScheme).toLowerCase();
+  const number = text(row.registration_number).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return country && scheme && number ? `${country}:${scheme}:${number}` : null;
+}
+
+/**
  * Validate research suggestions against the official register (Stage 2 §5).
  *
  * For every suggestion carrying a registration number, that exact number is
@@ -139,15 +155,25 @@ export async function validateResearchSuggestions(
   let strippedCount = 0;
   let suggestionsKept = 0;
 
-  // Dedupe on the CONFIRMED number, so research proposing the same product
-  // twice under two spellings collapses to the register's one identity.
-  const seenNumbers = new Set<string>();
-  const seenNames = new Set<string>();
+  // Dedupe at the post-validation identity boundary. Authoritative rows seed
+  // this set before any research row can be admitted, so a validated research
+  // lead can never duplicate or overwrite an official result.
+  const seenIdentities = new Set<string>();
+  const seenIdentitylessNames = new Set<string>();
 
   for (const raw of rows ?? []) {
     const row = { ...(raw ?? {}) } as Record<string, unknown>;
 
     if (isAuthoritativeRow(row)) {
+      const identity = registrationIdentity(row, options.countryCode);
+      if (identity) {
+        if (seenIdentities.has(identity)) continue;
+        seenIdentities.add(identity);
+      } else {
+        const nameKey = normaliseProductNameLoose(text(row.name));
+        if (nameKey && seenIdentitylessNames.has(nameKey)) continue;
+        if (nameKey) seenIdentitylessNames.add(nameKey);
+      }
       out.push(row);
       continue;
     }
@@ -160,8 +186,8 @@ export async function validateResearchSuggestions(
     const number = text(row.registration_number);
     if (!number) {
       const nameKey = normaliseProductNameLoose(text(row.name));
-      if (nameKey && seenNames.has(nameKey)) continue;
-      if (nameKey) seenNames.add(nameKey);
+      if (nameKey && seenIdentitylessNames.has(nameKey)) continue;
+      if (nameKey) seenIdentitylessNames.add(nameKey);
       row.registration_validated = false;
       out.push(row);
       suggestionsKept++;
@@ -192,16 +218,26 @@ export async function validateResearchSuggestions(
       row.registration_unconfirmed_number = number;
       strippedCount++;
       const nameKey = normaliseProductNameLoose(text(row.name));
-      if (nameKey && seenNames.has(nameKey)) continue;
-      if (nameKey) seenNames.add(nameKey);
+      if (nameKey && seenIdentitylessNames.has(nameKey)) continue;
+      if (nameKey) seenIdentitylessNames.add(nameKey);
       out.push(row);
       suggestionsKept++;
       continue;
     }
 
     const canonicalNumber = text(confirmed.registration_number) || number;
-    if (seenNumbers.has(canonicalNumber)) continue;
-    seenNumbers.add(canonicalNumber);
+    const canonicalCountry = options.countryCode.trim().toUpperCase();
+    const canonicalScheme = text(row.registration_scheme).toLowerCase() ||
+      (canonicalCountry === "AU" ? "apvma" : canonicalCountry === "NZ" ? "acvm" : "");
+    const validatedRow = {
+      ...row,
+      registration_number: canonicalNumber,
+      registration_country: options.countryCode,
+      registration_scheme: canonicalScheme,
+    };
+    const identity = registrationIdentity(validatedRow, options.countryCode);
+    if (identity && seenIdentities.has(identity)) continue;
+    if (identity) seenIdentities.add(identity);
 
     // The register's row wins on every field it asserts. The research name is
     // discarded, not merged: a half-model, half-register name is a product
@@ -215,6 +251,7 @@ export async function validateResearchSuggestions(
         text(row.chemicalGroup),
       registration_number: canonicalNumber,
       registration_country: options.countryCode,
+      registration_scheme: canonicalScheme,
       source: VALIDATED_SUGGESTION_SOURCE,
       registration_validated: true,
     });

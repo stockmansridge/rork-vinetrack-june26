@@ -41,13 +41,14 @@
 // touches the registration number, the registered name or the registrant.
 
 import { hostOf } from "./classify.ts";
-import { nameCorresponds } from "../ingestion/matching.ts";
+import { nameCorresponds, normaliseProductNameLoose } from "../ingestion/matching.ts";
 
 /** How a linked document was identified, for provenance and debugging. */
 export type LinkPromotionOutcome =
   | "promoted_manufacturer_label"
   | "rejected_untrusted_page"
   | "rejected_product_mismatch"
+  | "rejected_catalogue_link_identity"
   | "rejected_cross_host"
   | "rejected_not_label_text"
   | "rejected_excluded_kind"
@@ -68,8 +69,10 @@ export interface ProductPageContext {
 
 export interface LinkPromotionInput {
   page: ProductPageContext;
-  /** Whether `classifyUrl` judged the page a trusted registrant product page. */
+  /** Whether `classifyUrl` judged the page safe to inspect for registrant evidence. */
   pageIsTrustedProductPage: boolean;
+  /** Whether the host is positively recognised as the registrant/manufacturer. */
+  pageIsVerifiedRegistrantDomain?: boolean;
   /** The register-resolved product name. Identity comes from the register. */
   registeredProductName: string;
   document: LinkedDocument;
@@ -117,6 +120,23 @@ const EXCLUDED_LINK_PATTERNS: { pattern: RegExp; kind: string }[] = [
   { pattern: /\bcase\s*stud(y|ies)\b/i, kind: "case study" },
 ];
 
+function catalogueLinkNamesRegisteredProduct(registeredName: string, linkText: string): boolean {
+  const stripDocumentWords = (value: string): string =>
+    normaliseProductNameLoose(value)
+      .split(" ")
+      .filter((token) => !["label", "labels", "product", "approved", "registered", "apvma", "download"].includes(token))
+      .join("")
+      .replace(/[^a-z0-9]/g, "");
+  const registered = stripDocumentWords(registeredName);
+  const linked = stripDocumentWords(linkText);
+  return registered.length >= 8 && linked === registered;
+}
+
+function isGenericCatalogueHeading(value: string): boolean {
+  const normalised = normaliseProductNameLoose(value);
+  return /^(fungicides?|herbicides?|insecticides?|adjuvants?|products?|catalog(?:ue)?)$/.test(normalised);
+}
+
 function isPdfUrl(url: string): boolean {
   try {
     return new URL(url).pathname.toLowerCase().endsWith(".pdf");
@@ -157,15 +177,28 @@ export function evaluateLinkedDocument(
     };
   }
 
-  // Identity is the register's. A page about a DIFFERENT product cannot
-  // confer label status on its PDFs, however trusted its host.
-  if (!nameCorresponds(registeredProductName, page.pageProductName)) {
+  // Product pages normally establish identity through their own H1/title.
+  // A registrant catalogue may use a generic heading (for example
+  // "Fungicide"); that narrower path is available only on a positively
+  // verified registrant domain and only when the link wording itself names
+  // the complete registered product. All document-kind checks below still
+  // apply, and the PDF must subsequently prove identity from its own bytes.
+  const pageCorresponds = nameCorresponds(registeredProductName, page.pageProductName);
+  const cataloguePage = input.pageIsVerifiedRegistrantDomain === true &&
+    isGenericCatalogueHeading(page.pageProductName);
+  const catalogueLinkCorresponds = cataloguePage &&
+    catalogueLinkNamesRegisteredProduct(registeredProductName, text);
+  if (!pageCorresponds && !catalogueLinkCorresponds) {
     return {
-      outcome: "rejected_product_mismatch",
+      outcome: cataloguePage
+        ? "rejected_catalogue_link_identity"
+        : "rejected_product_mismatch",
       isManufacturerLabel: false,
-      reason:
-        `the page is about "${page.pageProductName}", which does not ` +
-        `correspond to the registered product "${registeredProductName}"`,
+      reason: cataloguePage
+        ? `the catalogue page is generic and link text "${text}" does not correspond to ` +
+          `the registered product "${registeredProductName}"`
+        : `the page is about "${page.pageProductName}", which does not ` +
+          `correspond to the registered product "${registeredProductName}"`,
     };
   }
 
@@ -214,7 +247,8 @@ export function evaluateLinkedDocument(
     isManufacturerLabel: true,
     reason:
       `identified as the manufacturer label by the link text "${text}" on the ` +
-      `registrant's own product page for "${page.pageProductName}"`,
+      `registrant's own ${pageCorresponds ? "product page" : "catalogue page"} for ` +
+      `"${registeredProductName}"`,
   };
 }
 
@@ -236,6 +270,7 @@ export function evaluateLinkedDocument(
 export function selectManufacturerSds(input: {
   page: ProductPageContext;
   pageIsTrustedProductPage: boolean;
+  pageIsVerifiedRegistrantDomain?: boolean;
   registeredProductName: string;
   documents: LinkedDocument[];
 }): { sds: LinkedDocument | null; reason: string } {
@@ -277,6 +312,7 @@ export function selectManufacturerSds(input: {
 export function selectManufacturerLabel(input: {
   page: ProductPageContext;
   pageIsTrustedProductPage: boolean;
+  pageIsVerifiedRegistrantDomain?: boolean;
   registeredProductName: string;
   documents: LinkedDocument[];
 }): {
@@ -289,6 +325,7 @@ export function selectManufacturerLabel(input: {
     const result = evaluateLinkedDocument({
       page: input.page,
       pageIsTrustedProductPage: input.pageIsTrustedProductPage,
+      pageIsVerifiedRegistrantDomain: input.pageIsVerifiedRegistrantDomain,
       registeredProductName: input.registeredProductName,
       document,
     });

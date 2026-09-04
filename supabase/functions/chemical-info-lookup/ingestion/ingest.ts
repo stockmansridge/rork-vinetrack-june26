@@ -48,6 +48,7 @@ import {
   CANDIDATE_EVIDENCE_MAX_AGE_MS,
   materialChanges,
 } from "./refresh.ts";
+import { projectGrapevineUses, selectLabelReferences } from "../grapevine_label.ts";
 
 // ---------------------------------------------------------------------------
 // Discovery entry point (jurisdiction fail-closed)
@@ -184,6 +185,7 @@ export function mergeDiscoveryIntoStructured(
     });
   }
 
+  const authoritativeLabelUrl = reg.label_document?.url ?? null;
   merged.registration = {
     ...aiReg,
     country_code: reg.country_code,
@@ -193,8 +195,26 @@ export function mergeDiscoveryIntoStructured(
     registered_product_name: reg.registered_product_name,
     // Stage LD-1: the register-confirmed label DOCUMENT wins; an AI-supplied
     // URL is only carried when no authoritative document was discovered.
-    label_reference: reg.label_document?.url ?? aiReg?.label_reference ?? null,
+    label_reference: authoritativeLabelUrl ?? aiReg?.label_reference ?? null,
+    regulator_label_url: authoritativeLabelUrl ?? aiReg?.regulator_label_url ?? null,
     label_version: reg.label_version ?? aiReg?.label_version ?? null,
+  };
+  const labelReferences = selectLabelReferences({
+    manufacturerLabelUrl: aiReg?.manufacturer_label_url ??
+      structured?.label_urls?.manufacturer_label_url,
+    regulatorLabelUrl: merged.registration.label_reference,
+    productUrl: aiReg?.manufacturer_product_url ?? structured?.product_url ??
+      structured?.label_urls?.product_url,
+    sdsUrl: aiReg?.sds_url,
+  });
+  merged.registration.label_reference = labelReferences.label_reference;
+  merged.registration.regulator_label_url = labelReferences.regulator_label_url;
+  merged.registration.manufacturer_label_url = labelReferences.manufacturer_label_url;
+  merged.registration.manufacturer_product_url = labelReferences.manufacturer_product_url;
+  merged.label_urls = {
+    regulator_label_url: labelReferences.regulator_label_url,
+    manufacturer_label_url: labelReferences.manufacturer_label_url,
+    product_url: labelReferences.manufacturer_product_url,
   };
   merged.product_name = reg.registered_product_name;
   merged.product_category = reg.product_category ?? structured?.product_category ?? "";
@@ -331,6 +351,11 @@ export function mergeDiscoveryIntoStructured(
     panelFallbackApplied = true;
   }
   merged.registered_uses = uses;
+  const grapevineProjection = projectGrapevineUses(uses);
+  merged.grapevine_uses = grapevineProjection.grapevine_uses;
+  merged.other_crop_uses = grapevineProjection.other_crop_uses;
+  merged.registered_for_grapevine = grapevineProjection.registered_for_grapevine;
+  merged.label_reference_rate_ranges = grapevineProjection.label_reference_rate_ranges;
   merged.label_rate_bases = Array.from(
     new Set(uses.flatMap((u: any) => (u?.rates ?? []).map((r: any) => r?.basis).filter(Boolean))),
   );

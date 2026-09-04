@@ -10,6 +10,7 @@ import {
   validateResearchSuggestions,
 } from "./research_suggestions.ts";
 import { candidateClass, rankCandidates } from "./ranking.ts";
+import { buildDiagnostics, candidatesFromSearchResults } from "./diagnostics.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -33,6 +34,11 @@ const registerCandidate = (
 /** The live APVMA rows relevant to the Hortitrol reproduction. */
 const REGISTER: Record<string, RegisterCandidate> = {
   "33182": registerCandidate("33182", "VICOL WINTER OIL INSECTICIDE"),
+  "90279": registerCandidate(
+    "90279",
+    "CROPSURE GREENSHIELD 750 WG FUNGICIDE",
+    "CROPSURE PTY LTD",
+  ),
 };
 
 /** A register that answers from REGISTER and records what it was asked. */
@@ -205,6 +211,59 @@ Deno.test("the list is never padded to reach the cap", async () => {
     { countryCode: "AU", lookup: registerLookup() },
   );
   assertEquals(result.rows.length, 1);
+});
+
+Deno.test("CropSure official 90279 wins over a later research row validating to the same identity", async () => {
+  const official = {
+    name: "CROPSURE GREENSHIELD 750 WG FUNGICIDE",
+    brand: "CROPSURE PTY LTD",
+    registration_country: "AU",
+    registration_scheme: "apvma",
+    registration_number: "90279",
+    source: "official_register",
+  };
+  const result = await validateResearchSuggestions(
+    [official, researchRow("CropSure Greenshield", "90279")],
+    { countryCode: "AU", lookup: registerLookup() },
+  );
+
+  assertEquals(result.rows, [official]);
+  assertEquals(result.validatedCount, 0);
+  const ranked = rankCandidates(result.rows, "cropsure greenshield", "AU");
+  assertEquals(ranked.results.length, 1);
+  assertEquals(ranked.summary.official_candidate_count, 1);
+  assertEquals(ranked.summary.suggestion_count, 0);
+
+  const diagnostics = buildDiagnostics({
+    requestId: "greenshield-test",
+    client: { platform: "unknown", appVersion: null, appBuild: null, correlationId: null },
+    action: "search",
+    requestedCountry: "Australia",
+    resolvedCountryCode: "AU",
+    query: "cropsure greenshield",
+    candidates: candidatesFromSearchResults(ranked.results),
+    selectedRegistration: null,
+    method: "official_register_and_research",
+    startedAt: 0,
+    now: () => 1,
+    env: () => undefined,
+  });
+  assertEquals(diagnostics.candidate_registration_numbers, ["90279"]);
+});
+
+Deno.test("registration identity normalization deduplicates separators without using names", async () => {
+  const official = {
+    name: "FIRST AUTHORITATIVE POSITION",
+    registration_country: "AU",
+    registration_scheme: "APVMA",
+    registration_number: "90-279",
+    source: "official_register",
+  };
+  const result = await validateResearchSuggestions(
+    [official, { ...researchRow("Different research name", "90279"), registration_scheme: "apvma" }],
+    { countryCode: "AU", lookup: registerLookup() },
+  );
+  assertEquals(result.rows, [official]);
 });
 
 Deno.test("two research spellings of one product collapse to the register identity", async () => {

@@ -41,8 +41,10 @@
  *
  *   v1  Anchor-based manufacturer DFU extraction, manufacturer-first practical
  *       source priority, per-state conditional rates.
+ *   v2  Fetched-document identity confirmation and canonical final URL/projection
+ *       rebuilding.
  */
-export const ENRICHMENT_CACHE_VERSION = "enrichment-v1";
+export const ENRICHMENT_CACHE_VERSION = "enrichment-v2";
 
 /**
  * How long an enrichment stays fresh.
