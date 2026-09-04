@@ -84,6 +84,13 @@ nonisolated struct SprayVineyardProfile: Sendable, Hashable {
 
     var defaultCarrierBasis: SprayCarrierBasis { resolvedPolicy.defaultBasis }
 
+    /// The unit used when the operator enters the machine's calibrated output.
+    /// Australian/either-basis vineyards retain the historical L/ha contract;
+    /// a genuinely row-length-only profile such as SWNZ remains L/100 m.
+    var customSprayerInputBasis: SprayCarrierBasis {
+        resolvedPolicy == .litresPer100MetresOnly ? .litresPer100Metres : .litresPerHectare
+    }
+
     func allows(_ basis: SprayCarrierBasis) -> Bool { resolvedPolicy.allows(basis) }
 
     /// True when the grower has no choice to make and the UI should not offer one.

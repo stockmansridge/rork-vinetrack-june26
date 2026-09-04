@@ -296,10 +296,6 @@ struct SprayCalculatorView: View {
         )
     }
 
-    private var chosenSprayRate: Double {
-        Double(sprayRateText) ?? (waterRateEntry?.litresPerHa ?? 0)
-    }
-
     /// THE concentration factor, read from the one engine that defines it.
     ///
     /// # Why this is no longer computed here
@@ -397,6 +393,13 @@ struct SprayCalculatorView: View {
         sprayProfile.allows(carrierBasisChoice)
             ? carrierBasisChoice
             : sprayProfile.defaultCarrierBasis
+    }
+
+    /// The unit of the machine-calibration field. Australian/either-basis
+    /// vineyards retain the historical L/ha contract even when this job's
+    /// carrier is expressed per 100 m; SWNZ remains explicitly L/100 m.
+    private var customSprayerInputBasis: SprayCarrierBasis {
+        sprayProfile.customSprayerInputBasis
     }
 
     /// The label rate bases this vineyard's workflow starts from, strongest
@@ -547,18 +550,11 @@ struct SprayCalculatorView: View {
         inputs.customSprayerRate = Double(
             customSprayerRateText.trimmingCharacters(in: .whitespaces)
         )
-        // The figure is entered in whichever unit the operator chose for spray
-        // volume, and converted centrally. There is one sprayer output, not an
-        // L/ha one and an L/100 m one that could disagree.
-        //
-        // Read from `effectiveCarrierBasis`, NEVER from `flow`. `flow` is built
-        // FROM `guidedInputs`, so reaching for it here is unbounded recursion:
-        // guidedInputs → flow → guidedInputs → … until the thread runs off its
-        // stack guard page and the app is killed with SIGSEGV. That is the
-        // build-64 crash on opening a spray from a Program. The two properties
-        // resolve identically — same profile, same policy, same choice — so
-        // this is the same answer without the cycle.
-        inputs.customSprayerBasis = effectiveCarrierBasis
+        // Machine calibration has its own unit contract. In Australia, "Set my
+        // own rate" remains L/ha even when the job carrier is L/100 m; the
+        // decision engine converts it centrally. A row-length-only profile such
+        // as SWNZ keeps its explicit L/100 m input.
+        inputs.customSprayerBasis = customSprayerInputBasis
         inputs.carrierBasis = carrierBasisChoice
         inputs.manualTotalLitres = Double(
             manualTotalLitresText.trimmingCharacters(in: .whitespaces)
@@ -2100,7 +2096,21 @@ struct SprayCalculatorView: View {
     /// Mixing showed water and tank counts but never the chemical itself, and
     /// why the persisted `SprayTank.chemicals` was equally empty.
     private var guidedTankLines: [(chemicalLine: ChemicalLine, planLine: SprayProductLineResult)] {
-        let mapping = planLinesByChemicalLineId
+        guidedTankLines(for: flow.plan)
+    }
+
+    /// Pairs chemical lines with results from the supplied plan instance so a
+    /// save uses the same carrier, split and product totals throughout.
+    private func guidedTankLines(
+        for plan: SprayApplicationPlan
+    ) -> [(chemicalLine: ChemicalLine, planLine: SprayProductLineResult)] {
+        var mapping: [UUID: SprayProductLineResult] = [:]
+        var index = 0
+        for line in chemicalLines {
+            guard store.savedChemicals.contains(where: { $0.id == line.chemicalId }) else { continue }
+            if index < plan.productLines.count { mapping[line.id] = plan.productLines[index] }
+            index += 1
+        }
         return chemicalLines.compactMap { line in
             guard let planLine = mapping[line.id] else { return nil }
             return (line, planLine)
@@ -3209,10 +3219,9 @@ struct SprayCalculatorView: View {
             }
 
             if sprayVolumeChoice == .useCustomSprayerRate {
-                // Entered in the vineyard's own spray volume basis. One number,
-                // one unit — the equivalent in the other unit is derived below
-                // rather than kept as a second editable field.
-                let isPerHectare = flow.effectiveCarrierBasis == .litresPerHectare
+                // The machine's calibration basis is independent of the job's
+                // carrier workflow. The equivalent carrier value is derived.
+                let isPerHectare = customSprayerInputBasis == .litresPerHectare
                 VStack(alignment: .leading, spacing: 6) {
                     Text("What is your sprayer set to apply?")
                         .font(.caption)
@@ -3224,7 +3233,7 @@ struct SprayCalculatorView: View {
                             .padding(.vertical, 10)
                             .background(Color(.tertiarySystemGroupedBackground))
                             .clipShape(.rect(cornerRadius: 8))
-                        Text(SprayGuidedFormat.carrierBasisLabel(flow.effectiveCarrierBasis))
+                        Text(SprayGuidedFormat.carrierBasisLabel(customSprayerInputBasis))
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                     }
@@ -3800,9 +3809,10 @@ struct SprayCalculatorView: View {
             store.currentTractors.first(where: { $0.id == id })
         }
 
+        let plan = flow.plan
         calculationResult = SprayCalculator.calculate(
             selectedPaddocks: selectedPaddocks,
-            waterRateLitresPerHectare: chosenSprayRate,
+            waterRateLitresPerHectare: plan.carrier.litresPerHectare ?? 0,
             tankCapacity: equip.tankCapacityLitres,
             chemicalLines: chemicalLines,
             chemicals: store.savedChemicals,
@@ -3877,11 +3887,12 @@ struct SprayCalculatorView: View {
     /// product from the persisted tanks even though Review had already
     /// resolved and displayed it correctly.
     private func buildSprayTanks(tankCapacity: Double) -> [SprayTank] {
-        let split = flow.plan.tankSplit
+        let plan = flow.plan
+        let split = plan.tankSplit
         let totalTanks = split.totalTanks
-        let lines = guidedTankLines
+        let lines = guidedTankLines(for: plan)
         guard totalTanks > 0 else {
-            return [SprayTank(tankNumber: 1, waterVolume: 0, sprayRatePerHa: chosenSprayRate, concentrationFactor: concentrationFactor)]
+            return [plan.persistedTank(tankNumber: 1, waterVolume: 0)]
         }
 
         var tanks: [SprayTank] = []
@@ -3915,11 +3926,9 @@ struct SprayCalculatorView: View {
                 )
             }
             tanks.append(
-                SprayTank(
+                plan.persistedTank(
                     tankNumber: i + 1,
                     waterVolume: waterVolume,
-                    sprayRatePerHa: chosenSprayRate,
-                    concentrationFactor: concentrationFactor,
                     chemicals: chemicals
                 )
             )

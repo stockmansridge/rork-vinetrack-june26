@@ -302,6 +302,22 @@ nonisolated struct SprayApplicationPlan: Sendable {
     var totalCarrierLitres: Double { carrier.totalLitres }
     var concentrationFactor: Double { carrier.concentrationFactor }
 
+    /// Creates a persisted tank whose carrier rate and concentration come from
+    /// this exact plan, preventing UI entry state from disagreeing with Review.
+    func persistedTank(
+        tankNumber: Int,
+        waterVolume: Double,
+        chemicals: [SprayChemical] = []
+    ) -> SprayTank {
+        SprayTank(
+            tankNumber: tankNumber,
+            waterVolume: waterVolume,
+            sprayRatePerHa: carrier.litresPerHectare ?? 0,
+            concentrationFactor: carrier.concentrationFactor,
+            chemicals: chemicals
+        )
+    }
+
     /// Product lines that could not be calculated.
     var unresolvedProductLines: [SprayProductLineResult] { productLines.filter(\.isUnresolved) }
 
