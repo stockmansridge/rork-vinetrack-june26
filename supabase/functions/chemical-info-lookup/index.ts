@@ -161,11 +161,13 @@ import {
 } from "./ingestion/review_preview.ts";
 import {
   applyManufacturerEnrichment,
+  applyVerifiedManufacturerLinks,
   enrichFromManufacturerLabel,
   verifiedManufacturerLabelUrl,
 } from "./ingestion/manufacturer_enrichment.ts";
 import {
-  cachedEnrichmentIsUsable,
+  cachedManufacturerRatesAreUsable,
+  cachedVerifiedManufacturerLinksAreUsable,
   createPostgrestEnrichmentCache,
   ENRICHMENT_CACHE_TTL_SECONDS,
   ENRICHMENT_CACHE_VERSION,
@@ -2301,43 +2303,63 @@ Deno.serve(async (req: Request) => {
       let servedFromEnrichmentCache = false;
       if (structured && enrichmentCache && enrichmentKey) {
         const cached = await enrichmentCache.read(enrichmentKey);
-        if (cachedEnrichmentIsUsable(cached) && cached) {
-          // A cached reading of a public document is exactly equivalent to
-          // having just fetched it -- it confers no authority of its own, and
-          // it never touches identity, which the register has already fixed.
-          applyManufacturerEnrichment(
-            structured,
-            {
-              uses: cached.registered_uses,
-              source: "manufacturer_label",
-              fetchedUrl: cached.manufacturer_label_url,
-              withholdingPeriodDays: cached.withholding_period_days,
-              diagnostics: {
-                manufacturer_label_fetch: "skipped",
-                manufacturer_label_fetch_outcome: "skipped",
-                manufacturer_label_fetch_reason: "served from the enrichment cache",
-                manufacturer_label_extract: "skipped",
-                manufacturer_label_bytes: null,
-                manufacturer_label_sha256: cached.source_fingerprint,
-                label_rows_found: cached.registered_uses.length,
-                grapevine_rows_found: 0,
-                grapevine_rates_found: 0,
-                withholding_period_days: cached.withholding_period_days,
-                practical_source: "manufacturer_label",
-                practical_source_reason: "cached manufacturer label reading",
+        const cachedLinksUsable = cachedVerifiedManufacturerLinksAreUsable(cached);
+        const cachedRatesUsable = cachedManufacturerRatesAreUsable(cached);
+        if (cached && (cachedLinksUsable || cachedRatesUsable)) {
+          // Link evidence and practical rates are independent. A byte-verified
+          // manufacturer link can be restored while regulator rows remain the
+          // authoritative rates and WHP for this request.
+          if (cachedRatesUsable) {
+            applyManufacturerEnrichment(
+              structured,
+              {
+                uses: cached.registered_uses,
+                source: "manufacturer_label",
+                fetchedUrl: null,
+                withholdingPeriodDays: cached.withholding_period_days,
+                diagnostics: {
+                  manufacturer_label_fetch: "skipped",
+                  manufacturer_label_fetch_outcome: "skipped",
+                  manufacturer_label_fetch_reason: "served from the enrichment cache",
+                  manufacturer_label_extract: "skipped",
+                  manufacturer_label_bytes: null,
+                  manufacturer_label_sha256: cached.source_fingerprint,
+                  label_rows_found: cached.registered_uses.length,
+                  grapevine_rows_found: 0,
+                  grapevine_rates_found: 0,
+                  withholding_period_days: cached.withholding_period_days,
+                  practical_source: "manufacturer_label",
+                  practical_source_reason: "cached manufacturer label reading",
+                },
               },
-            },
-            {
-              manufacturerLabelUrl: cached.manufacturer_label_url,
-              manufacturerProductUrl: cached.manufacturer_product_url,
-            },
-          );
+              { manufacturerLabelUrl: null, manufacturerProductUrl: null },
+            );
+          }
+          if (cachedLinksUsable) {
+            applyVerifiedManufacturerLinks(structured, {
+              manufacturerLabelUrl: cached.manufacturer_label_url!,
+              manufacturerProductUrl: cached.manufacturer_product_url!,
+            });
+          }
+          if (!cachedRatesUsable) {
+            structured.practical_source = Array.isArray(structured.registered_uses) &&
+                structured.registered_uses.length > 0
+              ? "regulator_label"
+              : "none";
+          }
           servedFromEnrichmentCache = true;
           stageB.enrichment_cache = "hit";
           stageB.manufacturer_label_fetch = "skipped";
-          stageB.practical_source = "manufacturer_label";
-          stageB.selected_manufacturer_label = cached.manufacturer_label_url;
-          stageB.selected_manufacturer_product = cached.manufacturer_product_url;
+          stageB.manufacturer_label_extract = "skipped";
+          stageB.practical_source = cachedRatesUsable
+            ? "manufacturer_label"
+            : (structured.practical_source ?? (structured.registered_uses?.length ? "regulator_label" : "none"));
+          stageB.selected_manufacturer_label = cachedLinksUsable
+            ? cached.manufacturer_label_url
+            : null;
+          stageB.selected_manufacturer_product = cachedLinksUsable
+            ? cached.manufacturer_product_url
+            : null;
         } else {
           stageB.enrichment_cache = "miss";
         }
@@ -2379,15 +2401,23 @@ Deno.serve(async (req: Request) => {
             degradedStages.push("manufacturer_label_fetch_failed");
           }
 
-          // Cache ONLY a reading that actually carries rates. Caching a miss
-          // would make "we found nothing" sticky for a week, which is the
-          // opposite of what a lookup with no rates should do.
+          const verifiedLabelUrl = verifiedManufacturerLabelUrl(enrichment);
+          const verifiedProductUrl = projection.productPageCandidate?.url ?? null;
+          const verifiedLinksUsable = Boolean(
+            verifiedLabelUrl && verifiedProductUrl &&
+              enrichment.diagnostics.manufacturer_label_sha256,
+          );
+          const manufacturerRatesUsable = cachedManufacturerRatesAreUsable({
+            practical_source: enrichment.source,
+            registered_uses: enrichment.uses,
+          } as never);
+
+          // Verified document links and manufacturer-derived rates have separate
+          // eligibility. An empty manufacturer rate extraction must not discard
+          // a readable, identity-confirmed label and the page that supplied it.
           if (
             enrichmentCache && enrichmentKey && resolved &&
-            enrichment.source === "manufacturer_label" &&
-            cachedEnrichmentIsUsable({
-              registered_uses: enrichment.uses,
-            } as never)
+            (verifiedLinksUsable || manufacturerRatesUsable)
           ) {
             await enrichmentCache.write(
               enrichmentKey,
@@ -2397,11 +2427,14 @@ Deno.serve(async (req: Request) => {
                 registrationNumber: resolved.registration_number,
               },
               {
-                manufacturer_product_url: structured.label_urls?.product_url ?? null,
-                manufacturer_label_url: structured.label_urls?.manufacturer_label_url ?? null,
+                manufacturer_product_url: verifiedLinksUsable ? verifiedProductUrl : null,
+                manufacturer_label_url: verifiedLinksUsable ? verifiedLabelUrl : null,
+                manufacturer_links_verified: verifiedLinksUsable,
                 regulator_label_url: structured.label_urls?.regulator_label_url ?? null,
-                registered_uses: enrichment.uses,
-                withholding_period_days: enrichment.withholdingPeriodDays,
+                registered_uses: manufacturerRatesUsable ? enrichment.uses : [],
+                withholding_period_days: manufacturerRatesUsable
+                  ? enrichment.withholdingPeriodDays
+                  : null,
                 re_entry_period_hours: null,
                 practical_source: enrichment.source,
                 source_fingerprint: enrichment.diagnostics.manufacturer_label_sha256,

@@ -43,8 +43,10 @@
  *       source priority, per-state conditional rates.
  *   v2  Fetched-document identity confirmation and canonical final URL/projection
  *       rebuilding.
+ *   v3  Independently retained byte-verified manufacturer label/product links,
+ *       even when regulator rows remain the practical source.
  */
-export const ENRICHMENT_CACHE_VERSION = "enrichment-v2";
+export const ENRICHMENT_CACHE_VERSION = "enrichment-v3";
 
 /**
  * How long an enrichment stays fresh.
@@ -74,6 +76,8 @@ export function enrichmentCacheKey(
 export interface CachedEnrichment {
   manufacturer_product_url: string | null;
   manufacturer_label_url: string | null;
+  /** True only after readable PDF bytes confirmed the locked product identity. */
+  manufacturer_links_verified: boolean;
   regulator_label_url: string | null;
   /** The served practical use rows, grapevine and other crops alike. */
   registered_uses: any[];
@@ -166,15 +170,41 @@ export function createPostgrestEnrichmentCache(
   };
 }
 
-/** Whether a cached enrichment is worth serving (it actually carries rates). */
-export function cachedEnrichmentIsUsable(value: CachedEnrichment | null): boolean {
-  if (!value) return false;
+function isHttpsUrl(value: unknown): boolean {
+  try {
+    return new URL(String(value ?? "")).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether the cache carries a complete verified manufacturer link pair.
+ *
+ * The explicit verification bit is minted only after readable PDF bytes confirm
+ * the locked identity. URL shape alone can never promote a discovery lead.
+ */
+export function cachedVerifiedManufacturerLinksAreUsable(
+  value: CachedEnrichment | null,
+): boolean {
+  return Boolean(
+    value?.manufacturer_links_verified === true &&
+      isHttpsUrl(value.manufacturer_label_url) &&
+      isHttpsUrl(value.manufacturer_product_url) &&
+      String(value.source_fingerprint ?? "").trim(),
+  );
+}
+
+/** Whether cached manufacturer-derived practical rates are worth serving. */
+export function cachedManufacturerRatesAreUsable(value: CachedEnrichment | null): boolean {
+  if (!value || value.practical_source !== "manufacturer_label") return false;
   if (!Array.isArray(value.registered_uses) || value.registered_uses.length === 0) {
     return false;
   }
-  // A cached MISS is not worth keeping a fast path for: re-running enrichment
-  // is exactly what a lookup with no rates should do.
   return value.registered_uses.some((u: any) =>
     Array.isArray(u?.rates) && u.rates.some((r: any) => r?.basis && r.basis !== "other")
   );
 }
+
+/** Backward-compatible name retained for existing callers and focused tests. */
+export const cachedEnrichmentIsUsable = cachedManufacturerRatesAreUsable;

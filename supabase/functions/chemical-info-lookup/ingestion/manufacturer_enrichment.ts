@@ -340,24 +340,18 @@ export async function enrichFromManufacturerLabel(input: {
  * PRACTICAL rows on top. The two authorities are not in competition: they are
  * authoritative about different things.
  */
-export function applyManufacturerEnrichment(
+export function applyVerifiedManufacturerLinks(
   structured: any,
-  result: ManufacturerEnrichmentResult,
-  urls: { manufacturerLabelUrl: string | null; manufacturerProductUrl: string | null },
+  urls: { manufacturerLabelUrl: string; manufacturerProductUrl: string },
 ): void {
   if (!structured) return;
 
-  // A linked URL becomes manufacturer-label evidence only after the fetched
-  // PDF is readable and confirms the locked registration/product identity.
-  // It does not need to replace the regulator as the practical rate source.
-  // Discovery leads and failed/unreadable PDFs never populate final fields.
-  const labelUrl = verifiedManufacturerLabelUrl(result);
   const refs = selectLabelReferences({
-    manufacturerLabelUrl: labelUrl,
-    // The register-confirmed legacy reference wins over an unvalidated AI URL.
+    manufacturerLabelUrl: urls.manufacturerLabelUrl,
+    // The register-confirmed legacy reference wins over manufacturer evidence.
     regulatorLabelUrl: structured.registration?.label_reference ??
       structured.registration?.regulator_label_url ?? null,
-    productUrl: urls.manufacturerProductUrl ?? structured.product_url ?? null,
+    productUrl: urls.manufacturerProductUrl,
     sdsUrl: structured.registration?.sds_url ?? null,
   });
 
@@ -376,6 +370,26 @@ export function applyManufacturerEnrichment(
     manufacturer_label_url: refs.manufacturer_label_url,
     product_url: refs.manufacturer_product_url,
   };
+}
+
+export function applyManufacturerEnrichment(
+  structured: any,
+  result: ManufacturerEnrichmentResult,
+  urls: { manufacturerLabelUrl: string | null; manufacturerProductUrl: string | null },
+): void {
+  if (!structured) return;
+
+  // A linked URL becomes manufacturer-label evidence only after the fetched
+  // PDF is readable and confirms the locked registration/product identity.
+  // It does not need to replace the regulator as the practical rate source.
+  // Discovery leads and failed/unreadable PDFs never populate final fields.
+  const labelUrl = verifiedManufacturerLabelUrl(result);
+  if (labelUrl && urls.manufacturerProductUrl) {
+    applyVerifiedManufacturerLinks(structured, {
+      manufacturerLabelUrl: labelUrl,
+      manufacturerProductUrl: urls.manufacturerProductUrl,
+    });
+  }
 
   // Practical rows only change when a source actually supplied some.
   if (result.source === "manufacturer_label" && result.uses.length > 0) {

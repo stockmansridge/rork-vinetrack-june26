@@ -18,7 +18,10 @@ import {
   structuredOnlyStagesEntered,
 } from "./timings.ts";
 import {
+  type CachedEnrichment,
   cachedEnrichmentIsUsable,
+  cachedManufacturerRatesAreUsable,
+  cachedVerifiedManufacturerLinksAreUsable,
   createPostgrestEnrichmentCache,
   ENRICHMENT_CACHE_TTL_SECONDS,
   ENRICHMENT_CACHE_VERSION,
@@ -31,6 +34,11 @@ import {
 } from "./research_suggestions.ts";
 import { planCandidateDiscovery, readResearchConfig } from "./research/research.ts";
 import { candidateClass } from "./ranking.ts";
+import {
+  applyManufacturerEnrichment,
+  applyVerifiedManufacturerLinks,
+  type ManufacturerEnrichmentResult,
+} from "./ingestion/manufacturer_enrichment.ts";
 
 const config = readResearchConfig(() => undefined);
 
@@ -251,7 +259,157 @@ Deno.test("G4: an enrichment carrying no usable rate is not worth a fast path", 
   } as never));
 });
 
-Deno.test("G5: a cache outage degrades to doing the work, never to failing", async () => {
+Deno.test("G5: CropSure verified links survive a second cold request while regulator rates stay authoritative", async () => {
+  const manufacturerLabelUrl =
+    "https://cropsure.com/wp-content/uploads/2023/10/cropsure-greenshield-750wg-fungicide-label.pdf";
+  const manufacturerProductUrl = "https://cropsure.com/products/greenshield-750wg";
+  const regulatorLabelUrl = "https://elabels.apvma.gov.au/90279ELBL.pdf";
+  const regulatorUses = [{
+    crop: "Grapes",
+    target: "Downy mildew",
+    rates: [{ basis: "per_100_litres", value: 200, unit: "g", raw_text: "200 g/100 L" }],
+    withholding_period_days: 30,
+  }];
+  const makeStructured = () => ({
+    registration: {
+      registration_number: "90279",
+      label_reference: regulatorLabelUrl,
+      regulator_label_url: regulatorLabelUrl,
+      manufacturer_label_url: null as string | null,
+      manufacturer_product_url: null as string | null,
+    },
+    registered_uses: structuredClone(regulatorUses),
+    practical_source: "regulator_label",
+    label_urls: {
+      regulator_label_url: regulatorLabelUrl,
+      manufacturer_label_url: null as string | null,
+      product_url: null as string | null,
+    },
+  });
+
+  // Request one fetched readable bytes and confirmed identity, but its empty
+  // manufacturer rates did not displace the regulator's useful rows or WHP.
+  const first = makeStructured();
+  const enrichment: ManufacturerEnrichmentResult = {
+    uses: first.registered_uses,
+    source: "regulator_label",
+    fetchedUrl: manufacturerLabelUrl,
+    withholdingPeriodDays: null,
+    diagnostics: {
+      manufacturer_label_fetch: "success",
+      manufacturer_label_fetch_outcome: "fetched",
+      manufacturer_label_fetch_reason: "PDF identity confirmed",
+      manufacturer_label_extract: "success",
+      manufacturer_label_bytes: 277033,
+      manufacturer_label_sha256: "verified-cropsure-pdf-sha256",
+      label_rows_found: 0,
+      grapevine_rows_found: 1,
+      grapevine_rates_found: 1,
+      withholding_period_days: null,
+      practical_source: "regulator_label",
+      practical_source_reason: "manufacturer extraction had no usable rate",
+    },
+  };
+  applyManufacturerEnrichment(first, enrichment, {
+    manufacturerLabelUrl,
+    manufacturerProductUrl,
+  });
+  assertEquals(first.registration.manufacturer_label_url, manufacturerLabelUrl);
+  assertEquals(first.registration.manufacturer_product_url, manufacturerProductUrl);
+  assertEquals(first.registered_uses, regulatorUses);
+  assertEquals(first.registered_uses[0].withholding_period_days, 30);
+
+  const payload: CachedEnrichment = {
+    manufacturer_product_url: manufacturerProductUrl,
+    manufacturer_label_url: manufacturerLabelUrl,
+    manufacturer_links_verified: true,
+    regulator_label_url: regulatorLabelUrl,
+    registered_uses: [],
+    withholding_period_days: null,
+    re_entry_period_hours: null,
+    practical_source: "regulator_label",
+    source_fingerprint: "verified-cropsure-pdf-sha256",
+    parser_version: ENRICHMENT_CACHE_VERSION,
+    refreshed_at: new Date().toISOString(),
+  };
+  assert(cachedVerifiedManufacturerLinksAreUsable(payload));
+  assertFalse(cachedManufacturerRatesAreUsable(payload));
+
+  let durablePayload: CachedEnrichment | null = null;
+  const requests: string[] = [];
+  const store = createPostgrestEnrichmentCache(
+    "https://project.supabase.co",
+    "service-key",
+    ((_input: string | URL | Request, init?: RequestInit) => {
+      requests.push(init?.method ?? "GET");
+      if (init?.method === "POST") {
+        const rows = JSON.parse(String(init.body ?? "[]"));
+        durablePayload = rows[0]?.payload ?? null;
+        return Promise.resolve(new Response(null, { status: 201 }));
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(durablePayload ? [{ payload: durablePayload }] : []), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }) as typeof fetch,
+  );
+  assert(store);
+  const key = enrichmentCacheKey("AU", "APVMA", "90279");
+  await store.write(
+    key,
+    { countryCode: "AU", scheme: "APVMA", registrationNumber: "90279" },
+    payload,
+    ENRICHMENT_CACHE_TTL_SECONDS,
+  );
+
+  // Request two has no discovery/page/PDF fixtures at all. It restores only
+  // the verified URL pair; its independently supplied regulator data is intact.
+  const cached = await store.read(key);
+  assert(cachedVerifiedManufacturerLinksAreUsable(cached));
+  const second = makeStructured();
+  applyVerifiedManufacturerLinks(second, {
+    manufacturerLabelUrl: cached!.manufacturer_label_url!,
+    manufacturerProductUrl: cached!.manufacturer_product_url!,
+  });
+  assertEquals(requests, ["POST", "GET"]);
+  assertEquals(second.registration.manufacturer_label_url, manufacturerLabelUrl);
+  assertEquals(second.registration.manufacturer_product_url, manufacturerProductUrl);
+  assertEquals(second.label_urls.manufacturer_label_url, manufacturerLabelUrl);
+  assertEquals(second.label_urls.product_url, manufacturerProductUrl);
+  assertEquals(second.registration.regulator_label_url, regulatorLabelUrl);
+  assertEquals(second.registered_uses, regulatorUses);
+  assertEquals(second.registered_uses[0].withholding_period_days, 30);
+  assertEquals(second.practical_source, "regulator_label");
+});
+
+Deno.test("G6: unverified manufacturer URLs are never cache-eligible", () => {
+  const base = {
+    manufacturer_product_url: "https://cropsure.com/products/greenshield-750wg",
+    manufacturer_label_url:
+      "https://cropsure.com/wp-content/uploads/2023/10/cropsure-greenshield-750wg-fungicide-label.pdf",
+    regulator_label_url: "https://elabels.apvma.gov.au/90279ELBL.pdf",
+    registered_uses: [],
+    withholding_period_days: null,
+    re_entry_period_hours: null,
+    practical_source: "regulator_label",
+    source_fingerprint: "verified-sha256",
+    parser_version: ENRICHMENT_CACHE_VERSION,
+    refreshed_at: new Date().toISOString(),
+  };
+  assertFalse(cachedVerifiedManufacturerLinksAreUsable({
+    ...base,
+    manufacturer_links_verified: false,
+  }));
+  assertFalse(cachedVerifiedManufacturerLinksAreUsable({
+    ...base,
+    manufacturer_links_verified: true,
+    source_fingerprint: null,
+  }));
+});
+
+Deno.test("G7: a cache outage degrades to doing the work, never to failing", async () => {
   const store = createPostgrestEnrichmentCache(
     "https://project.supabase.co",
     "service-key",
@@ -270,7 +428,7 @@ Deno.test("G5: a cache outage degrades to doing the work, never to failing", asy
   );
 });
 
-Deno.test("G6: the cache is unavailable without service-role credentials", () => {
+Deno.test("G8: the cache is unavailable without service-role credentials", () => {
   // It must never fall back to an anon key: this table is service-role only.
   assertEquals(createPostgrestEnrichmentCache("", "key"), null);
   assertEquals(createPostgrestEnrichmentCache("https://project.supabase.co", ""), null);
