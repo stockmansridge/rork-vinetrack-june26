@@ -1,0 +1,1189 @@
+{
+ "seed_source_id": "awri_dogbook_2026_27",
+ "started_at": "2026-08-20T09:41:21.717Z",
+ "updated_at": "2026-08-20T10:15:45.426Z",
+ "records": {
+  "AU:apvma:91636": {
+   "outcome": "already_exists",
+   "detail": "pre-verified by operator comparison SQL (candidate) — skipped unchanged, never sent",
+   "at": "2026-08-20T09:41:21.719Z",
+   "attempts": 0
+  },
+  "AU:apvma:30462": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T09:50:04.398Z",
+   "attempts": 2
+  },
+  "AU:apvma:30467": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T09:50:06.701Z",
+   "attempts": 2
+  },
+  "AU:apvma:30476": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T09:50:10.044Z",
+   "attempts": 2
+  },
+  "AU:apvma:30582": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T09:50:12.292Z",
+   "attempts": 2
+  },
+  "AU:apvma:31393": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T09:50:14.452Z",
+   "attempts": 2
+  },
+  "AU:apvma:33181": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:03.792Z",
+   "attempts": 1
+  },
+  "AU:apvma:33182": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:06.618Z",
+   "attempts": 1
+  },
+  "AU:apvma:40146": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:08.813Z",
+   "attempts": 1
+  },
+  "AU:apvma:45725": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:11.880Z",
+   "attempts": 1
+  },
+  "AU:apvma:45804": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:13.914Z",
+   "attempts": 1
+  },
+  "AU:apvma:46516": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:15.990Z",
+   "attempts": 1
+  },
+  "AU:apvma:47914": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:18.534Z",
+   "attempts": 1
+  },
+  "AU:apvma:48518": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:20.504Z",
+   "attempts": 1
+  },
+  "AU:apvma:48910": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:23.017Z",
+   "attempts": 1
+  },
+  "AU:apvma:49439": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:25.155Z",
+   "attempts": 1
+  },
+  "AU:apvma:49487": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:30.927Z",
+   "attempts": 1
+  },
+  "AU:apvma:50029": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:33.344Z",
+   "attempts": 1
+  },
+  "AU:apvma:50124": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:35.215Z",
+   "attempts": 1
+  },
+  "AU:apvma:50429": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:37.869Z",
+   "attempts": 1
+  },
+  "AU:apvma:50670": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:39.668Z",
+   "attempts": 1
+  },
+  "AU:apvma:50833": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:42.616Z",
+   "attempts": 1
+  },
+  "AU:apvma:51479": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:45.078Z",
+   "attempts": 1
+  },
+  "AU:apvma:51498": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:48.068Z",
+   "attempts": 1
+  },
+  "AU:apvma:51547": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:50.416Z",
+   "attempts": 1
+  },
+  "AU:apvma:51797": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:52.306Z",
+   "attempts": 1
+  },
+  "AU:apvma:52478": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:54.153Z",
+   "attempts": 1
+  },
+  "AU:apvma:52817": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:56.197Z",
+   "attempts": 1
+  },
+  "AU:apvma:53047": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:08:59.251Z",
+   "attempts": 1
+  },
+  "AU:apvma:53222": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:01.373Z",
+   "attempts": 1
+  },
+  "AU:apvma:53450": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:03.492Z",
+   "attempts": 1
+  },
+  "AU:apvma:53597": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:05.945Z",
+   "attempts": 1
+  },
+  "AU:apvma:53607": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:08.480Z",
+   "attempts": 1
+  },
+  "AU:apvma:53871": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:10.642Z",
+   "attempts": 1
+  },
+  "AU:apvma:54430": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:12.538Z",
+   "attempts": 1
+  },
+  "AU:apvma:55733": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:14.728Z",
+   "attempts": 1
+  },
+  "AU:apvma:56275": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:17.287Z",
+   "attempts": 1
+  },
+  "AU:apvma:56362": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:19.566Z",
+   "attempts": 1
+  },
+  "AU:apvma:56697": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:21.863Z",
+   "attempts": 1
+  },
+  "AU:apvma:56791": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:24.255Z",
+   "attempts": 1
+  },
+  "AU:apvma:58103": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:26.118Z",
+   "attempts": 1
+  },
+  "AU:apvma:58118": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:29.407Z",
+   "attempts": 1
+  },
+  "AU:apvma:58337": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:31.328Z",
+   "attempts": 1
+  },
+  "AU:apvma:58340": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:33.378Z",
+   "attempts": 1
+  },
+  "AU:apvma:58521": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:35.600Z",
+   "attempts": 1
+  },
+  "AU:apvma:58704": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:38.098Z",
+   "attempts": 1
+  },
+  "AU:apvma:58773": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:41.482Z",
+   "attempts": 1
+  },
+  "AU:apvma:58816": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:43.558Z",
+   "attempts": 1
+  },
+  "AU:apvma:58992": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:45.133Z",
+   "attempts": 1
+  },
+  "AU:apvma:59052": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:47.247Z",
+   "attempts": 1
+  },
+  "AU:apvma:59092": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:50.060Z",
+   "attempts": 1
+  },
+  "AU:apvma:59375": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:52.201Z",
+   "attempts": 1
+  },
+  "AU:apvma:59688": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:54.122Z",
+   "attempts": 1
+  },
+  "AU:apvma:59986": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:55.937Z",
+   "attempts": 1
+  },
+  "AU:apvma:60013": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:09:58.224Z",
+   "attempts": 1
+  },
+  "AU:apvma:60287": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:00.478Z",
+   "attempts": 1
+  },
+  "AU:apvma:60297": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:02.399Z",
+   "attempts": 1
+  },
+  "AU:apvma:60335": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:04.786Z",
+   "attempts": 1
+  },
+  "AU:apvma:60419": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:07.040Z",
+   "attempts": 1
+  },
+  "AU:apvma:60445": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:10.121Z",
+   "attempts": 1
+  },
+  "AU:apvma:60541": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:12.220Z",
+   "attempts": 1
+  },
+  "AU:apvma:60987": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:14.585Z",
+   "attempts": 1
+  },
+  "AU:apvma:61072": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:16.524Z",
+   "attempts": 1
+  },
+  "AU:apvma:61355": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:18.892Z",
+   "attempts": 1
+  },
+  "AU:apvma:61450": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:21.353Z",
+   "attempts": 1
+  },
+  "AU:apvma:61504": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:23.375Z",
+   "attempts": 1
+  },
+  "AU:apvma:61605": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:25.514Z",
+   "attempts": 1
+  },
+  "AU:apvma:61639": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:27.822Z",
+   "attempts": 1
+  },
+  "AU:apvma:61716": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:31.676Z",
+   "attempts": 1
+  },
+  "AU:apvma:61864": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:33.967Z",
+   "attempts": 1
+  },
+  "AU:apvma:62737": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:36.172Z",
+   "attempts": 1
+  },
+  "AU:apvma:62809": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:38.521Z",
+   "attempts": 1
+  },
+  "AU:apvma:62910": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:42.764Z",
+   "attempts": 1
+  },
+  "AU:apvma:62917": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:45.261Z",
+   "attempts": 1
+  },
+  "AU:apvma:63023": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:47.589Z",
+   "attempts": 1
+  },
+  "AU:apvma:63052": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:51.299Z",
+   "attempts": 1
+  },
+  "AU:apvma:63216": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:53.430Z",
+   "attempts": 1
+  },
+  "AU:apvma:63316": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:56.601Z",
+   "attempts": 1
+  },
+  "AU:apvma:63329": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:10:58.912Z",
+   "attempts": 1
+  },
+  "AU:apvma:63373": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:01.573Z",
+   "attempts": 1
+  },
+  "AU:apvma:63487": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:04.056Z",
+   "attempts": 1
+  },
+  "AU:apvma:63581": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:07.074Z",
+   "attempts": 1
+  },
+  "AU:apvma:63651": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:09.993Z",
+   "attempts": 1
+  },
+  "AU:apvma:64165": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:12.903Z",
+   "attempts": 1
+  },
+  "AU:apvma:64609": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:15.696Z",
+   "attempts": 1
+  },
+  "AU:apvma:64885": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:18.471Z",
+   "attempts": 1
+  },
+  "AU:apvma:65015": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:20.653Z",
+   "attempts": 1
+  },
+  "AU:apvma:65044": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:22.603Z",
+   "attempts": 1
+  },
+  "AU:apvma:65178": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:25.298Z",
+   "attempts": 1
+  },
+  "AU:apvma:65295": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:27.278Z",
+   "attempts": 1
+  },
+  "AU:apvma:65406": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:30.348Z",
+   "attempts": 1
+  },
+  "AU:apvma:65422": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:32.939Z",
+   "attempts": 1
+  },
+  "AU:apvma:65926": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:34.815Z",
+   "attempts": 1
+  },
+  "AU:apvma:66036": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:36.802Z",
+   "attempts": 1
+  },
+  "AU:apvma:66320": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:40.101Z",
+   "attempts": 1
+  },
+  "AU:apvma:66606": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:43.106Z",
+   "attempts": 1
+  },
+  "AU:apvma:66733": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:46.218Z",
+   "attempts": 1
+  },
+  "AU:apvma:66821": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:48.600Z",
+   "attempts": 1
+  },
+  "AU:apvma:66860": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:52.223Z",
+   "attempts": 1
+  },
+  "AU:apvma:66885": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:11:55.020Z",
+   "attempts": 1
+  },
+  "AU:apvma:66927": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:00.311Z",
+   "attempts": 1
+  },
+  "AU:apvma:66970": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:02.865Z",
+   "attempts": 1
+  },
+  "AU:apvma:67253": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:05.264Z",
+   "attempts": 1
+  },
+  "AU:apvma:67370": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:07.646Z",
+   "attempts": 1
+  },
+  "AU:apvma:67743": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:10.510Z",
+   "attempts": 1
+  },
+  "AU:apvma:68000": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:12.949Z",
+   "attempts": 1
+  },
+  "AU:apvma:68251": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:15.349Z",
+   "attempts": 1
+  },
+  "AU:apvma:68506": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:17.926Z",
+   "attempts": 1
+  },
+  "AU:apvma:68577": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:19.674Z",
+   "attempts": 1
+  },
+  "AU:apvma:68631": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:21.735Z",
+   "attempts": 1
+  },
+  "AU:apvma:68634": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:23.792Z",
+   "attempts": 1
+  },
+  "AU:apvma:68804": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:25.823Z",
+   "attempts": 1
+  },
+  "AU:apvma:68898": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:27.845Z",
+   "attempts": 1
+  },
+  "AU:apvma:68930": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:29.904Z",
+   "attempts": 1
+  },
+  "AU:apvma:69532": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:31.939Z",
+   "attempts": 1
+  },
+  "AU:apvma:69652": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:33.698Z",
+   "attempts": 1
+  },
+  "AU:apvma:69712": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:35.130Z",
+   "attempts": 1
+  },
+  "AU:apvma:69798": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:37.640Z",
+   "attempts": 1
+  },
+  "AU:apvma:70334": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:39.852Z",
+   "attempts": 1
+  },
+  "AU:apvma:80647": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:41.994Z",
+   "attempts": 1
+  },
+  "AU:apvma:80807": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:43.804Z",
+   "attempts": 1
+  },
+  "AU:apvma:80823": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:45.856Z",
+   "attempts": 1
+  },
+  "AU:apvma:81526": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:47.773Z",
+   "attempts": 1
+  },
+  "AU:apvma:81781": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:49.564Z",
+   "attempts": 1
+  },
+  "AU:apvma:81832": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:51.555Z",
+   "attempts": 1
+  },
+  "AU:apvma:81921": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:53.589Z",
+   "attempts": 1
+  },
+  "AU:apvma:81930": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:55.974Z",
+   "attempts": 1
+  },
+  "AU:apvma:82017": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:12:59.339Z",
+   "attempts": 1
+  },
+  "AU:apvma:82057": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:01.406Z",
+   "attempts": 1
+  },
+  "AU:apvma:82251": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:03.675Z",
+   "attempts": 1
+  },
+  "AU:apvma:82389": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:05.755Z",
+   "attempts": 1
+  },
+  "AU:apvma:82738": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:09.174Z",
+   "attempts": 1
+  },
+  "AU:apvma:82944": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:11.144Z",
+   "attempts": 1
+  },
+  "AU:apvma:83117": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:13.240Z",
+   "attempts": 1
+  },
+  "AU:apvma:83144": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:15.320Z",
+   "attempts": 1
+  },
+  "AU:apvma:83145": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:17.959Z",
+   "attempts": 1
+  },
+  "AU:apvma:83204": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:20.165Z",
+   "attempts": 1
+  },
+  "AU:apvma:83334": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:22.514Z",
+   "attempts": 1
+  },
+  "AU:apvma:83438": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:26.356Z",
+   "attempts": 1
+  },
+  "AU:apvma:83522": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:28.681Z",
+   "attempts": 1
+  },
+  "AU:apvma:83844": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:30.651Z",
+   "attempts": 1
+  },
+  "AU:apvma:84344": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:34.294Z",
+   "attempts": 1
+  },
+  "AU:apvma:84390": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:36.878Z",
+   "attempts": 1
+  },
+  "AU:apvma:84525": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:40.660Z",
+   "attempts": 1
+  },
+  "AU:apvma:84722": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:43.644Z",
+   "attempts": 1
+  },
+  "AU:apvma:85197": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:46.029Z",
+   "attempts": 1
+  },
+  "AU:apvma:85223": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:48.915Z",
+   "attempts": 1
+  },
+  "AU:apvma:85320": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:51.130Z",
+   "attempts": 1
+  },
+  "AU:apvma:85546": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:53.162Z",
+   "attempts": 1
+  },
+  "AU:apvma:85676": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:55.291Z",
+   "attempts": 1
+  },
+  "AU:apvma:86106": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:57.910Z",
+   "attempts": 1
+  },
+  "AU:apvma:86181": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:13:59.818Z",
+   "attempts": 1
+  },
+  "AU:apvma:86238": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:02.233Z",
+   "attempts": 1
+  },
+  "AU:apvma:86914": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:04.850Z",
+   "attempts": 1
+  },
+  "AU:apvma:87107": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:07.330Z",
+   "attempts": 1
+  },
+  "AU:apvma:87197": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:09.473Z",
+   "attempts": 1
+  },
+  "AU:apvma:87665": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:14.637Z",
+   "attempts": 1
+  },
+  "AU:apvma:87841": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:16.498Z",
+   "attempts": 1
+  },
+  "AU:apvma:88196": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:18.578Z",
+   "attempts": 1
+  },
+  "AU:apvma:88598": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:21.230Z",
+   "attempts": 1
+  },
+  "AU:apvma:88850": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:23.077Z",
+   "attempts": 1
+  },
+  "AU:apvma:89375": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:24.713Z",
+   "attempts": 1
+  },
+  "AU:apvma:89376": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:27.033Z",
+   "attempts": 1
+  },
+  "AU:apvma:89701": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:29.052Z",
+   "attempts": 1
+  },
+  "AU:apvma:89849": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:31.447Z",
+   "attempts": 1
+  },
+  "AU:apvma:89922": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:33.498Z",
+   "attempts": 1
+  },
+  "AU:apvma:89968": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:35.291Z",
+   "attempts": 1
+  },
+  "AU:apvma:89997": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:37.248Z",
+   "attempts": 1
+  },
+  "AU:apvma:90104": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:39.329Z",
+   "attempts": 1
+  },
+  "AU:apvma:90258": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:41.913Z",
+   "attempts": 1
+  },
+  "AU:apvma:90560": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:43.693Z",
+   "attempts": 1
+  },
+  "AU:apvma:91333": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:45.726Z",
+   "attempts": 1
+  },
+  "AU:apvma:91353": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:47.715Z",
+   "attempts": 1
+  },
+  "AU:apvma:91395": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:50.497Z",
+   "attempts": 1
+  },
+  "AU:apvma:91885": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:52.668Z",
+   "attempts": 1
+  },
+  "AU:apvma:92078": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:56.120Z",
+   "attempts": 1
+  },
+  "AU:apvma:92296": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:14:58.550Z",
+   "attempts": 1
+  },
+  "AU:apvma:92416": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:00.695Z",
+   "attempts": 1
+  },
+  "AU:apvma:92457": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:03.187Z",
+   "attempts": 1
+  },
+  "AU:apvma:92516": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:05.458Z",
+   "attempts": 1
+  },
+  "AU:apvma:92656": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:08.749Z",
+   "attempts": 1
+  },
+  "AU:apvma:92989": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:10.620Z",
+   "attempts": 1
+  },
+  "AU:apvma:93113": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:12.861Z",
+   "attempts": 1
+  },
+  "AU:apvma:93220": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:14.720Z",
+   "attempts": 1
+  },
+  "AU:apvma:93365": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:16.608Z",
+   "attempts": 1
+  },
+  "AU:apvma:93485": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:18.867Z",
+   "attempts": 1
+  },
+  "AU:apvma:93498": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:21.792Z",
+   "attempts": 1
+  },
+  "AU:apvma:93668": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:24.093Z",
+   "attempts": 1
+  },
+  "AU:apvma:93799": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:26.096Z",
+   "attempts": 1
+  },
+  "AU:apvma:93909": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:28.748Z",
+   "attempts": 1
+  },
+  "AU:apvma:94432": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:30.769Z",
+   "attempts": 1
+  },
+  "AU:apvma:94723": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:33.118Z",
+   "attempts": 1
+  },
+  "AU:apvma:94734": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:35.056Z",
+   "attempts": 1
+  },
+  "AU:apvma:95387": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:37.264Z",
+   "attempts": 1
+  },
+  "AU:apvma:95698": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:39.928Z",
+   "attempts": 1
+  },
+  "AU:apvma:96001": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:43.079Z",
+   "attempts": 1
+  },
+  "AU:apvma:96278": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T10:15:45.426Z",
+   "attempts": 1
+  }
+ }
+}

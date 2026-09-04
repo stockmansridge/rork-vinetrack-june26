@@ -1,0 +1,68 @@
+{
+ "cohort": "stage5g_pilot_10_strongest",
+ "seed_source_id": "awri_dogbook_2026_27",
+ "started_at": "2026-08-20T11:53:13.747Z",
+ "updated_at": "2026-08-20T11:53:20.316Z",
+ "records": {
+  "AU:apvma:53987": {
+   "outcome": "already_exists",
+   "detail": "row already in Master (candidate) — skipped unchanged",
+   "at": "2026-08-20T11:53:14.638Z",
+   "attempts": 1
+  },
+  "AU:apvma:54522": {
+   "outcome": "already_exists",
+   "detail": "row already in Master (candidate) — skipped unchanged",
+   "at": "2026-08-20T11:53:15.282Z",
+   "attempts": 1
+  },
+  "AU:apvma:58831": {
+   "outcome": "already_exists",
+   "detail": "row already in Master (candidate) — skipped unchanged",
+   "at": "2026-08-20T11:53:15.918Z",
+   "attempts": 1
+  },
+  "AU:apvma:60560": {
+   "outcome": "already_exists",
+   "detail": "row already in Master (candidate) — skipped unchanged",
+   "at": "2026-08-20T11:53:16.567Z",
+   "attempts": 1
+  },
+  "AU:apvma:63228": {
+   "outcome": "already_exists",
+   "detail": "row already in Master (candidate) — skipped unchanged",
+   "at": "2026-08-20T11:53:17.204Z",
+   "attempts": 1
+  },
+  "AU:apvma:67494": {
+   "outcome": "already_exists",
+   "detail": "row already in Master (candidate) — skipped unchanged",
+   "at": "2026-08-20T11:53:17.836Z",
+   "attempts": 1
+  },
+  "AU:apvma:68458": {
+   "outcome": "already_exists",
+   "detail": "row already in Master (candidate) — skipped unchanged",
+   "at": "2026-08-20T11:53:18.485Z",
+   "attempts": 1
+  },
+  "AU:apvma:81077": {
+   "outcome": "already_exists",
+   "detail": "row already in Master (candidate) — skipped unchanged",
+   "at": "2026-08-20T11:53:19.084Z",
+   "attempts": 1
+  },
+  "AU:apvma:83459": {
+   "outcome": "already_exists",
+   "detail": "row already in Master (candidate) — skipped unchanged",
+   "at": "2026-08-20T11:53:19.716Z",
+   "attempts": 1
+  },
+  "AU:apvma:92506": {
+   "outcome": "already_exists",
+   "detail": "row already in Master (candidate) — skipped unchanged",
+   "at": "2026-08-20T11:53:20.316Z",
+   "attempts": 1
+  }
+ }
+}

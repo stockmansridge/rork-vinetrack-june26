@@ -1,0 +1,68 @@
+{
+ "cohort": "stage5g_pilot_10_strongest",
+ "seed_source_id": "awri_dogbook_2026_27",
+ "started_at": "2026-08-20T11:51:56.145Z",
+ "updated_at": "2026-08-20T11:52:22.607Z",
+ "records": {
+  "AU:apvma:53987": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T11:52:00.172Z",
+   "attempts": 1
+  },
+  "AU:apvma:54522": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T11:52:02.807Z",
+   "attempts": 1
+  },
+  "AU:apvma:58831": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T11:52:06.146Z",
+   "attempts": 1
+  },
+  "AU:apvma:60560": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T11:52:08.663Z",
+   "attempts": 1
+  },
+  "AU:apvma:63228": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T11:52:11.134Z",
+   "attempts": 1
+  },
+  "AU:apvma:67494": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T11:52:13.645Z",
+   "attempts": 1
+  },
+  "AU:apvma:68458": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T11:52:16.005Z",
+   "attempts": 1
+  },
+  "AU:apvma:81077": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T11:52:18.056Z",
+   "attempts": 1
+  },
+  "AU:apvma:83459": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T11:52:20.439Z",
+   "attempts": 1
+  },
+  "AU:apvma:92506": {
+   "outcome": "created",
+   "detail": "candidate created (register_number_verified)",
+   "at": "2026-08-20T11:52:22.607Z",
+   "attempts": 1
+  }
+ }
+}
