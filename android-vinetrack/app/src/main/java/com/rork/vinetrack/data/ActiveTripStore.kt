@@ -1,7 +1,6 @@
 package com.rork.vinetrack.data
 
 import android.content.Context
-import androidx.core.content.edit
 import com.rork.vinetrack.data.model.Trip
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -26,10 +25,10 @@ import kotlinx.serialization.json.Json
  * queues, replays, or writes to the server. Server write contracts are
  * unchanged — replay lands in later Tier-A stages.
  */
-class ActiveTripStore(context: Context) {
-
-    private val prefs = context.applicationContext
-        .getSharedPreferences("vinetrack_active_trip", Context.MODE_PRIVATE)
+class ActiveTripStore internal constructor(
+    private val storage: ActiveTripSnapshotStorage,
+) {
+    constructor(context: Context) : this(SharedPreferencesActiveTripSnapshotStorage(context))
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -49,19 +48,15 @@ class ActiveTripStore(context: Context) {
     fun save(ownerUserId: String, vineyardId: String, trip: Trip) {
         val snapshot = Snapshot(ownerUserId, vineyardId, trip, System.currentTimeMillis())
         val encoded = runCatching { json.encodeToString(Snapshot.serializer(), snapshot) }.getOrNull() ?: return
-        prefs.edit { putString(KEY_SNAPSHOT, encoded) }
+        storage.write(encoded)
     }
 
     /** Read the persisted snapshot, or null when none is stored / it can't decode. */
     fun load(): Snapshot? {
-        val raw = prefs.getString(KEY_SNAPSHOT, null) ?: return null
+        val raw = storage.read() ?: return null
         return runCatching { json.decodeFromString(Snapshot.serializer(), raw) }.getOrNull()
     }
 
     /** Remove the persisted snapshot (trip ended/deleted, sign-out, or invalid). */
-    fun clear() = prefs.edit { remove(KEY_SNAPSHOT) }
-
-    private companion object {
-        const val KEY_SNAPSHOT = "active_trip_snapshot_json"
-    }
+    fun clear() = storage.remove()
 }

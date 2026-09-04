@@ -5,7 +5,6 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -47,25 +46,6 @@ class TripPathDisplayProcessorTest {
         assertTrue(displayed.any { it.longitude < 149.02 })
         assertTrue(displayed.any { it.longitude > 149.09 && it.longitude < 149.11 })
         assertTrue(displayed.any { it.longitude > 149.18 })
-    }
-
-    @Test
-    fun knownRestartBoundaryCreatesSeparatePolylines() {
-        val source = makeRoute(5_000)
-        val segments = TripPathDisplayProcessor.displaySegments(
-            points = source,
-            maxDisplayPoints = displayCap,
-            segmentStartIndices = setOf(2_500),
-        )
-
-        assertEquals(2, segments.size)
-        val boundaryLongitude = source[2_500].longitude
-        val crossingSegment = segments.firstOrNull { segment ->
-            segment.first().longitude < boundaryLongitude &&
-                segment.last().longitude >= boundaryLongitude
-        }
-        assertNull("A known restart boundary must never be bridged", crossingSegment)
-        assertTrue(segments.flatten().size <= displayCap)
     }
 
     private fun makeRoute(count: Int): List<CoordinatePoint> = List(count) { index ->

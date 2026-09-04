@@ -32,58 +32,35 @@ enum TrailDisplayProcessor {
     /// Produces display-ready segments from the complete route. Largest
     /// Triangle Three Buckets retains representative turns across the full time
     /// range; global coordinate extrema are also forced into the result so map
-    /// bounds cover the complete journey.
-    ///
-    /// `segmentStartIndices` may identify known recording restart boundaries.
-    /// A boundary starts a new polyline and is never bridged visually.
+    /// bounds cover the complete journey. Colour buckets share endpoints, so
+    /// the restored trip remains one continuous chronological route.
     static func makeDisplayTrailSegments(
         points: [CoordinatePoint],
         maxDisplayPoints: Int = 500,
-        maxColourBuckets: Int = 5,
-        segmentStartIndices: Set<Int> = []
+        maxColourBuckets: Int = 5
     ) -> [TrailSegment] {
         guard points.count > 1, maxDisplayPoints >= 2 else { return [] }
 
-        let bucketLimit = max(1, min(maxColourBuckets, palette.count))
-        let validBoundaries = segmentStartIndices
-            .filter { $0 > 0 && $0 < points.count }
-            .sorted()
-        let sourceSegmentCount = validBoundaries.count + 1
-        let desiredPolylineCount = min(bucketLimit, max(sourceSegmentCount, min(bucketLimit, points.count / 2)))
-        let uniquePointCap = max(2, maxDisplayPoints - max(0, desiredPolylineCount - sourceSegmentCount))
-        let sampled = sampledPoints(
-            points,
-            maxCount: uniquePointCap,
-            segmentStartIndices: Set(validBoundaries)
-        )
+        let bucketCount = max(1, min(maxColourBuckets, palette.count, points.count / 2))
+        let uniquePointCap = max(2, maxDisplayPoints - max(0, bucketCount - 1))
+        let sampled = sampledPoints(points, maxCount: uniquePointCap)
         guard sampled.count > 1 else { return [] }
 
-        let sourceGroups = splitAtBoundaries(sampled, boundaries: validBoundaries)
-        let allocations = colourBucketAllocations(
-            groupSizes: sourceGroups.map(\.count),
-            totalLimit: bucketLimit
-        )
-
+        let perBucket = max(1, Int(ceil(Double(sampled.count - 1) / Double(bucketCount))))
         var segments: [TrailSegment] = []
-        for (groupIndex, group) in sourceGroups.enumerated() where group.count > 1 {
-            let count = allocations[groupIndex]
-            let perBucket = max(1, Int(ceil(Double(group.count - 1) / Double(count))))
-            var start = 0
-            for _ in 0..<count where start < group.count - 1 {
-                let end = min(group.count, start + perBucket + 1)
-                let coordinates = group[start..<end].map { $0.point.coordinate }
-                let colorPosition = segments.count
-                let colorIndex = Int(
-                    Double(colorPosition) / Double(max(1, bucketLimit - 1))
-                        * Double(palette.count - 1)
-                )
-                segments.append(TrailSegment(
-                    id: segments.count,
-                    coordinates: coordinates,
-                    color: palette[min(colorIndex, palette.count - 1)]
-                ))
-                start = end - 1
-            }
+        var start = 0
+        while start < sampled.count - 1 {
+            let end = min(sampled.count, start + perBucket + 1)
+            let colorIndex = Int(
+                Double(segments.count) / Double(max(1, bucketCount - 1))
+                    * Double(palette.count - 1)
+            )
+            segments.append(TrailSegment(
+                id: segments.count,
+                coordinates: sampled[start..<end].map(\.coordinate),
+                color: palette[min(colorIndex, palette.count - 1)]
+            ))
+            start = end - 1
         }
         return segments
     }
@@ -92,28 +69,17 @@ enum TrailDisplayProcessor {
     /// internally so the rendering contract can be tested without MapKit.
     static func makeDisplayPoints(
         points: [CoordinatePoint],
-        maxDisplayPoints: Int = 500,
-        segmentStartIndices: Set<Int> = []
+        maxDisplayPoints: Int = 500
     ) -> [CoordinatePoint] {
-        sampledPoints(
-            points,
-            maxCount: maxDisplayPoints,
-            segmentStartIndices: segmentStartIndices
-        ).map(\.point)
-    }
-
-    private struct IndexedPoint {
-        let index: Int
-        let point: CoordinatePoint
+        sampledPoints(points, maxCount: maxDisplayPoints)
     }
 
     private static func sampledPoints(
         _ points: [CoordinatePoint],
-        maxCount: Int,
-        segmentStartIndices: Set<Int>
-    ) -> [IndexedPoint] {
+        maxCount: Int
+    ) -> [CoordinatePoint] {
         guard points.count > maxCount, maxCount >= 2 else {
-            return points.enumerated().map { IndexedPoint(index: $0.offset, point: $0.element) }
+            return points
         }
 
         var mandatory: Set<Int> = [0, points.count - 1]
@@ -129,14 +95,9 @@ enum TrailDisplayProcessor {
         if let maxLongitude = points.indices.max(by: { points[$0].longitude < points[$1].longitude }) {
             mandatory.insert(maxLongitude)
         }
-        for boundary in segmentStartIndices where boundary > 0 && boundary < points.count {
-            mandatory.insert(boundary - 1)
-            mandatory.insert(boundary)
-        }
-
         if mandatory.count >= maxCount {
             return evenlySpacedMandatoryIndices(mandatory.sorted(), maxCount: maxCount)
-                .map { IndexedPoint(index: $0, point: points[$0]) }
+                .map { points[$0] }
         }
 
         let lttbCount = max(2, maxCount - mandatory.count + 2)
@@ -149,7 +110,7 @@ enum TrailDisplayProcessor {
                 selected.remove(index)
             }
         }
-        return selected.sorted().map { IndexedPoint(index: $0, point: points[$0]) }
+        return selected.sorted().map { points[$0] }
     }
 
     private static func largestTriangleThreeBucketsIndices(
@@ -196,46 +157,6 @@ enum TrailDisplayProcessor {
         }
         selected.insert(points.count - 1)
         return selected
-    }
-
-    private static func splitAtBoundaries(
-        _ points: [IndexedPoint],
-        boundaries: [Int]
-    ) -> [[IndexedPoint]] {
-        guard !boundaries.isEmpty else { return [points] }
-        var groups: [[IndexedPoint]] = []
-        var current: [IndexedPoint] = []
-        var boundaryCursor = 0
-
-        for point in points {
-            while boundaryCursor < boundaries.count,
-                  point.index >= boundaries[boundaryCursor] {
-                if current.count > 1 { groups.append(current) }
-                current = []
-                boundaryCursor += 1
-            }
-            current.append(point)
-        }
-        if current.count > 1 { groups.append(current) }
-        return groups
-    }
-
-    private static func colourBucketAllocations(
-        groupSizes: [Int],
-        totalLimit: Int
-    ) -> [Int] {
-        guard !groupSizes.isEmpty else { return [] }
-        var allocations = Array(repeating: 1, count: groupSizes.count)
-        guard groupSizes.count < totalLimit else { return allocations }
-
-        for _ in groupSizes.count..<totalLimit {
-            guard let index = allocations.indices.max(by: {
-                Double(groupSizes[$0]) / Double(allocations[$0])
-                    < Double(groupSizes[$1]) / Double(allocations[$1])
-            }) else { break }
-            allocations[index] += 1
-        }
-        return allocations
     }
 
     private static func evenlySpacedMandatoryIndices(

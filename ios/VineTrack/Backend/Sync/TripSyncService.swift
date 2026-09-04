@@ -708,7 +708,9 @@ final class TripSyncService {
         }
 
         let mapped = backendTrip.toTrip()
-        store.applyRemoteTripUpsert(mapped)
+        let local = store.trips.first { $0.id == mapped.id }
+        let reconciled = ActiveTripPathReconciler.reconcile(local: local, remote: mapped)
+        store.applyRemoteTripUpsert(reconciled)
         metadata.clearDirty([backendTrip.id])
     }
 }

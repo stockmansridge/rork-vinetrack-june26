@@ -65,6 +65,7 @@ import com.rork.vinetrack.data.PaddockTransferService
 import com.rork.vinetrack.data.calculateRowLines
 import com.rork.vinetrack.data.DomainCacheRepository
 import com.rork.vinetrack.data.PendingPhotoRepository
+import com.rork.vinetrack.data.ActiveTripReconciliation
 import com.rork.vinetrack.data.ActiveTripStore
 import com.rork.vinetrack.data.ActiveVineyardResolver
 import com.rork.vinetrack.data.FertiliserStore
@@ -7779,7 +7780,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching { activeTripStore.clear() }
                 return loadedTrips
             }
-            val merged = mergeLocalProgress(server, saved)
+            val merged = ActiveTripReconciliation.mergeProgress(server, saved)
             return loadedTrips.toMutableList().also { it[index] = merged }
         }
         // Absent from the loaded list.
@@ -7799,38 +7800,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Stale/offline list — restore so the active-trip view survives.
             listOf(saved) + loadedTrips
         }
-    }
-
-    /**
-     * Overlay the locally-persisted in-progress fields onto the server trip
-     * (Tier-A Stage A). The path is only taken from local when local has at
-     * least as many points, so a shorter local snapshot never truncates a
-     * longer server track.
-     */
-    private fun mergeLocalProgress(server: Trip, local: Trip): Trip {
-        val serverPointCount = server.pathPoints?.size ?: 0
-        val localPointCount = local.pathPoints?.size ?: 0
-        val useLocalPath = localPointCount >= serverPointCount
-        return server.copy(
-            pathPoints = if (useLocalPath) local.pathPoints else server.pathPoints,
-            totalDistance = if (useLocalPath) local.totalDistance else server.totalDistance,
-            isPaused = local.isPaused,
-            pauseTimestamps = local.pauseTimestamps,
-            resumeTimestamps = local.resumeTimestamps,
-            completedPaths = local.completedPaths,
-            skippedPaths = local.skippedPaths,
-            trackingPattern = local.trackingPattern,
-            rowSequence = local.rowSequence,
-            sequenceIndex = local.sequenceIndex,
-            currentRowNumber = local.currentRowNumber,
-            nextRowNumber = local.nextRowNumber,
-            tankSessions = local.tankSessions,
-            activeTankNumber = local.activeTankNumber,
-            isFillingTank = local.isFillingTank,
-            fillingTankNumber = local.fillingTankNumber,
-            startEngineHours = local.startEngineHours,
-            endEngineHours = local.endEngineHours,
-        )
     }
 
     override fun onCleared() {

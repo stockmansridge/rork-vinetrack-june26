@@ -46,26 +46,6 @@ final class TrailDisplayProcessorTests: XCTestCase {
         XCTAssertTrue(displayed.contains { $0.longitude > 149.18 })
     }
 
-    func testKnownRestartBoundaryCreatesSeparatePolylines() {
-        let source = makeRoute(count: 5_000)
-        let segments = TrailDisplayProcessor.makeDisplayTrailSegments(
-            points: source,
-            maxDisplayPoints: displayCap,
-            maxColourBuckets: 5,
-            segmentStartIndices: [2_500]
-        )
-
-        XCTAssertGreaterThanOrEqual(segments.count, 2)
-        XCTAssertLessThanOrEqual(segments.count, 5)
-        let boundaryLongitude = source[2_500].longitude
-        let crossingSegment = segments.first { segment in
-            guard let first = segment.coordinates.first,
-                  let last = segment.coordinates.last else { return false }
-            return first.longitude < boundaryLongitude && last.longitude >= boundaryLongitude
-        }
-        XCTAssertNil(crossingSegment, "A known restart boundary must never be bridged")
-    }
-
     func testMapRenderingStaysWithinPointAndPolylineCaps() {
         let source = makeRoute(count: 20_000)
         let segments = TrailDisplayProcessor.makeDisplayTrailSegments(
@@ -78,6 +58,13 @@ final class TrailDisplayProcessorTests: XCTestCase {
         XCTAssertLessThanOrEqual(segments.reduce(0) { $0 + $1.coordinates.count }, displayCap)
         XCTAssertEqual(segments.first?.coordinates.first?.longitude, source.first?.longitude)
         XCTAssertEqual(segments.last?.coordinates.last?.longitude, source.last?.longitude)
+        for index in 1..<segments.count {
+            XCTAssertEqual(
+                segments[index - 1].coordinates.last?.longitude,
+                segments[index].coordinates.first?.longitude,
+                "Colour buckets must join into one continuous route"
+            )
+        }
     }
 
     private func makeRoute(count: Int) -> [CoordinatePoint] {

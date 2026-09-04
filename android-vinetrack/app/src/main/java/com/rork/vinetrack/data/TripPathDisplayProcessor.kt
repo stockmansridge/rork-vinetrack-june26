@@ -21,7 +21,6 @@ object TripPathDisplayProcessor {
     fun displayPoints(
         points: List<CoordinatePoint>,
         maxDisplayPoints: Int = DEFAULT_MAX_DISPLAY_POINTS,
-        segmentStartIndices: Set<Int> = emptySet(),
     ): List<CoordinatePoint> {
         if (points.size <= maxDisplayPoints || maxDisplayPoints < 2) return points.toList()
 
@@ -30,13 +29,6 @@ object TripPathDisplayProcessor {
         points.indices.maxByOrNull { points[it].latitude }?.let(mandatory::add)
         points.indices.minByOrNull { points[it].longitude }?.let(mandatory::add)
         points.indices.maxByOrNull { points[it].longitude }?.let(mandatory::add)
-        segmentStartIndices
-            .filter { it > 0 && it < points.size }
-            .forEach {
-                mandatory += it - 1
-                mandatory += it
-            }
-
         if (mandatory.size >= maxDisplayPoints) {
             return evenlySpacedIndices(mandatory.sorted(), maxDisplayPoints).map(points::get)
         }
@@ -51,35 +43,13 @@ object TripPathDisplayProcessor {
         return selected.sorted().map(points::get)
     }
 
-    /**
-     * Produces separate polylines when known recording restart boundaries are
-     * supplied, preventing unrelated route sections from being connected.
-     */
+    /** Produces one continuous chronological polyline for the restored trip. */
     fun displaySegments(
         points: List<CoordinatePoint>,
         maxDisplayPoints: Int = DEFAULT_MAX_DISPLAY_POINTS,
-        segmentStartIndices: Set<Int> = emptySet(),
     ): List<List<CoordinatePoint>> {
-        val displayed = displayPoints(points, maxDisplayPoints, segmentStartIndices)
-        if (displayed.size < 2) return emptyList()
-        val boundaries = segmentStartIndices.filter { it > 0 && it < points.size }.sorted()
-        if (boundaries.isEmpty()) return listOf(displayed)
-
-        val sourceIndexByPoint = points.withIndex().associate { it.value to it.index }
-        val groups = mutableListOf<MutableList<CoordinatePoint>>()
-        var current = mutableListOf<CoordinatePoint>()
-        var boundaryCursor = 0
-        displayed.forEach { point ->
-            val sourceIndex = sourceIndexByPoint[point] ?: return@forEach
-            while (boundaryCursor < boundaries.size && sourceIndex >= boundaries[boundaryCursor]) {
-                if (current.size > 1) groups += current
-                current = mutableListOf()
-                boundaryCursor++
-            }
-            current += point
-        }
-        if (current.size > 1) groups += current
-        return groups
+        val displayed = displayPoints(points, maxDisplayPoints)
+        return if (displayed.size < 2) emptyList() else listOf(displayed)
     }
 
     private fun largestTriangleThreeBucketsIndices(
