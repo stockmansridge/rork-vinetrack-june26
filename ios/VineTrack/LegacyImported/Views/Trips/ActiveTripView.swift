@@ -35,6 +35,7 @@ struct ActiveTripView: View {
     @State private var ticker: Timer?
     @State private var fillElapsed: TimeInterval = 0
     @State private var showEndTankConfirmation: Bool = false
+    @State private var showTankMix: Bool = false
 
     /// Display-only trail segments. Recomputed on a 1Hz throttled timer rather
     /// than every GPS tick or every SwiftUI body invocation.
@@ -471,8 +472,8 @@ struct ActiveTripView: View {
                     rowTrackingDisabledBanner
                 }
 
-                if let record = sprayRecord {
-                    tankControls(record: record)
+                if sprayRecord != nil || liveTrip.totalTanks > 0 || !liveTrip.tankSessions.isEmpty {
+                    tankControls(record: sprayRecord)
                 }
 
                 tripControls
@@ -589,6 +590,11 @@ struct ActiveTripView: View {
         }
         .sheet(isPresented: $showRepairs) {
             NavigationStack { RepairsGrowthView(initial: .repairs) }
+        }
+        .sheet(isPresented: $showTankMix) {
+            TankMixDetailsView(record: sprayRecord, trip: liveTrip)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showGrowth) {
             NavigationStack { RepairsGrowthView(initial: .growth) }
@@ -1899,22 +1905,36 @@ struct ActiveTripView: View {
     /// Start/End Tank buttons on the right. Replaces the old two-row card
     /// (plus dots) so the map gets the reclaimed height.
     @ViewBuilder
-    private func tankControls(record: SprayRecord) -> some View {
-        let totalTanks = max(record.tanks.count, liveTrip.totalTanks)
+    private func tankControls(record: SprayRecord?) -> some View {
+        let totalTanks = max(record?.tanks.count ?? 0, liveTrip.totalTanks)
         let fillEnabled = store.settings.fillTimerEnabled
 
         HStack(spacing: 8) {
-            Image(systemName: "drop.fill")
-                .font(.subheadline)
-                .foregroundStyle(.cyan)
+            Button {
+                showTankMix = true
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "drop.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(.cyan)
 
-            Text(tankStatusText(record: record, totalTanks: totalTanks))
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(hasActiveTank || isFilling ? .cyan : .secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-                .monospacedDigit()
-                .contentTransition(.numericText())
+                    Text(tankStatusText(record: record, totalTanks: totalTanks))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(hasActiveTank || isFilling ? .cyan : .secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(minHeight: 44)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("View planned tank mix")
 
             Spacer(minLength: 8)
 
@@ -1981,20 +2001,19 @@ struct ActiveTripView: View {
 
     /// One-line tank status, including the inline filling timer when the
     /// fill timer is running.
-    private func tankStatusText(record: SprayRecord, totalTanks: Int) -> String {
+    private func tankStatusText(record: SprayRecord?, totalTanks: Int) -> String {
         var text: String
-        if let n = liveTrip.activeTankNumber {
-            text = "Tank \(n)\(totalTanks > 0 ? " of \(totalTanks)" : "")"
-            if let session = openTankSession,
-               let tank = record.tanks.first(where: { $0.tankNumber == session.tankNumber }) {
-                text += " • \(Int(tank.waterVolume)) L"
-            }
+        let presentation = TankMixPresentation(record: record, trip: liveTrip)
+        if let activeNumber = presentation.activeTankNumber,
+           let tank = presentation.tanks.first(where: { $0.tankNumber == activeNumber }) {
+            text = "Active tank: Tank \(activeNumber) of \(presentation.tanks.count) • \(TankMixDetailsView.number(tank.waterVolume)) L"
+        } else if let nextNumber = presentation.nextTankNumber,
+                  let tank = presentation.tanks.first(where: { $0.tankNumber == nextNumber }) {
+            text = "Next: Tank \(nextNumber) of \(presentation.tanks.count) • \(TankMixDetailsView.number(tank.waterVolume)) L"
+        } else if presentation.isAvailable {
+            text = "Finished: \(presentation.completedTankNumbers.count) of \(presentation.tanks.count) tanks complete"
         } else if totalTanks > 0 {
-            text = "Tank \(completedTankCount) of \(totalTanks) done"
-            if completedTankCount < record.tanks.count {
-                let next = record.tanks[completedTankCount]
-                text += " • Next: \(Int(next.waterVolume)) L"
-            }
+            text = "Tank mix details unavailable on this device."
         } else {
             text = "Tank not started"
         }

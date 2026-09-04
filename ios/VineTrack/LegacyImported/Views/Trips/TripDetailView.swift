@@ -16,6 +16,7 @@ struct TripDetailView: View {
     @State private var showRowCompletion: Bool = false
     @State private var showPathMap: Bool = false
     @State private var showSprayDetails: Bool = false
+    @State private var showTankMix: Bool = false
     @State private var showSeedingDetails: Bool = false
     @State private var showPinsSection: Bool = false
     @State private var showCostSection: Bool = true
@@ -148,10 +149,30 @@ struct TripDetailView: View {
                         if record.tanks.count > 0 {
                             statRow("Tanks", value: "\(record.tanks.count)", icon: "cylinder")
                         }
+                        Button {
+                            showTankMix = true
+                        } label: {
+                            Label("View tank mix", systemImage: "cylinder.split.1x2")
+                                .frame(minHeight: 44)
+                        }
+                        .accessibilityLabel("View planned tank mix")
                     } label: {
                         Label("Spray Record", systemImage: "drop.fill")
                             .font(.subheadline.weight(.semibold))
                     }
+                }
+            } else if trip.totalTanks > 0 {
+                Section("Spray Record") {
+                    Button {
+                        showTankMix = true
+                    } label: {
+                        Label("View tank mix", systemImage: "cylinder.split.1x2")
+                            .frame(minHeight: 44)
+                    }
+                    .accessibilityLabel("View planned tank mix")
+                    Text("Tank mix details unavailable on this device.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -342,6 +363,11 @@ struct TripDetailView: View {
         }
         .sheet(isPresented: $showSummary) {
             TripSummarySheet(trip: trip)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showTankMix) {
+            TankMixDetailsView(record: sprayRecord, trip: currentTrip)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
