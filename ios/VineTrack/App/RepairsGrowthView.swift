@@ -30,7 +30,7 @@ struct RepairsGrowthView: View {
         let existing: VinePin
         let distance: Double
         let radius: Double
-        let proceed: () -> Void
+        let attempt: PinDuplicateCreateAttempt
     }
 
     init(initial: Tab = .repairs) {
@@ -140,15 +140,20 @@ struct RepairsGrowthView: View {
                 distance: warning.distance,
                 radius: warning.radius,
                 onCreateAnyway: {
-                    tracking.diagDuplicateCheckResult = "duplicate_create_anyway"
-                    warning.proceed()
+                    if warning.attempt.createAnyway() {
+                        tracking.diagDuplicateCheckResult = appendDuplicateAction("create_anyway")
+                    }
                 },
                 onViewExisting: {
-                    tracking.diagDuplicateCheckResult = "duplicate_view_existing"
-                    pinForDetailSheet = warning.existing
+                    if warning.attempt.cancel() {
+                        tracking.diagDuplicateCheckResult = appendDuplicateAction("view_existing")
+                        pinForDetailSheet = warning.existing
+                    }
                 },
                 onCancel: {
-                    tracking.diagDuplicateCheckResult = "duplicate_cancelled"
+                    if warning.attempt.cancel() {
+                        tracking.diagDuplicateCheckResult = appendDuplicateAction("cancelled")
+                    }
                 }
             )
             .presentationDetents([.medium, .large])
@@ -368,13 +373,20 @@ struct RepairsGrowthView: View {
                 attachment: attachment
             )
         }
-        if let dup = checkDuplicate(at: coord, resolved: resolved, attachment: attachment, side: side, mode: button.mode) {
-            recordDuplicateWarningShown(dup)
+        if let dup = checkDuplicate(
+            at: coord,
+            rawCoordinate: raw,
+            resolved: resolved,
+            attachment: attachment,
+            side: side,
+            mode: button.mode,
+            logicalType: button.name
+        ) {
             duplicateWarning = DuplicateWarning(
                 existing: dup.pin,
                 distance: dup.distance,
                 radius: dup.radius,
-                proceed: proceed
+                attempt: PinDuplicateCreateAttempt(create: proceed)
             )
             return
         }
@@ -436,13 +448,20 @@ struct RepairsGrowthView: View {
                 attachment: attachment
             )
         }
-        if let dup = checkDuplicate(at: coord, resolved: resolved, attachment: attachment, side: .right, mode: .growth) {
-            recordDuplicateWarningShown(dup)
+        if let dup = checkDuplicate(
+            at: coord,
+            rawCoordinate: raw,
+            resolved: resolved,
+            attachment: attachment,
+            side: .right,
+            mode: .growth,
+            logicalType: "Growth Stage"
+        ) {
             duplicateWarning = DuplicateWarning(
                 existing: dup.pin,
                 distance: dup.distance,
                 radius: dup.radius,
-                proceed: proceed
+                attempt: PinDuplicateCreateAttempt(create: proceed)
             )
             return
         }
@@ -526,57 +545,33 @@ struct RepairsGrowthView: View {
 
     private func checkDuplicate(
         at coord: CLLocationCoordinate2D,
+        rawCoordinate: CLLocationCoordinate2D,
         resolved: PinContextResolver.Resolved,
         attachment: PinAttachmentResolver.Attachment,
         side: PinSide,
-        mode: PinMode
+        mode: PinMode,
+        logicalType: String
     ) -> (pin: VinePin, distance: Double, radius: Double)? {
-        // Prefer the resolved actual vine row (pin_row_number) when the
-        // attachment confidently snapped — that's what newer pins store.
-        // Fall back to the legacy nearest-row resolution otherwise.
-        let rowForDuplicate = attachment.pinRowNumber ?? resolved.rowNumber
-        let sideForDuplicate = attachment.pinSide ?? side
-        if let alongRow = PinDuplicateChecker.nearbyPinAlongRow(
-            snappedCoordinate: coord,
+        let evaluation = PinDuplicateChecker.evaluate(
+            coordinate: coord,
+            rawCoordinate: rawCoordinate,
             vineyardId: store.selectedVineyardId,
             paddockId: resolved.paddockId,
-            rowNumber: rowForDuplicate,
-            side: sideForDuplicate,
+            rowNumber: attachment.pinRowNumber ?? resolved.rowNumber,
+            side: attachment.pinSide ?? side,
             mode: mode,
+            logicalType: logicalType,
             in: store.pins,
             paddocks: store.paddocks
-        ) {
-            tracking.diagDuplicateRadiusMeters = PinDuplicateChecker.alongRowDuplicateMetres
-            return (alongRow.pin, alongRow.distance, PinDuplicateChecker.alongRowDuplicateMetres)
-        }
-        let radius = PinDuplicateChecker.duplicateRadius(
-            coordinate: coord,
-            paddockId: resolved.paddockId,
-            paddocks: store.paddocks
         )
-        tracking.diagDuplicateRadiusMeters = radius
-        guard let match = PinDuplicateChecker.nearbyPin(
-            coordinate: coord,
-            vineyardId: store.selectedVineyardId,
-            paddockId: resolved.paddockId,
-            radius: radius,
-            in: store.pins
-        ) else {
-            tracking.diagDuplicateCheckResult = "no_duplicate_found"
-            return nil
-        }
-        return (match.pin, match.distance, radius)
+        tracking.diagDuplicateRadiusMeters = evaluation.diagnostics.radius
+        tracking.diagDuplicateCheckResult = evaluation.diagnostics.description
+        guard let match = evaluation.match else { return nil }
+        return (match.pin, match.distance, match.radius)
     }
 
-    private func recordDuplicateWarningShown(
-        _ dup: (pin: VinePin, distance: Double, radius: Double)
-    ) {
-        let title = dup.pin.buttonName.isEmpty ? "pin" : dup.pin.buttonName
-        let status = dup.pin.isCompleted ? "completed" : "active"
-        let dist = String(format: "%.2f", dup.distance)
-        tracking.diagDuplicateRadiusMeters = dup.radius
-        tracking.diagDuplicateCheckResult =
-            "duplicate_warning_shown: \(title), \(dist)m, status=\(status)"
+    private func appendDuplicateAction(_ action: String) -> String {
+        "\(tracking.diagDuplicateCheckResult ?? "result=unknown"); action=\(action)"
     }
 
     private func showPinToast(title: String, subtitle: String) {

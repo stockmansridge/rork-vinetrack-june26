@@ -258,7 +258,7 @@ extension BackendPin {
         preservingCreatedByText existingCreatedByText: String? = nil,
         nameColorMap: [String: String] = [:]
     ) -> VinePin? {
-        guard let latitude, let longitude else { return nil }
+        guard deletedAt == nil, let latitude, let longitude else { return nil }
         // Honest optional side: a pin saved without Left/Right (unified
         // composer, Android null) stays side-less instead of faking Left.
         let resolvedSide = PinSide(rawValue: side ?? "")

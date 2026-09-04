@@ -2,6 +2,7 @@ package com.rork.vinetrack.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -110,6 +111,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.rork.vinetrack.data.PinDuplicateChecker
+import com.rork.vinetrack.data.PinDuplicateCreateAttempt
 import com.rork.vinetrack.data.PinExporter
 import com.rork.vinetrack.data.SeasonScope
 import com.rork.vinetrack.data.SeasonSelection
@@ -1185,35 +1187,21 @@ private fun PinEditSheetHost(
                     }
                 }
             }
-            // Duplicate detection runs only for launcher pins with a real
-            // GPS fix. The preferred path snaps to a row and compares
-            // along-row distance; legacy pins lacking row attachment are
-            // caught by a conservative raw-distance fallback.
-            // Preferred: along-row duplicate using the snapped attachment.
-            val alongRowDup = attachment?.let {
-                PinDuplicateChecker.nearbyAlongRow(
-                    candidate = it,
-                    paddockId = fields.paddockId,
-                    mode = fields.mode,
-                    pins = state.pins,
-                )
-            }
-            // Fallback: raw-distance match against older pins without row
-            // attachment, scoped to the same block / mode / side / manual row.
-            val duplicate = alongRowDup ?: if (hasGps) {
-                PinDuplicateChecker.nearbyRawDistance(
-                    latitude = target.latitude,
-                    longitude = target.longitude,
-                    paddockId = fields.paddockId,
-                    mode = fields.mode,
-                    side = fields.side?.ifBlank { null },
-                    manualRowNumber = fields.rowNumber,
-                    paddock = paddock,
-                    pins = state.pins,
-                )
-            } else {
-                null
-            }
+            val evaluation = PinDuplicateChecker.evaluate(
+                candidate = attachment,
+                latitude = if (hasGps) target.latitude else null,
+                longitude = if (hasGps) target.longitude else null,
+                vineyardId = state.selectedVineyardId,
+                paddockId = fields.paddockId ?: placement.paddockId,
+                mode = fields.mode,
+                logicalType = fields.title,
+                side = fields.side?.ifBlank { null },
+                manualRowNumber = fields.rowNumber,
+                paddock = paddock,
+                pins = state.pins,
+            )
+            Log.d("PinDuplicate", evaluation.diagnostics.description())
+            val duplicate = evaluation.match
             if (duplicate != null) {
                 // Stop the save spinner and ask before creating.
                 onDone(false)
@@ -1228,7 +1216,8 @@ private fun PinEditSheetHost(
                     },
                     distanceM = duplicate.distanceM,
                     alongRow = duplicate.alongRow,
-                    onCreateAnyway = doCreate,
+                    diagnostic = evaluation.diagnostics.description(),
+                    attempt = PinDuplicateCreateAttempt(doCreate),
                 )
             } else {
                 doCreate()
@@ -1252,17 +1241,26 @@ private fun PinEditSheetHost(
                 "about $distLabel m away. Create another one here anyway?"
         }
         AlertDialog(
-            onDismissRequest = { pendingDuplicate = null },
+            onDismissRequest = {
+                Log.d("PinDuplicate", "${dup.diagnostic}; action=cancelled")
+                dup.attempt.cancel()
+                pendingDuplicate = null
+            },
             title = { Text("Possible duplicate") },
             text = { Text(message) },
             confirmButton = {
                 TextButton(onClick = {
                     pendingDuplicate = null
-                    dup.onCreateAnyway()
+                    Log.d("PinDuplicate", "${dup.diagnostic}; action=create_anyway")
+                    dup.attempt.createAnyway()
                 }) { Text("Create anyway") }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDuplicate = null }) { Text("Cancel") }
+                TextButton(onClick = {
+                    Log.d("PinDuplicate", "${dup.diagnostic}; action=cancelled")
+                    dup.attempt.cancel()
+                    pendingDuplicate = null
+                }) { Text("Cancel") }
             },
         )
     }
@@ -1280,7 +1278,8 @@ private data class PendingPinDuplicate(
     val alongRow: Boolean,
     /** Block name of the existing pin, for the duplicate sheet's context line. */
     val blockName: String? = null,
-    val onCreateAnyway: () -> Unit,
+    val diagnostic: String,
+    val attempt: PinDuplicateCreateAttempt,
 )
 
 /** Floating success card payload shown after a quick pin is dropped. */
@@ -1594,26 +1593,21 @@ fun PinCategoryLauncherScreen(
             }
         }
 
-        // Preferred along-row duplicate using the snapped attachment, with the
-        // conservative raw-distance fallback for legacy pins (unchanged algorithm).
-        val alongRowDup = attachment?.let {
-            PinDuplicateChecker.nearbyAlongRow(
-                candidate = it,
-                paddockId = paddockId,
-                mode = mode,
-                pins = state.pins,
-            )
-        }
-        val duplicate = alongRowDup ?: PinDuplicateChecker.nearbyRawDistance(
+        val evaluation = PinDuplicateChecker.evaluate(
+            candidate = attachment,
             latitude = lat,
             longitude = lng,
+            vineyardId = state.selectedVineyardId,
             paddockId = paddockId,
             mode = mode,
+            logicalType = category,
             side = side,
             manualRowNumber = null,
             paddock = paddock,
             pins = state.pins,
         )
+        Log.d("PinDuplicate", evaluation.diagnostics.description())
+        val duplicate = evaluation.match
         if (duplicate != null) {
             duplicatePrompt = PendingPinDuplicate(
                 existing = duplicate.pin,
@@ -1626,7 +1620,8 @@ fun PinCategoryLauncherScreen(
                 distanceM = duplicate.distanceM,
                 alongRow = duplicate.alongRow,
                 blockName = state.paddocks.firstOrNull { it.id == duplicate.pin.paddockId }?.name,
-                onCreateAnyway = doCreate,
+                diagnostic = evaluation.diagnostics.description(),
+                attempt = PinDuplicateCreateAttempt(doCreate),
             )
         } else {
             doCreate()
@@ -1831,10 +1826,15 @@ fun PinCategoryLauncherScreen(
     duplicatePrompt?.let { dup ->
         QuickPinDuplicateSheet(
             duplicate = dup,
-            onDismiss = { duplicatePrompt = null },
+            onDismiss = {
+                Log.d("PinDuplicate", "${dup.diagnostic}; action=cancelled")
+                dup.attempt.cancel()
+                duplicatePrompt = null
+            },
             onCreateAnyway = {
                 duplicatePrompt = null
-                dup.onCreateAnyway()
+                Log.d("PinDuplicate", "${dup.diagnostic}; action=create_anyway")
+                dup.attempt.createAnyway()
             },
         )
     }

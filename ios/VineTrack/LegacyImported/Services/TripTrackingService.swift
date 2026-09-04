@@ -559,60 +559,33 @@ final class TripTrackingService {
             confident: confident
         )
         let pinCoordinate = attachment.snappedCoordinate ?? location.coordinate
-        let snappedToRow = attachment.snappedToRow
         let dupRow = attachment.pinRowNumber ?? resolvedRow
         let dupSide = attachment.pinSide ?? side
 
         if !force {
-            // Prefer along-row duplicate detection when we have a row
-            // lock. Same vineyard + paddock + row + mode within ~2.5 m
-            // along the row line is a likely duplicate even if the raw
-            // GPS samples sit slightly apart.
-            if let alongRow = PinDuplicateChecker.nearbyPinAlongRow(
-                snappedCoordinate: pinCoordinate,
+            let evaluation = PinDuplicateChecker.evaluate(
+                coordinate: pinCoordinate,
+                rawCoordinate: location.coordinate,
                 vineyardId: store.selectedVineyardId,
                 paddockId: resolvedPaddock,
                 rowNumber: dupRow,
                 side: dupSide,
                 mode: button.mode,
+                logicalType: button.name,
                 in: store.pins,
                 paddocks: store.paddocks
-            ) {
-                let title = alongRow.pin.buttonName.isEmpty ? "pin" : alongRow.pin.buttonName
-                let status = alongRow.pin.isCompleted ? "completed" : "active"
-                let dist = String(format: "%.2f", alongRow.distance)
-                diagDuplicateRadiusMeters = PinDuplicateChecker.alongRowDuplicateMetres
-                diagDuplicateCheckResult =
-                    "duplicate_warning_shown_along_row: \(title), \(dist)m, status=\(status)"
+            )
+            diagDuplicateRadiusMeters = evaluation.diagnostics.radius
+            diagDuplicateCheckResult = evaluation.diagnostics.description
+            if let match = evaluation.match {
                 return .duplicateNearby(
-                    existing: alongRow.pin,
-                    distance: alongRow.distance,
-                    radius: PinDuplicateChecker.alongRowDuplicateMetres
+                    existing: match.pin,
+                    distance: match.distance,
+                    radius: match.radius
                 )
             }
-            let radius = PinDuplicateChecker.duplicateRadius(
-                coordinate: pinCoordinate,
-                paddockId: resolvedPaddock,
-                paddocks: store.paddocks
-            )
-            diagDuplicateRadiusMeters = radius
-            if let match = PinDuplicateChecker.nearbyPin(
-                coordinate: pinCoordinate,
-                vineyardId: store.selectedVineyardId,
-                paddockId: resolvedPaddock,
-                radius: radius,
-                in: store.pins
-            ) {
-                let title = match.pin.buttonName.isEmpty ? "pin" : match.pin.buttonName
-                let status = match.pin.isCompleted ? "completed" : "active"
-                let dist = String(format: "%.2f", match.distance)
-                diagDuplicateCheckResult =
-                    "duplicate_warning_shown: \(title), \(dist)m, status=\(status)"
-                return .duplicateNearby(existing: match.pin, distance: match.distance, radius: radius)
-            }
-            diagDuplicateCheckResult = snappedToRow ? "no_duplicate_found_snapped" : "no_duplicate_found"
         } else {
-            diagDuplicateCheckResult = "duplicate_create_anyway"
+            diagDuplicateCheckResult = "result=duplicate_create_anyway; candidate=\(PinTypeIdentity(mode: button.mode, logicalType: button.name))"
         }
 
         guard var pin = store.createPinFromButton(

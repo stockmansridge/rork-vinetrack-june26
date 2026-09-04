@@ -1,33 +1,51 @@
 import Foundation
 import CoreLocation
 
-/// Pure helpers for warning when a new pin is being dropped on top of an
-/// existing one. Backend-neutral — works with whatever pins are already
-/// loaded into `MigratedDataStore.pins`.
-nonisolated enum PinDuplicateChecker {
-
-    /// Default fallback radius (metres) when no row-spacing is known.
-    /// Sized for typical field GPS error (3-5 m) so two pins placed at the
-    /// same vine actually trigger a duplicate warning even when the GPS
-    /// fix has drifted between drops.
+/// Pure, read-only duplicate warning evaluator shared by every Repairs/Growth
+/// creation surface. Type identity is always checked before spatial matching.
+@MainActor
+enum PinDuplicateChecker {
     static let fallbackRadiusMeters: Double = 3.0
-
-    /// Hard cap on radius. Above this, two pins are clearly different
-    /// targets — but this is intentionally generous to account for GPS
-    /// noise during active trips at slow speeds.
     static let maxRadiusMeters: Double = 6.0
-
-    /// Minimum radius even when row spacing is known. Bumped from 1.5 m to
-    /// 2.5 m so vineyard GPS jitter (typically 2–3 m horizontal accuracy)
-    /// can't sneak a near-duplicate pin past the warning. Narrow-row
-    /// paddocks may now warn on adjacent rows, which is the correct
-    /// trade-off for repair/growth pin work.
     static let minRadiusMeters: Double = 2.5
+    static let alongRowDuplicateMetres: Double = 2.5
 
-    /// Compute the duplicate-warning radius for a pin being dropped at
-    /// `coordinate`. Uses half the row spacing of the most relevant paddock
-    /// (the one containing the coordinate, falling back to `paddockId`),
-    /// or a conservative fallback when geometry isn't available.
+    enum Method: String, Sendable {
+        case alongRow = "along_row"
+        case rawDistance = "raw_distance"
+    }
+
+    struct Match: Sendable {
+        let pin: VinePin
+        let distance: Double
+        let radius: Double
+        let method: Method
+    }
+
+    struct Diagnostics: Sendable, CustomStringConvertible {
+        let candidateKey: PinTypeIdentity
+        let vineyardPinsInspected: Int
+        let sameTypeCandidates: Int
+        let method: Method?
+        let matchedType: String?
+        let distance: Double?
+        let radius: Double
+        let result: String
+
+        var description: String {
+            let distanceText = distance.map { String(format: "%.2f", $0) } ?? "none"
+            return "candidate=\(candidateKey); inspected=\(vineyardPinsInspected); " +
+                "same_type=\(sameTypeCandidates); method=\(method?.rawValue ?? "none"); " +
+                "matched_type=\(matchedType ?? "none"); distance_m=\(distanceText); " +
+                "radius_m=\(String(format: "%.2f", radius)); result=\(result)"
+        }
+    }
+
+    struct Evaluation: Sendable {
+        let match: Match?
+        let diagnostics: Diagnostics
+    }
+
     static func duplicateRadius(
         coordinate: CLLocationCoordinate2D,
         paddockId: UUID?,
@@ -37,113 +55,205 @@ nonisolated enum PinDuplicateChecker {
            containing.rowWidth > 0 {
             return min(maxRadiusMeters, max(minRadiusMeters, containing.rowWidth / 2.0))
         }
-        if let id = paddockId,
-           let paddock = paddocks.first(where: { $0.id == id }),
+        if let paddockId,
+           let paddock = paddocks.first(where: { $0.id == paddockId }),
            paddock.rowWidth > 0 {
             return min(maxRadiusMeters, max(minRadiusMeters, paddock.rowWidth / 2.0))
         }
         return fallbackRadiusMeters
     }
 
-    /// The closest pin within `radius` of `coordinate`, scoped to the same
-    /// vineyard. Active (not-completed) pins are preferred; completed pins
-    /// are returned only when no active match exists. Returns `nil` when
-    /// no pin is in range.
-    /// Along-row duplicate radius. When pin-snapping projects two pins
-    /// onto the same row line, raw GPS distance under-counts duplicates
-    /// because tractor jitter spreads samples along the row. We use a
-    /// tighter, fixed along-row radius for same-row, same-mode pins so a
-    /// repair tapped twice within a couple of metres warns reliably.
-    static let alongRowDuplicateMetres: Double = 2.5
-
-    /// Find a likely duplicate using along-row geometry. Same vineyard +
-    /// same paddock + same row number + same mode + along-row distance
-    /// within `alongRowDuplicateMetres`. Returns the closest match (open
-    /// pins preferred). Falls back to nil when no row context exists —
-    /// callers should then use the lat/lng-based `nearbyPin` check.
-    static func nearbyPinAlongRow(
-        snappedCoordinate: CLLocationCoordinate2D,
+    /// Runs along-row matching first, then the legacy raw-distance fallback.
+    /// The source array is never sorted or mutated.
+    static func evaluate(
+        coordinate: CLLocationCoordinate2D,
+        rawCoordinate: CLLocationCoordinate2D? = nil,
         vineyardId: UUID?,
         paddockId: UUID?,
         rowNumber: Int?,
-        side: PinSide? = nil,
-        mode: PinMode?,
+        side: PinSide?,
+        mode: PinMode,
+        logicalType: String,
         in pins: [VinePin],
         paddocks: [Paddock]
-    ) -> (pin: VinePin, distance: Double)? {
+    ) -> Evaluation {
+        let candidateKey = PinTypeIdentity(mode: mode, logicalType: logicalType)
+        let radius = duplicateRadius(coordinate: coordinate, paddockId: paddockId, paddocks: paddocks)
+        guard let vineyardId else {
+            return noMatchDiagnostics(
+                candidateKey: candidateKey,
+                inspected: 0,
+                sameType: 0,
+                radius: radius
+            )
+        }
+
+        let vineyardPins = pins.filter { $0.vineyardId == vineyardId }
+        let sameTypePins = vineyardPins.filter {
+            !$0.isCompleted && PinTypeIdentity(existing: $0) == candidateKey
+        }
+
+        if let match = nearbyPinAlongRow(
+            snappedCoordinate: coordinate,
+            paddockId: paddockId,
+            rowNumber: rowNumber,
+            side: side,
+            candidateKey: candidateKey,
+            in: sameTypePins,
+            paddocks: paddocks
+        ) {
+            return matchedEvaluation(
+                match: match,
+                candidateKey: candidateKey,
+                inspected: vineyardPins.count,
+                sameType: sameTypePins.count
+            )
+        }
+
+        if let match = nearbyPinRawDistance(
+            coordinate: rawCoordinate ?? coordinate,
+            paddockId: paddockId,
+            rowNumber: rowNumber,
+            side: side,
+            candidateKey: candidateKey,
+            radius: radius,
+            in: sameTypePins
+        ) {
+            return matchedEvaluation(
+                match: match,
+                candidateKey: candidateKey,
+                inspected: vineyardPins.count,
+                sameType: sameTypePins.count
+            )
+        }
+
+        return noMatchDiagnostics(
+            candidateKey: candidateKey,
+            inspected: vineyardPins.count,
+            sameType: sameTypePins.count,
+            radius: radius
+        )
+    }
+
+    private static func nearbyPinAlongRow(
+        snappedCoordinate: CLLocationCoordinate2D,
+        paddockId: UUID?,
+        rowNumber: Int?,
+        side: PinSide?,
+        candidateKey: PinTypeIdentity,
+        in pins: [VinePin],
+        paddocks: [Paddock]
+    ) -> Match? {
         guard let paddockId, let rowNumber,
-              let paddock = paddocks.first(where: { $0.id == paddockId }) else {
+              let paddock = paddocks.first(where: { $0.id == paddockId }),
+              let snappedCandidate = RowGuidance.snapToRow(
+                coordinate: snappedCoordinate,
+                rowNumber: rowNumber,
+                in: paddock
+              ) else {
             return nil
         }
-        guard let snappedSelf = RowGuidance.snapToRow(
-            coordinate: snappedCoordinate,
-            rowNumber: rowNumber,
-            in: paddock
-        ) else { return nil }
 
-        var bestActive: (pin: VinePin, distance: Double)?
-        var bestDone: (pin: VinePin, distance: Double)?
+        var best: Match?
         for pin in pins {
-            if let vid = vineyardId, pin.vineyardId != vid { continue }
+            guard !pin.isCompleted else { continue }
+            guard PinTypeIdentity(existing: pin) == candidateKey else { continue }
             guard pin.paddockId == paddockId else { continue }
-            // Match by the new pin_row_number when present (actual vine
-            // row), otherwise fall back to the legacy row_number storage
-            // (driving path floor). New + legacy pins both compare cleanly.
-            let candidateRow = pin.pinRowNumber ?? pin.rowNumber
-            guard candidateRow == rowNumber else { continue }
-            // Only constrain by side when the caller actually knows the
-            // side — otherwise treat both sides as candidate duplicates.
-            // Prefer the new pin_side; legacy pin.side is operator-side too.
-            if let side, let candidateSide = pin.pinSide ?? pin.side, candidateSide != side { continue }
-            if let mode, pin.mode != mode { continue }
-            guard let snappedOther = RowGuidance.snapToRow(
+            guard (pin.pinRowNumber ?? pin.rowNumber) == rowNumber else { continue }
+            if let side, let existingSide = pin.pinSide ?? pin.side, existingSide != side { continue }
+            guard let snappedExisting = RowGuidance.snapToRow(
                 coordinate: pin.attachedCoordinate,
                 rowNumber: rowNumber,
                 in: paddock
             ) else { continue }
-            let delta = abs(snappedSelf.distanceAlongMetres - snappedOther.distanceAlongMetres)
-            guard delta <= alongRowDuplicateMetres else { continue }
-            let scoped: (VinePin, Double) = (pin, delta)
-            if pin.isCompleted {
-                if bestDone == nil || delta < bestDone!.distance { bestDone = scoped }
-            } else {
-                if bestActive == nil || delta < bestActive!.distance { bestActive = scoped }
+
+            let distance = abs(snappedCandidate.distanceAlongMetres - snappedExisting.distanceAlongMetres)
+            guard distance <= alongRowDuplicateMetres else { continue }
+            if best == nil || distance < best!.distance {
+                best = Match(
+                    pin: pin,
+                    distance: distance,
+                    radius: alongRowDuplicateMetres,
+                    method: .alongRow
+                )
             }
         }
-        return bestActive ?? bestDone
+        return best
     }
 
-    static func nearbyPin(
+    private static func nearbyPinRawDistance(
         coordinate: CLLocationCoordinate2D,
-        vineyardId: UUID?,
         paddockId: UUID?,
+        rowNumber: Int?,
+        side: PinSide?,
+        candidateKey: PinTypeIdentity,
         radius: Double,
         in pins: [VinePin]
-    ) -> (pin: VinePin, distance: Double)? {
-        var bestActive: (pin: VinePin, distance: Double)?
-        var bestDone: (pin: VinePin, distance: Double)?
-
+    ) -> Match? {
+        var best: Match?
         for pin in pins {
-            if let vid = vineyardId, pin.vineyardId != vid { continue }
-            let d = RowGuidance.metresBetween(
-                coordinate,
-                CLLocationCoordinate2D(latitude: pin.latitude, longitude: pin.longitude)
-            )
-            guard d <= radius else { continue }
+            guard !pin.isCompleted else { continue }
+            guard PinTypeIdentity(existing: pin) == candidateKey else { continue }
+            if let paddockId, let existingPaddockId = pin.paddockId,
+               existingPaddockId != paddockId { continue }
 
-            // Same paddock matches sort first by tightening the radius slightly.
-            let scoped: (VinePin, Double) = (pin, d)
-            if pin.isCompleted {
-                if bestDone == nil || d < bestDone!.distance {
-                    bestDone = scoped
-                }
-            } else {
-                if bestActive == nil || d < bestActive!.distance {
-                    bestActive = scoped
-                }
+            // Row-attached records belong exclusively to along-row matching.
+            // This prevents an adjacent row from re-entering through raw GPS.
+            if pin.snappedToRow || pin.pinRowNumber != nil || pin.alongRowDistanceM != nil { continue }
+            if let side, let existingSide = pin.pinSide ?? pin.side, existingSide != side { continue }
+            if let rowNumber, let existingRow = pin.rowNumber, existingRow != rowNumber { continue }
+
+            let distance = RowGuidance.metresBetween(coordinate, pin.coordinate)
+            guard distance <= radius else { continue }
+            if best == nil || distance < best!.distance {
+                best = Match(pin: pin, distance: distance, radius: radius, method: .rawDistance)
             }
-            _ = paddockId
         }
-        return bestActive ?? bestDone
+        return best
+    }
+
+    private static func matchedEvaluation(
+        match: Match,
+        candidateKey: PinTypeIdentity,
+        inspected: Int,
+        sameType: Int
+    ) -> Evaluation {
+        let result = match.method == .alongRow
+            ? "duplicate_same_type_along_row"
+            : "duplicate_same_type_raw_distance"
+        return Evaluation(
+            match: match,
+            diagnostics: Diagnostics(
+                candidateKey: candidateKey,
+                vineyardPinsInspected: inspected,
+                sameTypeCandidates: sameType,
+                method: match.method,
+                matchedType: PinTypeIdentity(existing: match.pin).description,
+                distance: match.distance,
+                radius: match.radius,
+                result: result
+            )
+        )
+    }
+
+    private static func noMatchDiagnostics(
+        candidateKey: PinTypeIdentity,
+        inspected: Int,
+        sameType: Int,
+        radius: Double
+    ) -> Evaluation {
+        Evaluation(
+            match: nil,
+            diagnostics: Diagnostics(
+                candidateKey: candidateKey,
+                vineyardPinsInspected: inspected,
+                sameTypeCandidates: sameType,
+                method: nil,
+                matchedType: nil,
+                distance: nil,
+                radius: radius,
+                result: "no_same_type_duplicate"
+            )
+        )
     }
 }

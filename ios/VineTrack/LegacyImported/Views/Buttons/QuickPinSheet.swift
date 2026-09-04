@@ -26,8 +26,14 @@ struct QuickPinSheet: View {
         let existing: VinePin
         let distance: Double
         let radius: Double
-        let proceed: () -> Void
+        let attempt: PinDuplicateCreateAttempt
     }
+
+    private typealias ResolvedPlacement = (
+        paddockId: UUID?,
+        attachment: PinAttachmentResolver.Attachment,
+        fallbackRowNumber: Int?
+    )
 
     private var canCreate: Bool { accessControl.canCreateOperationalRecords }
 
@@ -162,15 +168,20 @@ struct QuickPinSheet: View {
                     distance: warning.distance,
                     radius: warning.radius,
                     onCreateAnyway: {
-                        tracking.diagDuplicateCheckResult = "duplicate_create_anyway"
-                        warning.proceed()
+                        if warning.attempt.createAnyway() {
+                            tracking.diagDuplicateCheckResult = appendDuplicateAction("create_anyway")
+                        }
                     },
                     onViewExisting: {
-                        tracking.diagDuplicateCheckResult = "duplicate_view_existing"
-                        pinForDetailSheet = warning.existing
+                        if warning.attempt.cancel() {
+                            tracking.diagDuplicateCheckResult = appendDuplicateAction("view_existing")
+                            pinForDetailSheet = warning.existing
+                        }
                     },
                     onCancel: {
-                        tracking.diagDuplicateCheckResult = "duplicate_cancelled"
+                        if warning.attempt.cancel() {
+                            tracking.diagDuplicateCheckResult = appendDuplicateAction("cancelled")
+                        }
                     }
                 )
                 .presentationDetents([.medium, .large])
@@ -207,14 +218,22 @@ struct QuickPinSheet: View {
             return
         }
 
-        let proceed = { createPin(button: button, location: loc) }
-        if let dup = checkDuplicate(at: loc.coordinate, side: side, mode: button.mode) {
-            recordDuplicateWarningShown(dup)
+        let placement = resolvePlacement(coordinate: loc.coordinate, side: side)
+        let duplicateCoordinate = placement.attachment.snappedCoordinate ?? loc.coordinate
+        let proceed = { createPin(button: button, location: loc, placement: placement) }
+        if let dup = checkDuplicate(
+            at: duplicateCoordinate,
+            rawCoordinate: loc.coordinate,
+            placement: placement,
+            side: side,
+            mode: button.mode,
+            logicalType: button.name
+        ) {
             duplicateWarning = DuplicateWarning(
                 existing: dup.pin,
                 distance: dup.distance,
                 radius: dup.radius,
-                proceed: proceed
+                attempt: PinDuplicateCreateAttempt(create: proceed)
             )
             return
         }
@@ -231,23 +250,34 @@ struct QuickPinSheet: View {
             errorMessage = warning
             return
         }
-        let proceed = { createGrowthPin(stage: stage, location: loc) }
-        if let dup = checkDuplicate(at: loc.coordinate, side: side, mode: .growth) {
-            recordDuplicateWarningShown(dup)
+        let placement = resolvePlacement(coordinate: loc.coordinate, side: side)
+        let duplicateCoordinate = placement.attachment.snappedCoordinate ?? loc.coordinate
+        let proceed = { createGrowthPin(stage: stage, location: loc, placement: placement) }
+        if let dup = checkDuplicate(
+            at: duplicateCoordinate,
+            rawCoordinate: loc.coordinate,
+            placement: placement,
+            side: side,
+            mode: .growth,
+            logicalType: "Growth Stage"
+        ) {
             duplicateWarning = DuplicateWarning(
                 existing: dup.pin,
                 distance: dup.distance,
                 radius: dup.radius,
-                proceed: proceed
+                attempt: PinDuplicateCreateAttempt(create: proceed)
             )
             return
         }
         proceed()
     }
 
-    private func createGrowthPin(stage: GrowthStage, location: CLLocation) {
+    private func createGrowthPin(
+        stage: GrowthStage,
+        location: CLLocation,
+        placement: ResolvedPlacement
+    ) {
         let rowNumber = Int(rowText.trimmingCharacters(in: .whitespacesAndNewlines))
-        let placement = resolvePlacement(coordinate: location.coordinate, side: side)
         store.createGrowthStagePin(
             stageCode: stage.code,
             stageDescription: stage.description,
@@ -264,9 +294,12 @@ struct QuickPinSheet: View {
         dismiss()
     }
 
-    private func createPin(button: ButtonConfig, location: CLLocation) {
+    private func createPin(
+        button: ButtonConfig,
+        location: CLLocation,
+        placement: ResolvedPlacement
+    ) {
         let rowNumber = Int(rowText.trimmingCharacters(in: .whitespacesAndNewlines))
-        let placement = resolvePlacement(coordinate: location.coordinate, side: side)
         store.createPinFromButton(
             button: button,
             coordinate: location.coordinate,
@@ -289,7 +322,7 @@ struct QuickPinSheet: View {
     private func resolvePlacement(
         coordinate: CLLocationCoordinate2D,
         side: PinSide
-    ) -> (paddockId: UUID?, attachment: PinAttachmentResolver.Attachment, fallbackRowNumber: Int?) {
+    ) -> ResolvedPlacement {
         let resolved = PinContextResolver.resolve(
             coordinate: coordinate,
             store: store,
@@ -320,53 +353,32 @@ struct QuickPinSheet: View {
 
     private func checkDuplicate(
         at coord: CLLocationCoordinate2D,
+        rawCoordinate: CLLocationCoordinate2D,
+        placement: ResolvedPlacement,
         side: PinSide,
-        mode: PinMode
+        mode: PinMode,
+        logicalType: String
     ) -> (pin: VinePin, distance: Double, radius: Double)? {
-        let rowNumber = Int(rowText.trimmingCharacters(in: .whitespacesAndNewlines))
-        // When the operator has explicitly entered paddock + row, prefer
-        // along-row geometry so two pins on the same row line are caught
-        // even if their raw GPS samples are a metre or two apart.
-        if let alongRow = PinDuplicateChecker.nearbyPinAlongRow(
-            snappedCoordinate: coord,
+        let manualRow = Int(rowText.trimmingCharacters(in: .whitespacesAndNewlines))
+        let evaluation = PinDuplicateChecker.evaluate(
+            coordinate: coord,
+            rawCoordinate: rawCoordinate,
             vineyardId: store.selectedVineyardId,
-            paddockId: selectedPaddockId,
-            rowNumber: rowNumber,
-            side: side,
+            paddockId: placement.paddockId,
+            rowNumber: placement.attachment.pinRowNumber ?? manualRow ?? placement.fallbackRowNumber,
+            side: placement.attachment.pinSide ?? side,
             mode: mode,
+            logicalType: logicalType,
             in: store.pins,
             paddocks: store.paddocks
-        ) {
-            tracking.diagDuplicateRadiusMeters = PinDuplicateChecker.alongRowDuplicateMetres
-            return (alongRow.pin, alongRow.distance, PinDuplicateChecker.alongRowDuplicateMetres)
-        }
-        let radius = PinDuplicateChecker.duplicateRadius(
-            coordinate: coord,
-            paddockId: selectedPaddockId,
-            paddocks: store.paddocks
         )
-        tracking.diagDuplicateRadiusMeters = radius
-        guard let match = PinDuplicateChecker.nearbyPin(
-            coordinate: coord,
-            vineyardId: store.selectedVineyardId,
-            paddockId: selectedPaddockId,
-            radius: radius,
-            in: store.pins
-        ) else {
-            tracking.diagDuplicateCheckResult = "no_duplicate_found"
-            return nil
-        }
-        return (match.pin, match.distance, radius)
+        tracking.diagDuplicateRadiusMeters = evaluation.diagnostics.radius
+        tracking.diagDuplicateCheckResult = evaluation.diagnostics.description
+        guard let match = evaluation.match else { return nil }
+        return (match.pin, match.distance, match.radius)
     }
 
-    private func recordDuplicateWarningShown(
-        _ dup: (pin: VinePin, distance: Double, radius: Double)
-    ) {
-        let title = dup.pin.buttonName.isEmpty ? "pin" : dup.pin.buttonName
-        let status = dup.pin.isCompleted ? "completed" : "active"
-        let dist = String(format: "%.2f", dup.distance)
-        tracking.diagDuplicateRadiusMeters = dup.radius
-        tracking.diagDuplicateCheckResult =
-            "duplicate_warning_shown: \(title), \(dist)m, status=\(status)"
+    private func appendDuplicateAction(_ action: String) -> String {
+        "\(tracking.diagDuplicateCheckResult ?? "result=unknown"); action=\(action)"
     }
 }
