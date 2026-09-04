@@ -249,16 +249,24 @@ final class TripTrackingService {
 
     func startTrip(
         type: TripType,
-        paddockId: UUID?,
+        primaryPaddockId: UUID?,
+        paddockIds: [UUID],
         paddockName: String,
         trackingPattern: TrackingPattern = .sequential,
+        rowSequence: [Double] = [],
+        sequenceIndex: Int = 0,
+        currentRowNumber: Double? = nil,
+        nextRowNumber: Double? = nil,
+        totalTanks: Int = 0,
         personName: String = "",
         tripFunction: String? = nil,
         tripTitle: String? = nil,
         machineId: UUID? = nil,
         tractorId: UUID? = nil,
         operatorUserId: UUID? = nil,
-        operatorCategoryId: UUID? = nil
+        operatorCategoryId: UUID? = nil,
+        startEngineHours: Double? = nil,
+        seedingDetails: SeedingDetails? = nil
     ) {
         guard let store else { return }
         guard store.selectedVineyardId != nil else {
@@ -270,25 +278,76 @@ final class TripTrackingService {
             return
         }
 
+        let normalizedPaddockIds = paddockIds.reduce(into: [UUID]()) { result, id in
+            if !result.contains(id) { result.append(id) }
+        }
+        let resolvedIds = normalizedPaddockIds.isEmpty
+            ? primaryPaddockId.map { [$0] } ?? []
+            : normalizedPaddockIds
+        let clampedIndex = rowSequence.isEmpty
+            ? 0
+            : min(max(sequenceIndex, 0), rowSequence.count - 1)
+        let resolvedCurrent = currentRowNumber
+            ?? (rowSequence.indices.contains(clampedIndex) ? rowSequence[clampedIndex] : nil)
+            ?? 0.5
+        let resolvedNext = nextRowNumber
+            ?? (rowSequence.indices.contains(clampedIndex + 1) ? rowSequence[clampedIndex + 1] : nil)
+            ?? resolvedCurrent
+
         let trip = Trip(
-            paddockId: paddockId,
+            paddockId: primaryPaddockId ?? resolvedIds.first,
             paddockName: paddockName,
-            paddockIds: paddockId.map { [$0] } ?? [],
+            paddockIds: resolvedIds,
             startTime: Date(),
+            currentRowNumber: resolvedCurrent,
+            nextRowNumber: resolvedNext,
             isActive: true,
             trackingPattern: trackingPattern,
+            rowSequence: rowSequence,
+            sequenceIndex: clampedIndex,
             personName: personName,
+            totalTanks: totalTanks,
             tripFunction: tripFunction,
             tripTitle: tripTitle,
             machineId: machineId,
             tractorId: tractorId,
             operatorUserId: operatorUserId,
-            operatorCategoryId: operatorCategoryId
+            operatorCategoryId: operatorCategoryId,
+            startEngineHours: startEngineHours,
+            seedingDetails: seedingDetails
         )
+        // Persist one complete snapshot before GPS, sync callbacks, or any
+        // dependent trip event can observe it.
         store.startTrip(trip)
         errorMessage = nil
         beginTracking()
         _ = type
+    }
+
+    /// Activate a saved inactive trip in place, preserving its identity and all
+    /// planned spray metadata. The complete active snapshot is persisted before
+    /// location tracking starts.
+    func activateSavedTrip(_ savedTrip: Trip) {
+        guard let store else { return }
+        guard store.selectedVineyardId != nil else {
+            errorMessage = "No vineyard selected."
+            return
+        }
+        if let activeTrip, activeTrip.id != savedTrip.id {
+            errorMessage = "A trip is already in progress."
+            return
+        }
+
+        var activated = savedTrip
+        activated.isActive = true
+        activated.isPaused = false
+        activated.endTime = nil
+        if activated.paddockIds.isEmpty, let primary = activated.paddockId {
+            activated.paddockIds = [primary]
+        }
+        store.updateTrip(activated)
+        errorMessage = nil
+        beginTracking()
     }
 
     // MARK: - Pause / Resume
@@ -443,7 +502,10 @@ final class TripTrackingService {
         }
 
         let resolved = PinContextResolver.resolve(coordinate: location.coordinate, store: store, tracking: self)
-        let resolvedPaddock = paddockId ?? resolved.paddockId ?? trip.paddockId
+        // During an active trip, physical containment within the selected trip
+        // blocks is authoritative. An explicitly supplied/legacy primary block
+        // is only a fallback when geometry cannot resolve the fix.
+        let resolvedPaddock = resolved.paddockId ?? paddockId ?? trip.paddockId
         let resolvedRow = rowNumber ?? resolved.rowNumber
 
         // Snap the pin coordinate onto the live locked row line when we

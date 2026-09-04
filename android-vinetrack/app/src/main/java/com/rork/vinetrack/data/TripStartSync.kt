@@ -193,23 +193,12 @@ class TripStartSync(
                         startTime = payload.startTime,
                         clientUpdatedAt = payload.clientUpdatedAt,
                         seedingDetails = payload.seedingDetails,
+                        trackingPattern = payload.trackingPattern,
+                        rowSequence = payload.rowSequence,
+                        sequenceIndex = 0,
                     )
-                    // Seed the planned row sequence chosen on the Start sheet.
-                    // Non-fatal: the trip row exists either way, and local row
-                    // guidance already runs from the provisional trip's plan.
-                    val seeded = if (!payload.trackingPattern.isNullOrBlank()) {
-                        runCatching {
-                            tripRepo.updateTripRowPlan(
-                                id = created.id,
-                                trackingPattern = payload.trackingPattern,
-                                rowSequence = payload.rowSequence,
-                            )
-                        }.getOrDefault(created)
-                    } else {
-                        created
-                    }
                     pending.remove(write.id)
-                    onSynced(seeded)
+                    onSynced(created)
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to start the trip.")
                 } catch (e: BackendError.Server) {

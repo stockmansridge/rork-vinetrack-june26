@@ -1232,66 +1232,43 @@ struct StartTripSheet: View {
         // (ATV, side-by-side, etc.) leave it nil.
         let legacyTractorId = selectedMachine?.legacyTractorId
 
+        let sequence = hasAnyRowGeometry && trackingPattern != .freeDrive
+            ? generatedSequence()
+            : []
+        let initialPath = sequence.first
+        let startHours: Double? = {
+            guard selectedMachineId != nil,
+                  let hours = Double(startEngineHoursText.trimmingCharacters(in: .whitespaces)),
+                  hours >= 0 else { return nil }
+            return hours
+        }()
+        let tripSeedingDetails: SeedingDetails? = {
+            guard isSeedingSelected else { return nil }
+            let details = buildSeedingDetails()
+            return details.frontBox != nil || details.backBox != nil || details.hasAnyValue
+                ? details
+                : nil
+        }()
+
         tracking.startTrip(
             type: .maintenance,
-            paddockId: primary?.id,
+            primaryPaddockId: primary?.id,
+            paddockIds: selectedPaddocks.map(\.id),
             paddockName: paddockName,
             trackingPattern: trackingPattern,
+            rowSequence: sequence,
+            sequenceIndex: 0,
+            currentRowNumber: initialPath,
+            nextRowNumber: sequence.dropFirst().first ?? initialPath,
             personName: personName,
             tripFunction: selectedFunctionKey,
             tripTitle: resolvedTitle,
             machineId: selectedMachineId,
             tractorId: legacyTractorId,
-            operatorUserId: auth.userId
+            operatorUserId: auth.userId,
+            startEngineHours: startHours,
+            seedingDetails: tripSeedingDetails
         )
-
-        // Persist the full multi-block selection on the active trip and apply
-        // a row sequence generated against the combined multi-block path range.
-        if var trip = tracking.activeTrip {
-            trip.paddockIds = Array(selectedPaddockIds)
-
-            // Phase 2 costing: record the signed-in user as the trip operator
-            // when known. The operator category is resolved at cost time from
-            // vineyard_members.operator_category_id (see TripCostService).
-            if let userId = auth.userId {
-                trip.operatorUserId = userId
-            }
-
-            // Phase 3 fuel allocation: optional start engine-hour reading.
-            if selectedMachineId != nil,
-               let hours = Double(startEngineHoursText.trimmingCharacters(in: .whitespaces)),
-               hours >= 0 {
-                trip.startEngineHours = hours
-            }
-
-            if isSeedingSelected {
-                let details = buildSeedingDetails()
-                // Always persist seeding details when the function is Seeding
-                // (even if empty) so the operator's box toggle state is
-                // available to "Copy from previous seeding job" on the next
-                // trip. SeedingDetails.hasAnyValue still correctly gates the
-                // Trip Detail display section.
-                if details.frontBox != nil || details.backBox != nil || details.hasAnyValue {
-                    trip.seedingDetails = details
-                }
-            }
-
-            if hasAnyRowGeometry, trackingPattern != .freeDrive {
-                let sequence = generatedSequence()
-                if let first = sequence.first {
-                    trip.rowSequence = sequence
-                    trip.sequenceIndex = 0
-                    trip.currentRowNumber = first
-                    trip.nextRowNumber = sequence.dropFirst().first ?? first
-                }
-            } else if trackingPattern == .freeDrive {
-                // Free Drive: explicitly clear any planned sequence so
-                // active-trip UI hides planned-only chrome.
-                trip.rowSequence = []
-                trip.sequenceIndex = 0
-            }
-            store.updateTrip(trip)
-        }
 
         if tracking.errorMessage == nil {
             dismiss()

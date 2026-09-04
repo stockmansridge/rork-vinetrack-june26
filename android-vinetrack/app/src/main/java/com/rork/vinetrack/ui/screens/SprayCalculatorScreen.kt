@@ -991,6 +991,7 @@ fun SprayCalculatorScreen(
         vm.createSprayJobForLater(
             input = buildInput(),
             paddockId = firstPaddock?.id,
+            paddockIds = selectedPaddocks.map { it.id },
             paddockName = paddockNames,
             rowPlan = buildRowPlan(r.totalTanks),
         ) { ok ->
@@ -1012,6 +1013,7 @@ fun SprayCalculatorScreen(
         vm.startSprayJobNow(
             input = buildInput(),
             paddockId = firstPaddock?.id,
+            paddockIds = selectedPaddocks.map { it.id },
             paddockName = paddockNames,
             rowPlan = buildRowPlan(r.totalTanks),
         ) { ok ->

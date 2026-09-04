@@ -136,26 +136,17 @@ struct SprayTripSetupSheet: View {
     }
 
     private func startTripFromRecord(_ record: SprayRecord) {
-        let trip = store.trips.first(where: { $0.id == record.tripId })
-        let paddockId: UUID? = trip?.paddockId ?? trip?.paddockIds.first
-        let paddockName: String = trip?.paddockName
-            ?? (paddockId.flatMap { id in store.paddocks.first(where: { $0.id == id })?.name } ?? "")
-
-        tracking.startTrip(
-            type: .spray,
-            paddockId: paddockId,
-            paddockName: paddockName,
-            trackingPattern: trip?.trackingPattern ?? .sequential,
-            personName: auth.userName ?? ""
-        )
-
-        if let activeTrip = tracking.activeTrip, record.tripId != activeTrip.id {
-            var updated = record
-            updated.tripId = activeTrip.id
-            store.updateSprayRecord(updated)
+        guard let savedTrip = store.trips.first(where: { $0.id == record.tripId }) else {
+            return
         }
 
-        dismiss()
+        // Saved calculator jobs already own the canonical trip identity and its
+        // full block/row/tank/equipment plan. Activate that exact snapshot; do
+        // not create a primary-block replacement and relink the spray record.
+        tracking.activateSavedTrip(savedTrip)
+        if tracking.errorMessage == nil {
+            dismiss()
+        }
     }
 }
 

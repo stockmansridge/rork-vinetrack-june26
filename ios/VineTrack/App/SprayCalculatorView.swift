@@ -4037,13 +4037,25 @@ struct SprayCalculatorView: View {
         }
 
         let firstPaddock = selectedPaddocks.first
-        let paddockNames = selectedPaddocks.map { $0.name }.joined(separator: ", ")
+        let paddockIds = selectedPaddocks.map(\.id)
+        let paddockNames = selectedPaddocks.map(\.name).joined(separator: ", ")
+        let tanks = pendingTanks.isEmpty
+            ? buildSprayTanks(tankCapacity: equip.tankCapacityLitres)
+            : pendingTanks
+        let sequence = pathSequencePreview
+        let initialPath = sequence.first
 
         tracking.startTrip(
             type: .spray,
-            paddockId: firstPaddock?.id,
+            primaryPaddockId: firstPaddock?.id,
+            paddockIds: paddockIds,
             paddockName: paddockNames,
             trackingPattern: trackingPatternChoice,
+            rowSequence: sequence,
+            sequenceIndex: 0,
+            currentRowNumber: initialPath,
+            nextRowNumber: sequence.dropFirst().first ?? initialPath,
+            totalTanks: tanks.count,
             personName: auth.userName ?? "",
             tractorId: selectedTractorId,
             operatorUserId: auth.userId
@@ -4055,20 +4067,6 @@ struct SprayCalculatorView: View {
         }
 
         let weather = currentWeatherSnapshot()
-        let tanks = pendingTanks.isEmpty
-            ? buildSprayTanks(tankCapacity: equip.tankCapacityLitres)
-            : pendingTanks
-
-        var tripWithTanks = activeTrip
-        tripWithTanks.totalTanks = tanks.count
-        let sequence = pathSequencePreview
-        if let first = sequence.first {
-            tripWithTanks.rowSequence = sequence
-            tripWithTanks.sequenceIndex = 0
-            tripWithTanks.currentRowNumber = first
-            tripWithTanks.nextRowNumber = sequence.dropFirst().first ?? first
-        }
-        store.updateTrip(tripWithTanks)
 
         let tractorName = selectedTractorId.flatMap { id in
             store.currentTractors.first(where: { $0.id == id })?.displayName
@@ -4127,20 +4125,31 @@ struct SprayCalculatorView: View {
         // "Not Started" in the spray program picker.
         let firstPaddock = selectedPaddocks.first
         let paddockNames = selectedPaddocks.map { $0.name }.joined(separator: ", ")
+        let tanks: [SprayTank] = buildSprayTanks(tankCapacity: equip.tankCapacityLitres)
+        let sequence = pathSequencePreview
+        let initialPath = sequence.first ?? 0.5
         let placeholderTrip = Trip(
             id: UUID(),
             vineyardId: vineyardId,
             paddockId: firstPaddock?.id,
             paddockName: paddockNames,
-            paddockIds: selectedPaddocks.map { $0.id },
+            paddockIds: selectedPaddocks.map(\.id),
             startTime: Date(),
             endTime: nil,
-            isActive: false
+            currentRowNumber: initialPath,
+            nextRowNumber: sequence.dropFirst().first ?? initialPath,
+            isActive: false,
+            trackingPattern: trackingPatternChoice,
+            rowSequence: sequence,
+            sequenceIndex: 0,
+            personName: auth.userName ?? "",
+            totalTanks: tanks.count,
+            tractorId: selectedTractorId,
+            operatorUserId: auth.userId
         )
         store.addInactiveTrip(placeholderTrip)
 
         let weather = currentWeatherSnapshot()
-        let tanks: [SprayTank] = buildSprayTanks(tankCapacity: equip.tankCapacityLitres)
 
         let tractorName = selectedTractorId.flatMap { id in
             store.currentTractors.first(where: { $0.id == id })?.displayName

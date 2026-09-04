@@ -22,11 +22,19 @@ nonisolated enum RowGuidance {
         in paddocks: [Paddock],
         fallbackRadius: Double = 50
     ) -> Paddock? {
-        for paddock in paddocks {
+        let containing = paddocks.filter { paddock in
             let polygon = paddock.polygonPoints.map { $0.coordinate }
-            if polygon.count >= 3, isPointInPolygon(point: coordinate, polygon: polygon) {
-                return paddock
-            }
+            return polygon.count >= 3 && isPointInPolygon(point: coordinate, polygon: polygon)
+        }
+        if containing.count == 1 { return containing[0] }
+        if containing.count > 1 {
+            // Overlapping mapped blocks are resolved by the closest usable row
+            // attachment, not by primary-block or array order.
+            let nearest = containing.compactMap { paddock -> (Paddock, Double)? in
+                guard let row = nearestRow(for: coordinate, in: paddock) else { return nil }
+                return (paddock, row.distance)
+            }.min(by: { $0.1 < $1.1 })
+            return nearest?.0 ?? containing[0]
         }
 
         var closest: (Paddock, Double)?

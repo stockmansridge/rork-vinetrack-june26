@@ -99,6 +99,7 @@ import com.rork.vinetrack.data.PinDeleteSync
 import com.rork.vinetrack.data.PinEditSync
 import com.rork.vinetrack.data.PinPhotoSync
 import com.rork.vinetrack.data.model.PendingPhotoStatus
+import com.rork.vinetrack.data.PinPlacement
 import com.rork.vinetrack.data.PinPlacementResult
 import com.rork.vinetrack.data.PinRepository
 import com.rork.vinetrack.data.ProfileRepository
@@ -121,6 +122,7 @@ import com.rork.vinetrack.data.RegionSettingsRepository
 import com.rork.vinetrack.data.RegionSettingsStore
 import com.rork.vinetrack.data.RowAttachment
 import com.rork.vinetrack.data.RowLockTracker
+import com.rork.vinetrack.data.TripBlockResolver
 import com.rork.vinetrack.data.TeamRepository
 import com.rork.vinetrack.data.OperatorCategoryRepository
 import com.rork.vinetrack.data.VineyardTripFunctionRepository
@@ -609,6 +611,8 @@ data class AppUiState(
     val latestSpeedMetresPerSecond: Double? = null,
     /** Latest horizontal accuracy (m) during the active trip. */
     val latestAccuracyMetres: Double? = null,
+    /** Selected trip block that currently contains the live GPS fix. */
+    val currentTripPaddockId: String? = null,
     /** Live driving path (X.5) the operator is locked onto, if confident geometry exists. */
     val currentDrivingPathNumber: Double? = null,
     /** Row-lock confidence in [0.0, 1.0]; saturates after ~10s of continuous lock. */
@@ -5911,13 +5915,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         onResult: (Boolean) -> Unit,
     ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
-        // Block: the explicit selection wins, else the placement's containment
-        // resolution — so a launcher pin dropped inside a mapped block is never
-        // saved blockless just because no block was hand-picked.
-        val resolvedPaddockId = paddockId?.ifBlank { null } ?: placement?.paddockId
-        // Backfill the legacy row_number from the snapped row when the user left
-        // it blank, so the existing row column stays consistent with the snap.
-        val resolvedRowNumber = rowNumber ?: placement?.pinRowNumber?.toInt()
+        val activeTrip = _ui.value.activeTrip
+        val tripResolution = if (activeTrip != null && latitude != null && longitude != null) {
+            TripBlockResolver.resolve(activeTrip, _ui.value.paddocks, latitude, longitude)
+        } else {
+            null
+        }
+        // During a trip, containing selected-block geometry is authoritative.
+        // Re-resolve the attachment against that block so block and row fields
+        // cannot disagree even when a caller supplied the legacy primary block.
+        val effectivePlacement = if (tripResolution != null && latitude != null && longitude != null) {
+            PinPlacement.resolve(
+                paddocks = listOf(tripResolution.paddock),
+                selectedPaddockId = tripResolution.paddock.id,
+                latitude = latitude,
+                longitude = longitude,
+                side = side,
+            )
+        } else {
+            placement
+        }
+        val resolvedPaddockId = tripResolution?.paddock?.id
+            ?: paddockId?.ifBlank { null }
+            ?: effectivePlacement?.paddockId
+        val resolvedRowNumber = rowNumber ?: effectivePlacement?.pinRowNumber?.toInt()
         // Mint the client id up front so the same UUID flows through the
         // optimistic pin, the network insert, and (if queued) the outbox
         // payload — keeping replay idempotent.
@@ -5937,12 +5958,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             side = side?.ifBlank { null },
             heading = heading,
             rowNumber = resolvedRowNumber,
-            pinRowNumber = placement?.pinRowNumber,
-            pinSide = placement?.pinSide,
-            alongRowDistanceM = placement?.alongRowDistanceM,
-            snappedLatitude = placement?.snappedLatitude,
-            snappedLongitude = placement?.snappedLongitude,
-            snappedToRow = placement?.snappedToRow ?: false,
+            pinRowNumber = effectivePlacement?.pinRowNumber,
+            pinSide = effectivePlacement?.pinSide,
+            alongRowDistanceM = effectivePlacement?.alongRowDistanceM,
+            snappedLatitude = effectivePlacement?.snappedLatitude,
+            snappedLongitude = effectivePlacement?.snappedLongitude,
+            snappedToRow = effectivePlacement?.snappedToRow ?: false,
             locationScope = locationScope?.ifBlank { null },
             growthStageCode = growthStageCode?.ifBlank { null },
             isCompleted = isCompleted,
@@ -6940,32 +6961,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     startTime = startTime,
                     clientUpdatedAt = startTime,
                     seedingDetails = seedingDetails,
+                    trackingPattern = trackingPattern,
+                    rowSequence = rowSequence,
+                    sequenceIndex = 0,
                 )
-                // Seed the planned row sequence chosen on the Start sheet
-                // (iOS `StartTripSheet` parity). Non-fatal: if the row-plan
-                // patch fails the trip still starts — the local copy keeps the
-                // plan so row guidance works, and TripRowSync reconciles later.
-                val seeded = if (!trackingPattern.isNullOrBlank()) {
-                    try {
-                        tripRepo.updateTripRowPlan(
-                            id = created.id,
-                            trackingPattern = trackingPattern,
-                            rowSequence = rowSequence,
-                        )
-                    } catch (e: Exception) {
-                        created.copy(
-                            trackingPattern = trackingPattern,
-                            rowSequence = rowSequence,
-                            sequenceIndex = 0,
-                            currentRowNumber = rowSequence.getOrNull(0),
-                            nextRowNumber = rowSequence.getOrNull(1),
-                        )
-                    }
-                } else {
-                    created
-                }
-                _ui.update { it.copy(trips = listOf(seeded) + it.trips, tripBusy = false) }
-                beginTracking(seeded)
+                _ui.update { it.copy(trips = listOf(created) + it.trips, tripBusy = false) }
+                beginTracking(created)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(tripBusy = false) }
@@ -7523,6 +7524,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 latestBearingDegrees = null,
                 latestSpeedMetresPerSecond = null,
                 latestAccuracyMetres = null,
+                currentTripPaddockId = null,
                 currentDrivingPathNumber = null,
                 rowLockConfidence = 0.0,
                 rowLockIsConfident = false,
@@ -7549,15 +7551,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun updateRowLockState(tripId: String, sample: LocationTracker.MovementSample?) {
         if (sample == null) return
         val st = _ui.value
-        val trip = st.trips.firstOrNull { it.id == tripId }
-        // Resolve the block the operator is in: prefer the trip's block, then
-        // any block whose polygon contains the fix.
-        val paddock = st.paddocks.firstOrNull { it.id == trip?.paddockId }
-            ?: st.paddocks.firstOrNull { RowAttachment.containsPoint(it, sample.latitude, sample.longitude) }
-        val hit = RowAttachment.nearestRow(paddock, sample.latitude, sample.longitude)
+        val trip = st.trips.firstOrNull { it.id == tripId } ?: return
+        val resolution = TripBlockResolver.resolve(
+            trip = trip,
+            paddocks = st.paddocks,
+            latitude = sample.latitude,
+            longitude = sample.longitude,
+        )
+        val hit = resolution?.rowHit
         if (hit != null) {
-            // iOS numbers the driving path as the row's mid-row (row − 0.5).
-            val livePath = hit.rowNumber - 0.5
+            val livePath = TripBlockResolver.livePath(
+                globalRowNumber = resolution.globalRowNumber ?: hit.rowNumber,
+                sequence = trip.rowSequence,
+                currentPath = trip.rowSequence.getOrNull(trip.sequenceIndex) ?: trip.currentRowNumber,
+            )
             val corridorTolerance = (hit.rowWidthM / 2.0).coerceAtLeast(1.0)
             val inCorridor = hit.perpendicularDistanceM <= corridorTolerance
             rowLockTracker.update(livePath, inCorridor, sample.timestampMs)
@@ -7567,6 +7574,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 latestBearingDegrees = sample.bearingDegrees ?: it.latestBearingDegrees,
                 latestSpeedMetresPerSecond = sample.speedMetresPerSecond ?: it.latestSpeedMetresPerSecond,
                 latestAccuracyMetres = sample.accuracyMetres ?: it.latestAccuracyMetres,
+                currentTripPaddockId = resolution?.paddock?.id,
                 currentDrivingPathNumber = rowLockTracker.drivingPathNumber,
                 rowLockConfidence = rowLockTracker.confidence,
                 rowLockIsConfident = rowLockTracker.isConfident,
@@ -7582,6 +7590,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 latestBearingDegrees = null,
                 latestSpeedMetresPerSecond = null,
                 latestAccuracyMetres = null,
+                currentTripPaddockId = null,
                 currentDrivingPathNumber = null,
                 rowLockConfidence = 0.0,
                 rowLockIsConfident = false,
@@ -9081,6 +9090,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun createSprayJobForLater(
         input: SprayRecordRepository.SprayInput,
         paddockId: String?,
+        paddockIds: List<String>,
         paddockName: String?,
         rowPlan: SprayJobRowPlan? = null,
         onResult: (Boolean) -> Unit,
@@ -9090,34 +9100,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(sprayBusy = true, sprayError = null) }
             var trip: Trip? = null
             try {
+                val plan = rowPlan ?: SprayJobRowPlan(
+                    trackingPattern = "freeDrive",
+                    rowSequence = emptyList(),
+                    totalTanks = input.tanks.size,
+                )
                 trip = tripRepo.createImportedTrip(
                     vineyardId = vineyardId,
                     paddockId = paddockId,
+                    paddockIds = paddockIds.distinct(),
                     paddockName = paddockName?.ifBlank { null },
-                    personName = null,
+                    personName = userName,
                     startTime = input.startTime,
                     endTime = null,
+                    machineId = input.machineId,
+                    operatorUserId = session.userId,
+                    trackingPattern = plan.trackingPattern,
+                    rowSequence = plan.rowSequence,
+                    sequenceIndex = 0,
+                    totalTanks = plan.totalTanks,
                 )
                 val created = sprayRepo.createSprayRecord(vineyardId, input.copy(tripId = trip.id))
-                // Seed the planned row sequence onto the new inactive trip. A
-                // failure here is non-fatal: the spray job is already saved, so
-                // we keep it and surface a soft warning rather than rolling back.
-                var seededTrip: Trip = trip
-                var rowPlanWarning: String? = null
-                if (rowPlan != null) {
-                    try {
-                        seededTrip = tripRepo.updateTripRowPlan(
-                            id = trip.id,
-                            trackingPattern = rowPlan.trackingPattern,
-                            rowSequence = rowPlan.rowSequence,
-                            sequenceIndex = 0,
-                            totalTanks = rowPlan.totalTanks,
-                        )
-                    } catch (e: Exception) {
-                        android.util.Log.e("AppViewModel", "Failed to seed spray job row plan", e)
-                        rowPlanWarning = "Spray job saved, but the row plan couldn't be stored. You can set it when starting the job."
-                    }
-                }
+                val seededTrip: Trip = trip
+                val rowPlanWarning: String? = null
                 _ui.update {
                     it.copy(
                         sprayBusy = false,
@@ -9205,6 +9210,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun startSprayJobNow(
         input: SprayRecordRepository.SprayInput,
         paddockId: String?,
+        paddockIds: List<String>,
         paddockName: String?,
         rowPlan: SprayJobRowPlan? = null,
         onResult: (Boolean) -> Unit,
@@ -9218,34 +9224,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(sprayBusy = true, tripBusy = true, sprayError = null, tripError = null) }
             var trip: Trip? = null
             try {
+                val plan = rowPlan ?: SprayJobRowPlan(
+                    trackingPattern = "freeDrive",
+                    rowSequence = emptyList(),
+                    totalTanks = input.tanks.size,
+                )
                 trip = tripRepo.createTrip(
                     vineyardId = vineyardId,
                     paddockId = paddockId,
+                    paddockIds = paddockIds.distinct(),
                     paddockName = paddockName?.ifBlank { null },
-                    personName = null,
+                    personName = userName,
                     tripFunction = null,
                     tripTitle = paddockName?.ifBlank { null },
+                    machineId = input.machineId,
+                    operatorUserId = session.userId,
+                    trackingPattern = plan.trackingPattern,
+                    rowSequence = plan.rowSequence,
+                    sequenceIndex = 0,
+                    totalTanks = plan.totalTanks,
                 )
                 val created = sprayRepo.createSprayRecord(vineyardId, input.copy(tripId = trip.id))
-                // Seed the planned row sequence onto the new active trip. A
-                // failure here is non-fatal: the trip is already started, so we
-                // keep it and surface a soft warning rather than rolling back.
-                var seededTrip: Trip = trip
-                var rowPlanWarning: String? = null
-                if (rowPlan != null) {
-                    try {
-                        seededTrip = tripRepo.updateTripRowPlan(
-                            id = trip.id,
-                            trackingPattern = rowPlan.trackingPattern,
-                            rowSequence = rowPlan.rowSequence,
-                            sequenceIndex = 0,
-                            totalTanks = rowPlan.totalTanks,
-                        )
-                    } catch (e: Exception) {
-                        android.util.Log.e("AppViewModel", "Failed to seed spray job row plan", e)
-                        rowPlanWarning = "Spray job started, but the row plan couldn't be stored. You can still drive and use Free Drive."
-                    }
-                }
+                val seededTrip: Trip = trip
+                val rowPlanWarning: String? = null
                 _ui.update {
                     it.copy(
                         sprayBusy = false,
