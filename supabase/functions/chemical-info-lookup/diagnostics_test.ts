@@ -3,6 +3,7 @@ import {
   buildDiagnostics,
   type CandidateDiagnostic,
   diagnosticsLog,
+  LOOKUP_BUILD_VERSION,
   lookupVersion,
   newRequestId,
   normaliseClientPlatform,
@@ -12,15 +13,23 @@ import {
 
 const envOf = (map: Record<string, string>) => (k: string) => map[k];
 
-Deno.test("lookupVersion reports the deployed SHA", () => {
-  assertEquals(lookupVersion(envOf({ LOOKUP_GIT_SHA: "a1b2c3d" })), "a1b2c3d");
+Deno.test("lookupVersion identifies the source correction and deployed function", () => {
+  assertEquals(
+    lookupVersion(envOf({ DENO_DEPLOYMENT_ID: "deployment-81", LOOKUP_GIT_SHA: "stale-sha" })),
+    `${LOOKUP_BUILD_VERSION}+deployment-81`,
+  );
+  assertEquals(
+    lookupVersion(envOf({ LOOKUP_GIT_SHA: "a1b2c3d" })),
+    `${LOOKUP_BUILD_VERSION}+a1b2c3d`,
+  );
 });
 
-Deno.test("lookupVersion is a STABLE 'unknown' when unset", () => {
-  // A generated stand-in would differ per isolate and make one deployment
-  // look like several builds during a parity investigation.
-  assertEquals(lookupVersion(envOf({})), "unknown");
-  assertEquals(lookupVersion(envOf({ LOOKUP_GIT_SHA: "   " })), "unknown");
+Deno.test("lookupVersion keeps a stable source marker when deployment metadata is unset", () => {
+  assertEquals(lookupVersion(envOf({})), `${LOOKUP_BUILD_VERSION}+unknown`);
+  assertEquals(
+    lookupVersion(envOf({ DENO_DEPLOYMENT_ID: "   ", LOOKUP_GIT_SHA: "   " })),
+    `${LOOKUP_BUILD_VERSION}+unknown`,
+  );
 });
 
 Deno.test("projectRef extracts the public subdomain only", () => {
@@ -126,7 +135,7 @@ Deno.test("diagnostics records candidate registrations IN SERVED ORDER", () => {
   assertEquals(d.query, "Hortitrol winter oil");
   assertEquals(d.country.requested, "AU");
   assertEquals(d.country.resolved_code, "AU");
-  assertEquals(d.server.lookup_version, "sha1");
+  assertEquals(d.server.lookup_version, `${LOOKUP_BUILD_VERSION}+sha1`);
   assertEquals(d.server.project_ref, "proj");
   assertEquals(d.client.platform, "ios");
   assertEquals(d.duration_ms, 250);

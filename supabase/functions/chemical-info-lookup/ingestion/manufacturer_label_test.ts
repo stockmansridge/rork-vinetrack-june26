@@ -27,7 +27,12 @@ import { whpDaysFromStatement, reentryHoursFromStatement } from "./label.ts";
 import { projectGrapevineUses, selectLabelReferences } from "../grapevine_label.ts";
 import { classifyUrl } from "../research/classify.ts";
 import { selectManufacturerLabel } from "../research/linked_documents.ts";
-import { manufacturerDocumentConfirmsIdentity } from "./manufacturer_enrichment.ts";
+import {
+  applyManufacturerEnrichment,
+  type ManufacturerEnrichmentResult,
+  manufacturerDocumentConfirmsIdentity,
+  verifiedManufacturerLabelUrl,
+} from "./manufacturer_enrichment.ts";
 
 const REGISTERED_NAME = "VICOL WINTER OIL INSECTICIDE";
 const PRODUCT_URL = "https://www.vicchem.com/product_detail?pn=19200";
@@ -218,6 +223,75 @@ Deno.test("D2: a manufacturer label with no parsable rate does not displace the 
     }],
   });
   assertEquals(chosen.source, "regulator_label");
+});
+
+Deno.test("CropSure live shape: a verified manufacturer URL survives regulator rate-source selection", () => {
+  const cropSureLabel =
+    "https://cropsure.com/wp-content/uploads/2023/10/cropsure-greenshield-750wg-fungicide-label.pdf";
+  const regulatorUses = [{
+    crop: "Grapes",
+    target: "Downy mildew",
+    rates: [{ basis: "per_100_litres", value: 200, unit: "g", raw_text: "200 g/100 L" }],
+    withholding_period_days: 30,
+  }];
+  const result: ManufacturerEnrichmentResult = {
+    uses: regulatorUses,
+    source: "regulator_label",
+    fetchedUrl: cropSureLabel,
+    withholdingPeriodDays: null,
+    diagnostics: {
+      manufacturer_label_fetch: "success",
+      manufacturer_label_fetch_outcome: "fetched",
+      manufacturer_label_fetch_reason: "PDF identity confirmed",
+      manufacturer_label_extract: "success",
+      manufacturer_label_bytes: 277033,
+      manufacturer_label_sha256: "confirmed-pdf-fingerprint",
+      label_rows_found: 1,
+      grapevine_rows_found: 1,
+      grapevine_rates_found: 1,
+      withholding_period_days: null,
+      practical_source: "regulator_label",
+      practical_source_reason: "regulator rows are more complete",
+    },
+  };
+  const structured: {
+    registration: {
+      registration_number: string;
+      label_reference: string;
+      regulator_label_url: string;
+      manufacturer_label_url?: string | null;
+      manufacturer_product_url?: string | null;
+    };
+    registered_uses: typeof regulatorUses;
+    label_urls?: {
+      regulator_label_url: string | null;
+      manufacturer_label_url: string | null;
+      product_url: string | null;
+    };
+    product_url?: string | null;
+  } = {
+    registration: {
+      registration_number: "90279",
+      label_reference: "https://elabels.apvma.gov.au/90279ELBL.pdf",
+      regulator_label_url: "https://elabels.apvma.gov.au/90279ELBL.pdf",
+    },
+    registered_uses: regulatorUses,
+  };
+
+  assertEquals(verifiedManufacturerLabelUrl(result), cropSureLabel);
+  applyManufacturerEnrichment(structured, result, {
+    manufacturerLabelUrl: cropSureLabel,
+    manufacturerProductUrl: "https://cropsure.com/products/greenshield-750wg",
+  });
+
+  assertEquals(structured.registration.manufacturer_label_url, cropSureLabel);
+  assertEquals(structured.label_urls?.manufacturer_label_url, cropSureLabel);
+  assertEquals(
+    structured.registration.regulator_label_url,
+    "https://elabels.apvma.gov.au/90279ELBL.pdf",
+  );
+  assertEquals(structured.registered_uses, regulatorUses);
+  assertEquals(structured.registered_uses[0].withholding_period_days, 30);
 });
 
 // ---------------------------------------------------------------------------

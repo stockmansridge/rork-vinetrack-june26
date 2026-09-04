@@ -68,6 +68,23 @@ export interface ManufacturerEnrichmentResult {
 }
 
 /**
+ * Returns manufacturer-label evidence only after the fetched PDF was readable
+ * and confirmed the locked product identity. Practical rate-source selection
+ * is deliberately irrelevant: a verified label remains useful evidence even
+ * when the regulator's parsed rows are more complete and continue to win.
+ */
+export function verifiedManufacturerLabelUrl(
+  result: ManufacturerEnrichmentResult,
+): string | null {
+  return result.fetchedUrl &&
+      result.diagnostics.manufacturer_label_fetch === "success" &&
+      result.diagnostics.manufacturer_label_fetch_outcome === "fetched" &&
+      result.diagnostics.manufacturer_label_extract === "success"
+    ? result.fetchedUrl
+    : null;
+}
+
+/**
  * The product-wide withholding statement, read from the document's own text.
  *
  * Labels state the WHP once, in prose, beneath the Directions-for-Use table
@@ -331,11 +348,10 @@ export function applyManufacturerEnrichment(
   if (!structured) return;
 
   // A linked URL becomes manufacturer-label evidence only after the fetched
-  // PDF confirms the locked registration/product identity and supplies the
-  // practical manufacturer rows. Discovery leads never populate final fields.
-  const labelUrl = result.source === "manufacturer_label"
-    ? (result.fetchedUrl ?? urls.manufacturerLabelUrl ?? null)
-    : null;
+  // PDF is readable and confirms the locked registration/product identity.
+  // It does not need to replace the regulator as the practical rate source.
+  // Discovery leads and failed/unreadable PDFs never populate final fields.
+  const labelUrl = verifiedManufacturerLabelUrl(result);
   const refs = selectLabelReferences({
     manufacturerLabelUrl: labelUrl,
     // The register-confirmed legacy reference wins over an unvalidated AI URL.

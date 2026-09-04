@@ -113,17 +113,22 @@ export interface LookupDiagnostics {
   degraded: string[];
 }
 
+/** Source-level marker changed whenever lookup response semantics change. */
+export const LOOKUP_BUILD_VERSION = "v81-greenshield-authority-20260904";
+
 /**
  * The deployed build identifier.
  *
- * Set `LOOKUP_GIT_SHA` at deploy time. When it is absent the value is the
- * literal string "unknown" — NOT a generated or timestamped stand-in, because
- * a build id that changes per isolate would make two identical deployments
- * look like different builds and send a parity investigation chasing nothing.
+ * Supabase supplies `DENO_DEPLOYMENT_ID` per deployed function version, so it
+ * takes precedence over the optional deploy-time git SHA. The source marker
+ * guarantees this correction is distinguishable even where an old
+ * `LOOKUP_GIT_SHA` secret was left behind by a deployment script.
  */
 export function lookupVersion(env: (k: string) => string | undefined = Deno.env.get): string {
+  const deploymentId = (env("DENO_DEPLOYMENT_ID") ?? "").trim();
   const sha = (env("LOOKUP_GIT_SHA") ?? "").trim();
-  return sha || "unknown";
+  const deployment = deploymentId || sha || "unknown";
+  return `${LOOKUP_BUILD_VERSION}+${deployment}`;
 }
 
 /**

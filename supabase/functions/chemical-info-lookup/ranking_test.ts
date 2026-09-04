@@ -322,6 +322,32 @@ Deno.test("final ranking deduplicates one canonical identity and prefers authori
   assertEquals(summary.exact_registration_number, "90279");
 });
 
+Deno.test("CropSure live shape: one strong official APVMA candidate is not ambiguous", () => {
+  const { results, summary } = rankCandidates(
+    [{
+      name: "REGISTERED CROPSURE GREENSHIELD FUNGICIDE",
+      brand: "CROPSURE PTY LTD",
+      registration_country: "AU",
+      registration_scheme: "apvma",
+      registration_number: "90279",
+      source: "official_register",
+      activeIngredient: "Mancozeb 750 g/kg",
+    }],
+    "cropsure greenshield",
+    "AU",
+  );
+
+  assertEquals(results.length, 1);
+  assertEquals(results[0].registration_number, "90279");
+  assertEquals(results[0].activeIngredient, "Mancozeb 750 g/kg");
+  assertEquals(summary.strong_candidate_count, 1);
+  assertEquals(summary.strong_official_candidate_count, 1);
+  assertEquals(summary.search_state, "exact");
+  assertEquals(summary.ambiguous, false);
+  assertEquals(summary.auto_select_allowed, true);
+  assertEquals(summary.exact_registration_number, "90279");
+});
+
 Deno.test("a genuinely ambiguous query keeps several credible candidates", () => {
   // Task §1: search should normally return ~2–5 plausible products when the
   // query is ambiguous, and must NOT be forced into one.

@@ -684,21 +684,21 @@ export function rankCandidates<T extends Record<string, any>>(
 
   // # When ONE result may be treated as an exact identity (task §1)
   //
-  // Only when the identity is genuinely unambiguous after canonical identity
-  // deduplication: exactly one AUTHORITATIVE row whose name is exact OR whose
-  // remaining suffix is only formulation/strength wording, and no OTHER row
-  // credible enough to be a rival. A broad chemistry fragment such as
-  // "Copper" remains contained_phrase and can never auto-select by itself.
+  // Canonical identity deduplication has already run. If exactly one strong,
+  // AUTHORITATIVE register row remains and there is no other strong row, there
+  // is no candidate choice left to make: that registration is the sole
+  // official answer. This deliberately uses the served candidate set rather
+  // than demanding an exact-name score; official APIs can return a registered
+  // name whose holder/brand wording makes a multi-token query only a contained
+  // phrase even though the register returned exactly one legal identity.
   //
   // Rivals are counted across ALL strong rows, not just authoritative ones: a
-  // credible suggestion beside an exact register hit is still a reason to ask.
-  const identityRows = authoritativeRows.filter(
-    (s) => s.relevance === "exact_name" || s.relevance === "leading_product_name",
-  );
-  const identityRowSet = new Set(identityRows);
-  const rivals = strongRows.filter((s) => !identityRowSet.has(s));
-  const exactRegistration = identityRows.length === 1 && rivals.length === 0
-    ? (String(identityRows[0].row?.registration_number ?? "").trim() || null)
+  // credible suggestion beside the register hit is still a reason to ask.
+  const soleOfficialIdentity = strongOfficialRows.length === 1 && strongRows.length === 1
+    ? strongOfficialRows[0]
+    : null;
+  const exactRegistration = soleOfficialIdentity
+    ? (String(soleOfficialIdentity.row?.registration_number ?? "").trim() || null)
     : null;
 
   const searchState: SearchState = strongOfficialRows.length === 0
