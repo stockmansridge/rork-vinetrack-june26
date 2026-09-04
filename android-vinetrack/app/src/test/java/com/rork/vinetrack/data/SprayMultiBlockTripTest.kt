@@ -7,7 +7,10 @@ import com.rork.vinetrack.data.model.Trip
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SprayMultiBlockTripTest {
@@ -90,6 +93,57 @@ class SprayMultiBlockTripTest {
         assertEquals(ids, decoded.paddockIds)
         assertEquals(trip.rowSequence, decoded.rowSequence)
         assertEquals(trip.totalTanks, decoded.totalTanks)
+    }
+
+    @Test
+    fun `actual trip start outbox preserves complete plan and survives process death`() {
+        val store = InMemoryPendingWriteStore()
+        val pending = PendingWriteRepository(store)
+        val sync = TripStartSync(pending)
+        val trip = completeTrip(active = true)
+
+        sync.enqueue(trip)
+        val afterRestart = PendingWriteRepository(store).list().single()
+        val payload = json.decodeFromString(TripStartSync.Payload.serializer(), afterRestart.payloadJson)
+
+        assertEquals(ids, payload.paddockIds)
+        assertEquals("everySecondRow", payload.trackingPattern)
+        assertEquals(listOf(0.5, 68.5, 108.5), payload.rowSequence)
+        assertEquals(1, payload.sequenceIndex)
+        assertEquals(68.5, payload.currentRowNumber!!, 0.001)
+        assertEquals(108.5, payload.nextRowNumber!!, 0.001)
+        assertEquals(4, payload.totalTanks)
+        assertFalse(payload.activateExisting)
+
+        val legacy = """{"tripId":"legacy","vineyardId":"vineyard","startTime":"2026-01-01T00:00:00Z","clientUpdatedAt":"2026-01-01T00:00:00Z","savedAt":1}"""
+        val decodedLegacy = json.decodeFromString(TripStartSync.Payload.serializer(), legacy)
+        assertEquals(0, decodedLegacy.sequenceIndex)
+        assertNull(decodedLegacy.totalTanks)
+    }
+
+    @Test
+    fun `offline saved job activation preserves identity plan and durable activation marker`() {
+        val planned = completeTrip(active = false)
+        val activated = SavedTripActivation.activate(planned, "2026-09-06T12:00:00Z")!!
+        assertEquals(planned.id, activated.id)
+        assertEquals(ids, activated.paddockIds)
+        assertEquals(planned.rowSequence, activated.rowSequence)
+        assertEquals(planned.trackingPattern, activated.trackingPattern)
+        assertEquals(planned.totalTanks, activated.totalTanks)
+        assertEquals("2026-09-06T12:00:00Z", activated.startTime)
+        assertTrue(activated.isActive)
+
+        val store = InMemoryPendingWriteStore()
+        TripStartSync(PendingWriteRepository(store)).enqueueActivation(activated)
+        val restored = PendingWriteRepository(store).list().single()
+        val payload = json.decodeFromString(TripStartSync.Payload.serializer(), restored.payloadJson)
+        assertEquals(planned.id, restored.clientId)
+        assertTrue(payload.activateExisting)
+        assertEquals(ids, payload.paddockIds)
+        assertEquals(4, payload.totalTanks)
+        assertEquals(1, payload.sequenceIndex)
+
+        assertNull(SavedTripActivation.activate(planned.copy(endTime = "2026-09-05T00:00:00Z"), "later"))
     }
 
     @Test

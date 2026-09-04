@@ -47,9 +47,11 @@ import kotlinx.serialization.json.Json
  * failures (validation / forbidden) and corrupt payloads block.
  */
 class TripStartSync(
-    private val tripRepo: TripRepository,
+    private val tripRepo: TripRepository?,
     private val pending: PendingWriteRepository,
 ) {
+    /** Queue-only constructor used to verify durable payloads without networking. */
+    internal constructor(pending: PendingWriteRepository) : this(null, pending)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     /** Serialises replay so overlapping connectivity events can't double-fire. */
@@ -80,6 +82,11 @@ class TripStartSync(
         val startEngineHours: Double? = null,
         val trackingPattern: String? = null,
         val rowSequence: List<Double> = emptyList(),
+        val sequenceIndex: Int = 0,
+        val currentRowNumber: Double? = null,
+        val nextRowNumber: Double? = null,
+        val totalTanks: Int? = null,
+        val activateExisting: Boolean = false,
         val seedingDetails: SeedingDetails? = null,
         val clientUpdatedAt: String,
         val savedAt: Long,
@@ -120,6 +127,10 @@ class TripStartSync(
                 startEngineHours = trip.startEngineHours,
                 trackingPattern = trip.trackingPattern,
                 rowSequence = trip.rowSequence,
+                sequenceIndex = trip.sequenceIndex,
+                currentRowNumber = trip.currentRowNumber,
+                nextRowNumber = trip.nextRowNumber,
+                totalTanks = trip.totalTanks,
                 seedingDetails = trip.seedingDetails,
                 clientUpdatedAt = java.time.Instant.now().toString(),
                 savedAt = System.currentTimeMillis(),
@@ -130,6 +141,50 @@ class TripStartSync(
             opType = PendingOpType.CREATE,
             payloadJson = payload,
             clientId = tripId,
+        )
+    }
+
+    /** Queue activation of an already-downloaded Not Started trip in place. */
+    fun enqueueActivation(trip: Trip): PendingWrite {
+        val existing = pending.list().filter {
+            it.entityType == PendingEntityType.TRIP_START &&
+                it.opType == PendingOpType.CREATE &&
+                it.clientId == trip.id &&
+                it.status != PendingWriteStatus.SYNCED
+        }
+        existing.forEach { pending.remove(it.id) }
+        val base = Payload(
+            tripId = trip.id,
+            vineyardId = trip.vineyardId,
+            paddockId = trip.paddockId,
+            paddockName = trip.paddockName,
+            paddockIds = trip.paddockIds,
+            personName = trip.personName,
+            tripFunction = trip.tripFunction,
+            tripTitle = trip.tripTitle,
+            machineId = trip.machineId,
+            tractorId = trip.tractorId,
+            workTaskId = trip.workTaskId,
+            operatorUserId = trip.operatorUserId,
+            operatorCategoryId = trip.operatorCategoryId,
+            startTime = requireNotNull(trip.startTime),
+            startEngineHours = trip.startEngineHours,
+            trackingPattern = trip.trackingPattern,
+            rowSequence = trip.rowSequence,
+            sequenceIndex = trip.sequenceIndex,
+            currentRowNumber = trip.currentRowNumber,
+            nextRowNumber = trip.nextRowNumber,
+            totalTanks = trip.totalTanks,
+            activateExisting = true,
+            seedingDetails = trip.seedingDetails,
+            clientUpdatedAt = trip.clientUpdatedAt ?: trip.startTime,
+            savedAt = System.currentTimeMillis(),
+        )
+        return pending.enqueue(
+            entityType = PendingEntityType.TRIP_START,
+            opType = PendingOpType.CREATE,
+            payloadJson = json.encodeToString(Payload.serializer(), base),
+            clientId = trip.id,
         )
     }
 
@@ -151,6 +206,7 @@ class TripStartSync(
     suspend fun replayAll(onSynced: (Trip) -> Unit) {
         if (!replayLock.tryLock()) return
         try {
+            val repository = requireNotNull(tripRepo) { "Trip repository is required for replay." }
             val candidates = pending.list().filter {
                 it.entityType == PendingEntityType.TRIP_START &&
                     it.opType == PendingOpType.CREATE &&
@@ -169,13 +225,26 @@ class TripStartSync(
                     // Idempotency probe: a prior insert may have succeeded but
                     // its response was lost. Reuse the existing row rather than
                     // create a duplicate (the primary key is the client UUID).
-                    val existingServer = tripRepo.fetchTrip(payload.tripId)
+                    val existingServer = repository.fetchTrip(payload.tripId)
                     if (existingServer != null) {
+                        val reconciled = if (payload.activateExisting) {
+                            repository.activateTrip(payload.tripId, payload.startTime)
+                        } else {
+                            existingServer
+                        }
                         pending.remove(write.id)
-                        onSynced(existingServer)
+                        onSynced(reconciled)
                         continue
                     }
-                    val created = tripRepo.createTrip(
+                    if (payload.activateExisting) {
+                        pending.updateStatus(
+                            write.id,
+                            PendingWriteStatus.BLOCKED,
+                            "The saved trip no longer exists on the server.",
+                        )
+                        continue
+                    }
+                    val created = repository.createTrip(
                         vineyardId = payload.vineyardId,
                         paddockId = payload.paddockId,
                         paddockName = payload.paddockName,
@@ -195,12 +264,15 @@ class TripStartSync(
                         seedingDetails = payload.seedingDetails,
                         trackingPattern = payload.trackingPattern,
                         rowSequence = payload.rowSequence,
-                        sequenceIndex = 0,
+                        sequenceIndex = payload.sequenceIndex,
+                        currentRowNumber = payload.currentRowNumber,
+                        nextRowNumber = payload.nextRowNumber,
+                        totalTanks = payload.totalTanks,
                     )
                     pending.remove(write.id)
                     onSynced(created)
                 } catch (e: BackendError.Unauthorized) {
-                    retryOrBlock(write, "Sign-in needed to start the trip.")
+                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Sign-in needed to start the trip.")
                 } catch (e: BackendError.Server) {
                     when {
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")

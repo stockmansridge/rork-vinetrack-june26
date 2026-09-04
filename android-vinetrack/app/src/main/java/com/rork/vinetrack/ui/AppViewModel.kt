@@ -130,6 +130,7 @@ import com.rork.vinetrack.data.ChemicalInfoService
 import com.rork.vinetrack.data.SavedChemicalRepository
 import com.rork.vinetrack.data.SavedInputRepository
 import com.rork.vinetrack.data.SavedSprayPresetRepository
+import com.rork.vinetrack.data.SavedTripActivation
 import com.rork.vinetrack.data.SprayEquipmentRepository
 import com.rork.vinetrack.data.VineyardMachineRepository
 import com.rork.vinetrack.data.EquipmentItemRepository
@@ -2239,12 +2240,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                 if (returnedCount >= existingCount) {
                                     trip
                                 } else {
-                                    // The freshly-created server row has no path
-                                    // yet — keep the longer live in-memory track
-                                    // (the TRIP_GPS marker will land it next).
+                                    // The create/activation response can lag live
+                                    // work already captured locally. Keep every
+                                    // runtime-owned field; dependent markers land
+                                    // them after this start marker clears.
                                     trip.copy(
                                         pathPoints = existing.pathPoints,
                                         totalDistance = existing.totalDistance,
+                                        completedPaths = existing.completedPaths,
+                                        skippedPaths = existing.skippedPaths,
+                                        tankSessions = existing.tankSessions,
+                                        activeTankNumber = existing.activeTankNumber,
+                                        isFillingTank = existing.isFillingTank,
+                                        fillingTankNumber = existing.fillingTankNumber,
                                     )
                                 }
                             }
@@ -9168,28 +9176,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             onResult(false); return
         }
         if (existing.isActive) { onResult(true); return }
+        if (session.accessToken == null) {
+            onUnauthorized("startSprayJob")
+            onResult(false)
+            return
+        }
         val active = _ui.value.activeTrip
         if (active != null) {
             _ui.update { it.copy(sprayError = "Finish the active trip before starting another spray job.") }
             onResult(false); return
         }
-        viewModelScope.launch {
-            _ui.update { it.copy(tripBusy = true, tripError = null, sprayError = null) }
-            try {
-                val activated = tripRepo.activateTrip(tripId)
-                _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == tripId) activated else it }, tripBusy = false) }
-                beginTracking(activated)
-                onResult(true)
-            } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(tripBusy = false) }; onUnauthorized("startSprayJob"); onResult(false)
-            } catch (e: BackendError.Server) {
-                _ui.update { it.copy(tripBusy = false, sprayError = friendlyWriteError(e.code)) }
-                onResult(false)
-            } catch (e: Exception) {
-                _ui.update { it.copy(tripBusy = false, sprayError = "Couldn't start the spray job. Check your connection.") }
-                onResult(false)
-            }
+        val operationalStart = java.time.Instant.now().toString()
+        val activated = SavedTripActivation.activate(existing, operationalStart)
+        if (activated == null) {
+            _ui.update { it.copy(sprayError = "Only a Not Started spray job can be activated.") }
+            onResult(false)
+            return
         }
+
+        // Local-first: store the complete active snapshot before GPS starts.
+        // The TRIP_START marker doubles as an idempotent activation patch and
+        // dependency gate for subsequent GPS, row, tank and end writes.
+        _ui.update { st ->
+            st.copy(
+                trips = st.trips.map { if (it.id == tripId) activated else it },
+                tripBusy = false,
+                tripError = null,
+                sprayError = null,
+            )
+        }
+        persistActiveTripSnapshot()
+        tripStartSync.enqueueActivation(activated)
+        beginTracking(activated)
+        if (_ui.value.isOnline) replayPendingTripStart()
+        onResult(true)
     }
 
     /**

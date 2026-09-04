@@ -324,10 +324,10 @@ final class TripTrackingService {
         _ = type
     }
 
-    /// Activate a saved inactive trip in place, preserving its identity and all
-    /// planned spray metadata. The complete active snapshot is persisted before
-    /// location tracking starts.
-    func activateSavedTrip(_ savedTrip: Trip) {
+    /// Activate a genuine saved, unstarted spray placeholder in place. Identity
+    /// and its frozen spray plan are preserved, while operational clocks and
+    /// runtime-only progress begin at the actual activation instant.
+    func activateSavedTrip(_ savedTrip: Trip, at activationTime: Date = Date()) {
         guard let store else { return }
         guard store.selectedVineyardId != nil else {
             errorMessage = "No vineyard selected."
@@ -337,14 +337,44 @@ final class TripTrackingService {
             errorMessage = "A trip is already in progress."
             return
         }
+        guard !savedTrip.isActive,
+              savedTrip.endTime == nil,
+              savedTrip.pathPoints.isEmpty,
+              savedTrip.totalDistance == 0,
+              savedTrip.completedPaths.isEmpty,
+              savedTrip.skippedPaths.isEmpty,
+              savedTrip.tankSessions.isEmpty,
+              let recordIndex = store.sprayRecords.firstIndex(where: {
+                  $0.tripId == savedTrip.id && !$0.isTemplate && $0.endTime == nil
+              }) else {
+            errorMessage = "Only a Not Started spray job can be activated."
+            return
+        }
 
         var activated = savedTrip
+        activated.startTime = activationTime
+        activated.endTime = nil
         activated.isActive = true
         activated.isPaused = false
-        activated.endTime = nil
+        activated.pauseTimestamps = []
+        activated.resumeTimestamps = []
+        activated.currentPathDistance = 0
+        activated.activeTankNumber = nil
+        activated.isFillingTank = false
+        activated.fillingTankNumber = nil
         if activated.paddockIds.isEmpty, let primary = activated.paddockId {
             activated.paddockIds = [primary]
         }
+
+        var record = store.sprayRecords[recordIndex]
+        record.date = activationTime
+        record.startTime = activationTime
+        record.endTime = nil
+
+        // Persist both linked operational records before GPS or sync callbacks
+        // can observe the newly active trip. Planned tanks and frozen calculator
+        // snapshots are deliberately untouched.
+        store.updateSprayRecord(record)
         store.updateTrip(activated)
         errorMessage = nil
         beginTracking()

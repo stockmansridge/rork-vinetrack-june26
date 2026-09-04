@@ -59,7 +59,7 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
     var paddockId: UUID?
     let paddockName: String
     var paddockIds: [UUID]
-    let startTime: Date
+    var startTime: Date
     var endTime: Date?
     var currentRowNumber: Double
     var nextRowNumber: Double

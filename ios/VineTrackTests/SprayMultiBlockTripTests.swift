@@ -1,6 +1,7 @@
 import CoreLocation
 import Foundation
 import Testing
+import XCTest
 @testable import VineTrack
 
 struct SprayMultiBlockTripTests {
@@ -79,6 +80,58 @@ struct SprayMultiBlockTripTests {
         #expect(syncJSON["total_tanks"] as? Int == 4)
     }
 
+    @Test("Saved job activation refreshes operational clocks without changing identity or plan")
+    @MainActor
+    func savedJobActivationUsesActualStart() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("spray-activation-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = PersistenceStore(directory: directory)
+        let store = MigratedDataStore(persistence: persistence)
+        store.selectedVineyardId = vineyardId
+
+        let plannedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let activatedAt = Date()
+        let trip = Trip(
+            id: UUID(), vineyardId: vineyardId, paddockId: sauvId,
+            paddockName: "Sauv Blanc, Pinot Noir, Pinot Gris",
+            paddockIds: [sauvId, pinotId, grisId], startTime: plannedAt,
+            currentRowNumber: 0.5, nextRowNumber: 68.5, isActive: false,
+            trackingPattern: .everySecondRow,
+            rowSequence: [0.5, 68.5, 108.5], totalTanks: 1
+        )
+        let plannedTanks = [SprayTank(tankNumber: 1, waterVolume: 2_000, sprayRatePerHa: 500)]
+        let record = SprayRecord(
+            tripId: trip.id, vineyardId: vineyardId, date: plannedAt,
+            startTime: plannedAt, sprayReference: "Saved plan", tanks: plannedTanks
+        )
+        store.addInactiveTrip(trip)
+        store.addSprayRecord(record)
+
+        let tracking = TripTrackingService()
+        tracking.configure(store: store, locationService: LocationService())
+        tracking.activateSavedTrip(trip, at: activatedAt)
+
+        let activatedTrip = try #require(store.trips.first { $0.id == trip.id })
+        let activatedRecord = try #require(store.sprayRecords.first { $0.id == record.id })
+        #expect(activatedTrip.id == trip.id)
+        #expect(activatedRecord.tripId == trip.id)
+        #expect(activatedTrip.startTime == activatedAt)
+        #expect(activatedRecord.startTime == activatedAt)
+        #expect(activatedRecord.date == activatedAt)
+        #expect(activatedRecord.tanks == plannedTanks)
+        #expect(activatedTrip.paddockIds == trip.paddockIds)
+        #expect(activatedTrip.rowSequence == trip.rowSequence)
+        #expect(activatedTrip.activeDuration < 5)
+
+        let relaunchedTrips = TripRepository(persistence: persistence).load(for: vineyardId)
+        let relaunchedRecords = SprayRepository(persistence: persistence).loadRecords(for: vineyardId)
+        let persistedStart = try #require(relaunchedTrips.first { $0.id == trip.id }?.startTime)
+        #expect(abs(persistedStart.timeIntervalSince(activatedAt)) < 1)
+        #expect(relaunchedRecords.first { $0.id == record.id }?.tanks == plannedTanks)
+    }
+
     @Test("Pinot containment beats primary Sauv Blanc and resolves its local/global row")
     func pinotContainmentWins() {
         let sauv = block(id: sauvId, name: "Sauv Blanc", row: 1, longitude: 149.000)
@@ -118,5 +171,55 @@ struct SprayMultiBlockTripTests {
             #expect(row.map { Int($0.rowNumber) } == expectedRow)
             #expect(index.globalRow(paddockId: block.id, localRow: expectedRow) == expectedRow)
         }
+    }
+}
+
+@MainActor
+final class SpraySavedJobActivationIntegrationTests: XCTestCase {
+    func testSavedJobActivationRefreshesOperationalStartAndPreservesPlan() throws {
+        let vineyardId = UUID()
+        let blockIds = [UUID(), UUID(), UUID()]
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("spray-activation-xctest-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = PersistenceStore(directory: directory)
+        let store = MigratedDataStore(persistence: persistence)
+        store.selectedVineyardId = vineyardId
+        let plannedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let activatedAt = Date()
+        let trip = Trip(
+            id: UUID(), vineyardId: vineyardId, paddockId: blockIds[0],
+            paddockName: "Three blocks", paddockIds: blockIds, startTime: plannedAt,
+            currentRowNumber: 0.5, nextRowNumber: 68.5, isActive: false,
+            trackingPattern: .everySecondRow, rowSequence: [0.5, 68.5, 108.5], totalTanks: 1
+        )
+        let tanks = [SprayTank(tankNumber: 1, waterVolume: 2_000, sprayRatePerHa: 500)]
+        let record = SprayRecord(
+            tripId: trip.id, vineyardId: vineyardId, date: plannedAt,
+            startTime: plannedAt, sprayReference: "Saved plan", tanks: tanks
+        )
+        store.addInactiveTrip(trip)
+        store.addSprayRecord(record)
+        let tracking = TripTrackingService()
+        tracking.configure(store: store, locationService: LocationService())
+
+        tracking.activateSavedTrip(trip, at: activatedAt)
+
+        let active = try XCTUnwrap(store.trips.first { $0.id == trip.id })
+        let linked = try XCTUnwrap(store.sprayRecords.first { $0.id == record.id })
+        XCTAssertEqual(active.id, trip.id)
+        XCTAssertEqual(linked.tripId, trip.id)
+        XCTAssertEqual(active.startTime, activatedAt)
+        XCTAssertEqual(linked.startTime, activatedAt)
+        XCTAssertEqual(active.paddockIds, blockIds)
+        XCTAssertEqual(active.rowSequence, trip.rowSequence)
+        XCTAssertEqual(linked.tanks, tanks)
+        XCTAssertLessThan(active.activeDuration, 5)
+        let relaunchedTrips = TripRepository(persistence: persistence).load(for: vineyardId)
+        let relaunchedRecords = SprayRepository(persistence: persistence).loadRecords(for: vineyardId)
+        let persistedStart = try XCTUnwrap(relaunchedTrips.first { $0.id == trip.id }?.startTime)
+        XCTAssertEqual(persistedStart.timeIntervalSince1970, activatedAt.timeIntervalSince1970, accuracy: 1)
+        XCTAssertEqual(relaunchedRecords.first { $0.id == record.id }?.tanks, tanks)
     }
 }

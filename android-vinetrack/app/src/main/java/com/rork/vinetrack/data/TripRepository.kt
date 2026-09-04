@@ -401,11 +401,11 @@ class TripRepository(private val session: SessionStore) {
      * paused flag. Used to start a calculator-created "Not Started" spray job
      * without creating a duplicate trip.
      */
-    suspend fun activateTrip(id: String): Trip = withContext(Dispatchers.IO) {
+    suspend fun activateTrip(id: String, startTime: String? = null): Trip = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        val now = nowIso()
-        val patch = TripStartPatch(startTime = now, clientUpdatedAt = now)
+        val operationalStart = startTime ?: nowIso()
+        val patch = TripStartPatch(startTime = operationalStart, clientUpdatedAt = operationalStart)
         patchTrip(id, patch, token)
     }
 
