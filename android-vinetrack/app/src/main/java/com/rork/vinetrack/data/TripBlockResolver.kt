@@ -25,8 +25,10 @@ object TripBlockResolver {
         val byId = paddocks.associateBy { it.id }
         val effectiveIds = trip.effectivePaddockIds
         val candidates = effectiveIds.mapNotNull(byId::get)
-        val hasCompleteList = trip.paddockIds.isNotEmpty()
-        val scoped = if (candidates.isNotEmpty()) candidates else paddocks
+        val hasDeclaredBlocks = effectiveIds.isNotEmpty()
+        // Declared trip scope is authoritative. If those blocks are temporarily
+        // absent from local data, do not attribute work to an unrelated block.
+        val scoped = if (hasDeclaredBlocks) candidates else paddocks
         val containing = scoped.filter { RowAttachment.containsPoint(it, latitude, longitude) }
 
         val selected = when {
@@ -37,8 +39,6 @@ object TripBlockResolver {
                 .minByOrNull { it.second!!.perpendicularDistanceM }
                 ?.first
                 ?: containing.first()
-            !hasCompleteList -> trip.paddockId?.let(byId::get)
-            candidates.none { it.hasGeometry } -> trip.paddockId?.let(byId::get) ?: candidates.firstOrNull()
             else -> null
         } ?: return null
 

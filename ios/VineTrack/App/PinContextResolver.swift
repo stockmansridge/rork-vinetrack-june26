@@ -38,7 +38,9 @@ enum PinContextResolver {
             var ids = trip.paddockIds
             if ids.isEmpty, let id = trip.paddockId { ids = [id] }
             let scoped = ids.compactMap { id in store.paddocks.first(where: { $0.id == id }) }
-            candidates = scoped.isEmpty ? store.paddocks : scoped
+            // An active trip's declared blocks are authoritative. Missing local
+            // block data must produce no attribution, never a neighbouring block.
+            candidates = ids.isEmpty ? store.paddocks : scoped
         } else {
             candidates = store.paddocks
         }
@@ -51,17 +53,6 @@ enum PinContextResolver {
                 paddockName: paddock.name,
                 rowNumber: rowInt,
                 source: tracking?.isTracking == true ? "trip_live" : "geometry"
-            )
-        }
-
-        // Fall back to the trip's declared paddock if geometry didn't resolve.
-        if let trip, let pid = trip.paddockId,
-           let paddock = store.paddocks.first(where: { $0.id == pid }) {
-            return Resolved(
-                paddockId: paddock.id,
-                paddockName: paddock.name,
-                rowNumber: nil,
-                source: "trip_paddock_only"
             )
         }
 

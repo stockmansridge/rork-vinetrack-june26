@@ -482,7 +482,7 @@ final class TripTrackingService {
 
     func addCurrentLocationPoint() {
         guard let location = locationService?.location else { return }
-        appendPoint(from: location, force: true)
+        processLocation(location, force: true)
     }
 
     // MARK: - Quick pin during trip
@@ -835,10 +835,11 @@ final class TripTrackingService {
 
     private func sampleAndAppendPoint() {
         guard let location = locationService?.location else { return }
-        appendPoint(from: location, force: false)
+        processLocation(location, force: false)
     }
 
-    private func appendPoint(from location: CLLocation, force: Bool) {
+    /// Processes one GPS fix through the same persistence and row-guidance path used by live tracking.
+    func processLocation(_ location: CLLocation, force: Bool = false) {
         guard let store, var trip = activeTrip, !trip.isPaused else { return }
         #if DEBUG
         diagLocationUpdateCount += 1
@@ -984,11 +985,13 @@ final class TripTrackingService {
         let selected = selectedIds.compactMap { id in
             store.paddocks.first(where: { $0.id == id })
         }
-        let candidates: [Paddock] = selected.isEmpty ? store.paddocks : selected
+        // Declared block IDs are authoritative. If those block rows are not
+        // loaded yet, do not fall through to unrelated vineyard blocks.
+        let candidates: [Paddock] = selectedIds.isEmpty ? store.paddocks : selected
 
         guard let paddock = RowGuidance.paddock(for: coordinate, in: candidates) else {
-            currentPaddockId = trip.paddockId
-            currentPaddockName = trip.paddockName.isEmpty ? nil : trip.paddockName
+            currentPaddockId = nil
+            currentPaddockName = nil
             currentRowNumber = nil
             currentRowDistance = nil
             rowGuidanceAvailable = false

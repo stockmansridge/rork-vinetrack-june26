@@ -6,6 +6,7 @@ import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import com.rork.vinetrack.data.model.SeedingDetails
 import com.rork.vinetrack.data.model.Trip
+import com.rork.vinetrack.data.model.parseIsoToEpochMs
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -49,9 +50,18 @@ import kotlinx.serialization.json.Json
 class TripStartSync(
     private val tripRepo: TripRepository?,
     private val pending: PendingWriteRepository,
+    private val fetchTripOverride: (suspend (String) -> Trip?)? = null,
+    private val activateTripOverride: (suspend (String, String) -> Trip)? = null,
 ) {
     /** Queue-only constructor used to verify durable payloads without networking. */
     internal constructor(pending: PendingWriteRepository) : this(null, pending)
+
+    /** Replay seam that executes the real coordinator against deterministic trip operations. */
+    internal constructor(
+        pending: PendingWriteRepository,
+        fetchTrip: suspend (String) -> Trip?,
+        activateTrip: suspend (String, String) -> Trip,
+    ) : this(null, pending, fetchTrip, activateTrip)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     /** Serialises replay so overlapping connectivity events can't double-fire. */
@@ -206,7 +216,6 @@ class TripStartSync(
     suspend fun replayAll(onSynced: (Trip) -> Unit) {
         if (!replayLock.tryLock()) return
         try {
-            val repository = requireNotNull(tripRepo) { "Trip repository is required for replay." }
             val candidates = pending.list().filter {
                 it.entityType == PendingEntityType.TRIP_START &&
                     it.opType == PendingOpType.CREATE &&
@@ -225,15 +234,45 @@ class TripStartSync(
                     // Idempotency probe: a prior insert may have succeeded but
                     // its response was lost. Reuse the existing row rather than
                     // create a duplicate (the primary key is the client UUID).
-                    val existingServer = repository.fetchTrip(payload.tripId)
+                    val existingServer = if (fetchTripOverride != null) {
+                        fetchTripOverride.invoke(payload.tripId)
+                    } else {
+                        requireNotNull(tripRepo) { "Trip repository is required for replay." }.fetchTrip(payload.tripId)
+                    }
                     if (existingServer != null) {
-                        val reconciled = if (payload.activateExisting) {
-                            repository.activateTrip(payload.tripId, payload.startTime)
-                        } else {
-                            existingServer
+                        if (!payload.activateExisting) {
+                            pending.remove(write.id)
+                            onSynced(existingServer)
+                            continue
                         }
-                        pending.remove(write.id)
-                        onSynced(reconciled)
+                        when (activationDecision(existingServer, payload.startTime)) {
+                            ActivationDecision.ACTIVATE -> {
+                                val activated = activateTripOverride?.invoke(payload.tripId, payload.startTime)
+                                    ?: requireNotNull(tripRepo) { "Trip repository is required for replay." }
+                                        .activateTrip(payload.tripId, payload.startTime)
+                                pending.remove(write.id)
+                                onSynced(activated)
+                            }
+                            ActivationDecision.IDEMPOTENT_SUCCESS -> {
+                                pending.remove(write.id)
+                                onSynced(existingServer)
+                            }
+                            ActivationDecision.COMPLETED_CONFLICT -> pending.updateStatus(
+                                write.id,
+                                PendingWriteStatus.BLOCKED,
+                                "The saved trip has already been completed.",
+                            )
+                            ActivationDecision.ACTIVE_CONFLICT -> pending.updateStatus(
+                                write.id,
+                                PendingWriteStatus.BLOCKED,
+                                "The saved trip was started elsewhere.",
+                            )
+                            ActivationDecision.PROGRESS_CONFLICT -> pending.updateStatus(
+                                write.id,
+                                PendingWriteStatus.BLOCKED,
+                                "The saved trip already has runtime progress.",
+                            )
+                        }
                         continue
                     }
                     if (payload.activateExisting) {
@@ -244,7 +283,7 @@ class TripStartSync(
                         )
                         continue
                     }
-                    val created = repository.createTrip(
+                    val created = requireNotNull(tripRepo) { "Trip repository is required for create replay." }.createTrip(
                         vineyardId = payload.vineyardId,
                         paddockId = payload.paddockId,
                         paddockName = payload.paddockName,
@@ -302,7 +341,41 @@ class TripStartSync(
         pending.updateStatus(write.id, status, error)
     }
 
+    internal enum class ActivationDecision {
+        ACTIVATE,
+        IDEMPOTENT_SUCCESS,
+        COMPLETED_CONFLICT,
+        ACTIVE_CONFLICT,
+        PROGRESS_CONFLICT,
+    }
+
     companion object Dependency {
+        /** Classify replay without mutating a server trip. */
+        internal fun activationDecision(server: Trip, queuedStartTime: String): ActivationDecision {
+            if (server.endTime != null) return ActivationDecision.COMPLETED_CONFLICT
+            if (server.isActive) {
+                val serverStart = parseIsoToEpochMs(server.startTime)
+                val queuedStart = parseIsoToEpochMs(queuedStartTime)
+                return if (serverStart != null && serverStart == queuedStart) {
+                    ActivationDecision.IDEMPOTENT_SUCCESS
+                } else {
+                    ActivationDecision.ACTIVE_CONFLICT
+                }
+            }
+            val hasProgress = server.pathPoints.orEmpty().isNotEmpty() ||
+                (server.totalDistance ?: 0.0) > 0.0 ||
+                server.completedPaths.orEmpty().isNotEmpty() ||
+                server.skippedPaths.orEmpty().isNotEmpty() ||
+                server.tankSessions.isNotEmpty() ||
+                server.activeTankNumber != null ||
+                server.isFillingTank ||
+                server.fillingTankNumber != null ||
+                server.pauseTimestamps.orEmpty().isNotEmpty() ||
+                server.resumeTimestamps.orEmpty().isNotEmpty() ||
+                server.sequenceIndex > 0
+            return if (hasProgress) ActivationDecision.PROGRESS_CONFLICT else ActivationDecision.ACTIVATE
+        }
+
         /** Cap retries so a persistently-failing marker can't loop indefinitely. */
         private const val MAX_ATTEMPTS = 8
 

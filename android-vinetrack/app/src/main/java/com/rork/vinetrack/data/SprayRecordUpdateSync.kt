@@ -43,9 +43,11 @@ import kotlinx.serialization.json.Json
  * [Payload.clientUpdatedAt]).
  */
 class SprayRecordUpdateSync(
-    private val sprayRepo: SprayRecordRepository,
+    private val sprayRepo: SprayRecordRepository?,
     private val pending: PendingWriteRepository,
 ) {
+    /** Queue-only constructor for durable payload verification. */
+    internal constructor(pending: PendingWriteRepository) : this(null, pending)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     /** Serialises replay so overlapping connectivity events can't double-fire. */
@@ -184,7 +186,7 @@ class SprayRecordUpdateSync(
                     continue
                 }
                 try {
-                    val updated = sprayRepo.updateSprayRecord(
+                    val updated = requireNotNull(sprayRepo) { "Spray repository is required for replay." }.updateSprayRecord(
                         id = payload.id,
                         input = SprayRecordRepository.SprayInput(
                             date = payload.date,

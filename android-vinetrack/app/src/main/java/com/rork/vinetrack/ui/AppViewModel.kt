@@ -156,6 +156,7 @@ import com.rork.vinetrack.data.SprayRecordRepository
 import com.rork.vinetrack.data.SprayRecordUpdateSync
 import com.rork.vinetrack.data.TripDeleteSync
 import com.rork.vinetrack.data.TripEndSync
+import com.rork.vinetrack.data.TripStartReconciliation
 import com.rork.vinetrack.data.TripStartSync
 import com.rork.vinetrack.data.YieldEstimationSessionRepository
 import com.rork.vinetrack.data.YieldSampleGenerator
@@ -918,6 +919,82 @@ data class AppUiState(
                 compareByDescending<AppNotice> { it.priority }
                     .thenByDescending { it.createdAtEpochMs }
             )
+}
+
+internal data class TripRowLockResolution(
+    val resolution: TripBlockResolver.Resolution?,
+    val livePath: Double?,
+    val isInCorridor: Boolean,
+)
+
+/** Exact location-resolution boundary used by the live AppViewModel row lock. */
+internal fun resolveTripRowLockBoundary(
+    trip: Trip,
+    paddocks: List<Paddock>,
+    latitude: Double,
+    longitude: Double,
+): TripRowLockResolution {
+    val resolution = TripBlockResolver.resolve(trip, paddocks, latitude, longitude)
+    val hit = resolution?.rowHit
+    if (hit == null) return TripRowLockResolution(resolution, null, false)
+    val livePath = TripBlockResolver.livePath(
+        globalRowNumber = resolution.globalRowNumber ?: hit.rowNumber,
+        sequence = trip.rowSequence,
+        currentPath = trip.rowSequence.getOrNull(trip.sequenceIndex) ?: trip.currentRowNumber,
+    )
+    return TripRowLockResolution(
+        resolution = resolution,
+        livePath = livePath,
+        isInCorridor = hit.perpendicularDistanceM <= (hit.rowWidthM / 2.0).coerceAtLeast(1.0),
+    )
+}
+
+internal data class TripPinAttribution(
+    val paddockId: String?,
+    val rowNumber: Int?,
+    val placement: PinPlacementResult?,
+)
+
+/** Exact attribution boundary used by [AppViewModel.createPin]. */
+internal fun resolveTripPinAttribution(
+    activeTrip: Trip?,
+    paddocks: List<Paddock>,
+    latitude: Double?,
+    longitude: Double?,
+    side: String?,
+    callerPaddockId: String?,
+    callerRowNumber: Int?,
+    callerPlacement: PinPlacementResult?,
+): TripPinAttribution {
+    val tripResolution = if (activeTrip != null && latitude != null && longitude != null) {
+        TripBlockResolver.resolve(activeTrip, paddocks, latitude, longitude)
+    } else {
+        null
+    }
+    val placement = if (tripResolution != null && latitude != null && longitude != null) {
+        PinPlacement.resolve(
+            paddocks = listOf(tripResolution.paddock),
+            selectedPaddockId = tripResolution.paddock.id,
+            latitude = latitude,
+            longitude = longitude,
+            side = side,
+        )
+    } else {
+        callerPlacement
+    }
+    return if (activeTrip != null) {
+        TripPinAttribution(
+            paddockId = tripResolution?.paddock?.id,
+            rowNumber = placement?.pinRowNumber?.toInt(),
+            placement = placement,
+        )
+    } else {
+        TripPinAttribution(
+            paddockId = callerPaddockId?.ifBlank { null } ?: placement?.paddockId,
+            rowNumber = callerRowNumber ?: placement?.pinRowNumber?.toInt(),
+            placement = placement,
+        )
+    }
 }
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -2235,26 +2312,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             if (existing.id != trip.id) {
                                 existing
                             } else {
-                                val existingCount = existing.pathPoints?.size ?: 0
-                                val returnedCount = trip.pathPoints?.size ?: 0
-                                if (returnedCount >= existingCount) {
-                                    trip
-                                } else {
-                                    // The create/activation response can lag live
-                                    // work already captured locally. Keep every
-                                    // runtime-owned field; dependent markers land
-                                    // them after this start marker clears.
-                                    trip.copy(
-                                        pathPoints = existing.pathPoints,
-                                        totalDistance = existing.totalDistance,
-                                        completedPaths = existing.completedPaths,
-                                        skippedPaths = existing.skippedPaths,
-                                        tankSessions = existing.tankSessions,
-                                        activeTankNumber = existing.activeTankNumber,
-                                        isFillingTank = existing.isFillingTank,
-                                        fillingTankNumber = existing.fillingTankNumber,
-                                    )
-                                }
+                                TripStartReconciliation.reconcile(server = trip, local = existing)
                             }
                         },
                     )
@@ -5924,29 +5982,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
         val activeTrip = _ui.value.activeTrip
-        val tripResolution = if (activeTrip != null && latitude != null && longitude != null) {
-            TripBlockResolver.resolve(activeTrip, _ui.value.paddocks, latitude, longitude)
-        } else {
-            null
-        }
-        // During a trip, containing selected-block geometry is authoritative.
-        // Re-resolve the attachment against that block so block and row fields
-        // cannot disagree even when a caller supplied the legacy primary block.
-        val effectivePlacement = if (tripResolution != null && latitude != null && longitude != null) {
-            PinPlacement.resolve(
-                paddocks = listOf(tripResolution.paddock),
-                selectedPaddockId = tripResolution.paddock.id,
-                latitude = latitude,
-                longitude = longitude,
-                side = side,
-            )
-        } else {
-            placement
-        }
-        val resolvedPaddockId = tripResolution?.paddock?.id
-            ?: paddockId?.ifBlank { null }
-            ?: effectivePlacement?.paddockId
-        val resolvedRowNumber = rowNumber ?: effectivePlacement?.pinRowNumber?.toInt()
+        val attribution = resolveTripPinAttribution(
+            activeTrip = activeTrip,
+            paddocks = _ui.value.paddocks,
+            latitude = latitude,
+            longitude = longitude,
+            side = side,
+            callerPaddockId = paddockId,
+            callerRowNumber = rowNumber,
+            callerPlacement = placement,
+        )
+        val effectivePlacement = attribution.placement
+        val resolvedPaddockId = attribution.paddockId
+        val resolvedRowNumber = attribution.rowNumber
         // Mint the client id up front so the same UUID flows through the
         // optimistic pin, the network insert, and (if queued) the outbox
         // payload — keeping replay idempotent.
@@ -7560,22 +7608,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (sample == null) return
         val st = _ui.value
         val trip = st.trips.firstOrNull { it.id == tripId } ?: return
-        val resolution = TripBlockResolver.resolve(
+        val boundary = resolveTripRowLockBoundary(
             trip = trip,
             paddocks = st.paddocks,
             latitude = sample.latitude,
             longitude = sample.longitude,
         )
-        val hit = resolution?.rowHit
-        if (hit != null) {
-            val livePath = TripBlockResolver.livePath(
-                globalRowNumber = resolution.globalRowNumber ?: hit.rowNumber,
-                sequence = trip.rowSequence,
-                currentPath = trip.rowSequence.getOrNull(trip.sequenceIndex) ?: trip.currentRowNumber,
-            )
-            val corridorTolerance = (hit.rowWidthM / 2.0).coerceAtLeast(1.0)
-            val inCorridor = hit.perpendicularDistanceM <= corridorTolerance
-            rowLockTracker.update(livePath, inCorridor, sample.timestampMs)
+        val resolution = boundary.resolution
+        boundary.livePath?.let { livePath ->
+            rowLockTracker.update(livePath, boundary.isInCorridor, sample.timestampMs)
         }
         _ui.update {
             it.copy(
@@ -9187,8 +9228,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             onResult(false); return
         }
         val operationalStart = java.time.Instant.now().toString()
+        val linkedSpray = _ui.value.sprayRecords.firstOrNull {
+            it.tripId == tripId && !it.isTemplate && it.endTime == null
+        }
+        val activatedSpray = linkedSpray?.let {
+            SavedTripActivation.activateLinkedSpray(it, tripId, operationalStart)
+        }
         val activated = SavedTripActivation.activate(existing, operationalStart)
-        if (activated == null) {
+        if (activated == null || activatedSpray == null) {
             _ui.update { it.copy(sprayError = "Only a Not Started spray job can be activated.") }
             onResult(false)
             return
@@ -9200,6 +9247,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { st ->
             st.copy(
                 trips = st.trips.map { if (it.id == tripId) activated else it },
+                sprayRecords = st.sprayRecords.map { if (it.id == activatedSpray.id) activatedSpray else it },
                 tripBusy = false,
                 tripError = null,
                 sprayError = null,
@@ -9207,8 +9255,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         persistActiveTripSnapshot()
         tripStartSync.enqueueActivation(activated)
+        sprayUpdateSync.enqueue(
+            activatedSpray.id,
+            SavedTripActivation.sprayUpdateInput(activatedSpray),
+            operationalStart,
+        )
         beginTracking(activated)
-        if (_ui.value.isOnline) replayPendingTripStart()
+        if (_ui.value.isOnline) {
+            replayPendingTripStart()
+            replayPendingSprayUpdates()
+        }
         onResult(true)
     }
 

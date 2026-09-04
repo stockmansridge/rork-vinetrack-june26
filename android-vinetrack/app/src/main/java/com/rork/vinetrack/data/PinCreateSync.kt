@@ -23,9 +23,11 @@ import kotlinx.serialization.json.Json
  * already there and we treat it as synced rather than creating a second pin.
  */
 class PinCreateSync(
-    private val pinRepo: PinRepository,
+    private val pinRepo: PinRepository?,
     private val pending: PendingWriteRepository,
 ) {
+    /** Queue-only constructor used by durable production-payload tests. */
+    internal constructor(pending: PendingWriteRepository) : this(null, pending)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     /** Serialises replay so overlapping connectivity events can't double-fire. */
@@ -79,7 +81,7 @@ class PinCreateSync(
                     continue
                 }
                 try {
-                    val pin = pinRepo.createPin(input)
+                    val pin = requireNotNull(pinRepo) { "Pin repository is required for replay." }.createPin(input)
                     pending.remove(write.id)
                     onSynced(pin)
                 } catch (e: BackendError.Unauthorized) {
