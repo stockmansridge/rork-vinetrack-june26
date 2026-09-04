@@ -233,6 +233,10 @@ Deno.test("CropSure official 90279 wins over a later research row validating to 
   assertEquals(ranked.results.length, 1);
   assertEquals(ranked.summary.official_candidate_count, 1);
   assertEquals(ranked.summary.suggestion_count, 0);
+  assertEquals(ranked.summary.search_state, "exact");
+  assertEquals(ranked.summary.ambiguous, false);
+  assertEquals(ranked.summary.auto_select_allowed, true);
+  assertEquals(ranked.summary.exact_registration_number, "90279");
 
   const diagnostics = buildDiagnostics({
     requestId: "greenshield-test",
@@ -444,7 +448,7 @@ Deno.test("a register-answered search never consults validation or the cache", a
   assertEquals(result.degraded.length, 0);
 
   const { summary } = rankCandidates(result.rows, "Chateau", "AU");
-  assertEquals(summary.search_state, "ambiguous");
+  assertEquals(summary.search_state, "exact");
   assertEquals(summary.official_candidate_count, 1);
   assertEquals(summary.suggestion_count, 0);
 });

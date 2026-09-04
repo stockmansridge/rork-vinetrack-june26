@@ -121,15 +121,33 @@ const EXCLUDED_LINK_PATTERNS: { pattern: RegExp; kind: string }[] = [
 ];
 
 function catalogueLinkNamesRegisteredProduct(registeredName: string, linkText: string): boolean {
-  const stripDocumentWords = (value: string): string =>
+  const documentWords = new Set([
+    "label",
+    "labels",
+    "product",
+    "approved",
+    "registered",
+    "apvma",
+    "download",
+  ]);
+  const identityTokens = (value: string): string[] =>
     normaliseProductNameLoose(value)
       .split(" ")
-      .filter((token) => !["label", "labels", "product", "approved", "registered", "apvma", "download"].includes(token))
-      .join("")
-      .replace(/[^a-z0-9]/g, "");
-  const registered = stripDocumentWords(registeredName);
-  const linked = stripDocumentWords(linkText);
-  return registered.length >= 8 && linked === registered;
+      .filter((token) => token.length > 0 && !documentWords.has(token));
+  const registered = identityTokens(registeredName);
+  const linked = identityTokens(linkText);
+  if (linked.join("").length < 8) return false;
+  if (registered.join("") === linked.join("")) return true;
+
+  // Registrant catalogues commonly omit the company/house-brand prefix from
+  // each anchor ("Greenshield … Label" on a product registered as
+  // "CropSure Greenshield … Fungicide"). On a positively verified registrant
+  // catalogue, allow exactly that ONE leading token to be absent. Every
+  // product, strength, formulation and variant token must otherwise remain in
+  // order and match exactly; the fetched PDF must still confirm identity from
+  // its own bytes before it can become evidence.
+  return registered.length === linked.length + 1 &&
+    registered.slice(1).every((token, index) => token === linked[index]);
 }
 
 function isGenericCatalogueHeading(value: string): boolean {

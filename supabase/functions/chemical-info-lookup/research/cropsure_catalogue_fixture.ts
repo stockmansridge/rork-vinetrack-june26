@@ -10,7 +10,7 @@ export const CROPSURE_CATALOGUE_HTML = `<!doctype html>
     <h1>Fungicide</h1>
     <section>
       <a href="/wp-content/uploads/2023/10/cropsure-greenshield-750wg-fungicide-label.pdf">
-        CropSure Greenshield 750WG Fungicide Label
+        Greenshield 750WG Fungicide Label Download
       </a>
       <a href="/wp-content/uploads/2023/10/cropsure-greenshield-750wg-fungicide-sds.pdf">
         CropSure Greenshield 750WG Fungicide SDS

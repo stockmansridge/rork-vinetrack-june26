@@ -135,6 +135,11 @@ export function tokens(value: string): string[] {
     .filter((t) => t.length > 0);
 }
 
+/** Strength numbers are formulation descriptors, not product variants. */
+function isFormulationToken(token: string): boolean {
+  return FORMULATION_TOKENS.has(token) || /^\d+(?:\.\d+)?$/.test(token);
+}
+
 /**
  * Classify a contiguous whole-word occurrence of the query inside the name.
  *
@@ -188,7 +193,7 @@ function classifyContainedRun(
     if (!all) continue;
     found = true;
     const tail = haystack.slice(start + needle.length);
-    if (tail.every((t) => FORMULATION_TOKENS.has(t))) return "contained_phrase";
+    if (tail.every(isFormulationToken)) return "contained_phrase";
   }
   return found ? "incidental" : null;
 }
@@ -216,7 +221,7 @@ export function scoreNameRelevance(query: string, name: string): NameRelevance {
     const prefixMatches = queryTokens.every((t, i) => t === nameTokens[i]);
     if (prefixMatches) {
       const remainder = nameTokens.slice(queryTokens.length);
-      return remainder.every((t) => FORMULATION_TOKENS.has(t))
+      return remainder.every(isFormulationToken)
         ? "leading_product_name"
         : "leading_token";
     }
@@ -564,14 +569,60 @@ export interface RankingResult<T> {
  * WITHOUT reordering, so the served order stays the order every platform
  * shows.
  */
+function canonicalRankingIdentity(
+  row: Record<string, any>,
+  countryCode: string,
+): string | null {
+  const classification = candidateClass(row, countryCode);
+  if (classification !== "authoritative" && classification !== "validated_suggestion") {
+    return null;
+  }
+  const country = String(row?.registration_country ?? row?.country_code ?? countryCode)
+    .trim().toUpperCase();
+  const inferredScheme = country === "AU" ? "apvma" : country === "NZ" ? "acvm" : "";
+  const scheme = String(row?.registration_scheme ?? inferredScheme).trim().toLowerCase();
+  const number = String(row?.registration_number ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return country && scheme && number ? `${country}:${scheme}:${number}` : null;
+}
+
+/**
+ * Collapse rows that have already resolved to the same legal registration.
+ * Authority wins over a validated research lead regardless of input order.
+ */
+export function dedupeCandidatesByCanonicalIdentity<T extends Record<string, any>>(
+  rows: T[],
+  countryCode: string,
+): T[] {
+  const preferredIndex = new Map<string, number>();
+  (rows ?? []).forEach((row, index) => {
+    const identity = canonicalRankingIdentity(row, countryCode);
+    if (!identity) return;
+    const existing = preferredIndex.get(identity);
+    if (existing === undefined) {
+      preferredIndex.set(identity, index);
+      return;
+    }
+    const existingClass = candidateClass(rows[existing], countryCode);
+    if (existingClass !== "authoritative" && candidateClass(row, countryCode) === "authoritative") {
+      preferredIndex.set(identity, index);
+    }
+  });
+
+  return (rows ?? []).filter((row, index) => {
+    const identity = canonicalRankingIdentity(row, countryCode);
+    return !identity || preferredIndex.get(identity) === index;
+  });
+}
+
 export function rankCandidates<T extends Record<string, any>>(
   rows: T[],
   query: string,
   countryCode: string,
 ): RankingResult<T> {
   const trimmedQuery = (query ?? "").trim();
+  const canonicalRows = dedupeCandidatesByCanonicalIdentity(rows ?? [], countryCode);
 
-  const scored = (rows ?? []).map((row, index) => {
+  const scored = canonicalRows.map((row, index) => {
     const relevance: NameRelevance = trimmedQuery
       ? scoreNameRelevance(trimmedQuery, String(row?.name ?? ""))
       : "exact_name";
@@ -633,18 +684,21 @@ export function rankCandidates<T extends Record<string, any>>(
 
   // # When ONE result may be treated as an exact identity (task §1)
   //
-  // Only when the identity is genuinely unambiguous: exactly one AUTHORITATIVE
-  // row whose name IS the query, and no OTHER row credible enough to be a
-  // rival. An exact name sitting beside a second strong candidate is still a
-  // choice for a human — "Hortitrol winter oil" must not silently become one
-  // product because it happened to sort first.
+  // Only when the identity is genuinely unambiguous after canonical identity
+  // deduplication: exactly one AUTHORITATIVE row whose name is exact OR whose
+  // remaining suffix is only formulation/strength wording, and no OTHER row
+  // credible enough to be a rival. A broad chemistry fragment such as
+  // "Copper" remains contained_phrase and can never auto-select by itself.
   //
   // Rivals are counted across ALL strong rows, not just authoritative ones: a
   // credible suggestion beside an exact register hit is still a reason to ask.
-  const exactRows = authoritativeRows.filter((s) => s.relevance === "exact_name");
-  const rivals = strongRows.filter((s) => s.relevance !== "exact_name");
-  const exactRegistration = exactRows.length === 1 && rivals.length === 0
-    ? (String(exactRows[0].row?.registration_number ?? "").trim() || null)
+  const identityRows = authoritativeRows.filter(
+    (s) => s.relevance === "exact_name" || s.relevance === "leading_product_name",
+  );
+  const identityRowSet = new Set(identityRows);
+  const rivals = strongRows.filter((s) => !identityRowSet.has(s));
+  const exactRegistration = identityRows.length === 1 && rivals.length === 0
+    ? (String(identityRows[0].row?.registration_number ?? "").trim() || null)
     : null;
 
   const searchState: SearchState = strongOfficialRows.length === 0

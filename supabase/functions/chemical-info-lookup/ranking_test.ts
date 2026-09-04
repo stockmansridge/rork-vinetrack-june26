@@ -294,6 +294,34 @@ Deno.test("Hortitrol: the exact product beats generic 'winter'/'oil' noise", () 
   assertEquals(summary.ambiguous, false);
 });
 
+Deno.test("final ranking deduplicates one canonical identity and prefers authority", () => {
+  const validatedSuggestion = {
+    name: "EXAMPLE RIDGESHIELD 750 WG FUNGICIDE",
+    registration_number: "90-279",
+    registration_country: "AU",
+    registration_scheme: "APVMA",
+    source: "research_validated",
+    registration_validated: true,
+  };
+  const authoritative = {
+    ...registerRow("EXAMPLE RIDGESHIELD 750 WG FUNGICIDE", "90279"),
+    registration_country: "AU",
+    registration_scheme: "apvma",
+  };
+  const { results, summary } = rankCandidates(
+    [validatedSuggestion, authoritative],
+    "Example Ridgeshield",
+    "AU",
+  );
+  assertEquals(results.length, 1);
+  assertEquals(results[0].source, "official_register");
+  assertEquals(summary.official_candidate_count, 1);
+  assertEquals(summary.suggestion_count, 0);
+  assertEquals(summary.search_state, "exact");
+  assertEquals(summary.ambiguous, false);
+  assertEquals(summary.exact_registration_number, "90279");
+});
+
 Deno.test("a genuinely ambiguous query keeps several credible candidates", () => {
   // Task §1: search should normally return ~2–5 plausible products when the
   // query is ambiguous, and must NOT be forced into one.

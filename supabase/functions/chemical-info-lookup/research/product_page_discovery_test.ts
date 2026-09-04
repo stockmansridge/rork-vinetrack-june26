@@ -147,7 +147,7 @@ function researchWith(productPages: string[], labelCandidates: string[] = []): C
   return research;
 }
 
-Deno.test("CropSure catalogue page is inspected and earns product/label selection from the exact anchor", async () => {
+Deno.test("verified catalogue accepts a same-host label anchor omitting only the registrant prefix", async () => {
   const network = fetchByUrl({ [CROPSURE_CATALOGUE_URL]: CROPSURE_CATALOGUE_HTML });
   const inspected = await inspectProductPage(
     { fetchFn: network.fetchFn },
@@ -169,6 +169,27 @@ Deno.test("CropSure catalogue page is inspected and earns product/label selectio
   assertEquals(projection.productPageCandidate?.url, CROPSURE_CATALOGUE_URL);
   assertEquals(projection.extraction.manufacturer_label_url, CROPSURE_GREENSHIELD_LABEL_URL);
   assertEquals(projection.extraction.productURL, CROPSURE_CATALOGUE_URL);
+});
+
+Deno.test("verified catalogue still rejects a missing product token or changed variant", () => {
+  const page = { pageUrl: CROPSURE_CATALOGUE_URL, pageProductName: "Fungicide" };
+  const base = {
+    page,
+    pageIsTrustedProductPage: true,
+    pageIsVerifiedRegistrantDomain: true,
+    registeredProductName: "EXAMPLECO RIDGESHIELD 750 WG FUNGICIDE",
+  };
+  for (const linkText of [
+    "RidgeShield Fungicide Label",
+    "RidgeShield 750 WG Plus Fungicide Label",
+    "OtherShield 750 WG Fungicide Label",
+  ]) {
+    const selection = selectManufacturerLabel({
+      ...base,
+      documents: [{ url: "https://cropsure.com/documents/candidate-label.pdf", linkText }],
+    });
+    assertEquals(selection.label, null, linkText);
+  }
 });
 
 // ---------------------------------------------------------------------------
