@@ -156,13 +156,14 @@ object SprayProgramPdfExporter {
         fuelPurchases: List<FuelPurchase> = emptyList(),
         operatorCategories: List<OperatorCategory> = emptyList(),
         paddocks: List<Paddock> = emptyList(),
+        tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual> = emptyList(),
         logo: Bitmap? = null,
     ): Boolean {
         if (records.isEmpty()) return false
         return try {
             val doc = PdfDocument()
             val s = PageState(doc)
-            render(s, records, trips, vineyardName, canViewFinancials, machines, fuelPurchases, operatorCategories, paddocks, logo)
+            render(s, records, trips, vineyardName, canViewFinancials, machines, fuelPurchases, operatorCategories, paddocks, tankActuals, logo)
             s.finish()
 
             val dir = File(context.cacheDir, "exports").apply { mkdirs() }
@@ -202,6 +203,7 @@ object SprayProgramPdfExporter {
         fuelPurchases: List<FuelPurchase>,
         operatorCategories: List<OperatorCategory>,
         paddocks: List<Paddock>,
+        tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual>,
         logo: Bitmap?,
     ) {
         // Header
@@ -237,6 +239,12 @@ object SprayProgramPdfExporter {
         }
 
         drawChemicalTotals(s, records)
+
+        val relevantActuals = tankActuals.filter { actual -> records.any { it.id == actual.sprayRecordId } }
+        s.y += 8f
+        s.ensure(20f)
+        s.canvas.drawText("Actual tanks recorded: ${relevantActuals.size} • Actual water used: ${String.format(Locale.US, "%.2f", relevantActuals.sumOf { it.waterVolumeL })} L", MARGIN, s.y, bodyBoldPaint)
+        s.y += 16f
 
         drawRowCoverage(s, records, trips)
 

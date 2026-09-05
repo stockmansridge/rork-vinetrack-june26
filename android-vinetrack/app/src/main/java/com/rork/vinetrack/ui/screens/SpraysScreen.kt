@@ -496,6 +496,7 @@ private fun SprayListView(
                                         fuelPurchases = state.fuelPurchases,
                                         operatorCategories = state.operatorCategories,
                                         paddocks = state.paddocks,
+                                        tankActuals = operational.flatMap { record -> record.tripId?.let { tripId -> record.tanks.orEmpty().mapNotNull { vm.actualTankUse(tripId, it.tankNumber) } }.orEmpty() },
                                         logo = state.selectedVineyardLogo,
                                     )
                                     if (!ok) {

@@ -30,6 +30,8 @@ struct TripPDFService {
         tripFunctionLabel: String? = nil,
         paddockGroups: [PaddockCoverage] = [],
         tripCostResult: TripCostService.Result? = nil,
+        sprayRecord: SprayRecord? = nil,
+        tankActuals: [SprayTankActual] = [],
         formatter: RegionFormatter = .australian
     ) -> Data {
         let pageWidth: CGFloat = 595.0
@@ -281,6 +283,31 @@ struct TripPDFService {
                 for session in trip.tankSessions {
                     let status = session.endTime != nil ? "Complete" : "Active"
                     drawRow(label: "Tank \(session.tankNumber)", value: status)
+                    if let planned = sprayRecord?.tanks.first(where: { $0.tankNumber == session.tankNumber }) {
+                        drawRow(label: "  Planned water", value: "\(formatNumber(planned.waterVolume)) L", indent: 12)
+                        if let actual = tankActuals.first(where: { $0.tankSessionId == session.id.uuidString || $0.tankNumber == session.tankNumber }) {
+                            drawRow(label: "  Actual water", value: "\(formatNumber(actual.waterVolumeL)) L", indent: 12)
+                            let waterDifference = actual.waterVolumeL - planned.waterVolume
+                            if abs(waterDifference) > 0.000_001 {
+                                drawRow(label: "  Water difference", value: "\(waterDifference > 0 ? "+" : "")\(formatNumber(waterDifference)) L", indent: 12)
+                            }
+                            for chemical in planned.chemicals {
+                                let confirmed = actual.chemicals.first { $0.plannedChemicalId == chemical.id }
+                                drawRow(label: "  Planned \(chemical.name)", value: "\(formatNumber(chemical.unit.fromBase(chemical.volumePerTank))) \(chemical.unit.rawValue)", indent: 12)
+                                let actualText = confirmed.map { $0.actualAmountBase == 0 ? "Not added" : "\(formatNumber($0.displayAmount)) \($0.unit.rawValue)" } ?? "Not recorded"
+                                drawRow(label: "  Actual \(chemical.name)", value: actualText, indent: 12)
+                                if let confirmed, abs(confirmed.actualAmountBase - chemical.volumePerTank) > 0.000_001 {
+                                    let difference = chemical.unit.fromBase(confirmed.actualAmountBase - chemical.volumePerTank)
+                                    drawRow(label: "  Difference", value: "\(difference > 0 ? "+" : "")\(formatNumber(difference)) \(chemical.unit.rawValue)", indent: 12)
+                                }
+                            }
+                        } else {
+                            drawRow(label: "  Actual amounts", value: "Not recorded", indent: 12)
+                        }
+                    } else {
+                        drawRow(label: "  Planned tank mix", value: "Unavailable", indent: 12)
+                        drawRow(label: "  Actual amounts", value: "Not recorded", indent: 12)
+                    }
                     if !session.rowRange.isEmpty {
                         drawRow(label: "  Rows", value: session.rowRange, indent: 12)
                     }
@@ -314,7 +341,7 @@ struct TripPDFService {
             // for non-owner/manager roles so supervisors and operators never
             // see pricing in exported PDFs.
             if includeCostings, let r = tripCostResult {
-                drawSectionHeader("Estimated Trip Cost")
+                drawSectionHeader(r.chemical?.basis == .actual ? "Trip Cost — Actual Chemicals" : "Estimated Trip Cost")
 
                 // Labour
                 if let w = r.labour.warning {

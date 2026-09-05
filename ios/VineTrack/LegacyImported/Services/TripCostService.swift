@@ -56,9 +56,15 @@ nonisolated enum TripCostService {
         let engineHourDelta: Double?
     }
 
+    nonisolated enum ChemicalCostBasis: String, Sendable {
+        case actual
+        case estimated
+    }
+
     nonisolated struct ChemicalBreakdown: Sendable {
         let cost: Double
         let warning: String?
+        let basis: ChemicalCostBasis
     }
 
     nonisolated struct SeedingBreakdown: Sendable {
@@ -124,6 +130,7 @@ nonisolated enum TripCostService {
         tractor: Tractor?,
         fuelPurchases: [FuelPurchase],
         sprayRecord: SprayRecord?,
+        tankActuals: [SprayTankActual] = [],
         savedChemicals: [SavedChemical] = [],
         savedInputs: [SavedInput] = [],
         paddockHectares: Double? = nil,
@@ -270,16 +277,23 @@ nonisolated enum TripCostService {
         // Step 1 is the canonical path going forward; steps 2/3 keep older
         // records (created before snapshotting) costable.
         let chemical: ChemicalBreakdown? = sprayRecord.map { record in
+            let actualByTank = Dictionary(uniqueKeysWithValues: tankActuals
+                .filter { $0.tripId == trip.id && $0.sprayRecordId == record.id }
+                .map { ($0.tankNumber, $0) })
+            let actualsComplete = !record.tanks.isEmpty && record.tanks.allSatisfy { actualByTank[$0.tankNumber] != nil }
             var total: Double = 0
             var anyMissing = false
             var anyPriced = false
             for tank in record.tanks {
                 for chem in tank.chemicals {
+                    let amount = actualsComplete
+                        ? (actualByTank[tank.tankNumber]?.chemicals.first { $0.plannedChemicalId == chem.id }?.actualAmountBase ?? 0)
+                        : chem.volumePerTank
                     let resolvedCostPerUnit = resolveCostPerUnit(chem, savedChemicals: savedChemicals)
                     if let cpu = resolvedCostPerUnit, cpu > 0 {
-                        total += cpu * chem.volumePerTank
+                        total += cpu * amount
                         anyPriced = true
-                    } else if chem.volumePerTank > 0 {
+                    } else if amount > 0 {
                         anyMissing = true
                     }
                 }
@@ -292,7 +306,7 @@ nonisolated enum TripCostService {
             } else {
                 warning = nil
             }
-            return ChemicalBreakdown(cost: total, warning: warning)
+            return ChemicalBreakdown(cost: total, warning: warning, basis: actualsComplete ? .actual : .estimated)
         }
 
         // ---- Seeding / input -----------------------------------------------

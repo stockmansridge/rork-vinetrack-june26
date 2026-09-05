@@ -1031,6 +1031,7 @@ private fun TripDetailView(
                                 pinCount = pinCount,
                                 includeCostings = canViewFinancials,
                                 linkedSpray = linkedSprayForExport,
+                                tankActuals = linkedSprayForExport?.tanks.orEmpty().mapNotNull { vm.actualTankUse(trip.id, it.tankNumber) },
                                 operatorCategories = state.operatorCategories,
                                 machines = state.machines,
                                 fuelPurchases = state.fuelPurchases,

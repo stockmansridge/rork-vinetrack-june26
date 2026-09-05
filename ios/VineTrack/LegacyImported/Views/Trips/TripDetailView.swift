@@ -472,6 +472,7 @@ struct TripDetailView: View {
             tractor: resolvedTractor,
             fuelPurchases: tripFuelPurchases,
             sprayRecord: sprayRecord,
+            tankActuals: SprayTankActualStore.shared.records.filter { $0.tripId == currentTrip.id },
             savedChemicals: store.savedChemicals,
             savedInputs: store.savedInputs,
             paddockHectares: tripPaddockHectares,
@@ -993,6 +994,8 @@ struct TripDetailView: View {
         let includeCostings = accessControl.canViewCosting
         let costResult: TripCostService.Result? = includeCostings ? costResult : nil
         let formatter = store.settings.regionFormatter
+        let sprayRecord = sprayRecord
+        let tankActuals = SprayTankActualStore.shared.records.filter { $0.tripId == tripCopy.id }
 
         Task {
             let snapshot = await TripPDFService.captureMapSnapshot(trip: tripCopy)
@@ -1008,6 +1011,8 @@ struct TripDetailView: View {
                 tripFunctionLabel: functionLabel,
                 paddockGroups: paddockGroups,
                 tripCostResult: costResult,
+                sprayRecord: sprayRecord,
+                tankActuals: tankActuals,
                 formatter: formatter
             )
             let url = TripPDFService.savePDFToTemp(data: pdfData, fileName: fileName)

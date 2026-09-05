@@ -298,6 +298,14 @@ struct NewMainTabView: View {
         await paddockSync.syncPaddocksForSelectedVineyard()
         await tripSync.syncTripsForSelectedVineyard()
         await sprayRecordSync.syncSprayRecordsForSelectedVineyard()
+        if let vineyardId = store.selectedVineyardId {
+            await SprayTankActualStore.shared.syncPending(
+                tripSync: tripSync,
+                spraySync: sprayRecordSync,
+                vineyardId: vineyardId
+            )
+            await SprayTankActualStore.shared.pull(vineyardId: vineyardId)
+        }
         await sprayJobTemplateService.syncForSelectedVineyard()
         await buttonConfigSync.syncButtonConfigForSelectedVineyard()
         await savedChemicalSync.syncForSelectedVineyard()

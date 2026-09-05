@@ -45,9 +45,12 @@ object TripCostEstimator {
      * Chemical cost for a linked spray record. Null when no spray record is
      * linked (chemical cost is then not applicable rather than $0).
      */
+    enum class ChemicalCostBasis { Actual, Estimated }
+
     data class ChemicalBreakdown(
         val cost: Double,
         val warning: String?,
+        val basis: ChemicalCostBasis,
     )
 
     /**
@@ -112,6 +115,7 @@ object TripCostEstimator {
         paddocks: List<Paddock> = emptyList(),
         yieldRecords: List<HistoricalYieldRecord> = emptyList(),
         savedInputs: List<SavedInput> = emptyList(),
+        tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual> = emptyList(),
     ): Estimate {
         val hours = (trip.activeDurationSeconds ?: 0L).coerceAtLeast(0L) / 3600.0
 
@@ -158,16 +162,30 @@ object TripCostEstimator {
         // present but unpriced (mirroring iOS chemical-cost messaging).
         val chemical: ChemicalBreakdown? = sprayRecord?.let { record ->
             val tanks = record.tanks.orEmpty()
-            val anyPriced = tanks.any { it.hasCost }
-            val anyMissing = tanks.any { tank ->
-                tank.chemicals.any { it.volumePerTank > 0 && !it.hasCost }
+            val actualByTank = tankActuals.filter { it.tripId == trip.id && it.sprayRecordId == record.id }
+                .associateBy { it.tankNumber }
+            val actualsComplete = tanks.isNotEmpty() && tanks.all { actualByTank[it.tankNumber] != null }
+            var total = 0.0
+            var anyPriced = false
+            var anyMissing = false
+            tanks.forEach { tank ->
+                tank.chemicals.forEach { planned ->
+                    val amount = if (actualsComplete) {
+                        actualByTank[tank.tankNumber]?.chemicals
+                            ?.firstOrNull { it.plannedChemicalId == planned.id }?.actualAmountBase ?: 0.0
+                    } else planned.volumePerTank
+                    if (planned.hasCost) {
+                        total += planned.costPerUnit * amount
+                        anyPriced = true
+                    } else if (amount > 0.0) anyMissing = true
+                }
             }
             val warning = when {
                 !anyPriced && anyMissing -> "Chemical cost unavailable — costs per unit not set on chemicals."
                 anyMissing -> "Some chemicals are missing a cost per unit."
                 else -> null
             }
-            ChemicalBreakdown(cost = record.totalChemicalCost, warning = warning)
+            ChemicalBreakdown(total, warning, if (actualsComplete) ChemicalCostBasis.Actual else ChemicalCostBasis.Estimated)
         }
 
         // ---- Treated area (multi-block) -----------------------------------

@@ -17,11 +17,28 @@ begin
   if public.validate_spray_tank_actual_chemicals('[]'::jsonb) is not true then
     raise exception 'empty confirmed chemical list should be valid';
   end if;
+  if public.validate_spray_tank_actual_chemicals(
+    '[{"id":"not-a-uuid","plannedChemicalId":null,"savedChemicalId":null,"name":"Bad","actualAmountBase":1,"unit":"mL"}]'::jsonb
+  ) then raise exception 'non-UUID line id accepted'; end if;
+  if public.validate_spray_tank_actual_chemicals(
+    '[{"id":"10000000-0000-4000-8000-000000000001","plannedChemicalId":null,"savedChemicalId":null,"name":" ","actualAmountBase":1,"unit":"mL"}]'::jsonb
+  ) then raise exception 'blank frozen name accepted'; end if;
   if has_function_privilege('anon', 'public.upsert_spray_tank_actual(uuid,uuid,uuid,uuid,text,integer,double precision,jsonb,timestamptz,timestamptz)', 'execute') then
     raise exception 'anon can execute actual-use RPC';
   end if;
   if not has_function_privilege('authenticated', 'public.upsert_spray_tank_actual(uuid,uuid,uuid,uuid,text,integer,double precision,jsonb,timestamptz,timestamptz)', 'execute') then
     raise exception 'authenticated role cannot execute actual-use RPC';
+  end if;
+  if has_table_privilege('authenticated', 'public.spray_tank_actuals', 'insert')
+     or has_table_privilege('authenticated', 'public.spray_tank_actuals', 'update')
+     or has_table_privilege('authenticated', 'public.spray_tank_actuals', 'delete') then
+    raise exception 'authenticated has forbidden direct DML privilege';
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'spray_tank_actuals' and policyname = 'spray_tank_actuals_select_members') then
+    raise exception 'member select RLS policy missing';
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'spray_tank_actuals' and policyname = 'spray_tank_actuals_no_hard_delete') then
+    raise exception 'hard-delete denial RLS policy missing';
   end if;
 end;
 $test$;

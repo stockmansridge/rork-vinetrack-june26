@@ -2,7 +2,9 @@ package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.SprayTankActual
+import io.ktor.client.request.get
 import io.ktor.client.request.headers
+import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -27,6 +29,21 @@ class SprayTankActualRepository(private val session: SessionStore) {
         @SerialName("p_confirmed_at") val confirmedAt: String,
         @SerialName("p_client_updated_at") val clientUpdatedAt: String,
     )
+
+    suspend fun fetch(vineyardId: String): List<SprayTankActual> {
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.get(SupabaseClient.restUrl("spray_tank_actuals")) {
+            headers {
+                append(HttpHeaders.Authorization, "Bearer $token")
+                append("apikey", SupabaseClient.anonKey)
+            }
+            parameter("select", "id,vineyard_id,spray_record_id,trip_id,tank_session_id,tank_number,water_volume_l,chemicals,confirmed_at,confirmed_by,client_updated_at")
+            parameter("vineyard_id", "eq.$vineyardId")
+            parameter("deleted_at", "is.null")
+        }
+        if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
+        return SupabaseClient.json.decodeFromString(response.bodyAsText())
+    }
 
     suspend fun upsert(actual: SprayTankActual) {
         val token = session.accessToken ?: throw BackendError.Unauthorized

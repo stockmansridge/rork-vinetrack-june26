@@ -23,6 +23,7 @@ struct SprayProgramExportService {
         seasonFuelCostPerLitre: Double = 0,
         operatorCategories: [OperatorCategory] = [],
         vineyardUsers: [VineyardUser] = [],
+        tankActuals: [SprayTankActual] = [],
         includeCostings: Bool = true,
         timeZone: TimeZone = .current,
         formatter: RegionFormatter = .australian
@@ -220,10 +221,30 @@ struct SprayProgramExportService {
                 }
             }
 
-            let costItems: [(String, Double)] = allChemicals.compactMap { chemical -> (String, Double)? in
-                let cost = chemical.costPerUnit * chemical.volumePerTank
-                guard cost > 0 else { return nil }
-                return (chemical.name.isEmpty ? "Unnamed" : chemical.name, cost)
+            y += 8
+            checkPageBreak(needed: 30)
+            let actualCount = tankActuals.filter { actual in records.contains { $0.id == actual.sprayRecordId } }.count
+            let actualWater = tankActuals.filter { actual in records.contains { $0.id == actual.sprayRecordId } }.reduce(0) { $0 + $1.waterVolumeL }
+            let actualSummaryAttrs: [NSAttributedString.Key: Any] = [.font: bodyBoldFont, .foregroundColor: UIColor.black]
+            ("Actual tanks recorded: \(actualCount) • Actual water used: \(String(format: "%.2f", actualWater)) L" as NSString).draw(at: CGPoint(x: margin, y: y), withAttributes: actualSummaryAttrs)
+            y += 16
+
+            let allActualsComplete = !records.isEmpty && records.allSatisfy { record in
+                !record.tanks.isEmpty && record.tanks.allSatisfy { tank in
+                    tankActuals.contains { $0.sprayRecordId == record.id && $0.tankNumber == tank.tankNumber }
+                }
+            }
+            let costItems: [(String, Double)] = records.flatMap { record in
+                record.tanks.flatMap { tank in
+                    tank.chemicals.compactMap { chemical -> (String, Double)? in
+                        let amount = allActualsComplete
+                            ? (tankActuals.first { $0.sprayRecordId == record.id && $0.tankNumber == tank.tankNumber }?.chemicals.first { $0.plannedChemicalId == chemical.id }?.actualAmountBase ?? 0)
+                            : chemical.volumePerTank
+                        let cost = chemical.costPerUnit * amount
+                        guard cost > 0 else { return nil }
+                        return (chemical.name.isEmpty ? "Unnamed" : chemical.name, cost)
+                    }
+                }
             }
             let costGrouped = Dictionary(grouping: costItems, by: { $0.0.lowercased() })
             let chemCosts = costGrouped.compactMap { (key, items) -> (String, Double)? in
@@ -260,7 +281,7 @@ struct SprayProgramExportService {
                 y += 8
                 checkPageBreak(needed: 40)
                 let costTitleAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10, weight: .bold), .foregroundColor: accentColor]
-                ("Cost Summary (All Records)" as NSString).draw(at: CGPoint(x: margin, y: y), withAttributes: costTitleAttrs)
+                ("Cost Summary (All Records) — \(allActualsComplete ? "Actual chemicals" : "Estimated chemicals")" as NSString).draw(at: CGPoint(x: margin, y: y), withAttributes: costTitleAttrs)
                 y += 16
 
                 let nameAttrs: [NSAttributedString.Key: Any] = [.font: bodyFont, .foregroundColor: UIColor.black]

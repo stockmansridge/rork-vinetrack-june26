@@ -55,11 +55,16 @@ begin
        or (v_line ? 'plannedChemicalId') = false
        or (v_line ? 'savedChemicalId') = false
        or jsonb_typeof(v_line->'name') <> 'string'
+       or nullif(btrim(v_line->>'name'), '') is null
        or jsonb_typeof(v_line->'actualAmountBase') <> 'number'
        or jsonb_typeof(v_line->'unit') <> 'string'
        or v_line->>'unit' not in ('Litres','mL','Kg','g')
     then return false;
     end if;
+    begin
+      perform (v_line->>'id')::uuid;
+    exception when others then return false;
+    end;
     begin
       v_amount := (v_line->>'actualAmountBase')::double precision;
     exception when others then return false;

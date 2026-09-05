@@ -7,6 +7,40 @@ nonisolated private struct SprayTankActualCache: Codable, Sendable {
     var pendingIds: Set<UUID> = []
 }
 
+nonisolated private struct BackendSprayTankActual: Decodable, Sendable {
+    let id: UUID
+    let vineyardId: UUID
+    let sprayRecordId: UUID
+    let tripId: UUID
+    let tankSessionId: String
+    let tankNumber: Int
+    let waterVolumeL: Double
+    let chemicals: [SprayTankActualChemical]
+    let confirmedAt: Date
+    let confirmedBy: UUID
+    let clientUpdatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id, chemicals
+        case vineyardId = "vineyard_id"
+        case sprayRecordId = "spray_record_id"
+        case tripId = "trip_id"
+        case tankSessionId = "tank_session_id"
+        case tankNumber = "tank_number"
+        case waterVolumeL = "water_volume_l"
+        case confirmedAt = "confirmed_at"
+        case confirmedBy = "confirmed_by"
+        case clientUpdatedAt = "client_updated_at"
+    }
+
+    func actual() throws -> SprayTankActual {
+        try SprayTankActual(id: id, vineyardId: vineyardId, sprayRecordId: sprayRecordId,
+            tripId: tripId, tankSessionId: tankSessionId, tankNumber: tankNumber,
+            waterVolumeL: waterVolumeL, chemicals: chemicals, confirmedAt: confirmedAt,
+            confirmedBy: confirmedBy, clientUpdatedAt: clientUpdatedAt)
+    }
+}
+
 nonisolated private struct SprayTankActualUpsertRequest: Encodable, Sendable {
     let actual: SprayTankActual
 
@@ -67,7 +101,8 @@ final class SprayTankActualStore {
         } else {
             next.append(actual)
         }
-        var pending = pendingIds
+        guard next.contains(where: { $0.id == actual.id }) else { return }
+        var pending = Set(pendingIds.filter { id in next.contains(where: { $0.id == id }) })
         pending.insert(actual.id)
         try persistence.saveOrThrow(SprayTankActualCache(records: next, pendingIds: pending), key: Self.persistenceKey)
         records = next
@@ -83,13 +118,46 @@ final class SprayTankActualStore {
         pendingIds = pending
     }
 
+    /// Pulls permanent actual-use rows and merges by stable session identity; newer local confirmations win.
+    func pull(vineyardId: UUID) async {
+        guard SupabaseClientProvider.shared.isConfigured else { return }
+        do {
+            let rows: [BackendSprayTankActual] = try await SupabaseClientProvider.shared.client
+                .from("spray_tank_actuals")
+                .select()
+                .eq("vineyard_id", value: vineyardId)
+                .is("deleted_at", value: nil)
+                .execute()
+                .value
+            var merged = records
+            for remote in try rows.map({ try $0.actual() }) {
+                if let index = merged.firstIndex(where: { $0.tripId == remote.tripId && $0.tankSessionId == remote.tankSessionId }) {
+                    if merged[index].clientUpdatedAt < remote.clientUpdatedAt && !pendingIds.contains(merged[index].id) {
+                        merged[index] = remote
+                    }
+                } else {
+                    merged.append(remote)
+                }
+            }
+            try persistence.saveOrThrow(SprayTankActualCache(records: merged, pendingIds: pendingIds), key: Self.persistenceKey)
+            records = merged
+        } catch {
+            // Keep the durable local authority when offline or before migration deployment.
+        }
+    }
+
     /// Replays only after parent trip and spray-record sync have had an opportunity to run.
     func syncPending(tripSync: TripSyncService?, spraySync: SprayRecordSyncService?, vineyardId: UUID) async {
         if tripSync?.isSyncing == true || spraySync?.isSyncing == true { return }
         guard SupabaseClientProvider.shared.isConfigured else { return }
-        let ids = pendingIds
-        for id in ids {
-            guard let actual = records.first(where: { $0.id == id && $0.vineyardId == vineyardId }) else { continue }
+        let queued = records
+            .filter { pendingIds.contains($0.id) && $0.vineyardId == vineyardId }
+            .sorted { $0.clientUpdatedAt < $1.clientUpdatedAt }
+        for actual in queued {
+            let id = actual.id
+            if tripSync?.isPendingUpsert(actual.tripId) == true || spraySync?.isPendingUpsert(actual.sprayRecordId) == true {
+                continue
+            }
             do {
                 try await SupabaseClientProvider.shared.client
                     .rpc("upsert_spray_tank_actual", params: SprayTankActualUpsertRequest(actual: actual))

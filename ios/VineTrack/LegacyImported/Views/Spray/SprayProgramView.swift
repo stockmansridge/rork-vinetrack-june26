@@ -661,6 +661,7 @@ struct SprayProgramView: View {
         let includeCostings = accessControl?.canViewFinancials ?? false
         let exportTimeZone = store.settings.resolvedTimeZone
         let formatter = store.settings.regionFormatter
+        let tankActuals = SprayTankActualStore.shared.records.filter { actual in records.contains { $0.id == actual.sprayRecordId } }
 
         Task.detached {
             let url = SprayProgramExportService.generateProgramPDF(
@@ -675,6 +676,7 @@ struct SprayProgramView: View {
                 seasonFuelCostPerLitre: fuelCost,
                 operatorCategories: operatorCategories,
                 vineyardUsers: users,
+                tankActuals: tankActuals,
                 includeCostings: includeCostings,
                 timeZone: exportTimeZone,
                 formatter: formatter

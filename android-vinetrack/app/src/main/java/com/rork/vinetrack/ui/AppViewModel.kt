@@ -2477,15 +2477,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (session.accessToken == null || !_ui.value.isOnline) return
         viewModelScope.launch {
             sprayTankActualStore.pending().sortedBy { it.clientUpdatedAt }.forEach { actual ->
-                runCatching { sprayTankActualRepo.upsert(actual) }
-                    .onSuccess { sprayTankActualStore.markSynced(actual.id) }
+                val parentPending = TripStartSync.hasUnresolvedStart(pendingWrites, actual.tripId) ||
+                    pendingWrites.list().any {
+                        it.clientId == actual.sprayRecordId &&
+                            it.entityType == com.rork.vinetrack.data.model.PendingEntityType.SPRAY_RECORD &&
+                            it.opType == com.rork.vinetrack.data.model.PendingOpType.CREATE &&
+                            it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
+                    }
+                if (!parentPending) {
+                    runCatching { sprayTankActualRepo.upsert(actual) }
+                        .onSuccess { sprayTankActualStore.markSynced(actual.id) }
+                }
             }
+            _ui.value.selectedVineyardId?.let { vineyardId ->
+                runCatching { sprayTankActualRepo.fetch(vineyardId) }
+                    .onSuccess { sprayTankActualStore.mergeRemote(it) }
+            }
+            replayPendingTripEnd()
         }
     }
 
     private fun replayPendingTripEnd() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        if (sprayTankActualStore.pending().isNotEmpty()) return
+        val pendingEndTripIds = pendingWrites.list()
+            .filter {
+                it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_END &&
+                    it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
+            }
+            .mapTo(mutableSetOf()) { it.clientId }
+        if (pendingEndTripIds.any { sprayTankActualStore.pending(it).isNotEmpty() }) return
         viewModelScope.launch {
             tripEndSync.replayAll { trip ->
                 _ui.update { st ->
@@ -3530,13 +3550,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingTripGps()
         replayPendingTripRow()
         replayPendingTripTank()
+        replayPendingSprayCreates()
         replayPendingTankActuals()
         replayPendingTripEnd()
         replayPendingTripDeletes()
         replayPendingFuelCreates()
         replayPendingFuelUpdates()
         replayPendingFuelDeletes()
-        replayPendingSprayCreates()
         replayPendingSprayUpdates()
         replayPendingSprayDeletes()
         replayPendingWorkTaskCreates()
@@ -3604,13 +3624,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingTripGps()
         replayPendingTripRow()
         replayPendingTripTank()
+        replayPendingSprayCreates()
         replayPendingTankActuals()
         replayPendingTripEnd()
         replayPendingTripDeletes()
         replayPendingFuelCreates()
         replayPendingFuelUpdates()
         replayPendingFuelDeletes()
-        replayPendingSprayCreates()
         replayPendingSprayUpdates()
         replayPendingSprayDeletes()
         replayPendingWorkTaskCreates()
@@ -4175,13 +4195,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingTripGps()
         replayPendingTripRow()
         replayPendingTripTank()
+        replayPendingSprayCreates()
         replayPendingTankActuals()
         replayPendingTripEnd()
         replayPendingTripDeletes()
         replayPendingFuelCreates()
         replayPendingFuelUpdates()
         replayPendingFuelDeletes()
-        replayPendingSprayCreates()
         replayPendingSprayUpdates()
         replayPendingSprayDeletes()
         replayPendingWorkTaskCreates()
@@ -9497,6 +9517,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         actualChemicalBaseAmounts: Map<String, Double>,
     ): Boolean {
         val trip = _ui.value.trips.firstOrNull { it.id == tripId && it.isActive } ?: return false
+        if (tripId in _ui.value.locallyEndedTripIds) return false
         val userId = session.userId ?: return false
         if (record.tripId != trip.id || !actualWaterLitres.isFinite() || actualWaterLitres < 0.0) return false
         val result = TankSessionLifecycle.startResult(

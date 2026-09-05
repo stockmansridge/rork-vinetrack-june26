@@ -19,6 +19,7 @@ import com.rork.vinetrack.data.model.SavedInput
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.VineyardMachine
+import com.rork.vinetrack.data.model.chemicalUnitFromBase
 import com.rork.vinetrack.data.model.formatTripDuration
 import com.rork.vinetrack.data.model.parseIsoToEpochMs
 import java.io.File
@@ -120,6 +121,7 @@ object TripPdfExporter {
         pinCount: Int,
         includeCostings: Boolean,
         linkedSpray: SprayRecord?,
+        tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual> = emptyList(),
         operatorCategories: List<OperatorCategory>,
         machines: List<VineyardMachine>,
         fuelPurchases: List<FuelPurchase>,
@@ -133,7 +135,7 @@ object TripPdfExporter {
             val s = PageState(doc)
             render(
                 s, trip, vineyardName, blockLabel, operatorName, pinCount,
-                includeCostings, linkedSpray, operatorCategories, machines,
+                includeCostings, linkedSpray, tankActuals, operatorCategories, machines,
                 fuelPurchases, paddocks, yieldRecords, savedInputs, logo,
             )
             s.finish()
@@ -174,6 +176,7 @@ object TripPdfExporter {
         pinCount: Int,
         includeCostings: Boolean,
         linkedSpray: SprayRecord?,
+        tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual> = emptyList(),
         operatorCategories: List<OperatorCategory>,
         machines: List<VineyardMachine>,
         fuelPurchases: List<FuelPurchase>,
@@ -264,6 +267,35 @@ object TripPdfExporter {
             for (session in tankSessions.sortedBy { it.tankNumber }) {
                 val status = if (session.isOpen) "Active" else "Complete"
                 row(s, "Tank ${session.tankNumber}", status)
+                val planned = linkedSpray?.tanks?.firstOrNull { it.tankNumber == session.tankNumber }
+                val actual = tankActuals.firstOrNull { it.tankSessionId == session.id || it.tankNumber == session.tankNumber }
+                if (planned != null) {
+                    rowIndented(s, "Planned water", "${fmt(planned.waterVolume)} L")
+                    if (actual == null) {
+                        rowIndented(s, "Actual amounts", "Not recorded")
+                    } else {
+                        rowIndented(s, "Actual water", "${fmt(actual.waterVolumeL)} L")
+                        val waterDifference = actual.waterVolumeL - planned.waterVolume
+                        if (kotlin.math.abs(waterDifference) > 0.000_001) rowIndented(s, "Water difference", "${if (waterDifference > 0) "+" else ""}${fmt(waterDifference)} L")
+                        planned.chemicals.forEach { chemical ->
+                            val confirmed = actual.chemicals.firstOrNull { it.plannedChemicalId == chemical.id }
+                            rowIndented(s, "Planned ${chemical.name}", "${fmt(chemicalUnitFromBase(chemical.unit, chemical.volumePerTank))} ${chemical.unit}")
+                            val actualText = when {
+                                confirmed == null -> "Not recorded"
+                                confirmed.actualAmountBase == 0.0 -> "Not added"
+                                else -> "${fmt(chemicalUnitFromBase(confirmed.unit, confirmed.actualAmountBase))} ${confirmed.unit}"
+                            }
+                            rowIndented(s, "Actual ${chemical.name}", actualText)
+                            if (confirmed != null && kotlin.math.abs(confirmed.actualAmountBase - chemical.volumePerTank) > 0.000_001) {
+                                val difference = chemicalUnitFromBase(chemical.unit, confirmed.actualAmountBase - chemical.volumePerTank)
+                                rowIndented(s, "Difference", "${if (difference > 0) "+" else ""}${fmt(difference)} ${chemical.unit}")
+                            }
+                        }
+                    }
+                } else {
+                    rowIndented(s, "Planned tank mix", "Unavailable")
+                    rowIndented(s, "Actual amounts", "Not recorded")
+                }
                 if (session.rowRange.isNotBlank()) rowIndented(s, "Rows", session.rowRange)
                 session.fillDurationSeconds?.let { rowIndented(s, "Fill duration", formatFillDuration(it)) }
             }
@@ -280,8 +312,9 @@ object TripPdfExporter {
             val cost = TripCostEstimator.estimate(
                 trip, linkedSpray, operatorCategories, machines,
                 fuelPurchases, paddocks, yieldRecords, savedInputs,
+                tankActuals,
             )
-            sectionHeader(s, "Estimated Trip Cost")
+            sectionHeader(s, if (cost.chemical?.basis == TripCostEstimator.ChemicalCostBasis.Actual) "Trip Cost — Actual Chemicals" else "Estimated Trip Cost")
             val labour = cost.labour
             if (labour.warning != null && labour.cost <= 0) {
                 row(s, "Labour", "—")
