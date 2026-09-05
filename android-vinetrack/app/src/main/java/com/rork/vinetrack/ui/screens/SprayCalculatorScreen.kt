@@ -134,6 +134,7 @@ import com.rork.vinetrack.data.spray.SprayCarrierBasis
 import com.rork.vinetrack.data.spray.SprayGuidedFlow
 import com.rork.vinetrack.data.spray.SprayGuidedInputs
 import com.rork.vinetrack.data.spray.SprayGuidedStep
+import com.rork.vinetrack.data.spray.SpraySectionNavigationState
 import com.rork.vinetrack.data.spray.SprayHeadTarget
 import com.rork.vinetrack.data.spray.SprayOperationType
 import com.rork.vinetrack.data.spray.SprayProductLineInput
@@ -606,15 +607,29 @@ fun SprayCalculatorScreen(
     )
     val guidedPlan = guidedFlow.plan
 
-    /**
-     * The section the operator has explicitly opened. Null means "follow the
-     * flow", so the screen lands on whatever still needs attention rather than
-     * on a step that is already done.
-     */
-    var openedStep by remember { mutableStateOf<SprayGuidedStep?>(null) }
-    val expandedStep = openedStep ?: guidedFlow.activeStep
+    // Expansion is operator-owned after a one-time seed from the flow. Both
+    // fields are saveable so recomposition and configuration recreation cannot
+    // reopen a section that the operator closed or replace their selection.
+    var openedStepRaw by rememberSaveable { mutableStateOf<String?>(null) }
+    var hasSeededOpenedStep by rememberSaveable { mutableStateOf(false) }
+    val openedStep = SprayGuidedStep.entries.firstOrNull { it.raw == openedStepRaw }
+    val navigationState = SpraySectionNavigationState(
+        openedStep = openedStep,
+        hasSeededOpenedStep = hasSeededOpenedStep,
+    )
+    LaunchedEffect(Unit) {
+        val seeded = navigationState.seed(guidedFlow.activeStep)
+        openedStepRaw = seeded.openedStep?.raw
+        hasSeededOpenedStep = seeded.hasSeededOpenedStep
+    }
+    val expandedStep = openedStep
     val toggleStep: (SprayGuidedStep) -> Unit = { step ->
-        openedStep = if (expandedStep == step) null else step
+        val updated = SpraySectionNavigationState(
+            openedStep = SprayGuidedStep.entries.firstOrNull { it.raw == openedStepRaw },
+            hasSeededOpenedStep = hasSeededOpenedStep,
+        ).toggle(step = step, isUnlocked = guidedFlow.isUnlocked(step))
+        openedStepRaw = updated.openedStep?.raw
+        hasSeededOpenedStep = updated.hasSeededOpenedStep
     }
 
     // One-line recaps for collapsed sections. Every figure comes off the plan.

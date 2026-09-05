@@ -528,8 +528,8 @@ data class SprayGuidedFlow(
         get() = SprayGuidedStep.entries.filter { isUnlocked(it) }
 
     /**
-     * The first step still needing attention — the one to expand by default. Every
-     * earlier step collapses to a compact summary with an Edit action.
+     * The first step still needing attention. The screen consults this once to
+     * seed its initial section; later validation changes never control expansion.
      */
     val activeStep: SprayGuidedStep
         get() = SprayGuidedStep.entries.firstOrNull { !isComplete(it) } ?: SprayGuidedStep.REVIEW
