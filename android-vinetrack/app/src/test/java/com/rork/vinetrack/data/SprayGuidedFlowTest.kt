@@ -93,6 +93,7 @@ class SprayGuidedFlowTest {
         isGrowthStageAssigned = true,
         isEquipmentSelected = true,
         isEquipmentConfirmed = true,
+        isCanopyConfirmed = true,
         tankCapacityLitres = 2_000.0,
         carrierBasis = SprayCarrierBasis.LITRES_PER_HECTARE,
         litresPerHectare = 625.0,
@@ -656,6 +657,10 @@ class SprayGuidedFlowTest {
         flow = SprayGuidedFlow(inputs)
         assertTrue(flow.isUnlocked(SprayGuidedStep.CARRIER))
         assertFalse(flow.isUnlocked(SprayGuidedStep.PRODUCTS))
+        assertEquals(SprayGuidedBlocker.CanopyConfirmationRequired, flow.blocker(SprayGuidedStep.CARRIER))
+
+        inputs = inputs.copy(isCanopyConfirmed = true)
+        flow = SprayGuidedFlow(inputs)
         assertEquals(SprayGuidedBlocker.CarrierRateRequired, flow.blocker(SprayGuidedStep.CARRIER))
 
         inputs = inputs.copy(litresPerHectare = 625.0, tankCapacityLitres = 2_000.0)

@@ -72,7 +72,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -85,7 +84,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
@@ -93,9 +91,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImagePainter
-import coil3.compose.SubcomposeAsyncImage
-import coil3.compose.SubcomposeAsyncImageContent
 import com.rork.vinetrack.data.CanopyWaterRates
 import com.rork.vinetrack.data.CanopyWaterRatesStore
 import com.rork.vinetrack.data.RegionFormatter
@@ -130,7 +125,9 @@ import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.SprayJobRowPlan
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.SectionHeader
+import com.rork.vinetrack.ui.components.SprayCanopySelector
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.data.spray.SprayCanopySelection
 import com.rork.vinetrack.data.spray.SprayCarrierBasis
 import com.rork.vinetrack.data.spray.SprayGuidedFlow
 import com.rork.vinetrack.data.spray.SprayGuidedInputs
@@ -420,9 +417,9 @@ fun SprayCalculatorScreen(
     var equipmentExpanded by remember { mutableStateOf(false) }
     var showAddEquipment by remember { mutableStateOf(false) }
 
-    // Water rate
-    var canopySize by remember { mutableStateOf(SprayCalculator.CanopySize.MEDIUM) }
-    var canopyDensity by remember { mutableStateOf(SprayCalculator.CanopyDensity.LOW) }
+    // Canopy opens on the familiar Medium / Low controls, but those visible
+    // defaults are not an operator answer until type and confirmation are given.
+    var canopySelection by remember { mutableStateOf(SprayCanopySelection.unconfirmed) }
     var sprayRateText by remember { mutableStateOf("") }
     var hasEditedSprayRate by remember { mutableStateOf(false) }
 
@@ -506,8 +503,20 @@ fun SprayCalculatorScreen(
     // straight into the water rate and every product quantity built on it.
     val resolvedRowSpacing: Double? = applicationGeometry.uniformRowSpacingMetres
 
-    val per100m = SprayCalculator.litresPer100m(canopyRates, canopySize, canopyDensity)
-    val recommendedRate: Double? = resolvedRowSpacing?.let { CanopyWaterRates.litresPerHa(per100m, it) }
+    val per100m: Double? = if (operationType == "Foliar Spray") {
+        canopySelection.litresPer100m(canopyRates)
+    } else {
+        // Preserve the established non-foliar numeric path exactly; canopy is
+        // neither shown nor required for banded/spreader applications.
+        SprayCalculator.litresPer100m(
+            canopyRates,
+            SprayCalculator.CanopySize.MEDIUM,
+            SprayCalculator.CanopyDensity.LOW,
+        )
+    }
+    val recommendedRate: Double? = per100m?.let { per100 ->
+        resolvedRowSpacing?.let { CanopyWaterRates.litresPerHa(per100, it) }
+    }
     val chosenRate = if (hasEditedSprayRate) {
         sprayRateText.toDoubleOrNull() ?: (recommendedRate ?: 0.0)
     } else {
@@ -547,6 +556,20 @@ fun SprayCalculatorScreen(
     val selectedVineyard = state.selectedVineyard
     val sprayProfile = remember(selectedVineyard, regionCountryCode) {
         selectedVineyard?.sprayProfile ?: SprayVineyardProfile(countryCode = regionCountryCode)
+    }
+    val canopyCarrierBasis = if (sprayProfile.resolvedPolicy.allows(carrierBasisChoice)) {
+        carrierBasisChoice
+    } else {
+        sprayProfile.resolvedPolicy.defaultBasis
+    }
+    val canopyContextSignature = canopySelection.signature(selectedPaddockIds.toList(), canopyCarrierBasis)
+    val isCanopyConfirmed = canopySelection.isConfirmed(selectedPaddockIds.toList(), canopyCarrierBasis)
+    LaunchedEffect(canopyContextSignature) {
+        if (canopySelection.confirmedSignature != null && !isCanopyConfirmed) {
+            canopySelection = canopySelection.copy(confirmedSignature = null)
+        }
+        // A result belongs to the exact type/size/density/block/basis answer.
+        result = null
     }
 
     /**
@@ -648,6 +671,7 @@ fun SprayCalculatorScreen(
             isEquipmentConfirmed = isEquipmentConfirmed,
             tankCapacityLitres = tankCapacity,
             carrierBasis = carrierBasisChoice,
+            isCanopyConfirmed = isCanopyConfirmed,
             litresPerHectare = chosenRate.takeIf { it > 0 },
             diluteLitresPerHectare = recommendedRate,
             diluteLitresPer100Metres = diluteLitresPer100mText.toDoubleOrNull(),
@@ -1559,6 +1583,25 @@ fun SprayCalculatorScreen(
                     }
                 }
 
+                if (operationType == "Foliar Spray") {
+                    SprayCanopySelector(
+                        selection = canopySelection,
+                        rates = canopyRates,
+                        isConfirmed = isCanopyConfirmed,
+                        onSelectionChange = { updated ->
+                            canopySelection = updated
+                            result = null
+                        },
+                        onConfirm = {
+                            canopySelection = canopySelection.confirm(
+                                selectedPaddockIds.toList(),
+                                guidedFlow.effectiveCarrierBasis,
+                            )
+                            result = null
+                        },
+                    )
+                }
+
                 if (guidedFlow.effectiveCarrierBasis == SprayCarrierBasis.LITRES_PER_100_METRES) {
                     // Row-length entry: the operator types ONLY the two rates.
                     // Concentration factor, total litres and the equivalent L/ha
@@ -1619,71 +1662,6 @@ fun SprayCalculatorScreen(
                         }
                     }
                 } else {
-                Text(
-                    "Based on row widths & canopy status",
-                    fontSize = 12.sp,
-                    color = vine.textSecondary,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-                )
-                VineyardCard {
-                    Text("VSP Canopy Size", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = vine.textSecondary)
-                    Spacer8()
-                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                        SprayCalculator.CanopySize.entries.forEachIndexed { i, sz ->
-                            SegmentedButton(
-                                selected = canopySize == sz,
-                                onClick = { canopySize = sz; result = null },
-                                shape = SegmentedButtonDefaults.itemShape(i, SprayCalculator.CanopySize.entries.size),
-                            ) { Text(sz.label, fontSize = 13.sp) }
-                        }
-                    }
-                    Text(canopySize.description, fontSize = 11.sp, color = vine.textSecondary, modifier = Modifier.padding(top = 4.dp))
-
-                    Spacer8()
-                    Box(
-                        Modifier.fillMaxWidth().height(140.dp).clip(RoundedCornerShape(8.dp))
-                            .background(Color.White).padding(8.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        SubcomposeAsyncImage(
-                            model = canopySize.referenceImageUrl,
-                            contentDescription = "${canopySize.label} canopy reference diagram",
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.fillMaxWidth().height(124.dp),
-                        ) {
-                            when (painter.state.collectAsState().value) {
-                                is AsyncImagePainter.State.Loading -> CircularProgressIndicator(
-                                    modifier = Modifier.size(28.dp),
-                                    strokeWidth = 2.5.dp,
-                                    color = VineColors.DarkGreen,
-                                )
-                                is AsyncImagePainter.State.Error -> Text(
-                                    "Reference image unavailable. Use the canopy description above.",
-                                    fontSize = 11.sp,
-                                    color = vine.textSecondary,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(horizontal = 16.dp),
-                                )
-                                else -> SubcomposeAsyncImageContent()
-                            }
-                        }
-                    }
-
-                    Spacer12()
-                    Text("Canopy Density", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = vine.textSecondary)
-                    Spacer8()
-                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                        SprayCalculator.CanopyDensity.entries.forEachIndexed { i, d ->
-                            SegmentedButton(
-                                selected = canopyDensity == d,
-                                onClick = { canopyDensity = d; result = null },
-                                shape = SegmentedButtonDefaults.itemShape(i, SprayCalculator.CanopyDensity.entries.size),
-                            ) { Text(d.label, fontSize = 13.sp) }
-                        }
-                    }
-                    Text(canopyDensity.description, fontSize = 11.sp, color = vine.textSecondary, modifier = Modifier.padding(top = 4.dp))
-
-                    Spacer12()
                     Row(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
                             .background(VineColors.LeafGreen.copy(alpha = 0.10f)).padding(12.dp),
@@ -1700,7 +1678,7 @@ fun SprayCalculatorScreen(
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text("Per 100m row", fontSize = 12.sp, color = vine.textSecondary)
-                            Text("${fmtNum(per100m, 0)} L", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                            Text(per100m?.let { "${fmtNum(it, 0)} L" } ?: "—", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                         }
                     }
 
@@ -1750,7 +1728,6 @@ fun SprayCalculatorScreen(
                             }
                         }
                     }
-                }
                 }
 
                 guidedFlow.blocker(SprayGuidedStep.CARRIER)?.let { blocker ->

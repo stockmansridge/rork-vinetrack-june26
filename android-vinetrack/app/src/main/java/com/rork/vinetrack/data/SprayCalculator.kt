@@ -23,20 +23,34 @@ import kotlin.math.ceil
  */
 object SprayCalculator {
 
-    /**
-     * Canopy size options — labels, descriptions, and reference images all match
-     * the iOS `CanopySize` enum so growers see identical guidance on both
-     * platforms. The reference images are the canonical shared R2 assets iOS
-     * loads, rendered here via Coil.
-     */
-    enum class CanopySize(val label: String, val description: String, val referenceImageUrl: String) {
-        SMALL("Small", "up to 0.5m × 0.5m", "https://r2-pub.rork.com/attachments/n9g6j5bjz0l47bkxhd42r.png"),
-        MEDIUM("Medium", "up to 1m × 1m", "https://pub-e001eb4506b145aa938b5d3badbff6a5.r2.dev/attachments/5dye3l0veago38uvra0ec.png"),
-        LARGE("Large", "Wires Up - 1.5m × 0.5m", "https://pub-e001eb4506b145aa938b5d3badbff6a5.r2.dev/attachments/00p3rr1b6qpdaht5ihsdh.png"),
-        FULL("Full", "Wires Up - 2m × 0.5m", "https://pub-e001eb4506b145aa938b5d3badbff6a5.r2.dev/attachments/iducbl7zsx0yk8ftvuntf.png"),
+    /** Training systems from the iOS `CanopyType` model. */
+    enum class CanopyType(val label: String) {
+        VSP("VSP"),
+        SPRAWL("Sprawl"),
     }
 
-    /** Canopy density options — raw values match the iOS `CanopyDensity` enum. */
+    /** Canopy sizes and system-specific dimensions from iOS. */
+    enum class CanopySize(val label: String) {
+        SMALL("Small"),
+        MEDIUM("Medium"),
+        LARGE("Large"),
+        FULL("Full"),
+        ;
+
+        fun description(type: CanopyType): String = when (type to this) {
+            CanopyType.VSP to SMALL -> "up to 0.5m × 0.5m"
+            CanopyType.VSP to MEDIUM -> "up to 1m × 1m"
+            CanopyType.VSP to LARGE -> "Wires Up - 1.5m × 0.5m"
+            CanopyType.VSP to FULL -> "Wires Up - 2m × 0.5m"
+            CanopyType.SPRAWL to SMALL -> "up to 0.5m × 0.5m"
+            CanopyType.SPRAWL to MEDIUM -> "up to 1m × 1m"
+            CanopyType.SPRAWL to LARGE -> "approx. 1.5m × 1.5m"
+            CanopyType.SPRAWL to FULL -> "approx. 2m × 2m and above"
+            else -> error("Unsupported canopy type and size")
+        }
+    }
+
+    /** Canopy density options — Low and High select the range endpoints. */
     enum class CanopyDensity(val label: String, val description: String) {
         LOW("Low", "Open canopy — light passes through, gaps between shoots."),
         HIGH("High", "Dense canopy — full leaf wall, little light through."),
@@ -53,16 +67,32 @@ object SprayCalculator {
      * [CanopyWaterRates] preference set.
      */
     fun litresPer100m(rates: CanopyWaterRates, size: CanopySize, density: CanopyDensity): Double =
-        when (size to density) {
-            CanopySize.SMALL to CanopyDensity.LOW -> rates.smallLow
-            CanopySize.SMALL to CanopyDensity.HIGH -> rates.smallHigh
-            CanopySize.MEDIUM to CanopyDensity.LOW -> rates.mediumLow
-            CanopySize.MEDIUM to CanopyDensity.HIGH -> rates.mediumHigh
-            CanopySize.LARGE to CanopyDensity.LOW -> rates.largeLow
-            CanopySize.LARGE to CanopyDensity.HIGH -> rates.largeHigh
-            CanopySize.FULL to CanopyDensity.LOW -> rates.fullLow
-            else -> rates.fullHigh
-        }
+        litresPer100m(rates, CanopyType.VSP, size, density)
+
+    /** One shared VSP/Sprawl table for both carrier bases. */
+    fun litresPer100m(
+        rates: CanopyWaterRates,
+        type: CanopyType,
+        size: CanopySize,
+        density: CanopyDensity,
+    ): Double = when (Triple(type, size, density)) {
+        Triple(CanopyType.VSP, CanopySize.SMALL, CanopyDensity.LOW) -> rates.smallLow
+        Triple(CanopyType.VSP, CanopySize.SMALL, CanopyDensity.HIGH) -> rates.smallHigh
+        Triple(CanopyType.VSP, CanopySize.MEDIUM, CanopyDensity.LOW) -> rates.mediumLow
+        Triple(CanopyType.VSP, CanopySize.MEDIUM, CanopyDensity.HIGH) -> rates.mediumHigh
+        Triple(CanopyType.VSP, CanopySize.LARGE, CanopyDensity.LOW) -> rates.largeLow
+        Triple(CanopyType.VSP, CanopySize.LARGE, CanopyDensity.HIGH) -> rates.largeHigh
+        Triple(CanopyType.VSP, CanopySize.FULL, CanopyDensity.LOW) -> rates.fullLow
+        Triple(CanopyType.VSP, CanopySize.FULL, CanopyDensity.HIGH) -> rates.fullHigh
+        Triple(CanopyType.SPRAWL, CanopySize.SMALL, CanopyDensity.LOW) -> rates.sprawlSmallLow
+        Triple(CanopyType.SPRAWL, CanopySize.SMALL, CanopyDensity.HIGH) -> rates.sprawlSmallHigh
+        Triple(CanopyType.SPRAWL, CanopySize.MEDIUM, CanopyDensity.LOW) -> rates.sprawlMediumLow
+        Triple(CanopyType.SPRAWL, CanopySize.MEDIUM, CanopyDensity.HIGH) -> rates.sprawlMediumHigh
+        Triple(CanopyType.SPRAWL, CanopySize.LARGE, CanopyDensity.LOW) -> rates.sprawlLargeLow
+        Triple(CanopyType.SPRAWL, CanopySize.LARGE, CanopyDensity.HIGH) -> rates.sprawlLargeHigh
+        Triple(CanopyType.SPRAWL, CanopySize.FULL, CanopyDensity.LOW) -> rates.sprawlFullLow
+        else -> rates.sprawlFullHigh
+    }
 
     /** Whether an operation type uses the per-100L concentration factor (foliar only). */
     fun usesConcentrationFactor(operationType: String): Boolean =

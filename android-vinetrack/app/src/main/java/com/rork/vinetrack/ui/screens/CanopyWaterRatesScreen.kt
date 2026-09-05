@@ -82,6 +82,16 @@ fun CanopyWaterRatesScreen(modifier: Modifier = Modifier, onBack: (() -> Unit)? 
         largeHigh = parseRate(largeHigh),
         fullLow = parseRate(fullLow),
         fullHigh = parseRate(fullHigh),
+        // This screen remains the established VSP editor. Carry every Sprawl
+        // preference through unchanged so saving VSP can never reset it.
+        sprawlSmallLow = saved.sprawlSmallLow,
+        sprawlSmallHigh = saved.sprawlSmallHigh,
+        sprawlMediumLow = saved.sprawlMediumLow,
+        sprawlMediumHigh = saved.sprawlMediumHigh,
+        sprawlLargeLow = saved.sprawlLargeLow,
+        sprawlLargeHigh = saved.sprawlLargeHigh,
+        sprawlFullLow = saved.sprawlFullLow,
+        sprawlFullHigh = saved.sprawlFullHigh,
     )
 
     fun persist() {

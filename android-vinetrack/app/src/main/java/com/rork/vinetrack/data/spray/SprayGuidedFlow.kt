@@ -89,6 +89,12 @@ sealed interface SprayGuidedBlocker {
         override val message: String get() = "Review the equipment and path, then tap Confirm equipment and path."
     }
 
+    data object CanopyConfirmationRequired : SprayGuidedBlocker {
+        override val title: String get() = "Confirm canopy"
+        override val message: String
+            get() = "Choose the canopy type, size and density, then tap Confirm canopy."
+    }
+
     data object CarrierRateRequired : SprayGuidedBlocker {
         override val title: String get() = "Enter carrier volume"
         override val message: String get() = "Enter the carrier volume for this application."
@@ -169,6 +175,8 @@ data class SprayGuidedInputs(
     val isEquipmentConfirmed: Boolean = false,
     val tankCapacityLitres: Double = 0.0,
     val carrierBasis: SprayCarrierBasis = SprayCarrierBasis.LITRES_PER_HECTARE,
+    /** Foliar canopy is a deliberate operator-confirmed answer, never a visual default. */
+    val isCanopyConfirmed: Boolean = false,
     /** L/ha mode: the rate the operator entered. */
     val litresPerHectare: Double? = null,
     /**
@@ -236,9 +244,12 @@ data class SprayGuidedFlow(
     val requiresBandWidth: Boolean
         get() = inputs.operationType == SprayOperationType.BANDED_SPRAY
 
-    /** True when canopy-specific settings apply. Spreader has no canopy. */
+    /** Existing visibility policy retained; confirmation itself is foliar-only. */
     val supportsCanopySettings: Boolean
         get() = inputs.operationType != SprayOperationType.SPREADER
+
+    val requiresCanopyConfirmation: Boolean
+        get() = SprayCanopyRequirement.requiresConfirmation(inputs.operationType)
 
     // endregion
 
@@ -475,6 +486,8 @@ data class SprayGuidedFlow(
                     positive(inputs.appliedLitresPer100Metres)
             }
             when {
+                requiresCanopyConfirmation && !inputs.isCanopyConfirmed ->
+                    SprayGuidedBlocker.CanopyConfirmationRequired
                 entered == null -> SprayGuidedBlocker.CarrierRateRequired
                 !isCarrierResolved -> SprayGuidedBlocker.CarrierNotCalculable
                 else -> null
