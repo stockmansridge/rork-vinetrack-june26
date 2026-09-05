@@ -57,6 +57,7 @@ object SavedTripActivation {
             tractor = record.tractor,
             tractorGear = record.tractorGear,
             machineId = record.machineId,
+            tractorId = record.tractorId,
             sprayEquipmentId = record.sprayEquipmentId,
             operationType = record.operationType,
             tripId = record.tripId,

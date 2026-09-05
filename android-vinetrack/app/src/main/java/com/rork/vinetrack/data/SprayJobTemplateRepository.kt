@@ -119,12 +119,13 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
         val id: String,
         @SerialName("vineyard_id") val vineyardId: String? = null,
         val name: String? = null,
-        val make: String? = null,
+        val brand: String? = null,
         val model: String? = null,
+        @SerialName("deleted_at") val deletedAt: String? = null,
     ) {
         val displayName: String
             get() = name?.takeIf { it.isNotBlank() }
-                ?: listOfNotNull(make?.takeIf { it.isNotBlank() }, model?.takeIf { it.isNotBlank() })
+                ?: listOfNotNull(brand?.takeIf { it.isNotBlank() }, model?.takeIf { it.isNotBlank() })
                     .joinToString(" ")
                     .ifBlank { "Tractor" }
     }
@@ -222,7 +223,7 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized
             val response = SupabaseClient.http.get(
-                SupabaseClient.restUrl("tractors?vineyard_id=eq.$vineyardId"),
+                SupabaseClient.restUrl(tractorFilterPath(vineyardId)),
             ) { authHeaders(token) }
             when {
                 response.status.isSuccess() ->
@@ -348,6 +349,9 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
     }
 
     companion object {
+        internal fun tractorFilterPath(vineyardId: String): String =
+            "tractors?vineyard_id=eq.$vineyardId&deleted_at=is.null&order=name.asc"
+
         /**
          * The PostgREST filter path shared by [fetchTemplateRow] and
          * [updateTemplate] — factored so the safety contract (id + vineyard +

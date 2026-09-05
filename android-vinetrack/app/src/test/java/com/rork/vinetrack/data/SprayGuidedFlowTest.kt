@@ -92,6 +92,7 @@ class SprayGuidedFlowTest {
         bandWidthTotalMetres = if (operationType == SprayOperationType.BANDED_SPRAY) 0.8 else null,
         isGrowthStageAssigned = true,
         isEquipmentSelected = true,
+        isEquipmentConfirmed = true,
         tankCapacityLitres = 2_000.0,
         carrierBasis = SprayCarrierBasis.LITRES_PER_HECTARE,
         litresPerHectare = 625.0,
@@ -647,6 +648,11 @@ class SprayGuidedFlowTest {
         assertFalse(flow.isUnlocked(SprayGuidedStep.CARRIER))
 
         inputs = inputs.copy(isEquipmentSelected = true)
+        flow = SprayGuidedFlow(inputs)
+        assertEquals(SprayGuidedBlocker.EquipmentConfirmationRequired, flow.blocker(SprayGuidedStep.EQUIPMENT))
+        assertFalse(flow.isUnlocked(SprayGuidedStep.CARRIER))
+
+        inputs = inputs.copy(isEquipmentConfirmed = true)
         flow = SprayGuidedFlow(inputs)
         assertTrue(flow.isUnlocked(SprayGuidedStep.CARRIER))
         assertFalse(flow.isUnlocked(SprayGuidedStep.PRODUCTS))

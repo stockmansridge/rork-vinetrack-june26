@@ -352,6 +352,7 @@ data class SprayProgramStepDraft(
             tractor = existing.tractor,
             tractorGear = existing.tractorGear,
             machineId = existing.machineId,
+            tractorId = tractorId,
             sprayEquipmentId = equipmentId,
             operationType = operationType,
             tripId = existing.tripId,

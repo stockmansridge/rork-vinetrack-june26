@@ -81,7 +81,7 @@ class TripRepository(private val session: SessionStore) {
      * way iOS does (`SprayProgramCSVService.importRows`).
      */
     @Serializable
-    private data class ImportedTripInsert(
+    internal data class ImportedTripInsert(
         val id: String,
         @SerialName("vineyard_id") val vineyardId: String,
         @SerialName("paddock_id") val paddockId: String? = null,
@@ -94,6 +94,7 @@ class TripRepository(private val session: SessionStore) {
         @SerialName("person_name") val personName: String? = null,
         @SerialName("trip_function") val tripFunction: String? = null,
         @SerialName("machine_id") val machineId: String? = null,
+        @SerialName("tractor_id") val tractorId: String? = null,
         @SerialName("operator_user_id") val operatorUserId: String? = null,
         @SerialName("tracking_pattern") val trackingPattern: String? = null,
         @SerialName("row_sequence") val rowSequence: List<Double> = emptyList(),
@@ -325,6 +326,7 @@ class TripRepository(private val session: SessionStore) {
         startTime: String,
         endTime: String?,
         machineId: String? = null,
+        tractorId: String? = null,
         operatorUserId: String? = null,
         trackingPattern: String? = null,
         rowSequence: List<Double> = emptyList(),
@@ -345,6 +347,7 @@ class TripRepository(private val session: SessionStore) {
             personName = personName,
             tripFunction = "spraying",
             machineId = machineId,
+            tractorId = tractorId,
             operatorUserId = operatorUserId,
             trackingPattern = trackingPattern,
             rowSequence = rowSequence,

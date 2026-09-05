@@ -84,6 +84,11 @@ sealed interface SprayGuidedBlocker {
         override val message: String get() = "Select the spray unit used for this application."
     }
 
+    data object EquipmentConfirmationRequired : SprayGuidedBlocker {
+        override val title: String get() = "Confirm equipment"
+        override val message: String get() = "Review the equipment and path, then tap Confirm equipment and path."
+    }
+
     data object CarrierRateRequired : SprayGuidedBlocker {
         override val title: String get() = "Enter carrier volume"
         override val message: String get() = "Enter the carrier volume for this application."
@@ -160,6 +165,8 @@ data class SprayGuidedInputs(
     val bandWidthTotalMetres: Double? = null,
     val isGrowthStageAssigned: Boolean = false,
     val isEquipmentSelected: Boolean = false,
+    /** Explicit operator sign-off; prefilled or merely selected equipment is not confirmation. */
+    val isEquipmentConfirmed: Boolean = false,
     val tankCapacityLitres: Double = 0.0,
     val carrierBasis: SprayCarrierBasis = SprayCarrierBasis.LITRES_PER_HECTARE,
     /** L/ha mode: the rate the operator entered. */
@@ -455,8 +462,11 @@ data class SprayGuidedFlow(
         SprayGuidedStep.GROWTH_STAGE ->
             if (inputs.isGrowthStageAssigned) null else SprayGuidedBlocker.GrowthStageRequired
 
-        SprayGuidedStep.EQUIPMENT ->
-            if (inputs.isEquipmentSelected) null else SprayGuidedBlocker.EquipmentRequired
+        SprayGuidedStep.EQUIPMENT -> when {
+            !inputs.isEquipmentSelected -> SprayGuidedBlocker.EquipmentRequired
+            !inputs.isEquipmentConfirmed -> SprayGuidedBlocker.EquipmentConfirmationRequired
+            else -> null
+        }
 
         SprayGuidedStep.CARRIER -> {
             val entered = when (effectiveCarrierBasis) {

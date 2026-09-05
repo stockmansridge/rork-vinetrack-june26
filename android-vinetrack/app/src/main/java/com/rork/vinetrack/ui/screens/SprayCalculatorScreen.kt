@@ -101,6 +101,7 @@ import com.rork.vinetrack.data.CanopyWaterRatesStore
 import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.data.SprayCalculator
 import com.rork.vinetrack.data.SprayRecordRepository
+import com.rork.vinetrack.data.SprayJobTemplateRepository
 import com.rork.vinetrack.data.TrackingPattern
 import com.rork.vinetrack.data.TripRowSequencePlanner
 import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_100L
@@ -135,6 +136,9 @@ import com.rork.vinetrack.data.spray.SprayGuidedFlow
 import com.rork.vinetrack.data.spray.SprayGuidedInputs
 import com.rork.vinetrack.data.spray.SprayGuidedStep
 import com.rork.vinetrack.data.spray.SpraySectionNavigationState
+import com.rork.vinetrack.data.spray.SprayEquipmentConfirmationState
+import com.rork.vinetrack.data.spray.SprayEquipmentSelection
+import com.rork.vinetrack.data.spray.SprayTractorOptions
 import com.rork.vinetrack.data.spray.SprayHeadTarget
 import com.rork.vinetrack.data.spray.SprayOperationType
 import com.rork.vinetrack.data.spray.SprayProductLineInput
@@ -469,9 +473,11 @@ fun SprayCalculatorScreen(
      */
     val productAreaBasis = remember { mutableStateMapOf<String, SprayProductRateBasis>() }
 
-    // Review step (Spray Tank Mixing)
+    // Equipment and final tank-mix review.
     var showReview by remember { mutableStateOf(false) }
-    var machineId by remember { mutableStateOf<String?>(null) }
+    var tractorId by rememberSaveable { mutableStateOf<String?>(null) }
+    var tractors by remember { mutableStateOf<List<SprayJobTemplateRepository.SprayTractor>>(emptyList()) }
+    var equipmentConfirmedSignature by rememberSaveable { mutableStateOf<String?>(null) }
     var fansJets by remember { mutableStateOf("") }
     var trackingPattern by remember { mutableStateOf(TrackingPattern.SEQUENTIAL) }
     var startPath by remember { mutableStateOf(0.5) }
@@ -514,7 +520,14 @@ fun SprayCalculatorScreen(
     val selectedEquipment = state.sprayEquipment.firstOrNull { it.id == sprayEquipmentId }
     val tankCapacity = selectedEquipment?.tankCapacityLitres?.takeIf { it > 0 } ?: 0.0
 
-    val selectedMachine = state.machines.firstOrNull { it.id == machineId }
+    val selectedTractor = tractors.firstOrNull { it.id == tractorId }
+
+    LaunchedEffect(state.selectedVineyardId) {
+        tractors = emptyList()
+        vm.fetchSprayTractors { loaded ->
+            tractors = state.selectedVineyardId?.let { SprayTractorOptions.activeForVineyard(loaded, it) }.orEmpty()
+        }
+    }
 
     /**
      * The vineyard's spray profile — read from the vineyard, never re-derived
@@ -572,6 +585,44 @@ fun SprayCalculatorScreen(
         )
     }
 
+    // Equipment path setup remains delegated to the established planner.
+    val orderedSelectedPaddocks = remember(selectedPaddocks) {
+        selectedPaddocks.sortedWith(TripRowSequencePlanner.rowOrderComparator)
+    }
+    val hasRowGeometry = remember(orderedSelectedPaddocks) {
+        TripRowSequencePlanner.hasAnyRowGeometry(orderedSelectedPaddocks)
+    }
+    val availablePaths = remember(orderedSelectedPaddocks) {
+        TripRowSequencePlanner.availablePaths(orderedSelectedPaddocks)
+    }
+    LaunchedEffect(availablePaths) {
+        startPath = if (availablePaths.none { abs(it - startPath) < 0.01 }) {
+            availablePaths.firstOrNull() ?: 0.5
+        } else {
+            TripRowSequencePlanner.clampedStartPath(startPath, orderedSelectedPaddocks)
+        }
+    }
+    val pathSequence = remember(orderedSelectedPaddocks, trackingPattern, startPath, directionHigherFirst) {
+        if (!hasRowGeometry || trackingPattern == TrackingPattern.FREE_DRIVE) emptyList()
+        else TripRowSequencePlanner.generateSequence(orderedSelectedPaddocks, trackingPattern, startPath, directionHigherFirst)
+    }
+    val equipmentSelection = SprayEquipmentSelection(
+        selectedBlockIds = orderedSelectedPaddocks.map { it.id },
+        sprayEquipmentId = sprayEquipmentId,
+        tractorId = tractorId,
+        fansJets = fansJets,
+        trackingPattern = trackingPattern.rawValue,
+        startPath = startPath.takeIf { hasRowGeometry && trackingPattern != TrackingPattern.FREE_DRIVE },
+        directionHigherFirst = directionHigherFirst.takeIf { hasRowGeometry && trackingPattern != TrackingPattern.FREE_DRIVE },
+    )
+    LaunchedEffect(equipmentSelection.signature) {
+        if (equipmentConfirmedSignature != null && equipmentConfirmedSignature != equipmentSelection.signature) {
+            equipmentConfirmedSignature = null
+        }
+    }
+    val isEquipmentConfirmed = SprayEquipmentConfirmationState(equipmentConfirmedSignature)
+        .isConfirmed(equipmentSelection)
+
     /**
      * THE single bridge to `SprayApplicationPlanner.plan`. Every calculated figure
      * this screen displays is read back off `guidedPlan` — the screen does no
@@ -593,7 +644,8 @@ fun SprayCalculatorScreen(
                 selectedPaddockIds.isNotEmpty() &&
                     selectedPaddockIds.all { perBlockStages[it] != null }
             },
-            isEquipmentSelected = sprayEquipmentId != null,
+            isEquipmentSelected = selectedEquipment != null,
+            isEquipmentConfirmed = isEquipmentConfirmed,
             tankCapacityLitres = tankCapacity,
             carrierBasis = carrierBasisChoice,
             litresPerHectare = chosenRate.takeIf { it > 0 },
@@ -694,28 +746,6 @@ fun SprayCalculatorScreen(
         guidedFlow.firstBlocker?.title ?: "Incomplete"
     }
 
-    // Row plan geometry — blocks ordered lowest row first, matching iOS.
-    val orderedSelectedPaddocks = remember(selectedPaddocks) {
-        selectedPaddocks.sortedWith(TripRowSequencePlanner.rowOrderComparator)
-    }
-    val hasRowGeometry = remember(orderedSelectedPaddocks) {
-        TripRowSequencePlanner.hasAnyRowGeometry(orderedSelectedPaddocks)
-    }
-    val availablePaths = remember(orderedSelectedPaddocks) {
-        TripRowSequencePlanner.availablePaths(orderedSelectedPaddocks)
-    }
-    LaunchedEffect(availablePaths) {
-        startPath = if (availablePaths.none { abs(it - startPath) < 0.01 }) {
-            availablePaths.firstOrNull() ?: 0.5
-        } else {
-            TripRowSequencePlanner.clampedStartPath(startPath, orderedSelectedPaddocks)
-        }
-    }
-    val pathSequence = remember(orderedSelectedPaddocks, trackingPattern, startPath, directionHigherFirst) {
-        if (!hasRowGeometry || trackingPattern == TrackingPattern.FREE_DRIVE) emptyList()
-        else TripRowSequencePlanner.generateSequence(orderedSelectedPaddocks, trackingPattern, startPath, directionHigherFirst)
-    }
-
     // Auto-select the only spray unit so the operator can't skip the section.
     LaunchedEffect(state.sprayEquipment) {
         if (sprayEquipmentId == null && state.sprayEquipment.size == 1) {
@@ -741,6 +771,7 @@ fun SprayCalculatorScreen(
         r.operationType?.takeIf { it in sprayOperationTypes }?.let { operationType = it }
         notes = r.notes.orEmpty()
         fansJets = r.numberOfFansJets.orEmpty()
+        tractorId = r.tractorId
         sprayEquipmentId = r.sprayEquipmentId?.takeIf { id -> state.sprayEquipment.any { it.id == id } }
             ?: state.sprayEquipment.firstOrNull {
                 it.name.isNotBlank() && it.name.equals(r.equipmentType ?: "", ignoreCase = true)
@@ -780,6 +811,10 @@ fun SprayCalculatorScreen(
             }
         } else {
             resolveSprayTrip(r, state.trips)?.let { trip ->
+                trackingPattern = TrackingPattern.fromRaw(trip.trackingPattern)
+                trip.rowSequence.firstOrNull()?.let { startPath = it }
+                val firstDistinctPair = trip.rowSequence.zipWithNext().firstOrNull { (a, b) -> abs(a - b) > 0.01 }
+                firstDistinctPair?.let { (first, second) -> directionHigherFirst = second > first }
                 val ids = trip.paddockIds.ifEmpty { listOfNotNull(trip.paddockId) }
                     .filter { pid -> state.paddocks.any { it.id == pid } }
                 if (ids.isNotEmpty()) {
@@ -948,9 +983,10 @@ fun SprayCalculatorScreen(
             numberOfFansJets = fansJets.trim().ifBlank { null },
             averageSpeed = null,
             equipmentType = selectedEquipment?.displayName,
-            tractor = selectedMachine?.displayName,
+            tractor = selectedTractor?.displayName ?: prefillRecord?.tractor,
             tractorGear = null,
-            machineId = machineId,
+            machineId = null,
+            tractorId = tractorId,
             sprayEquipmentId = sprayEquipmentId,
             operationType = operationType,
             tripId = null,
@@ -1054,7 +1090,7 @@ fun SprayCalculatorScreen(
         guidedProducts.any { it.needsAreaBasisDecision }
 
     val formIsValid = selectedPaddockIds.isNotEmpty() && selectedEquipment != null &&
-        chemLines.isNotEmpty() && !bandedBasisUndecided
+        isEquipmentConfirmed && chemLines.isNotEmpty() && !bandedBasisUndecided
 
     // ── Spray Tank Mixing review step ────────────────────────────────────────
     val reviewResult = result
@@ -1067,18 +1103,12 @@ fun SprayCalculatorScreen(
             equipmentLabel = selectedEquipment?.displayName ?: "—",
             savedChemicals = state.savedChemicals,
             canEditCost = canEditCost,
-            machineId = machineId,
-            onMachineChange = { machineId = it },
+            tractorLabel = selectedTractor?.displayName ?: if (tractorId == null) "Not Set" else "Unavailable tractor",
             fansJets = fansJets,
-            onFansJetsChange = { fansJets = it },
             trackingPattern = trackingPattern,
-            onPatternChange = { trackingPattern = it },
             hasRowGeometry = hasRowGeometry,
-            availablePaths = availablePaths,
             startPath = startPath,
-            onStartPathChange = { startPath = it },
             directionHigherFirst = directionHigherFirst,
-            onDirectionChange = { directionHigherFirst = it },
             orderedSelectedPaddocks = orderedSelectedPaddocks,
             pathSequence = pathSequence,
             errorMessage = errorMessage,
@@ -1451,6 +1481,33 @@ fun SprayCalculatorScreen(
                                 }
                             }
                         }
+                    }
+                    EquipmentPathSetupContent(
+                        tractors = tractors,
+                        tractorId = tractorId,
+                        onTractorChange = { tractorId = SprayTractorOptions.selectedId(it, tractors) },
+                        fansJets = fansJets,
+                        onFansJetsChange = { fansJets = it },
+                        trackingPattern = trackingPattern,
+                        onPatternChange = { trackingPattern = it },
+                        hasRowGeometry = hasRowGeometry,
+                        availablePaths = availablePaths,
+                        startPath = startPath,
+                        onStartPathChange = { startPath = it },
+                        directionHigherFirst = directionHigherFirst,
+                        onDirectionChange = { directionHigherFirst = it },
+                        orderedSelectedPaddocks = orderedSelectedPaddocks,
+                        pathSequence = pathSequence,
+                        canConfirm = selectedEquipment != null,
+                        isConfirmed = isEquipmentConfirmed,
+                        onConfirm = {
+                            equipmentConfirmedSignature = SprayEquipmentConfirmationState()
+                                .confirm(equipmentSelection)
+                                .confirmedSignature
+                        },
+                    )
+                    guidedFlow.blocker(SprayGuidedStep.EQUIPMENT)?.let { blocker ->
+                        GuidedBlockerBanner(blocker = blocker)
                     }
                 }
                 }
@@ -1949,9 +2006,17 @@ fun SprayCalculatorScreen(
                                 fansJets.ifBlank { "Not set" },
                             )
                             GuidedReviewRow(
-                                "Machine",
-                                selectedMachine?.displayName ?: "Not selected",
+                                "Tractor",
+                                selectedTractor?.displayName ?: if (tractorId == null) "Not Set" else "Unavailable tractor",
                             )
+                            GuidedReviewRow("Tracking pattern", trackingPattern.title)
+                            if (hasRowGeometry && trackingPattern != TrackingPattern.FREE_DRIVE) {
+                                GuidedReviewRow("Starting path", TripRowSequencePlanner.pathMenuLabel(startPath, orderedSelectedPaddocks))
+                                GuidedReviewRow("Direction", if (directionHigherFirst) "Lower to higher" else "Higher to lower")
+                                GuidedReviewRow("Proposed sequence", TripRowSequencePlanner.sequencePreviewText(pathSequence))
+                            } else {
+                                GuidedReviewRow("Proposed sequence", "Free Drive")
+                            }
                         }
                     }
 
@@ -3281,6 +3346,113 @@ private fun LegacyRatePickerRow(
     }
 }
 
+// ── Equipment setup ──────────────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EquipmentPathSetupContent(
+    tractors: List<SprayJobTemplateRepository.SprayTractor>,
+    tractorId: String?,
+    onTractorChange: (String?) -> Unit,
+    fansJets: String,
+    onFansJetsChange: (String) -> Unit,
+    trackingPattern: TrackingPattern,
+    onPatternChange: (TrackingPattern) -> Unit,
+    hasRowGeometry: Boolean,
+    availablePaths: List<Double>,
+    startPath: Double,
+    onStartPathChange: (Double) -> Unit,
+    directionHigherFirst: Boolean,
+    onDirectionChange: (Boolean) -> Unit,
+    orderedSelectedPaddocks: List<Paddock>,
+    pathSequence: List<Double>,
+    canConfirm: Boolean,
+    isConfirmed: Boolean,
+    onConfirm: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    var tractorMenu by remember { mutableStateOf(false) }
+    var patternMenu by remember { mutableStateOf(false) }
+    var pathMenu by remember { mutableStateOf(false) }
+    val selectedTractor = tractors.firstOrNull { it.id == tractorId }
+
+    Text("Tractor", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+    ExposedDropdownMenuBox(expanded = tractorMenu, onExpandedChange = { tractorMenu = it }) {
+        OutlinedTextField(
+            value = selectedTractor?.displayName ?: if (tractorId == null) "Not Set" else "Unavailable tractor",
+            onValueChange = {}, readOnly = true, label = { Text("Tractor (optional)") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(tractorMenu) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+        )
+        ExposedDropdownMenu(expanded = tractorMenu, onDismissRequest = { tractorMenu = false }) {
+            DropdownMenuItem(text = { Text("Not Set") }, onClick = { onTractorChange(null); tractorMenu = false })
+            tractors.forEach { tractor ->
+                DropdownMenuItem(text = { Text(tractor.displayName) }, onClick = { onTractorChange(tractor.id); tractorMenu = false })
+            }
+        }
+    }
+    OutlinedTextField(
+        value = fansJets,
+        onValueChange = { onFansJetsChange(it.filter(Char::isDigit)) },
+        label = { Text("Fans / Jets") }, supportingText = { Text("Optional") },
+        singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Text("Tracking pattern", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+    ExposedDropdownMenuBox(expanded = patternMenu, onExpandedChange = { patternMenu = it }) {
+        OutlinedTextField(
+            value = trackingPattern.title, onValueChange = {}, readOnly = true, label = { Text("Tracking pattern") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(patternMenu) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+        )
+        ExposedDropdownMenu(expanded = patternMenu, onDismissRequest = { patternMenu = false }) {
+            TrackingPattern.entries.forEach { pattern ->
+                DropdownMenuItem(text = { Text(pattern.title) }, onClick = { onPatternChange(pattern); patternMenu = false })
+            }
+        }
+    }
+    if (hasRowGeometry && trackingPattern != TrackingPattern.FREE_DRIVE) {
+        ExposedDropdownMenuBox(expanded = pathMenu, onExpandedChange = { pathMenu = it }) {
+            OutlinedTextField(
+                value = TripRowSequencePlanner.pathMenuLabel(startPath, orderedSelectedPaddocks),
+                onValueChange = {}, readOnly = true, label = { Text("Starting path") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(pathMenu) },
+                modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+            )
+            ExposedDropdownMenu(expanded = pathMenu, onDismissRequest = { pathMenu = false }) {
+                availablePaths.forEach { path ->
+                    DropdownMenuItem(text = { Text(TripRowSequencePlanner.pathMenuLabel(path, orderedSelectedPaddocks)) }, onClick = { onStartPathChange(path); pathMenu = false })
+                }
+            }
+        }
+        Text("Direction", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            SegmentedButton(selected = !directionHigherFirst, onClick = { onDirectionChange(false) }, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Higher to lower", fontSize = 12.sp) }
+            SegmentedButton(selected = directionHigherFirst, onClick = { onDirectionChange(true) }, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Lower to higher", fontSize = 12.sp) }
+        }
+        Text("Proposed row/path sequence", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+        VineyardCard {
+            Text(TripRowSequencePlanner.sequencePreviewText(pathSequence), fontSize = 13.sp, color = vine.textPrimary)
+        }
+    } else {
+        Text(
+            if (trackingPattern == TrackingPattern.FREE_DRIVE) "Free Drive does not require a starting path."
+            else "Selected blocks have no usable row geometry; this trip will use Free Drive.",
+            fontSize = 12.sp, color = vine.textSecondary,
+        )
+        Text("Proposed row/path sequence: Free Drive", fontSize = 13.sp, color = vine.textPrimary)
+    }
+    Button(
+        onClick = onConfirm,
+        enabled = canConfirm,
+        modifier = Modifier.fillMaxWidth(),
+        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Olive),
+    ) {
+        Icon(Icons.Filled.CheckCircle, contentDescription = null)
+        Text(if (isConfirmed) "  Equipment and path confirmed" else "  Confirm equipment and path")
+    }
+}
+
 // ── Spray Tank Mixing review ─────────────────────────────────────────────────
 
 private fun patternIcon(pattern: TrackingPattern): ImageVector = when (pattern) {
@@ -3308,18 +3480,12 @@ private fun SprayTankMixReview(
     equipmentLabel: String,
     savedChemicals: List<SavedChemical>,
     canEditCost: Boolean,
-    machineId: String?,
-    onMachineChange: (String?) -> Unit,
+    tractorLabel: String,
     fansJets: String,
-    onFansJetsChange: (String) -> Unit,
     trackingPattern: TrackingPattern,
-    onPatternChange: (TrackingPattern) -> Unit,
     hasRowGeometry: Boolean,
-    availablePaths: List<Double>,
     startPath: Double,
-    onStartPathChange: (Double) -> Unit,
     directionHigherFirst: Boolean,
-    onDirectionChange: (Boolean) -> Unit,
     orderedSelectedPaddocks: List<Paddock>,
     pathSequence: List<Double>,
     errorMessage: String?,
@@ -3331,7 +3497,9 @@ private fun SprayTankMixReview(
 ) {
     val vine = LocalVineColors.current
     val uriHandler = LocalUriHandler.current
-    val selectedMachine = state.machines.firstOrNull { it.id == machineId }
+    val availablePaths: List<Double> = emptyList()
+    val onStartPathChange: (Double) -> Unit = {}
+    val onDirectionChange: (Boolean) -> Unit = {}
 
     Scaffold(
         modifier = modifier,
@@ -3469,112 +3637,26 @@ private fun SprayTankMixReview(
                 item { CostingCard(result) }
             }
 
-            // Machine (optional, for fuel costing)
-            item { SectionHeader("Machine", onLight = true) }
+            item { SectionHeader("Equipment & path", onLight = true) }
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    var menu by remember { mutableStateOf(false) }
-                    Box {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(vine.cardBackground)
-                                .clickable(enabled = state.machines.isNotEmpty()) { menu = true }
-                                .padding(14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Icon(Icons.Filled.Agriculture, contentDescription = null, tint = VineColors.Indigo, modifier = Modifier.size(20.dp))
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text("Machine / Tractor", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                                Text(
-                                    selectedMachine?.displayName
-                                        ?: if (state.machines.isEmpty()) "No machines configured" else "No machine selected",
-                                    fontSize = 12.sp,
-                                    color = vine.textSecondary,
-                                )
-                            }
-                            Icon(Icons.Filled.SwapVert, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(16.dp))
-                        }
-                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(text = { Text("No machine") }, onClick = { onMachineChange(null); menu = false })
-                            state.machines.forEach { machine ->
-                                DropdownMenuItem(
-                                    text = { Text(machine.displayName) },
-                                    onClick = { onMachineChange(machine.id); menu = false },
-                                )
-                            }
-                        }
+                VineyardCard {
+                    GuidedReviewRow("Spray unit", equipmentLabel)
+                    GuidedReviewRow("Tractor", tractorLabel)
+                    GuidedReviewRow("Fans / jets", fansJets.ifBlank { "Not Set" })
+                    GuidedReviewRow("Tracking pattern", trackingPattern.title)
+                    if (hasRowGeometry && trackingPattern != TrackingPattern.FREE_DRIVE) {
+                        GuidedReviewRow("Starting path", TripRowSequencePlanner.pathMenuLabel(startPath, orderedSelectedPaddocks))
+                        GuidedReviewRow("Direction", if (directionHigherFirst) "Lower to higher" else "Higher to lower")
+                        GuidedReviewRow("Proposed sequence", TripRowSequencePlanner.sequencePreviewText(pathSequence))
+                    } else {
+                        GuidedReviewRow("Proposed sequence", "Free Drive")
                     }
-                    Text(
-                        if (state.machines.isEmpty()) "Add machines in Equipment to enable fuel cost estimates."
-                        else "Optional \u2014 select a machine so fuel cost can be estimated.",
-                        fontSize = 11.sp,
-                        color = vine.textSecondary,
-                        modifier = Modifier.padding(horizontal = 4.dp),
-                    )
                 }
             }
 
-            // Fans / jets
-            item { SectionHeader("Equipment Settings", onLight = true) }
-            item {
-                OutlinedTextField(
-                    value = fansJets,
-                    onValueChange = { onFansJetsChange(it.filter { c -> c.isDigit() }) },
-                    label = { Text("No. Fans / Jets") },
-                    placeholder = { Text("e.g. 6") },
-                    supportingText = { Text("Optional \u2014 recorded for compliance") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
 
-            // Tracking pattern
-            item { SectionHeader("Tracking Pattern", onLight = true) }
-            items(TrackingPattern.entries, key = { "pattern-${it.rawValue}" }) { pattern ->
-                val isSelected = trackingPattern == pattern
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(vine.cardBackground)
-                        .clickable { onPatternChange(pattern) }
-                        .padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background((if (isSelected) VineColors.Purple else vine.textSecondary).copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            patternIcon(pattern),
-                            contentDescription = null,
-                            tint = if (isSelected) VineColors.Purple else vine.textSecondary,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text(pattern.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                        Text(pattern.subtitle, fontSize = 12.sp, color = vine.textSecondary, maxLines = 2)
-                    }
-                    Icon(
-                        if (isSelected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
-                        contentDescription = null,
-                        tint = if (isSelected) VineColors.Purple else vine.textSecondary.copy(alpha = 0.5f),
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-            }
-
-            // Start path + direction + sequence preview
-            if (hasRowGeometry && trackingPattern != TrackingPattern.FREE_DRIVE) {
+            // Path setup is owned by Step 5; Review keeps only the summary above.
+            if (false && hasRowGeometry && trackingPattern != TrackingPattern.FREE_DRIVE) {
                 item { SectionHeader("Start Path & Direction", onLight = true) }
                 item {
                     VineyardCard {
@@ -3650,7 +3732,7 @@ private fun SprayTankMixReview(
                         }
                     }
                 }
-            } else if (trackingPattern == TrackingPattern.FREE_DRIVE) {
+            } else if (false && trackingPattern == TrackingPattern.FREE_DRIVE) {
                 item {
                     VineyardCard {
                         Text("No planned row sequence", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
@@ -3662,7 +3744,7 @@ private fun SprayTankMixReview(
                         )
                     }
                 }
-            } else {
+            } else if (false) {
                 item {
                     VineyardCard {
                         Text(

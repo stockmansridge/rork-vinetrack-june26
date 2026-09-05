@@ -1534,6 +1534,7 @@ private fun SpraySheet(
     var equipmentType by remember { mutableStateOf(existing?.equipmentType ?: "") }
     var tractorText by remember { mutableStateOf(existing?.tractor ?: "") }
     var machineId by remember { mutableStateOf(existing?.machineId) }
+    val tractorId = existing?.tractorId
     var sprayEquipmentId by remember { mutableStateOf(existing?.sprayEquipmentId) }
     var tractorGear by remember { mutableStateOf(existing?.tractorGear ?: "") }
     var fansJets by remember { mutableStateOf(existing?.numberOfFansJets ?: "") }
@@ -1621,6 +1622,7 @@ private fun SpraySheet(
             tractor = tractorText.trim().ifBlank { null },
             tractorGear = tractorGear.trim().ifBlank { null },
             machineId = machineId,
+            tractorId = tractorId,
             sprayEquipmentId = sprayEquipmentId,
             operationType = operationType,
             tripId = tripId,
