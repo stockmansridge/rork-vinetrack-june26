@@ -1620,6 +1620,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val tripTankSync = TripTankSync(tripRepo, pendingWrites, activeTripStore)
     private val sprayTankActualStore = com.rork.vinetrack.data.SprayTankActualStore(app)
     private val sprayTankActualRepo = com.rork.vinetrack.data.SprayTankActualRepository(session)
+    private val startTankCommitCoordinator = com.rork.vinetrack.data.StartTankCommitCoordinator(
+        app, activeTripStore, sprayTankActualStore, pendingWrites, tripTankSync,
+    )
 
     /**
      * Offline replay coordinator for the trip-END summary only (Tier-A Stage
@@ -1631,7 +1634,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * server trip before a guarded endTrip PATCH. Triggered on reconnect and
      * after a successful vineyard load, after the dependency replays.
      */
-    private val tripEndSync = TripEndSync(tripRepo, pendingWrites, activeTripStore)
+    private val tripEndSync = TripEndSync(
+        tripRepo, pendingWrites, activeTripStore,
+        hasPendingActuals = { tripId -> sprayTankActualStore.pending(tripId).isNotEmpty() },
+    )
+    private val phase5ReplayRunning = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
      * Trip soft-DELETE replay coordinator (Tier-A Stage G-2). Ended/inactive
@@ -1867,6 +1874,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         accountDeletionRepo.submitRequest(reason)
 
     init {
+        startTankCommitCoordinator.recover()
         observeConnectivity()
         observePendingWrites()
         observePendingPhotos()
@@ -2320,6 +2328,65 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Runs Phase 5 parent and dependent writes in one awaited, per-process pipeline. */
+    private fun replayPhase5Writes() {
+        if (session.accessToken == null || !_ui.value.isOnline) return
+        if (!phase5ReplayRunning.compareAndSet(false, true)) return
+        viewModelScope.launch {
+            try {
+                tripStartSync.replayAll { trip ->
+                    _ui.update { st -> st.copy(trips = st.trips.map { existing ->
+                        if (existing.id == trip.id) TripStartReconciliation.reconcile(server = trip, local = existing) else existing
+                    }) }
+                    persistActiveTripSnapshot()
+                }
+                // A spray record may depend on a queued spray job; both parents
+                // must exist before tank-session state is attempted.
+                sprayJobCreateSync.replayAll()
+                sprayCreateSync.replayAll { record ->
+                    _ui.update { st ->
+                        if (st.sprayRecords.any { it.id == record.id }) {
+                            st.copy(sprayRecords = st.sprayRecords.map { if (it.id == record.id) record else it })
+                        } else st.copy(sprayRecords = listOf(record) + st.sprayRecords)
+                    }
+                }
+                tripTankSync.replayAll { trip ->
+                    _ui.update { st -> st.copy(trips = st.trips.map { existing ->
+                        if (existing.id != trip.id) existing
+                        else if ((trip.pathPoints?.size ?: 0) >= (existing.pathPoints?.size ?: 0)) trip
+                        else trip.copy(pathPoints = existing.pathPoints, totalDistance = existing.totalDistance)
+                    }) }
+                    persistActiveTripSnapshot()
+                }
+                sprayTankActualStore.pending().sortedBy { it.clientUpdatedAt }.forEach { actual ->
+                    val unresolved = TripStartSync.hasUnresolvedStart(pendingWrites, actual.tripId) ||
+                        pendingWrites.list().any { write ->
+                            write.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved &&
+                                ((write.clientId == actual.tripId && write.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK) ||
+                                    (write.clientId == actual.sprayRecordId && write.entityType == com.rork.vinetrack.data.model.PendingEntityType.SPRAY_RECORD && write.opType == com.rork.vinetrack.data.model.PendingOpType.CREATE))
+                        }
+                    if (!unresolved) {
+                        runCatching { sprayTankActualRepo.upsert(actual) }
+                            .onSuccess { sprayTankActualStore.markSynced(actual.id) }
+                    }
+                }
+                _ui.value.selectedVineyardId?.let { vineyardId ->
+                    runCatching { sprayTankActualRepo.fetch(vineyardId) }
+                        .onSuccess { sprayTankActualStore.mergeRemote(it) }
+                }
+                tripEndSync.replayAll { trip ->
+                    _ui.update { st -> st.copy(
+                        trips = st.trips.map { if (it.id == trip.id) trip else it },
+                        locallyEndedTripIds = st.locallyEndedTripIds - trip.id,
+                    ) }
+                    persistActiveTripSnapshot()
+                }
+            } finally {
+                phase5ReplayRunning.set(false)
+            }
+        }
+    }
+
     /**
      * Replay any queued trip-START create markers (Tier-A Stage B-3-1).
      * Start-only — creates the server trip row for a NEW trip begun offline,
@@ -2332,25 +2399,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * reconciled into state by id, preserving a longer live in-memory path, and
      * the Stage A snapshot is refreshed.
      */
-    private fun replayPendingTripStart() {
-        if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
-            tripStartSync.replayAll { trip ->
-                _ui.update { st ->
-                    st.copy(
-                        trips = st.trips.map { existing ->
-                            if (existing.id != trip.id) {
-                                existing
-                            } else {
-                                TripStartReconciliation.reconcile(server = trip, local = existing)
-                            }
-                        },
-                    )
-                }
-                persistActiveTripSnapshot()
-            }
-        }
-    }
+    private fun replayPendingTripStart() = replayPhase5Writes()
 
     /**
      * Replay any queued GPS/path progress markers (Tier-A Stage C-1). GPS-only —
@@ -2446,37 +2495,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * truncated (keep the longer of in-memory vs returned), and the Stage A
      * snapshot is refreshed.
      */
-    private fun replayPendingTripTank() {
-        if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
-            tripTankSync.replayAll { trip ->
-                _ui.update { st ->
-                    st.copy(
-                        trips = st.trips.map { existing ->
-                            if (existing.id != trip.id) {
-                                existing
-                            } else {
-                                val existingCount = existing.pathPoints?.size ?: 0
-                                val returnedCount = trip.pathPoints?.size ?: 0
-                                if (returnedCount >= existingCount) {
-                                    trip
-                                } else {
-                                    // The tank PATCH returns the server's path,
-                                    // which can lag the live tracker — keep the
-                                    // longer in-memory path/distance.
-                                    trip.copy(
-                                        pathPoints = existing.pathPoints,
-                                        totalDistance = existing.totalDistance,
-                                    )
-                                }
-                            }
-                        },
-                    )
-                }
-                persistActiveTripSnapshot()
-            }
-        }
-    }
+    private fun replayPendingTripTank() = replayPhase5Writes()
 
     /**
      * Replay any queued trip-END markers (Tier-A Stage B-2-1). End-only —
@@ -2491,57 +2510,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * the dependency replays so any same-trip GPS/row/tank/metadata work has a
      * chance to land first in the same pass.
      */
-    private fun replayPendingTankActuals() {
-        if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
-            sprayTankActualStore.pending().sortedBy { it.clientUpdatedAt }.forEach { actual ->
-                val parentPending = TripStartSync.hasUnresolvedStart(pendingWrites, actual.tripId) ||
-                    pendingWrites.list().any {
-                        it.clientId == actual.tripId &&
-                            it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK &&
-                            it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
-                    } || pendingWrites.list().any {
-                        it.clientId == actual.sprayRecordId &&
-                            it.entityType == com.rork.vinetrack.data.model.PendingEntityType.SPRAY_RECORD &&
-                            it.opType == com.rork.vinetrack.data.model.PendingOpType.CREATE &&
-                            it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
-                    }
-                if (!parentPending) {
-                    runCatching { sprayTankActualRepo.upsert(actual) }
-                        .onSuccess { sprayTankActualStore.markSynced(actual.id) }
-                }
-            }
-            _ui.value.selectedVineyardId?.let { vineyardId ->
-                runCatching { sprayTankActualRepo.fetch(vineyardId) }
-                    .onSuccess { sprayTankActualStore.mergeRemote(it) }
-            }
-            replayPendingTripEnd()
-        }
-    }
+    private fun replayPendingTankActuals() = replayPhase5Writes()
 
-    private fun replayPendingTripEnd() {
-        if (session.accessToken == null || !_ui.value.isOnline) return
-        val pendingEndTripIds = pendingWrites.list()
-            .filter {
-                it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_END &&
-                    it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
-            }
-            .mapTo(mutableSetOf()) { it.clientId }
-        if (pendingEndTripIds.any { sprayTankActualStore.pending(it).isNotEmpty() }) return
-        viewModelScope.launch {
-            tripEndSync.replayAll { trip ->
-                _ui.update { st ->
-                    st.copy(
-                        trips = st.trips.map { if (it.id == trip.id) trip else it },
-                        locallyEndedTripIds = st.locallyEndedTripIds - trip.id,
-                    )
-                }
-                // The trip is now inactive server-side, so this clears the
-                // durable Stage A snapshot it was preserving for the end replay.
-                persistActiveTripSnapshot()
-            }
-        }
-    }
+    private fun replayPendingTripEnd() = replayPhase5Writes()
 
     /**
      * Replay any queued trip soft-deletes (Tier-A Stage G-2). Soft-delete-only,
@@ -2625,23 +2596,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * passes and before pin photos in every replay pipeline. Skipped when offline
      * or with no session so it can't fire during early startup.
      */
-    private fun replayPendingSprayCreates() {
-        if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
-            // Jobs FIRST: a queued spray record may reference a queued job via
-            // spray_job_id, and sql/033 requires the job row to exist.
-            sprayJobCreateSync.replayAll()
-            sprayCreateSync.replayAll { record ->
-                _ui.update { st ->
-                    if (st.sprayRecords.any { it.id == record.id }) {
-                        st.copy(sprayRecords = st.sprayRecords.map { if (it.id == record.id) record else it })
-                    } else {
-                        st.copy(sprayRecords = listOf(record) + st.sprayRecords)
-                    }
-                }
-            }
-        }
-    }
+    private fun replayPendingSprayCreates() = replayPhase5Writes()
 
     // ------------------------------------------------------------------
     // Plan -> Spray Job provenance (sql/201, Stage 5B)
@@ -7273,6 +7228,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun endTrip(notes: String?, endEngineHours: Double? = null, onResult: (Boolean) -> Unit) {
         val trip = _ui.value.activeTrip ?: run { onResult(false); return }
+        if (trip.activeTankNumber != null || trip.isFillingTank) {
+            _ui.update { it.copy(tripError = "End or stop the current tank before finishing this trip.") }
+            onResult(false)
+            return
+        }
         val tripId = trip.id
         val capturedPoints = tracker?.points?.toList() ?: trip.pathPoints ?: emptyList()
         val capturedDistance = tracker?.distanceMetres ?: trip.totalDistance ?: 0.0
@@ -7293,8 +7253,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         persistActiveTripSnapshot()
-        // Known offline: end locally and queue the markers; no network call.
-        if (!_ui.value.isOnline) {
+        val hasPendingPhase5Dependencies = sprayTankActualStore.pending(tripId).isNotEmpty() ||
+            pendingWrites.list().any { write ->
+                write.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved &&
+                    ((write.clientId == tripId && write.entityType in setOf(
+                        com.rork.vinetrack.data.model.PendingEntityType.TRIP_START,
+                        com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK,
+                    )) || (write.entityType == com.rork.vinetrack.data.model.PendingEntityType.SPRAY_RECORD &&
+                        write.opType == com.rork.vinetrack.data.model.PendingOpType.CREATE &&
+                        _ui.value.sprayRecords.any { it.id == write.clientId && it.tripId == tripId }))
+            }
+        // Offline or dependency-blocked online: queue the end behind Phase 5.
+        if (!_ui.value.isOnline || hasPendingPhase5Dependencies) {
             markTripEndedLocally(tripId, cleanNotes, endEngineHours, requestedEndTime)
             onResult(true)
             return
@@ -9575,21 +9545,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
         val ownerId = session.userId ?: return false
         val vineyardId = _ui.value.selectedVineyardId ?: return false
-        val previousSnapshot = activeTripStore.load()
-        if (!activeTripStore.saveDurably(ownerId, vineyardId, result.trip)) return false
-        if (!sprayTankActualStore.save(actual)) {
-            if (previousSnapshot != null) {
-                activeTripStore.saveDurably(previousSnapshot.ownerUserId, previousSnapshot.vineyardId, previousSnapshot.trip)
-            } else {
-                activeTripStore.clear()
-            }
-            return false
-        }
-        val marker = runCatching { tripTankSync.enqueue(result.trip) }.getOrElse {
-            sprayTankActualStore.remove(actual.id)
-            if (previousSnapshot != null) activeTripStore.saveDurably(previousSnapshot.ownerUserId, previousSnapshot.vineyardId, previousSnapshot.trip)
-            else activeTripStore.clear()
-            return false
+        if (!startTankCommitCoordinator.commit(ownerId, vineyardId, result.trip, actual)) return false
+        val marker = pendingWrites.list().firstOrNull {
+            it.clientId == trip.id &&
+                it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK &&
+                it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
         }
         _ui.update { state -> state.copy(trips = state.trips.map { if (it.id == trip.id) result.trip else it }) }
         if (_ui.value.isOnline) {
@@ -9600,10 +9560,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         result.trip.isFillingTank, result.trip.fillingTankNumber,
                     )
                 }.onSuccess {
-                    pendingWrites.remove(marker.id)
-                    replayPendingTankActuals()
+                    marker?.let { pendingWrites.remove(it.id) }
+                    replayAllPendingWrites()
                 }.onFailure {
-                    pendingWrites.updateStatus(marker.id, com.rork.vinetrack.data.model.PendingWriteStatus.FAILED, "Tank session is waiting to sync.")
+                    marker?.let { pendingWrites.updateStatus(it.id, com.rork.vinetrack.data.model.PendingWriteStatus.FAILED, "Tank session is waiting to sync.") }
                 }
             }
         }

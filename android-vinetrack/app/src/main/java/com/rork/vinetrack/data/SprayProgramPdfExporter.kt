@@ -464,15 +464,9 @@ object SprayProgramPdfExporter {
         paddocks: List<Paddock>,
         tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual>,
     ) {
-        // Per-chemical costs across all records (covers records without a
-        // linked trip, mirroring the existing grouped behaviour).
-        val chemCosts = records
-            .flatMap { it.tanks.orEmpty() }
-            .flatMap { it.chemicals }
-            .filter { it.name.isNotBlank() && it.costPerTank > 0 }
-            .groupBy { it.name.trim().lowercase(Locale.getDefault()) }
-            .map { (_, chems) -> chems.first().name to chems.sumOf { it.costPerTank } }
-            .sortedBy { it.first.lowercase(Locale.getDefault()) }
+        // Product rows and subtotal are accumulated from the same selected
+        // all-actual or all-planned dataset for each record.
+        val chemicalLineCosts = linkedMapOf<String, Pair<String, Double>>()
         var chemicalSubtotal = 0.0
         var allChemicalCostsActual = true
 
@@ -486,7 +480,17 @@ object SprayProgramPdfExporter {
         var linkedCount = 0
 
         records.forEach { record ->
-            val trip = resolveSprayTrip(record, trips) ?: return@forEach
+            val trip = resolveSprayTrip(record, trips)
+            if (trip == null) {
+                allChemicalCostsActual = false
+                record.tanks.orEmpty().flatMap { it.chemicals }.filter { it.hasCost }.forEach { chemical ->
+                    val key = chemical.name.trim().lowercase(Locale.getDefault())
+                    val previous = chemicalLineCosts[key]?.second ?: 0.0
+                    chemicalLineCosts[key] = chemical.name to previous + chemical.costPerTank
+                    chemicalSubtotal += chemical.costPerTank
+                }
+                return@forEach
+            }
             linkedCount++
             val est = TripCostEstimator.estimate(
                 trip = trip,
@@ -498,6 +502,11 @@ object SprayProgramPdfExporter {
                 tankActuals = tankActuals.filter { it.tripId == trip.id && it.sprayRecordId == record.id },
             )
             chemicalSubtotal += est.chemical?.cost ?: 0.0
+            est.chemical?.lines.orEmpty().forEach { line ->
+                val key = line.name.trim().lowercase(Locale.getDefault())
+                val previous = chemicalLineCosts[key]?.second ?: 0.0
+                chemicalLineCosts[key] = line.name to previous + line.cost
+            }
             if (est.chemical?.basis != TripCostEstimator.ChemicalCostBasis.Actual) allChemicalCostsActual = false
             est.fuel.litres?.let { fuelLitres += it }
             est.fuel.fuelCost?.let { fuelCost += it }
@@ -508,6 +517,8 @@ object SprayProgramPdfExporter {
                 TripCostEstimator.Completeness.Unavailable -> unavailable++
             }
         }
+
+        val chemCosts = chemicalLineCosts.values.sortedBy { it.first.lowercase(Locale.getDefault()) }
 
         // Grand total composed from distinct sources to avoid double-counting:
         // chemical subtotal spans all records, fuel + labour come from linked

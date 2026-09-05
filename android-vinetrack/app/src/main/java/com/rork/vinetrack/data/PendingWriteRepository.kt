@@ -62,7 +62,7 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
             createdAt = now,
             updatedAt = now,
         )
-        update { it + write }
+        check(update { it + write }) { "Pending write could not be committed durably." }
         return write
     }
 
@@ -179,16 +179,18 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
      * server/replay side effects.
      */
     fun clearAll() {
-        store.clear()
-        _writes.value = emptyList()
-        _pendingCount.value = 0
+        if (store.clear()) {
+            _writes.value = emptyList()
+            _pendingCount.value = 0
+        }
     }
 
-    private fun update(transform: (List<PendingWrite>) -> List<PendingWrite>) {
+    private fun update(transform: (List<PendingWrite>) -> List<PendingWrite>): Boolean {
         val next = transform(_writes.value)
+        if (!store.save(next)) return false
         _writes.value = next
         _pendingCount.value = countUnresolved(next)
-        store.save(next)
+        return true
     }
 
     private fun countUnresolved(list: List<PendingWrite>): Int =

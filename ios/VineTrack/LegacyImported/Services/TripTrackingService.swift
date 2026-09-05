@@ -8,6 +8,7 @@ import Supabase
 @Observable
 @MainActor
 final class TripTrackingService {
+    private let startTankCommitCoordinator = StartTankCommitCoordinator()
 
     // MARK: - Published state
 
@@ -237,6 +238,7 @@ final class TripTrackingService {
     func configure(store: MigratedDataStore, locationService: LocationService) {
         self.store = store
         self.locationService = locationService
+        startTankCommitCoordinator.recover(store: store)
         resumeIfNeeded()
     }
 
@@ -404,6 +406,10 @@ final class TripTrackingService {
     // MARK: - End
 
     func endTrip() {
+        if let trip = activeTrip, trip.activeTankNumber != nil || trip.isFillingTank {
+            errorMessage = "End or stop the current tank before finishing this trip."
+            return
+        }
         // Final completion pass — credit the current/last locked row if
         // it was clearly driven but never produced a normal row-end
         // transition (typical for the last planned row, where there is
@@ -696,13 +702,8 @@ final class TripTrackingService {
                 confirmedAt: result.operationTimestamp,
                 confirmedBy: userId
             )
-            try SprayTankActualStore.shared.saveLocally(actual)
-            do {
-                try store?.updateTripOrThrow(committedTrip)
-            } catch {
-                try? SprayTankActualStore.shared.removeLocal(id: actual.id)
-                throw error
-            }
+            guard let store else { throw SprayTankActualValidationError.localSaveFailed }
+            try startTankCommitCoordinator.commit(updatedTrip: committedTrip, actual: actual, store: store)
             return true
         } catch {
             errorMessage = error.localizedDescription

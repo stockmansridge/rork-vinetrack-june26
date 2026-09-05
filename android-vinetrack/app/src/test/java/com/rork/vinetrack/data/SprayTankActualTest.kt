@@ -7,10 +7,25 @@ import com.rork.vinetrack.ui.screens.parseLocalizedNonNegativeDecimal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import java.io.File
 import java.text.NumberFormat
 import java.util.Locale
 
 class SprayTankActualTest {
+    @Test fun sharedRepositoryChemicalFixtureDecodesCompleteContract() {
+        val fixtureFile = listOf(
+            File("ios/VineTrackTests/Fixtures/spray_tank_actual_chemical.json"),
+            File("../ios/VineTrackTests/Fixtures/spray_tank_actual_chemical.json"),
+            File("../../ios/VineTrackTests/Fixtures/spray_tank_actual_chemical.json"),
+        ).first { it.exists() }
+        val fixture = fixtureFile.readText()
+        val decoded = SupabaseClient.json.decodeFromString(SprayTankActualChemical.serializer(), fixture)
+        assertEquals("10000000-0000-4000-8000-000000000002", decoded.plannedChemicalId)
+        assertEquals("10000000-0000-4000-8000-000000000003", decoded.savedChemicalId)
+        assertEquals(1250.5, decoded.actualAmountBase, 0.0)
+        assertEquals("mL", decoded.unit)
+    }
+
     @Test fun sharedChemicalJsonDecodesConfirmedZero() {
         val json = """{"id":"10000000-0000-4000-8000-000000000001","plannedChemicalId":null,"savedChemicalId":null,"name":"Product","actualAmountBase":0,"unit":"Litres"}"""
         val decoded = SupabaseClient.json.decodeFromString(SprayTankActualChemical.serializer(), json)

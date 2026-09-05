@@ -296,7 +296,9 @@ object SprayRecordPdfExporter {
         val tanks = record.tanks.orEmpty()
         for (tank in tanks) {
             sectionHeader(s, "Tank ${tank.tankNumber}")
-            val actual = actuals.firstOrNull { it.tankNumber == tank.tankNumber }
+            val sessionId = trip?.tankSessions?.firstOrNull { it.tankNumber == tank.tankNumber }?.id
+            val actual = sessionId?.let { id -> actuals.filter { it.tankSessionId == id }.maxByOrNull { it.clientUpdatedAt } }
+                ?: actuals.filter { it.tankNumber == tank.tankNumber }.maxByOrNull { it.clientUpdatedAt }
             row(s, "Planned Water", "${fmt(tank.waterVolume)} L")
             row(s, "Actual Water", actual?.let { "${fmt(it.waterVolumeL)} L" } ?: "Not recorded")
             if (actual != null && kotlin.math.abs(actual.waterVolumeL - tank.waterVolume) > 0.0000001) {
@@ -332,6 +334,10 @@ object SprayRecordPdfExporter {
                         s.canvas.drawText("${fmt(chem.ratePerHa)} $unit/ha", c2, s.y, bodyBoldPaint)
                     }
                     s.y += 18f
+                    if (actualChemical != null && kotlin.math.abs(actualChemical.actualAmountBase - chem.volumePerTank) > 0.000_001) {
+                        val difference = chemicalUnitFromBase(chem.unit, actualChemical.actualAmountBase - chem.volumePerTank)
+                        rowIndented(s, "Difference", "${if (difference > 0) "+" else ""}${fmt(difference)} ${chem.unit}")
+                    }
                 }
             }
         }

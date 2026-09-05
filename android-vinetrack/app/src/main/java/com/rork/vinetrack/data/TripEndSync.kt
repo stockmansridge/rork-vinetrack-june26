@@ -45,6 +45,7 @@ class TripEndSync(
     private val tripRepo: TripRepository,
     private val pending: PendingWriteRepository,
     private val activeTripStore: ActiveTripStore,
+    private val hasPendingActuals: (String) -> Boolean = { false },
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -219,7 +220,7 @@ class TripEndSync(
      * rather than finalise with unsynced progress.
      */
     private fun hasUnresolvedDependencies(tripId: String): Boolean =
-        pending.list().any {
+        hasPendingActuals(tripId) || pending.list().any {
             it.clientId == tripId &&
                 it.entityType in dependencyTypes &&
                 it.status in PendingWriteStatus.unresolved

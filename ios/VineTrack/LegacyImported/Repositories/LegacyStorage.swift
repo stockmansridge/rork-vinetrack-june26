@@ -94,8 +94,13 @@ final class PersistenceStore {
     }
 
     func remove(key: String) {
+        try? removeOrThrow(key: key)
+    }
+
+    func removeOrThrow(key: String) throws {
         let url = fileURL(for: key)
-        try? FileManager.default.removeItem(at: url)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
     }
 
     /// Move a corrupt payload aside so the next save starts from a clean file

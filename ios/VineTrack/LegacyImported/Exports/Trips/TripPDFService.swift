@@ -285,7 +285,9 @@ struct TripPDFService {
                     drawRow(label: "Tank \(session.tankNumber)", value: status)
                     if let planned = sprayRecord?.tanks.first(where: { $0.tankNumber == session.tankNumber }) {
                         drawRow(label: "  Planned water", value: "\(formatNumber(planned.waterVolume)) L", indent: 12)
-                        if let actual = tankActuals.first(where: { $0.tankSessionId == session.id.uuidString || $0.tankNumber == session.tankNumber }) {
+                        let actual = tankActuals.filter { $0.tankSessionId == session.id.uuidString }.max(by: { $0.clientUpdatedAt < $1.clientUpdatedAt })
+                            ?? tankActuals.filter { $0.tankNumber == session.tankNumber }.max(by: { $0.clientUpdatedAt < $1.clientUpdatedAt })
+                        if let actual {
                             drawRow(label: "  Actual water", value: "\(formatNumber(actual.waterVolumeL)) L", indent: 12)
                             let waterDifference = actual.waterVolumeL - planned.waterVolume
                             if abs(waterDifference) > 0.000_001 {

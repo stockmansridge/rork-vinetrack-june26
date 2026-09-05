@@ -53,6 +53,7 @@ final class TripSyncService {
     private let repository: any TripSyncRepositoryProtocol
     private let metadata: TripSyncMetadata
     private var isConfigured: Bool = false
+    private var shouldDeferEndedTrip: (UUID) -> Bool = { _ in false }
 
     init(
         repository: (any TripSyncRepositoryProtocol)? = nil,
@@ -75,6 +76,11 @@ final class TripSyncService {
         store.onTripDeleted = { [weak self] id in
             self?.markTripDeleted(id)
         }
+    }
+
+    /// Holds final ended state locally until this trip's actual-use queue clears.
+    func configurePhase5EndGate(_ gate: @escaping (UUID) -> Bool) {
+        shouldDeferEndedTrip = gate
     }
 
     // MARK: - Dirty tracking
@@ -528,6 +534,7 @@ final class TripSyncService {
             var pushedIds: [UUID] = []
             var skipped: [(UUID, String)] = []
             var orphans: [UUID] = []
+            var deferredEndIds: Set<UUID> = []
             for (tripId, ts) in dirty {
                 // Reclaim queue entries with no local trip — they can never
                 // upload and used to sit in the queue forever.
@@ -550,6 +557,13 @@ final class TripSyncService {
                         continue
                     }
                 }
+                if !trip.isActive && shouldDeferEndedTrip(tripId) {
+                    // Upload parent and exact tank-session state first, but keep
+                    // the durable final end queued until actual-use succeeds.
+                    trip.isActive = true
+                    trip.endTime = nil
+                    deferredEndIds.insert(tripId)
+                }
                 payloads.append(BackendTrip.upsert(from: trip, createdBy: createdBy, clientUpdatedAt: ts))
                 pushedIds.append(tripId)
             }
@@ -563,6 +577,9 @@ final class TripSyncService {
                 vineyardId: vineyardId
             ) { try await repository.upsertTrips($0) }
             metadata.clearDirty(result.uploaded)
+            for id in result.uploaded where deferredEndIds.contains(id) {
+                metadata.markDirty(id, at: Date())
+            }
             metadata.markUpsertsFailed(result.failed)
             SyncIssueCenter.shared.notePending(entity: "Trips", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }

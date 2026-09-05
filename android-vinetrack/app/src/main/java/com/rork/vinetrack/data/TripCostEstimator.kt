@@ -48,10 +48,13 @@ object TripCostEstimator {
      */
     enum class ChemicalCostBasis { Actual, Estimated }
 
+    data class ChemicalCostLine(val name: String, val cost: Double)
+
     data class ChemicalBreakdown(
         val cost: Double,
         val warning: String?,
         val basis: ChemicalCostBasis,
+        val lines: List<ChemicalCostLine>,
     )
 
     /**
@@ -170,6 +173,7 @@ object TripCostEstimator {
             var total = 0.0
             var anyPriced = false
             var anyMissing = false
+            val lineCosts = linkedMapOf<String, ChemicalCostLine>()
             tanks.forEach { tank ->
                 tank.chemicals.forEach { planned ->
                     val amount = if (actualsComplete) {
@@ -177,7 +181,11 @@ object TripCostEstimator {
                             ?.singleOrNull { it.plannedChemicalId == planned.id }).actualAmountBase
                     } else planned.volumePerTank
                     if (planned.hasCost) {
-                        total += planned.costPerUnit * amount
+                        val lineCost = planned.costPerUnit * amount
+                        total += lineCost
+                        val key = planned.name.trim().lowercase()
+                        val existing = lineCosts[key]
+                        lineCosts[key] = ChemicalCostLine(planned.name, (existing?.cost ?: 0.0) + lineCost)
                         anyPriced = true
                     } else if (amount > 0.0) anyMissing = true
                 }
@@ -187,7 +195,12 @@ object TripCostEstimator {
                 anyMissing -> "Some chemicals are missing a cost per unit."
                 else -> null
             }
-            ChemicalBreakdown(total, warning, if (actualsComplete) ChemicalCostBasis.Actual else ChemicalCostBasis.Estimated)
+            ChemicalBreakdown(
+                total,
+                warning,
+                if (actualsComplete) ChemicalCostBasis.Actual else ChemicalCostBasis.Estimated,
+                lineCosts.values.toList(),
+            )
         }
 
         // ---- Treated area (multi-block) -----------------------------------

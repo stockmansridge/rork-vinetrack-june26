@@ -88,6 +88,10 @@ final class SprayTankActualStore {
         pendingIds = cache?.pendingIds ?? []
     }
 
+    func hasPending(tripId: UUID) -> Bool {
+        records.contains { $0.tripId == tripId && pendingIds.contains($0.id) }
+    }
+
     func actual(tripId: UUID, tankNumber: Int) -> SprayTankActual? {
         records.filter { $0.tripId == tripId && $0.tankNumber == tankNumber }
             .max { $0.clientUpdatedAt < $1.clientUpdatedAt }

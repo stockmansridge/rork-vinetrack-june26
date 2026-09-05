@@ -1,7 +1,6 @@
 package com.rork.vinetrack.data
 
 import android.content.Context
-import androidx.core.content.edit
 import com.rork.vinetrack.data.model.PendingWrite
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -33,14 +32,11 @@ class PendingWriteStore(context: Context) : PendingWriteStoring {
     }
 
     /** Persist the full outbox, replacing any previous contents. */
-    override fun save(writes: List<PendingWrite>) {
-        prefs.edit { putString(KEY_WRITES, json.encodeToString(serializer, writes)) }
-    }
+    override fun save(writes: List<PendingWrite>): Boolean =
+        prefs.edit().putString(KEY_WRITES, json.encodeToString(serializer, writes)).commit()
 
     /** Clear the entire outbox (used by tooling / future sign-out cleanup). */
-    override fun clear() {
-        prefs.edit { remove(KEY_WRITES) }
-    }
+    override fun clear(): Boolean = prefs.edit().remove(KEY_WRITES).commit()
 
     private companion object {
         const val KEY_WRITES = "pending_writes_json"

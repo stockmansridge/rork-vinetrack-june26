@@ -37,6 +37,11 @@
 #   VT_TRIP_OTHER         trip UUID inside VT_VINEYARD_OTHER
 #   VT_SPRAY_GRANTED      spray record UUID inside VT_VINEYARD_GRANTED
 #   VT_SPRAY_OTHER        spray record UUID inside VT_VINEYARD_OTHER
+#   VT_SPRAY_PLANNED_ONLY Phase 5 planned-only spray record UUID
+#   VT_SPRAY_PARTIAL      Phase 5 partially confirmed spray record UUID
+#   VT_SPRAY_COMPLETE     Phase 5 fully confirmed spray record UUID
+#   VT_SPRAY_ZERO         Phase 5 fully confirmed record with an explicit zero product
+#   VT_SPRAY_MISSING_LINE Phase 5 actual row missing a planned chemical line
 #   VT_FUEL_RECORD_GRANTED    tractor_fuel_logs UUID inside VT_VINEYARD_GRANTED
 #   VT_FUEL_RECORD_OTHER      tractor_fuel_logs UUID inside VT_VINEYARD_OTHER
 #   VT_FUEL_PURCHASE_GRANTED  fuel_purchases UUID inside VT_VINEYARD_GRANTED
@@ -297,17 +302,42 @@ if [ -n "${VT_TRIP_OTHER-}" ]; then
 else skip "other-account trip"; fi
 
 if [ -n "${VT_SPRAY_GRANTED-}" ]; then
-  s=$(call GET "/v1/spray-jobs/$VT_SPRAY_GRANTED" "Bearer $VT_KEY_FULL"); check "granted spray record retrievable" 200 "$s"
+  s=$(call GET "/v1/spray-records/$VT_SPRAY_GRANTED" "Bearer $VT_KEY_FULL"); check "granted spray record retrievable" 200 "$s"
   check_body "spray detail has tanks array" '.data.tanks | type == "array"'
   check_body "spray detail has blocks array" '.data.blocks | type == "array"'
   check_body "spray products omit cost_per_unit without costs:read" \
     '[.data.tanks[].products[]? | has("cost_per_unit")] | any | not'
   check_body "spray conditions use explicit units" \
     '.data.conditions | has("temperature_c") and has("wind_speed_kmh") and has("humidity_percent")'
-else skip "granted spray record (5 tests)"; fi
+  check_body "legacy water_volume_l remains planned water" '.data.water_volume_l == .data.planned_water_volume_l'
+  check_body "actual tanks are exposed but cost basis is scope-gated" '(.data.actual_tanks | type == "array") and (.data | has("chemical_cost_basis") | not)'
+else skip "granted spray record (7 tests)"; fi
 if [ -n "${VT_SPRAY_OTHER-}" ]; then
-  s=$(call GET "/v1/spray-jobs/$VT_SPRAY_OTHER" "Bearer $VT_KEY_FULL"); check "other account's spray record -> 404" 404 "$s" resource_not_found
+  s=$(call GET "/v1/spray-records/$VT_SPRAY_OTHER" "Bearer $VT_KEY_FULL"); check "other account's spray record -> 404" 404 "$s" resource_not_found
 else skip "other-account spray record"; fi
+
+if [ -n "${VT_KEY_SENSITIVE-}" ]; then
+  if [ -n "${VT_SPRAY_PLANNED_ONLY-}" ]; then
+    s=$(call GET "/v1/spray-records/$VT_SPRAY_PLANNED_ONLY" "Bearer $VT_KEY_SENSITIVE"); check "Phase 5 planned-only spray" 200 "$s"
+    check_body "planned-only actuals incomplete and estimated" '.data.actuals_complete == false and .data.actual_water_volume_l == null and .data.chemical_cost_basis == "estimated"'
+  else skip "Phase 5 planned-only spray (2 tests)"; fi
+  if [ -n "${VT_SPRAY_PARTIAL-}" ]; then
+    s=$(call GET "/v1/spray-records/$VT_SPRAY_PARTIAL" "Bearer $VT_KEY_SENSITIVE"); check "Phase 5 partial spray" 200 "$s"
+    check_body "partial actuals remain entirely estimated" '.data.actuals_complete == false and .data.actual_water_volume_l != null and .data.chemical_cost_basis == "estimated"'
+  else skip "Phase 5 partial spray (2 tests)"; fi
+  if [ -n "${VT_SPRAY_COMPLETE-}" ]; then
+    s=$(call GET "/v1/spray-records/$VT_SPRAY_COMPLETE" "Bearer $VT_KEY_SENSITIVE"); check "Phase 5 complete spray" 200 "$s"
+    check_body "complete actuals use actual basis" '.data.actuals_complete == true and .data.actual_water_volume_l != null and .data.chemical_cost_basis == "actual"'
+  else skip "Phase 5 complete spray (2 tests)"; fi
+  if [ -n "${VT_SPRAY_ZERO-}" ]; then
+    s=$(call GET "/v1/spray-records/$VT_SPRAY_ZERO" "Bearer $VT_KEY_SENSITIVE"); check "Phase 5 confirmed-zero spray" 200 "$s"
+    check_body "confirmed zero remains an explicit actual result" '.data.actuals_complete == true and [.data.actual_tanks[].actual_products[]? | select(.quantity_base == 0)] | length > 0'
+  else skip "Phase 5 confirmed-zero spray (2 tests)"; fi
+  if [ -n "${VT_SPRAY_MISSING_LINE-}" ]; then
+    s=$(call GET "/v1/spray-records/$VT_SPRAY_MISSING_LINE" "Bearer $VT_KEY_SENSITIVE"); check "Phase 5 missing-line spray" 200 "$s"
+    check_body "missing planned product confirmation is incomplete" '.data.actuals_complete == false and .data.chemical_cost_basis == "estimated"'
+  else skip "Phase 5 missing-line spray (2 tests)"; fi
+else skip "sensitive Phase 5 key and fixtures"; fi
 
 if [ -n "${VT_FUEL_RECORD_GRANTED-}" ]; then
   s=$(call GET "/v1/fuel-records/$VT_FUEL_RECORD_GRANTED" "Bearer $VT_KEY_FULL"); check "granted fuel record retrievable" 200 "$s"

@@ -113,6 +113,9 @@ struct NewMainTabView: View {
             pinSync.configure(store: store, auth: auth)
             paddockSync.configure(store: store, auth: auth)
             tripSync.configure(store: store, auth: auth)
+            tripSync.configurePhase5EndGate { tripId in
+                SprayTankActualStore.shared.hasPending(tripId: tripId)
+            }
             sprayRecordSync.configure(store: store, auth: auth)
             sprayJobTemplateService.configure(store: store, auth: auth)
             buttonConfigSync.configure(store: store, auth: auth)
@@ -305,6 +308,9 @@ struct NewMainTabView: View {
                 vineyardId: vineyardId
             )
             await SprayTankActualStore.shared.pull(vineyardId: vineyardId)
+            // Final ended state is a durable second stage and can only upload
+            // after this trip's actual-use rows have cleared their queue.
+            await tripSync.syncTripsForSelectedVineyard()
         }
         await sprayJobTemplateService.syncForSelectedVineyard()
         await buttonConfigSync.syncButtonConfigForSelectedVineyard()

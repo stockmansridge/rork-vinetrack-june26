@@ -57,6 +57,7 @@ struct TripCSVService {
                 "fuel_cost_per_litre",
                 "fuel_cost",
                 "chemical_cost",
+                "chemical_cost_basis",
                 "total_estimated_cost",
                 "costing_status",
                 "treated_area_ha",
@@ -74,6 +75,7 @@ struct TripCSVService {
                     if let w = c.warning, c.cost <= 0, !w.isEmpty { return "" }
                     return String(format: "%.2f", c.cost)
                 }) ?? "",
+                r.chemical?.basis.rawValue ?? "",
                 String(format: "%.2f", r.totalCost),
                 r.completeness.rawValue,
                 (r.treatedAreaHa.map { String(format: "%.2f", $0) }) ?? "",

@@ -258,7 +258,10 @@ struct SprayRecordPDFService {
             for tank in record.tanks {
                 drawSectionHeader("Tank \(tank.tankNumber)")
 
-                let actual = trip.flatMap { SprayTankActualStore.shared.actual(tripId: $0.id, tankNumber: tank.tankNumber) }
+                let sessionId = trip?.tankSessions.first(where: { $0.tankNumber == tank.tankNumber })?.id.uuidString
+                let tripActuals = trip.map { trip in SprayTankActualStore.shared.records.filter { $0.tripId == trip.id && $0.sprayRecordId == record.id } } ?? []
+                let actual = sessionId.flatMap { id in tripActuals.filter { $0.tankSessionId == id }.max(by: { $0.clientUpdatedAt < $1.clientUpdatedAt }) }
+                    ?? tripActuals.filter { $0.tankNumber == tank.tankNumber }.max(by: { $0.clientUpdatedAt < $1.clientUpdatedAt })
                 drawRow(label: "Planned Water", value: formatter.formatVolume(litres: tank.waterVolume))
                 drawRow(label: "Actual Water", value: actual.map { formatter.formatVolume(litres: $0.waterVolumeL) } ?? "Not recorded")
                 if let actual, abs(actual.waterVolumeL - tank.waterVolume) > 0.000_000_1 {
@@ -312,6 +315,10 @@ struct SprayRecordPDFService {
                         // line as "0.00 L/ha" on a compliance document.
                         (chemical.reportedRateText(formatter: formatter) as NSString).draw(at: CGPoint(x: colX[2], y: y), withAttributes: valAttrs)
                         y += 18
+                        if let actualChemical, abs(actualChemical.actualAmountBase - chemical.volumePerTank) > 0.000_001 {
+                            let difference = chemical.unit.fromBase(actualChemical.actualAmountBase - chemical.volumePerTank)
+                            drawRow(label: "  Difference", value: "\(difference > 0 ? "+" : "")\(String(format: "%.3f", difference)) \(chemical.unit.rawValue)", indent: 12)
+                        }
                     }
                 }
             }
@@ -355,7 +362,7 @@ struct SprayRecordPDFService {
             // pass `false` for supervisors and operators so they never receive
             // pricing in exported spray PDFs.
             if includeCostings, let r = tripCostResult {
-                drawSectionHeader("Estimated Trip Cost")
+                drawSectionHeader(r.chemical?.basis == .actual ? "Trip Cost — Actual Chemicals" : "Estimated Trip Cost")
 
                 if let w = r.labour.warning {
                     drawRow(label: "Labour", value: "—")

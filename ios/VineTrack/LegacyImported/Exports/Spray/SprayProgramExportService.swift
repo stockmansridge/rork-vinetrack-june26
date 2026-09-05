@@ -230,15 +230,19 @@ struct SprayProgramExportService {
             y += 16
 
             let allActualsComplete = !records.isEmpty && records.allSatisfy { record in
-                !record.tanks.isEmpty && record.tanks.allSatisfy { tank in
-                    tankActuals.contains { $0.sprayRecordId == record.id && $0.tankNumber == tank.tankNumber }
-                }
+                areSprayTankActualsComplete(
+                    plannedTanks: record.tanks,
+                    actuals: tankActuals.filter { $0.sprayRecordId == record.id }
+                )
             }
             let costItems: [(String, Double)] = records.flatMap { record in
                 record.tanks.flatMap { tank in
                     tank.chemicals.compactMap { chemical -> (String, Double)? in
+                        let actual = tankActuals
+                            .filter { $0.sprayRecordId == record.id && $0.tankNumber == tank.tankNumber }
+                            .max(by: { $0.clientUpdatedAt < $1.clientUpdatedAt })
                         let amount = allActualsComplete
-                            ? (tankActuals.first { $0.sprayRecordId == record.id && $0.tankNumber == tank.tankNumber }?.chemicals.first { $0.plannedChemicalId == chemical.id }?.actualAmountBase ?? 0)
+                            ? actual!.chemicals.first(where: { $0.plannedChemicalId == chemical.id })!.actualAmountBase
                             : chemical.volumePerTank
                         let cost = chemical.costPerUnit * amount
                         guard cost > 0 else { return nil }

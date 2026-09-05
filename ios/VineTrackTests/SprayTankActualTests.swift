@@ -3,6 +3,16 @@ import XCTest
 @testable import VineTrack
 
 final class SprayTankActualTests: XCTestCase {
+    func testSharedRepositoryChemicalFixtureDecodesCompleteContract() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "spray_tank_actual_chemical", withExtension: "json"))
+        let data = try Data(contentsOf: url)
+        let decoded = try JSONDecoder().decode(SprayTankActualChemical.self, from: data)
+        XCTAssertEqual(decoded.plannedChemicalId?.uuidString.lowercased(), "10000000-0000-4000-8000-000000000002")
+        XCTAssertEqual(decoded.savedChemicalId?.uuidString.lowercased(), "10000000-0000-4000-8000-000000000003")
+        XCTAssertEqual(decoded.actualAmountBase, 1250.5)
+        XCTAssertEqual(decoded.unit, .millilitres)
+    }
+
     func testSharedChemicalJsonAndZeroRemainDistinctFromMissing() throws {
         let json = #"{"id":"10000000-0000-4000-8000-000000000001","plannedChemicalId":null,"savedChemicalId":null,"name":"Product","actualAmountBase":0,"unit":"Litres"}"#.data(using: .utf8)!
         let decoded = try JSONDecoder().decode(SprayTankActualChemical.self, from: json)

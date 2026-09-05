@@ -17,10 +17,10 @@ interface PendingWriteStoring {
     fun load(): List<PendingWrite>
 
     /** Persist the full outbox, replacing any previous contents. */
-    fun save(writes: List<PendingWrite>)
+    fun save(writes: List<PendingWrite>): Boolean
 
     /** Drop the entire outbox. */
-    fun clear()
+    fun clear(): Boolean
 }
 
 /**
@@ -35,11 +35,13 @@ class InMemoryPendingWriteStore(initial: List<PendingWrite> = emptyList()) : Pen
 
     override fun load(): List<PendingWrite> = writes
 
-    override fun save(writes: List<PendingWrite>) {
+    override fun save(writes: List<PendingWrite>): Boolean {
         this.writes = writes
+        return true
     }
 
-    override fun clear() {
+    override fun clear(): Boolean {
         writes = emptyList()
+        return true
     }
 }

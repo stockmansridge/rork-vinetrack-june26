@@ -268,7 +268,8 @@ object TripPdfExporter {
                 val status = if (session.isOpen) "Active" else "Complete"
                 row(s, "Tank ${session.tankNumber}", status)
                 val planned = linkedSpray?.tanks?.firstOrNull { it.tankNumber == session.tankNumber }
-                val actual = tankActuals.firstOrNull { it.tankSessionId == session.id || it.tankNumber == session.tankNumber }
+                val actual = tankActuals.filter { it.tankSessionId == session.id }.maxByOrNull { it.clientUpdatedAt }
+                    ?: tankActuals.filter { it.tankNumber == session.tankNumber }.maxByOrNull { it.clientUpdatedAt }
                 if (planned != null) {
                     rowIndented(s, "Planned water", "${fmt(planned.waterVolume)} L")
                     if (actual == null) {
