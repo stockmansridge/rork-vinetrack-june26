@@ -266,6 +266,7 @@ import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.FuelPurchase
 import com.rork.vinetrack.data.model.TractorFuelLog
 import com.rork.vinetrack.data.model.TankSession
+import com.rork.vinetrack.data.TankSessionLifecycle
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.Vineyard
 import com.rork.vinetrack.data.model.VineyardMachine
@@ -9458,67 +9459,47 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // MARK: - Live tank sessions (Stage 3F-2b)
 
-    /**
-     * Start a new tank session on the active spray trip. Mirrors the iOS
-     * `startTank()` semantics: if a session is still open it is closed first
-     * (capturing its end row), then a new session is opened with the next tank
-     * number, the current time and the current planned row as its start row.
-     * Sets `activeTankNumber` and clears the (parked) fill state. Manual only;
-     * never touches GPS progress, row coverage or fill timing.
-     */
+    /** Start spraying the next tank, reusing an existing fill-only session. */
     fun startTankSession(tripId: String) {
         val trip = _ui.value.trips.firstOrNull { it.id == tripId }
         if (trip == null || !trip.isActive) {
             _ui.update { it.copy(tripError = "No active trip to update.") }
             return
         }
-        val currentRow = trip.currentRowNumber ?: trip.rowSequence.getOrNull(trip.sequenceIndex)
-        val now = java.time.Instant.now().toString()
-        val sessions = trip.tankSessions.map { session ->
-            // Close any still-open session before opening the new one.
-            if (session.isOpen) session.copy(endTime = now, endRow = session.endRow ?: currentRow) else session
-        }.toMutableList()
-        val nextNumber = (sessions.maxOfOrNull { it.tankNumber } ?: 0) + 1
-        sessions.add(
-            TankSession(
-                id = java.util.UUID.randomUUID().toString(),
-                tankNumber = nextNumber,
-                startTime = now,
-                startRow = currentRow,
-            ),
+        val updated = TankSessionLifecycle.start(
+            trip = trip,
+            timestamp = java.time.Instant.now().toString(),
+            currentRow = trip.currentRowNumber ?: trip.rowSequence.getOrNull(trip.sequenceIndex),
         )
+        if (updated == trip) return
         persistTankSessions(
             tripId,
-            sessions,
-            activeTankNumber = nextNumber,
-            isFillingTank = trip.isFillingTank,
-            fillingTankNumber = trip.fillingTankNumber,
+            updated.tankSessions,
+            activeTankNumber = updated.activeTankNumber,
+            isFillingTank = updated.isFillingTank,
+            fillingTankNumber = updated.fillingTankNumber,
         )
     }
 
-    /**
-     * End the currently open tank session on the active spray trip. Mirrors the
-     * iOS `endTank()`: sets the open session's end time and end row, then clears
-     * `activeTankNumber`. Fill state is left untouched (parked for 3F-2c).
-     */
+    /** End only the session identified by the active tank number. */
     fun endTankSession(tripId: String) {
         val trip = _ui.value.trips.firstOrNull { it.id == tripId }
         if (trip == null || !trip.isActive) {
             _ui.update { it.copy(tripError = "No active trip to update.") }
             return
         }
-        val openIndex = trip.tankSessions.indexOfLast { it.isOpen }
-        if (openIndex < 0) return
-        val currentRow = trip.currentRowNumber ?: trip.rowSequence.getOrNull(trip.sequenceIndex)
-        val now = java.time.Instant.now().toString()
-        val sessions = trip.tankSessions.toMutableList()
-        sessions[openIndex] = sessions[openIndex].copy(endTime = now, endRow = currentRow)
+        val updated = TankSessionLifecycle.end(
+            trip = trip,
+            timestamp = java.time.Instant.now().toString(),
+            currentRow = trip.currentRowNumber ?: trip.rowSequence.getOrNull(trip.sequenceIndex),
+        )
+        if (updated == trip) return
         persistTankSessions(
             tripId,
-            sessions,
-            activeTankNumber = null,
-            isFillingTank = trip.isFillingTank,
-            fillingTankNumber = trip.fillingTankNumber,
+            updated.tankSessions,
+            activeTankNumber = updated.activeTankNumber,
+            isFillingTank = updated.isFillingTank,
+            fillingTankNumber = updated.fillingTankNumber,
         )
     }
 
