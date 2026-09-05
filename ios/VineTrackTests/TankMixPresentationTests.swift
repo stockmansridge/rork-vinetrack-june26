@@ -128,6 +128,7 @@ final class TankMixPresentationTests: XCTestCase {
         )
         XCTAssertEqual(complete.selectedTankNumber, 2)
         XCTAssertEqual(complete.completedTankNumbers, [1, 2])
+        XCTAssertTrue(complete.isPlanComplete)
         XCTAssertEqual(complete.progress(for: complete.tanks[1]), .completed)
     }
 

@@ -1908,6 +1908,8 @@ struct ActiveTripView: View {
     private func tankControls(record: SprayRecord?) -> some View {
         let totalTanks = max(record?.tanks.count ?? 0, liveTrip.totalTanks)
         let fillEnabled = store.settings.fillTimerEnabled
+        let presentation = TankMixPresentation(record: record, trip: liveTrip)
+        let isPlannedTankWorkComplete = presentation.isPlanComplete && !hasActiveTank
 
         HStack(spacing: 8) {
             Button {
@@ -1976,7 +1978,7 @@ struct ActiveTripView: View {
                 .controlSize(.small)
                 .tint(.orange)
                 .disabled(!accessControl.canCreateOperationalRecords)
-            } else {
+            } else if !isPlannedTankWorkComplete {
                 Button {
                     tankControlInteraction.tapStart {
                         tracking.startTank()

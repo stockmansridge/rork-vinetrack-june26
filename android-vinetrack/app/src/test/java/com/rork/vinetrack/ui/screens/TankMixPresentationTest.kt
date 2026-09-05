@@ -119,6 +119,7 @@ class TankMixPresentationTest {
         val complete = TankMixPresentation.from(record(), trip(listOf(endedTwo, endedOne), active = false))
         assertEquals(2, complete.selectedTankNumber)
         assertEquals(setOf(1, 2), complete.completedTankNumbers)
+        assertTrue(complete.isPlanComplete)
         assertEquals(PlannedTankProgress.COMPLETED, complete.progress(complete.tanks[1]))
     }
 

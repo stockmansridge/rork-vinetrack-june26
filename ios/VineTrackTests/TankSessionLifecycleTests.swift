@@ -5,6 +5,7 @@ import XCTest
 final class TankSessionLifecycleTests: XCTestCase {
     private let vineyardID = UUID(uuidString: "81000000-0000-4000-8000-000000000001")!
     private let sessionID = UUID(uuidString: "81000000-0000-4000-8000-000000000002")!
+    private let createdSessionID = UUID(uuidString: "81000000-0000-4000-8000-000000000004")!
     private let fillStart = Date(timeIntervalSince1970: 1_780_000_000)
     private let fillEnd = Date(timeIntervalSince1970: 1_780_000_060)
     private let sprayStart = Date(timeIntervalSince1970: 1_780_000_120)
@@ -98,6 +99,121 @@ final class TankSessionLifecycleTests: XCTestCase {
         XCTAssertFalse(started.tankSessions.contains { $0.tankNumber == 2 })
     }
 
+    func testFreeDriveActiveTankWithoutRowsCanEnd() {
+        let active = TankSession(
+            id: sessionID,
+            tankNumber: 1,
+            startTime: sprayStart,
+            startRow: nil
+        )
+        let ended = TankSessionLifecycle.end(
+            trip: trip(sessions: [active], activeTankNumber: 1),
+            at: sprayEnd,
+            currentRow: nil
+        )
+
+        XCTAssertEqual(ended.tankSessions.single?.endTime, sprayEnd)
+        XCTAssertNil(ended.tankSessions.single?.endRow)
+        XCTAssertNil(ended.activeTankNumber)
+    }
+
+    func testPlannedStartIgnoresStaleOutOfPlanSession() {
+        let stale = TankSession(tankNumber: 99, startTime: fillStart)
+        let started = TankSessionLifecycle.start(
+            trip: trip(sessions: [stale]),
+            at: sprayStart,
+            currentRow: 4.5,
+            plannedTankNumbers: [1, 2],
+            makeID: { self.createdSessionID }
+        )
+
+        XCTAssertEqual(started.activeTankNumber, 1)
+        XCTAssertEqual(started.tankSessions.last?.tankNumber, 1)
+        XCTAssertFalse(started.tankSessions.contains { $0.tankNumber == 100 })
+    }
+
+    func testPlannedStartReusesFillOnlyTankOne() {
+        let started = TankSessionLifecycle.start(
+            trip: trip(sessions: [fillOnly(completed: true)]),
+            at: sprayStart,
+            currentRow: 5.5,
+            plannedTankNumbers: [1, 2]
+        )
+
+        XCTAssertEqual(started.tankSessions.count, 1)
+        XCTAssertEqual(started.tankSessions.single?.id, sessionID)
+        XCTAssertEqual(started.activeTankNumber, 1)
+    }
+
+    func testPlannedStartSelectsTankTwoAfterTankOneCompletes() {
+        let completedOne = TankSession(
+            id: sessionID,
+            tankNumber: 1,
+            startTime: sprayStart,
+            endTime: sprayEnd
+        )
+        let started = TankSessionLifecycle.start(
+            trip: trip(sessions: [completedOne]),
+            at: sprayEnd.addingTimeInterval(60),
+            currentRow: 6.5,
+            plannedTankNumbers: [1, 2],
+            makeID: { self.createdSessionID }
+        )
+
+        XCTAssertEqual(started.activeTankNumber, 2)
+        XCTAssertEqual(started.tankSessions.last?.tankNumber, 2)
+    }
+
+    func testCompletedPlanDoesNotCreateAdditionalTank() {
+        let completed = [1, 2].map { number in
+            TankSession(
+                tankNumber: number,
+                startTime: sprayStart,
+                endTime: sprayEnd
+            )
+        }
+        let original = trip(sessions: completed)
+        let unchanged = TankSessionLifecycle.start(
+            trip: original,
+            at: sprayEnd.addingTimeInterval(60),
+            currentRow: nil,
+            plannedTankNumbers: [1, 2]
+        )
+
+        XCTAssertEqual(unchanged, original)
+        XCTAssertFalse(unchanged.tankSessions.contains { $0.tankNumber == 3 })
+    }
+
+    func testLegacyUnplannedFallbackRemainsSequential() {
+        let legacy = TankSession(
+            tankNumber: 4,
+            startTime: sprayStart,
+            endTime: sprayEnd
+        )
+        let started = TankSessionLifecycle.start(
+            trip: trip(sessions: [legacy]),
+            at: sprayEnd.addingTimeInterval(60),
+            currentRow: nil,
+            makeID: { self.createdSessionID }
+        )
+
+        XCTAssertEqual(started.activeTankNumber, 5)
+        XCTAssertEqual(started.tankSessions.last?.tankNumber, 5)
+    }
+
+    func testInvalidAndDuplicatePlannedNumbersAreIgnored() {
+        let started = TankSessionLifecycle.start(
+            trip: trip(),
+            at: sprayStart,
+            currentRow: nil,
+            plannedTankNumbers: [0, 2, -3, 2],
+            makeID: { self.createdSessionID }
+        )
+
+        XCTAssertEqual(started.activeTankNumber, 2)
+        XCTAssertEqual(started.tankSessions.single?.tankNumber, 2)
+    }
+
     func testEndTargetsActiveTankAndCancellationAndDoubleConfirmationAreSafe() {
         let unrelatedFill = TankSession(
             id: UUID(uuidString: "81000000-0000-4000-8000-000000000003")!,
@@ -142,7 +258,10 @@ final class TankSessionLifecycleTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let started = TankSessionLifecycle.start(
-            trip: trip(sessions: [fillOnly(completed: true)]), at: sprayStart, currentRow: 9.5
+            trip: trip(sessions: [fillOnly(completed: true)]),
+            at: sprayStart,
+            currentRow: 9.5,
+            plannedTankNumbers: [1, 2]
         )
         let closed = TankSessionLifecycle.end(trip: started, at: sprayEnd, currentRow: 14.5)
         let persistence = PersistenceStore(directory: directory)

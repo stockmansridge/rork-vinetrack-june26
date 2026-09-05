@@ -75,6 +75,7 @@ nonisolated struct TankMixPresentation: Sendable {
     }
 
     var isAvailable: Bool { !tanks.isEmpty }
+    var isPlanComplete: Bool { isAvailable && nextTankNumber == nil }
 
     func progress(for tank: SprayTank) -> PlannedTankProgress? {
         if tank.tankNumber == activeTankNumber { return .current }

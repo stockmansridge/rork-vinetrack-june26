@@ -98,6 +98,116 @@ class TankSessionLifecycleTest {
     }
 
     @Test
+    fun `Free Drive active tank without rows can end`() {
+        val active = TankSession(
+            id = "tank-session-1",
+            tankNumber = 1,
+            startTime = sprayStart,
+            startRow = null,
+        )
+        val ended = TankSessionLifecycle.end(
+            trip(listOf(active), activeTankNumber = 1),
+            sprayEnd,
+            null,
+        )
+
+        assertEquals(sprayEnd, ended.tankSessions.single().endTime)
+        assertNull(ended.tankSessions.single().endRow)
+        assertNull(ended.activeTankNumber)
+    }
+
+    @Test
+    fun `planned start ignores stale out-of-plan session`() {
+        val stale = TankSession("stale", 99, fillStart)
+        val started = TankSessionLifecycle.start(
+            trip(listOf(stale)),
+            sprayStart,
+            4.5,
+            listOf(1, 2),
+            makeId = { "created-session" },
+        )
+
+        assertEquals(1, started.activeTankNumber)
+        assertEquals(1, started.tankSessions.last().tankNumber)
+        assertFalse(started.tankSessions.any { it.tankNumber == 100 })
+    }
+
+    @Test
+    fun `planned start reuses fill-only Tank 1`() {
+        val started = TankSessionLifecycle.start(
+            trip(listOf(fillOnly(true))),
+            sprayStart,
+            5.5,
+            listOf(1, 2),
+        )
+
+        assertEquals(1, started.tankSessions.size)
+        assertEquals("tank-session-1", started.tankSessions.single().id)
+        assertEquals(1, started.activeTankNumber)
+    }
+
+    @Test
+    fun `planned start selects Tank 2 after Tank 1 completes`() {
+        val completedOne = TankSession("tank-session-1", 1, sprayStart, sprayEnd)
+        val started = TankSessionLifecycle.start(
+            trip(listOf(completedOne)),
+            "2026-09-05T00:11:00Z",
+            6.5,
+            listOf(1, 2),
+            makeId = { "created-session" },
+        )
+
+        assertEquals(2, started.activeTankNumber)
+        assertEquals(2, started.tankSessions.last().tankNumber)
+    }
+
+    @Test
+    fun `completed plan does not create additional tank`() {
+        val completed = listOf(
+            TankSession("tank-session-1", 1, sprayStart, sprayEnd),
+            TankSession("tank-session-2", 2, sprayStart, sprayEnd),
+        )
+        val original = trip(completed)
+        val unchanged = TankSessionLifecycle.start(
+            original,
+            "2026-09-05T00:11:00Z",
+            null,
+            listOf(1, 2),
+        )
+
+        assertEquals(original, unchanged)
+        assertFalse(unchanged.tankSessions.any { it.tankNumber == 3 })
+    }
+
+    @Test
+    fun `legacy unplanned fallback remains sequential`() {
+        val legacy = TankSession("tank-session-4", 4, sprayStart, sprayEnd)
+        val started = TankSessionLifecycle.start(
+            trip(listOf(legacy)),
+            "2026-09-05T00:11:00Z",
+            null,
+            makeId = { "created-session" },
+        )
+
+        assertEquals(5, started.activeTankNumber)
+        assertEquals(5, started.tankSessions.last().tankNumber)
+    }
+
+    @Test
+    fun `invalid and duplicate planned numbers are ignored`() {
+        val started = TankSessionLifecycle.start(
+            trip(),
+            sprayStart,
+            null,
+            listOf(0, 2, -3, 2),
+            makeId = { "created-session" },
+        )
+
+        assertEquals(2, started.activeTankNumber)
+        assertEquals(2, started.tankSessions.single().tankNumber)
+    }
+
+    @Test
     fun `end targets active Tank 1 and cancellation and double confirmation are safe`() {
         val unrelatedFill = TankSession(
             id = "tank-session-2",
@@ -130,7 +240,12 @@ class TankSessionLifecycleTest {
     @Test
     fun `relaunch offline payload and canonical contract preserve reused closed session`() {
         val closed = TankSessionLifecycle.end(
-            TankSessionLifecycle.start(trip(listOf(fillOnly(true))), sprayStart, 9.5),
+            TankSessionLifecycle.start(
+                trip(listOf(fillOnly(true))),
+                sprayStart,
+                9.5,
+                listOf(1, 2),
+            ),
             sprayEnd,
             14.5,
         )

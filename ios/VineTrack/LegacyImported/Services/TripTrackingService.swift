@@ -624,13 +624,21 @@ final class TripTrackingService {
         trip.tankSessions.lastIndex(where: { $0.fillStartTime != nil && $0.fillEndTime == nil })
     }
 
-    /// Start spraying the next tank, reusing an existing fill-only session.
+    /// Start spraying the next planned tank, reusing an existing fill-only session.
     func startTank() {
         guard let trip = activeTrip else { return }
+        let linkedRecord = TankMixPresentation.linkedRecord(
+            for: trip.id,
+            in: store?.sprayRecords ?? []
+        )
+        let operationRow = trip.trackingPattern == .freeDrive
+            ? currentRowNumber
+            : currentRowNumber ?? trip.currentRowNumber
         let updated = TankSessionLifecycle.start(
             trip: trip,
             at: Date(),
-            currentRow: currentRowNumber ?? trip.currentRowNumber
+            currentRow: operationRow,
+            plannedTankNumbers: linkedRecord?.tanks.map(\.tankNumber)
         )
         guard updated != trip else { return }
         store?.updateTrip(updated)
@@ -639,10 +647,13 @@ final class TripTrackingService {
     /// End only the session identified by the active tank number.
     func endTank() {
         guard let trip = activeTrip else { return }
+        let operationRow = trip.trackingPattern == .freeDrive
+            ? currentRowNumber
+            : currentRowNumber ?? trip.currentRowNumber
         let updated = TankSessionLifecycle.end(
             trip: trip,
             at: Date(),
-            currentRow: currentRowNumber ?? trip.currentRowNumber
+            currentRow: operationRow
         )
         guard updated != trip else { return }
         store?.updateTrip(updated)

@@ -81,6 +81,7 @@ internal data class TankMixPresentation(
     val completedTankNumbers: Set<Int>,
 ) {
     val isAvailable: Boolean get() = tanks.isNotEmpty()
+    val isPlanComplete: Boolean get() = isAvailable && nextTankNumber == null
 
     fun progress(tank: SprayTank): PlannedTankProgress? = when {
         tank.tankNumber == activeTankNumber -> PlannedTankProgress.CURRENT

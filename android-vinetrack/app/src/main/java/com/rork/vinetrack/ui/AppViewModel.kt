@@ -269,6 +269,7 @@ import com.rork.vinetrack.data.model.TankSession
 import com.rork.vinetrack.data.TankSessionLifecycle
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.Vineyard
+import com.rork.vinetrack.ui.screens.TankMixPresentation
 import com.rork.vinetrack.data.model.VineyardMachine
 import com.rork.vinetrack.data.model.EquipmentItem
 import com.rork.vinetrack.data.model.VineyardMember
@@ -9466,10 +9467,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(tripError = "No active trip to update.") }
             return
         }
+        val linkedRecord = TankMixPresentation.linkedRecord(trip.id, _ui.value.sprayRecords)
         val updated = TankSessionLifecycle.start(
             trip = trip,
             timestamp = java.time.Instant.now().toString(),
             currentRow = trip.currentRowNumber ?: trip.rowSequence.getOrNull(trip.sequenceIndex),
+            plannedTankNumbers = linkedRecord?.tanks?.map { it.tankNumber },
         )
         if (updated == trip) return
         persistTankSessions(

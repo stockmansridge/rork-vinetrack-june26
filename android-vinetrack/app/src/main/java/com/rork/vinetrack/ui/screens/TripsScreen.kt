@@ -2458,6 +2458,7 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
     val totalTanks = maxOf(linkedSpray?.tankCount ?: 0, trip.totalTanks ?: 0)
     val active = trip.activeTankNumber
     val presentation = remember(linkedSpray, trip) { TankMixPresentation.from(linkedSpray, trip) }
+    val isPlannedTankWorkComplete = presentation.isPlanComplete && active == null
     var interaction by remember { mutableStateOf(TankControlInteractionState()) }
     var showTankMix by remember { mutableStateOf(false) }
     val fillTimerEnabled = remember { OperationPrefsStore(context).load().fillTimerEnabled }
@@ -2562,7 +2563,7 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
                 Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
                 Text(" End tank", fontSize = 12.sp)
             }
-        } else {
+        } else if (!isPlannedTankWorkComplete) {
             Button(
                 onClick = { interaction.tapStart { vm.startTankSession(trip.id) } },
                 enabled = !busy,
