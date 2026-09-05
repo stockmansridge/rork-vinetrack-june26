@@ -194,11 +194,11 @@ class SprayBandedTankPersistenceTest {
             .substringAfter("fun runCalculation")
             .substringBefore("fun buildInput")
         val bandedGuard = runCalculation.indexOf(
-            "if (guidedFlow.mode == SprayApplicationMode.BANDED)",
+            "if (guidedFlow.mode == SprayApplicationMode.BANDED || operationType == \"Foliar Spray\")",
         )
         val legacyCall = runCalculation.indexOf("SprayCalculator.calculate(")
-        assertTrue("runCalculation must branch on BANDED", bandedGuard >= 0)
-        assertTrue("legacy engine must remain for whole-block", legacyCall >= 0)
+        assertTrue("runCalculation must branch on BANDED and foliar", bandedGuard >= 0)
+        assertTrue("legacy engine must remain for non-foliar whole-block callers", legacyCall >= 0)
         assertTrue("the BANDED branch must precede the legacy engine", bandedGuard < legacyCall)
         assertTrue(
             "the banded review result must be a projection of the plan",

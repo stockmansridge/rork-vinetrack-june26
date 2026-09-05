@@ -1,5 +1,7 @@
 package com.rork.vinetrack.data.spray
 
+import com.rork.vinetrack.data.CanopyWaterRates
+
 /**
  * The ordered decisions in the guided Spray Calculator.
  *
@@ -95,6 +97,22 @@ sealed interface SprayGuidedBlocker {
             get() = "Choose the canopy type, size and density, then tap Confirm canopy."
     }
 
+    data object SprayVolumeChoiceRequired : SprayGuidedBlocker {
+        override val title: String get() = "Choose spray volume"
+        override val message: String get() = "Choose whether to use the recommended volume or set your sprayer's own calibrated rate."
+    }
+
+    data object CustomSprayerRateRequired : SprayGuidedBlocker {
+        override val title: String get() = "Enter sprayer output"
+        override val message: String get() = SprayVolumeHelp.ACTUAL_SPRAYER_OUTPUT
+    }
+
+    data object CarrierConversionRequired : SprayGuidedBlocker {
+        override val title: String get() = "Matching row spacing required"
+        override val message: String get() = SprayVolumeHelp.ROW_SPACING_REQUIRED
+        override val needsBlockEditor: Boolean get() = true
+    }
+
     data object CarrierRateRequired : SprayGuidedBlocker {
         override val title: String get() = "Enter carrier volume"
         override val message: String get() = "Enter the carrier volume for this application."
@@ -177,7 +195,13 @@ data class SprayGuidedInputs(
     val carrierBasis: SprayCarrierBasis = SprayCarrierBasis.LITRES_PER_HECTARE,
     /** Foliar canopy is a deliberate operator-confirmed answer, never a visual default. */
     val isCanopyConfirmed: Boolean = false,
-    /** L/ha mode: the rate the operator entered. */
+    val canopy: SprayCanopySelection? = null,
+    val canopyWaterRates: CanopyWaterRates = CanopyWaterRates.defaults,
+    val sprayVolumeChoice: SprayVolumeChoice = SprayVolumeChoice.UNDECIDED,
+    /** One calibrated machine output and its independent input basis. */
+    val customSprayerRate: Double? = null,
+    val customSprayerBasis: SprayCarrierBasis = SprayCarrierBasis.LITRES_PER_HECTARE,
+    /** L/ha mode: legacy direct rate retained for non-foliar callers. */
     val litresPerHectare: Double? = null,
     /**
      * L/ha mode: the dilute/runoff reference used for concentration, when the
@@ -322,6 +346,22 @@ data class SprayGuidedFlow(
 
     // region Carrier volume
 
+    /** The sole recommended/custom authority for foliar spray volume. */
+    val volumeDecision: SprayVolumeDecision?
+        get() {
+            if (inputs.operationType != SprayOperationType.FOLIAR_SPRAY) return null
+            val canopy = inputs.canopy ?: return null
+            return SprayVolumeDecisionResolver.decide(
+                canopy = canopy,
+                isCanopyConfirmed = inputs.isCanopyConfirmed,
+                rates = inputs.canopyWaterRates,
+                rowSpacingMetres = geometry.uniformRowSpacingMetres,
+                choice = inputs.sprayVolumeChoice,
+                customRate = inputs.customSprayerRate,
+                customBasis = inputs.customSprayerBasis,
+            )
+        }
+
     /**
      * The resolved carrier volume, or null when it is not calculable yet.
      *
@@ -329,15 +369,35 @@ data class SprayGuidedFlow(
      * arithmetic itself.
      */
     val carrier: SprayCarrierVolume?
-        get() = when (effectiveCarrierBasis) {
-            SprayCarrierBasis.LITRES_PER_HECTARE -> {
-                val rate = positive(inputs.litresPerHectare)
-                if (rate == null) {
-                    null
-                } else {
-                    // Concentration keeps its established VineTrack meaning
-                    // (dilute ÷ chosen) and floors at 1.0 so concentrating never
-                    // reduces a per-100 L product dose.
+        get() {
+            val decision = volumeDecision
+            if (inputs.operationType == SprayOperationType.FOLIAR_SPRAY) {
+                if (decision == null || !decision.isResolved) return null
+                return when (effectiveCarrierBasis) {
+                    SprayCarrierBasis.LITRES_PER_HECTARE -> {
+                        val actual = decision.actualLitresPerHectare ?: return null
+                        SprayCarrierVolumeCalculator.perHectare(
+                            litresPerHectare = actual,
+                            areaHectares = geometry.grossAreaHectares,
+                            concentrationFactor = decision.concentrationFactor,
+                            rowLengthMetres = geometry.totalRowLengthMetres,
+                            rowSpacingMetres = geometry.uniformRowSpacingMetres,
+                        )
+                    }
+                    SprayCarrierBasis.LITRES_PER_100_METRES -> {
+                        val actual = decision.actualLitresPer100Metres ?: return null
+                        SprayCarrierVolumeCalculator.per100Metres(
+                            appliedLitresPer100Metres = actual,
+                            diluteLitresPer100Metres = decision.recommendedLitresPer100Metres,
+                            geometry = geometry,
+                        )
+                    }
+                }
+            }
+
+            return when (effectiveCarrierBasis) {
+                SprayCarrierBasis.LITRES_PER_HECTARE -> {
+                    val rate = positive(inputs.litresPerHectare) ?: return null
                     val dilute = positive(inputs.diluteLitresPerHectare)
                     val factor = if (dilute == null) 1.0 else maxOf(1.0, dilute / rate)
                     SprayCarrierVolumeCalculator.perHectare(
@@ -348,13 +408,8 @@ data class SprayGuidedFlow(
                         rowSpacingMetres = geometry.uniformRowSpacingMetres,
                     )
                 }
-            }
-
-            SprayCarrierBasis.LITRES_PER_100_METRES -> {
-                val applied = positive(inputs.appliedLitresPer100Metres)
-                if (applied == null) {
-                    null
-                } else {
+                SprayCarrierBasis.LITRES_PER_100_METRES -> {
+                    val applied = positive(inputs.appliedLitresPer100Metres) ?: return null
                     SprayCarrierVolumeCalculator.per100Metres(
                         appliedLitresPer100Metres = applied,
                         diluteLitresPer100Metres = positive(inputs.diluteLitresPer100Metres),
@@ -480,17 +535,36 @@ data class SprayGuidedFlow(
         }
 
         SprayGuidedStep.CARRIER -> {
-            val entered = when (effectiveCarrierBasis) {
-                SprayCarrierBasis.LITRES_PER_HECTARE -> positive(inputs.litresPerHectare)
-                SprayCarrierBasis.LITRES_PER_100_METRES ->
-                    positive(inputs.appliedLitresPer100Metres)
-            }
-            when {
-                requiresCanopyConfirmation && !inputs.isCanopyConfirmed ->
-                    SprayGuidedBlocker.CanopyConfirmationRequired
-                entered == null -> SprayGuidedBlocker.CarrierRateRequired
-                !isCarrierResolved -> SprayGuidedBlocker.CarrierNotCalculable
-                else -> null
+            if (inputs.operationType == SprayOperationType.FOLIAR_SPRAY) {
+                val decision = volumeDecision
+                when {
+                    !inputs.isCanopyConfirmed || decision?.recommendation == null ->
+                        SprayGuidedBlocker.CanopyConfirmationRequired
+                    inputs.sprayVolumeChoice == SprayVolumeChoice.UNDECIDED ->
+                        SprayGuidedBlocker.SprayVolumeChoiceRequired
+                    inputs.sprayVolumeChoice == SprayVolumeChoice.USE_CUSTOM_SPRAYER_RATE &&
+                        positive(inputs.customSprayerRate) == null ->
+                        SprayGuidedBlocker.CustomSprayerRateRequired
+                    !decision.hasComparableRates -> SprayGuidedBlocker.CarrierConversionRequired
+                    effectiveCarrierBasis == SprayCarrierBasis.LITRES_PER_HECTARE &&
+                        decision.actualLitresPerHectare == null ->
+                        SprayGuidedBlocker.CarrierConversionRequired
+                    effectiveCarrierBasis == SprayCarrierBasis.LITRES_PER_100_METRES &&
+                        decision.actualLitresPer100Metres == null ->
+                        SprayGuidedBlocker.CarrierConversionRequired
+                    !isCarrierResolved -> SprayGuidedBlocker.CarrierNotCalculable
+                    else -> null
+                }
+            } else {
+                val entered = when (effectiveCarrierBasis) {
+                    SprayCarrierBasis.LITRES_PER_HECTARE -> positive(inputs.litresPerHectare)
+                    SprayCarrierBasis.LITRES_PER_100_METRES -> positive(inputs.appliedLitresPer100Metres)
+                }
+                when {
+                    entered == null -> SprayGuidedBlocker.CarrierRateRequired
+                    !isCarrierResolved -> SprayGuidedBlocker.CarrierNotCalculable
+                    else -> null
+                }
             }
         }
 

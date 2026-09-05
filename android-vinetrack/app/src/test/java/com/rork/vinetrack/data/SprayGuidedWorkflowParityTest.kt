@@ -2,6 +2,7 @@ package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.spray.SprayApplicationSnapshot
 import com.rork.vinetrack.data.spray.SprayBlockInput
+import com.rork.vinetrack.data.spray.SprayCanopySelection
 import com.rork.vinetrack.data.spray.SprayCarrierBasis
 import com.rork.vinetrack.data.spray.SprayCarrierVolumePolicy
 import com.rork.vinetrack.data.spray.SprayComplianceProfile
@@ -16,6 +17,7 @@ import com.rork.vinetrack.data.spray.SprayProductRateBasis
 import com.rork.vinetrack.data.spray.SprayProductUnresolvedReason
 import com.rork.vinetrack.data.spray.SprayTarget
 import com.rork.vinetrack.data.spray.SprayVineyardProfile
+import com.rork.vinetrack.data.spray.SprayVolumeChoice
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -109,6 +111,12 @@ class SprayGuidedWorkflowParityTest {
         isEquipmentSelected = true,
         isEquipmentConfirmed = true,
         isCanopyConfirmed = true,
+        canopy = SprayCanopySelection(
+            type = SprayCalculator.CanopyType.VSP,
+            size = SprayCalculator.CanopySize.MEDIUM,
+            density = SprayCalculator.CanopyDensity.LOW,
+        ),
+        sprayVolumeChoice = SprayVolumeChoice.USE_RECOMMENDED,
         tankCapacityLitres = 2_000.0,
         carrierBasis = SprayCarrierBasis.LITRES_PER_HECTARE,
         litresPerHectare = 625.0,

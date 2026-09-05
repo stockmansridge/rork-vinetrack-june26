@@ -129,6 +129,8 @@ import com.rork.vinetrack.ui.components.SprayCanopySelector
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.data.spray.SprayCanopySelection
 import com.rork.vinetrack.data.spray.SprayCarrierBasis
+import com.rork.vinetrack.data.spray.SprayVolumeChoice
+import com.rork.vinetrack.data.spray.SprayVolumeHelp
 import com.rork.vinetrack.data.spray.SprayGuidedFlow
 import com.rork.vinetrack.data.spray.SprayGuidedInputs
 import com.rork.vinetrack.data.spray.SprayGuidedStep
@@ -462,6 +464,9 @@ fun SprayCalculatorScreen(
     var sprayHeadTarget by remember { mutableStateOf<SprayHeadTarget?>(null) }
     var bandWidthText by remember { mutableStateOf("") }
     var carrierBasisChoice by remember { mutableStateOf(SprayCarrierBasis.LITRES_PER_HECTARE) }
+    var sprayVolumeChoice by rememberSaveable { mutableStateOf(SprayVolumeChoice.UNDECIDED) }
+    var customSprayerRateText by rememberSaveable { mutableStateOf("") }
+    var customSprayerBasis by rememberSaveable { mutableStateOf(SprayCarrierBasis.LITRES_PER_HECTARE) }
     var diluteLitresPer100mText by remember { mutableStateOf("") }
     var appliedLitresPer100mText by remember { mutableStateOf("") }
     /**
@@ -503,28 +508,21 @@ fun SprayCalculatorScreen(
     // straight into the water rate and every product quantity built on it.
     val resolvedRowSpacing: Double? = applicationGeometry.uniformRowSpacingMetres
 
-    val per100m: Double? = if (operationType == "Foliar Spray") {
-        canopySelection.litresPer100m(canopyRates)
-    } else {
-        // Preserve the established non-foliar numeric path exactly; canopy is
-        // neither shown nor required for banded/spreader applications.
-        SprayCalculator.litresPer100m(
-            canopyRates,
-            SprayCalculator.CanopySize.MEDIUM,
-            SprayCalculator.CanopyDensity.LOW,
-        )
-    }
-    val recommendedRate: Double? = per100m?.let { per100 ->
-        resolvedRowSpacing?.let { CanopyWaterRates.litresPerHa(per100, it) }
-    }
+    // Legacy direct rate remains only for non-foliar callers. Foliar volume is
+    // resolved once by SprayVolumeDecision inside SprayGuidedFlow.
+    val legacyPer100m = SprayCalculator.litresPer100m(
+        canopyRates,
+        SprayCalculator.CanopySize.MEDIUM,
+        SprayCalculator.CanopyDensity.LOW,
+    )
+    val legacyRecommendedRate = resolvedRowSpacing?.let { CanopyWaterRates.litresPerHa(legacyPer100m, it) }
     val chosenRate = if (hasEditedSprayRate) {
-        sprayRateText.toDoubleOrNull() ?: (recommendedRate ?: 0.0)
+        sprayRateText.toDoubleOrNull() ?: (legacyRecommendedRate ?: 0.0)
     } else {
-        recommendedRate ?: 0.0
+        legacyRecommendedRate ?: 0.0
     }
-    val concentrationFactor =
-        if (chosenRate > 0 && recommendedRate != null) recommendedRate / chosenRate else 1.0
     val usesCF = SprayCalculator.usesConcentrationFactor(operationType)
+    val concentrationFactor = 1.0
 
     val selectedEquipment = state.sprayEquipment.firstOrNull { it.id == sprayEquipmentId }
     val tankCapacity = selectedEquipment?.tankCapacityLitres?.takeIf { it > 0 } ?: 0.0
@@ -672,8 +670,13 @@ fun SprayCalculatorScreen(
             tankCapacityLitres = tankCapacity,
             carrierBasis = carrierBasisChoice,
             isCanopyConfirmed = isCanopyConfirmed,
+            canopy = canopySelection,
+            canopyWaterRates = canopyRates,
+            sprayVolumeChoice = sprayVolumeChoice,
+            customSprayerRate = customSprayerRateText.toDoubleOrNull(),
+            customSprayerBasis = customSprayerBasis,
             litresPerHectare = chosenRate.takeIf { it > 0 },
-            diluteLitresPerHectare = recommendedRate,
+            diluteLitresPerHectare = legacyRecommendedRate,
             diluteLitresPer100Metres = diluteLitresPer100mText.toDoubleOrNull(),
             appliedLitresPer100Metres = appliedLitresPer100mText.toDoubleOrNull(),
             products = guidedProducts,
@@ -912,7 +915,7 @@ fun SprayCalculatorScreen(
         // quantity. The review result below is a pure PROJECTION of the same
         // plan the Products step and Review displayed — preview, review and
         // persisted tanks are one calculation by construction.
-        if (guidedFlow.mode == SprayApplicationMode.BANDED) {
+        if (guidedFlow.mode == SprayApplicationMode.BANDED || operationType == "Foliar Spray") {
             guidedFlow.firstBlocker?.let { blocker ->
                 errorMessage = blocker.message
                 return null
@@ -951,7 +954,7 @@ fun SprayCalculatorScreen(
             waterRateLitresPerHectare = chosenRate,
             tankCapacity = tankCapacity,
             lines = lines,
-            concentrationFactor = if (usesCF) concentrationFactor else 1.0,
+            concentrationFactor = 1.0,
             operationType = operationType,
         )
         result = computed
@@ -1023,10 +1026,10 @@ fun SprayCalculatorScreen(
             // basis it was ACTUALLY calculated on. The legacy result never
             // touches a banded save. Whole-block and foliar jobs keep the
             // established builder unchanged.
-            tanks = if (guidedFlow.mode == SprayApplicationMode.BANDED) {
+            tanks = if (guidedFlow.mode == SprayApplicationMode.BANDED || operationType == "Foliar Spray") {
                 SprayGuidedTankBuilder.build(
                     plan = guidedPlan,
-                    chosenSprayRate = chosenRate,
+                    chosenSprayRate = guidedFlow.volumeDecision?.actualLitresPerHectare ?: chosenRate,
                     snapshots = lineSnapshots,
                 )
             } else {
@@ -1602,7 +1605,89 @@ fun SprayCalculatorScreen(
                     )
                 }
 
-                if (guidedFlow.effectiveCarrierBasis == SprayCarrierBasis.LITRES_PER_100_METRES) {
+                if (operationType == "Foliar Spray") {
+                    val decision = guidedFlow.volumeDecision
+                    decision?.recommendation?.let { recommendation ->
+                        GuidedCalculatedPanel(title = "Recommended spray volume — CF 1.00", accent = VineColors.LeafGreen) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                GuidedCalculatedRow(label = "L/100 m", value = "${fmtNum(recommendation.diluteLitresPer100Metres, 2)} L/100 m", accent = VineColors.LeafGreen, emphasis = true)
+                                GuidedCalculatedRow(
+                                    label = "Equivalent L/ha",
+                                    value = recommendation.diluteLitresPerHectare?.let { "${fmtNum(it, 2)} L/ha" } ?: "Unavailable",
+                                    accent = VineColors.LeafGreen,
+                                    caption = if (recommendation.diluteLitresPerHectare == null) SprayVolumeHelp.ROW_SPACING_REQUIRED else null,
+                                )
+                                Text(SprayVolumeHelp.RECOMMENDED_VOLUME, fontSize = 12.sp, color = vine.textSecondary)
+                            }
+                        }
+                        Text("Spray at the recommended volume?", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                            val choices = listOf(
+                                SprayVolumeChoice.USE_RECOMMENDED to "Use recommended rate",
+                                SprayVolumeChoice.USE_CUSTOM_SPRAYER_RATE to "Set my own rate",
+                            )
+                            choices.forEachIndexed { index, (choice, label) ->
+                                SegmentedButton(
+                                    selected = sprayVolumeChoice == choice,
+                                    onClick = { sprayVolumeChoice = choice; result = null },
+                                    shape = SegmentedButtonDefaults.itemShape(index, choices.size),
+                                ) { Text(label, fontSize = 12.sp, textAlign = TextAlign.Center) }
+                            }
+                        }
+                        if (sprayVolumeChoice == SprayVolumeChoice.USE_CUSTOM_SPRAYER_RATE) {
+                            Text("What is your sprayer set to apply?", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                SprayCarrierBasis.entries.forEachIndexed { index, basis ->
+                                    SegmentedButton(
+                                        selected = customSprayerBasis == basis,
+                                        onClick = { customSprayerBasis = basis; result = null },
+                                        shape = SegmentedButtonDefaults.itemShape(index, SprayCarrierBasis.entries.size),
+                                    ) { Text(SprayGuidedFormat.carrierBasisLabel(basis), fontSize = 13.sp) }
+                                }
+                            }
+                            OutlinedTextField(
+                                value = customSprayerRateText,
+                                onValueChange = { customSprayerRateText = it.filter { c -> c.isDigit() || c == '.' }; result = null },
+                                label = { Text("Custom sprayer rate (${SprayGuidedFormat.carrierBasisLabel(customSprayerBasis)})") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                supportingText = { Text(SprayVolumeHelp.ACTUAL_SPRAYER_OUTPUT) },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        if (sprayVolumeChoice != SprayVolumeChoice.UNDECIDED) {
+                            GuidedCalculatedPanel(title = "Sprayer output and carrier", accent = VineColors.Olive) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    GuidedCalculatedRow(
+                                        label = "Actual sprayer output",
+                                        value = when (guidedFlow.effectiveCarrierBasis) {
+                                            SprayCarrierBasis.LITRES_PER_HECTARE -> decision.actualLitresPerHectare?.let { "${fmtNum(it, 2)} L/ha" } ?: "Unavailable"
+                                            SprayCarrierBasis.LITRES_PER_100_METRES -> decision.actualLitresPer100Metres?.let { "${fmtNum(it, 2)} L/100 m" } ?: "Unavailable"
+                                        },
+                                        accent = VineColors.Olive,
+                                        emphasis = true,
+                                    )
+                                    GuidedCalculatedRow(
+                                        label = "Equivalent rate",
+                                        value = when (guidedFlow.effectiveCarrierBasis) {
+                                            SprayCarrierBasis.LITRES_PER_HECTARE -> decision.actualLitresPer100Metres?.let { "${fmtNum(it, 2)} L/100 m" } ?: "Unavailable"
+                                            SprayCarrierBasis.LITRES_PER_100_METRES -> decision.actualLitresPerHectare?.let { "${fmtNum(it, 2)} L/ha" } ?: "Unavailable"
+                                        },
+                                        accent = VineColors.Olive,
+                                        caption = if (resolvedRowSpacing == null) SprayVolumeHelp.ROW_SPACING_REQUIRED else "Derived from matching row spacing",
+                                    )
+                                    GuidedCalculatedRow(label = "Concentration factor", value = SprayGuidedFormat.factor(decision.concentrationFactor), accent = VineColors.Olive)
+                                    GuidedCalculatedRow(
+                                        label = "Total carrier volume",
+                                        value = if (guidedFlow.isCarrierResolved) SprayGuidedFormat.litres(guidedPlan.carrier.totalLitres) else "Unavailable",
+                                        accent = VineColors.Olive,
+                                        emphasis = true,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else if (guidedFlow.effectiveCarrierBasis == SprayCarrierBasis.LITRES_PER_100_METRES) {
                     // Row-length entry: the operator types ONLY the two rates.
                     // Concentration factor, total litres and the equivalent L/ha
                     // are all read back from the plan.
@@ -1670,15 +1755,15 @@ fun SprayCalculatorScreen(
                         Column(Modifier.weight(1f)) {
                             Text("Volume", fontSize = 12.sp, color = vine.textSecondary)
                             Text(
-                                recommendedRate?.let { LocalRegionFormatter.current.formatVolumePerArea(it) } ?: "—",
+                                legacyRecommendedRate?.let { LocalRegionFormatter.current.formatVolumePerArea(it) } ?: "—",
                                 fontSize = 20.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (recommendedRate != null) VineColors.DarkGreen else vine.textSecondary,
+                                color = if (legacyRecommendedRate != null) VineColors.DarkGreen else vine.textSecondary,
                             )
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text("Per 100m row", fontSize = 12.sp, color = vine.textSecondary)
-                            Text(per100m?.let { "${fmtNum(it, 0)} L" } ?: "—", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                            Text(legacyPer100m?.let { "${fmtNum(it, 0)} L" } ?: "—", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                         }
                     }
 
@@ -1710,7 +1795,7 @@ fun SprayCalculatorScreen(
                         Spacer8()
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             OutlinedTextField(
-                                value = if (hasEditedSprayRate) sprayRateText else recommendedRate?.let { fmtNum(it, 0) } ?: "",
+                                value = if (hasEditedSprayRate) sprayRateText else legacyRecommendedRate?.let { fmtNum(it, 0) } ?: "",
                                 onValueChange = { sprayRateText = it.filter { c -> c.isDigit() || c == '.' }; hasEditedSprayRate = true; result = null },
                                 label = { Text("Chosen Spray Rate (L/ha)") },
                                 singleLine = true,

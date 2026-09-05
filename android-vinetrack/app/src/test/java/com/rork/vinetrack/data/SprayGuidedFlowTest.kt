@@ -3,6 +3,7 @@ package com.rork.vinetrack.data
 import com.rork.vinetrack.data.spray.SprayApplicationMode
 import com.rork.vinetrack.data.spray.SprayApplicationSnapshot
 import com.rork.vinetrack.data.spray.SprayBlockInput
+import com.rork.vinetrack.data.spray.SprayCanopySelection
 import com.rork.vinetrack.data.spray.SprayCarrierBasis
 import com.rork.vinetrack.data.spray.SprayCarrierVolumePolicy
 import com.rork.vinetrack.data.spray.SprayGeometryQuality
@@ -18,6 +19,7 @@ import com.rork.vinetrack.data.spray.SprayProductRateBasis
 import com.rork.vinetrack.data.spray.SprayTarget
 import com.rork.vinetrack.data.spray.SprayTreatedAreaMethod
 import com.rork.vinetrack.data.spray.SprayVineyardProfile
+import com.rork.vinetrack.data.spray.SprayVolumeChoice
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -94,6 +96,12 @@ class SprayGuidedFlowTest {
         isEquipmentSelected = true,
         isEquipmentConfirmed = true,
         isCanopyConfirmed = true,
+        canopy = SprayCanopySelection(
+            type = SprayCalculator.CanopyType.VSP,
+            size = SprayCalculator.CanopySize.MEDIUM,
+            density = SprayCalculator.CanopyDensity.LOW,
+        ),
+        sprayVolumeChoice = SprayVolumeChoice.USE_RECOMMENDED,
         tankCapacityLitres = 2_000.0,
         carrierBasis = SprayCarrierBasis.LITRES_PER_HECTARE,
         litresPerHectare = 625.0,
@@ -128,7 +136,12 @@ class SprayGuidedFlowTest {
     @Test
     fun `foliar L per ha dilute reference above applied rate concentrates`() {
         val flow = SprayGuidedFlow(
-            completeInputs().copy(litresPerHectare = 500.0, diluteLitresPerHectare = 1_000.0),
+            completeInputs().copy(
+                canopyWaterRates = CanopyWaterRates.defaults.copy(mediumLow = 32.0),
+                sprayVolumeChoice = SprayVolumeChoice.USE_CUSTOM_SPRAYER_RATE,
+                customSprayerRate = 500.0,
+                customSprayerBasis = SprayCarrierBasis.LITRES_PER_HECTARE,
+            ),
         )
         assertEquals(2.0, flow.plan.concentrationFactor, tolerance)
         assertEquals(5_000.0, flow.plan.totalCarrierLitres, tolerance)
@@ -144,8 +157,10 @@ class SprayGuidedFlowTest {
             completeInputs().copy(
                 carrierBasis = SprayCarrierBasis.LITRES_PER_100_METRES,
                 litresPerHectare = null,
-                diluteLitresPer100Metres = 40.0,
-                appliedLitresPer100Metres = 20.0,
+                canopyWaterRates = CanopyWaterRates.defaults.copy(mediumLow = 40.0),
+                sprayVolumeChoice = SprayVolumeChoice.USE_CUSTOM_SPRAYER_RATE,
+                customSprayerRate = 20.0,
+                customSprayerBasis = SprayCarrierBasis.LITRES_PER_100_METRES,
             ),
         )
         assertTrue(flow.isComplete)
@@ -238,8 +253,10 @@ class SprayGuidedFlowTest {
             completeInputs().copy(
                 carrierBasis = SprayCarrierBasis.LITRES_PER_100_METRES,
                 litresPerHectare = null,
-                diluteLitresPer100Metres = 40.0,
-                appliedLitresPer100Metres = 20.0,
+                canopyWaterRates = CanopyWaterRates.defaults.copy(mediumLow = 40.0),
+                sprayVolumeChoice = SprayVolumeChoice.USE_CUSTOM_SPRAYER_RATE,
+                customSprayerRate = 20.0,
+                customSprayerBasis = SprayCarrierBasis.LITRES_PER_100_METRES,
                 products = listOf(
                     product("Adjuvant", SprayProductRateBasis.PER_100_LITRES, 100.0, "mL"),
                 ),
@@ -318,17 +335,19 @@ class SprayGuidedFlowTest {
     }
 
     @Test
-    fun `whole-block L per ha does not require row geometry`() {
+    fun `whole-block L per ha still needs spacing for a canopy recommendation conversion`() {
         val flow = SprayGuidedFlow(
             completeInputs().copy(
                 blocks = listOf(block(rowLengthMetres = null, rowSpacing = null)),
+                sprayVolumeChoice = SprayVolumeChoice.USE_CUSTOM_SPRAYER_RATE,
+                customSprayerRate = 625.0,
+                customSprayerBasis = SprayCarrierBasis.LITRES_PER_HECTARE,
             ),
         )
         assertFalse(flow.requiresCanonicalRowLength)
         assertNull(flow.blocker(SprayGuidedStep.BLOCKS))
-        assertTrue(flow.isComplete)
-        // 625 L/ha × 10 ha still works without any row metres.
-        assertEquals(6_250.0, flow.plan.totalCarrierLitres, tolerance)
+        assertEquals(SprayGuidedBlocker.CarrierConversionRequired, flow.blocker(SprayGuidedStep.CARRIER))
+        assertFalse(flow.isComplete)
     }
 
     @Test
@@ -515,20 +534,22 @@ class SprayGuidedFlowTest {
         val base = completeInputs().copy(
             carrierBasis = SprayCarrierBasis.LITRES_PER_100_METRES,
             litresPerHectare = null,
-            diluteLitresPer100Metres = 40.0,
+            canopyWaterRates = CanopyWaterRates.defaults.copy(mediumLow = 40.0),
+            sprayVolumeChoice = SprayVolumeChoice.USE_CUSTOM_SPRAYER_RATE,
+            customSprayerBasis = SprayCarrierBasis.LITRES_PER_100_METRES,
             products = listOf(
                 product("Adjuvant", SprayProductRateBasis.PER_100_LITRES, 100.0, "mL"),
             ),
         )
 
-        val concentrated = SprayGuidedFlow(base.copy(appliedLitresPer100Metres = 20.0)).plan
+        val concentrated = SprayGuidedFlow(base.copy(customSprayerRate = 20.0)).plan
         assertEquals(6_250.0, concentrated.totalCarrierLitres, tolerance)
         assertEquals(2.0, concentrated.concentrationFactor, tolerance)
         assertEquals(625.0, concentrated.carrier.litresPerHectare!!, tolerance)
         assertEquals(12_500.0, concentrated.productLines[0].totalQuantity!!, tolerance)
 
         // Spray dilute instead: same water as the reference rate.
-        val dilute = SprayGuidedFlow(base.copy(appliedLitresPer100Metres = 40.0)).plan
+        val dilute = SprayGuidedFlow(base.copy(customSprayerRate = 40.0)).plan
         assertEquals(12_500.0, dilute.totalCarrierLitres, tolerance)
         assertEquals(1.0, dilute.concentrationFactor, tolerance)
         assertEquals(1_250.0, dilute.carrier.litresPerHectare!!, tolerance)
@@ -659,11 +680,18 @@ class SprayGuidedFlowTest {
         assertFalse(flow.isUnlocked(SprayGuidedStep.PRODUCTS))
         assertEquals(SprayGuidedBlocker.CanopyConfirmationRequired, flow.blocker(SprayGuidedStep.CARRIER))
 
-        inputs = inputs.copy(isCanopyConfirmed = true)
+        inputs = inputs.copy(
+            isCanopyConfirmed = true,
+            canopy = SprayCanopySelection(
+                type = SprayCalculator.CanopyType.VSP,
+                size = SprayCalculator.CanopySize.MEDIUM,
+                density = SprayCalculator.CanopyDensity.LOW,
+            ),
+        )
         flow = SprayGuidedFlow(inputs)
-        assertEquals(SprayGuidedBlocker.CarrierRateRequired, flow.blocker(SprayGuidedStep.CARRIER))
+        assertEquals(SprayGuidedBlocker.SprayVolumeChoiceRequired, flow.blocker(SprayGuidedStep.CARRIER))
 
-        inputs = inputs.copy(litresPerHectare = 625.0, tankCapacityLitres = 2_000.0)
+        inputs = inputs.copy(sprayVolumeChoice = SprayVolumeChoice.USE_RECOMMENDED, tankCapacityLitres = 2_000.0)
         flow = SprayGuidedFlow(inputs)
         assertTrue(flow.isUnlocked(SprayGuidedStep.PRODUCTS))
         assertFalse(flow.isUnlocked(SprayGuidedStep.REVIEW))
