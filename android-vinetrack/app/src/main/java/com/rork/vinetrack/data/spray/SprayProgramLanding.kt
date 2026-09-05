@@ -1,8 +1,11 @@
 package com.rork.vinetrack.data.spray
 
+import com.rork.vinetrack.data.model.GrowthStage
 import com.rork.vinetrack.data.model.SprayRecord
+import com.rork.vinetrack.data.model.SprayStatus
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.resolveSprayTrip
+import com.rork.vinetrack.data.model.sprayRecordStatus
 
 /**
  * Sort options for the Spray Program landing. The Program tab defaults to
@@ -24,6 +27,16 @@ enum class SprayProgramSort(val label: String) {
  * Android mirror of the iOS `SprayProgramCatalog`. Pure so the rules the two
  * tabs disagree about least often are provable without a Compose host.
  */
+/** A stable section in the Spray Trip "Resume a Spray Program" picker. */
+data class SprayResumeSection(
+    val title: String,
+    val kind: Kind,
+    val stageNumber: Int? = null,
+    val records: List<SprayRecord>,
+) {
+    enum class Kind { IN_PROGRESS, PROGRAM_STAGE, UNKNOWN_STAGE }
+}
+
 object SprayProgramLanding {
 
     /**
@@ -57,7 +70,7 @@ object SprayProgramLanding {
      * Applies the selected sort. E-L sorts numerically by actual stage value
      * (EL 7 < EL 12 < EL 31, never alphabetical); records with no known stage
      * always sink to the bottom in either direction — an unknown stage is not
-     * a low stage — newest-first among themselves.
+     * a low stage. Equal stages use name then stable ID for reload-safe order.
      */
     fun sort(records: List<SprayRecord>, sort: SprayProgramSort): List<SprayRecord> = when (sort) {
         SprayProgramSort.DATE_NEWEST -> records.sortedByDescending { it.dateEpochMs ?: 0L }
@@ -76,7 +89,8 @@ object SprayProgramLanding {
                             ea != null && eb != null && ea != eb -> if (ascending) ea - eb else eb - ea
                             ea != null && eb == null -> -1
                             ea == null && eb != null -> 1
-                            else -> (b.first.dateEpochMs ?: 0L).compareTo(a.first.dateEpochMs ?: 0L)
+                            else -> compareBy<SprayRecord>({ it.displayLabel.lowercase() }, { it.id })
+                                .compare(a.first, b.first)
                         }
                     },
                 )
@@ -99,6 +113,63 @@ object SprayProgramLanding {
         val seenPortal = mutableSetOf<String>()
         val portal = portalTemplates.filter { it.id !in localIds && seenPortal.add(it.id) }
         return local + portal
+    }
+
+    /**
+     * Builds the iOS-parity Resume picker: active operational jobs first,
+     * followed by reusable Program Steps grouped in numeric E-L order. Completed
+     * and not-started history are deliberately excluded from reusable sections.
+     */
+    fun resumeSections(
+        localRecords: List<SprayRecord>,
+        portalTemplates: List<SprayRecord>,
+        trips: List<Trip>,
+        query: String = "",
+        labels: Map<String, String> = emptyMap(),
+    ): List<SprayResumeSection> {
+        val trimmedQuery = query.trim()
+        val inProgress = localRecords
+            .asSequence()
+            .filter { !it.isTemplate }
+            .filter { resolveSprayTrip(it, trips) != null }
+            .filter { sprayRecordStatus(it, trips) == SprayStatus.IN_PROGRESS }
+            .filter { trimmedQuery.isEmpty() || sprayMatches(it, trips, trimmedQuery) }
+            .sortedWith(compareByDescending<SprayRecord> { it.dateEpochMs ?: 0L }.thenBy { it.id })
+            .toList()
+
+        val steps = sort(
+            mergedProgramSteps(localRecords, portalTemplates)
+                .filter { trimmedQuery.isEmpty() || programStepMatches(it, trimmedQuery, labels) },
+            SprayProgramSort.EL_ASC,
+        )
+        val staged = steps.filter { elStageNumber(it) != null }
+            .groupBy { requireNotNull(elStageNumber(it)) }
+            .toSortedMap()
+            .map { (stage, records) ->
+                SprayResumeSection(
+                    title = "EL$stage",
+                    kind = SprayResumeSection.Kind.PROGRAM_STAGE,
+                    stageNumber = stage,
+                    records = records,
+                )
+            }
+        val unknown = steps.filter { elStageNumber(it) == null }
+
+        return buildList {
+            if (inProgress.isNotEmpty()) {
+                add(SprayResumeSection("In Progress", SprayResumeSection.Kind.IN_PROGRESS, records = inProgress))
+            }
+            addAll(staged)
+            if (unknown.isNotEmpty()) {
+                add(SprayResumeSection("Other Program Steps", SprayResumeSection.Kind.UNKNOWN_STAGE, records = unknown))
+            }
+        }
+    }
+
+    /** The unchanged calculator prefill identity used when a Program Step is selected. */
+    fun calculatorPrefillId(programStep: SprayRecord): String {
+        require(programStep.isTemplate) { "Calculator prefill requires a Program Step" }
+        return programStep.id
     }
 
     /**
@@ -131,6 +202,7 @@ object SprayProgramLanding {
             record.notes?.let(::add)
             record.operationType?.let(::add)
             elStageLabel(record)?.let(::add)
+            elStageNumber(record)?.let { stage -> GrowthStage.byCode("EL$stage")?.displayName?.let(::add) }
             addAll(targetLabels)
             addAll(record.chemicalNames)
         }

@@ -20,15 +20,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Calculate
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -50,8 +51,10 @@ import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.SprayStatus
 import com.rork.vinetrack.data.model.resolveSprayTrip
-import com.rork.vinetrack.data.model.sprayOperationTypes
 import com.rork.vinetrack.data.model.sprayRecordStatus
+import com.rork.vinetrack.data.spray.SprayProgramLanding
+import com.rork.vinetrack.data.spray.SprayResumeSection
+import com.rork.vinetrack.data.spray.SprayTargetLibrary
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
@@ -64,13 +67,10 @@ import java.util.Locale
 /**
  * Spray Trip setup chooser — Android port of the iOS `SprayTripSetupSheet`.
  *
- * Offers the same three entry points before anything is created:
- *  1. Start from Template — pick a saved template (local `spray_records`
- *     templates plus read-only portal `spray_jobs` templates, deduped by id)
- *     to pre-fill a new job in the Spray Calculator.
- *  2. Custom Spray Job — open the Spray Calculator from scratch.
- *  3. Resume a Spray Program — pick an existing spray record (grouped by
- *     status like the iOS program picker) and continue it.
+ * Offers the same two entry points as iOS:
+ *  1. Resume a Spray Program — active spray jobs first, then reusable Program
+ *     Steps grouped in numeric E-L order.
+ *  2. One-off Spray — open the Spray Calculator from scratch.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,17 +83,13 @@ fun SprayTripSetupScreen(
     onOpenTrip: (tripId: String) -> Unit,
 ) {
     val vine = LocalVineColors.current
-    var showTemplatePicker by remember { mutableStateOf(false) }
     var showProgramPicker by remember { mutableStateOf(false) }
     var startingRecordId by remember { mutableStateOf<String?>(null) }
 
-    // Legacy templates in spray_records plus portal templates from spray_jobs,
-    // deduped by id — matches the iOS `activeTemplates` merge.
+    // Local and portal Program Steps share the canonical merge rules. Ordering
+    // is applied by the Resume picker using numeric E-L stages, never names.
     val templates = remember(state.sprayRecords, state.sprayJobTemplates) {
-        val local = state.sprayRecords.filter { it.isTemplate }
-        val localIds = local.map { it.id }.toSet()
-        (local + state.sprayJobTemplates.filter { it.id !in localIds })
-            .sortedBy { it.displayLabel.lowercase() }
+        SprayProgramLanding.mergedProgramSteps(state.sprayRecords, state.sprayJobTemplates)
     }
     val nonTemplateRecords = remember(state.sprayRecords) {
         state.sprayRecords.filter { !it.isTemplate }
@@ -141,16 +137,12 @@ fun SprayTripSetupScreen(
             Spacer(Modifier.height(24.dp))
 
             SprayTripSetupCard(
-                icon = { tint -> Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp)) },
-                title = "Plan from Program",
-                subtitle = if (templates.isEmpty()) {
-                    "No Program Steps yet — add one in the Spray Program"
-                } else {
-                    "Start from a Program Step (${templates.size} available)"
-                },
-                tint = VineColors.Purple,
-                enabled = templates.isNotEmpty(),
-                onClick = { showTemplatePicker = true },
+                icon = { tint -> Icon(Icons.Filled.Schedule, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp)) },
+                title = "Resume a Spray Program",
+                subtitle = "Continue an in-progress spray or start from a Program Step",
+                tint = VineColors.Indigo,
+                enabled = true,
+                onClick = { showProgramPicker = true },
             )
             Spacer(Modifier.height(12.dp))
             SprayTripSetupCard(
@@ -161,30 +153,8 @@ fun SprayTripSetupScreen(
                 enabled = true,
                 onClick = { onOpenCalculator(null) },
             )
-            if (nonTemplateRecords.isNotEmpty()) {
-                Spacer(Modifier.height(12.dp))
-                SprayTripSetupCard(
-                    icon = { tint -> Icon(Icons.Filled.Schedule, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp)) },
-                    title = "Resume a Spray Program",
-                    subtitle = "Continue an in-progress or saved spray record",
-                    tint = VineColors.Indigo,
-                    enabled = true,
-                    onClick = { showProgramPicker = true },
-                )
-            }
             Spacer(Modifier.height(24.dp))
         }
-    }
-
-    if (showTemplatePicker) {
-        SprayTemplatePickerSheet(
-            templates = templates,
-            onDismiss = { showTemplatePicker = false },
-            onSelect = { template ->
-                showTemplatePicker = false
-                onOpenCalculator(template.id)
-            },
-        )
     }
 
     if (showProgramPicker) {
@@ -198,7 +168,7 @@ fun SprayTripSetupScreen(
                 when {
                     record.isTemplate -> {
                         showProgramPicker = false
-                        onOpenCalculator(record.id)
+                        onOpenCalculator(SprayProgramLanding.calculatorPrefillId(record))
                     }
                     else -> when (sprayRecordStatus(record, state.trips)) {
                         SprayStatus.IN_PROGRESS -> {
@@ -281,64 +251,10 @@ private fun SprayTripSetupCard(
     }
 }
 
-/** Template chooser, grouped by operation type like the iOS `SprayTemplatePickerSheet`. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SprayTemplatePickerSheet(
-    templates: List<SprayRecord>,
-    onDismiss: () -> Unit,
-    onSelect: (SprayRecord) -> Unit,
-) {
-    val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val grouped = remember(templates) {
-        val byType = templates.groupBy { it.operationType?.takeIf { t -> t.isNotBlank() } ?: "Other" }
-        val ordered = sprayOperationTypes.filter { byType.containsKey(it) }
-        (ordered + byType.keys.filter { it !in ordered }).map { it to byType.getValue(it) }
-    }
-
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        LazyColumn(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 32.dp),
-        ) {
-            item {
-                Text("Choose a Template", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Selecting a template pre-fills a new spray job. The original template is not changed.",
-                    fontSize = 12.sp,
-                    color = vine.textSecondary,
-                )
-                Spacer(Modifier.height(12.dp))
-            }
-            grouped.forEach { (type, items) ->
-                item(key = "header-$type") {
-                    Text(
-                        type.uppercase(Locale.getDefault()),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = vine.textSecondary,
-                        modifier = Modifier.padding(top = 8.dp, bottom = 6.dp),
-                    )
-                }
-                items(items, key = { "tmpl-${it.id}" }) { template ->
-                    SprayPickerRecordRow(
-                        record = template,
-                        subtitleOverride = null,
-                        trailing = null,
-                        onClick = { onSelect(template) },
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
-            }
-        }
-    }
-}
-
 /**
- * Existing spray program chooser — sections mirror the iOS
- * `SprayTripProgramPickerSheet`: Templates, In Progress, Not Started, Completed.
+ * iOS-parity program chooser: active jobs first, followed by reusable Program
+ * Steps grouped under ascending numeric E-L headings. Completed history is not
+ * offered as reusable configuration.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -353,20 +269,19 @@ private fun SprayProgramPickerSheet(
     val vine = LocalVineColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    val linked = remember(records, state.trips) {
-        records.filter { resolveSprayTrip(it, state.trips) != null }
-            .sortedByDescending { it.dateEpochMs ?: 0L }
+    var search by remember { mutableStateOf("") }
+    val targetLabels = remember(state.sprayTargetLibrary, state.selectedVineyardId) {
+        SprayTargetLibrary.labels(state.sprayTargetLibrary, state.selectedVineyardId)
     }
-    val inProgress = remember(linked, state.trips) { linked.filter { sprayRecordStatus(it, state.trips) == SprayStatus.IN_PROGRESS } }
-    val notStarted = remember(linked, state.trips) { linked.filter { sprayRecordStatus(it, state.trips) == SprayStatus.NOT_STARTED } }
-    val completed = remember(linked, state.trips) { linked.filter { sprayRecordStatus(it, state.trips) == SprayStatus.COMPLETED } }
-
-    val sections: List<Triple<String, androidx.compose.ui.graphics.vector.ImageVector, List<SprayRecord>>> = listOf(
-        Triple("Program", Icons.Filled.ContentCopy, templates),
-        Triple("In Progress", Icons.Filled.PlayCircle, inProgress),
-        Triple("Upcoming", Icons.Filled.Schedule, notStarted),
-        Triple("Completed", Icons.Filled.CheckCircle, completed),
-    ).filter { it.third.isNotEmpty() }
+    val sections = remember(records, templates, state.trips, search, targetLabels) {
+        SprayProgramLanding.resumeSections(
+            localRecords = records,
+            portalTemplates = templates,
+            trips = state.trips,
+            query = search,
+            labels = targetLabels,
+        )
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         LazyColumn(
@@ -374,32 +289,46 @@ private fun SprayProgramPickerSheet(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 32.dp),
         ) {
             item {
-                Text("Spray Program", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                Text("Resume a Spray Program", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = search,
+                    onValueChange = { search = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Search programs") },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                )
                 Spacer(Modifier.height(12.dp))
             }
             if (sections.isEmpty()) {
                 item {
                     Text(
-                        "No spray programs yet. Create spray records first, then select them here.",
+                        if (search.isBlank()) "No in-progress sprays or Program Steps yet." else "No matching spray programs.",
                         fontSize = 13.sp,
                         color = vine.textSecondary,
                     )
                 }
             }
-            sections.forEach { (title, icon, items) ->
-                item(key = "section-$title") {
+            sections.forEach { section ->
+                item(key = "section-${section.kind}-${section.stageNumber ?: section.title}") {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp, bottom = 6.dp)) {
-                        Icon(icon, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(14.dp))
+                        Icon(
+                            if (section.kind == SprayResumeSection.Kind.IN_PROGRESS) Icons.Filled.PlayCircle else Icons.Filled.ContentCopy,
+                            contentDescription = null,
+                            tint = vine.textSecondary,
+                            modifier = Modifier.size(14.dp),
+                        )
                         Spacer(Modifier.size(6.dp))
                         Text(
-                            title.uppercase(Locale.getDefault()),
+                            section.title.uppercase(Locale.getDefault()),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = vine.textSecondary,
                         )
                     }
                 }
-                items(items, key = { "$title-${it.id}" }) { record ->
+                items(section.records, key = { "${section.kind}-${section.stageNumber}-${it.id}" }) { record ->
                     val paddockName = resolveSprayTrip(record, state.trips)?.paddockName
                     SprayPickerRecordRow(
                         record = record,
