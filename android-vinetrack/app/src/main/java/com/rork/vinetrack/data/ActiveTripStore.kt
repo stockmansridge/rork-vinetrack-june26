@@ -51,6 +51,13 @@ class ActiveTripStore internal constructor(
         storage.write(encoded)
     }
 
+    /** Synchronous result-returning commit used by the Start Tank transaction. */
+    fun saveDurably(ownerUserId: String, vineyardId: String, trip: Trip): Boolean {
+        val snapshot = Snapshot(ownerUserId, vineyardId, trip, System.currentTimeMillis())
+        val encoded = runCatching { json.encodeToString(Snapshot.serializer(), snapshot) }.getOrNull() ?: return false
+        return storage.writeDurably(encoded)
+    }
+
     /** Read the persisted snapshot, or null when none is stored / it can't decode. */
     fun load(): Snapshot? {
         val raw = storage.read() ?: return null

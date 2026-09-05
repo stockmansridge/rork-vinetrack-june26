@@ -616,7 +616,7 @@ struct ActiveTripView: View {
                     tankCount: pending.record.tanks.count
                 ) { water, chemicals in
                     tracking.confirmAndStartTank(
-                        record: pending.record,
+                        pending: pending,
                         actualWaterLitres: water,
                         actualChemicalBaseAmounts: chemicals
                     )

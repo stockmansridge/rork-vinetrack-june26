@@ -150,7 +150,10 @@ create policy spray_tank_actuals_update_operational on public.spray_tank_actuals
 drop policy if exists spray_tank_actuals_no_hard_delete on public.spray_tank_actuals;
 create policy spray_tank_actuals_no_hard_delete on public.spray_tank_actuals for delete to authenticated using (false);
 
+revoke all on public.spray_tank_actuals from public, anon;
 grant select on public.spray_tank_actuals to authenticated;
+-- The API Edge Function uses the service-role client for its explicitly scoped read path.
+grant select on public.spray_tank_actuals to service_role;
 revoke insert, update, delete on public.spray_tank_actuals from authenticated, anon;
 
 create or replace function public.upsert_spray_tank_actual(
@@ -199,6 +202,6 @@ begin
 end;
 $fn$;
 
-revoke all on function public.upsert_spray_tank_actual(uuid,uuid,uuid,uuid,text,integer,double precision,jsonb,timestamptz,timestamptz) from public, anon;
+revoke all on function public.upsert_spray_tank_actual(uuid,uuid,uuid,uuid,text,integer,double precision,jsonb,timestamptz,timestamptz) from public, anon, service_role;
 grant execute on function public.upsert_spray_tank_actual(uuid,uuid,uuid,uuid,text,integer,double precision,jsonb,timestamptz,timestamptz) to authenticated;
 revoke all on function public.validate_spray_tank_actual_chemicals(jsonb) from public, anon, authenticated;

@@ -58,6 +58,7 @@ object CostReportBuilder {
         machines: List<VineyardMachine>,
         fuelPurchases: List<FuelPurchase>,
         paddocks: List<Paddock>,
+        tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual> = emptyList(),
         seasonStartMonth: Int = 7,
         seasonStartDay: Int = 1,
     ): List<CostAllocationRow> {
@@ -83,6 +84,7 @@ object CostReportBuilder {
                 machines = machines,
                 fuelPurchases = fuelPurchases,
                 paddocks = paddocks,
+                tankActuals = tankActuals.filter { it.tripId == trip.id },
             )
 
             val paddock = trip.paddockId?.let { id -> paddocks.firstOrNull { it.id == id } }

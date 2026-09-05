@@ -629,6 +629,7 @@ struct SprayProgramView: View {
             operatorCategories: includeCostings ? store.operatorCategories : [],
             operatorCategoryForName: includeCostings ? { store.operatorCategoryForName($0) } : nil,
             savedChemicals: includeCostings ? store.savedChemicals : [],
+            tankActuals: includeCostings ? SprayTankActualStore.shared.records : [],
             paddocks: includeCostings ? store.paddocks : [],
             historicalYieldRecords: includeCostings ? store.historicalYieldRecords : []
         )

@@ -381,6 +381,7 @@ object SprayRecordPdfExporter {
                 machines = machines,
                 fuelPurchases = fuelPurchases,
                 paddocks = paddocks,
+                tankActuals = actuals,
             )
             val fuel = cost.fuel
             val hasAnyValue = cost.totalCost > 0 ||
@@ -389,7 +390,7 @@ object SprayRecordPdfExporter {
                 fuel.litres != null ||
                 (cost.chemical?.cost ?: 0.0) > 0
             if (hasAnyValue) {
-                sectionHeader(s, "Cost Breakdown")
+                sectionHeader(s, if (cost.chemical?.basis == TripCostEstimator.ChemicalCostBasis.Actual) "Cost Breakdown — Actual Chemicals" else "Cost Breakdown — Estimated Chemicals")
                 if (cost.labour.cost > 0) row(s, "Labour", money(cost.labour.cost))
                 fuel.fuelCost?.let { fc ->
                     val value = fuel.litres?.let { "${money(fc)} \u00B7 ${fmt(it)} L" } ?: money(fc)

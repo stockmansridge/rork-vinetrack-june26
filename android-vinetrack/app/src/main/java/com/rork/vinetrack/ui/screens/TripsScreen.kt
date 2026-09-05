@@ -1464,7 +1464,7 @@ private fun TripDetailView(
             // cost/ha, yield, cost/tonne, then the costing-links editor.
             val canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager"
             if (canViewFinancials) {
-                val cost = remember(trip, linkedSpray, state.operatorCategories, state.machines, state.fuelPurchases, state.paddocks, state.yieldRecords, state.savedInputs) {
+                val cost = remember(trip, linkedSpray, state.operatorCategories, state.machines, state.fuelPurchases, state.paddocks, state.yieldRecords, state.savedInputs, state.sprayTankActuals) {
                     TripCostEstimator.estimate(
                         trip,
                         linkedSpray,
@@ -1474,11 +1474,12 @@ private fun TripDetailView(
                         state.paddocks,
                         state.yieldRecords,
                         state.savedInputs,
+                        state.sprayTankActuals.filter { it.tripId == trip.id },
                     )
                 }
                 val fuel = cost.fuel
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Estimated Trip Cost", onLight = true)
+                    SectionHeader(if (cost.chemical?.basis == TripCostEstimator.ChemicalCostBasis.Actual) "Trip Cost — Actual Chemicals" else "Estimated Trip Cost", onLight = true)
                     VineyardCard {
                         DetailRow(
                             Icons.Filled.Person,
@@ -2467,7 +2468,7 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
     val isPlannedTankWorkComplete = presentation.isPlanComplete && active == null
     var interaction by remember { mutableStateOf(TankControlInteractionState()) }
     var showTankMix by remember { mutableStateOf(false) }
-    var showActualTankConfirmation by remember { mutableStateOf(false) }
+    var pendingTankStart by remember { mutableStateOf<com.rork.vinetrack.ui.PendingTankStart?>(null) }
     var showNoMixConfirmation by remember { mutableStateOf(false) }
     val fillTimerEnabled = remember { OperationPrefsStore(context).load().fillTimerEnabled }
     val isFilling = trip.isFillingTank
@@ -2574,8 +2575,8 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
         } else if (!isPlannedTankWorkComplete) {
             Button(
                 onClick = { interaction.tapStart {
-                    if (vm.pendingTankStart(trip.id) != null) showActualTankConfirmation = true
-                    else showNoMixConfirmation = true
+                    pendingTankStart = vm.pendingTankStart(trip.id)
+                    if (pendingTankStart == null) showNoMixConfirmation = true
                 } },
                 enabled = !busy,
                 modifier = Modifier.height(36.dp),
@@ -2612,16 +2613,13 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
             actuals = linkedSpray?.tanks.orEmpty().mapNotNull { vm.actualTankUse(trip.id, it.tankNumber) },
         )
     }
-    if (showActualTankConfirmation) {
-        val pending = vm.pendingTankStart(trip.id)
-        if (pending != null) {
-            ConfirmActualTankMixDialog(
-                record = pending.first,
-                tank = pending.second,
-                onDismiss = { showActualTankConfirmation = false },
-                onConfirm = { water, chemicals -> vm.confirmAndStartTank(trip.id, pending.first, water, chemicals) },
-            )
-        } else showActualTankConfirmation = false
+    pendingTankStart?.let { pending ->
+        ConfirmActualTankMixDialog(
+            record = pending.record,
+            tank = pending.tank,
+            onDismiss = { pendingTankStart = null },
+            onConfirm = { water, chemicals -> vm.confirmAndStartTank(pending, water, chemicals) },
+        )
     }
     if (showNoMixConfirmation) {
         AlertDialog(

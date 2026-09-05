@@ -1192,6 +1192,17 @@ final class MigratedDataStore {
         onTripChanged?(trip.id)
     }
 
+    func updateTripOrThrow(_ trip: Trip) throws {
+        guard let vineyardId = selectedVineyardId,
+              let index = trips.firstIndex(where: { $0.id == trip.id })
+        else { throw SprayTankActualValidationError.localSaveFailed }
+        var next = trips
+        next[index] = trip
+        try tripRepo.saveSliceOrThrow(next, for: vineyardId)
+        trips = next
+        onTripChanged?(trip.id)
+    }
+
     func endTrip(_ tripId: UUID) {
         guard let vineyardId = selectedVineyardId else { return }
         guard let index = trips.firstIndex(where: { $0.id == tripId }) else { return }

@@ -2,6 +2,9 @@ package com.rork.vinetrack.data
 
 import android.content.Context
 import com.rork.vinetrack.data.model.SprayTankActual
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 
 /** Durable, separate local authority for actual tank contents and their retry queue. */
@@ -12,8 +15,11 @@ class SprayTankActualStore(context: Context) {
     )
 
     private val prefs = context.getSharedPreferences("vinetrack_spray_tank_actuals", Context.MODE_PRIVATE)
+    private val _records = MutableStateFlow(cache().records)
+    /** Single observable authority consumed by UI, reports, and reconciliation. */
+    val records: StateFlow<List<SprayTankActual>> = _records.asStateFlow()
 
-    @Synchronized fun load(): List<SprayTankActual> = cache().records
+    @Synchronized fun load(): List<SprayTankActual> = _records.value
 
     @Synchronized fun actual(tripId: String, tankNumber: Int): SprayTankActual? =
         cache().records.filter { it.tripId == tripId && it.tankNumber == tankNumber }
@@ -30,6 +36,12 @@ class SprayTankActualStore(context: Context) {
         } else records.add(actual)
         val validIds = records.mapTo(mutableSetOf()) { it.id }
         return write(Cache(records, (current.pendingIds intersect validIds) + actual.id))
+    }
+
+    /** Removes a just-created local row when a coordinated trip commit fails. */
+    @Synchronized fun remove(id: String): Boolean {
+        val current = cache()
+        return write(current.copy(records = current.records.filterNot { it.id == id }, pendingIds = current.pendingIds - id))
     }
 
     @Synchronized fun pending(tripId: String? = null): List<SprayTankActual> {
@@ -58,7 +70,11 @@ class SprayTankActualStore(context: Context) {
         runCatching { SupabaseClient.json.decodeFromString(Cache.serializer(), it) }.getOrNull()
     } ?: Cache()
 
-    private fun write(cache: Cache): Boolean = prefs.edit()
-        .putString("cache", SupabaseClient.json.encodeToString(Cache.serializer(), cache))
-        .commit()
+    private fun write(cache: Cache): Boolean {
+        val committed = prefs.edit()
+            .putString("cache", SupabaseClient.json.encodeToString(Cache.serializer(), cache))
+            .commit()
+        if (committed) _records.value = cache.records
+        return committed
+    }
 }

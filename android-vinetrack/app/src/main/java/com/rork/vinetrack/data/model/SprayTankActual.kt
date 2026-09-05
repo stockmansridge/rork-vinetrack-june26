@@ -38,3 +38,18 @@ data class SprayTankActual(
         require(waterVolumeL.isFinite() && waterVolumeL >= 0.0)
     }
 }
+
+/** True only when each planned tank and planned chemical line has one explicit result. */
+fun areSprayTankActualsComplete(
+    plannedTanks: List<SprayTank>,
+    actuals: List<SprayTankActual>,
+): Boolean {
+    if (plannedTanks.isEmpty()) return false
+    return plannedTanks.all { tank ->
+        val actual = actuals.filter { it.tankNumber == tank.tankNumber }
+            .maxByOrNull { it.clientUpdatedAt } ?: return@all false
+        tank.chemicals.all { planned ->
+            actual.chemicals.count { it.plannedChemicalId == planned.id } == 1
+        }
+    }
+}

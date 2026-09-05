@@ -9,6 +9,7 @@ import com.rork.vinetrack.data.model.SeedingMixLine
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.VineyardMachine
+import com.rork.vinetrack.data.model.areSprayTankActualsComplete
 import com.rork.vinetrack.data.model.resolveTripOperatorCategory
 import java.util.Calendar
 import java.util.TimeZone
@@ -162,17 +163,18 @@ object TripCostEstimator {
         // present but unpriced (mirroring iOS chemical-cost messaging).
         val chemical: ChemicalBreakdown? = sprayRecord?.let { record ->
             val tanks = record.tanks.orEmpty()
-            val actualByTank = tankActuals.filter { it.tripId == trip.id && it.sprayRecordId == record.id }
-                .associateBy { it.tankNumber }
-            val actualsComplete = tanks.isNotEmpty() && tanks.all { actualByTank[it.tankNumber] != null }
+            val relevantActuals = tankActuals.filter { it.tripId == trip.id && it.sprayRecordId == record.id }
+            val actualByTank = relevantActuals.groupBy { it.tankNumber }
+                .mapValues { (_, rows) -> rows.maxBy { it.clientUpdatedAt } }
+            val actualsComplete = areSprayTankActualsComplete(tanks, relevantActuals)
             var total = 0.0
             var anyPriced = false
             var anyMissing = false
             tanks.forEach { tank ->
                 tank.chemicals.forEach { planned ->
                     val amount = if (actualsComplete) {
-                        actualByTank[tank.tankNumber]?.chemicals
-                            ?.firstOrNull { it.plannedChemicalId == planned.id }?.actualAmountBase ?: 0.0
+                        checkNotNull(actualByTank[tank.tankNumber]?.chemicals
+                            ?.singleOrNull { it.plannedChemicalId == planned.id }).actualAmountBase
                     } else planned.volumePerTank
                     if (planned.hasCost) {
                         total += planned.costPerUnit * amount

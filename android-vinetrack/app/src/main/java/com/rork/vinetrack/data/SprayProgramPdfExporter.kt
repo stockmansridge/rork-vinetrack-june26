@@ -251,7 +251,7 @@ object SprayProgramPdfExporter {
         drawTankFills(s, records, trips)
 
         if (canViewFinancials) {
-            drawCostSummary(s, records, trips, machines, fuelPurchases, operatorCategories, paddocks)
+            drawCostSummary(s, records, trips, machines, fuelPurchases, operatorCategories, paddocks, tankActuals)
         }
 
         // Footer
@@ -462,6 +462,7 @@ object SprayProgramPdfExporter {
         fuelPurchases: List<FuelPurchase>,
         operatorCategories: List<OperatorCategory>,
         paddocks: List<Paddock>,
+        tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual>,
     ) {
         // Per-chemical costs across all records (covers records without a
         // linked trip, mirroring the existing grouped behaviour).
@@ -472,7 +473,8 @@ object SprayProgramPdfExporter {
             .groupBy { it.name.trim().lowercase(Locale.getDefault()) }
             .map { (_, chems) -> chems.first().name to chems.sumOf { it.costPerTank } }
             .sortedBy { it.first.lowercase(Locale.getDefault()) }
-        val chemicalSubtotal = chemCosts.sumOf { it.second }
+        var chemicalSubtotal = 0.0
+        var allChemicalCostsActual = true
 
         // Aggregate fuel + labour from the estimator over linked records only.
         var fuelLitres = 0.0
@@ -493,7 +495,10 @@ object SprayProgramPdfExporter {
                 machines = machines,
                 fuelPurchases = fuelPurchases,
                 paddocks = paddocks,
+                tankActuals = tankActuals.filter { it.tripId == trip.id && it.sprayRecordId == record.id },
             )
+            chemicalSubtotal += est.chemical?.cost ?: 0.0
+            if (est.chemical?.basis != TripCostEstimator.ChemicalCostBasis.Actual) allChemicalCostsActual = false
             est.fuel.litres?.let { fuelLitres += it }
             est.fuel.fuelCost?.let { fuelCost += it }
             labourCost += est.labour.cost
@@ -528,7 +533,7 @@ object SprayProgramPdfExporter {
 
         if (chemCosts.isNotEmpty()) {
             s.ensure(14f)
-            s.canvas.drawText("Chemical Subtotal", MARGIN + 8f, s.y, bodyPaint)
+            s.canvas.drawText(if (allChemicalCostsActual) "Chemical Subtotal — Actual" else "Chemical Subtotal — Estimated", MARGIN + 8f, s.y, bodyPaint)
             s.canvas.drawText(formatCurrency(chemicalSubtotal), MARGIN + 200f, s.y, bodyBoldPaint)
             s.y += 14f
         }

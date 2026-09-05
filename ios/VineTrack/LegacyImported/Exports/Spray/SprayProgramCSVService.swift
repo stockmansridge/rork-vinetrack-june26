@@ -69,6 +69,7 @@ struct SprayProgramCSVService {
         operatorCategories: [OperatorCategory] = [],
         operatorCategoryForName: ((String) -> OperatorCategory?)? = nil,
         savedChemicals: [SavedChemical] = [],
+        tankActuals: [SprayTankActual] = [],
         paddocks: [Paddock] = [],
         historicalYieldRecords: [HistoricalYieldRecord] = []
     ) -> URL {
@@ -100,6 +101,7 @@ struct SprayProgramCSVService {
                 "fuel_litres_estimated",
                 "fuel_cost",
                 "chemical_cost",
+                "chemical_cost_basis",
                 "total_estimated_cost",
                 "costing_status",
                 "treated_area_ha",
@@ -231,6 +233,7 @@ struct SprayProgramCSVService {
                         tractor: tractor,
                         fuelPurchases: vineyardFuelPurchases,
                         sprayRecord: record,
+                        tankActuals: tankActuals.filter { $0.tripId == trip.id && $0.sprayRecordId == record.id },
                         savedChemicals: savedChemicals,
                         paddockAreasById: areasById,
                         historicalYieldRecords: historicalYieldRecords
@@ -244,6 +247,7 @@ struct SprayProgramCSVService {
                         if let w = c.warning, c.cost <= 0, !w.isEmpty { return "" }
                         return String(format: "%.2f", c.cost)
                     }())
+                    row.append(r.chemical?.basis.rawValue ?? "")
                     row.append(String(format: "%.2f", r.totalCost))
                     row.append(r.completeness.rawValue)
                     row.append((r.treatedAreaHa.map { String(format: "%.2f", $0) }) ?? "")
@@ -251,7 +255,7 @@ struct SprayProgramCSVService {
                     row.append((r.yieldTonnes.map { String(format: "%.2f", $0) }) ?? "")
                     row.append((r.costPerTonne.map { String(format: "%.2f", $0) }) ?? "")
                 } else {
-                    row.append(contentsOf: ["", "", "", "", "", "", "", "", "", "", ""])
+                    row.append(contentsOf: ["", "", "", "", "", "", "", "", "", "", "", ""])
                 }
             }
 

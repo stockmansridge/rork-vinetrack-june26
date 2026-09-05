@@ -102,7 +102,7 @@ object SprayProgramCsvExporter {
      */
     private val costRollupHeaders: List<String> = listOf(
         "active_hours", "labour_cost", "fuel_litres_estimated", "fuel_cost",
-        "chemical_cost", "total_estimated_cost", "costing_status",
+        "chemical_cost", "chemical_cost_basis", "total_estimated_cost", "costing_status",
         "treated_area_ha", "cost_per_ha",
     )
 
@@ -406,6 +406,7 @@ object SprayProgramCsvExporter {
                         machines = machines,
                         fuelPurchases = fuelPurchases,
                         paddocks = paddocks,
+                        tankActuals = recordActuals,
                     )
                     // active_hours
                     row.add(String.format(Locale.US, "%.2f", est.activeHours))
@@ -420,6 +421,7 @@ object SprayProgramCsvExporter {
                             if (c.warning != null && c.cost <= 0.0) "" else String.format(Locale.US, "%.2f", c.cost)
                         } ?: ""
                     )
+                    row.add(est.chemical?.basis?.name?.lowercase(Locale.US) ?: "")
                     // total_estimated_cost
                     row.add(String.format(Locale.US, "%.2f", est.totalCost))
                     // costing_status (iOS rawValue: complete/partial/unavailable)

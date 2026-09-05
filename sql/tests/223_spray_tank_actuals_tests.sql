@@ -26,6 +26,15 @@ begin
   if has_function_privilege('anon', 'public.upsert_spray_tank_actual(uuid,uuid,uuid,uuid,text,integer,double precision,jsonb,timestamptz,timestamptz)', 'execute') then
     raise exception 'anon can execute actual-use RPC';
   end if;
+  if not has_table_privilege('service_role', 'public.spray_tank_actuals', 'select') then
+    raise exception 'service_role cannot read spray_tank_actuals';
+  end if;
+  if has_function_privilege('service_role', 'public.upsert_spray_tank_actual(uuid,uuid,uuid,uuid,text,integer,double precision,jsonb,timestamptz,timestamptz)', 'execute') then
+    raise exception 'service_role unexpectedly has actual-use RPC execution';
+  end if;
+  if has_table_privilege('anon', 'public.spray_tank_actuals', 'select') then
+    raise exception 'anon can read spray_tank_actuals';
+  end if;
   if not has_function_privilege('authenticated', 'public.upsert_spray_tank_actual(uuid,uuid,uuid,uuid,text,integer,double precision,jsonb,timestamptz,timestamptz)', 'execute') then
     raise exception 'authenticated role cannot execute actual-use RPC';
   end if;

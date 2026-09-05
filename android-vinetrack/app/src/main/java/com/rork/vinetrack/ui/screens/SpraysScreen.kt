@@ -1328,6 +1328,7 @@ private fun SprayDetailView(
                                 state.machines,
                                 state.fuelPurchases,
                                 state.paddocks,
+                                tankActuals = state.sprayTankActuals.filter { it.tripId == linkedTrip.id && it.sprayRecordId == record.id },
                             )
                             val fuel = cost.fuel
                             if (cost.totalCost > 0) {

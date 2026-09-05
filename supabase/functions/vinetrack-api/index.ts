@@ -1010,6 +1010,25 @@ function mapSprayTanks(raw: unknown, includeCosts: boolean) {
   });
 }
 
+function areSprayTankActualsComplete(plannedTanks: TankJson[], actualRows: TankActualRow[]): boolean {
+  if (plannedTanks.length === 0) return false;
+  return plannedTanks.every((tank) => {
+    const tankNumber = num(tank.tankNumber);
+    if (tankNumber === null) return false;
+    const matchingRows = actualRows.filter((row) => row.tank_number === tankNumber)
+      .sort((a, b) => b.client_updated_at.localeCompare(a.client_updated_at));
+    const actual = matchingRows[0];
+    if (!actual) return false;
+    const actualChemicals = Array.isArray(actual.chemicals)
+      ? actual.chemicals as TankActualChemicalJson[] : [];
+    const plannedChemicals = Array.isArray(tank.chemicals) ? tank.chemicals as ChemicalJson[] : [];
+    return plannedChemicals.every((planned) => {
+      if (typeof planned.id !== "string") return false;
+      return actualChemicals.filter((line) => line.plannedChemicalId === planned.id).length === 1;
+    });
+  });
+}
+
 function actualChemicalCostTotal(plannedRaw: unknown, actualRows: TankActualRow[]): number | null {
   const costs = new Map<string, number>();
   for (const tank of parseTanks(plannedRaw)) {
@@ -1632,10 +1651,7 @@ async function handleSprayGet(
   const plannedTanks = parseTanks(spray.tanks);
   const actualRows = await loadSprayTankActuals(db, spray.id);
   const actualTanks = mapActualTanks(actualRows);
-  const actualsComplete = plannedTanks.length > 0 && plannedTanks.every((tank) => {
-    const number = num(tank.tankNumber);
-    return number !== null && actualRows.some((actual) => actual.tank_number === number);
-  });
+  const actualsComplete = areSprayTankActualsComplete(plannedTanks, actualRows);
   body.planned_water_volume_l = sprayTotals(plannedTanks).waterL;
   body.actual_water_volume_l = actualRows.length > 0
     ? round3(actualRows.reduce((sum, actual) => sum + (num(actual.water_volume_l) ?? 0), 0))

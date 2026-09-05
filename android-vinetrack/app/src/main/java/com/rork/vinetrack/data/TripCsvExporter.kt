@@ -36,7 +36,7 @@ object TripCsvExporter {
 
     private val costHeaders = listOf(
         "active_hours", "labour_cost", "fuel_litres_estimated", "fuel_cost_per_litre",
-        "fuel_cost", "chemical_cost", "total_estimated_cost", "costing_status",
+        "fuel_cost", "chemical_cost", "chemical_cost_basis", "total_estimated_cost", "costing_status",
         "treated_area_ha", "cost_per_ha", "yield_tonnes", "cost_per_tonne",
     )
 
@@ -60,6 +60,7 @@ object TripCsvExporter {
                 trip, vineyardName, blockLabel, operatorName, includeCostings,
                 linkedSpray, operatorCategories, machines, fuelPurchases,
                 paddocks, yieldRecords, savedInputs,
+                SprayTankActualStore(context).load().filter { it.tripId == trip.id },
             )
 
             val dir = File(context.cacheDir, "exports").apply { mkdirs() }
@@ -101,6 +102,7 @@ object TripCsvExporter {
         paddocks: List<Paddock>,
         yieldRecords: List<HistoricalYieldRecord>,
         savedInputs: List<SavedInput>,
+        tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual>,
     ): String {
         val dateFmt = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
         val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -122,7 +124,7 @@ object TripCsvExporter {
         if (includeCostings) {
             val est = TripCostEstimator.estimate(
                 trip, linkedSpray, operatorCategories, machines,
-                fuelPurchases, paddocks, yieldRecords, savedInputs,
+                fuelPurchases, paddocks, yieldRecords, savedInputs, tankActuals,
             )
             row.add(String.format(Locale.US, "%.2f", est.activeHours))
             row.add(if (est.labour.warning == null) String.format(Locale.US, "%.2f", est.labour.cost) else "")
@@ -134,6 +136,7 @@ object TripCsvExporter {
                     if (c.warning != null && c.cost <= 0.0) "" else String.format(Locale.US, "%.2f", c.cost)
                 } ?: ""
             )
+            row.add(est.chemical?.basis?.name?.lowercase(Locale.US) ?: "")
             row.add(String.format(Locale.US, "%.2f", est.totalCost))
             row.add(est.completeness.name.lowercase(Locale.US))
             row.add(est.treatedAreaHa?.let { String.format(Locale.US, "%.2f", it) } ?: "")

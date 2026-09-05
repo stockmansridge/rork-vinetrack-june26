@@ -31,6 +31,13 @@ final class TripRepository {
         persistence.save(all, key: Self.storageKey)
     }
 
+    func saveSliceOrThrow(_ items: [Trip], for vineyardId: UUID) throws {
+        var all = loadAll()
+        all.removeAll { $0.vineyardId == vineyardId }
+        all.append(contentsOf: items)
+        try persistence.saveOrThrow(all, key: Self.storageKey)
+    }
+
     // MARK: - Sync
 
     func replace(_ remote: [Trip], for vineyardId: UUID) {

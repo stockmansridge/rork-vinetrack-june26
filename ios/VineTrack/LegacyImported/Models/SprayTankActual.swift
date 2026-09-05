@@ -73,6 +73,22 @@ nonisolated struct SprayTankActual: Codable, Identifiable, Sendable, Hashable {
     }
 }
 
+nonisolated func areSprayTankActualsComplete(
+    plannedTanks: [SprayTank],
+    actuals: [SprayTankActual]
+) -> Bool {
+    guard !plannedTanks.isEmpty else { return false }
+    return plannedTanks.allSatisfy { tank in
+        guard let actual = actuals
+            .filter({ $0.tankNumber == tank.tankNumber })
+            .max(by: { $0.clientUpdatedAt < $1.clientUpdatedAt })
+        else { return false }
+        return tank.chemicals.allSatisfy { planned in
+            actual.chemicals.filter { $0.plannedChemicalId == planned.id }.count == 1
+        }
+    }
+}
+
 nonisolated enum SprayTankActualValidationError: LocalizedError, Sendable {
     case invalidAmount
     case unavailablePlan

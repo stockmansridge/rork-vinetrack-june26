@@ -50,8 +50,13 @@ import com.rork.vinetrack.data.spray.SprayProductRateBasis
 import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
+import java.text.DateFormat
 import java.text.NumberFormat
+import java.text.ParsePosition
+import java.time.Instant
+import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 
 internal data class TankControlInteractionState(
     val isEndConfirmationPresented: Boolean = false,
@@ -139,9 +144,9 @@ internal fun ConfirmActualTankMixDialog(
     } }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    fun parse(value: String): Double? = value.takeIf { it.isNotBlank() }?.let { runCatching { formatter.parse(it)?.toDouble() }.getOrNull() }
-    val valid = parse(waterText)?.let { it.isFinite() && it >= 0.0 } == true && tank.chemicals.all {
-        parse(chemicalTexts[it.id].orEmpty())?.let { value -> value.isFinite() && value >= 0.0 } == true
+    fun parse(value: String): Double? = parseLocalizedNonNegativeDecimal(value, formatter)
+    val valid = parse(waterText) != null && tank.chemicals.all {
+        parse(chemicalTexts[it.id].orEmpty()) != null
     }
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
@@ -282,6 +287,18 @@ private fun TankMixContent(
                 PlannedDetailRow("Planned water", "${tankMixNumber(selectedTank.waterVolume)} L")
                 HorizontalDivider(color = vine.cardBorder)
                 PlannedDetailRow("Actual water", actual?.let { "${tankMixNumber(it.waterVolumeL)} L" } ?: "Not recorded")
+                actual?.let {
+                    val difference = it.waterVolumeL - selectedTank.waterVolume
+                    if (abs(difference) > 0.000001) {
+                        Text(
+                            "Difference: ${signedTankMixNumber(difference)} L",
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                            color = vine.textSecondary,
+                            fontSize = 12.sp,
+                            textAlign = TextAlign.End,
+                        )
+                    }
+                }
                 HorizontalDivider(color = vine.cardBorder)
                 PlannedDetailRow("Planned area", "${tankMixNumber(selectedTank.areaPerTank)} ha")
                 HorizontalDivider(color = vine.cardBorder)
@@ -308,8 +325,8 @@ private fun TankMixContent(
             selectedTank.chemicals.forEach { chemical ->
                 PlannedChemicalCard(chemical, actual?.chemicals?.firstOrNull { it.plannedChemicalId == chemical.id })
             }
-            actual?.let { Text("Confirmed ${it.confirmedAt}", color = vine.textSecondary, fontSize = 12.sp) }
         }
+        actual?.let { Text("Confirmed ${formatTankConfirmationTime(it.confirmedAt)}", color = vine.textSecondary, fontSize = 12.sp) }
     }
 }
 
@@ -363,13 +380,19 @@ private fun PlannedChemicalCard(
             }
             Text(
                 when {
-                    actual == null -> "Actual amounts not yet confirmed"
+                    actual == null -> "Actual: Not recorded"
                     actual.actualAmountBase == 0.0 -> "Actual: Not added"
                     else -> "Actual: ${tankMixNumber(chemicalUnitFromBase(actual.unit, actual.actualAmountBase))} ${actual.unit}"
                 },
                 color = if (actual?.actualAmountBase == 0.0) VineColors.Orange else vine.textSecondary,
                 fontSize = 12.sp,
             )
+            actual?.let {
+                val difference = chemicalUnitFromBase(chemical.unit, it.actualAmountBase - chemical.volumePerTank)
+                if (abs(difference) > 0.000001) {
+                    Text("Difference: ${signedTankMixNumber(difference)} ${chemical.unit}", color = vine.textSecondary, fontSize = 12.sp)
+                }
+            }
             rateText?.let { Text("Application rate: $it", color = vine.textSecondary, fontSize = 12.sp) }
         }
     }
@@ -394,11 +417,30 @@ private fun progressColor(progress: PlannedTankProgress): Color = when (progress
     PlannedTankProgress.COMPLETED -> VineColors.DarkGreen
 }
 
+internal fun parseLocalizedNonNegativeDecimal(
+    input: String,
+    formatter: NumberFormat = NumberFormat.getNumberInstance(Locale.getDefault()),
+): Double? {
+    if (input.isBlank() || input != input.trim()) return null
+    val position = ParsePosition(0)
+    val parsed = formatter.parse(input, position)?.toDouble() ?: return null
+    if (position.errorIndex >= 0 || position.index != input.length) return null
+    return parsed.takeIf { it.isFinite() && it >= 0.0 }
+}
+
 internal fun tankMixNumber(value: Double): String {
     val formatter = NumberFormat.getNumberInstance(Locale.getDefault())
     formatter.maximumFractionDigits = 3
     formatter.minimumFractionDigits = 0
     return formatter.format(value)
+}
+
+internal fun signedTankMixNumber(value: Double): String =
+    (if (value > 0.0) "+" else "") + tankMixNumber(value)
+
+private fun formatTankConfirmationTime(value: String): String {
+    val date = runCatching { Date.from(Instant.parse(value)) }.getOrNull() ?: return value
+    return DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT, Locale.getDefault()).format(date)
 }
 
 internal fun plannedRowRange(application: TankRowApplication): String {

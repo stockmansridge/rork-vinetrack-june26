@@ -113,7 +113,7 @@ fun CostReportsScreen(
         if (!canViewCosting) null else buildCostingSetup(state)
     }
 
-    val allRows = remember(state.trips, state.sprayRecords, state.operatorCategories, state.machines, state.fuelPurchases, state.paddocks, state.seasonStartMonth, state.seasonStartDay) {
+    val allRows = remember(state.trips, state.sprayRecords, state.operatorCategories, state.machines, state.fuelPurchases, state.paddocks, state.sprayTankActuals, state.seasonStartMonth, state.seasonStartDay) {
         if (!canViewCosting) emptyList()
         else CostReportBuilder.build(
             trips = state.trips,
@@ -122,6 +122,7 @@ fun CostReportsScreen(
             machines = state.machines,
             fuelPurchases = state.fuelPurchases,
             paddocks = state.paddocks,
+            tankActuals = state.sprayTankActuals,
             seasonStartMonth = state.seasonStartMonth,
             seasonStartDay = state.seasonStartDay,
         )

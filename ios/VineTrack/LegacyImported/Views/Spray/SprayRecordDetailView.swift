@@ -838,6 +838,7 @@ extension SprayRecordDetailView {
                 tractor: tractor,
                 fuelPurchases: fuelPurchases,
                 sprayRecord: recordCopy,
+                tankActuals: SprayTankActualStore.shared.records.filter { $0.tripId == trip.id && $0.sprayRecordId == recordCopy.id },
                 savedChemicals: store.savedChemicals,
                 paddockAreasById: areasById,
                 historicalYieldRecords: store.historicalYieldRecords

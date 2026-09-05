@@ -625,8 +625,15 @@ final class TripTrackingService {
         trip.tankSessions.lastIndex(where: { $0.fillStartTime != nil && $0.fillEndTime == nil })
     }
 
+    struct PendingTankStart {
+        let sourceTrip: Trip
+        let record: SprayRecord
+        let tank: SprayTank
+        let result: TankStartResult
+    }
+
     /// Preview the exact next tank selected by the production lifecycle without mutating state.
-    func pendingTankStart() -> (record: SprayRecord, tank: SprayTank)? {
+    func pendingTankStart() -> PendingTankStart? {
         guard let trip = activeTrip,
               let record = TankMixPresentation.linkedRecord(for: trip.id, in: store?.sprayRecords ?? []),
               let result = TankSessionLifecycle.startResult(
@@ -638,31 +645,35 @@ final class TripTrackingService {
               ),
               let tank = record.tanks.first(where: { $0.tankNumber == result.tankNumber })
         else { return nil }
-        return (record, tank)
+        return PendingTankStart(sourceTrip: trip, record: record, tank: tank, result: result)
     }
 
     /// Atomically commits the lifecycle-selected session identity and its confirmed actual mix locally.
     @discardableResult
     func confirmAndStartTank(
-        record: SprayRecord,
+        pending: PendingTankStart,
         actualWaterLitres: Double,
         actualChemicalBaseAmounts: [UUID: Double]
     ) -> Bool {
         guard let trip = activeTrip,
-              record.tripId == trip.id,
+              pending.record.tripId == trip.id,
               let userId = SupabaseClientProvider.shared.client.auth.currentUser?.id
         else { return false }
-        let operationTimestamp = Date()
-        let operationRow = trip.trackingPattern == .freeDrive
-            ? currentRowNumber
-            : currentRowNumber ?? trip.currentRowNumber
-        guard let result = TankSessionLifecycle.startResult(
-            trip: trip,
-            at: operationTimestamp,
-            currentRow: operationRow,
-            plannedTankNumbers: record.tanks.map(\.tankNumber)
-        ), let plannedTank = record.tanks.first(where: { $0.tankNumber == result.tankNumber })
-        else { return false }
+        guard trip.tankSessions == pending.sourceTrip.tankSessions,
+              trip.activeTankNumber == pending.sourceTrip.activeTankNumber,
+              trip.isFillingTank == pending.sourceTrip.isFillingTank,
+              trip.fillingTankNumber == pending.sourceTrip.fillingTankNumber
+        else {
+            errorMessage = "The trip changed while this tank was open. Reopen Start Tank and confirm again."
+            return false
+        }
+        let result = pending.result
+        let plannedTank = pending.tank
+        var committedTrip = trip
+        committedTrip.tankSessions = result.trip.tankSessions
+        committedTrip.activeTankNumber = result.trip.activeTankNumber
+        committedTrip.isFillingTank = result.trip.isFillingTank
+        committedTrip.fillingTankNumber = result.trip.fillingTankNumber
 
         do {
             let actualChemicals = try plannedTank.chemicals.map { chemical in
@@ -676,7 +687,7 @@ final class TripTrackingService {
             }
             let actual = try SprayTankActual(
                 vineyardId: trip.vineyardId,
-                sprayRecordId: record.id,
+                sprayRecordId: pending.record.id,
                 tripId: trip.id,
                 tankSessionId: result.tankSessionId.uuidString,
                 tankNumber: result.tankNumber,
@@ -686,7 +697,12 @@ final class TripTrackingService {
                 confirmedBy: userId
             )
             try SprayTankActualStore.shared.saveLocally(actual)
-            store?.updateTrip(result.trip)
+            do {
+                try store?.updateTripOrThrow(committedTrip)
+            } catch {
+                try? SprayTankActualStore.shared.removeLocal(id: actual.id)
+                throw error
+            }
             return true
         } catch {
             errorMessage = error.localizedDescription

@@ -6,6 +6,10 @@ import androidx.core.content.edit
 internal interface ActiveTripSnapshotStorage {
     fun read(): String?
     fun write(value: String)
+    fun writeDurably(value: String): Boolean {
+        write(value)
+        return true
+    }
     fun remove()
 }
 
@@ -20,6 +24,9 @@ internal class SharedPreferencesActiveTripSnapshotStorage(
     override fun write(value: String) {
         prefs.edit { putString(KEY_SNAPSHOT, value) }
     }
+
+    override fun writeDurably(value: String): Boolean =
+        prefs.edit().putString(KEY_SNAPSHOT, value).commit()
 
     override fun remove() {
         prefs.edit { remove(KEY_SNAPSHOT) }

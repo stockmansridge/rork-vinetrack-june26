@@ -277,18 +277,22 @@ nonisolated enum TripCostService {
         // Step 1 is the canonical path going forward; steps 2/3 keep older
         // records (created before snapshotting) costable.
         let chemical: ChemicalBreakdown? = sprayRecord.map { record in
-            let actualByTank = Dictionary(uniqueKeysWithValues: tankActuals
-                .filter { $0.tripId == trip.id && $0.sprayRecordId == record.id }
-                .map { ($0.tankNumber, $0) })
-            let actualsComplete = !record.tanks.isEmpty && record.tanks.allSatisfy { actualByTank[$0.tankNumber] != nil }
+            let relevantActuals = tankActuals.filter { $0.tripId == trip.id && $0.sprayRecordId == record.id }
+            let actualByTank = Dictionary(grouping: relevantActuals, by: \.tankNumber)
+                .compactMapValues { $0.max(by: { $0.clientUpdatedAt < $1.clientUpdatedAt }) }
+            let actualsComplete = areSprayTankActualsComplete(plannedTanks: record.tanks, actuals: relevantActuals)
             var total: Double = 0
             var anyMissing = false
             var anyPriced = false
             for tank in record.tanks {
                 for chem in tank.chemicals {
-                    let amount = actualsComplete
-                        ? (actualByTank[tank.tankNumber]?.chemicals.first { $0.plannedChemicalId == chem.id }?.actualAmountBase ?? 0)
-                        : chem.volumePerTank
+                    let amount: Double
+                    if actualsComplete,
+                       let actual = actualByTank[tank.tankNumber]?.chemicals.first(where: { $0.plannedChemicalId == chem.id }) {
+                        amount = actual.actualAmountBase
+                    } else {
+                        amount = chem.volumePerTank
+                    }
                     let resolvedCostPerUnit = resolveCostPerUnit(chem, savedChemicals: savedChemicals)
                     if let cpu = resolvedCostPerUnit, cpu > 0 {
                         total += cpu * amount

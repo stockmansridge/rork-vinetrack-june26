@@ -559,6 +559,7 @@ struct TripCostAllocationRecalculator {
             tractor: tractor,
             fuelPurchases: fuelPurchases,
             sprayRecord: sprayRecord,
+            tankActuals: SprayTankActualStore.shared.records.filter { $0.tripId == trip.id },
             savedChemicals: store.savedChemicals,
             savedInputs: store.savedInputs,
             paddockHectares: paddockHectares > 0 ? paddockHectares : nil,

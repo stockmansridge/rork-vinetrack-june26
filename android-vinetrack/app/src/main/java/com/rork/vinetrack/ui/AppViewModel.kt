@@ -421,6 +421,13 @@ data class SeasonMigrationPrompt(
     val sharedDay: Int,
 )
 
+data class PendingTankStart(
+    val sourceTrip: Trip,
+    val record: SprayRecord,
+    val tank: com.rork.vinetrack.data.model.SprayTank,
+    val result: com.rork.vinetrack.data.TankStartResult,
+)
+
 data class AppUiState(
     val route: AppRoute = AppRoute.Restoring,
     /**
@@ -501,6 +508,8 @@ data class AppUiState(
     /** Vineyard-scoped custom Trip Functions (active + archived) for the picker and Settings. */
     val vineyardTripFunctions: List<VineyardTripFunction> = emptyList(),
     val sprayRecords: List<SprayRecord> = emptyList(),
+    /** Canonical reconciled actual-tank source for screens, costs, and exports. */
+    val sprayTankActuals: List<com.rork.vinetrack.data.model.SprayTankActual> = emptyList(),
     /**
      * Read-only portal spray templates from `spray_jobs` (is_template = true,
      * deleted_at IS NULL), mapped to in-memory [SprayRecord] templates. Never
@@ -1861,6 +1870,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         observeConnectivity()
         observePendingWrites()
         observePendingPhotos()
+        observeSprayTankActuals()
         // Every server answer to an activity write reaches the UI, including the
         // quarters the server refused because another record already owns them.
         pruningSyncCoordinator.onActivityReconciled = { reconciliation ->
@@ -1888,6 +1898,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * Mirror the local pending-photo count into [AppUiState.pendingPhotoCount].
      * Read-only: observing the count never triggers an upload or retry.
      */
+    private fun observeSprayTankActuals() {
+        viewModelScope.launch {
+            sprayTankActualStore.records.collect { actuals ->
+                _ui.update { it.copy(sprayTankActuals = actuals) }
+            }
+        }
+    }
+
     private fun observePendingPhotos() {
         viewModelScope.launch {
             pendingPhotos.attachments.collect { list ->
@@ -2479,6 +2497,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             sprayTankActualStore.pending().sortedBy { it.clientUpdatedAt }.forEach { actual ->
                 val parentPending = TripStartSync.hasUnresolvedStart(pendingWrites, actual.tripId) ||
                     pendingWrites.list().any {
+                        it.clientId == actual.tripId &&
+                            it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK &&
+                            it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
+                    } || pendingWrites.list().any {
                         it.clientId == actual.sprayRecordId &&
                             it.entityType == com.rork.vinetrack.data.model.PendingEntityType.SPRAY_RECORD &&
                             it.opType == com.rork.vinetrack.data.model.PendingOpType.CREATE &&
@@ -9497,36 +9519,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // MARK: - Live tank sessions (Stage 3F-2b)
 
     /** Returns the exact next planned tank selected by the production lifecycle without mutating state. */
-    fun pendingTankStart(tripId: String): Pair<com.rork.vinetrack.data.model.SprayRecord, com.rork.vinetrack.data.model.SprayTank>? {
+    fun pendingTankStart(tripId: String): PendingTankStart? {
         val trip = _ui.value.trips.firstOrNull { it.id == tripId && it.isActive } ?: return null
         val record = TankMixPresentation.linkedRecord(trip.id, _ui.value.sprayRecords) ?: return null
         val result = TankSessionLifecycle.startResult(
             trip, java.time.Instant.now().toString(), null, record.tanks.orEmpty().map { it.tankNumber }
         ) ?: return null
-        return record to (record.tanks.orEmpty().firstOrNull { it.tankNumber == result.tankNumber } ?: return null)
+        val tank = record.tanks.orEmpty().firstOrNull { it.tankNumber == result.tankNumber } ?: return null
+        return PendingTankStart(trip, record, tank, result)
     }
 
     fun actualTankUse(tripId: String, tankNumber: Int): com.rork.vinetrack.data.model.SprayTankActual? =
-        sprayTankActualStore.actual(tripId, tankNumber)
+        _ui.value.sprayTankActuals.filter { it.tripId == tripId && it.tankNumber == tankNumber }
+            .maxByOrNull { it.clientUpdatedAt }
 
     /** Durable local confirmation boundary. Double submission cannot create a second active session. */
     fun confirmAndStartTank(
-        tripId: String,
-        record: com.rork.vinetrack.data.model.SprayRecord,
+        pending: PendingTankStart,
         actualWaterLitres: Double,
         actualChemicalBaseAmounts: Map<String, Double>,
     ): Boolean {
-        val trip = _ui.value.trips.firstOrNull { it.id == tripId && it.isActive } ?: return false
-        if (tripId in _ui.value.locallyEndedTripIds) return false
+        val trip = _ui.value.trips.firstOrNull { it.id == pending.sourceTrip.id && it.isActive } ?: return false
+        if (trip != pending.sourceTrip || trip.id in _ui.value.locallyEndedTripIds) {
+            _ui.update { it.copy(tripError = "The trip changed while this tank was open. Reopen Start Tank and confirm again.") }
+            return false
+        }
+        val record = pending.record
+        val result = pending.result
+        val tank = pending.tank
         val userId = session.userId ?: return false
         if (record.tripId != trip.id || !actualWaterLitres.isFinite() || actualWaterLitres < 0.0) return false
-        val result = TankSessionLifecycle.startResult(
-            trip = trip,
-            timestamp = java.time.Instant.now().toString(),
-            currentRow = trip.currentRowNumber ?: trip.rowSequence.getOrNull(trip.sequenceIndex),
-            plannedTankNumbers = record.tanks.orEmpty().map { it.tankNumber },
-        ) ?: return false
-        val tank = record.tanks.orEmpty().firstOrNull { it.tankNumber == result.tankNumber } ?: return false
         val chemicals = tank.chemicals.map { chemical ->
             val amount = actualChemicalBaseAmounts[chemical.id] ?: chemical.volumePerTank
             if (!amount.isFinite() || amount < 0.0) return false
@@ -9551,12 +9573,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             confirmedAt = result.operationTimestamp,
             confirmedBy = userId,
         )
-        if (!sprayTankActualStore.save(actual)) return false
-        persistTankSessions(
-            tripId, result.trip.tankSessions, result.trip.activeTankNumber,
-            result.trip.isFillingTank, result.trip.fillingTankNumber,
-        )
-        replayPendingTankActuals()
+        val ownerId = session.userId ?: return false
+        val vineyardId = _ui.value.selectedVineyardId ?: return false
+        val previousSnapshot = activeTripStore.load()
+        if (!activeTripStore.saveDurably(ownerId, vineyardId, result.trip)) return false
+        if (!sprayTankActualStore.save(actual)) {
+            if (previousSnapshot != null) {
+                activeTripStore.saveDurably(previousSnapshot.ownerUserId, previousSnapshot.vineyardId, previousSnapshot.trip)
+            } else {
+                activeTripStore.clear()
+            }
+            return false
+        }
+        val marker = runCatching { tripTankSync.enqueue(result.trip) }.getOrElse {
+            sprayTankActualStore.remove(actual.id)
+            if (previousSnapshot != null) activeTripStore.saveDurably(previousSnapshot.ownerUserId, previousSnapshot.vineyardId, previousSnapshot.trip)
+            else activeTripStore.clear()
+            return false
+        }
+        _ui.update { state -> state.copy(trips = state.trips.map { if (it.id == trip.id) result.trip else it }) }
+        if (_ui.value.isOnline) {
+            viewModelScope.launch {
+                runCatching {
+                    tripRepo.updateTripTankSessions(
+                        trip.id, result.trip.tankSessions, result.trip.activeTankNumber,
+                        result.trip.isFillingTank, result.trip.fillingTankNumber,
+                    )
+                }.onSuccess {
+                    pendingWrites.remove(marker.id)
+                    replayPendingTankActuals()
+                }.onFailure {
+                    pendingWrites.updateStatus(marker.id, com.rork.vinetrack.data.model.PendingWriteStatus.FAILED, "Tank session is waiting to sync.")
+                }
+            }
+        }
         return true
     }
 
