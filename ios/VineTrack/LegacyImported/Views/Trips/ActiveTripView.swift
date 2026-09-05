@@ -13,6 +13,8 @@ struct ActiveTripView: View {
     @Environment(LocationService.self) private var locationService
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(NetworkMonitor.self) private var network
+    @Environment(TripSyncService.self) private var tripSync
+    @Environment(SprayRecordSyncService.self) private var spraySync
 
     @State private var position: MapCameraPosition = .userLocation(fallback: .automatic)
     @State private var isFollowingUser: Bool = true
@@ -36,6 +38,8 @@ struct ActiveTripView: View {
     @State private var fillElapsed: TimeInterval = 0
     @State private var tankControlInteraction: TankControlInteractionState = .init()
     @State private var showTankMix: Bool = false
+    @State private var showActualTankConfirmation: Bool = false
+    @State private var showStartWithoutMixConfirmation: Bool = false
 
     /// Display-only trail segments. Recomputed on a 1Hz throttled timer rather
     /// than every GPS tick or every SwiftUI body invocation.
@@ -459,6 +463,14 @@ struct ActiveTripView: View {
             }
         }
         .background(Color(.systemGroupedBackground))
+        .task(id: network.isOnline) {
+            guard network.isOnline else { return }
+            await SprayTankActualStore.shared.syncPending(
+                tripSync: tripSync,
+                spraySync: spraySync,
+                vineyardId: liveTrip.vineyardId
+            )
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             // Pin the action buttons (row banner, spray banner, tank
             // controls and pause/end controls) above the floating tab bar
@@ -595,6 +607,23 @@ struct ActiveTripView: View {
             TankMixDetailsView(record: sprayRecord, trip: liveTrip)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showActualTankConfirmation) {
+            if let pending = tracking.pendingTankStart() {
+                ConfirmActualTankMixView(
+                    record: pending.record,
+                    tank: pending.tank,
+                    tankCount: pending.record.tanks.count
+                ) { water, chemicals in
+                    tracking.confirmAndStartTank(
+                        record: pending.record,
+                        actualWaterLitres: water,
+                        actualChemicalBaseAmounts: chemicals
+                    )
+                }
+            } else {
+                ContentUnavailableView("Planned tank mix unavailable", systemImage: "exclamationmark.triangle")
+            }
         }
         .sheet(isPresented: $showGrowth) {
             NavigationStack { RepairsGrowthView(initial: .growth) }
@@ -1981,7 +2010,11 @@ struct ActiveTripView: View {
             } else if !isPlannedTankWorkComplete {
                 Button {
                     tankControlInteraction.tapStart {
-                        tracking.startTank()
+                        if tracking.pendingTankStart() != nil {
+                            showActualTankConfirmation = true
+                        } else {
+                            showStartWithoutMixConfirmation = true
+                        }
                     }
                 } label: {
                     Label("Start Tank", systemImage: "play.circle.fill")
@@ -1997,6 +2030,14 @@ struct ActiveTripView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 4)
         .background(Color(.secondarySystemGroupedBackground))
+        .confirmationDialog("Planned tank mix unavailable", isPresented: $showStartWithoutMixConfirmation) {
+            Button("Start without recorded mix") {
+                tracking.startTankWithoutRecordedMix()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Actual amounts will be shown as not recorded. No zero quantities will be fabricated.")
+        }
         .confirmationDialog("End this tank?", isPresented: $tankControlInteraction.isEndConfirmationPresented) {
             Button("End Tank", role: .destructive) {
                 tankControlInteraction.confirmEnd {

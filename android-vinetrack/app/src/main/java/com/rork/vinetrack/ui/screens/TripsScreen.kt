@@ -1637,7 +1637,12 @@ private fun TripDetailView(
     }
 
     if (showTankMix) {
-        TankMixDialog(record = linkedSpray, trip = trip, onDismiss = { showTankMix = false })
+        TankMixDialog(
+            record = linkedSpray,
+            trip = trip,
+            onDismiss = { showTankMix = false },
+            actuals = linkedSpray?.tanks.orEmpty().mapNotNull { vm.actualTankUse(trip.id, it.tankNumber) },
+        )
     }
 
     if (editingSeeding) {
@@ -2461,6 +2466,8 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
     val isPlannedTankWorkComplete = presentation.isPlanComplete && active == null
     var interaction by remember { mutableStateOf(TankControlInteractionState()) }
     var showTankMix by remember { mutableStateOf(false) }
+    var showActualTankConfirmation by remember { mutableStateOf(false) }
+    var showNoMixConfirmation by remember { mutableStateOf(false) }
     val fillTimerEnabled = remember { OperationPrefsStore(context).load().fillTimerEnabled }
     val isFilling = trip.isFillingTank
 
@@ -2565,7 +2572,10 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
             }
         } else if (!isPlannedTankWorkComplete) {
             Button(
-                onClick = { interaction.tapStart { vm.startTankSession(trip.id) } },
+                onClick = { interaction.tapStart {
+                    if (vm.pendingTankStart(trip.id) != null) showActualTankConfirmation = true
+                    else showNoMixConfirmation = true
+                } },
                 enabled = !busy,
                 modifier = Modifier.height(36.dp),
                 contentPadding = PaddingValues(horizontal = 12.dp),
@@ -2594,7 +2604,35 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
     }
 
     if (showTankMix) {
-        TankMixDialog(record = linkedSpray, trip = trip, onDismiss = { showTankMix = false })
+        TankMixDialog(
+            record = linkedSpray,
+            trip = trip,
+            onDismiss = { showTankMix = false },
+            actuals = linkedSpray?.tanks.orEmpty().mapNotNull { vm.actualTankUse(trip.id, it.tankNumber) },
+        )
+    }
+    if (showActualTankConfirmation) {
+        val pending = vm.pendingTankStart(trip.id)
+        if (pending != null) {
+            ConfirmActualTankMixDialog(
+                record = pending.first,
+                tank = pending.second,
+                onDismiss = { showActualTankConfirmation = false },
+                onConfirm = { water, chemicals -> vm.confirmAndStartTank(trip.id, pending.first, water, chemicals) },
+            )
+        } else showActualTankConfirmation = false
+    }
+    if (showNoMixConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showNoMixConfirmation = false },
+            title = { Text("Planned tank mix unavailable") },
+            text = { Text("Actual amounts will be shown as not recorded. No zero quantities will be fabricated.") },
+            confirmButton = { TextButton(onClick = {
+                showNoMixConfirmation = false
+                vm.startTankWithoutRecordedMix(trip.id)
+            }) { Text("Start without recorded mix") } },
+            dismissButton = { TextButton(onClick = { showNoMixConfirmation = false }) { Text("Cancel") } },
+        )
     }
 }
 

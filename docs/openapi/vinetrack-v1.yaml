@@ -239,6 +239,32 @@ paths:
                   data: { $ref: "#/components/schemas/SprayDetail" }
         default: { $ref: "#/components/responses/Error" }
 
+  /v1/spray-records:
+    get:
+      tags: [Spray Jobs]
+      summary: List completed spray records
+      description: "Canonical alias. Scope: sprays:read."
+      parameters:
+        - $ref: "#/components/parameters/vineyardId"
+        - $ref: "#/components/parameters/from"
+        - $ref: "#/components/parameters/to"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200": { description: Spray records }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/spray-records/{spray_record_id}:
+    get:
+      tags: [Spray Jobs]
+      summary: Get planned and actual spray tank detail
+      description: "Scope: sprays:read. Actual quantities require sprays:read; cost fields additionally require costs:read. water_volume_l retains its legacy planned meaning."
+      parameters:
+        - { name: spray_record_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Spray record detail with planned_water_volume_l, actual_water_volume_l, actuals_complete, and actual_tanks }
+        default: { $ref: "#/components/responses/Error" }
+
   /v1/fuel-records:
     get:
       tags: [Fuel]

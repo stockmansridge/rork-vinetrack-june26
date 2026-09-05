@@ -458,13 +458,25 @@ Collection summary shape:
 
 - `conditions` values are as recorded by the apps (°C, km/h 10-minute
   average, % relative humidity) — never converted.
-- `water_volume_l` and `treated_area_ha` are derived from the canonical
-  tank mix (`area = water × concentration factor ÷ rate per ha`, summed
+- `water_volume_l` is the legacy/planned water quantity and remains derived from the frozen
+  tank mix. `treated_area_ha` is also derived from that plan (`area = water × concentration factor ÷ rate per ha`, summed
   per tank), matching the apps' calculation exactly.
 
-### GET /v1/spray-jobs/{spray_job_id}
+### GET /v1/spray-records/{spray_record_id}
 
-Same summary shape plus full detail:
+Canonical detail route. `/v1/spray-jobs/{spray_job_id}` remains a backward-compatible alias and still accepts a `spray_records.id`.
+
+Same summary shape plus full detail. Existing `water_volume_l` is unchanged and means planned water from the frozen tank plan. New fields are:
+
+- `planned_water_volume_l`: sum of frozen planned tank water.
+- `actual_water_volume_l`: sum of confirmed actual water, or `null` when none is recorded.
+- `actuals_complete`: true only when every planned tank has a confirmed actual row.
+- `actual_tanks`: tank number, stable tank-session ID, confirmation time, actual water, and snapshotted actual products.
+- `chemical_cost_basis`: `actual` only when all tanks are confirmed; otherwise `estimated`. Requires `costs:read`.
+
+Actual product quantities require `sprays:read`; product prices and chemical cost totals continue to require `costs:read`.
+
+Compatibility alias detail:
 
 ```json
 {

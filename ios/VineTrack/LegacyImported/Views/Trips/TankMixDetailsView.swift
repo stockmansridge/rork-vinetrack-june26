@@ -99,6 +99,7 @@ struct TankMixDetailsView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTankNumber: Int?
+    @State private var actualStore: SprayTankActualStore = .shared
 
     private let presentation: TankMixPresentation
 
@@ -193,8 +194,19 @@ struct TankMixDetailsView: View {
     }
 
     private func plannedSummary(_ tank: SprayTank) -> some View {
-        VStack(spacing: 0) {
+        let actual = actualStore.actual(tripId: trip.id, tankNumber: tank.tankNumber)
+        return VStack(spacing: 0) {
             detailRow("Planned water", value: "\(Self.number(tank.waterVolume)) L")
+            Divider()
+            detailRow("Actual water", value: actual.map { "\(Self.number($0.waterVolumeL)) L" } ?? "Not recorded")
+            if let actual, abs(actual.waterVolumeL - tank.waterVolume) > 0.000_000_1 {
+                Divider()
+                detailRow("Difference", value: "\(actual.waterVolumeL > tank.waterVolume ? "+" : "")\(Self.number(actual.waterVolumeL - tank.waterVolume)) L")
+            }
+            if let actual {
+                Divider()
+                detailRow("Confirmed", value: actual.confirmedAt.formatted(date: .abbreviated, time: .shortened))
+            }
             Divider()
             detailRow("Planned area", value: "\(Self.number(tank.areaPerTank)) ha")
             Divider()
@@ -226,14 +238,23 @@ struct TankMixDetailsView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(tank.chemicals) { chemical in
+                    let actual = actualStore.actual(tripId: trip.id, tankNumber: tank.tankNumber)?
+                        .chemicals.first { $0.plannedChemicalId == chemical.id }
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(alignment: .firstTextBaseline) {
                             Text(chemical.name.isEmpty ? "Unnamed chemical" : chemical.name)
                                 .font(.body.weight(.semibold))
                             Spacer(minLength: 12)
-                            Text("\(Self.number(chemical.displayVolume)) \(chemical.unitLabel)")
+                            Text("Planned \(Self.number(chemical.displayVolume)) \(chemical.unitLabel)")
                                 .font(.body.weight(.bold))
                                 .monospacedDigit()
+                        }
+                        Text(actual.map { $0.actualAmountBase == 0 ? "Actual: Not added" : "Actual: \(Self.number($0.displayAmount)) \($0.unit.rawValue)" } ?? "Actual amounts not yet confirmed")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(actual?.actualAmountBase == 0 ? .orange : .secondary)
+                        if let actual, abs(actual.displayAmount - chemical.displayVolume) > 0.000_000_1 {
+                            Text("Difference: \(actual.displayAmount > chemical.displayVolume ? "+" : "")\(Self.number(actual.displayAmount - chemical.displayVolume)) \(chemical.unitLabel)")
+                                .font(.caption).foregroundStyle(.secondary)
                         }
                         if chemical.reportedRateBaseValue > 0 {
                             Text("Application rate: \(chemical.reportedRateText(formatter: store.settings.regionFormatter))")

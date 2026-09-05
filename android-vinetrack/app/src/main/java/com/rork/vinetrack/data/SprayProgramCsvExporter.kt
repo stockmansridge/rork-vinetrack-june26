@@ -10,6 +10,7 @@ import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.spray.SprayBlockAttributionDisplay
 import com.rork.vinetrack.data.model.SprayChemical
 import com.rork.vinetrack.data.model.SprayRecord
+import com.rork.vinetrack.data.model.chemicalUnitFromBase
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.VineyardMachine
 import com.rork.vinetrack.data.model.formatTripDuration
@@ -116,8 +117,19 @@ object SprayProgramCsvExporter {
      * included only when [includeCostings] is true; otherwise they are omitted
      * entirely so cost data never leaves the app for supervisor/operator.
      */
+    private val actualHeaders: List<String> = buildList {
+        add("Actual Tanks Recorded")
+        add("Actual Water Used (L)")
+        for (i in 1..MAX_CHEMICALS) {
+            add("Actual Chemical $i Name")
+            add("Actual Chemical $i Total")
+            add("Actual Chemical $i Unit")
+        }
+    }
+
     private fun exportHeaders(includeCostings: Boolean): List<String> = buildList {
         addAll(coreHeaders)
+        addAll(actualHeaders)
         if (includeCostings) addAll(summaryHeaders)
         addAll(blockAttributionHeaders)
         addAll(coverageHeaders)
@@ -237,6 +249,7 @@ object SprayProgramCsvExporter {
                 fuelPurchases = fuelPurchases,
                 operatorCategories = operatorCategories,
                 paddocks = paddocks,
+                actuals = SprayTankActualStore(context).load(),
             )
 
             val dir = File(context.cacheDir, "exports").apply { mkdirs() }
@@ -273,6 +286,7 @@ object SprayProgramCsvExporter {
         fuelPurchases: List<FuelPurchase>,
         operatorCategories: List<OperatorCategory>,
         paddocks: List<Paddock>,
+        actuals: List<com.rork.vinetrack.data.model.SprayTankActual>,
     ): String {
         val sb = StringBuilder()
         sb.append(exportHeaders(includeCostings).joinToString(",") { escape(it) }).append("\n")
@@ -324,6 +338,22 @@ object SprayProgramCsvExporter {
                     row.add(if (chem.costPerUnit > 0) String.format(Locale.US, "%.2f", chem.costPerUnit) else "")
                 } else {
                     repeat(6) { row.add("") }
+                }
+            }
+
+            val recordActuals = actuals.filter { it.sprayRecordId == record.id }
+            row.add(recordActuals.size.toString())
+            row.add(if (recordActuals.isEmpty()) "" else String.format(Locale.US, "%.12g", recordActuals.sumOf { it.waterVolumeL }))
+            val actualChemicals = recordActuals.flatMap { it.chemicals }
+                .groupBy { it.plannedChemicalId ?: it.savedChemicalId ?: "${it.name.trim().lowercase(Locale.US)}|${it.unit}" }
+                .values.map { lines -> Triple(lines.first().name, lines.sumOf { it.actualAmountBase }, lines.first().unit) }
+                .sortedBy { it.first.lowercase(Locale.US) }
+            for (i in 0 until MAX_CHEMICALS) {
+                val actual = actualChemicals.getOrNull(i)
+                if (actual == null) repeat(3) { row.add("") } else {
+                    row.add(actual.first)
+                    row.add(String.format(Locale.US, "%.12g", chemicalUnitFromBase(actual.third, actual.second)))
+                    row.add(actual.third)
                 }
             }
 

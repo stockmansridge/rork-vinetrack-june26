@@ -5,6 +5,13 @@ struct SprayProgramCSVService {
 
     static let maxChemicals = 6
 
+    private static func actualChemicalKey(_ chemical: SprayTankActualChemical) -> String {
+        if let plannedId = chemical.plannedChemicalId { return "planned:" + plannedId.uuidString }
+        if let savedId = chemical.savedChemicalId { return "saved:" + savedId.uuidString }
+        let normalizedName = chemical.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return "legacy:" + normalizedName + "|" + chemical.unit.rawValue
+    }
+
     static let descriptionRow = "VineTrack Spray Program Import Template — Row 1 is this description (ignored on import). Row 2 contains column headers. Enter one spray record per row starting from Row 3. Dates must be DD/MM/YYYY. Chemical units: Litres, mL, Kg, or g. Growth Stage uses E-L codes (e.g. EL12). Operation Type: Foliar Spray, Banded Spray, or Spreader. Delete the example row before importing. Up to 6 chemicals per record."
 
     static let templateHeaders: [String] = {
@@ -78,7 +85,14 @@ struct SprayProgramCSVService {
         // must not have to string-match English prose.
         //
         // Non-financial, so they are emitted for every role.
-        headers.append(contentsOf: ["Block IDs", "Blocks"])
+        headers.append(contentsOf: ["Block IDs", "Blocks", "Actual Tanks Recorded", "Actual Water Used (L)"])
+        for index in 1...maxChemicals {
+            headers.append(contentsOf: [
+                "Actual Chemical \(index) Name",
+                "Actual Chemical \(index) Total",
+                "Actual Chemical \(index) Unit"
+            ])
+        }
         if includeCostings {
             headers.append(contentsOf: [
                 "active_hours",
@@ -154,6 +168,36 @@ struct SprayProgramCSVService {
             let treatedBlocks = record.applicationGeometry?.blocks
             row.append(escapeCSV(SprayBlockAttributionDisplay.idsCell(treatedBlocks)))
             row.append(escapeCSV(SprayBlockAttributionDisplay.namesCell(treatedBlocks, paddocks: paddocks)))
+
+            let actuals = SprayTankActualStore.shared.records.filter { $0.sprayRecordId == record.id }
+            row.append(String(actuals.count))
+            row.append(actuals.isEmpty ? "" : String(format: "%.12g", actuals.reduce(0) { $0 + $1.waterVolumeL }))
+            var actualGroups: [String: [SprayTankActualChemical]] = [:]
+            for actual in actuals {
+                for chemical in actual.chemicals {
+                    actualGroups[actualChemicalKey(chemical), default: []].append(chemical)
+                }
+            }
+            var groupedActuals: [(String, Double, ChemicalUnit)] = []
+            for lines in actualGroups.values {
+                guard let first = lines.first else { continue }
+                var totalBase = 0.0
+                for line in lines { totalBase += line.actualAmountBase }
+                groupedActuals.append((first.name, totalBase, first.unit))
+            }
+            groupedActuals.sort { lhs, rhs in
+                lhs.0.localizedCaseInsensitiveCompare(rhs.0) == .orderedAscending
+            }
+            for index in 0..<maxChemicals {
+                if index < groupedActuals.count {
+                    let value = groupedActuals[index]
+                    row.append(escapeCSV(value.0))
+                    row.append(String(format: "%.12g", value.2.fromBase(value.1)))
+                    row.append(value.2.rawValue)
+                } else {
+                    row.append(contentsOf: ["", "", ""])
+                }
+            }
 
             if includeCostings {
                 if let trip = trip {

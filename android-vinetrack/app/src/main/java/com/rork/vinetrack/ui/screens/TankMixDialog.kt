@@ -18,12 +18,15 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -32,6 +35,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -121,10 +126,69 @@ internal data class TankMixPresentation(
 }
 
 @Composable
+internal fun ConfirmActualTankMixDialog(
+    record: SprayRecord,
+    tank: SprayTank,
+    onDismiss: () -> Unit,
+    onConfirm: (Double, Map<String, Double>) -> Boolean,
+) {
+    val formatter = remember { NumberFormat.getNumberInstance(Locale.getDefault()) }
+    var waterText by remember(tank.id) { mutableStateOf(formatter.format(tank.waterVolume)) }
+    val chemicalTexts = remember(tank.id) { mutableStateMapOf<String, String>().apply {
+        tank.chemicals.forEach { put(it.id, formatter.format(chemicalUnitFromBase(it.unit, it.volumePerTank))) }
+    } }
+    var saving by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    fun parse(value: String): Double? = value.takeIf { it.isNotBlank() }?.let { runCatching { formatter.parse(it)?.toDouble() }.getOrNull() }
+    val valid = parse(waterText)?.let { it.isFinite() && it >= 0.0 } == true && tank.chemicals.all {
+        parse(chemicalTexts[it.id].orEmpty())?.let { value -> value.isFinite() && value >= 0.0 } == true
+    }
+    AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        title = { Text("Confirm Actual Tank Mix") },
+        text = {
+            Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Tank ${tank.tankNumber} of ${record.tanks.orEmpty().size}", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                Text("Planned water: ${tankMixNumber(tank.waterVolume)} L")
+                OutlinedTextField(waterText, { waterText = it }, label = { Text("Actual water (L)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                tank.chemicals.forEach { chemical ->
+                    Text(chemical.name.ifBlank { "Unnamed chemical" }, fontWeight = FontWeight.SemiBold)
+                    Text("Planned: ${tankMixNumber(chemicalUnitFromBase(chemical.unit, chemical.volumePerTank))} ${chemical.unit}")
+                    OutlinedTextField(
+                        chemicalTexts[chemical.id].orEmpty(), { chemicalTexts[chemical.id] = it },
+                        label = { Text("Actual (${chemical.unit})") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    )
+                    if (parse(chemicalTexts[chemical.id].orEmpty()) == 0.0) {
+                        Text("This product will be recorded as not added.", color = VineColors.Orange, fontSize = 12.sp)
+                    }
+                }
+                error?.let { Text(it, color = VineColors.Orange) }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = valid && !saving, onClick = {
+                val water = parse(waterText) ?: return@TextButton
+                saving = true
+                val amounts = tank.chemicals.associate { chemical ->
+                    chemical.id to com.rork.vinetrack.data.model.chemicalUnitToBase(
+                        chemical.unit, parse(chemicalTexts[chemical.id].orEmpty()) ?: 0.0
+                    )
+                }
+                if (onConfirm(water, amounts)) onDismiss() else error = "The mix could not be saved locally. The tank was not started."
+                saving = false
+            }) { Text("Confirm & Start Tank ${tank.tankNumber}") }
+        },
+        dismissButton = { TextButton(enabled = !saving, onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
 internal fun TankMixDialog(
     record: SprayRecord?,
     trip: Trip,
     onDismiss: () -> Unit,
+    actuals: List<com.rork.vinetrack.data.model.SprayTankActual> = emptyList(),
 ) {
     val presentation = remember(record, trip) { TankMixPresentation.from(record, trip) }
     var selectedTankNumber by remember(record?.id, trip.id) {
@@ -145,6 +209,7 @@ internal fun TankMixDialog(
                     selectedTank = selectedTank,
                     selectedTankNumber = selectedTankNumber,
                     onSelectTank = { selectedTankNumber = it },
+                    actual = actuals.firstOrNull { it.tankNumber == selectedTank.tankNumber },
                 )
             }
         },
@@ -158,6 +223,7 @@ private fun TankMixContent(
     selectedTank: SprayTank,
     selectedTankNumber: Int,
     onSelectTank: (Int) -> Unit,
+    actual: com.rork.vinetrack.data.model.SprayTankActual?,
 ) {
     val vine = LocalVineColors.current
     Column(
@@ -215,6 +281,8 @@ private fun TankMixContent(
             Column(modifier = Modifier.padding(horizontal = 14.dp)) {
                 PlannedDetailRow("Planned water", "${tankMixNumber(selectedTank.waterVolume)} L")
                 HorizontalDivider(color = vine.cardBorder)
+                PlannedDetailRow("Actual water", actual?.let { "${tankMixNumber(it.waterVolumeL)} L" } ?: "Not recorded")
+                HorizontalDivider(color = vine.cardBorder)
                 PlannedDetailRow("Planned area", "${tankMixNumber(selectedTank.areaPerTank)} ha")
                 HorizontalDivider(color = vine.cardBorder)
                 PlannedDetailRow("Spray rate", "${tankMixNumber(selectedTank.sprayRatePerHa)} L/ha")
@@ -237,7 +305,10 @@ private fun TankMixContent(
         if (selectedTank.chemicals.isEmpty()) {
             Text("No planned chemicals stored for this tank.", color = vine.textSecondary, fontSize = 13.sp)
         } else {
-            selectedTank.chemicals.forEach { chemical -> PlannedChemicalCard(chemical) }
+            selectedTank.chemicals.forEach { chemical ->
+                PlannedChemicalCard(chemical, actual?.chemicals?.firstOrNull { it.plannedChemicalId == chemical.id })
+            }
+            actual?.let { Text("Confirmed ${it.confirmedAt}", color = vine.textSecondary, fontSize = 12.sp) }
         }
     }
 }
@@ -258,7 +329,10 @@ private fun PlannedDetailRow(label: String, value: String) {
 }
 
 @Composable
-private fun PlannedChemicalCard(chemical: SprayChemical) {
+private fun PlannedChemicalCard(
+    chemical: SprayChemical,
+    actual: com.rork.vinetrack.data.model.SprayTankActualChemical?,
+) {
     val vine = LocalVineColors.current
     val formatter = LocalRegionFormatter.current
     val displayAmount = chemicalUnitFromBase(chemical.unit, chemical.volumePerTank)
@@ -287,6 +361,15 @@ private fun PlannedChemicalCard(chemical: SprayChemical) {
                     textAlign = TextAlign.End,
                 )
             }
+            Text(
+                when {
+                    actual == null -> "Actual amounts not yet confirmed"
+                    actual.actualAmountBase == 0.0 -> "Actual: Not added"
+                    else -> "Actual: ${tankMixNumber(chemicalUnitFromBase(actual.unit, actual.actualAmountBase))} ${actual.unit}"
+                },
+                color = if (actual?.actualAmountBase == 0.0) VineColors.Orange else vine.textSecondary,
+                fontSize = 12.sp,
+            )
             rateText?.let { Text("Application rate: $it", color = vine.textSecondary, fontSize = 12.sp) }
         }
     }

@@ -1,6 +1,13 @@
 import Foundation
 
 /// Deterministic production transitions for operator-driven tank spraying.
+nonisolated struct TankStartResult: Sendable, Equatable {
+    let trip: Trip
+    let tankNumber: Int
+    let tankSessionId: UUID
+    let operationTimestamp: Date
+}
+
 nonisolated enum TankSessionLifecycle {
     static func start(
         trip: Trip,
@@ -9,11 +16,30 @@ nonisolated enum TankSessionLifecycle {
         plannedTankNumbers: [Int]? = nil,
         makeID: () -> UUID = UUID.init
     ) -> Trip {
-        guard trip.activeTankNumber == nil else { return trip }
-        guard let target = startTarget(in: trip, plannedTankNumbers: plannedTankNumbers) else { return trip }
+        startResult(
+            trip: trip,
+            at: timestamp,
+            currentRow: currentRow,
+            plannedTankNumbers: plannedTankNumbers,
+            makeID: makeID
+        )?.trip ?? trip
+    }
+
+    /// Returns the production-selected tank/session identity so UI and actual-use persistence never recalculate it.
+    static func startResult(
+        trip: Trip,
+        at timestamp: Date,
+        currentRow: Double?,
+        plannedTankNumbers: [Int]? = nil,
+        makeID: () -> UUID = UUID.init
+    ) -> TankStartResult? {
+        guard trip.activeTankNumber == nil else { return nil }
+        guard let target = startTarget(in: trip, plannedTankNumbers: plannedTankNumbers) else { return nil }
 
         var updated = trip
+        let sessionId: UUID
         if let fillIndex = target.fillSessionIndex {
+            sessionId = updated.tankSessions[fillIndex].id
             updated.tankSessions[fillIndex].startTime = timestamp
             updated.tankSessions[fillIndex].startRow = currentRow
             updated.tankSessions[fillIndex].endTime = nil
@@ -22,8 +48,10 @@ nonisolated enum TankSessionLifecycle {
                 updated.tankSessions[fillIndex].fillEndTime = timestamp
             }
         } else {
+            let newId = makeID()
+            sessionId = newId
             updated.tankSessions.append(TankSession(
-                id: makeID(),
+                id: newId,
                 tankNumber: target.tankNumber,
                 startTime: timestamp,
                 startRow: currentRow
@@ -32,7 +60,12 @@ nonisolated enum TankSessionLifecycle {
         updated.activeTankNumber = target.tankNumber
         updated.isFillingTank = false
         updated.fillingTankNumber = nil
-        return updated
+        return TankStartResult(
+            trip: updated,
+            tankNumber: target.tankNumber,
+            tankSessionId: sessionId,
+            operationTimestamp: timestamp
+        )
     }
 
     static func end(trip: Trip, at timestamp: Date, currentRow: Double?) -> Trip {

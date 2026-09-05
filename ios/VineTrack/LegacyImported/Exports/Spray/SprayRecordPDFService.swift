@@ -258,7 +258,12 @@ struct SprayRecordPDFService {
             for tank in record.tanks {
                 drawSectionHeader("Tank \(tank.tankNumber)")
 
-                drawRow(label: "Water Volume", value: formatter.formatVolume(litres: tank.waterVolume))
+                let actual = trip.flatMap { SprayTankActualStore.shared.actual(tripId: $0.id, tankNumber: tank.tankNumber) }
+                drawRow(label: "Planned Water", value: formatter.formatVolume(litres: tank.waterVolume))
+                drawRow(label: "Actual Water", value: actual.map { formatter.formatVolume(litres: $0.waterVolumeL) } ?? "Not recorded")
+                if let actual, abs(actual.waterVolumeL - tank.waterVolume) > 0.000_000_1 {
+                    drawRow(label: "Water Difference", value: String(format: "%+.3f L", actual.waterVolumeL - tank.waterVolume))
+                }
                 drawRow(label: "Spray Rate", value: formatter.formatSprayRate(perHectare: tank.sprayRatePerHa, unitLabel: "L", fractionDigits: 1))
                 drawRow(label: "Concentration Factor", value: String(format: "%.2f", tank.concentrationFactor))
                 if tank.areaPerTank > 0 {
@@ -297,7 +302,11 @@ struct SprayRecordPDFService {
                         // unit (L/kg) — those are manufacturer-specified, not a
                         // region preference. Only the per-area denominator is
                         // region-aware via the spray-rate formatter.
-                        (String(format: "%.2f %@", chemical.displayVolume, chemical.unitLabel) as NSString).draw(at: CGPoint(x: colX[1], y: y), withAttributes: valAttrs)
+                        let actualChemical = actual?.chemicals.first { $0.plannedChemicalId == chemical.id }
+                        let actualText = actualChemical.map { line in
+                            line.actualAmountBase == 0 ? "Not added" : String(format: "%.3f %@", line.displayAmount, line.unit.rawValue)
+                        } ?? "Not recorded"
+                        (String(format: "P %.3f %@ / A %@", chemical.displayVolume, chemical.unitLabel, actualText) as NSString).draw(at: CGPoint(x: colX[1], y: y), withAttributes: valAttrs)
                         // Read from the line's own recorded basis. Printing
                         // `ratePerHa` unconditionally reported every per-100 L
                         // line as "0.00 L/ha" on a compliance document.

@@ -777,8 +777,16 @@ interface TankJson {
   concentrationFactor?: unknown; chemicals?: unknown;
 }
 interface ChemicalJson {
-  name?: unknown; volumePerTank?: unknown; ratePerHa?: unknown; ratePer100L?: unknown;
+  id?: unknown; name?: unknown; volumePerTank?: unknown; ratePerHa?: unknown; ratePer100L?: unknown;
   costPerUnit?: unknown; unit?: unknown; savedChemicalId?: unknown;
+}
+interface TankActualChemicalJson {
+  id?: unknown; plannedChemicalId?: unknown; savedChemicalId?: unknown;
+  name?: unknown; actualAmountBase?: unknown; unit?: unknown;
+}
+interface TankActualRow {
+  id: string; tank_session_id: string; tank_number: number; water_volume_l: number;
+  chemicals: unknown; confirmed_at: string; client_updated_at: string;
 }
 
 function parseTanks(raw: unknown): TankJson[] {
@@ -844,7 +852,8 @@ function mapSpraySummary(row: SprayRow, idx: MachineIndex) {
       wind_direction: row.wind_direction ?? null,
       humidity_percent: row.humidity ?? null,
     },
-    // Derived from the canonical tank mix: water = sum(tank waterVolume).
+    // Legacy compatibility field: this is planned water from frozen spray_records.tanks.
+    // New consumers should use planned_water_volume_l and actual_water_volume_l.
     water_volume_l: totals.waterL,
     // DEPRECATED (kept for backwards compatibility, unchanged semantics).
     //
@@ -941,7 +950,36 @@ function mapSpraySummary(row: SprayRow, idx: MachineIndex) {
   };
 }
 
-/** Full tank/product detail (single-record endpoint only). */
+async function loadSprayTankActuals(db: SupabaseClient, sprayRecordId: string): Promise<TankActualRow[]> {
+  const { data, error } = await db.from("spray_tank_actuals")
+    .select("id,tank_session_id,tank_number,water_volume_l,chemicals,confirmed_at,client_updated_at")
+    .eq("spray_record_id", sprayRecordId).is("deleted_at", null)
+    .order("tank_number", { ascending: true });
+  if (error) {
+    console.error("[vinetrack-api] spray tank actuals query failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  return (data ?? []) as TankActualRow[];
+}
+
+function mapActualTanks(rows: TankActualRow[]) {
+  return rows.map((row) => ({
+    tank_number: row.tank_number,
+    tank_session_id: row.tank_session_id,
+    confirmed_at: row.confirmed_at,
+    actual_water_volume_l: num(row.water_volume_l),
+    actual_products: (Array.isArray(row.chemicals) ? row.chemicals as TankActualChemicalJson[] : []).map((chemical) => ({
+      id: typeof chemical.id === "string" ? chemical.id : null,
+      planned_chemical_id: typeof chemical.plannedChemicalId === "string" ? chemical.plannedChemicalId : null,
+      saved_chemical_id: typeof chemical.savedChemicalId === "string" ? chemical.savedChemicalId : null,
+      name: typeof chemical.name === "string" ? chemical.name : null,
+      quantity_base: num(chemical.actualAmountBase),
+      unit: typeof chemical.unit === "string" ? chemical.unit : null,
+    })),
+  }));
+}
+
+/** Full planned tank/product detail (single-record endpoint only). */
 function mapSprayTanks(raw: unknown, includeCosts: boolean) {
   return parseTanks(raw).map((t) => {
     const chems = Array.isArray(t.chemicals) ? (t.chemicals as ChemicalJson[]) : [];
@@ -972,7 +1010,33 @@ function mapSprayTanks(raw: unknown, includeCosts: boolean) {
   });
 }
 
-/** Total chemical cost across every tank line (costs:read gated). */
+function actualChemicalCostTotal(plannedRaw: unknown, actualRows: TankActualRow[]): number | null {
+  const costs = new Map<string, number>();
+  for (const tank of parseTanks(plannedRaw)) {
+    for (const chemical of (Array.isArray(tank.chemicals) ? tank.chemicals as ChemicalJson[] : [])) {
+      const key = typeof chemical.id === "string" ? `planned:${chemical.id}`
+        : typeof chemical.savedChemicalId === "string" ? `saved:${chemical.savedChemicalId}`
+        : `legacy:${String(chemical.name ?? "").trim().toLocaleLowerCase()}|${String(chemical.unit ?? "")}`;
+      const cost = num(chemical.costPerUnit);
+      if (cost !== null && cost > 0) costs.set(key, cost);
+    }
+  }
+  let total = 0;
+  let found = false;
+  for (const row of actualRows) {
+    for (const chemical of (Array.isArray(row.chemicals) ? row.chemicals as TankActualChemicalJson[] : [])) {
+      const key = typeof chemical.plannedChemicalId === "string" ? `planned:${chemical.plannedChemicalId}`
+        : typeof chemical.savedChemicalId === "string" ? `saved:${chemical.savedChemicalId}`
+        : `legacy:${String(chemical.name ?? "").trim().toLocaleLowerCase()}|${String(chemical.unit ?? "")}`;
+      const amount = num(chemical.actualAmountBase);
+      const cost = costs.get(key);
+      if (amount !== null && cost !== undefined) { total += amount * cost; found = true; }
+    }
+  }
+  return found ? round3(total) : null;
+}
+
+/** Total planned chemical cost across every tank line (costs:read gated). */
 function sprayChemicalCostTotal(raw: unknown): number | null {
   let total = 0;
   let found = false;
@@ -1565,8 +1629,24 @@ async function handleSprayGet(
 
   body.blocks = await loadSprayBlocks(db, spray);
   body.tanks = mapSprayTanks(spray.tanks, includeCosts);
+  const plannedTanks = parseTanks(spray.tanks);
+  const actualRows = await loadSprayTankActuals(db, spray.id);
+  const actualTanks = mapActualTanks(actualRows);
+  const actualsComplete = plannedTanks.length > 0 && plannedTanks.every((tank) => {
+    const number = num(tank.tankNumber);
+    return number !== null && actualRows.some((actual) => actual.tank_number === number);
+  });
+  body.planned_water_volume_l = sprayTotals(plannedTanks).waterL;
+  body.actual_water_volume_l = actualRows.length > 0
+    ? round3(actualRows.reduce((sum, actual) => sum + (num(actual.water_volume_l) ?? 0), 0))
+    : null;
+  body.actuals_complete = actualsComplete;
+  body.actual_tanks = actualTanks;
   if (includeCosts) {
-    body.chemical_cost_total = sprayChemicalCostTotal(spray.tanks);
+    body.chemical_cost_total = actualsComplete
+      ? actualChemicalCostTotal(spray.tanks, actualRows)
+      : sprayChemicalCostTotal(spray.tanks);
+    body.chemical_cost_basis = actualsComplete ? "actual" : "estimated";
   }
 
   // Linked plan header (public.spray_jobs) when the record fulfilled a plan.
@@ -4743,6 +4823,7 @@ const RESOURCE_ROUTES: Record<string, { list: Route["name"]; get: Route["name"];
   "blocks": { list: "blocks_list", get: "block_get", idLabel: "block_id" },
   "trips": { list: "trips_list", get: "trip_get", idLabel: "trip_id" },
   "spray-jobs": { list: "sprays_list", get: "spray_get", idLabel: "spray_job_id" },
+  "spray-records": { list: "sprays_list", get: "spray_get", idLabel: "spray_record_id" },
   "fuel-records": { list: "fuel_records_list", get: "fuel_record_get", idLabel: "fuel_record_id" },
   "fuel-purchases": { list: "fuel_purchases_list", get: "fuel_purchase_get", idLabel: "fuel_purchase_id" },
   "equipment": { list: "equipment_list", get: "equipment_get", idLabel: "equipment_id" },

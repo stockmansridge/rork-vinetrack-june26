@@ -3,6 +3,13 @@ package com.rork.vinetrack.data
 import com.rork.vinetrack.data.model.TankSession
 import com.rork.vinetrack.data.model.Trip
 
+data class TankStartResult(
+    val trip: Trip,
+    val tankNumber: Int,
+    val tankSessionId: String,
+    val operationTimestamp: String,
+)
+
 /** Deterministic production transitions for operator-driven tank spraying. */
 object TankSessionLifecycle {
     fun start(
@@ -11,13 +18,24 @@ object TankSessionLifecycle {
         currentRow: Double?,
         plannedTankNumbers: List<Int>? = null,
         makeId: () -> String = { java.util.UUID.randomUUID().toString() },
-    ): Trip {
-        if (trip.activeTankNumber != null) return trip
-        val target = startTarget(trip, plannedTankNumbers) ?: return trip
+    ): Trip = startResult(trip, timestamp, currentRow, plannedTankNumbers, makeId)?.trip ?: trip
+
+    /** Returns the production-selected tank/session identity; callers must not recalculate either value. */
+    fun startResult(
+        trip: Trip,
+        timestamp: String,
+        currentRow: Double?,
+        plannedTankNumbers: List<Int>? = null,
+        makeId: () -> String = { java.util.UUID.randomUUID().toString() },
+    ): TankStartResult? {
+        if (trip.activeTankNumber != null) return null
+        val target = startTarget(trip, plannedTankNumbers) ?: return null
 
         val sessions = trip.tankSessions.toMutableList()
+        val sessionId: String
         if (target.fillSessionIndex >= 0) {
             val existing = sessions[target.fillSessionIndex]
+            sessionId = existing.id
             sessions[target.fillSessionIndex] = existing.copy(
                 startTime = timestamp,
                 startRow = currentRow,
@@ -26,21 +44,23 @@ object TankSessionLifecycle {
                 fillEndTime = existing.fillEndTime ?: timestamp,
             )
         } else {
+            sessionId = makeId()
             sessions.add(
                 TankSession(
-                    id = makeId(),
+                    id = sessionId,
                     tankNumber = target.tankNumber,
                     startTime = timestamp,
                     startRow = currentRow,
                 ),
             )
         }
-        return trip.copy(
+        val updated = trip.copy(
             tankSessions = sessions,
             activeTankNumber = target.tankNumber,
             isFillingTank = false,
             fillingTankNumber = null,
         )
+        return TankStartResult(updated, target.tankNumber, sessionId, timestamp)
     }
 
     fun end(trip: Trip, timestamp: String, currentRow: Double?): Trip {

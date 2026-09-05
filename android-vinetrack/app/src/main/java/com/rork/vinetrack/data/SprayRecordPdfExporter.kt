@@ -13,6 +13,7 @@ import com.rork.vinetrack.data.model.FuelPurchase
 import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.SprayRecord
+import com.rork.vinetrack.data.model.chemicalUnitFromBase
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.VineyardMachine
 import com.rork.vinetrack.data.model.WorkTask
@@ -133,6 +134,7 @@ object SprayRecordPdfExporter {
             render(
                 s, record, vineyardName, machines, equipment, trip, workTask,
                 canViewFinancials, fuelPurchases, operatorCategories, paddocks, logo,
+                SprayTankActualStore(context).load().filter { it.sprayRecordId == record.id },
             )
             s.finish()
 
@@ -176,6 +178,7 @@ object SprayRecordPdfExporter {
         operatorCategories: List<OperatorCategory>,
         paddocks: List<Paddock>,
         logo: Bitmap?,
+        actuals: List<com.rork.vinetrack.data.model.SprayTankActual>,
     ) {
         // Header
         val textX = PdfHeaderUtil.drawLogo(s.canvas, logo, MARGIN, s.y)
@@ -293,7 +296,12 @@ object SprayRecordPdfExporter {
         val tanks = record.tanks.orEmpty()
         for (tank in tanks) {
             sectionHeader(s, "Tank ${tank.tankNumber}")
-            if (tank.waterVolume > 0) row(s, "Water Volume", "${fmt(tank.waterVolume)} L")
+            val actual = actuals.firstOrNull { it.tankNumber == tank.tankNumber }
+            row(s, "Planned Water", "${fmt(tank.waterVolume)} L")
+            row(s, "Actual Water", actual?.let { "${fmt(it.waterVolumeL)} L" } ?: "Not recorded")
+            if (actual != null && kotlin.math.abs(actual.waterVolumeL - tank.waterVolume) > 0.0000001) {
+                row(s, "Water Difference", String.format(Locale.US, "%+.3f L", actual.waterVolumeL - tank.waterVolume))
+            }
             if (tank.sprayRatePerHa > 0) row(s, "Spray Rate", "${fmt(tank.sprayRatePerHa)} L/ha")
             if (tank.concentrationFactor > 0) row(s, "Concentration Factor", fmt(tank.concentrationFactor))
             if (tank.areaPerTank > 0) row(s, "Area per Tank", "${fmt(tank.areaPerTank)} ha")
@@ -313,9 +321,13 @@ object SprayRecordPdfExporter {
                     s.ensure(18f)
                     val unit = chemUnitAbbrev(chem.unit)
                     s.canvas.drawText(chem.name.ifBlank { "Unnamed" }, c0, s.y, bodyPaint)
-                    if (chem.volumePerTank > 0) {
-                        s.canvas.drawText("${fmt(chem.volumePerTank)} $unit", c1, s.y, bodyBoldPaint)
+                    val actualChemical = actual?.chemicals?.firstOrNull { it.plannedChemicalId == chem.id }
+                    val actualText = when {
+                        actualChemical == null -> "Not recorded"
+                        actualChemical.actualAmountBase == 0.0 -> "Not added"
+                        else -> "${fmt(chemicalUnitFromBase(actualChemical.unit, actualChemical.actualAmountBase))} ${actualChemical.unit}"
                     }
+                    s.canvas.drawText("P ${fmt(chemicalUnitFromBase(chem.unit, chem.volumePerTank))} $unit / A $actualText", c1, s.y, bodyBoldPaint)
                     if (chem.ratePerHa > 0) {
                         s.canvas.drawText("${fmt(chem.ratePerHa)} $unit/ha", c2, s.y, bodyBoldPaint)
                     }

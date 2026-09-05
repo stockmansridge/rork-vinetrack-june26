@@ -1,5 +1,6 @@
 import Foundation
 import CoreLocation
+import Supabase
 
 /// Backend-neutral live trip tracking service. Keeps the active trip in
 /// MigratedDataStore.trips (where isActive == true) and appends GPS points to
@@ -624,24 +625,88 @@ final class TripTrackingService {
         trip.tankSessions.lastIndex(where: { $0.fillStartTime != nil && $0.fillEndTime == nil })
     }
 
-    /// Start spraying the next planned tank, reusing an existing fill-only session.
-    func startTank() {
-        guard let trip = activeTrip else { return }
-        let linkedRecord = TankMixPresentation.linkedRecord(
-            for: trip.id,
-            in: store?.sprayRecords ?? []
-        )
+    /// Preview the exact next tank selected by the production lifecycle without mutating state.
+    func pendingTankStart() -> (record: SprayRecord, tank: SprayTank)? {
+        guard let trip = activeTrip,
+              let record = TankMixPresentation.linkedRecord(for: trip.id, in: store?.sprayRecords ?? []),
+              let result = TankSessionLifecycle.startResult(
+                trip: trip,
+                at: Date(),
+                currentRow: nil,
+                plannedTankNumbers: record.tanks.map(\.tankNumber),
+                makeID: { UUID() }
+              ),
+              let tank = record.tanks.first(where: { $0.tankNumber == result.tankNumber })
+        else { return nil }
+        return (record, tank)
+    }
+
+    /// Atomically commits the lifecycle-selected session identity and its confirmed actual mix locally.
+    @discardableResult
+    func confirmAndStartTank(
+        record: SprayRecord,
+        actualWaterLitres: Double,
+        actualChemicalBaseAmounts: [UUID: Double]
+    ) -> Bool {
+        guard let trip = activeTrip,
+              record.tripId == trip.id,
+              let userId = SupabaseClientProvider.shared.client.auth.currentUser?.id
+        else { return false }
+        let operationTimestamp = Date()
         let operationRow = trip.trackingPattern == .freeDrive
             ? currentRowNumber
             : currentRowNumber ?? trip.currentRowNumber
-        let updated = TankSessionLifecycle.start(
+        guard let result = TankSessionLifecycle.startResult(
+            trip: trip,
+            at: operationTimestamp,
+            currentRow: operationRow,
+            plannedTankNumbers: record.tanks.map(\.tankNumber)
+        ), let plannedTank = record.tanks.first(where: { $0.tankNumber == result.tankNumber })
+        else { return false }
+
+        do {
+            let actualChemicals = try plannedTank.chemicals.map { chemical in
+                try SprayTankActualChemical(
+                    plannedChemicalId: chemical.id,
+                    savedChemicalId: chemical.savedChemicalId,
+                    name: chemical.name,
+                    actualAmountBase: actualChemicalBaseAmounts[chemical.id] ?? chemical.volumePerTank,
+                    unit: chemical.unit
+                )
+            }
+            let actual = try SprayTankActual(
+                vineyardId: trip.vineyardId,
+                sprayRecordId: record.id,
+                tripId: trip.id,
+                tankSessionId: result.tankSessionId.uuidString,
+                tankNumber: result.tankNumber,
+                waterVolumeL: actualWaterLitres,
+                chemicals: actualChemicals,
+                confirmedAt: result.operationTimestamp,
+                confirmedBy: userId
+            )
+            try SprayTankActualStore.shared.saveLocally(actual)
+            store?.updateTrip(result.trip)
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Explicit legacy fallback. It creates no fabricated actual-use record.
+    func startTankWithoutRecordedMix() {
+        guard let trip = activeTrip else { return }
+        let operationRow = trip.trackingPattern == .freeDrive
+            ? currentRowNumber
+            : currentRowNumber ?? trip.currentRowNumber
+        guard let result = TankSessionLifecycle.startResult(
             trip: trip,
             at: Date(),
             currentRow: operationRow,
-            plannedTankNumbers: linkedRecord?.tanks.map(\.tankNumber)
-        )
-        guard updated != trip else { return }
-        store?.updateTrip(updated)
+            plannedTankNumbers: nil
+        ) else { return }
+        store?.updateTrip(result.trip)
     }
 
     /// End only the session identified by the active tank number.
