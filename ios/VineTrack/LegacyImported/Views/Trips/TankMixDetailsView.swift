@@ -1,5 +1,31 @@
 import SwiftUI
 
+nonisolated struct TankControlInteractionState: Sendable {
+    var isEndConfirmationPresented: Bool = false
+
+    mutating func tapStart(perform action: () -> Void) {
+        action()
+    }
+
+    mutating func tapEnd() {
+        isEndConfirmationPresented = true
+    }
+
+    mutating func cancelEnd() {
+        isEndConfirmationPresented = false
+    }
+
+    mutating func confirmEnd(perform action: () -> Void) {
+        guard isEndConfirmationPresented else { return }
+        isEndConfirmationPresented = false
+        action()
+    }
+
+    mutating func tapStatus(perform action: () -> Void) {
+        action()
+    }
+}
+
 nonisolated enum PlannedTankProgress: String, Sendable {
     case current = "Current"
     case next = "Next"
@@ -13,6 +39,10 @@ nonisolated struct TankMixPresentation: Sendable {
     let activeTankNumber: Int?
     let nextTankNumber: Int?
     let completedTankNumbers: Set<Int>
+
+    static func linkedRecord(for tripId: UUID, in records: [SprayRecord]) -> SprayRecord? {
+        records.first { $0.tripId == tripId }
+    }
 
     init(record: SprayRecord?, trip: Trip) {
         let sortedTanks = (record?.tanks ?? []).sorted {

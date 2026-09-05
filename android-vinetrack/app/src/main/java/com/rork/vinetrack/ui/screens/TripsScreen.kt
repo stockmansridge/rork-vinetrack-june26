@@ -162,6 +162,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.SolidColor
@@ -957,6 +959,10 @@ private fun TripDetailView(
     var editingSeeding by remember { mutableStateOf(false) }
     var editingCostLinks by remember { mutableStateOf(false) }
     var exportMenuOpen by remember { mutableStateOf(false) }
+    var showTankMix by remember { mutableStateOf(false) }
+    val linkedSpray = remember(tripId, state.sprayRecords) {
+        TankMixPresentation.linkedRecord(tripId, state.sprayRecords)
+    }
     // Active trips open in the full-screen in-cab HUD; toggle to the scrollable
     // detail (summary, cost, etc.) and back via the top-bar controls.
     var showLiveHud by remember(tripId) { mutableStateOf(true) }
@@ -1092,13 +1098,10 @@ private fun TripDetailView(
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             if (trip.isActive) {
-                val activeLinkedSpray = remember(trip.id, state.sprayRecords) {
-                    state.sprayRecords.firstOrNull { it.tripId == trip.id }
-                }
                 ActiveTripControls(
                     vm = vm,
                     trip = trip,
-                    linkedSpray = activeLinkedSpray,
+                    linkedSpray = linkedSpray,
                     durationSeconds = durationSeconds,
                     busy = state.tripBusy,
                     tracking = state.isTracking,
@@ -1271,11 +1274,6 @@ private fun TripDetailView(
                 }
             }
 
-            // Linked spray record (spray_records.trip_id == trip.id), mirroring iOS.
-            val linkedSpray = remember(trip.id, state.sprayRecords) {
-                state.sprayRecords.firstOrNull { it.tripId == trip.id }
-            }
-
             // Spray Record — immediately after the summary, matching iOS.
             if (linkedSpray != null) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1301,6 +1299,32 @@ private fun TripDetailView(
                             Divider(vine.cardBorder)
                             DetailRow(Icons.Filled.LocalDrink, "Tanks", linkedSpray.tankCount.toString(), VineColors.Indigo)
                         }
+                        Divider(vine.cardBorder)
+                        TextButton(
+                            onClick = { showTankMix = true },
+                            modifier = Modifier.semantics { contentDescription = "View planned tank mix" },
+                        ) {
+                            Icon(Icons.Filled.LocalDrink, contentDescription = null)
+                            Text("  View tank mix")
+                        }
+                    }
+                }
+            } else if ((trip.totalTanks ?: 0) > 0) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SectionHeader("Spray Record", onLight = true)
+                    VineyardCard {
+                        TextButton(
+                            onClick = { showTankMix = true },
+                            modifier = Modifier.semantics { contentDescription = "View planned tank mix" },
+                        ) {
+                            Icon(Icons.Filled.LocalDrink, contentDescription = null)
+                            Text("  View tank mix")
+                        }
+                        Text(
+                            "Tank mix details unavailable on this device.",
+                            color = vine.textSecondary,
+                            fontSize = 12.sp,
+                        )
                     }
                 }
             }
@@ -1612,6 +1636,10 @@ private fun TripDetailView(
     }
     }
 
+    if (showTankMix) {
+        TankMixDialog(record = linkedSpray, trip = trip, onDismiss = { showTankMix = false })
+    }
+
     if (editingSeeding) {
         SeedingDetailsSheet(
             vm = vm,
@@ -1692,7 +1720,7 @@ private fun ActiveTripHud(
         state.paddocks.filter { it.id in ids && it.hasGeometry }
     }
     val linkedSpray = remember(trip.id, state.sprayRecords) {
-        state.sprayRecords.firstOrNull { it.tripId == trip.id }
+        TankMixPresentation.linkedRecord(trip.id, state.sprayRecords)
     }
     val cameraPositionState = rememberCameraPositionState()
     var followUser by remember { mutableStateOf(true) }
@@ -2429,8 +2457,9 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
     val context = LocalContext.current
     val totalTanks = maxOf(linkedSpray?.tankCount ?: 0, trip.totalTanks ?: 0)
     val active = trip.activeTankNumber
-    val completedCount = trip.tankSessions.count { !it.isOpen }
-    var confirmEnd by remember { mutableStateOf(false) }
+    val presentation = remember(linkedSpray, trip) { TankMixPresentation.from(linkedSpray, trip) }
+    var interaction by remember { mutableStateOf(TankControlInteractionState()) }
+    var showTankMix by remember { mutableStateOf(false) }
     val fillTimerEnabled = remember { OperationPrefsStore(context).load().fillTimerEnabled }
     val isFilling = trip.isFillingTank
 
@@ -2450,9 +2479,16 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
     val statusText = buildString {
         append(
             when {
-                active != null -> if (totalTanks > 0) "Tank $active of $totalTanks" else "Tank $active"
-                totalTanks > 0 -> "Tank $completedCount of $totalTanks done"
-                completedCount > 0 -> "$completedCount done"
+                presentation.activeTankNumber != null -> {
+                    val tank = presentation.tanks.first { it.tankNumber == presentation.activeTankNumber }
+                    "Active tank: Tank ${tank.tankNumber} of ${presentation.tanks.size} • ${tankMixNumber(tank.waterVolume)} L"
+                }
+                presentation.nextTankNumber != null -> {
+                    val tank = presentation.tanks.first { it.tankNumber == presentation.nextTankNumber }
+                    "Next: Tank ${tank.tankNumber} of ${presentation.tanks.size} • ${tankMixNumber(tank.waterVolume)} L"
+                }
+                presentation.isAvailable -> "Finished: ${presentation.completedTankNumbers.size} of ${presentation.tanks.size} tanks complete"
+                totalTanks > 0 -> "Tank mix details unavailable on this device."
                 else -> "Tank not started"
             },
         )
@@ -2466,15 +2502,29 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Icon(Icons.Filled.LocalDrink, contentDescription = null, tint = VineColors.Cyan, modifier = Modifier.size(16.dp))
-        Text(
-            statusText,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = if (active != null || isFilling) VineColors.Cyan else vine.textSecondary,
-            maxLines = 1,
-            modifier = Modifier.weight(1f),
-        )
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable {
+                    interaction.tapStatus { showTankMix = true }
+                }
+                .semantics { contentDescription = "View planned tank mix" }
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(Icons.Filled.LocalDrink, contentDescription = null, tint = VineColors.Cyan, modifier = Modifier.size(16.dp))
+            Text(
+                statusText,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (active != null || isFilling) VineColors.Cyan else vine.textSecondary,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(18.dp))
+        }
         // Optional fill timer (device-local setting). Mirrors iOS: filling a
         // tank happens between tanks, so Start Fill is offered only when no
         // tank is active. Stop Fill is always available while filling.
@@ -2503,7 +2553,7 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
         }
         if (active != null) {
             Button(
-                onClick = { confirmEnd = true },
+                onClick = { interaction = interaction.tapEnd() },
                 enabled = !busy,
                 modifier = Modifier.height(36.dp),
                 contentPadding = PaddingValues(horizontal = 12.dp),
@@ -2514,7 +2564,7 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
             }
         } else {
             Button(
-                onClick = { vm.startTankSession(trip.id) },
+                onClick = { interaction.tapStart { vm.startTankSession(trip.id) } },
                 enabled = !busy,
                 modifier = Modifier.height(36.dp),
                 contentPadding = PaddingValues(horizontal = 12.dp),
@@ -2526,19 +2576,24 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
         }
     }
 
-    if (confirmEnd) {
+    if (interaction.isEndConfirmationPresented) {
         AlertDialog(
-            onDismissRequest = { confirmEnd = false },
+            onDismissRequest = { interaction = interaction.cancelEnd() },
             title = { Text("End tank ${active ?: ""}?") },
             text = { Text("This finalizes the current tank session.") },
             confirmButton = {
                 TextButton(onClick = {
-                    confirmEnd = false
-                    vm.endTankSession(trip.id)
+                    interaction = interaction.confirmEnd { vm.endTankSession(trip.id) }
                 }) { Text("End tank", color = VineColors.Orange) }
             },
-            dismissButton = { TextButton(onClick = { confirmEnd = false }) { Text("Cancel") } },
+            dismissButton = {
+                TextButton(onClick = { interaction = interaction.cancelEnd() }) { Text("Cancel") }
+            },
         )
+    }
+
+    if (showTankMix) {
+        TankMixDialog(record = linkedSpray, trip = trip, onDismiss = { showTankMix = false })
     }
 }
 

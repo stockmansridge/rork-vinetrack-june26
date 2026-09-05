@@ -28,7 +28,7 @@ struct TripDetailView: View {
     private static let maxTrailBuckets: Int = 5
 
     private var sprayRecord: SprayRecord? {
-        store.sprayRecords.first { $0.tripId == trip.id }
+        TankMixPresentation.linkedRecord(for: trip.id, in: store.sprayRecords)
     }
 
     /// Live copy of `trip` from the store so the cost summary reflects any

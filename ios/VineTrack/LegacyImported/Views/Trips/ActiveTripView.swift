@@ -34,7 +34,7 @@ struct ActiveTripView: View {
     @State private var elapsedTimer: TimeInterval = 0
     @State private var ticker: Timer?
     @State private var fillElapsed: TimeInterval = 0
-    @State private var showEndTankConfirmation: Bool = false
+    @State private var tankControlInteraction: TankControlInteractionState = .init()
     @State private var showTankMix: Bool = false
 
     /// Display-only trail segments. Recomputed on a 1Hz throttled timer rather
@@ -81,7 +81,7 @@ struct ActiveTripView: View {
     private static let maxTrailBuckets: Int = 5
 
     private var sprayRecord: SprayRecord? {
-        store.sprayRecords.first { $0.tripId == trip.id }
+        TankMixPresentation.linkedRecord(for: trip.id, in: store.sprayRecords)
     }
 
     /// Active paddock prefers the live GPS-detected block (so the operator
@@ -1911,7 +1911,9 @@ struct ActiveTripView: View {
 
         HStack(spacing: 8) {
             Button {
-                showTankMix = true
+                tankControlInteraction.tapStatus {
+                    showTankMix = true
+                }
             } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "drop.fill")
@@ -1965,7 +1967,7 @@ struct ActiveTripView: View {
 
             if hasActiveTank {
                 Button {
-                    showEndTankConfirmation = true
+                    tankControlInteraction.tapEnd()
                 } label: {
                     Label("End Tank", systemImage: "stop.circle.fill")
                         .font(.caption.weight(.semibold))
@@ -1976,7 +1978,9 @@ struct ActiveTripView: View {
                 .disabled(!accessControl.canCreateOperationalRecords)
             } else {
                 Button {
-                    tracking.startTank()
+                    tankControlInteraction.tapStart {
+                        tracking.startTank()
+                    }
                 } label: {
                     Label("Start Tank", systemImage: "play.circle.fill")
                         .font(.caption.weight(.semibold))
@@ -1991,11 +1995,15 @@ struct ActiveTripView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 4)
         .background(Color(.secondarySystemGroupedBackground))
-        .confirmationDialog("End this tank?", isPresented: $showEndTankConfirmation) {
+        .confirmationDialog("End this tank?", isPresented: $tankControlInteraction.isEndConfirmationPresented) {
             Button("End Tank", role: .destructive) {
-                tracking.endTank()
+                tankControlInteraction.confirmEnd {
+                    tracking.endTank()
+                }
             }
-            Button("Cancel", role: .cancel) {}
+            Button("Cancel", role: .cancel) {
+                tankControlInteraction.cancelEnd()
+            }
         }
     }
 
