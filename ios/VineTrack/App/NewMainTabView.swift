@@ -1308,8 +1308,21 @@ private struct NewHomeTabView: View {
     // MARK: Summary
 
     private var summarySection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            plainSectionHeader("Recent")
+        let vintage = store.settings.currentSeasonVintage
+        let window = store.settings.seasonWindow(for: vintage)
+        let vintagePins = store.pins.filter { window.contains($0.timestamp) }
+        let vintageTrips = store.trips.filter { window.contains($0.startTime) }
+        let vintageSprayRecords = store.sprayRecords.filter { window.contains($0.date) }
+        let currentBlockIds = Set(store.paddocks.map(\.id))
+        let workedBlockIds = Set(vintagePins.compactMap(\.paddockId))
+            .union(vintageTrips.flatMap { $0.paddockIds.isEmpty ? [$0.paddockId].compactMap { $0 } : $0.paddockIds })
+            .union(vintageSprayRecords.flatMap { record in
+                record.applicationGeometry?.blocks?.compactMap { UUID(uuidString: $0.blockId) } ?? []
+            })
+            .intersection(currentBlockIds)
+
+        return VStack(alignment: .leading, spacing: 10) {
+            plainSectionHeader("Vintage \(String(vintage))")
 
             VineyardCard {
                 VStack(spacing: 10) {
@@ -1317,7 +1330,7 @@ private struct NewHomeTabView: View {
                         PinsView(initialViewMode: .summary)
                     } label: {
                         HStack(spacing: 12) {
-                            summaryRow("Pins", value: store.pins.count, icon: "mappin.circle.fill", tint: .red)
+                            summaryRow("Pins", value: vintagePins.count, icon: "mappin.circle.fill", tint: .red)
                             Image(systemName: "chevron.right")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.tertiary)
@@ -1326,11 +1339,11 @@ private struct NewHomeTabView: View {
                     }
                     .buttonStyle(.plain)
                     Divider()
-                    summaryRow("Trips", value: store.trips.count, icon: "map.fill", tint: .blue)
+                    summaryRow("Trips", value: vintageTrips.count, icon: "map.fill", tint: .blue)
                     Divider()
-                    summaryRow("Spray records", value: store.sprayRecords.count, icon: "sprinkler.and.droplets.fill", tint: .purple)
+                    summaryRow("Spray records", value: vintageSprayRecords.count, icon: "sprinkler.and.droplets.fill", tint: .purple)
                     Divider()
-                    summaryRow(fmt.blockTermPluralCapitalised, value: store.paddocks.count, icon: "square.grid.2x2.fill", tint: VineyardTheme.leafGreen)
+                    summaryRow("\(fmt.blockTermPluralCapitalised) worked", value: workedBlockIds.count, icon: "square.grid.2x2.fill", tint: VineyardTheme.leafGreen)
                 }
             }
             .padding(.horizontal)

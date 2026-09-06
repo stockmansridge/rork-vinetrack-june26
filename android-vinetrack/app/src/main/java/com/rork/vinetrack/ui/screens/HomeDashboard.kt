@@ -101,6 +101,7 @@ import com.rork.vinetrack.data.AlertsRepository
 import com.rork.vinetrack.data.HomePrefsStore
 import com.rork.vinetrack.data.OperationalToolLayoutResolver
 import com.rork.vinetrack.data.MapPrefsStore
+import com.rork.vinetrack.data.SeasonWindow
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.AlertSeverity
 import com.rork.vinetrack.data.model.AlertType
@@ -1151,23 +1152,36 @@ private fun ManagementSection(onOpenTool: (ToolRoute) -> Unit) {
 }
 
 /**
- * "Recent" summary card mirroring the iOS Home summary section: a compact
- * tally of the key record types for the current vineyard.
+ * Current-vintage summary card mirroring iOS. Every tally is constrained to
+ * the selected vineyard's shared season boundary and timezone.
  */
 @Composable
 private fun RecentSection(state: AppUiState) {
     val vine = LocalVineColors.current
+    val vintage = state.currentSeasonVintage
+    val window = SeasonWindow.forVintage(vintage, state.seasonStartMonth, state.seasonStartDay)
+    val vintagePins = state.pins.filter { window.containsIsoDate(it.createdAt, state.seasonZone) }
+    val vintageTrips = state.trips.filter { window.containsEpochMs(it.startEpochMs, state.seasonZone) }
+    val vintageSprayRecords = state.sprayRecords.filter { window.containsEpochMs(it.dateEpochMs, state.seasonZone) }
+    val currentBlockIds = state.paddocks.mapTo(mutableSetOf()) { it.id }
+    val workedBlockIds = buildSet {
+        vintagePins.mapNotNullTo(this) { it.paddockId }
+        vintageTrips.flatMapTo(this) { it.effectivePaddockIds }
+        vintageSprayRecords.flatMapTo(this) { record ->
+            record.applicationBlocks?.map { it.blockId } ?: record.blockIds.orEmpty()
+        }
+    }.intersect(currentBlockIds)
     val rows = listOf(
-        Triple("Pins", state.pins.size, Icons.Filled.LocationOn) to VineColors.Orange,
-        Triple("Trips", state.trips.size, Icons.Filled.Map) to VineColors.Info,
-        Triple("Spray records", state.sprayRecords.size, Icons.Filled.Science) to VineColors.Indigo,
-        Triple("Blocks", state.paddocks.size, Icons.Filled.Grass) to VineColors.LeafGreen,
+        Triple("Pins", vintagePins.size, Icons.Filled.LocationOn) to VineColors.Orange,
+        Triple("Trips", vintageTrips.size, Icons.Filled.Map) to VineColors.Info,
+        Triple("Spray records", vintageSprayRecords.size, Icons.Filled.Science) to VineColors.Indigo,
+        Triple("Blocks worked", workedBlockIds.size, Icons.Filled.Grass) to VineColors.LeafGreen,
     )
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        SectionHeader("Recent")
+        SectionHeader("Vintage $vintage")
         VineyardCard {
             rows.forEachIndexed { index, (data, tint) ->
                 val (label, value, icon) = data
