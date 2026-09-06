@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material.icons.filled.GridView
@@ -3734,6 +3735,12 @@ private fun SprayTankMixReview(
                         Text("Equipment", fontSize = 14.sp, color = vine.textSecondary, modifier = Modifier.weight(1f))
                         Text(equipmentLabel, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = vine.textPrimary)
                     }
+                    Box(Modifier.fillMaxWidth().height(0.5.dp).background(vine.cardBorder))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 4.dp)) {
+                        Icon(Icons.Filled.DirectionsCar, contentDescription = null, tint = VineColors.Olive, modifier = Modifier.size(18.dp))
+                        Text("Tractor", fontSize = 14.sp, color = vine.textSecondary, modifier = Modifier.weight(1f))
+                        Text(tractorLabel, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = vine.textPrimary)
+                    }
                 }
             }
 
@@ -3784,10 +3791,24 @@ private fun SprayTankMixReview(
                             Text("${fmtNum(cr.totalAmount, 1)} ${cr.unit}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Olive)
                         }
                     }
-                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Per full tank: ${fmtNum(cr.amountPerFullTank, 1)} ${cr.unit}", fontSize = 11.sp, color = vine.textSecondary)
-                        if (cr.amountInLastTank > 0 && cr.amountInLastTank != cr.amountPerFullTank) {
-                            Text("Last tank: ${fmtNum(cr.amountInLastTank, 1)} ${cr.unit}", fontSize = 11.sp, color = vine.textSecondary)
+                    if (result.totalTanks > 0) {
+                        Spacer(Modifier.height(6.dp))
+                        Column {
+                            (1..result.totalTanks).forEach { tankNumber ->
+                                val isLastTank = tankNumber == result.totalTanks && result.lastTankLitres > 0
+                                val amount = if (isLastTank) cr.amountInLastTank else cr.amountPerFullTank
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text("Tank $tankNumber", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                                    Text("${fmtNum(amount, 2)} ${cr.unit}", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = vine.textSecondary)
+                                }
+                                if (tankNumber < result.totalTanks) {
+                                    Box(Modifier.fillMaxWidth().height(0.5.dp).background(vine.cardBorder))
+                                }
+                            }
                         }
                     }
                 }
@@ -3829,7 +3850,6 @@ private fun SprayTankMixReview(
             item {
                 VineyardCard {
                     GuidedReviewRow("Spray unit", equipmentLabel)
-                    GuidedReviewRow("Tractor", tractorLabel)
                     GuidedReviewRow("Fans / jets", fansJets.ifBlank { "Not Set" })
                     GuidedReviewRow("Tracking pattern", trackingPattern.title)
                     if (hasRowGeometry && trackingPattern != TrackingPattern.FREE_DRIVE) {

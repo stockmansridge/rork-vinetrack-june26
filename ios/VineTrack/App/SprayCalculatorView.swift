@@ -2296,21 +2296,34 @@ struct SprayCalculatorView: View {
                     }
                 }
 
-                // Multi-tank jobs: how much goes in EACH tank, not only the
-                // whole-job figure — this screen mixes tanks, not the job.
-                if totalTanks > 1 {
-                    VStack(alignment: .leading, spacing: 2) {
-                        if tankSplit.fullTankCount > 0, let perFullTank = planLine.quantityPerFullTank {
-                            Text("Full \(SprayGuidedFormat.number(tankSplit.tankCapacityLitres)) L tank\(tankSplit.fullTankCount > 1 ? "s" : "") (\(tankSplit.fullTankCount)): "
-                                 + "\(SprayGuidedFormat.quantity(planLine.unitDisplay.display(perFullTank), unit: displayUnit)) each")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if tankSplit.lastTankLitres > 0, let inLastTank = planLine.quantityInLastTank {
-                            Text("Last \(SprayGuidedFormat.number(tankSplit.lastTankLitres)) L tank: "
-                                 + SprayGuidedFormat.quantity(planLine.unitDisplay.display(inLastTank), unit: displayUnit))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                // List every physical tank explicitly so the operator can read
+                // the product amount in loading order without translating a
+                // grouped "full tanks × count" summary.
+                if totalTanks > 0 {
+                    VStack(spacing: 0) {
+                        ForEach(1...totalTanks, id: \.self) { tankNumber in
+                            let isPartialLastTank = tankNumber == totalTanks && tankSplit.lastTankLitres > 0
+                            let tankQuantity = isPartialLastTank
+                                ? planLine.quantityInLastTank
+                                : planLine.quantityPerFullTank
+                            if let tankQuantity {
+                                HStack(spacing: 8) {
+                                    Text("Tank \(tankNumber)")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    Text(SprayGuidedFormat.quantity(
+                                        planLine.unitDisplay.display(tankQuantity),
+                                        unit: displayUnit
+                                    ))
+                                        .font(.caption.weight(.medium).monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 5)
+                                if tankNumber < totalTanks {
+                                    Divider()
+                                }
+                            }
                         }
                     }
                 }
@@ -2592,8 +2605,6 @@ struct SprayCalculatorView: View {
                     .clipShape(.rect(cornerRadius: 12))
                     .padding(.horizontal)
 
-                    tankMixPreviewSection
-
                     confirmTractorPicker
                         .padding(.horizontal)
 
@@ -2608,6 +2619,8 @@ struct SprayCalculatorView: View {
                         }
                     }
                     .padding(.horizontal)
+
+                    tankMixPreviewSection
 
                     confirmTripSetup
                         .padding(.horizontal)
