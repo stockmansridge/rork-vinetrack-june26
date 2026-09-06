@@ -179,8 +179,12 @@ nonisolated enum TripCostService {
         // Prefer engine-hour delta (end - start) when both readings are present
         // and end > start; otherwise fall back to active trip duration.
         let engineHourDelta: Double? = {
-            guard let s = trip.startEngineHours, let e = trip.endEngineHours, e > s else { return nil }
-            return e - s
+            guard let start = trip.startEngineHours,
+                  let end = trip.endEngineHours,
+                  start.isFinite,
+                  end.isFinite,
+                  end > start else { return nil }
+            return end - start
         }()
         let fuelBasis: FuelBasis = engineHourDelta != nil ? .engineHours : .duration
         let fuelHours = engineHourDelta ?? hours

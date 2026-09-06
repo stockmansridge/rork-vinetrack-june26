@@ -162,6 +162,7 @@ class TripRepository(private val session: SessionStore) {
         @SerialName("is_paused") val isPaused: Boolean = false,
         @SerialName("start_time") val startTime: String,
         @SerialName("end_time") val endTime: String? = null,
+        @SerialName("start_engine_hours") val startEngineHours: Double? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
 
@@ -406,11 +407,19 @@ class TripRepository(private val session: SessionStore) {
      * paused flag. Used to start a calculator-created "Not Started" spray job
      * without creating a duplicate trip.
      */
-    suspend fun activateTrip(id: String, startTime: String? = null): Trip = withContext(Dispatchers.IO) {
+    suspend fun activateTrip(
+        id: String,
+        startTime: String? = null,
+        startEngineHours: Double? = null,
+    ): Trip = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val operationalStart = startTime ?: nowIso()
-        val patch = TripStartPatch(startTime = operationalStart, clientUpdatedAt = operationalStart)
+        val patch = TripStartPatch(
+            startTime = operationalStart,
+            startEngineHours = startEngineHours?.takeIf { it.isFinite() },
+            clientUpdatedAt = operationalStart,
+        )
         patchTrip(id, patch, token)
     }
 

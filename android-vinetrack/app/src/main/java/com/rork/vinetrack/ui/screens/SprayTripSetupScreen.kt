@@ -85,6 +85,7 @@ fun SprayTripSetupScreen(
     val vine = LocalVineColors.current
     var showProgramPicker by remember { mutableStateOf(false) }
     var startingRecordId by remember { mutableStateOf<String?>(null) }
+    var pendingStartTripId by remember { mutableStateOf<String?>(null) }
 
     // Local and portal Program Steps share the canonical merge rules. Ordering
     // is applied by the Resume picker using numeric E-L stages, never names.
@@ -182,11 +183,7 @@ fun SprayTripSetupScreen(
                                 onOpenCalculator(record.id)
                             } else if (startingRecordId == null) {
                                 startingRecordId = record.id
-                                vm.startSprayJob(tripId) { ok ->
-                                    startingRecordId = null
-                                    showProgramPicker = false
-                                    if (ok) onOpenTrip(tripId)
-                                }
+                                pendingStartTripId = tripId
                             }
                         }
                         // Completed jobs are re-run as a fresh job pre-filled
@@ -199,6 +196,25 @@ fun SprayTripSetupScreen(
                 }
             },
         )
+    }
+
+    pendingStartTripId?.let { tripId ->
+        val trip = state.trips.firstOrNull { it.id == tripId }
+        if (trip != null) {
+            SprayTripStartConfirmation(
+                machineName = sprayTripMachineName(trip, state.machines),
+                latestEngineHours = latestSprayTripEngineHours(trip, state.machines, state.fuelLogs),
+                onDismiss = { pendingStartTripId = null; startingRecordId = null },
+                onStart = { startHours ->
+                    vm.startSprayJob(tripId, startHours) { ok ->
+                        pendingStartTripId = null
+                        startingRecordId = null
+                        showProgramPicker = false
+                        if (ok) onOpenTrip(tripId)
+                    }
+                },
+            )
+        }
     }
 }
 

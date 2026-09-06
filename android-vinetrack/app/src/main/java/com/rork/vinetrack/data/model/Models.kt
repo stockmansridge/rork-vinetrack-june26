@@ -704,15 +704,17 @@ data class Trip(
 
     /**
      * Engine hours consumed during the trip when both readings are present and
-     * the end reading is not below the start. Returns null otherwise (no
-     * reading, or an end-below-start entry that should fall back elsewhere).
+     * both readings are finite and the end reading is strictly above the start.
+     * Returns null for missing, equal, reversed, or non-finite readings.
      */
+    val shouldCaptureEndEngineHours: Boolean get() = startEngineHours != null
+
     val engineHoursUsed: Double?
         get() {
-            val start = startEngineHours ?: return null
-            val end = endEngineHours ?: return null
+            val start = startEngineHours?.takeIf { it.isFinite() } ?: return null
+            val end = endEngineHours?.takeIf { it.isFinite() } ?: return null
             val delta = end - start
-            return if (delta >= 0) delta else null
+            return if (delta > 0 && delta.isFinite()) delta else null
         }
 
     /** Number of rows recorded as completed during this trip. */

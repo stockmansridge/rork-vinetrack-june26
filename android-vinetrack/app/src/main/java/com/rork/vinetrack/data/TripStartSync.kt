@@ -249,13 +249,23 @@ class TripStartSync(
                             ActivationDecision.ACTIVATE -> {
                                 val activated = activateTripOverride?.invoke(payload.tripId, payload.startTime)
                                     ?: requireNotNull(tripRepo) { "Trip repository is required for replay." }
-                                        .activateTrip(payload.tripId, payload.startTime)
+                                        .activateTrip(payload.tripId, payload.startTime, payload.startEngineHours)
                                 pending.remove(write.id)
                                 onSynced(activated)
                             }
                             ActivationDecision.IDEMPOTENT_SUCCESS -> {
+                                val synced = if (
+                                    payload.startEngineHours != null &&
+                                    existingServer.startEngineHours == null &&
+                                    activateTripOverride == null
+                                ) {
+                                    requireNotNull(tripRepo) { "Trip repository is required for replay." }
+                                        .updateStartEngineHours(payload.tripId, payload.startEngineHours)
+                                } else {
+                                    existingServer
+                                }
                                 pending.remove(write.id)
-                                onSynced(existingServer)
+                                onSynced(synced)
                             }
                             ActivationDecision.COMPLETED_CONFLICT -> pending.updateStatus(
                                 write.id,

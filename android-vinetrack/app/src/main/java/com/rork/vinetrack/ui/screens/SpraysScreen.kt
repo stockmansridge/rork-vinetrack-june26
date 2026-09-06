@@ -1019,6 +1019,7 @@ private fun SprayDetailView(
         ?: state.sprayJobTemplates.firstOrNull { it.id == recordId }
     var confirmDelete by remember { mutableStateOf(false) }
     var starting by remember { mutableStateOf(false) }
+    var showStartConfirmation by remember { mutableStateOf(false) }
 
     if (record == null) {
         LaunchedEffectBack(onBack)
@@ -1373,19 +1374,7 @@ private fun SprayDetailView(
                         Button(
                             onClick = {
                                 if (starting) return@Button
-                                starting = true
-                                vm.startSprayJob(linkedTrip.id) { ok ->
-                                    starting = false
-                                    Toast.makeText(
-                                        context,
-                                        if (ok) "Spray job started — tracking your trip."
-                                        else state.sprayError ?: "Couldn't start the spray job.",
-                                        Toast.LENGTH_SHORT,
-                                    ).show()
-                                    // On success, jump to the live trip experience so the
-                                    // user can continue field work immediately.
-                                    if (ok) onJobStarted?.invoke(linkedTrip.id)
-                                }
+                                showStartConfirmation = true
                             },
                             enabled = !starting && !hasActiveTrip,
                             modifier = Modifier.fillMaxWidth(),
@@ -1428,6 +1417,26 @@ private fun SprayDetailView(
                 }
             }
             Spacer(Modifier.height(8.dp))
+        }
+    }
+
+    if (showStartConfirmation) {
+        val trip = resolveSprayTrip(record, state.trips)
+        if (trip != null) {
+            SprayTripStartConfirmation(
+                machineName = sprayTripMachineName(trip, state.machines),
+                latestEngineHours = latestSprayTripEngineHours(trip, state.machines, state.fuelLogs),
+                onDismiss = { showStartConfirmation = false },
+                onStart = { startHours ->
+                    showStartConfirmation = false
+                    starting = true
+                    vm.startSprayJob(trip.id, startHours) { ok ->
+                        starting = false
+                        Toast.makeText(context, if (ok) "Spray job started — tracking your trip." else state.sprayError ?: "Couldn't start the spray job.", Toast.LENGTH_SHORT).show()
+                        if (ok) onJobStarted?.invoke(trip.id)
+                    }
+                },
+            )
         }
     }
 

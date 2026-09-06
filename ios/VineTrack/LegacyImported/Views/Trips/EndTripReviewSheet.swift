@@ -126,7 +126,7 @@ struct EndTripReviewSheet: View {
                     Text("Optional notes for this completed job. These will appear in reports.")
                 }
 
-                if liveTrip.tractorId != nil {
+                if liveTrip.shouldCaptureEndEngineHours {
                     engineHoursSection
                     fuelEstimateSection
                 }
@@ -203,7 +203,10 @@ struct EndTripReviewSheet: View {
 
     private var parsedEndEngineHours: Double? {
         let trimmed = endEngineHoursText.trimmingCharacters(in: .whitespaces)
-        guard let value = Double(trimmed), value >= 0 else { return nil }
+        guard liveTrip.startEngineHours != nil,
+              let value = Double(trimmed),
+              value.isFinite,
+              value >= 0 else { return nil }
         return value
     }
 

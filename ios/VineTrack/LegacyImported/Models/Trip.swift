@@ -118,6 +118,9 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
     /// Optional tractor engine-hour meter reading captured at trip end.
     /// Synced as `trips.end_engine_hours` (see sql/093_trips_engine_hours.sql).
     var endEngineHours: Double?
+
+    /// End-meter capture is meaningful only when this trip began with a reading.
+    var shouldCaptureEndEngineHours: Bool { startEngineHours != nil }
     /// Optional structured Seeding Details (only normally populated when
     /// `tripFunction == "seeding"`). Persisted to Supabase as JSONB at
     /// `trips.seeding_details`. Encoded with snake_case nested keys.

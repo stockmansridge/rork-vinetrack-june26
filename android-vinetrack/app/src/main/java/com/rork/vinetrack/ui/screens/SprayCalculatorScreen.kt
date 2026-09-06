@@ -484,6 +484,7 @@ fun SprayCalculatorScreen(
 
     // Equipment and final tank-mix review.
     var showReview by remember { mutableStateOf(false) }
+    var showOperationalStartConfirmation by remember { mutableStateOf(false) }
     var tractorId by rememberSaveable { mutableStateOf<String?>(null) }
     var tractors by remember { mutableStateOf<List<SprayJobTemplateRepository.SprayTractor>>(emptyList()) }
     var equipmentConfirmedSignature by rememberSaveable { mutableStateOf<String?>(null) }
@@ -1079,7 +1080,7 @@ fun SprayCalculatorScreen(
         }
     }
 
-    fun startJobNow() {
+    fun startJobNow(startEngineHours: Double?) {
         val r = result ?: return
         if (saving) return
         if (state.activeTrip != null) {
@@ -1095,6 +1096,7 @@ fun SprayCalculatorScreen(
             paddockIds = selectedPaddocks.map { it.id },
             paddockName = paddockNames,
             rowPlan = buildRowPlan(r.totalTanks),
+            startEngineHours = startEngineHours,
         ) { ok ->
             saving = false
             if (ok) {
@@ -1142,10 +1144,29 @@ fun SprayCalculatorScreen(
             errorMessage = errorMessage,
             saving = saving,
             hasActiveTrip = state.activeTrip != null,
-            onStart = { startJobNow() },
+            onStart = { showOperationalStartConfirmation = true },
             onCancel = { if (!saving) showReview = false },
             modifier = modifier,
         )
+        if (showOperationalStartConfirmation) {
+            val machine = state.machines.firstOrNull { it.id == tractorId || it.legacyTractorId == tractorId }
+            val latestHours = state.fuelLogs.asSequence()
+                .filter { log ->
+                    log.engineHours?.isFinite() == true && machine != null &&
+                        (log.machineId == machine.id || (log.machineId == null && log.tractorId == machine.legacyTractorId))
+                }
+                .maxByOrNull { it.fillEpochMs ?: Long.MIN_VALUE }
+                ?.engineHours
+            SprayTripStartConfirmation(
+                machineName = selectedTractor?.displayName ?: "Not selected",
+                latestEngineHours = latestHours,
+                onDismiss = { showOperationalStartConfirmation = false },
+                onStart = { hours ->
+                    showOperationalStartConfirmation = false
+                    startJobNow(hours)
+                },
+            )
+        }
         return
     }
 

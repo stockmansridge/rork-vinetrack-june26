@@ -139,6 +139,7 @@ struct SprayCalculatorView: View {
     @State private var savedFeedback: Bool = false
     @State private var errorMessage: String?
     @State private var showStartConfirmation: Bool = false
+    @State private var startEngineHoursText: String = ""
     @State private var isStartingJob: Bool = false
     @State private var showWeatherDataSettings: Bool = false
 
@@ -2596,6 +2597,18 @@ struct SprayCalculatorView: View {
                     confirmTractorPicker
                         .padding(.horizontal)
 
+                    VStack(alignment: .leading, spacing: 6) {
+                        TextField("Start engine hours (optional)", text: $startEngineHoursText)
+                            .keyboardType(.decimalPad)
+                            .textFieldStyle(.roundedBorder)
+                        if let latest = latestSelectedTractorEngineHours {
+                            Text("Last recorded: \(latest.formatted(.number.precision(.fractionLength(0...1)))) hrs")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal)
+
                     confirmTripSetup
                         .padding(.horizontal)
 
@@ -4024,6 +4037,20 @@ struct SprayCalculatorView: View {
         showStartConfirmation = false
     }
 
+    private var parsedStartEngineHours: Double? {
+        let normalized = startEngineHoursText.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+        guard let value = Double(normalized), value.isFinite, value >= 0 else { return nil }
+        return value
+    }
+
+    private var latestSelectedTractorEngineHours: Double? {
+        guard let tractorId = selectedTractorId else { return nil }
+        return store.currentTractorFuelLogs
+            .filter { $0.tractorId == tractorId && $0.engineHours?.isFinite == true }
+            .max(by: { $0.fillDateTime < $1.fillDateTime })?
+            .engineHours
+    }
+
     private func finalizeStartFromMixSummary() {
         guard let equipId = selectedEquipmentId,
               let equip = store.sprayEquipment.first(where: { $0.id == equipId }) else { return }
@@ -4060,7 +4087,8 @@ struct SprayCalculatorView: View {
             tripFunction: TripFunction.spraying.rawValue,
             tripTitle: TripFunction.spraying.displayName,
             tractorId: selectedTractorId,
-            operatorUserId: auth.userId
+            operatorUserId: auth.userId,
+            startEngineHours: parsedStartEngineHours
         )
 
         guard let activeTrip = tracking.activeTrip else {

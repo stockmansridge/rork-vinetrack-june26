@@ -6,7 +6,7 @@ import com.rork.vinetrack.data.model.Trip
 /** Local-first activation contract for an already-downloaded Not Started trip. */
 object SavedTripActivation {
     /** Returns a fresh active snapshot, or null when this is not an unstarted placeholder. */
-    fun activate(trip: Trip, operationalStart: String): Trip? {
+    fun activate(trip: Trip, operationalStart: String, startEngineHours: Double? = null): Trip? {
         val isUnstarted = !trip.isActive &&
             trip.endTime == null &&
             trip.pathPoints.orEmpty().isEmpty() &&
@@ -17,6 +17,8 @@ object SavedTripActivation {
         if (!isUnstarted) return null
         return trip.copy(
             startTime = operationalStart,
+            startEngineHours = startEngineHours?.takeIf { it.isFinite() },
+            endEngineHours = null,
             endTime = null,
             isActive = true,
             isPaused = false,

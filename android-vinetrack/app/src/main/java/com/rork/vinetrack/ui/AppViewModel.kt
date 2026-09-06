@@ -9218,7 +9218,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * concurrent trackers, mirroring the manual-start rule (the Trips FAB is
      * hidden while a trip is active).
      */
-    fun startSprayJob(tripId: String, onResult: (Boolean) -> Unit) {
+    fun startSprayJob(
+        tripId: String,
+        startEngineHours: Double? = null,
+        onResult: (Boolean) -> Unit,
+    ) {
         val existing = _ui.value.trips.firstOrNull { it.id == tripId }
         if (existing == null) {
             _ui.update { it.copy(sprayError = "This spray job's trip is no longer available.") }
@@ -9242,7 +9246,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val activatedSpray = linkedSpray?.let {
             SavedTripActivation.activateLinkedSpray(it, tripId, operationalStart)
         }
-        val activated = SavedTripActivation.activate(existing, operationalStart)
+        val activated = SavedTripActivation.activate(existing, operationalStart, startEngineHours)
         if (activated == null || activatedSpray == null) {
             _ui.update { it.copy(sprayError = "Only a Not Started spray job can be activated.") }
             onResult(false)
@@ -9297,6 +9301,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         paddockIds: List<String>,
         paddockName: String?,
         rowPlan: SprayJobRowPlan? = null,
+        startEngineHours: Double? = null,
         onResult: (Boolean) -> Unit,
     ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
@@ -9328,6 +9333,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     rowSequence = plan.rowSequence,
                     sequenceIndex = 0,
                     totalTanks = plan.totalTanks,
+                    startEngineHours = startEngineHours?.takeIf { it.isFinite() },
                 )
                 val created = sprayRepo.createSprayRecord(vineyardId, input.copy(tripId = trip.id))
                 val seededTrip: Trip = trip
@@ -9341,7 +9347,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         sprayRecords = listOf(created) + it.sprayRecords,
                     )
                 }
+                // Persist and queue the complete start before GPS permission or
+                // foreground tracking can return.
+                persistActiveTripSnapshot()
+                tripStartSync.enqueue(seededTrip)
                 beginTracking(seededTrip)
+                if (_ui.value.isOnline) replayPendingTripStart()
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(sprayBusy = false, tripBusy = false) }; onUnauthorized("startSprayJobNow"); onResult(false)

@@ -330,7 +330,11 @@ final class TripTrackingService {
     /// Activate a genuine saved, unstarted spray placeholder in place. Identity
     /// and its frozen spray plan are preserved, while operational clocks and
     /// runtime-only progress begin at the actual activation instant.
-    func activateSavedTrip(_ savedTrip: Trip, at activationTime: Date = Date()) {
+    func activateSavedTrip(
+        _ savedTrip: Trip,
+        startEngineHours: Double? = nil,
+        at activationTime: Date = Date()
+    ) {
         guard let store else { return }
         guard store.selectedVineyardId != nil else {
             errorMessage = "No vineyard selected."
@@ -356,6 +360,8 @@ final class TripTrackingService {
 
         var activated = savedTrip
         activated.startTime = activationTime
+        activated.startEngineHours = startEngineHours?.isFinite == true ? startEngineHours : nil
+        activated.endEngineHours = nil
         activated.endTime = nil
         activated.isActive = true
         activated.isPaused = false

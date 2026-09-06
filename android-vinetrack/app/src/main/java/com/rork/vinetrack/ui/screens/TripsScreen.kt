@@ -1257,7 +1257,7 @@ private fun TripDetailView(
 
             // Engine-hour readings (Stage 3F-1), shown only when at least one
             // reading was captured.
-            if (trip.startEngineHours != null || trip.endEngineHours != null) {
+            if (trip.shouldCaptureEndEngineHours || trip.endEngineHours != null) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     SectionHeader("Engine hours", onLight = true)
                     VineyardCard {
@@ -1265,7 +1265,7 @@ private fun TripDetailView(
                             DetailRow(Icons.Filled.Speed, "Start", "${formatEngineHours(it)} h", VineColors.Indigo)
                         }
                         trip.endEngineHours?.let {
-                            if (trip.startEngineHours != null) Divider(vine.cardBorder)
+                            if (trip.shouldCaptureEndEngineHours) Divider(vine.cardBorder)
                             DetailRow(Icons.Filled.Speed, "End", "${formatEngineHours(it)} h", VineColors.DarkGreen)
                         }
                         trip.engineHoursUsed?.let {
@@ -4355,7 +4355,7 @@ private fun EndTripSheet(vm: AppViewModel, trip: Trip, onDismiss: () -> Unit, on
     // Block finishing only when both readings exist and the end reading is below
     // the start reading — a blank end reading always allows the trip to end.
     val engineHoursInvalid = endEngineHours != null &&
-        trip.startEngineHours != null && endEngineHours < trip.startEngineHours
+        trip.startEngineHours?.let { start -> endEngineHours < start } == true
 
     val sequence = trip.rowSequence
     val hasRowPlan = sequence.isNotEmpty()
@@ -4398,7 +4398,8 @@ private fun EndTripSheet(vm: AppViewModel, trip: Trip, onDismiss: () -> Unit, on
                     )
                 }
 
-                OutlinedTextField(
+                if (trip.shouldCaptureEndEngineHours) {
+                    OutlinedTextField(
                     value = endEngineHoursText,
                     onValueChange = { endEngineHoursText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
                     label = { Text("End engine hours (optional)") },
@@ -4409,7 +4410,8 @@ private fun EndTripSheet(vm: AppViewModel, trip: Trip, onDismiss: () -> Unit, on
                     isError = engineHoursInvalid,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
-                )
+                    )
+                }
                 if (engineHoursInvalid) {
                     Text(
                         "End hours can't be lower than the start reading (${formatEngineHours(trip.startEngineHours ?: 0.0)}). Fix or clear it to finish.",
@@ -4431,7 +4433,8 @@ private fun EndTripSheet(vm: AppViewModel, trip: Trip, onDismiss: () -> Unit, on
                 onClick = {
                     saving = true
                     val extra = reviewCompletes.toList()
-                    vm.endTripWithRowReview(extra, notes.trim().ifBlank { null }, endEngineHours) { ok ->
+                    val savedEndHours = if (trip.shouldCaptureEndEngineHours) endEngineHours else null
+                    vm.endTripWithRowReview(extra, notes.trim().ifBlank { null }, savedEndHours) { ok ->
                         saving = false; if (ok) onEnded()
                     }
                 },

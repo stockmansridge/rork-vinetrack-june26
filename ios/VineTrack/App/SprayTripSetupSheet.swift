@@ -28,6 +28,7 @@ struct SprayTripSetupSheet: View {
     @State private var showResumeProgram: Bool = false
     @State private var showCalculator: Bool = false
     @State private var planningStep: SprayProgramStep?
+    @State private var pendingSavedTrip: Trip?
 
     /// The vineyard's Program, from the SAME sources the Spray Program tab
     /// reads: local steps, portal steps, one dedup rule, one offline cache.
@@ -127,6 +128,16 @@ struct SprayTripSetupSheet: View {
             .sheet(isPresented: $showCalculator, onDismiss: { dismiss() }) {
                 NavigationStack { SprayCalculatorView() }
             }
+            .sheet(item: $pendingSavedTrip) { trip in
+                SprayTripStartConfirmationSheet(
+                    machineName: machineName(for: trip),
+                    latestEngineHours: latestEngineHours(for: trip)
+                ) { startEngineHours in
+                    tracking.activateSavedTrip(trip, startEngineHours: startEngineHours)
+                    pendingSavedTrip = nil
+                    if tracking.errorMessage == nil { dismiss() }
+                }
+            }
             .task {
                 // Offline-safe hydration of portal Program Steps for this
                 // vineyard, so Resume works in a shed with no signal.
@@ -143,10 +154,20 @@ struct SprayTripSetupSheet: View {
         // Saved calculator jobs already own the canonical trip identity and its
         // full block/row/tank/equipment plan. Activate that exact snapshot; do
         // not create a primary-block replacement and relink the spray record.
-        tracking.activateSavedTrip(savedTrip)
-        if tracking.errorMessage == nil {
-            dismiss()
-        }
+        pendingSavedTrip = savedTrip
+    }
+
+    private func machineName(for trip: Trip) -> String {
+        guard let tractorId = trip.tractorId else { return "Not selected" }
+        return store.currentTractors.first(where: { $0.id == tractorId })?.displayName ?? "Unavailable machine"
+    }
+
+    private func latestEngineHours(for trip: Trip) -> Double? {
+        guard let tractorId = trip.tractorId else { return nil }
+        return store.currentTractorFuelLogs
+            .filter { $0.tractorId == tractorId && $0.engineHours?.isFinite == true }
+            .max(by: { $0.fillDateTime < $1.fillDateTime })?
+            .engineHours
     }
 }
 
