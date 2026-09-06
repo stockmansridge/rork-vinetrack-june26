@@ -30,6 +30,31 @@ nonisolated enum TripFunction: String, CaseIterable, Codable, Sendable, Identifi
 
     nonisolated var id: String { rawValue }
 
+    /// Resolves the persisted trip name. A user-entered name wins; otherwise
+    /// the selected function's friendly label is stored for portal/report parity.
+    nonisolated static func resolvedTripTitle(
+        userTitle: String?,
+        functionKey: String,
+        functionLabel: String? = nil
+    ) -> String {
+        let trimmedTitle = userTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedTitle.isEmpty { return trimmedTitle }
+
+        let trimmedLabel = functionLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedLabel.isEmpty { return trimmedLabel }
+
+        if let function = TripFunction(rawValue: functionKey) {
+            return function.displayName
+        }
+        if functionKey.hasPrefix("custom:") {
+            let slug = String(functionKey.dropFirst("custom:".count))
+            if !slug.isEmpty {
+                return slug.replacingOccurrences(of: "-", with: " ").capitalized
+            }
+        }
+        return "Trip"
+    }
+
     nonisolated var displayName: String {
         switch self {
         case .slashing:           return "Slashing"

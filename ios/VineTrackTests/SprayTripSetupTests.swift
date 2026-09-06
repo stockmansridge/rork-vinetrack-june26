@@ -304,6 +304,23 @@ struct SprayTripSetupTests {
         #expect(step.record.sprayReference == before.record.sprayReference)
     }
 
+    @Test("Blank trip names default to the selected function and entered names win")
+    func tripNameDefaultsToFunction() {
+        #expect(TripFunction.resolvedTripTitle(
+            userTitle: "   ",
+            functionKey: TripFunction.spraying.rawValue
+        ) == "Spraying")
+        #expect(TripFunction.resolvedTripTitle(
+            userTitle: "  North block cover  ",
+            functionKey: TripFunction.spraying.rawValue
+        ) == "North block cover")
+        #expect(TripFunction.resolvedTripTitle(
+            userTitle: nil,
+            functionKey: "custom:under-vine-work",
+            functionLabel: "Under Vine Work"
+        ) == "Under Vine Work")
+    }
+
     @Test("Searching the picker still groups by stage")
     func filteringPreservesStageGrouping() {
         let steps = [

@@ -1219,13 +1219,14 @@ struct StartTripSheet: View {
             paddockName = primary?.name ?? ""
         }
 
-        // `tripTitle` is reserved for optional user-entered extra details.
-        // It must remain nil when the operator hasn't typed anything — display
-        // code resolves the friendly label from `tripFunction` (built-in or
-        // `custom:<slug>`) instead. Never default the title to the function
-        // name/label/code.
-        let trimmedTitle = customTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedTitle: String? = trimmedTitle.isEmpty ? nil : trimmedTitle
+        // Store a stable portal/report name even when the operator leaves the
+        // optional field blank. The selected function label is the canonical
+        // default on both platforms; an entered title still wins.
+        let resolvedTitle = TripFunction.resolvedTripTitle(
+            userTitle: customTitle,
+            functionKey: selectedFunctionKey,
+            functionLabel: selectedFunctionLabel
+        )
 
         // Resolve the legacy tractor link for backward compatibility: only
         // tractor-backed machines populate `tractor_id`; non-tractor machines

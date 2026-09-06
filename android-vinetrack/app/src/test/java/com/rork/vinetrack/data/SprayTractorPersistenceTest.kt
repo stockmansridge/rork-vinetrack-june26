@@ -1,5 +1,6 @@
 package com.rork.vinetrack.data
 
+import com.rork.vinetrack.data.model.resolvedTripTitle
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -38,18 +39,30 @@ class SprayTractorPersistenceTest {
     @Test fun `immediate and placeholder trip payloads keep tractor separate from machine`() {
         val immediate = TripRepository.TripInsert(
             id = "trip", vineyardId = "vineyard", startTime = "2026-09-05T00:00:00Z",
-            isActive = true, machineId = null, tractorId = "tractor-id", clientUpdatedAt = "2026-09-05T00:00:00Z",
+            isActive = true, tripFunction = "spraying", tripTitle = "Spraying",
+            machineId = null, tractorId = "tractor-id", clientUpdatedAt = "2026-09-05T00:00:00Z",
         )
         val immediateDecoded = json.decodeFromString(TripRepository.TripInsert.serializer(), json.encodeToString(TripRepository.TripInsert.serializer(), immediate))
         assertEquals("tractor-id", immediateDecoded.tractorId)
         assertNull(immediateDecoded.machineId)
+        assertEquals("spraying", immediateDecoded.tripFunction)
+        assertEquals("Spraying", immediateDecoded.tripTitle)
 
         val placeholder = TripRepository.ImportedTripInsert(
             id = "trip", vineyardId = "vineyard", startTime = "2026-09-05T00:00:00Z",
+            tripFunction = "spraying", tripTitle = "Spraying",
             machineId = null, tractorId = "tractor-id", clientUpdatedAt = "2026-09-05T00:00:00Z",
         )
         val placeholderDecoded = json.decodeFromString(TripRepository.ImportedTripInsert.serializer(), json.encodeToString(TripRepository.ImportedTripInsert.serializer(), placeholder))
         assertEquals("tractor-id", placeholderDecoded.tractorId)
         assertNull(placeholderDecoded.machineId)
+        assertEquals("spraying", placeholderDecoded.tripFunction)
+        assertEquals("Spraying", placeholderDecoded.tripTitle)
+    }
+
+    @Test fun `blank trip name defaults to function while entered name wins`() {
+        assertEquals("Spraying", resolvedTripTitle("   ", "spraying"))
+        assertEquals("North block cover", resolvedTripTitle("  North block cover  ", "spraying"))
+        assertEquals("Under Vine Work", resolvedTripTitle(null, "custom:under-vine-work", "Under Vine Work"))
     }
 }

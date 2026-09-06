@@ -212,6 +212,7 @@ import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.builtInTripFunctions
 import com.rork.vinetrack.data.model.formatTripDuration
 import com.rork.vinetrack.data.model.parseIsoToEpochMs
+import com.rork.vinetrack.data.model.resolvedTripTitle
 import com.rork.vinetrack.data.model.slugifyTripFunction
 import com.rork.vinetrack.data.model.tripFunctionDisplayName
 import com.rork.vinetrack.data.model.VineyardMember
@@ -3057,7 +3058,7 @@ private fun StartTripSheet(
             paddockIds = selectedPaddocks.map { it.id },
             personName = operatorName.trim(),
             tripFunction = functionRaw,
-            tripTitle = title.trim(),
+            tripTitle = resolvedTripTitle(title, functionRaw, selectedFunctionLabel),
             machineId = machineId,
             tractorId = machine?.legacyTractorId,
             workTaskId = null,

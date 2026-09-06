@@ -4057,6 +4057,8 @@ struct SprayCalculatorView: View {
             nextRowNumber: sequence.dropFirst().first ?? initialPath,
             totalTanks: tanks.count,
             personName: auth.userName ?? "",
+            tripFunction: TripFunction.spraying.rawValue,
+            tripTitle: TripFunction.spraying.displayName,
             tractorId: selectedTractorId,
             operatorUserId: auth.userId
         )
@@ -4144,6 +4146,8 @@ struct SprayCalculatorView: View {
             sequenceIndex: 0,
             personName: auth.userName ?? "",
             totalTanks: tanks.count,
+            tripFunction: TripFunction.spraying.rawValue,
+            tripTitle: TripFunction.spraying.displayName,
             tractorId: selectedTractorId,
             operatorUserId: auth.userId
         )

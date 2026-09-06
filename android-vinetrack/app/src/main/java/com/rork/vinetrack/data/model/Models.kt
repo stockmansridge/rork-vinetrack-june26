@@ -816,6 +816,22 @@ fun formatTripDuration(seconds: Long): String {
     }
 }
 
+/** Resolves the persisted trip name, defaulting to the selected function label. */
+fun resolvedTripTitle(userTitle: String?, functionRaw: String, functionLabel: String? = null): String {
+    userTitle?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+    functionLabel?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+    tripFunctionDisplayName(functionRaw)?.let { return it }
+    if (functionRaw.startsWith("custom:")) {
+        val slug = functionRaw.removePrefix("custom:")
+        if (slug.isNotBlank()) {
+            return slug.replace("-", " ")
+                .split(" ")
+                .joinToString(" ") { it.replaceFirstChar { character -> character.uppercase() } }
+        }
+    }
+    return "Trip"
+}
+
 /** Maps a stored `trip_function` raw value to its display name (mirrors iOS `TripFunction`). */
 fun tripFunctionDisplayName(raw: String): String? = when (raw) {
     "slashing" -> "Slashing"
