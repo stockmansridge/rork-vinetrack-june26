@@ -65,24 +65,44 @@ struct TripCSVService {
                 "yield_tonnes",
                 "cost_per_tonne",
             ])
-            row.append(contentsOf: [
-                String(format: "%.2f", r.activeHours),
-                r.labour.warning == nil ? String(format: "%.2f", r.labour.cost) : "",
-                r.fuel.warning == nil ? String(format: "%.2f", r.fuel.litres) : "",
-                (r.fuel.costPerLitre.map { String(format: "%.4f", $0) }) ?? "",
-                r.fuel.warning == nil ? String(format: "%.2f", r.fuel.cost) : "",
-                (r.chemical.map { c -> String in
-                    if let w = c.warning, c.cost <= 0, !w.isEmpty { return "" }
-                    return String(format: "%.2f", c.cost)
-                }) ?? "",
-                r.chemical?.basis.rawValue ?? "",
-                String(format: "%.2f", r.totalCost),
-                r.completeness.rawValue,
-                (r.treatedAreaHa.map { String(format: "%.2f", $0) }) ?? "",
-                (r.costPerHa.map { String(format: "%.2f", $0) }) ?? "",
-                (r.yieldTonnes.map { String(format: "%.2f", $0) }) ?? "",
-                (r.costPerTonne.map { String(format: "%.2f", $0) }) ?? "",
-            ])
+            let activeHours = String(format: "%.2f", r.activeHours)
+            let labourCost = r.labour.warning == nil ? String(format: "%.2f", r.labour.cost) : ""
+            let fuelLitres = r.fuel.warning == nil ? String(format: "%.2f", r.fuel.litres) : ""
+            let fuelCostPerLitre = r.fuel.costPerLitre.map { String(format: "%.4f", $0) } ?? ""
+            let fuelCost = r.fuel.warning == nil ? String(format: "%.2f", r.fuel.cost) : ""
+            let chemicalCost: String
+            if let chemical = r.chemical {
+                if let warning = chemical.warning, chemical.cost <= 0, !warning.isEmpty {
+                    chemicalCost = ""
+                } else {
+                    chemicalCost = String(format: "%.2f", chemical.cost)
+                }
+            } else {
+                chemicalCost = ""
+            }
+            let chemicalCostBasis = r.chemical?.basis.rawValue ?? ""
+            let totalEstimatedCost = String(format: "%.2f", r.totalCost)
+            let costingStatus = r.completeness.rawValue
+            let treatedArea = r.treatedAreaHa.map { String(format: "%.2f", $0) } ?? ""
+            let costPerHectare = r.costPerHa.map { String(format: "%.2f", $0) } ?? ""
+            let yieldTonnes = r.yieldTonnes.map { String(format: "%.2f", $0) } ?? ""
+            let costPerTonne = r.costPerTonne.map { String(format: "%.2f", $0) } ?? ""
+            let costingValues: [String] = [
+                activeHours,
+                labourCost,
+                fuelLitres,
+                fuelCostPerLitre,
+                fuelCost,
+                chemicalCost,
+                chemicalCostBasis,
+                totalEstimatedCost,
+                costingStatus,
+                treatedArea,
+                costPerHectare,
+                yieldTonnes,
+                costPerTonne,
+            ]
+            row.append(contentsOf: costingValues)
         }
 
         let csv = headers.joined(separator: ",") + "\n" + row.joined(separator: ",") + "\n"
