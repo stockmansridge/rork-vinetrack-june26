@@ -30,8 +30,17 @@ object SprayConfirmedRateSeeding {
      * nothing confirmed     -> null
      * ```
      */
-    fun seedFor(chemical: SavedChemical): Seed? =
-        when (val resolution = ChemicalSprayDefaultHandoff.resolutionFor(chemical.defaultRates)) {
+    fun seedFor(chemical: SavedChemical): Seed? {
+        val resolution = ChemicalSprayDefaultHandoff.resolutionFor(chemical.defaultRates) ?: return null
+        if (SprayRegisteredUseRates.hasStructuredRates(chemical)) {
+            val operationalUses = chemical.registeredUses.orEmpty().filter {
+                ChemicalManualEntry.isProductRateCarrier(it) || it.isViticultural
+            }
+            val slot = ChemicalDefaultRateValidity.validSlots(chemical.defaultRates).singleOrNull()
+                ?: return null
+            if (!slot.slot.isManualEntry && !slot.slot.isSupportedBy(operationalUses)) return null
+        }
+        return when (resolution) {
             is ChemicalSprayRateResolution.Prefilled -> Seed(
                 basis = resolution.prefill.basis,
                 rateAmount = resolution.prefill.rate,
@@ -44,8 +53,8 @@ object SprayConfirmedRateSeeding {
                 rateUnit = resolution.selection.unit,
                 range = resolution.selection,
             )
-            null -> null
         }
+    }
 
     /** The confirmed band governing a line on [basis], if any. */
     fun rangeFor(chemical: SavedChemical, basis: SprayCalculator.RateBasis): ChemicalSprayRangeSelection? =
@@ -120,6 +129,7 @@ object SprayConfirmedRateSeeding {
         unit: String,
         isOverride: Boolean,
         capturedAt: String,
+        selectedRate: SpraySelectableRate? = null,
     ): ChemicalLineSnapshot? {
         if (!appliedRate.isFinite() || appliedRate <= 0.0) return base
         val contractBasis = if (basis == SprayProductRateBasis.PER_100_LITRES) {
@@ -131,6 +141,8 @@ object SprayConfirmedRateSeeding {
             .firstOrNull { it.basis == contractBasis }
         val range = slot?.range
         val entryMethod = when {
+            selectedRate?.preset != null && !isOverride -> StoredChemicalDefaultRate.ENTRY_CANONICAL
+            selectedRate != null && isOverride -> StoredChemicalDefaultRate.ENTRY_MANUAL
             slot == null -> if (isOverride) StoredChemicalDefaultRate.ENTRY_MANUAL else StoredChemicalDefaultRate.ENTRY_CANONICAL
             range == null && isOverride -> StoredChemicalDefaultRate.ENTRY_MANUAL
             slot.isManualEntry -> StoredChemicalDefaultRate.ENTRY_MANUAL
@@ -147,6 +159,7 @@ object SprayConfirmedRateSeeding {
             basis = contractBasis,
             entryMethod = entryMethod,
             confirmedRange = range,
+            selectedRate = selectedRate,
         )
     }
 

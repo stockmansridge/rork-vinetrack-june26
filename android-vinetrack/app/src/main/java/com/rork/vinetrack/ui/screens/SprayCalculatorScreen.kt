@@ -110,6 +110,9 @@ import com.rork.vinetrack.data.chemical.ChemicalSnapshotCapture
 import com.rork.vinetrack.data.chemical.ChemicalSprayDefaultHandoff
 import com.rork.vinetrack.data.chemical.ChemicalSprayPrefill
 import com.rork.vinetrack.data.chemical.SprayConfirmedRateSeeding
+import com.rork.vinetrack.data.chemical.SprayRateAmount
+import com.rork.vinetrack.data.chemical.SprayRegisteredUseRates
+import com.rork.vinetrack.data.chemical.SpraySelectableRate
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import com.rork.vinetrack.data.model.SavedChemical
@@ -300,11 +303,15 @@ private fun lineCostPerUnit(chem: SavedChemical, rateUnit: String): Double? =
 
 /** Effective rate: manual override (when valid) else the recommended rate. */
 private fun effectiveRateDisplay(chem: SavedChemical, line: CalcChemLine): Double {
-    // A CONFIRMED BAND is a gate, not a suggestion: the line calculates only
-    // from a typed dose the band authorises, and stays unresolved otherwise.
-    // Nothing selects an endpoint or the midpoint on the operator's behalf.
+    val selected = SprayRegisteredUseRates.rate(chem, line.selectedRateId)
+    selected?.labelRange?.let {
+        if (line.overrideText.isNotBlank()) {
+            return SprayRegisteredUseRates.validateManual(line.overrideText, selected) ?: Double.NaN
+        }
+        if (selected.requiresManualRate) return Double.NaN
+    }
     SprayConfirmedRateSeeding.rangeFor(chem, line.basis)?.let { range ->
-        return SprayConfirmedRateSeeding.plannerRate(range, line.overrideText)
+        if (line.rateAmount == null) return SprayConfirmedRateSeeding.plannerRate(range, line.overrideText)
     }
     return line.overrideText.toDoubleOrNull()?.takeIf { it > 0 } ?: recommendedRateDisplay(chem, line)
 }
@@ -328,7 +335,7 @@ private fun newLineFor(chem: SavedChemical): CalcChemLine {
     SprayConfirmedRateSeeding.seedFor(chem)?.let { seed ->
         return CalcChemLine(
             chemicalId = chem.id,
-            selectedRateId = null,
+            selectedRateId = SprayRegisteredUseRates.confirmedSelection(chem)?.id,
             basis = seed.basis,
             rateAmount = seed.rateAmount,
             rateUnit = seed.rateUnit,
@@ -989,6 +996,7 @@ fun SprayCalculatorScreen(
                 unit = lineRateUnit(chem, line),
                 isOverride = line.overrideText.toDoubleOrNull()?.let { it > 0 } == true,
                 capturedAt = iso,
+                selectedRate = SprayRegisteredUseRates.rate(chem, line.selectedRateId),
             )?.let { line.chemicalId to it }
         }.toMap()
         return SprayRecordRepository.SprayInput(
@@ -1833,7 +1841,8 @@ fun SprayCalculatorScreen(
                             line = line,
                             savedChemicals = state.savedChemicals,
                             onChanged = { result = null },
-                            onRemove = { chemLines.removeAt(idx); result = null },
+                            onProductChanged = { productAreaBasis.remove(line.uid) },
+                            onRemove = { chemLines.removeAt(idx); productAreaBasis.remove(line.uid); result = null },
                             // Creating a product from THIS line's picker. The
                             // line is remembered by uid, not by index: the
                             // register flow is long enough for the list to
@@ -2306,7 +2315,10 @@ fun SprayCalculatorScreen(
                 // is nothing to assign and nothing to append either - the
                 // product is still saved to the store, which is what the
                 // operator asked for.
-                chemLines.firstOrNull { it.uid == targetUid }?.adoptProduct(created)
+                chemLines.firstOrNull { it.uid == targetUid }?.let { line ->
+                    line.adoptProduct(created)
+                    productAreaBasis.remove(line.uid)
+                }
             }
             result = null
         },
@@ -2910,6 +2922,7 @@ private fun CalcChemicalLineCard(
     line: CalcChemLine,
     savedChemicals: List<SavedChemical>,
     onChanged: () -> Unit,
+    onProductChanged: () -> Unit,
     onRemove: () -> Unit,
     /** Create a product for THIS line — opens the Chemical Store registration. */
     onAddNewChemical: () -> Unit,
@@ -2924,10 +2937,18 @@ private fun CalcChemicalLineCard(
     // confirmed 560 g/ha default prints "560 Kg/ha" - the same number with a
     // thousandfold different meaning.
     val rateUnit = chem?.let { lineRateUnit(it, line) } ?: ""
-    // The confirmed band governing this line's basis, if the Chemical Store
-    // holds one. The operator must enter a dose inside it.
-    val confirmedRange = chem?.let { SprayConfirmedRateSeeding.rangeFor(it, line.basis) }
-    val rangeRejection = confirmedRange?.let { SprayConfirmedRateSeeding.rejection(it, line.overrideText) }
+    val selectedRate = chem?.let { SprayRegisteredUseRates.rate(it, line.selectedRateId) }
+    // A trip-selected registered range validates in its label unit. If no
+    // trip selection is active, the confirmed Chemical Store band remains the gate.
+    val selectedRange = selectedRate?.labelRange
+    val confirmedRange = if (selectedRate == null) chem?.let { SprayConfirmedRateSeeding.rangeFor(it, line.basis) } else null
+    val rangeRejection = when {
+        selectedRange != null && line.overrideText.isNotBlank() &&
+            SprayRegisteredUseRates.validateManual(line.overrideText, selectedRate) == null ->
+            "Enter a rate within ${selectedRate.labelRangeText}."
+        selectedRange != null -> null
+        else -> confirmedRange?.let { SprayConfirmedRateSeeding.rejection(it, line.overrideText) }
+    }
     // A structured product whose rate nobody confirmed. The line is genuinely
     // unresolved and says so, rather than showing a borrowed zero.
     val needsRate = chem != null && recommended <= 0 && !isOverridden && confirmedRange == null
@@ -3042,6 +3063,7 @@ private fun CalcChemicalLineCard(
                                 // Switching product A to product B must never
                                 // leave A's rate behind - see adoptProduct.
                                 line.adoptProduct(saved)
+                                onProductChanged()
                                 onChanged()
                             }
                             menu = false
@@ -3053,44 +3075,31 @@ private fun CalcChemicalLineCard(
 
         if (chem != null) {
             Spacer8()
-            // Rate picker
+            Text("Label rate basis", fontSize = 11.sp, color = vine.textSecondary)
+            SuggestedRateBasisRow(chem, line, onChanged)
+
+            Spacer8()
             Text("Rate", fontSize = 11.sp, color = vine.textSecondary)
-            // A STRUCTURED product may only ever offer rates its operator has
-            // confirmed. This picker used to build its options from
-            // `chem.rates` for every product, which quietly reinstated the
-            // whole legacy fallback the handoff exists to remove: the line was
-            // prefilled from `default_rates`, and then the operator could
-            // select an unconfirmed legacy row straight past it - in the pack
-            // unit, so a confirmed 560 g/ha product offered "560 Kg/ha".
-            if (ChemicalSprayDefaultHandoff.isLegacyRateRecord(chem)) {
-                LegacyRatePickerRow(chem, line, recommended, rateUnit, basisSuffix, onChanged)
-            } else if (confirmedRange != null) {
-                // RequiresSelection: the confirmed band is shown as the band,
-                // and the application-rate field below is where the dose is
-                // chosen. Never an endpoint or midpoint picked for them.
+            SuggestedRegisteredRatePickerRow(chem, line, onChanged)
+
+            val contextRange = selectedRate?.labelRangeText
+                ?: confirmedRange?.let { SprayConfirmedRateSeeding.rangeDisplay(it) }
+            if (contextRange != null) {
                 Text(
-                    "Confirmed rate range: ${SprayConfirmedRateSeeding.rangeDisplay(confirmedRange)}",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = vine.textPrimary,
-                    modifier = Modifier
-                        .padding(vertical = 6.dp)
-                        .semantics { contentDescription = "confirmedRateRange" },
-                )
-                Text(
-                    "Enter the application rate you are using, within this range.",
+                    "Confirmed label range: $contextRange",
                     fontSize = 11.sp,
                     color = vine.textSecondary,
+                    modifier = Modifier
+                        .padding(top = 6.dp)
+                        .semantics { contentDescription = "confirmedRateRange" },
                 )
-            } else {
-                ConfirmedRatePickerRow(chem, line, onChanged)
             }
 
             Spacer8()
             // Override rate
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    if (confirmedRange != null) "Application Rate" else "Override Rate",
+                    if (selectedRange != null || confirmedRange != null) "Applied label rate" else "Applied label rate",
                     fontSize = 11.sp,
                     color = vine.textSecondary,
                 )
@@ -3118,8 +3127,10 @@ private fun CalcChemicalLineCard(
                 OutlinedTextField(
                     value = line.overrideText,
                     onValueChange = { line.overrideText = it.filter { c -> c.isDigit() || c == '.' }; onChanged() },
-                    placeholder = { Text(if (confirmedRange != null) "Application rate" else fmtRate(recommended)) },
+                    placeholder = { Text(if (selectedRate?.requiresManualRate == true || confirmedRange != null) "Application rate" else fmtRate(recommended)) },
                     isError = rangeRejection != null,
+                    enabled = ChemicalSprayDefaultHandoff.isLegacyRateRecord(chem) ||
+                        selectedRate != null || line.rateAmount != null || confirmedRange != null,
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier
@@ -3128,12 +3139,12 @@ private fun CalcChemicalLineCard(
                 )
                 Text("$rateUnit$basisSuffix", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
             }
-            if (confirmedRange != null) {
+            if (selectedRange != null || confirmedRange != null) {
                 Text(
                     rangeRejection ?: if (isOverridden) {
                         "Applying ${line.overrideText.trim()} $rateUnit$basisSuffix within the confirmed range."
                     } else {
-                        "This product's confirmed rate is a range. Type the rate you are applying — it must fall within the range."
+                        "Type the rate you are applying in the label unit; it must fall within the displayed range."
                     },
                     fontSize = 11.sp,
                     color = if (rangeRejection != null) VineColors.Orange else vine.textSecondary,
@@ -3151,7 +3162,7 @@ private fun CalcChemicalLineCard(
                 )
             } else {
                 Text(
-                    "Recommended: ${fmtRate(recommended)} $rateUnit$basisSuffix",
+                    "Applied label rate: ${fmtRate(recommended)} $rateUnit$basisSuffix",
                     fontSize = 11.sp,
                     color = vine.textSecondary,
                     modifier = Modifier.padding(top = 4.dp),
@@ -3159,6 +3170,110 @@ private fun CalcChemicalLineCard(
             }
         }
     }
+}
+
+@Composable
+private fun SuggestedRateBasisRow(
+    chem: SavedChemical,
+    line: CalcChemLine,
+    onChanged: () -> Unit,
+) {
+    val available = remember(chem.registeredUses, chem.rates) {
+        SprayRegisteredUseRates.availableBases(chem)
+    }
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        listOf(
+            SprayCalculator.RateBasis.PER_100L to "Per 100 L",
+            SprayCalculator.RateBasis.PER_HECTARE to "Per ha",
+        ).forEachIndexed { index, (basis, label) ->
+            SegmentedButton(
+                selected = line.basis == basis && (line.selectedRateId != null || line.rateAmount != null),
+                enabled = basis in available,
+                onClick = {
+                    val offered = SprayRegisteredUseRates.firstOffered(chem, basis) ?: return@SegmentedButton
+                    applySuggestedRate(line, offered)
+                    onChanged()
+                },
+                shape = SegmentedButtonDefaults.itemShape(index = index, count = 2),
+            ) { Text(label, fontSize = 12.sp) }
+        }
+    }
+}
+
+@Composable
+private fun SuggestedRegisteredRatePickerRow(
+    chem: SavedChemical,
+    line: CalcChemLine,
+    onChanged: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val rates = remember(chem.registeredUses, chem.rates) {
+        SprayRegisteredUseRates.selectableVineyardRates(chem)
+    }
+    val selected = rates.firstOrNull { it.id == line.selectedRateId }
+    Box {
+        var menu by remember { mutableStateOf(false) }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(vine.appBackground)
+                .clickable(enabled = rates.isNotEmpty()) { menu = true }
+                .padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                selected?.menuText ?: line.rateAmount?.let {
+                    "Confirmed default: ${fmtRate(it)} ${line.rateUnit.orEmpty()}${sprayBasisSuffix(line.basis)}"
+                } ?: if (rates.isEmpty()) "No selectable vineyard rate" else "Select rate",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (rates.isEmpty()) VineColors.Orange else vine.textPrimary,
+                modifier = Modifier.weight(1f),
+                maxLines = 2,
+            )
+            if (rates.isNotEmpty()) {
+                Icon(Icons.Filled.SwapVert, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(14.dp))
+            }
+        }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            rates.groupBy { it.groupTitle }.forEach { (group, groupedRates) ->
+                DropdownMenuItem(
+                    text = {
+                        Text(group.uppercase(Locale.getDefault()), fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
+                    },
+                    enabled = false,
+                    onClick = {},
+                )
+                groupedRates.forEach { rate ->
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(rate.menuText, fontSize = 13.sp)
+                                rate.condition?.takeIf { it.isNotBlank() && !rate.menuText.startsWith(it) }?.let {
+                                    Text(it, fontSize = 10.sp, color = vine.textSecondary)
+                                }
+                            }
+                        },
+                        onClick = {
+                            applySuggestedRate(line, rate)
+                            onChanged()
+                            menu = false
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun applySuggestedRate(line: CalcChemLine, rate: SpraySelectableRate) {
+    val basis = rate.basis ?: return
+    line.selectedRateId = rate.id
+    line.basis = basis
+    line.rateUnit = rate.unit
+    line.rateAmount = (rate.amount as? SprayRateAmount.Fixed)?.value
+    line.overrideText = ""
 }
 
 /**

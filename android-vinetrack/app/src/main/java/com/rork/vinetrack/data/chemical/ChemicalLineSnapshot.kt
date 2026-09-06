@@ -91,6 +91,15 @@ data class ChemicalLineSnapshot(
     /** The confirmed band this dose was chosen inside, when there was one. */
     @SerialName("rate_range_min") val rateRangeMin: Double? = null,
     @SerialName("rate_range_max") val rateRangeMax: Double? = null,
+    /** Stable selected label-rate identity, when this spray used an offered row. */
+    @SerialName("selected_rate_id") val selectedRateId: String? = null,
+    /** Printed registered direction/use behind the selected rate. */
+    @SerialName("registered_use_id") val registeredUseId: String? = null,
+    @SerialName("rate_origin") val rateOrigin: String? = null,
+    /** `minimum`, `midpoint` or `maximum` for deterministic range presets. */
+    @SerialName("rate_preset") val ratePreset: String? = null,
+    /** Label condition retained for named choices such as disease pressure. */
+    @SerialName("rate_condition") val rateCondition: String? = null,
 ) {
     /** Whether this snapshot carries anything the Resistance Engine could use. */
     val hasResistanceData: Boolean
@@ -113,13 +122,19 @@ data class ChemicalLineSnapshot(
         basis: ChemicalDefaultRateBasis,
         entryMethod: String,
         confirmedRange: ChemicalDefaultRateValidity.Amount.Range? = null,
+        selectedRate: SpraySelectableRate? = null,
     ): ChemicalLineSnapshot = copy(
         appliedRate = rate,
         appliedRateUnit = unit,
         appliedRateBasis = basis.raw,
         rateEntryMethod = entryMethod,
-        rateRangeMin = confirmedRange?.min,
-        rateRangeMax = confirmedRange?.max,
+        rateRangeMin = confirmedRange?.min ?: selectedRate?.labelRange?.start,
+        rateRangeMax = confirmedRange?.max ?: selectedRate?.labelRange?.endInclusive,
+        selectedRateId = selectedRate?.id,
+        registeredUseId = selectedRate?.registeredUseId,
+        rateOrigin = selectedRate?.origin?.raw,
+        ratePreset = selectedRate?.preset?.raw,
+        rateCondition = selectedRate?.condition,
     )
 
     companion object {
