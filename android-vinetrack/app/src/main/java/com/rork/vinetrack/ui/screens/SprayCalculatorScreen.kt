@@ -555,20 +555,10 @@ fun SprayCalculatorScreen(
     val sprayProfile = remember(selectedVineyard, regionCountryCode) {
         selectedVineyard?.sprayProfile ?: SprayVineyardProfile(countryCode = regionCountryCode)
     }
-    val canopyCarrierBasis = if (sprayProfile.resolvedPolicy.allows(carrierBasisChoice)) {
-        carrierBasisChoice
-    } else {
-        sprayProfile.resolvedPolicy.defaultBasis
-    }
-    val canopyContextSignature = canopySelection.signature(selectedPaddockIds.toList(), canopyCarrierBasis)
-    val isCanopyConfirmed = canopySelection.isConfirmed(selectedPaddockIds.toList(), canopyCarrierBasis)
-    LaunchedEffect(canopyContextSignature) {
-        if (canopySelection.confirmedSignature != null && !isCanopyConfirmed) {
-            canopySelection = canopySelection.copy(confirmedSignature = null)
-        }
-        // A result belongs to the exact type/size/density/block/basis answer.
-        result = null
-    }
+    // Canopy confirmation belongs only to the chosen type/size/density answer.
+    // Carrier basis and block geometry may change its equivalent recommendation,
+    // but cannot erase an operator's deliberate confirmation.
+    val isCanopyConfirmed = canopySelection.isConfirmed
 
     /**
      * Maps the operator's chemical lines onto engine product inputs. Each line
@@ -796,6 +786,9 @@ fun SprayCalculatorScreen(
         val base = r.sprayReference.orEmpty()
         sprayName = if (r.isTemplate) base else if (base.isNotBlank()) "$base (Copy)" else ""
         r.operationType?.takeIf { it in sprayOperationTypes }?.let { operationType = it }
+        if (!canopySelection.isConfirmed) {
+            r.prefillCanopy?.let { canopySelection = it }
+        }
         notes = r.notes.orEmpty()
         fansJets = r.numberOfFansJets.orEmpty()
         tractorId = r.tractorId
@@ -1596,10 +1589,7 @@ fun SprayCalculatorScreen(
                             result = null
                         },
                         onConfirm = {
-                            canopySelection = canopySelection.confirm(
-                                selectedPaddockIds.toList(),
-                                guidedFlow.effectiveCarrierBasis,
-                            )
+                            canopySelection = canopySelection.confirm()
                             result = null
                         },
                     )

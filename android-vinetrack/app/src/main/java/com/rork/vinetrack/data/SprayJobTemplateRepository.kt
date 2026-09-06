@@ -4,6 +4,7 @@ import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.SprayChemical
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.SprayTank
+import com.rork.vinetrack.data.spray.SprayCanopySelection
 import com.rork.vinetrack.data.spray.SprayProductRateBasis
 import com.rork.vinetrack.data.spray.SprayProgramStepNotPermitted
 import com.rork.vinetrack.data.spray.SprayTargetVocabulary
@@ -90,6 +91,9 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
         val notes: String? = null,
         /** Canonical E-L stage for the template (sql/034), e.g. "EL12". */
         @SerialName("growth_stage_code") val growthStageCode: String? = null,
+        /** Historical Program canopy fields were captured by VSP-only controls. */
+        @SerialName("vsp_canopy_size") val vspCanopySize: String? = null,
+        @SerialName("vsp_canopy_density") val vspCanopyDensity: String? = null,
         @SerialName("created_at") val createdAt: String? = null,
         @SerialName("deleted_at") val deletedAt: String? = null,
     )
@@ -277,6 +281,7 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
             wording = target,
         )
         val targetIdentifiers = SprayTargetVocabulary.identifiers(tags)
+        val prefillCanopy = parsePrefilledCanopy(vspCanopySize, vspCanopyDensity)
         return SprayRecord(
             id = id,
             vineyardId = vineyardId,
@@ -297,7 +302,18 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
             targets = targetIdentifiers.takeIf { it.isNotEmpty() },
             createdAt = createdAt,
             templateGrowthStageCode = growthStageCode?.trim()?.takeIf { it.isNotEmpty() },
+            prefillCanopy = prefillCanopy,
         )
+    }
+
+    private fun parsePrefilledCanopy(size: String?, density: String?): SprayCanopySelection? {
+        val parsedSize = SprayCalculator.CanopySize.entries.firstOrNull {
+            it.label.equals(size?.trim(), ignoreCase = true)
+        } ?: return null
+        val parsedDensity = SprayCalculator.CanopyDensity.entries.firstOrNull {
+            it.label.equals(density?.trim(), ignoreCase = true)
+        } ?: return null
+        return SprayCanopySelection.prefilled(size = parsedSize, density = parsedDensity)
     }
 
     /**

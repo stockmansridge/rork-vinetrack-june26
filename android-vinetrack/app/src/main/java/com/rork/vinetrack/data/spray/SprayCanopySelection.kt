@@ -8,32 +8,25 @@ data class SprayCanopySelection(
     val type: SprayCalculator.CanopyType? = null,
     val size: SprayCalculator.CanopySize = SprayCalculator.CanopySize.MEDIUM,
     val density: SprayCalculator.CanopyDensity = SprayCalculator.CanopyDensity.LOW,
-    val confirmedSignature: String? = null,
+    val isSizeAndDensityConfirmed: Boolean = false,
 ) {
     val isValid: Boolean get() = type != null
 
-    fun chooseType(value: SprayCalculator.CanopyType?): SprayCanopySelection =
-        copy(type = value, confirmedSignature = null)
+    /** A complete answer needs a training system and a deliberately accepted size/density pair. */
+    val isConfirmed: Boolean get() = isValid && isSizeAndDensityConfirmed
 
+    /** Choosing or changing the training system does not alter confirmation of the displayed pair. */
+    fun chooseType(value: SprayCalculator.CanopyType?): SprayCanopySelection = copy(type = value)
+
+    /** Touching either pair control deliberately confirms both displayed values. */
     fun chooseSize(value: SprayCalculator.CanopySize): SprayCanopySelection =
-        copy(size = value, confirmedSignature = null)
+        copy(size = value, isSizeAndDensityConfirmed = true)
 
     fun chooseDensity(value: SprayCalculator.CanopyDensity): SprayCanopySelection =
-        copy(density = value, confirmedSignature = null)
+        copy(density = value, isSizeAndDensityConfirmed = true)
 
-    fun signature(selectedBlockIds: List<String>, carrierBasis: SprayCarrierBasis): String = listOf(
-        type?.name ?: "unselected",
-        size.name,
-        density.name,
-        selectedBlockIds.sorted().joinToString(","),
-        carrierBasis.name,
-    ).joinToString("|")
-
-    fun confirm(selectedBlockIds: List<String>, carrierBasis: SprayCarrierBasis): SprayCanopySelection =
-        if (!isValid) this else copy(confirmedSignature = signature(selectedBlockIds, carrierBasis))
-
-    fun isConfirmed(selectedBlockIds: List<String>, carrierBasis: SprayCarrierBasis): Boolean =
-        isValid && confirmedSignature == signature(selectedBlockIds, carrierBasis)
+    /** Accepts the displayed pair unchanged; type is still independently required. */
+    fun confirm(): SprayCanopySelection = copy(isSizeAndDensityConfirmed = true)
 
     fun litresPer100m(rates: CanopyWaterRates): Double? = type?.let {
         SprayCalculator.litresPer100m(rates, it, size, density)
@@ -49,16 +42,22 @@ data class SprayCanopySelection(
     companion object {
         val unconfirmed: SprayCanopySelection = SprayCanopySelection()
 
-        /** Historical Program Step fields came from the old VSP-only controls. */
+        /** Program/repeat values are already deliberate; legacy values without type were VSP-only. */
+        fun prefilled(
+            size: SprayCalculator.CanopySize,
+            density: SprayCalculator.CanopyDensity,
+            type: SprayCalculator.CanopyType = SprayCalculator.CanopyType.VSP,
+        ): SprayCanopySelection = SprayCanopySelection(
+            type = type,
+            size = size,
+            density = density,
+            isSizeAndDensityConfirmed = true,
+        )
+
         fun prefilledVsp(
             size: SprayCalculator.CanopySize,
             density: SprayCalculator.CanopyDensity,
-        ): SprayCanopySelection = SprayCanopySelection(
-            type = SprayCalculator.CanopyType.VSP,
-            size = size,
-            density = density,
-            confirmedSignature = null,
-        )
+        ): SprayCanopySelection = prefilled(size = size, density = density)
     }
 }
 

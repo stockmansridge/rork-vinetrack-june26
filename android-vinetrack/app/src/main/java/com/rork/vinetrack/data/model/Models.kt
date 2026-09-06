@@ -17,6 +17,7 @@ import com.rork.vinetrack.data.chemical.ChemicalVerificationConflict
 import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
 import com.rork.vinetrack.data.spray.SprayApplicationBlockSnapshot
 import com.rork.vinetrack.data.spray.SprayApplicationSnapshot
+import com.rork.vinetrack.data.spray.SprayCanopySelection
 import com.rork.vinetrack.data.spray.SprayProductRateBasis
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -1702,6 +1703,8 @@ data class SprayRecord(
      * the Spray Program can sort templates by their actual stage value.
      */
     @Transient val templateGrowthStageCode: String? = null,
+    /** Client-side handoff when a Program Step or repeated job explicitly carries canopy values. */
+    @Transient val prefillCanopy: SprayCanopySelection? = null,
 ) {
     val dateEpochMs: Long? get() = parseIsoToEpochMs(date ?: startTime)
 

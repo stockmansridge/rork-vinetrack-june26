@@ -12,6 +12,7 @@ import com.rork.vinetrack.data.spray.SprayOperationType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -21,15 +22,26 @@ class SprayCanopyParityTest {
     private val blocks = listOf("block-a")
 
     @Test
-    fun `unselected is distinct from VSP and defaults are not confirmation`() {
+    fun `rule 1 fresh canopy shows Medium Low and remains unconfirmed`() {
         val initial = SprayCanopySelection.unconfirmed
         assertNull(initial.type)
-        assertFalse(initial.isValid)
-        assertFalse(initial.isConfirmed(blocks, SprayCarrierBasis.LITRES_PER_HECTARE))
+        assertEquals(SprayCalculator.CanopySize.MEDIUM, initial.size)
+        assertEquals(SprayCalculator.CanopyDensity.LOW, initial.density)
+        assertFalse(initial.isConfirmed)
+    }
 
-        val vsp = initial.chooseType(SprayCalculator.CanopyType.VSP)
-        assertEquals(SprayCalculator.CanopyType.VSP, vsp.type)
-        assertFalse(vsp.isConfirmed(blocks, SprayCarrierBasis.LITRES_PER_HECTARE))
+    @Test
+    fun `rule 2 choosing VSP or Sprawl alone does not confirm displayed pair`() {
+        assertFalse(SprayCanopySelection.unconfirmed.chooseType(SprayCalculator.CanopyType.VSP).isConfirmed)
+        assertFalse(SprayCanopySelection.unconfirmed.chooseType(SprayCalculator.CanopyType.SPRAWL).isConfirmed)
+    }
+
+    @Test
+    fun `rule 3 touching either size or density confirms the displayed pair`() {
+        val typed = SprayCanopySelection.unconfirmed.chooseType(SprayCalculator.CanopyType.VSP)
+        assertTrue(typed.chooseSize(SprayCalculator.CanopySize.MEDIUM).isConfirmed)
+        assertTrue(typed.chooseDensity(SprayCalculator.CanopyDensity.LOW).isConfirmed)
+        assertTrue(typed.confirm().isConfirmed)
     }
 
     @Test
@@ -109,26 +121,74 @@ class SprayCanopyParityTest {
     }
 
     @Test
-    fun `prefilled historical VSP remains unconfirmed`() {
-        val prefilled = SprayCanopySelection.prefilledVsp(
-            SprayCalculator.CanopySize.LARGE,
-            SprayCalculator.CanopyDensity.HIGH,
+    fun `rule 4 Program Step and repeated job prefills arrive confirmed`() {
+        val program = SprayCanopySelection.prefilled(
+            type = SprayCalculator.CanopyType.SPRAWL,
+            size = SprayCalculator.CanopySize.LARGE,
+            density = SprayCalculator.CanopyDensity.HIGH,
         )
-        assertEquals(SprayCalculator.CanopyType.VSP, prefilled.type)
-        assertFalse(prefilled.isConfirmed(blocks, SprayCarrierBasis.LITRES_PER_HECTARE))
+        val repeated = program.copy()
+        assertTrue(program.isConfirmed)
+        assertTrue(repeated.isConfirmed)
     }
 
     @Test
-    fun `confirmation completes and every canopy context change invalidates`() {
-        val confirmed = SprayCanopySelection.unconfirmed
-            .chooseType(SprayCalculator.CanopyType.VSP)
-            .confirm(blocks, SprayCarrierBasis.LITRES_PER_HECTARE)
-        assertTrue(confirmed.isConfirmed(blocks, SprayCarrierBasis.LITRES_PER_HECTARE))
-        assertFalse(confirmed.chooseType(SprayCalculator.CanopyType.SPRAWL).isConfirmed(blocks, SprayCarrierBasis.LITRES_PER_HECTARE))
-        assertFalse(confirmed.chooseSize(SprayCalculator.CanopySize.FULL).isConfirmed(blocks, SprayCarrierBasis.LITRES_PER_HECTARE))
-        assertFalse(confirmed.chooseDensity(SprayCalculator.CanopyDensity.HIGH).isConfirmed(blocks, SprayCarrierBasis.LITRES_PER_HECTARE))
-        assertFalse(confirmed.isConfirmed(listOf("block-b"), SprayCarrierBasis.LITRES_PER_HECTARE))
-        assertFalse(confirmed.isConfirmed(blocks, SprayCarrierBasis.LITRES_PER_100_METRES))
+    fun `rule 5 historical pair without a stored type resolves to confirmed VSP`() {
+        val historical = SprayCanopySelection.prefilledVsp(
+            SprayCalculator.CanopySize.LARGE,
+            SprayCalculator.CanopyDensity.HIGH,
+        )
+        assertEquals(SprayCalculator.CanopyType.VSP, historical.type)
+        assertTrue(historical.isConfirmed)
+    }
+
+    @Test
+    fun `rule 6 changing carrier basis does not invalidate canopy`() {
+        val confirmed = SprayCanopySelection.prefilled(
+            SprayCalculator.CanopySize.MEDIUM,
+            SprayCalculator.CanopyDensity.LOW,
+        )
+        val perHectare = SprayGuidedFlow(confirmedFoliarInputs(confirmed, 2.8).copy(carrierBasis = SprayCarrierBasis.LITRES_PER_HECTARE))
+        val perRow = SprayGuidedFlow(confirmedFoliarInputs(confirmed, 2.8).copy(carrierBasis = SprayCarrierBasis.LITRES_PER_100_METRES))
+        assertTrue(confirmed.isConfirmed)
+        assertEquals(20.0, perHectare.volumeDecision?.recommendedLitresPer100Metres ?: -1.0, 0.0)
+        assertEquals(20.0, perRow.volumeDecision?.recommendedLitresPer100Metres ?: -1.0, 0.0)
+    }
+
+    @Test
+    fun `rule 7 block spacing recalculates equivalent without erasing confirmation`() {
+        val confirmed = SprayCanopySelection.prefilled(
+            SprayCalculator.CanopySize.SMALL,
+            SprayCalculator.CanopyDensity.LOW,
+        )
+        val at28 = SprayGuidedFlow(confirmedFoliarInputs(confirmed, 2.8)).volumeDecision
+        val at30 = SprayGuidedFlow(confirmedFoliarInputs(confirmed, 3.0)).volumeDecision
+        assertTrue(confirmed.isConfirmed)
+        assertEquals(357.14285714285717, at28?.recommendedLitresPerHectare ?: -1.0, 0.000001)
+        assertEquals(333.3333333333333, at30?.recommendedLitresPerHectare ?: -1.0, 0.000001)
+    }
+
+    @Test
+    fun `rule 8 changing confirmed canopy type preserves confirmed pair`() {
+        val confirmedVsp = SprayCanopySelection.prefilled(
+            SprayCalculator.CanopySize.LARGE,
+            SprayCalculator.CanopyDensity.HIGH,
+        )
+        val sprawl = confirmedVsp.chooseType(SprayCalculator.CanopyType.SPRAWL)
+        assertEquals(confirmedVsp.size, sprawl.size)
+        assertEquals(confirmedVsp.density, sprawl.density)
+        assertTrue(sprawl.isConfirmed)
+    }
+
+    @Test
+    fun `rule 9 confirmed prefill leaves volume undecided and Carrier incomplete`() {
+        val confirmed = SprayCanopySelection.prefilled(
+            SprayCalculator.CanopySize.SMALL,
+            SprayCalculator.CanopyDensity.LOW,
+        )
+        val inputs = confirmedFoliarInputs(confirmed, 2.8)
+        assertSame(SprayGuidedBlocker.SprayVolumeChoiceRequired, SprayGuidedFlow(inputs).blocker(SprayGuidedStep.CARRIER))
+        assertEquals(com.rork.vinetrack.data.spray.SprayVolumeChoice.UNDECIDED, inputs.sprayVolumeChoice)
     }
 
     @Test
@@ -153,6 +213,23 @@ class SprayCanopyParityTest {
         assertEquals(legacy, explicit, 0.0)
         assertEquals(2_500.0, CanopyWaterRates.litresPerHa(legacy, 3.0), 0.0)
     }
+
+    private fun confirmedFoliarInputs(
+        canopy: SprayCanopySelection,
+        rowSpacing: Double,
+    ): SprayGuidedInputs = SprayGuidedInputs(
+        operationType = SprayOperationType.FOLIAR_SPRAY,
+        blocks = listOf(
+            com.rork.vinetrack.data.spray.SprayBlockInput(
+                blockId = "block-a",
+                grossAreaHectares = 10.0,
+                mappedRowLengthMetres = 35_714.2857142857,
+                rowSpacingMetres = rowSpacing,
+            ),
+        ),
+        canopy = canopy,
+        isCanopyConfirmed = canopy.isConfirmed,
+    )
 
     private fun assertBand(
         type: SprayCalculator.CanopyType,
