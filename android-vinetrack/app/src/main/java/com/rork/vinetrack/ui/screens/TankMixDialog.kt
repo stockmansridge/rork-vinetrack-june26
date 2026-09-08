@@ -152,20 +152,48 @@ internal fun ConfirmActualTankMixDialog(
         onDismissRequest = { if (!saving) onDismiss() },
         title = { Text("Confirm Actual Tank Mix") },
         text = {
+            val vine = LocalVineColors.current
             Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Tank ${tank.tankNumber} of ${record.tanks.orEmpty().size}", fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                Text("Planned water: ${tankMixNumber(tank.waterVolume)} L")
-                OutlinedTextField(waterText, { waterText = it }, label = { Text("Actual water (L)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                Text("Water — Planned and Actual", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = vine.cardBackground,
+                    tonalElevation = 1.dp,
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Tank ${tank.tankNumber} of ${record.tanks.orEmpty().size}", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                        PlannedTankAmountRow("${tankMixNumber(tank.waterVolume)} L")
+                        ActualTankAmountRow(
+                            value = waterText,
+                            onValueChange = { waterText = it },
+                            unit = "L",
+                        )
+                    }
+                }
+
+                Text("Chemicals — Planned and Actual", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
                 tank.chemicals.forEach { chemical ->
-                    Text(chemical.name.ifBlank { "Unnamed chemical" }, fontWeight = FontWeight.SemiBold)
-                    Text("Planned: ${tankMixNumber(chemicalUnitFromBase(chemical.unit, chemical.volumePerTank))} ${chemical.unit}")
-                    OutlinedTextField(
-                        chemicalTexts[chemical.id].orEmpty(), { chemicalTexts[chemical.id] = it },
-                        label = { Text("Actual (${chemical.unit})") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    )
-                    if (parse(chemicalTexts[chemical.id].orEmpty()) == 0.0) {
-                        Text("This product will be recorded as not added.", color = VineColors.Orange, fontSize = 12.sp)
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        color = vine.cardBackground,
+                        tonalElevation = 1.dp,
+                    ) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(chemical.name.ifBlank { "Unnamed chemical" }, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                            PlannedTankAmountRow(
+                                "${tankMixNumber(chemicalUnitFromBase(chemical.unit, chemical.volumePerTank))} ${chemical.unit}"
+                            )
+                            ActualTankAmountRow(
+                                value = chemicalTexts[chemical.id].orEmpty(),
+                                onValueChange = { chemicalTexts[chemical.id] = it },
+                                unit = chemical.unit,
+                            )
+                            if (parse(chemicalTexts[chemical.id].orEmpty()) == 0.0) {
+                                Text("This product will be recorded as not added.", color = VineColors.Orange, fontSize = 12.sp)
+                            }
+                        }
                     }
                 }
                 error?.let { Text(it, color = VineColors.Orange) }
@@ -186,6 +214,47 @@ internal fun ConfirmActualTankMixDialog(
         },
         dismissButton = { TextButton(enabled = !saving, onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+@Composable
+private fun PlannedTankAmountRow(value: String) {
+    val vine = LocalVineColors.current
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("Planned", fontSize = 15.sp, color = vine.textPrimary)
+        Spacer(Modifier.weight(1f))
+        Text(value, fontSize = 15.sp, color = vine.textSecondary)
+    }
+}
+
+@Composable
+private fun ActualTankAmountRow(
+    value: String,
+    onValueChange: (String) -> Unit,
+    unit: String,
+) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("Actual", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = VineColors.Olive)
+        Spacer(Modifier.weight(1f))
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier.width(112.dp),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            singleLine = true,
+            textStyle = androidx.compose.ui.text.TextStyle(
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.End,
+                color = vine.textPrimary,
+            ),
+        )
+        Text(unit, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
+    }
 }
 
 @Composable

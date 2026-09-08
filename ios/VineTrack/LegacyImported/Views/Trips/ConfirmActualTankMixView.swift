@@ -27,11 +27,14 @@ struct ConfirmActualTankMixView: View {
         NavigationStack {
             Form {
                 Section {
-                    Text("Tank \(tank.tankNumber) of \(tankCount)").font(.title2.bold())
-                    LabeledContent("Planned water", value: "\(TankMixDetailsView.number(tank.waterVolume)) L")
-                    TextField("Actual water (L)", text: $waterText)
-                        .keyboardType(.decimalPad)
-                    difference(planned: tank.waterVolume, actual: parsed(waterText), unit: "L")
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Tank \(tank.tankNumber) of \(tankCount)")
+                            .font(.headline)
+                        LabeledContent("Planned", value: "\(TankMixDetailsView.number(tank.waterVolume)) L")
+                        actualInputRow(text: $waterText, unit: "L", accessibilityName: "Actual water")
+                        difference(planned: tank.waterVolume, actual: parsed(waterText), unit: "L")
+                    }
+                    .padding(.vertical, 4)
                 } header: { Text("Water — Planned and Actual") }
 
                 Section("Chemicals — Planned and Actual") {
@@ -39,11 +42,14 @@ struct ConfirmActualTankMixView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(chemical.name.isEmpty ? "Unnamed chemical" : chemical.name).font(.headline)
                             LabeledContent("Planned", value: "\(TankMixDetailsView.number(chemical.displayVolume)) \(chemical.unitLabel)")
-                            TextField("Actual (\(chemical.unitLabel))", text: Binding(
-                                get: { chemicalTexts[chemical.id] ?? "" },
-                                set: { chemicalTexts[chemical.id] = $0 }
-                            ))
-                            .keyboardType(.decimalPad)
+                            actualInputRow(
+                                text: Binding(
+                                    get: { chemicalTexts[chemical.id] ?? "" },
+                                    set: { chemicalTexts[chemical.id] = $0 }
+                                ),
+                                unit: chemical.unitLabel,
+                                accessibilityName: "Actual \(chemical.name.isEmpty ? "chemical" : chemical.name)"
+                            )
                             let actual = parsed(chemicalTexts[chemical.id] ?? "")
                             difference(planned: chemical.displayVolume, actual: actual, unit: chemical.unitLabel)
                             if actual == 0 {
@@ -86,6 +92,36 @@ struct ConfirmActualTankMixView: View {
         })
         if onConfirm(water, amounts) { dismiss() } else { errorMessage = "The mix could not be saved locally. The tank was not started." }
         isSaving = false
+    }
+
+    private func actualInputRow(
+        text: Binding<String>,
+        unit: String,
+        accessibilityName: String
+    ) -> some View {
+        HStack(spacing: 12) {
+            Text("Actual")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(VineyardTheme.olive)
+            Spacer(minLength: 12)
+            TextField("0", text: text)
+                .keyboardType(.decimalPad)
+                .multilineTextAlignment(.trailing)
+                .font(.body.weight(.semibold).monospacedDigit())
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(width: 120)
+                .background(VineyardTheme.olive.opacity(0.10))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(VineyardTheme.olive.opacity(0.65), lineWidth: 1.5)
+                }
+                .clipShape(.rect(cornerRadius: 8))
+                .accessibilityLabel(accessibilityName)
+            Text(unit)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
     }
 
     @ViewBuilder private func difference(planned: Double, actual: Double?, unit: String) -> some View {
