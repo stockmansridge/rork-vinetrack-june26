@@ -1,0 +1,22 @@
+{
+  "purpose": "Additive fixture fragments for schema 1.1 actual correction rendering and totals.",
+  "tank": {
+    "tankNumber": 1,
+    "actualId": "b1b2c3d4-0000-4000-8000-000000000001",
+    "actualVersion": 4,
+    "plannedWaterLitres": 1500,
+    "actualWaterLitres": 1420,
+    "chemicals": [
+      { "actualChemicalId": "b1b2c3d4-0000-4000-8000-000000000002", "plannedChemicalId": "b1b2c3d4-0000-4000-8000-000000000003", "savedChemicalId": "b1b2c3d4-0000-4000-8000-000000000004", "replacesPlannedChemicalId": null, "usageKind": "planned", "name": "Oil", "unit": "mL", "plannedAmountBase": 35714.28571428571, "actualAmountBase": 0, "matchSource": "plannedChemicalId" },
+      { "actualChemicalId": "b1b2c3d4-0000-4000-8000-000000000005", "plannedChemicalId": null, "savedChemicalId": "b1b2c3d4-0000-4000-8000-000000000006", "replacesPlannedChemicalId": "b1b2c3d4-0000-4000-8000-000000000007", "usageKind": "substitution", "name": "Substitute Sulphur", "unit": "g", "plannedAmountBase": null, "actualAmountBase": 9100, "matchSource": "actualOnly" },
+      { "actualChemicalId": "b1b2c3d4-0000-4000-8000-000000000008", "plannedChemicalId": null, "savedChemicalId": null, "replacesPlannedChemicalId": null, "usageKind": "additional", "name": "Wetting Agent", "unit": "mL", "plannedAmountBase": null, "actualAmountBase": 1250, "matchSource": "actualOnly" }
+    ]
+  },
+  "expectedDisplay": ["Water | 1,500 L | 1,420 L", "Oil | 35.714 L | Not added", "Substitution: Substitute Sulphur | — | 9.100 kg", "Additional: Wetting Agent | — | 1.250 L"],
+  "actualChemicalTotals": [
+    { "identityKey": "b1b2c3d4-0000-4000-8000-000000000004", "name": "Oil", "unit": "Litres", "actualAmountBase": 0 },
+    { "identityKey": "b1b2c3d4-0000-4000-8000-000000000006", "name": "Substitute Sulphur", "unit": "Kg", "actualAmountBase": 9100 },
+    { "identityKey": "wetting agent|liquid", "name": "Wetting Agent", "unit": "Litres", "actualAmountBase": 1250 }
+  ],
+  "amendment": { "field": "actualChemical", "changeKind": "explicitZero", "previousValue": null, "newValue": { "id": "b1b2c3d4-0000-4000-8000-000000000002", "actualAmountBase": 0, "unit": "mL" }, "previousUnit": null, "newUnit": "mL", "revision": 4 }
+}

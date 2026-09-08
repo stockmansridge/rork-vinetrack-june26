@@ -87,6 +87,41 @@ struct SprayRecordPDFService {
                 y += rowHeight
             }
 
+            func drawPlannedActualTable(_ tank: SprayReportPayloadV1.Tank) {
+                let itemWidth: CGFloat = 285
+                let valueWidth: CGFloat = (contentWidth - itemWidth) / 2
+                let headerHeight: CGFloat = 20
+                func header() {
+                    checkPageBreak(needed: headerHeight)
+                    let attrs: [NSAttributedString.Key: Any] = [.font: captionFont, .foregroundColor: UIColor.darkGray]
+                    ("ITEM" as NSString).draw(in: CGRect(x: margin, y: y, width: itemWidth, height: headerHeight), withAttributes: attrs)
+                    ("PLANNED" as NSString).draw(in: CGRect(x: margin + itemWidth, y: y, width: valueWidth, height: headerHeight), withAttributes: attrs)
+                    ("ACTUAL" as NSString).draw(in: CGRect(x: margin + itemWidth + valueWidth, y: y, width: valueWidth, height: headerHeight), withAttributes: attrs)
+                    y += headerHeight
+                }
+                func tableRow(item: String, planned: String, actual: String) {
+                    let itemAttrs: [NSAttributedString.Key: Any] = [.font: bodyFont, .foregroundColor: UIColor.black]
+                    let valueAttrs: [NSAttributedString.Key: Any] = [.font: bodyBoldFont, .foregroundColor: UIColor.black]
+                    let itemHeight = (item as NSString).boundingRect(with: CGSize(width: itemWidth - 8, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: itemAttrs, context: nil).height
+                    let rowHeight = max(24, itemHeight + 10)
+                    if y + rowHeight > pageHeight - margin - 18 { beginContinuationPage(); header() }
+                    (item as NSString).draw(in: CGRect(x: margin, y: y + 4, width: itemWidth - 8, height: rowHeight - 8), withAttributes: itemAttrs)
+                    (planned as NSString).draw(in: CGRect(x: margin + itemWidth, y: y + 4, width: valueWidth - 6, height: rowHeight - 8), withAttributes: valueAttrs)
+                    (actual as NSString).draw(in: CGRect(x: margin + itemWidth + valueWidth, y: y + 4, width: valueWidth - 6, height: rowHeight - 8), withAttributes: valueAttrs)
+                    y += rowHeight
+                    drawDivider()
+                }
+                header()
+                tableRow(item: "Water", planned: formatter.formatVolume(litres: tank.plannedWaterLitres), actual: tank.actualWaterLitres.map { $0 == 0 ? "0 L" : formatter.formatVolume(litres: $0) } ?? "Not recorded")
+                for chemical in tank.chemicals {
+                    let unit = ChemicalUnit(rawValue: chemical.unit) ?? .litres
+                    let planned = chemical.plannedAmountBase.map { String(format: "%.3f %@", unit.fromBase($0), unit.rawValue) } ?? "—"
+                    let actual = chemical.actualAmountBase.map { $0 == 0 ? "Not added" : String(format: "%.3f %@", unit.fromBase($0), unit.rawValue) } ?? "Not recorded"
+                    let prefix = chemical.usageKind == "substitution" ? "Substitution: " : chemical.usageKind == "additional" ? "Additional: " : ""
+                    tableRow(item: prefix + chemical.name, planned: planned, actual: actual)
+                }
+            }
+
             func drawSectionHeader(_ text: String) {
                 y += 12
                 checkPageBreak(needed: 28)
@@ -150,13 +185,8 @@ struct SprayRecordPDFService {
             // that may never have been sprayed would be worse than admitting the
             // record is silent.
             drawSectionHeader("\(formatter.blockTermCapitalised)s Treated")
-            if let treatedBlocks = SprayBlockAttributionDisplay.resolve(
-                record.applicationGeometry?.blocks,
-                paddocks: paddocks
-            ) {
-                for block in treatedBlocks {
-                    drawText("\u{2022} \(block.name)", font: bodyFont, color: .black)
-                }
+            if let treatedBlocks = payload.blocks {
+                for block in treatedBlocks { drawText("\u{2022} \(block.name)", font: bodyFont, color: .black) }
             } else {
                 drawText(SprayBlockAttributionDisplay.notRecorded, font: bodyFont, color: .darkGray)
             }
@@ -184,9 +214,9 @@ struct SprayRecordPDFService {
                 if !trip.pauseTimestamps.isEmpty {
                     drawRow(label: "Pauses", value: "\(trip.pauseTimestamps.count)")
                 }
-                if !trip.personName.isEmpty {
-                    drawRow(label: "Operator", value: trip.personName)
-                }
+                drawRow(label: "Operator", value: payload.trip.operatorName ?? "Not recorded")
+                if let elapsed = payload.trip.elapsedDurationSeconds { drawRow(label: "Elapsed Duration", value: RegionFormatter.formatDuration(seconds: TimeInterval(elapsed))) }
+                if let paused = payload.trip.pausedDurationSeconds { drawRow(label: "Paused Duration", value: RegionFormatter.formatDuration(seconds: TimeInterval(paused))) }
                 if let distance = payload.trip.distanceMetres {
                     drawRow(label: "Total Distance", value: formatter.formatDistance(metres: distance))
                 } else {
@@ -199,23 +229,13 @@ struct SprayRecordPDFService {
                     drawRow(label: "Skipped", value: "\(trip.skippedPaths.count)")
                 }
 
-                if !trip.tankSessions.isEmpty {
+                if let sessions = payload.tankSessions, !sessions.isEmpty {
                     y += 6
                     drawText("Tank Sessions", font: bodyBoldFont, color: .black)
-                    for session in trip.tankSessions {
-                        let startStr = timeFormatter.string(from: session.startTime)
-                        let endStr = session.endTime.map { timeFormatter.string(from: $0) } ?? "Active"
-                        var sessionDesc = "Tank \(session.tankNumber): \(startStr) – \(endStr)"
-                        if !session.rowRange.isEmpty {
-                            sessionDesc += " (\(session.rowRange))"
-                        }
-                        drawRow(label: sessionDesc, value: "", indent: 12)
-                        if let fillDur = session.fillDuration {
-                            let fillMins = Int(fillDur) / 60
-                            let fillSecs = Int(fillDur) % 60
-                            let fillStr = fillMins > 0 ? "\(fillMins)m \(fillSecs)s" : "\(fillSecs)s"
-                            drawRow(label: "  Fill Duration: \(fillStr)", value: "", indent: 24)
-                        }
+                    for session in sessions {
+                        drawRow(label: "Tank \(session.tankNumber)", value: session.status)
+                        if let start = session.startRow, let end = session.endRow { drawRow(label: "  Recorded range", value: "\(formatPath(start))–\(formatPath(end))", indent: 12) }
+                        drawRow(label: "  Assignment evidence", value: session.assignmentSource.replacingOccurrences(of: "_", with: " ").capitalized, indent: 12)
                     }
                 }
             }
@@ -252,86 +272,37 @@ struct SprayRecordPDFService {
                 if !equipmentName.isEmpty && payload.equipment.sprayUnitName == nil {
                     drawRow(label: "Equipment Type", value: equipmentName)
                 }
-                if !record.tractorGear.isEmpty {
-                    drawRow(label: "Tractor Gear", value: record.tractorGear)
-                }
-                if !record.numberOfFansJets.isEmpty {
-                    drawRow(label: "No. Fans/Jets", value: record.numberOfFansJets)
-                }
-                if let avgSpeed = record.averageSpeed {
+                if let gear = payload.equipment.tractorGear, !gear.isEmpty { drawRow(label: "Tractor Gear", value: gear) }
+                if let jets = payload.equipment.numberOfFansJets, !jets.isEmpty { drawRow(label: "No. Fans/Jets", value: jets) }
+                if let avgSpeed = payload.equipment.averageSpeedKmh {
                     drawRow(label: "Average Speed", value: formatter.formatSpeed(kmh: avgSpeed))
                 }
             }
 
-            // Tanks
-            for tank in record.tanks {
-                drawSectionHeader("Tank \(tank.tankNumber)")
+            if let application = payload.application {
+                drawSectionHeader("Application")
+                drawRow(label: "Operation", value: application.operationType ?? "Not recorded")
+                drawRow(label: "Application mode", value: application.applicationMode?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Not recorded")
+                drawRow(label: "Treated area", value: application.treatedAreaHa.map { formatter.formatArea(hectares: $0) } ?? "Not recorded")
+                drawRow(label: "Carrier total", value: application.totalCarrierLitres.map { formatter.formatVolume(litres: $0) } ?? "Not recorded")
+                if let notes = application.notes { drawText("Notes: \(notes)", font: bodyFont) }
+            }
+            if let step = payload.programStep {
+                drawSectionHeader("Program / Step")
+                drawRow(label: "Link", value: step.linkState.replacingOccurrences(of: "_", with: " ").capitalized)
+                drawRow(label: "Step", value: step.name ?? "Not recorded")
+                if let target = step.target { drawRow(label: "Target", value: target) }
+            }
 
-                let reportTank = payload.tanks.first(where: { $0.tankNumber == tank.tankNumber })
-                drawRow(label: "Water — Planned", value: reportTank.map { formatter.formatVolume(litres: $0.plannedWaterLitres) } ?? "Not recorded")
-                drawRow(label: "Water — Actual", value: reportTank?.actualWaterLitres.map { formatter.formatVolume(litres: $0) } ?? "Not recorded")
-                if let plannedWater = reportTank?.plannedWaterLitres, let actualWater = reportTank?.actualWaterLitres, abs(actualWater - plannedWater) > 0.000_000_1 {
-                    drawRow(label: "Water Difference", value: String(format: "%+.3f L", actualWater - plannedWater))
-                }
-                drawRow(label: "Spray Rate", value: formatter.formatSprayRate(perHectare: tank.sprayRatePerHa, unitLabel: "L", fractionDigits: 1))
-                drawRow(label: "Concentration Factor", value: String(format: "%.2f", tank.concentrationFactor))
-                if tank.areaPerTank > 0 {
-                    drawRow(label: "Area per Tank", value: formatter.formatArea(hectares: tank.areaPerTank))
-                }
-
-                if !tank.rowApplications.isEmpty {
-                    y += 6
-                    drawText("Row Applications", font: bodyBoldFont, color: .black)
-                    for application in tank.rowApplications {
-                        drawRow(label: application.rowRange, value: "", indent: 12)
-                    }
-                }
-
-                if !tank.chemicals.isEmpty {
-                    y += 6
-                    checkPageBreak(needed: 24)
-
-                    let colX: [CGFloat] = [margin + 8, margin + 180, margin + 300]
-                    let colHeaderAttrs: [NSAttributedString.Key: Any] = [.font: captionFont, .foregroundColor: UIColor.black]
-                    ("CHEMICAL" as NSString).draw(at: CGPoint(x: colX[0], y: y), withAttributes: colHeaderAttrs)
-                    ("VOL/TANK" as NSString).draw(at: CGPoint(x: colX[1], y: y), withAttributes: colHeaderAttrs)
-                    // Basis-neutral heading: the column now carries each line's
-                    // OWN denominator (/ha, /100 L, /100 m), because one tank
-                    // legitimately holds rates recorded on different bases.
-                    ("RATE" as NSString).draw(at: CGPoint(x: colX[2], y: y), withAttributes: colHeaderAttrs)
-                    y += 14
-
-                    for chemical in tank.chemicals {
-                        checkPageBreak(needed: 18)
-                        let nameAttrs: [NSAttributedString.Key: Any] = [.font: bodyFont, .foregroundColor: UIColor.black]
-                        let valAttrs: [NSAttributedString.Key: Any] = [.font: bodyBoldFont, .foregroundColor: UIColor.black]
-                        let name = chemical.name.isEmpty ? "Unnamed" : chemical.name
-                        (name as NSString).draw(at: CGPoint(x: colX[0], y: y), withAttributes: nameAttrs)
-                        // Chemical product amounts stay in their native product
-                        // unit (L/kg) — those are manufacturer-specified, not a
-                        // region preference. Only the per-area denominator is
-                        // region-aware via the spray-rate formatter.
-                        let reportChemical = reportTank?.chemicals.first { $0.plannedChemicalId == chemical.id }
-                        let actualText = reportChemical?.actualAmountBase.map { amount in
-                            amount == 0 ? "Not added" : String(format: "%.3f %@", chemical.unit.fromBase(amount), chemical.unit.rawValue)
-                        } ?? "Not recorded"
-                        let plannedAmount = reportChemical?.plannedAmountBase ?? chemical.volumePerTank
-                        (String(format: "P %.3f %@ / A %@", chemical.unit.fromBase(plannedAmount), chemical.unitLabel, actualText) as NSString).draw(at: CGPoint(x: colX[1], y: y), withAttributes: valAttrs)
-                        // Read from the line's own recorded basis. Printing
-                        // `ratePerHa` unconditionally reported every per-100 L
-                        // line as "0.00 L/ha" on a compliance document.
-                        (chemical.reportedRateText(formatter: formatter) as NSString).draw(at: CGPoint(x: colX[2], y: y), withAttributes: valAttrs)
-                        y += 18
-                        if let actualAmount = reportChemical?.actualAmountBase, abs(actualAmount - plannedAmount) > 0.000_001 {
-                            let difference = chemical.unit.fromBase(actualAmount - plannedAmount)
-                            drawRow(label: "  Difference", value: "\(difference > 0 ? "+" : "")\(String(format: "%.3f", difference)) \(chemical.unit.rawValue)", indent: 12)
-                        }
-                    }
-                    for actualOnly in reportTank?.chemicals.filter({ $0.plannedChemicalId == nil }) ?? [] {
-                        checkPageBreak(needed: 22)
-                        let kind = actualOnly.usageKind == "substitution" ? "Substituted actual" : "Additional actual"
-                        let actualUnit = ChemicalUnit(rawValue: actualOnly.unit) ?? .litres
-                        drawRow(label: "  \(kind): \(actualOnly.name)", value: actualOnly.actualAmountBase.map { "\(String(format: "%.3f", actualUnit.fromBase($0))) \(actualUnit.rawValue)" } ?? "Not recorded", indent: 12)
+            // Canonical one-table-per-tank worksheet. Values are base quantities
+            // converted exactly once for display; missing and explicit zero differ.
+            for reportTank in payload.tanks.sorted(by: { $0.tankNumber < $1.tankNumber }) {
+                drawSectionHeader("Tank \(reportTank.tankNumber) — Planned / Actual")
+                drawPlannedActualTable(reportTank)
+                if let plannedTank = record.tanks.first(where: { $0.tankNumber == reportTank.tankNumber }) {
+                    drawText("Rate / basis", font: bodyBoldFont)
+                    for chemical in plannedTank.chemicals {
+                        drawText("\(chemical.name): \(chemical.reportedRateText(formatter: formatter))", font: captionFont, color: .darkGray)
                     }
                 }
             }
@@ -346,22 +317,17 @@ struct SprayRecordPDFService {
                 }
             }
 
-            let allChemicals = record.tanks.flatMap { $0.chemicals }
-            let grouped = Dictionary(grouping: allChemicals, by: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
-            let chemTotals = grouped.compactMap { (key, chems) -> (String, Double, ChemicalUnit)? in
-                guard !key.isEmpty else { return nil }
-                let displayName = chems.first?.name ?? key
-                let unit = chems.first?.unit ?? .litres
-                let totalBase = chems.reduce(0.0) { $0 + $1.volumePerTank }
-                return (displayName, totalBase, unit)
-            }.sorted { $0.0.lowercased() < $1.0.lowercased() }
-
-            if !chemTotals.isEmpty {
+            let canonicalPlannedTotals = payload.plannedChemicalTotals ?? {
+                let lines = payload.tanks.flatMap(\.chemicals).filter { $0.plannedAmountBase != nil }
+                return Dictionary(grouping: lines) { $0.savedChemicalId?.uuidString ?? "\($0.name.lowercased())|\($0.unit)" }.map { key, values in
+                    SprayReportPayloadV1.ChemicalTotal(identityKey: key, name: values.first?.name ?? "Unnamed chemical", unit: values.first?.unit ?? "Litres", actualAmountBase: values.compactMap(\.plannedAmountBase).reduce(0, +))
+                }
+            }()
+            if !canonicalPlannedTotals.isEmpty {
                 drawSectionHeader("Planned Chemical Totals (All Tanks)")
-                for (name, totalBase, unit) in chemTotals {
-                    let displayTotal = unit.fromBase(totalBase)
-                    let unitAbbrev = unit == .litres ? "L" : unit == .kilograms ? "Kg" : unit.rawValue
-                    drawRow(label: name, value: String(format: "%.2f%@", displayTotal, unitAbbrev))
+                for total in canonicalPlannedTotals {
+                    let unit = ChemicalUnit(rawValue: total.unit) ?? .litres
+                    drawRow(label: total.name, value: String(format: "%.3f %@", unit.fromBase(total.actualAmountBase), unit.rawValue))
                 }
             }
             if !payload.actualChemicalTotals.isEmpty {
@@ -391,7 +357,16 @@ struct SprayRecordPDFService {
             // Costing is gated entirely on `includeCostings` — the caller MUST
             // pass `false` for supervisors and operators so they never receive
             // pricing in exported spray PDFs.
-            if includeCostings, let r = tripCostResult {
+            if includeCostings, let canonicalCost = payload.cost {
+                drawSectionHeader("Authorized Cost Summary")
+                drawRow(label: "Fuel used", value: canonicalCost.fuelLitres.map { formatter.formatVolume(litres: $0) } ?? "Not recorded")
+                drawRow(label: "Fuel cost", value: canonicalCost.fuelCost.map { formatter.formatCurrency($0) } ?? "Not recorded")
+                drawRow(label: "Chemical cost", value: canonicalCost.chemicalCost.map { formatter.formatCurrency($0) } ?? "Not recorded")
+                drawRow(label: "Labour cost", value: canonicalCost.labourCost.map { formatter.formatCurrency($0) } ?? "Not recorded")
+                drawRow(label: "Total", value: canonicalCost.totalCost.map { formatter.formatCurrency($0) } ?? "Incomplete")
+                if !canonicalCost.isComplete { drawText(canonicalCost.basis, font: captionFont, color: .darkGray) }
+            }
+            if includeCostings, payload.cost == nil, let r = tripCostResult {
                 drawSectionHeader(r.chemical?.basis == .actual ? "Trip Cost — Actual Chemicals" : "Estimated Trip Cost")
 
                 if let w = r.labour.warning {

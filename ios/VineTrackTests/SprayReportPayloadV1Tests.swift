@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import PDFKit
 @testable import VineTrack
 
 @Suite("Canonical Spray Report v1")
@@ -48,6 +49,24 @@ struct SprayReportPayloadV1Tests {
         #expect(payload.tanks.first?.chemicals.last?.plannedAmountBase == nil)
         #expect(payload.actualChemicalTotals.count == 2)
         #expect(abs((payload.equipment.engineHoursUsed ?? 0) - 3.1) < 0.000_001)
+    }
+
+    @Test("PDF uses readable planned actual tables and converts base amounts once")
+    func plannedActualPdfTable() throws {
+        let trip = Trip(vineyardId: UUID(), startTime: Date(timeIntervalSince1970: 1_788_480_000), endTime: Date(timeIntervalSince1970: 1_788_490_860), tripFunction: "spraying")
+        let oil = SprayChemical(name: "Sacoa Stifle Dormant Spray Oil with a deliberately long wrapping name", volumePerTank: 35_714.28571428571, unit: .litres)
+        let sulphur = SprayChemical(name: "Thiovit Jet Microgranule Fungicide/Miticide", volumePerTank: 8_928.571428571428, unit: .kilograms)
+        let record = SprayRecord(tripId: trip.id, vineyardId: trip.vineyardId, sprayReference: "Acceptance", tanks: [SprayTank(tankNumber: 1, waterVolume: 1_500, chemicals: [oil, sulphur])])
+        let payload = SprayReportPayloadV1.offlineProjection(trip: trip, record: record, vineyardName: "Stockmans Ridge", timeZone: .gmt, paddocks: [], tractorName: "", sprayUnitName: "", tankActuals: [])
+
+        let data = SprayRecordPDFService.generatePDF(payload: payload, record: record, trip: trip, vineyardName: "Stockmans Ridge", paddockName: "", personName: "", includeCostings: false, timeZone: .gmt)
+        let text = try #require(PDFDocument(data: data)?.string)
+        #expect(text.contains("ITEM"))
+        #expect(text.contains("PLANNED"))
+        #expect(text.contains("ACTUAL"))
+        #expect(text.contains("35.714 Litres"))
+        #expect(text.contains("8.929 Kg"))
+        #expect(text.contains("Not recorded"))
     }
 
     @Test("iOS filename uses canonical prefix, stable fragment and suffix")

@@ -175,7 +175,8 @@ object SprayRecordPdfExporter {
             )
             val repository = SprayReportRepository(session)
             val payload = runCatching { repository.fetch(trip.id) }.getOrDefault(offlinePayload)
-            val sharedRoute = payload.route?.let { route ->
+            val resolvedRoute = payload.route ?: runCatching { repository.ensureRoute(trip) }.getOrNull()
+            val sharedRoute = resolvedRoute?.let { route ->
                 runCatching {
                     val bytes = repository.downloadRoute(route)
                     BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
@@ -263,25 +264,19 @@ object SprayRecordPdfExporter {
         // falls back to the vineyard's current blocks: naming a block that may never
         // have been sprayed would be worse than admitting the record is silent.
         sectionHeader(s, "Blocks Treated")
-        val treatedBlocks = SprayBlockAttributionDisplay.resolve(
-            record.applicationGeometry?.blocks,
-            paddocks,
-        )
-        if (treatedBlocks == null) {
-            text(s, SprayBlockAttributionDisplay.NOT_RECORDED, bodyPaint)
-        } else {
-            for (block in treatedBlocks) {
-                text(s, "\u2022 ${block.name}", bodyPaint)
-            }
-        }
+        val treatedBlocks = payload.blocks
+        if (treatedBlocks == null) text(s, SprayBlockAttributionDisplay.NOT_RECORDED, bodyPaint)
+        else treatedBlocks.forEach { block -> text(s, "\u2022 ${block.name}", bodyPaint) }
 
         // Trip Information
         if (trip != null) {
             sectionHeader(s, "Trip Information")
             tripDateTime(trip.startTime)?.let { row(s, "Start Time", it) }
             tripDateTime(trip.endTime)?.let { row(s, "End Time", it) }
-            payload.trip.operatorName?.let { row(s, "Operator", it) }
+            row(s, "Operator", payload.trip.operatorName ?: "Not recorded")
             row(s, "Active Duration", payload.trip.activeDurationSeconds?.let { com.rork.vinetrack.data.model.formatTripDuration(it) } ?: "Not recorded")
+            payload.trip.elapsedDurationSeconds?.let { row(s, "Elapsed Duration", com.rork.vinetrack.data.model.formatTripDuration(it)) }
+            payload.trip.pausedDurationSeconds?.let { row(s, "Paused Duration", com.rork.vinetrack.data.model.formatTripDuration(it)) }
             row(s, "Total Distance", payload.trip.distanceMetres?.let { regionFormatter.formatDistance(it) } ?: "Not recorded")
         }
 
@@ -337,7 +332,7 @@ object SprayRecordPdfExporter {
         // Equipment
         val hasEquipment = payload.equipment.tractorName != null || payload.equipment.sprayUnitName != null ||
             payload.equipment.startEngineHours != null || payload.equipment.endEngineHours != null ||
-            !record.tractorGear.isNullOrBlank() || !record.numberOfFansJets.isNullOrBlank() || record.averageSpeed != null
+            !payload.equipment.tractorGear.isNullOrBlank() || !payload.equipment.numberOfFansJets.isNullOrBlank() || payload.equipment.averageSpeedKmh != null
         if (hasEquipment) {
             sectionHeader(s, "Equipment")
             row(s, "Tractor", payload.equipment.tractorName ?: "Not recorded")
@@ -345,60 +340,38 @@ object SprayRecordPdfExporter {
             row(s, "Engine hours end", payload.equipment.endEngineHours?.let { "${fmt(it)} h" } ?: "Not recorded")
             row(s, "Engine hours used", payload.equipment.engineHoursUsed?.let { "${fmt(it)} h" } ?: "Not recorded")
             row(s, "Spray Unit", payload.equipment.sprayUnitName ?: "Not recorded")
-            record.tractorGear?.takeIf { it.isNotBlank() }?.let { row(s, "Tractor Gear", it) }
-            record.numberOfFansJets?.takeIf { it.isNotBlank() }?.let { row(s, "No. Fans/Jets", it) }
-            record.averageSpeed?.let { row(s, "Average Speed", regionFormatter.formatSpeed(it)) }
+            payload.equipment.tractorGear?.takeIf { it.isNotBlank() }?.let { row(s, "Tractor Gear", it) }
+            payload.equipment.numberOfFansJets?.takeIf { it.isNotBlank() }?.let { row(s, "No. Fans/Jets", it) }
+            payload.equipment.averageSpeedKmh?.let { row(s, "Average Speed", regionFormatter.formatSpeed(it)) }
+            row(s, "Fuel consumption", payload.equipment.fuelConsumptionLPerHour?.let { "${fmt(it)} L/hr · ${payload.equipment.fuelConsumptionSource?.replace('_', ' ')}" } ?: "Not recorded")
         }
 
-        // Tanks
-        val tanks = record.tanks.orEmpty()
-        for (tank in tanks) {
-            sectionHeader(s, "Tank ${tank.tankNumber}")
-            val reportTank = payload.tanks.firstOrNull { it.tankNumber == tank.tankNumber }
-            row(s, "Water — Planned", reportTank?.let { regionFormatter.formatVolume(it.plannedWaterLitres) } ?: "Not recorded")
-            row(s, "Water — Actual", reportTank?.actualWaterLitres?.let { regionFormatter.formatVolume(it) } ?: "Not recorded")
-            if (reportTank?.actualWaterLitres != null && kotlin.math.abs(reportTank.actualWaterLitres - reportTank.plannedWaterLitres) > 0.0000001) {
-                row(s, "Water Difference", String.format(Locale.US, "%+.3f L", reportTank.actualWaterLitres - reportTank.plannedWaterLitres))
-            }
-            if (tank.sprayRatePerHa > 0) row(s, "Spray Rate", "${fmt(tank.sprayRatePerHa)} L/ha")
-            if (tank.concentrationFactor > 0) row(s, "Concentration Factor", fmt(tank.concentrationFactor))
-            if (tank.areaPerTank > 0) row(s, "Area per Tank", "${fmt(tank.areaPerTank)} ha")
+        payload.application?.let { application ->
+            sectionHeader(s, "Application")
+            row(s, "Operation", application.operationType ?: "Not recorded")
+            row(s, "Application mode", application.applicationMode?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Not recorded")
+            row(s, "Treated area", application.treatedAreaHa?.let { regionFormatter.formatArea(it) } ?: "Not recorded")
+            row(s, "Carrier total", application.totalCarrierLitres?.let { regionFormatter.formatVolume(it) } ?: "Not recorded")
+            application.notes?.let { text(s, "Notes: $it", bodyPaint) }
+        }
+        payload.programStep?.let { step ->
+            sectionHeader(s, "Program / Step")
+            row(s, "Link", step.linkState.replace('_', ' ').replaceFirstChar { it.uppercase() })
+            row(s, "Step", step.name ?: "Not recorded")
+            step.target?.let { row(s, "Target", it) }
+        }
 
-            val chemicals = tank.chemicals.filter { it.name.isNotBlank() || it.volumePerTank > 0 }
-            if (chemicals.isNotEmpty()) {
-                s.y += 6f
-                s.ensure(24f)
-                val c0 = MARGIN + 8f
-                val c1 = MARGIN + 200f
-                val c2 = MARGIN + 320f
-                s.canvas.drawText("CHEMICAL", c0, s.y, captionPaint)
-                s.canvas.drawText("VOL/TANK", c1, s.y, captionPaint)
-                s.canvas.drawText("RATE/HA", c2, s.y, captionPaint)
-                s.y += 14f
-                for (chem in chemicals) {
-                    s.ensure(18f)
-                    val unit = chemUnitAbbrev(chem.unit)
-                    s.canvas.drawText(chem.name.ifBlank { "Unnamed" }, c0, s.y, bodyPaint)
-                    val reportChemical = reportTank?.chemicals?.firstOrNull { it.plannedChemicalId == chem.id }
-                    val actualText = when {
-                        reportChemical?.actualAmountBase == null -> "Not recorded"
-                        reportChemical.actualAmountBase == 0.0 -> "Not added"
-                        else -> "${fmt(chemicalUnitFromBase(chem.unit, reportChemical.actualAmountBase))} $unit"
-                    }
-                    val plannedAmount = reportChemical?.plannedAmountBase ?: chem.volumePerTank
-                    s.canvas.drawText("P ${fmt(chemicalUnitFromBase(chem.unit, plannedAmount))} $unit / A $actualText", c1, s.y, bodyBoldPaint)
-                    if (chem.ratePerHa > 0) {
-                        s.canvas.drawText("${fmt(chem.ratePerHa)} $unit/ha", c2, s.y, bodyBoldPaint)
-                    }
-                    s.y += 18f
-                    if (reportChemical?.actualAmountBase != null && kotlin.math.abs(reportChemical.actualAmountBase - plannedAmount) > 0.000_001) {
-                        val difference = chemicalUnitFromBase(chem.unit, reportChemical.actualAmountBase - plannedAmount)
-                        rowIndented(s, "Difference", "${if (difference > 0) "+" else ""}${fmt(difference)} ${chem.unit}")
-                    }
-                }
-                reportTank?.chemicals?.filter { it.plannedChemicalId == null }?.forEach { actualOnly ->
-                    val kind = if (actualOnly.usageKind == "substitution") "Substituted actual" else "Additional actual"
-                    rowIndented(s, "$kind: ${actualOnly.name}", actualOnly.actualAmountBase?.let { "${fmt(chemicalUnitFromBase(actualOnly.unit, it))} ${chemUnitAbbrev(actualOnly.unit)}" } ?: "Not recorded")
+        // Canonical one-table-per-tank worksheet with wrapping names.
+        val tanks = record.tanks.orEmpty()
+        payload.tanks.sortedBy { it.tankNumber }.forEach { reportTank ->
+            sectionHeader(s, "Tank ${reportTank.tankNumber} — Planned / Actual")
+            drawPlannedActualTable(s, reportTank, regionFormatter)
+            tanks.firstOrNull { it.tankNumber == reportTank.tankNumber }?.chemicals?.takeIf { it.isNotEmpty() }?.let { lines ->
+                text(s, "Rate / basis", bodyBoldPaint)
+                lines.forEach { chemical ->
+                    val unit = chemUnitAbbrev(chemical.unit)
+                    val rate = when { chemical.ratePer100L > 0 -> "${fmt(chemical.ratePer100L)} $unit/100 L"; chemical.ratePerHa > 0 -> "${fmt(chemical.ratePerHa)} $unit/ha"; else -> "Not recorded" }
+                    text(s, "${chemical.name}: $rate", captionPaint)
                 }
             }
         }
@@ -414,22 +387,14 @@ object SprayRecordPdfExporter {
         }
 
         // Chemical Totals (All Tanks)
-        val totals = tanks.flatMap { it.chemicals }
-            .filter { it.name.isNotBlank() }
-            .groupBy { it.name.trim().lowercase(Locale.getDefault()) }
-            .map { (_, chems) ->
-                Triple(
-                    chems.first().name,
-                    chems.sumOf { it.volumePerTank },
-                    chemUnitAbbrev(chems.first().unit),
-                )
-            }
-            .sortedBy { it.first.lowercase(Locale.getDefault()) }
+        val totals = payload.plannedChemicalTotals.ifEmpty {
+            payload.tanks.flatMap { it.chemicals }.filter { it.plannedAmountBase != null }
+                .groupBy { it.savedChemicalId ?: "${it.name.trim().lowercase()}|${if (it.unit.equals("Litres", true) || it.unit.equals("mL", true)) "liquid" else "mass"}" }
+                .map { (key, lines) -> SprayReportPayloadV1.ChemicalTotal(key, lines.first().name, if (lines.first().unit.equals("Litres", true) || lines.first().unit.equals("mL", true)) "Litres" else "Kg", lines.sumOf { it.plannedAmountBase ?: 0.0 }) }
+        }
         if (totals.isNotEmpty()) {
             sectionHeader(s, "Planned Chemical Totals (All Tanks)")
-            for ((name, total, unit) in totals) {
-                row(s, name, "${fmt(total)}$unit")
-            }
+            totals.forEach { total -> row(s, total.name, "${fmt(chemicalUnitFromBase(total.unit, total.actualAmountBase))} ${chemUnitAbbrev(total.unit)}") }
         }
         if (payload.actualChemicalTotals.isNotEmpty()) {
             sectionHeader(s, "Actual Chemical Totals (All Tanks)")
@@ -439,16 +404,13 @@ object SprayRecordPdfExporter {
         }
 
         // Tank Sessions (read-only; only when the linked trip recorded fills) — Stage 3F-2d.
-        val tankSessions = trip?.tankSessions.orEmpty()
+        val tankSessions = payload.tankSessions
         if (tankSessions.isNotEmpty()) {
             sectionHeader(s, "Tank Sessions")
             for (session in tankSessions.sortedBy { it.tankNumber }) {
-                val status = if (session.isOpen) "In progress" else "Complete"
-                row(s, "Tank ${session.tankNumber}", status)
-                if (session.rowRange.isNotBlank()) {
-                    rowIndented(s, "Rows", session.rowRange)
-                }
-                session.fillDurationSeconds?.let { rowIndented(s, "Fill Duration", formatFillDuration(it)) }
+                row(s, "Tank ${session.tankNumber}", session.status)
+                if (session.startRow != null && session.endRow != null) rowIndented(s, "Recorded range", "${fmt(session.startRow)}–${fmt(session.endRow)}")
+                rowIndented(s, "Assignment evidence", session.assignmentSource.replace('_', ' ').replaceFirstChar { it.uppercase() })
             }
         }
 
@@ -456,7 +418,16 @@ object SprayRecordPdfExporter {
         // Mirrors the on-screen cost card via the pure TripCostEstimator. The
         // whole section is omitted for non-financial roles or when no trip is
         // linked (chemical-only behaviour elsewhere is unchanged).
-        if (canViewFinancials && trip != null) {
+        if (canViewFinancials && payload.cost != null) {
+            val cost = payload.cost
+            sectionHeader(s, "Authorized Cost Summary")
+            row(s, "Fuel used", cost.fuelLitres?.let { regionFormatter.formatVolume(it) } ?: "Not recorded")
+            row(s, "Fuel cost", cost.fuelCost?.let(::money) ?: "Not recorded")
+            row(s, "Chemical cost", cost.chemicalCost?.let(::money) ?: "Not recorded")
+            row(s, "Labour cost", cost.labourCost?.let(::money) ?: "Not recorded")
+            row(s, "Total", cost.totalCost?.let(::money) ?: "Incomplete")
+            if (!cost.isComplete) text(s, cost.basis, captionPaint)
+        } else if (canViewFinancials && trip != null) {
             val cost = TripCostEstimator.estimate(
                 trip = trip,
                 sprayRecord = record,
@@ -599,6 +570,37 @@ object SprayRecordPdfExporter {
             s.y += paint.textSize
             s.canvas.drawText(line, MARGIN, s.y, paint)
             s.y += 4f
+        }
+    }
+
+    private fun drawPlannedActualTable(s: PageState, tank: SprayReportPayloadV1.Tank, formatter: RegionFormatter) {
+        val itemWidth = 285f
+        val valueWidth = (PAGE_WIDTH - MARGIN * 2 - itemWidth) / 2f
+        fun header() {
+            s.ensure(20f)
+            s.canvas.drawText("ITEM", MARGIN, s.y + 12f, captionPaint)
+            s.canvas.drawText("PLANNED", MARGIN + itemWidth, s.y + 12f, captionPaint)
+            s.canvas.drawText("ACTUAL", MARGIN + itemWidth + valueWidth, s.y + 12f, captionPaint)
+            s.y += 20f
+        }
+        fun tableRow(item: String, planned: String, actual: String) {
+            val itemLines = wrap(item, bodyPaint, itemWidth - 8f)
+            val rowHeight = maxOf(24f, itemLines.size * 15f + 8f)
+            if (s.y + rowHeight > PAGE_HEIGHT - MARGIN - 18f) { s.newPage(); header() }
+            itemLines.forEachIndexed { index, line -> s.canvas.drawText(line, MARGIN, s.y + 14f + index * 15f, bodyPaint) }
+            s.canvas.drawText(planned, MARGIN + itemWidth, s.y + 14f, bodyBoldPaint)
+            s.canvas.drawText(actual, MARGIN + itemWidth + valueWidth, s.y + 14f, bodyBoldPaint)
+            s.y += rowHeight
+            drawDivider(s)
+        }
+        header()
+        tableRow("Water", formatter.formatVolume(tank.plannedWaterLitres), tank.actualWaterLitres?.let { if (it == 0.0) "0 L" else formatter.formatVolume(it) } ?: "Not recorded")
+        tank.chemicals.forEach { chemical ->
+            val unit = chemUnitAbbrev(chemical.unit)
+            val planned = chemical.plannedAmountBase?.let { "${fmt(chemicalUnitFromBase(chemical.unit, it))} $unit" } ?: "—"
+            val actual = chemical.actualAmountBase?.let { if (it == 0.0) "Not added" else "${fmt(chemicalUnitFromBase(chemical.unit, it))} $unit" } ?: "Not recorded"
+            val prefix = when (chemical.usageKind) { "substitution" -> "Substitution: "; "additional" -> "Additional: "; else -> "" }
+            tableRow(prefix + chemical.name, planned, actual)
         }
     }
 

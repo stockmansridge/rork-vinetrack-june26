@@ -93,3 +93,110 @@ Canonical report schema is now `1.1`:
 Render the current actuals and a readable amendment history in the vineyard timezone. Actual totals must include every actual line once, including substitutions and additions, without changing planned totals. Keep all monetary output under the existing financial-role gate.
 
 For PDF branding, resolve the vineyard from `identity.vineyardId`, not the portal's currently selected vineyard. Wait for that configured logo to load; fail with an honest warning if a configured object cannot be fetched/decoded. Draw it aspect-fit at top left. Draw the bundled official VineTrack mark at bottom left of every page, reserve header/footer space, and keep page numbering clear.
+
+## Additive SQL 228 — canonical facts and trip corrections
+
+Run `sql/228_spray_report_canonical_facts_and_trip_corrections_v1.sql` once, then the rollback-only `sql/tests/228_spray_report_canonical_facts_and_trip_corrections_v1_tests.sql`. SQL 224–227 are already applied and must not be rerun.
+
+The exact payload is `docs/spray-report-v1.schema.json`; real-shape fixtures are:
+
+- `docs/fixtures/spray-report-v1-stockmans-ridge.json`
+- `docs/fixtures/spray-report-v1-actual-corrections.json`
+
+Online worksheet, detail and export renderers must consume `get_spray_report_v1` only. New canonical sections are `application`, `programStep`, `tankSessions`, `plannedChemicalTotals`, expanded `trip`/`equipment`, role-gated `cost`, `metadataCorrectionVersion`, and `metadataAmendments`. Base chemical amounts remain mL/g even when `unit` selects L/kg display; divide by 1,000 once. `plannedChemicalTotals` and `actualChemicalTotals` group by saved-product identity plus physical dimension, falling back to normalized name plus dimension only when no saved identity exists.
+
+### Tractor, spray unit, operator and trip fuel correction
+
+RPC: `correct_spray_trip_metadata_v1`.
+
+Request fields:
+
+```json
+{
+  "p_operation_id": "one UUID per Save attempt",
+  "p_trip_id": "trip UUID",
+  "p_expected_version": 2,
+  "p_machine_id": "vineyard machine UUID or null",
+  "p_tractor_id": "legacy tractor UUID or null",
+  "p_spray_equipment_id": "spray unit UUID or null",
+  "p_operator_user_id": "active vineyard member UUID or null",
+  "p_fuel_consumption_l_per_hour": 6.8,
+  "p_start_engine_hours": 1200.0,
+  "p_end_engine_hours": 1203.1
+}
+```
+
+The request is a complete correction snapshot: explicit null clears an overlay. Blank fuel rate means null; zero is invalid, not free fuel. A positive finite engine pair uses `end - start`; otherwise costing uses pause-adjusted active duration without synthesizing a start reading. Changing the spray unit never changes frozen tanks, chemicals, rows, route, actuals, weather or program provenance.
+
+Response is `{ "correction": { ... "version": 3 }, "report": { ...schema 1.1... } }`. Reuse the operation UUID only for retries of the same Save. SQLSTATE `40001` means reload and reconcile; do not overwrite. Cross-vineyard equipment/operators and unauthorized roles are rejected. No-op snapshots do not increment the version or append history. Refresh worksheet, list and export state from `response.report` only after success.
+
+Canonical precedence is: explicit correction overlay → trip recorded identity → spray-record historical snapshot. Fuel rate precedence is explicit trip correction → selected machine default → legacy tractor default → Not recorded. Metadata history is separate from the original operator identity and from tank-actual history.
+
+### Row/block recovery action
+
+RPC: `recover_spray_row_assignments_v1(p_operation_id, p_trip_id, p_assignments)` is Owner/Manager/Supervisor only. Each assignment requires stable `blockId` plus a `rowIdentity`; row number alone is never accepted as identity. Preserve source evidence verbatim:
+
+```json
+{
+  "blockId": "uuid",
+  "blockName": "North Block",
+  "rowIdentity": "north-block:row:24.5",
+  "rowNumber": 24.5,
+  "tankSessionId": "recorded session id or null",
+  "tankNumber": 1,
+  "status": "Complete | Partial | Skipped/Not complete | Not recorded",
+  "assignmentSource": "recorded_path_identity | saved_plan_identity | session_boundary_order | gps_geometry_intersection",
+  "confidence": 1.0,
+  "originalEvidence": { "immutable": "provider/input evidence" }
+}
+```
+
+Precedence is recorded stable path identity, explicitly labelled saved-plan identity, valid session boundaries over the recorded ordered row sequence, then GPS/geometry intersection. GPS/geometry evidence is rejected below 0.90 confidence. Repeated row numbers across blocks remain separate because block and row identities are mandatory. Render `isDerived`, source and confidence; never rewrite or hide `originalEvidence`. If the evidence does not clear these thresholds, leave the assignment null and show the warning.
+
+## Additive SQL 229 — genuine hourly weather and archive recovery
+
+Run `sql/229_trip_hourly_weather_recovery_v1.sql` once after 228, then `sql/tests/229_trip_hourly_weather_recovery_v1_tests.sql`. Deploy `supabase/functions/spray-weather-recovery/index.ts` after SQL 229.
+
+Clients call the authenticated function with `{ "tripId": "uuid", "through": "ISO-8601 UTC" }` at spray start, each scheduled hour, resume/restart, trip end and before an online export. The database computes every missing scheduled slot, so absence itself is a durable retry queue across suspension, offline periods and process restarts. A transient network/provider error leaves the slot missing for retry; it is not relabelled unavailable.
+
+The deployed recovery function currently supports genuine Weather Underground PWS current observations and its hourly archive. It selects only an observation within 30 minutes of the requested slot and preserves `observedAt`, `stationId`, provider record identity, retrieval time, and `retrievalMode` (`live` or `historical_archive`). A definitive archive no-data response may record unavailable. Current observations and daily summaries must never fill historical slots. Providers without a supported hourly archive remain pending/not recorded rather than receiving invented values.
+
+`weather[]` also carries a separate `legacy_snapshot` item when historical scalar values survive on the spray record. It is not an hourly sample. Genuine observed/manual evidence cannot be overwritten by a later unavailable/modelled retry.
+
+## Authenticated canonical route upload/register/reuse
+
+Deploy `supabase/functions/spray-report-route-upload/index.ts`; no production credential needs to be requested because it uses the deployment environment's existing Supabase variables. The function requires the exporting user's JWT, verifies trip visibility, accepts only a PNG up to 10 MB, computes SHA-256 server-side, uploads with service authority, and calls the already-applied SQL 226 registration RPC as that user. Direct bucket or metadata writes remain closed.
+
+Request:
+
+```json
+{
+  "tripId": "uuid",
+  "routeHash": "64 lowercase SHA-256",
+  "pngBase64": "optional base64 PNG bytes",
+  "coordinates": [{ "latitude": -33.1, "longitude": 149.1 }],
+  "width": 1030,
+  "height": 700
+}
+```
+
+Send either approved 1030×700 PNG bytes or the complete oldest-to-newest coordinate sequence. When bytes are absent, the trusted function generates a 1030×700 Google hybrid image using the deployment's existing server-side Maps key; it samples rendering vertices only to satisfy Static Maps URL limits while the route hash remains over the complete unchanged coordinate sequence.
+
+Response: `{ "route": { "bucket", "objectPath", "sha256", "routeHash", "styleVersion" }, "uploadedSha256", "reusedExisting" }`. Always use/download `response.route`; it may be a concurrent immutable winner. Losing objects are removed. Verify downloaded bytes against `route.sha256` before export.
+
+Route input hash bytes are UTF-8 for `spray-route-red-green-v1|1030x700|lat,lon|...` in oldest-to-newest order, each coordinate rounded to exactly six decimal places with `.` decimal separator. Image chronology is full-route red oldest/start → orange → yellow → lime → green newest/finish, hybrid imagery, 1030×700 pixels. Preserve aspect ratio. An offline local image is explicitly non-canonical and must retain a warning. All later online exports reuse the registered bytes.
+
+## Portal rendering and edit rules
+
+- Inline Edit changes supported worksheet values into controls in place. Save submits complete snapshots; Cancel performs no calls.
+- During edit, export the last saved report or require Save/Cancel. Never export unsaved values silently.
+- Use one wrapping `Item | Planned | Actual` table per tank, Water first. Missing actual is `Not recorded`; explicit chemical zero is `Not added`.
+- Repeat table headers over page breaks. Render rate/basis details below the table, not inside squeezed legacy columns.
+- Humanize status/provenance tokens while retaining their machine value for diagnostics.
+- `cost` is null for non-Owner/Manager callers. Never reconstruct or leak financials locally.
+- Show active, elapsed and paused duration separately. A completed trip with an open tank session is `End not recorded`, not Active.
+- Fetch fresh canonical data on open and after every successful correction/recovery/upload action. A failed read is not an empty record.
+
+## Deployment and verification boundary
+
+Required order: SQL 228 + test, SQL 229 + test, deploy `spray-weather-recovery`, deploy `spray-report-route-upload`, then wire/release portal changes. The repository implementation is not production deployment evidence. Verify with an ordinary authorized user: correction/reopen/conflict, historical slot retrieval, upload/register/download/SHA reuse, repeated row numbers in two blocks, unauthorized cost read, and rendered multipage PDFs.

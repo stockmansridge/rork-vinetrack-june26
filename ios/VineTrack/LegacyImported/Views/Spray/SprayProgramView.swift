@@ -58,6 +58,19 @@ nonisolated enum SprayProgramTab: String, CaseIterable, Sendable, Identifiable {
 
 /// Operational sub-filter within Sprays. Presentation only — each case maps
 /// onto the existing record semantics, and no backend status is added.
+nonisolated enum SprayProgramOperationalRecords {
+    /// Repairs duplicate cache rows at the presentation boundary without deleting
+    /// or rewriting offline data. The newest dated snapshot wins deterministically.
+    static func unique(_ records: [SprayRecord]) -> [SprayRecord] {
+        var byId: [UUID: SprayRecord] = [:]
+        for record in records where !record.isTemplate {
+            if let existing = byId[record.id], existing.date >= record.date { continue }
+            byId[record.id] = record
+        }
+        return Array(byId.values)
+    }
+}
+
 nonisolated enum SpraysStatusTab: String, CaseIterable, Sendable, Identifiable {
     case upcoming = "Upcoming"
     case inProgress = "In Progress"
@@ -184,7 +197,7 @@ struct SprayProgramView: View {
 
     /// Operational spray records ONLY. Program Steps are never injected here.
     private var operationalRecords: [SprayRecord] {
-        var records = store.sprayRecords.filter { !$0.isTemplate }
+        var records = SprayProgramOperationalRecords.unique(store.sprayRecords)
         if !searchText.isEmpty {
             records = records.filter { record in
                 let trip = tripForRecord(record)

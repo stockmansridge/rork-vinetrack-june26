@@ -13,6 +13,13 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
     let rows: [Row]
     let tanks: [Tank]
     let actualChemicalTotals: [ChemicalTotal]
+    let plannedChemicalTotals: [ChemicalTotal]?
+    let application: Application?
+    let programStep: ProgramStep?
+    let tankSessions: [TankSessionSummary]?
+    let cost: Cost?
+    let metadataCorrectionVersion: Int?
+    let metadataAmendments: [MetadataAmendment]?
     let weather: [Weather]
     let route: Route?
     let amendments: [Amendment]
@@ -34,6 +41,10 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         let distanceMetres: Double?
         let operatorName: String?
         let pinCount: Int
+        let operatorId: UUID?
+        let operatorSource: String?
+        let elapsedDurationSeconds: Int?
+        let pausedDurationSeconds: Int?
     }
 
     nonisolated struct Block: Codable, Sendable, Hashable {
@@ -49,6 +60,97 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         let endEngineHours: Double?
         let engineHoursUsed: Double?
         let sprayUnitName: String?
+        let machineId: UUID?
+        let tractorId: UUID?
+        let sprayEquipmentId: UUID?
+        let equipmentSource: String?
+        let tractorGear: String?
+        let numberOfFansJets: String?
+        let averageSpeedKmh: Double?
+        let fuelConsumptionLPerHour: Double?
+        let fuelConsumptionSource: String?
+        let fuelHours: Double?
+        let fuelHoursSource: String?
+    }
+
+    nonisolated struct Application: Codable, Sendable, Hashable {
+        let operationType: String?
+        let applicationMode: String?
+        let grossAreaHa: Double?
+        let treatedAreaHa: Double?
+        let treatedAreaMethod: String?
+        let geometrySource: String?
+        let geometryQuality: String?
+        let carrierVolumeBasis: String?
+        let totalCarrierLitres: Double?
+        let carrierLitresPerHectare: Double?
+        let diluteLitresPer100m: Double?
+        let appliedLitresPer100m: Double?
+        let concentrationFactor: Double?
+        let notes: String?
+    }
+
+    nonisolated struct ProgramStep: Codable, Sendable, Hashable {
+        let linkState: String
+        let sprayJobId: UUID?
+        let name: String?
+        let status: String?
+        let plannedDate: String?
+        let operationType: String?
+        let target: String?
+        let notes: String?
+    }
+
+    nonisolated struct TankSessionSummary: Codable, Sendable, Hashable {
+        let tankSessionId: String?
+        let tankNumber: Int
+        let startedAt: String?
+        let endedAt: String?
+        let startRow: Double?
+        let endRow: Double?
+        let pathsCovered: [Double]
+        let status: String
+        let assignmentSource: String
+    }
+
+    nonisolated struct Cost: Codable, Sendable, Hashable {
+        let visibility: String
+        let currencyCode: String
+        let fuelLitres: Double?
+        let fuelRateLPerHour: Double?
+        let fuelHours: Double?
+        let fuelPricePerLitre: Double?
+        let fuelCost: Double?
+        let chemicalCost: Double?
+        let labourCost: Double?
+        let totalCost: Double?
+        let treatedAreaHa: Double?
+        let costPerTreatedHa: Double?
+        let isComplete: Bool
+        let basis: String
+    }
+
+    nonisolated struct MetadataAmendment: Codable, Sendable, Hashable {
+        let id: UUID
+        let operationId: UUID
+        let revision: Int
+        let previousValue: [String: JSONValue]
+        let newValue: [String: JSONValue]
+        let editedBy: UUID
+        let editorName: String
+        let editedAt: String
+    }
+
+    nonisolated enum JSONValue: Codable, Sendable, Hashable {
+        case string(String), number(Double), bool(Bool), object([String: JSONValue]), array([JSONValue]), null
+        init(from decoder: Decoder) throws {
+            let c = try decoder.singleValueContainer()
+            if c.decodeNil() { self = .null } else if let value = try? c.decode(Bool.self) { self = .bool(value) } else if let value = try? c.decode(Double.self) { self = .number(value) } else if let value = try? c.decode(String.self) { self = .string(value) } else if let value = try? c.decode([String: JSONValue].self) { self = .object(value) } else { self = .array(try c.decode([JSONValue].self)) }
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            switch self { case .string(let v): try c.encode(v); case .number(let v): try c.encode(v); case .bool(let v): try c.encode(v); case .object(let v): try c.encode(v); case .array(let v): try c.encode(v); case .null: try c.encodeNil() }
+        }
     }
 
     nonisolated struct Row: Codable, Sendable, Hashable {
@@ -172,6 +274,10 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         let windGustKmh: Double?
         let windDirectionDeg: Double?
         let rainMm: Double?
+        let stationId: String?
+        let retrievalMode: String?
+        let providerRecordId: String?
+        let retrievedAt: String?
     }
 
     nonisolated struct Route: Codable, Sendable, Hashable {
@@ -218,7 +324,7 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
             } else if trip.skippedPaths.contains(rowNumber) {
                 status = "Skipped/Not complete"; source = "skippedPaths"
             } else {
-                status = "Partial"; source = "incompletePlannedPath"
+                status = "Not recorded"; source = "noProgressEvidence"
             }
             let exact = Set(trip.tankSessions.filter { $0.pathsCovered.contains(rowNumber) }.map(\.tankNumber))
             let planned = Set(record.tanks.filter { tank in
@@ -240,9 +346,9 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
             let actual = tankActuals.filter { $0.tankNumber == planned.tankNumber }.max(by: { $0.clientUpdatedAt < $1.clientUpdatedAt })
             let chemicals: [Chemical] = planned.chemicals.map { line in
                 let byPlan = actual?.chemicals.filter { $0.plannedChemicalId == line.id } ?? []
-                let bySaved = line.savedChemicalId.map { id in actual?.chemicals.filter { $0.savedChemicalId == id } ?? [] } ?? []
+                let bySaved = line.savedChemicalId.map { id in actual?.chemicals.filter { $0.savedChemicalId == id && ($0.usageKind ?? "planned") == "planned" } ?? [] } ?? []
                 let byNameUnit = actual?.chemicals.filter {
-                    $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == line.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() && $0.unit == line.unit
+                    $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == line.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() && $0.unit == line.unit && ($0.usageKind ?? "planned") == "planned"
                 } ?? []
                 let match: SprayTankActualChemical?
                 let source: String
@@ -271,7 +377,7 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
 
         var weather: [Weather] = []
         if record.temperature != nil || record.humidity != nil || record.windSpeed != nil || !record.windDirection.isEmpty {
-            weather = [Weather(sampleSlot: iso.string(from: record.startTime), observedAt: nil, source: "Legacy start snapshot", sourceKind: "manual", isStale: true, temperatureC: record.temperature, humidityPct: record.humidity, windSpeedKmh: record.windSpeed, windGustKmh: nil, windDirectionDeg: nil, rainMm: nil)]
+            weather = [Weather(sampleSlot: iso.string(from: record.startTime), observedAt: nil, source: "Legacy start snapshot", sourceKind: "manual", isStale: true, temperatureC: record.temperature, humidityPct: record.humidity, windSpeedKmh: record.windSpeed, windGustKmh: nil, windDirectionDeg: nil, rainMm: nil, stationId: nil, retrievalMode: "legacy_snapshot", providerRecordId: nil, retrievedAt: nil)]
             warnings.append("Hourly weather was not recorded; showing the legacy start snapshot.")
         } else {
             warnings.append("No hourly weather observations were recorded.")
@@ -281,10 +387,10 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         return SprayReportPayloadV1(
             schemaVersion: currentSchemaVersion,
             identity: Identity(tripId: trip.id, sprayRecordId: record.id, vineyardId: trip.vineyardId, vineyardName: vineyardName, reference: record.sprayReference, vineyardTimeZone: timeZone.identifier),
-            trip: TripSummary(startUtc: iso.string(from: trip.startTime), endUtc: trip.endTime.map(iso.string), activeDurationSeconds: Int(trip.activeDuration), distanceMetres: trip.totalDistance, operatorName: trip.personName.isEmpty ? nil : trip.personName, pinCount: trip.pinIds.count),
+            trip: TripSummary(startUtc: iso.string(from: trip.startTime), endUtc: trip.endTime.map(iso.string), activeDurationSeconds: Int(trip.activeDuration), distanceMetres: trip.totalDistance, operatorName: trip.personName.isEmpty ? nil : trip.personName, pinCount: trip.pinIds.count, operatorId: trip.operatorUserId, operatorSource: trip.operatorUserId == nil ? "recorded_snapshot" : "recorded_identity", elapsedDurationSeconds: Int((trip.endTime ?? Date()).timeIntervalSince(trip.startTime)), pausedDurationSeconds: max(0, Int((trip.endTime ?? Date()).timeIntervalSince(trip.startTime) - trip.activeDuration))),
             blocks: canonicalBlocks,
-            equipment: Equipment(tractorName: tractorName.isEmpty ? nil : tractorName, startEngineHours: trip.startEngineHours, endEngineHours: trip.endEngineHours, engineHoursUsed: engineDelta, sprayUnitName: sprayUnitName.isEmpty ? nil : sprayUnitName),
-            rows: rows, tanks: tanks, actualChemicalTotals: actualChemicalTotals, weather: weather, route: nil, amendments: [], warnings: warnings
+            equipment: Equipment(tractorName: tractorName.isEmpty ? nil : tractorName, startEngineHours: trip.startEngineHours, endEngineHours: trip.endEngineHours, engineHoursUsed: engineDelta, sprayUnitName: sprayUnitName.isEmpty ? nil : sprayUnitName, machineId: trip.machineId, tractorId: trip.tractorId, sprayEquipmentId: record.sprayEquipmentId, equipmentSource: "offline_projection", tractorGear: record.tractorGear, numberOfFansJets: record.numberOfFansJets, averageSpeedKmh: record.averageSpeed, fuelConsumptionLPerHour: nil, fuelConsumptionSource: nil, fuelHours: engineDelta ?? trip.activeDuration / 3600, fuelHoursSource: engineDelta == nil ? "pause_adjusted_duration" : "engine_hours"),
+            rows: rows, tanks: tanks, actualChemicalTotals: actualChemicalTotals, plannedChemicalTotals: nil, application: nil, programStep: nil, tankSessions: nil, cost: nil, metadataCorrectionVersion: nil, metadataAmendments: nil, weather: weather, route: nil, amendments: [], warnings: warnings
         )
     }
 

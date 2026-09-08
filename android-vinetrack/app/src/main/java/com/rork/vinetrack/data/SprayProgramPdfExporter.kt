@@ -3,6 +3,7 @@ package com.rork.vinetrack.data
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
@@ -10,6 +11,7 @@ import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import androidx.core.content.FileProvider
+import com.rork.vinetrack.R
 import com.rork.vinetrack.data.model.FuelPurchase
 import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
@@ -77,7 +79,7 @@ object SprayProgramPdfExporter {
         Column("STATUS", 710f, 56f),
     )
 
-    private class PageState(val doc: PdfDocument) {
+    private class PageState(val doc: PdfDocument, private val officialLogo: Bitmap?) {
         var page: PdfDocument.Page = doc.startPage(pageInfo(1))
         var canvas = page.canvas
         var y = MARGIN
@@ -87,13 +89,23 @@ object SprayProgramPdfExporter {
             PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, n).create()
 
         fun ensure(needed: Float, onNewPage: (PageState) -> Unit = {}) {
-            if (y + needed > PAGE_HEIGHT - MARGIN) {
+            if (y + needed > PAGE_HEIGHT - MARGIN - 18f) {
                 newPage()
                 onNewPage(this)
             }
         }
 
+        private fun drawFooter() {
+            officialLogo?.let { logo ->
+                val scale = minOf(72f / logo.width, 16f / logo.height)
+                canvas.drawBitmap(logo, null, RectF(MARGIN, PAGE_HEIGHT - 27f, MARGIN + logo.width * scale, PAGE_HEIGHT - 27f + logo.height * scale), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            }
+            val label = "Page $pageNumber"
+            canvas.drawText(label, PAGE_WIDTH - MARGIN - captionPaint.measureText(label), PAGE_HEIGHT - 18f, captionPaint)
+        }
+
         fun newPage() {
+            drawFooter()
             doc.finishPage(page)
             pageNumber += 1
             page = doc.startPage(pageInfo(pageNumber))
@@ -102,6 +114,7 @@ object SprayProgramPdfExporter {
         }
 
         fun finish() {
+            drawFooter()
             doc.finishPage(page)
         }
     }
@@ -162,7 +175,7 @@ object SprayProgramPdfExporter {
         if (records.isEmpty()) return false
         return try {
             val doc = PdfDocument()
-            val s = PageState(doc)
+            val s = PageState(doc, BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher))
             render(s, records, trips, vineyardName, canViewFinancials, machines, fuelPurchases, operatorCategories, paddocks, tankActuals, logo)
             s.finish()
 

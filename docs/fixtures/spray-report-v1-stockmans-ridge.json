@@ -1,30 +1,45 @@
 {
-  "schemaVersion": "1.0",
-  "identity": {
-    "tripId": "a1b2c3d4-0000-4000-8000-000000000001",
-    "sprayRecordId": "a1b2c3d4-0000-4000-8000-000000000002",
-    "vineyardId": "a1b2c3d4-0000-4000-8000-000000000003",
-    "vineyardName": "Stockmans Ridge",
-    "reference": "Late Woolly Bud E-L Stage 2-3",
-    "vineyardTimeZone": "Australia/Sydney"
-  },
-  "trip": {
-    "startUtc": "2026-09-03T21:00:00Z",
-    "endUtc": "2026-09-04T00:35:00Z",
-    "activeDurationSeconds": 10860,
-    "distanceMetres": 12439.15,
-    "operatorName": "Sanitized Operator",
-    "pinCount": 50
-  },
-  "blocks": [{"blockId":"a1b2c3d4-0000-4000-8000-000000000004","name":"Sanitized Block","grossAreaHa":null,"treatedAreaHa":null}],
-  "equipment": {"tractorName":"Sanitized Tractor","startEngineHours":1200.0,"endEngineHours":1203.1,"engineHoursUsed":3.1,"sprayUnitName":"Sanitized Spray Unit"},
-  "rows": [
-    {"rowNumber":1.5,"blockName":"Sanitized Block","status":"Complete","source":"completedPaths","tank":1},
-    {"rowNumber":2.5,"blockName":"Sanitized Block","status":"Partial","source":"incompletePlannedPath","tank":"Multiple"}
+  "schemaVersion": "1.1",
+  "identity": { "tripId": "a1b2c3d4-0000-4000-8000-000000000001", "sprayRecordId": "a1b2c3d4-0000-4000-8000-000000000002", "vineyardId": "a1b2c3d4-0000-4000-8000-000000000003", "vineyardName": "Stockmans Ridge", "reference": "Late Woolly Bud E-L Stage 2-3", "vineyardTimeZone": "Australia/Sydney" },
+  "trip": { "startUtc": "2026-09-03T21:00:00Z", "endUtc": "2026-09-04T00:35:00Z", "activeDurationSeconds": 10860, "elapsedDurationSeconds": 12900, "pausedDurationSeconds": 2040, "distanceMetres": 12439.15, "operatorId": "a1b2c3d4-0000-4000-8000-000000000010", "operatorName": "Sanitized Operator", "operatorSource": "recorded_identity", "pinCount": 50 },
+  "blocks": [
+    { "blockId": "a1b2c3d4-0000-4000-8000-000000000004", "name": "North Block", "grossAreaHa": 1.7, "treatedAreaHa": null },
+    { "blockId": "a1b2c3d4-0000-4000-8000-000000000014", "name": "South Block", "grossAreaHa": 1.2, "treatedAreaHa": null }
   ],
-  "tanks": [{"tankNumber":1,"plannedWaterLitres":1500,"actualWaterLitres":1500,"chemicals":[{"plannedChemicalId":"a1b2c3d4-0000-4000-8000-000000000005","savedChemicalId":null,"name":"Sanitized Chemical","unit":"Litres","plannedAmountBase":3000,"actualAmountBase":2800,"matchSource":"plannedChemicalId"}]}],
-  "weather": [{"sampleSlot":"2026-09-03T21:00:00Z","observedAt":"2026-09-03T20:55:00Z","source":"Sanitized station","sourceKind":"observed","isStale":false,"temperatureC":16.2,"humidityPct":59,"windSpeedKmh":0,"windGustKmh":null,"windDirectionDeg":0,"rainMm":0}],
+  "equipment": { "machineId": "a1b2c3d4-0000-4000-8000-000000000011", "tractorId": null, "tractorName": "Sanitized Tractor", "sprayEquipmentId": "a1b2c3d4-0000-4000-8000-000000000012", "sprayUnitName": "Sanitized Spray Unit", "equipmentSource": "trip_recorded_identity", "startEngineHours": 1200, "endEngineHours": 1203.1, "engineHoursUsed": 3.1, "tractorGear": "B2", "numberOfFansJets": "12", "averageSpeedKmh": 5.6, "fuelConsumptionLPerHour": 6.8, "fuelConsumptionSource": "equipment_default", "fuelHours": 3.1, "fuelHoursSource": "engine_hours" },
+  "application": { "operationType": "Foliar Spray", "applicationMode": "whole_block", "grossAreaHa": 2.9, "treatedAreaHa": 0.41, "treatedAreaMethod": "canonical_row_length", "geometrySource": "mapped_rows", "geometryQuality": "authoritative", "carrierVolumeBasis": "l_per_ha", "totalCarrierLitres": 1843.9, "carrierLitresPerHectare": 450, "diluteLitresPer100m": null, "appliedLitresPer100m": null, "concentrationFactor": 1, "notes": "Sanitized acceptance fixture" },
+  "programStep": { "linkState": "program_linked", "sprayJobId": "a1b2c3d4-0000-4000-8000-000000000013", "name": "Late Woolly Bud", "status": "completed", "plannedDate": "2026-09-04", "operationType": "Foliar Spray", "target": "Powdery mildew", "notes": null },
+  "rows": [
+    { "rowIdentity": "north:24.5", "rowNumber": 24.5, "blockId": "a1b2c3d4-0000-4000-8000-000000000004", "blockName": "North Block", "status": "Complete", "source": "recorded_path_identity", "confidence": 1, "isDerived": false, "tank": 1, "tankSessionId": "tank-session-1", "originalEvidence": { "pathIdentity": "north:24.5" } },
+    { "rowIdentity": "south:24.5", "rowNumber": 24.5, "blockId": "a1b2c3d4-0000-4000-8000-000000000014", "blockName": "South Block", "status": "Not recorded", "source": "saved_plan_identity", "confidence": 1, "isDerived": true, "tank": 2, "tankSessionId": "tank-session-2", "originalEvidence": { "plannedTank": 2 } }
+  ],
+  "tanks": [
+    { "tankNumber": 1, "actualId": null, "actualVersion": 0, "plannedWaterLitres": 1500, "actualWaterLitres": null, "chemicals": [
+      { "actualChemicalId": null, "plannedChemicalId": "a1b2c3d4-0000-4000-8000-000000000005", "savedChemicalId": "a1b2c3d4-0000-4000-8000-000000000006", "replacesPlannedChemicalId": null, "usageKind": "planned", "name": "Sacoa Stifle Dormant Spray Oil", "unit": "Litres", "plannedAmountBase": 35714.28571428571, "actualAmountBase": null, "matchSource": "notRecorded" },
+      { "actualChemicalId": null, "plannedChemicalId": "a1b2c3d4-0000-4000-8000-000000000007", "savedChemicalId": "a1b2c3d4-0000-4000-8000-000000000008", "replacesPlannedChemicalId": null, "usageKind": "planned", "name": "Thiovit Jet Microgranule Fungicide/Miticide", "unit": "Kg", "plannedAmountBase": 8928.571428571428, "actualAmountBase": null, "matchSource": "notRecorded" }
+    ] },
+    { "tankNumber": 2, "actualId": null, "actualVersion": 0, "plannedWaterLitres": 343.9, "actualWaterLitres": null, "chemicals": [
+      { "actualChemicalId": null, "plannedChemicalId": "a1b2c3d4-0000-4000-8000-000000000015", "savedChemicalId": "a1b2c3d4-0000-4000-8000-000000000006", "replacesPlannedChemicalId": null, "usageKind": "planned", "name": "Sacoa Stifle Dormant Spray Oil", "unit": "Litres", "plannedAmountBase": 8188.61428571429, "actualAmountBase": null, "matchSource": "notRecorded" },
+      { "actualChemicalId": null, "plannedChemicalId": "a1b2c3d4-0000-4000-8000-000000000016", "savedChemicalId": "a1b2c3d4-0000-4000-8000-000000000008", "replacesPlannedChemicalId": null, "usageKind": "planned", "name": "Thiovit Jet Microgranule Fungicide/Miticide", "unit": "Kg", "plannedAmountBase": 2047.148571428572, "actualAmountBase": null, "matchSource": "notRecorded" }
+    ] }
+  ],
+  "tankSessions": [
+    { "tankSessionId": "tank-session-1", "tankNumber": 1, "startedAt": "2026-09-03T21:05:00Z", "endedAt": "2026-09-03T23:43:00Z", "startRow": 24.5, "endRow": 108.5, "pathsCovered": [24.5], "status": "Complete", "assignmentSource": "recorded_path_identity" },
+    { "tankSessionId": "tank-session-2", "tankNumber": 2, "startedAt": "2026-09-03T23:45:00Z", "endedAt": null, "startRow": null, "endRow": null, "pathsCovered": [], "status": "End not recorded", "assignmentSource": "not_recorded" }
+  ],
+  "plannedChemicalTotals": [
+    { "identityKey": "a1b2c3d4-0000-4000-8000-000000000006", "name": "Sacoa Stifle Dormant Spray Oil", "unit": "Litres", "actualAmountBase": 43902.9 },
+    { "identityKey": "a1b2c3d4-0000-4000-8000-000000000008", "name": "Thiovit Jet Microgranule Fungicide/Miticide", "unit": "Kg", "actualAmountBase": 10975.72 }
+  ],
+  "actualChemicalTotals": [],
+  "weather": [
+    { "sampleSlot": "2026-09-03T21:00:00Z", "observedAt": "2026-09-03T20:55:00Z", "source": "Legacy start snapshot", "sourceKind": "manual", "stationId": null, "isStale": true, "temperatureC": 16.2, "humidityPct": 59, "windSpeedKmh": 0, "windGustKmh": null, "windDirectionDeg": null, "windDirectionText": "N", "rainMm": null, "retrievalMode": "legacy_snapshot", "providerRecordId": null, "retrievedAt": null },
+    { "sampleSlot": "2026-09-03T22:00:00Z", "observedAt": "2026-09-03T21:58:00Z", "source": "Weather Underground PWS · Sanitized Station", "sourceKind": "observed", "stationId": "ISANITIZED1", "isStale": false, "temperatureC": 15.8, "humidityPct": 61, "windSpeedKmh": 2.1, "windGustKmh": 4.3, "windDirectionDeg": 5, "rainMm": 0, "retrievalMode": "historical_archive", "providerRecordId": "2026-09-03T21:58:00Z", "retrievedAt": "2026-09-08T01:00:00Z" }
+  ],
   "route": null,
   "cost": null,
-  "warnings": ["Fixture is sanitized and route bytes are intentionally omitted."]
+  "amendments": [],
+  "metadataCorrectionVersion": 0,
+  "metadataAmendments": [],
+  "warnings": ["Tank 2 session ended state was not recorded.", "Fixture is sanitized and route bytes are intentionally omitted."]
 }

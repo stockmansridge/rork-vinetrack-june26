@@ -85,6 +85,19 @@ struct SprayProgramRestructureTests {
         #expect(steps.contains { $0.name == "Bud Burst" && $0.source == .portal })
     }
 
+    @Test func duplicateOperationalCacheRowsCollapseBeforeSpraysListRendering() {
+        let sharedId = UUID()
+        let older = SprayRecord(id: sharedId, date: Date(timeIntervalSince1970: 100), sprayReference: "Older", tanks: [SprayTank()])
+        let newer = SprayRecord(id: sharedId, date: Date(timeIntervalSince1970: 200), sprayReference: "Newer", tanks: [SprayTank()])
+        let other = operationalRecord(name: "Other")
+
+        let records = SprayProgramOperationalRecords.unique([older, newer, other, newer])
+
+        #expect(records.count == 2)
+        #expect(Set(records.map(\.id)).count == records.count)
+        #expect(records.first(where: { $0.id == sharedId })?.sprayReference == "Newer")
+    }
+
     @Test func operationalRecordsNeverAppearInProgram() {
         let steps = SprayProgramCatalog.steps(
             localRecords: [

@@ -7,6 +7,7 @@ import com.rork.vinetrack.data.model.SprayTankActual
 import com.rork.vinetrack.data.model.SprayTankActualChemical
 import com.rork.vinetrack.data.model.TankSession
 import com.rork.vinetrack.data.model.Trip
+import com.rork.vinetrack.data.model.chemicalUnitFromBase
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -52,6 +53,13 @@ class SprayReportPayloadV1Test {
         assertEquals(null, payload.tanks.first().chemicals.last().plannedAmountBase)
         assertEquals(2, payload.actualChemicalTotals.size)
         assertEquals(3.1, payload.equipment.engineHoursUsed!!, 0.000001)
+    }
+
+    @Test fun `base quantities convert exactly once for report display`() {
+        assertEquals(35.71428571428571, chemicalUnitFromBase("Litres", 35_714.28571428571), 0.000000001)
+        assertEquals(8.928571428571429, chemicalUnitFromBase("Kg", 8_928.571428571428), 0.000000001)
+        assertEquals(500.0, chemicalUnitFromBase("mL", 500.0), 0.0)
+        assertEquals(500.0, chemicalUnitFromBase("g", 500.0), 0.0)
     }
 
     @Test fun `filename uses canonical Android suffix and stable trip fragment`() {

@@ -4,140 +4,101 @@
   "title": "SprayReportPayloadV1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "identity", "trip", "blocks", "equipment", "rows", "tanks", "weather", "route", "warnings"],
+  "required": ["schemaVersion", "identity", "trip", "blocks", "equipment", "application", "programStep", "rows", "tanks", "tankSessions", "plannedChemicalTotals", "actualChemicalTotals", "weather", "route", "cost", "amendments", "metadataCorrectionVersion", "metadataAmendments", "warnings"],
   "properties": {
-    "schemaVersion": { "const": "1.0" },
+    "schemaVersion": { "const": "1.1" },
+    "identity": { "$ref": "#/$defs/identity" },
+    "trip": { "$ref": "#/$defs/trip" },
+    "blocks": { "type": ["array", "null"], "items": { "$ref": "#/$defs/block" } },
+    "equipment": { "$ref": "#/$defs/equipment" },
+    "application": { "$ref": "#/$defs/application" },
+    "programStep": { "$ref": "#/$defs/programStep" },
+    "rows": { "type": "array", "items": { "$ref": "#/$defs/row" } },
+    "tanks": { "type": "array", "items": { "$ref": "#/$defs/tank" } },
+    "tankSessions": { "type": "array", "items": { "$ref": "#/$defs/tankSession" } },
+    "plannedChemicalTotals": { "type": "array", "items": { "$ref": "#/$defs/chemicalTotal" } },
+    "actualChemicalTotals": { "type": "array", "items": { "$ref": "#/$defs/chemicalTotal" } },
+    "weather": { "type": "array", "items": { "$ref": "#/$defs/weather" } },
+    "route": { "oneOf": [{ "$ref": "#/$defs/route" }, { "type": "null" }] },
+    "cost": { "oneOf": [{ "$ref": "#/$defs/cost" }, { "type": "null" }] },
+    "amendments": { "type": "array", "items": { "$ref": "#/$defs/actualAmendment" } },
+    "metadataCorrectionVersion": { "type": "integer", "minimum": 0 },
+    "metadataAmendments": { "type": "array", "items": { "$ref": "#/$defs/metadataAmendment" } },
+    "warnings": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+  },
+  "$defs": {
+    "uuidOrNull": { "type": ["string", "null"], "format": "uuid" },
+    "numberOrNull": { "type": ["number", "null"] },
+    "stringOrNull": { "type": ["string", "null"] },
     "identity": {
-      "type": "object",
-      "additionalProperties": false,
+      "type": "object", "additionalProperties": false,
       "required": ["tripId", "sprayRecordId", "vineyardId", "vineyardName", "reference", "vineyardTimeZone"],
-      "properties": {
-        "tripId": { "type": "string", "format": "uuid" },
-        "sprayRecordId": { "type": "string", "format": "uuid" },
-        "vineyardId": { "type": "string", "format": "uuid" },
-        "vineyardName": { "type": "string" },
-        "reference": { "type": "string" },
-        "vineyardTimeZone": { "type": "string" }
-      }
+      "properties": { "tripId": { "type": "string", "format": "uuid" }, "sprayRecordId": { "type": "string", "format": "uuid" }, "vineyardId": { "type": "string", "format": "uuid" }, "vineyardName": { "type": "string" }, "reference": { "type": "string" }, "vineyardTimeZone": { "type": "string" } }
     },
     "trip": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["startUtc", "endUtc", "activeDurationSeconds", "distanceMetres", "operatorName", "pinCount"],
-      "properties": {
-        "startUtc": { "type": ["string", "null"], "format": "date-time" },
-        "endUtc": { "type": ["string", "null"], "format": "date-time" },
-        "activeDurationSeconds": { "type": ["integer", "null"], "minimum": 0 },
-        "distanceMetres": { "type": ["number", "null"], "minimum": 0 },
-        "operatorName": { "type": ["string", "null"] },
-        "pinCount": { "type": "integer", "minimum": 0 }
-      }
+      "type": "object", "additionalProperties": false,
+      "required": ["startUtc", "endUtc", "activeDurationSeconds", "elapsedDurationSeconds", "pausedDurationSeconds", "distanceMetres", "operatorId", "operatorName", "operatorSource", "pinCount"],
+      "properties": { "startUtc": { "type": ["string", "null"], "format": "date-time" }, "endUtc": { "type": ["string", "null"], "format": "date-time" }, "activeDurationSeconds": { "type": ["integer", "null"], "minimum": 0 }, "elapsedDurationSeconds": { "type": ["integer", "null"], "minimum": 0 }, "pausedDurationSeconds": { "type": ["integer", "null"], "minimum": 0 }, "distanceMetres": { "type": ["number", "null"], "minimum": 0 }, "operatorId": { "$ref": "#/$defs/uuidOrNull" }, "operatorName": { "$ref": "#/$defs/stringOrNull" }, "operatorSource": { "enum": ["explicit_correction", "recorded_identity", "recorded_snapshot", "not_recorded"] }, "pinCount": { "type": "integer", "minimum": 0 } }
     },
-    "blocks": {
-      "type": ["array", "null"],
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["blockId", "name"],
-        "properties": {
-          "blockId": { "type": "string", "format": "uuid" },
-          "name": { "type": "string" },
-          "grossAreaHa": { "type": ["number", "null"], "minimum": 0 },
-          "treatedAreaHa": { "type": ["number", "null"], "minimum": 0 }
-        }
-      }
+    "block": {
+      "type": "object", "required": ["blockId", "name"],
+      "properties": { "blockId": { "type": "string", "format": "uuid" }, "name": { "type": "string" }, "grossAreaHa": { "$ref": "#/$defs/numberOrNull" }, "treatedAreaHa": { "$ref": "#/$defs/numberOrNull" } }
     },
     "equipment": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["tractorName", "startEngineHours", "endEngineHours", "engineHoursUsed", "sprayUnitName"],
-      "properties": {
-        "tractorName": { "type": ["string", "null"] },
-        "startEngineHours": { "type": ["number", "null"], "minimum": 0 },
-        "endEngineHours": { "type": ["number", "null"], "minimum": 0 },
-        "engineHoursUsed": { "type": ["number", "null"], "exclusiveMinimum": 0 },
-        "sprayUnitName": { "type": ["string", "null"] }
-      }
+      "type": "object", "additionalProperties": false,
+      "required": ["machineId", "tractorId", "tractorName", "sprayEquipmentId", "sprayUnitName", "equipmentSource", "startEngineHours", "endEngineHours", "engineHoursUsed", "tractorGear", "numberOfFansJets", "averageSpeedKmh", "fuelConsumptionLPerHour", "fuelConsumptionSource", "fuelHours", "fuelHoursSource"],
+      "properties": { "machineId": { "$ref": "#/$defs/uuidOrNull" }, "tractorId": { "$ref": "#/$defs/uuidOrNull" }, "tractorName": { "$ref": "#/$defs/stringOrNull" }, "sprayEquipmentId": { "$ref": "#/$defs/uuidOrNull" }, "sprayUnitName": { "$ref": "#/$defs/stringOrNull" }, "equipmentSource": { "type": "string" }, "startEngineHours": { "$ref": "#/$defs/numberOrNull" }, "endEngineHours": { "$ref": "#/$defs/numberOrNull" }, "engineHoursUsed": { "$ref": "#/$defs/numberOrNull" }, "tractorGear": { "$ref": "#/$defs/stringOrNull" }, "numberOfFansJets": { "$ref": "#/$defs/stringOrNull" }, "averageSpeedKmh": { "$ref": "#/$defs/numberOrNull" }, "fuelConsumptionLPerHour": { "$ref": "#/$defs/numberOrNull" }, "fuelConsumptionSource": { "type": "string" }, "fuelHours": { "$ref": "#/$defs/numberOrNull" }, "fuelHoursSource": { "type": "string" } }
     },
-    "rows": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["rowNumber", "blockName", "status", "source", "tank"],
-        "properties": {
-          "rowNumber": { "type": "number" },
-          "blockName": { "type": ["string", "null"] },
-          "status": { "enum": ["Complete", "Partial", "Skipped/Not complete"] },
-          "source": { "type": "string" },
-          "tank": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "const": "Multiple" }, { "type": "null" }] }
-        }
-      }
+    "application": {
+      "type": "object", "additionalProperties": false,
+      "required": ["operationType", "applicationMode", "grossAreaHa", "treatedAreaHa", "treatedAreaMethod", "geometrySource", "geometryQuality", "carrierVolumeBasis", "totalCarrierLitres", "carrierLitresPerHectare", "diluteLitresPer100m", "appliedLitresPer100m", "concentrationFactor", "notes"],
+      "properties": { "operationType": { "$ref": "#/$defs/stringOrNull" }, "applicationMode": { "$ref": "#/$defs/stringOrNull" }, "grossAreaHa": { "$ref": "#/$defs/numberOrNull" }, "treatedAreaHa": { "$ref": "#/$defs/numberOrNull" }, "treatedAreaMethod": { "$ref": "#/$defs/stringOrNull" }, "geometrySource": { "$ref": "#/$defs/stringOrNull" }, "geometryQuality": { "$ref": "#/$defs/stringOrNull" }, "carrierVolumeBasis": { "$ref": "#/$defs/stringOrNull" }, "totalCarrierLitres": { "$ref": "#/$defs/numberOrNull" }, "carrierLitresPerHectare": { "$ref": "#/$defs/numberOrNull" }, "diluteLitresPer100m": { "$ref": "#/$defs/numberOrNull" }, "appliedLitresPer100m": { "$ref": "#/$defs/numberOrNull" }, "concentrationFactor": { "$ref": "#/$defs/numberOrNull" }, "notes": { "$ref": "#/$defs/stringOrNull" } }
     },
-    "tanks": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["tankNumber", "plannedWaterLitres", "actualWaterLitres", "chemicals"],
-        "properties": {
-          "tankNumber": { "type": "integer", "minimum": 1 },
-          "plannedWaterLitres": { "type": "number", "minimum": 0 },
-          "actualWaterLitres": { "type": ["number", "null"], "minimum": 0 },
-          "chemicals": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["plannedChemicalId", "savedChemicalId", "name", "unit", "plannedAmountBase", "actualAmountBase", "matchSource"],
-              "properties": {
-                "plannedChemicalId": { "type": "string", "format": "uuid" },
-                "savedChemicalId": { "type": ["string", "null"], "format": "uuid" },
-                "name": { "type": "string" },
-                "unit": { "enum": ["Litres", "mL", "Kg", "g"] },
-                "plannedAmountBase": { "type": "number", "minimum": 0 },
-                "actualAmountBase": { "type": ["number", "null"], "minimum": 0 },
-                "matchSource": { "enum": ["plannedChemicalId", "savedChemicalId", "nameUnit", "notRecorded", "ambiguous"] }
-              }
-            }
-          }
-        }
-      }
+    "programStep": {
+      "type": "object", "additionalProperties": false,
+      "required": ["linkState", "sprayJobId", "name", "status", "plannedDate", "operationType", "target", "notes"],
+      "properties": { "linkState": { "enum": ["program_linked", "linked_step_unavailable", "not_recorded"] }, "sprayJobId": { "$ref": "#/$defs/uuidOrNull" }, "name": { "$ref": "#/$defs/stringOrNull" }, "status": { "$ref": "#/$defs/stringOrNull" }, "plannedDate": { "type": ["string", "null"], "format": "date" }, "operationType": { "$ref": "#/$defs/stringOrNull" }, "target": { "$ref": "#/$defs/stringOrNull" }, "notes": { "$ref": "#/$defs/stringOrNull" } }
+    },
+    "row": {
+      "type": "object", "required": ["rowNumber", "blockName", "status", "source", "tank"],
+      "properties": { "rowIdentity": { "$ref": "#/$defs/stringOrNull" }, "rowNumber": { "type": ["number", "null"] }, "blockId": { "$ref": "#/$defs/uuidOrNull" }, "blockName": { "$ref": "#/$defs/stringOrNull" }, "status": { "enum": ["Complete", "Partial", "Skipped/Not complete", "Not recorded"] }, "source": { "type": "string" }, "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "isDerived": { "type": "boolean" }, "tank": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "const": "Multiple" }, { "type": "null" }] }, "tankSessionId": { "$ref": "#/$defs/stringOrNull" }, "originalEvidence": { "type": ["object", "null"] } }
+    },
+    "tank": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tankNumber", "actualId", "actualVersion", "plannedWaterLitres", "actualWaterLitres", "chemicals"],
+      "properties": { "tankNumber": { "type": "integer", "minimum": 1 }, "actualId": { "$ref": "#/$defs/uuidOrNull" }, "actualVersion": { "type": "integer", "minimum": 0 }, "plannedWaterLitres": { "type": "number", "minimum": 0 }, "actualWaterLitres": { "type": ["number", "null"], "minimum": 0 }, "chemicals": { "type": "array", "items": { "$ref": "#/$defs/chemical" } } }
+    },
+    "chemical": {
+      "type": "object", "additionalProperties": false,
+      "required": ["actualChemicalId", "plannedChemicalId", "savedChemicalId", "replacesPlannedChemicalId", "usageKind", "name", "unit", "plannedAmountBase", "actualAmountBase", "matchSource"],
+      "properties": { "actualChemicalId": { "$ref": "#/$defs/uuidOrNull" }, "plannedChemicalId": { "$ref": "#/$defs/uuidOrNull" }, "savedChemicalId": { "$ref": "#/$defs/uuidOrNull" }, "replacesPlannedChemicalId": { "$ref": "#/$defs/uuidOrNull" }, "usageKind": { "enum": ["planned", "substitution", "additional"] }, "name": { "type": "string" }, "unit": { "enum": ["Litres", "mL", "Kg", "g"] }, "plannedAmountBase": { "type": ["number", "null"], "minimum": 0 }, "actualAmountBase": { "type": ["number", "null"], "minimum": 0 }, "matchSource": { "enum": ["plannedChemicalId", "savedChemicalId", "nameUnit", "notRecorded", "ambiguous", "actualOnly"] } }
+    },
+    "chemicalTotal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["identityKey", "name", "unit", "actualAmountBase"],
+      "properties": { "identityKey": { "type": "string" }, "name": { "type": "string" }, "unit": { "enum": ["Litres", "Kg"] }, "actualAmountBase": { "type": "number", "minimum": 0 } }
+    },
+    "tankSession": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tankSessionId", "tankNumber", "startedAt", "endedAt", "startRow", "endRow", "pathsCovered", "status", "assignmentSource"],
+      "properties": { "tankSessionId": { "$ref": "#/$defs/stringOrNull" }, "tankNumber": { "type": "integer", "minimum": 1 }, "startedAt": { "type": ["string", "null"], "format": "date-time" }, "endedAt": { "type": ["string", "null"], "format": "date-time" }, "startRow": { "$ref": "#/$defs/numberOrNull" }, "endRow": { "$ref": "#/$defs/numberOrNull" }, "pathsCovered": { "type": "array", "items": { "type": "number" } }, "status": { "enum": ["Complete", "End not recorded", "In progress"] }, "assignmentSource": { "type": "string" } }
     },
     "weather": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["sampleSlot", "observedAt", "source", "sourceKind", "isStale", "temperatureC", "humidityPct", "windSpeedKmh", "windGustKmh", "windDirectionDeg", "rainMm"],
-        "properties": {
-          "sampleSlot": { "type": "string", "format": "date-time" },
-          "observedAt": { "type": ["string", "null"], "format": "date-time" },
-          "source": { "type": "string" },
-          "sourceKind": { "enum": ["observed", "modelled", "manual", "unavailable"] },
-          "isStale": { "type": "boolean" },
-          "temperatureC": { "type": ["number", "null"] },
-          "humidityPct": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
-          "windSpeedKmh": { "type": ["number", "null"], "minimum": 0 },
-          "windGustKmh": { "type": ["number", "null"], "minimum": 0 },
-          "windDirectionDeg": { "type": ["number", "null"], "minimum": 0, "maximum": 360 },
-          "rainMm": { "type": ["number", "null"], "minimum": 0 }
-        }
-      }
+      "type": "object", "additionalProperties": false,
+      "required": ["sampleSlot", "observedAt", "source", "sourceKind", "stationId", "isStale", "temperatureC", "humidityPct", "windSpeedKmh", "windGustKmh", "windDirectionDeg", "rainMm", "retrievalMode", "providerRecordId", "retrievedAt"],
+      "properties": { "sampleSlot": { "type": "string", "format": "date-time" }, "observedAt": { "type": ["string", "null"], "format": "date-time" }, "source": { "type": "string" }, "sourceKind": { "enum": ["observed", "modelled", "manual", "unavailable"] }, "stationId": { "$ref": "#/$defs/stringOrNull" }, "isStale": { "type": "boolean" }, "temperatureC": { "$ref": "#/$defs/numberOrNull" }, "humidityPct": { "type": ["number", "null"], "minimum": 0, "maximum": 100 }, "windSpeedKmh": { "type": ["number", "null"], "minimum": 0 }, "windGustKmh": { "type": ["number", "null"], "minimum": 0 }, "windDirectionDeg": { "type": ["number", "null"], "minimum": 0, "maximum": 360 }, "windDirectionText": { "$ref": "#/$defs/stringOrNull" }, "rainMm": { "type": ["number", "null"], "minimum": 0 }, "retrievalMode": { "enum": ["live", "historical_archive", "legacy_snapshot", "unavailable"] }, "providerRecordId": { "$ref": "#/$defs/stringOrNull" }, "retrievedAt": { "type": ["string", "null"], "format": "date-time" } }
     },
     "route": {
-      "type": ["object", "null"],
-      "additionalProperties": false,
+      "type": "object", "additionalProperties": false,
       "required": ["bucket", "objectPath", "sha256", "routeHash", "styleVersion"],
-      "properties": {
-        "bucket": { "const": "trip-report-assets" },
-        "objectPath": { "type": "string" },
-        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-        "routeHash": { "type": "string" },
-        "styleVersion": { "const": "spray-route-red-green-v1" }
-      }
+      "properties": { "bucket": { "const": "trip-report-assets" }, "objectPath": { "type": "string" }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "routeHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "styleVersion": { "const": "spray-route-red-green-v1" } }
     },
-    "cost": { "type": ["object", "null"] },
-    "warnings": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+    "cost": {
+      "type": "object", "additionalProperties": false,
+      "required": ["visibility", "currencyCode", "fuelLitres", "fuelRateLPerHour", "fuelHours", "fuelPricePerLitre", "fuelCost", "chemicalCost", "labourCost", "totalCost", "treatedAreaHa", "costPerTreatedHa", "isComplete", "basis"],
+      "properties": { "visibility": { "const": "owner_manager" }, "currencyCode": { "type": "string" }, "fuelLitres": { "$ref": "#/$defs/numberOrNull" }, "fuelRateLPerHour": { "$ref": "#/$defs/numberOrNull" }, "fuelHours": { "$ref": "#/$defs/numberOrNull" }, "fuelPricePerLitre": { "$ref": "#/$defs/numberOrNull" }, "fuelCost": { "$ref": "#/$defs/numberOrNull" }, "chemicalCost": { "$ref": "#/$defs/numberOrNull" }, "labourCost": { "$ref": "#/$defs/numberOrNull" }, "totalCost": { "$ref": "#/$defs/numberOrNull" }, "treatedAreaHa": { "$ref": "#/$defs/numberOrNull" }, "costPerTreatedHa": { "$ref": "#/$defs/numberOrNull" }, "isComplete": { "type": "boolean" }, "basis": { "type": "string" } }
+    },
+    "actualAmendment": { "type": "object", "required": ["id", "operationId", "tankNumber", "field", "changeKind", "revision", "editedBy", "editorName", "editedAt"], "properties": { "id": { "type": "string", "format": "uuid" }, "operationId": { "type": "string", "format": "uuid" }, "tankNumber": { "type": "integer" }, "chemicalActualId": { "$ref": "#/$defs/uuidOrNull" }, "plannedChemicalId": { "$ref": "#/$defs/uuidOrNull" }, "savedChemicalId": { "$ref": "#/$defs/uuidOrNull" }, "field": { "type": "string" }, "changeKind": { "type": "string" }, "previousValue": {}, "newValue": {}, "previousUnit": { "$ref": "#/$defs/stringOrNull" }, "newUnit": { "$ref": "#/$defs/stringOrNull" }, "revision": { "type": "integer" }, "editedBy": { "type": "string", "format": "uuid" }, "editorName": { "type": "string" }, "editedAt": { "type": "string", "format": "date-time" } } },
+    "metadataAmendment": { "type": "object", "additionalProperties": false, "required": ["id", "operationId", "revision", "previousValue", "newValue", "editedBy", "editorName", "editedAt"], "properties": { "id": { "type": "string", "format": "uuid" }, "operationId": { "type": "string", "format": "uuid" }, "revision": { "type": "integer" }, "previousValue": { "type": "object" }, "newValue": { "type": "object" }, "editedBy": { "type": "string", "format": "uuid" }, "editorName": { "type": "string" }, "editedAt": { "type": "string", "format": "date-time" } } }
   }
 }
