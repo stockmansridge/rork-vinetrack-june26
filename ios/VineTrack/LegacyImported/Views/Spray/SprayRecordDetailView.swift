@@ -876,6 +876,7 @@ extension SprayRecordDetailView {
                 sprayUnitName: resolvedEquipmentName,
                 tankActuals: SprayTankActualStore.shared.records.filter { $0.tripId == trip.id && $0.sprayRecordId == recordCopy.id }
             )
+            await SprayReportRepository.shared.captureUnavailableIfDue(for: trip, at: trip.endTime ?? Date(), isFinal: trip.endTime != nil)
             let payload = (try? await SprayReportRepository.shared.fetch(tripId: trip.id)) ?? offlinePayload
             let snapshot = await SprayReportRepository.shared.routeImage(for: payload, fallbackTrip: trip)
             let data = SprayRecordPDFService.generatePDF(

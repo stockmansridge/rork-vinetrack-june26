@@ -69,6 +69,27 @@ struct SprayReportPayloadV1Tests {
         #expect(text.contains("Not recorded"))
     }
 
+    @Test("Continuation pages repeat planned actual headers and carry page footers")
+    func continuationPageBrandingAndHeaders() throws {
+        let trip = Trip(vineyardId: UUID(), startTime: Date(timeIntervalSince1970: 1_788_480_000), endTime: Date(timeIntervalSince1970: 1_788_490_860), tripFunction: "spraying")
+        let chemicals: [SprayChemical] = (1...55).map { index in
+            SprayChemical(name: "Long wrapped product name \(index) with qualification and formulation detail", volumePerTank: Double(index) * 1_000, unit: index.isMultiple(of: 2) ? .litres : .kilograms)
+        }
+        let record = SprayRecord(tripId: trip.id, vineyardId: trip.vineyardId, sprayReference: "Continuation acceptance", tanks: [SprayTank(tankNumber: 1, waterVolume: 1_500, chemicals: chemicals)])
+        let payload = SprayReportPayloadV1.offlineProjection(trip: trip, record: record, vineyardName: "Stockmans Ridge", timeZone: .gmt, paddocks: [], tractorName: "", sprayUnitName: "", tankActuals: [])
+        let data = SprayRecordPDFService.generatePDF(payload: payload, record: record, trip: trip, vineyardName: "Stockmans Ridge", paddockName: "", personName: "", includeCostings: false, timeZone: .gmt)
+        let document = try #require(PDFDocument(data: data))
+
+        #expect(document.pageCount >= 3)
+        for pageIndex in 0..<document.pageCount {
+            let text = try #require(document.page(at: pageIndex)?.string)
+            #expect(text.contains("Page \(pageIndex + 1)"))
+        }
+        let tablePages = (0..<document.pageCount).compactMap { document.page(at: $0)?.string }.filter { $0.contains("ITEM") }
+        #expect(tablePages.count >= 2)
+        #expect(tablePages.allSatisfy { $0.contains("PLANNED") && $0.contains("ACTUAL") })
+    }
+
     @Test("iOS filename uses canonical prefix, stable fragment and suffix")
     func filename() {
         let trip = Trip(id: UUID(uuidString: "a1b2c3d4-0000-4000-8000-000000000001")!, vineyardId: UUID(), startTime: Date(timeIntervalSince1970: 1_788_480_000), endTime: Date(timeIntervalSince1970: 1_788_480_100), tripFunction: "spraying")

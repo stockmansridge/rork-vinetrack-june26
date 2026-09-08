@@ -122,12 +122,23 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         let fuelPricePerLitre: Double?
         let fuelCost: Double?
         let chemicalCost: Double?
+        let chemicalCostBasis: String?
+        let labourRatePerHour: Double?
+        let labourRateSource: String?
         let labourCost: Double?
+        let knownCostSubtotal: Double?
         let totalCost: Double?
         let treatedAreaHa: Double?
         let costPerTreatedHa: Double?
         let isComplete: Bool
+        let incompleteReasons: [CostReason]
         let basis: String
+    }
+
+    nonisolated struct CostReason: Codable, Sendable, Hashable {
+        let component: String
+        let code: String
+        let kind: String
     }
 
     nonisolated struct MetadataAmendment: Codable, Sendable, Hashable {
@@ -159,6 +170,12 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         let status: String
         let source: String
         let tank: TankReference?
+        let rowIdentity: String? = nil
+        let blockId: UUID? = nil
+        let confidence: Double? = nil
+        let isDerived: Bool? = nil
+        let tankSessionId: String? = nil
+        let originalEvidence: [String: JSONValue]? = nil
     }
 
     nonisolated enum TankReference: Codable, Sendable, Hashable {
@@ -267,6 +284,8 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         let observedAt: String?
         let source: String
         let sourceKind: String
+        let provider: String?
+        let stationName: String?
         let isStale: Bool
         let temperatureC: Double?
         let humidityPct: Double?
@@ -278,6 +297,26 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         let retrievalMode: String?
         let providerRecordId: String?
         let retrievedAt: String?
+        let retrievalHistory: [WeatherAttempt]
+    }
+
+    nonisolated struct WeatherAttempt: Codable, Sendable, Hashable {
+        let provider: String
+        let stationId: String?
+        let stationName: String?
+        let retrievalMode: String
+        let outcome: String
+        let observedAt: String?
+        let source: String?
+        let temperatureC: Double?
+        let humidityPct: Double?
+        let windSpeedKmh: Double?
+        let windGustKmh: Double?
+        let windDirectionDeg: Double?
+        let rainMm: Double?
+        let isStale: Bool?
+        let providerRecordId: String?
+        let retrievedAt: String
     }
 
     nonisolated struct Route: Codable, Sendable, Hashable {
@@ -377,7 +416,7 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
 
         var weather: [Weather] = []
         if record.temperature != nil || record.humidity != nil || record.windSpeed != nil || !record.windDirection.isEmpty {
-            weather = [Weather(sampleSlot: iso.string(from: record.startTime), observedAt: nil, source: "Legacy start snapshot", sourceKind: "manual", isStale: true, temperatureC: record.temperature, humidityPct: record.humidity, windSpeedKmh: record.windSpeed, windGustKmh: nil, windDirectionDeg: nil, rainMm: nil, stationId: nil, retrievalMode: "legacy_snapshot", providerRecordId: nil, retrievedAt: nil)]
+            weather = [Weather(sampleSlot: iso.string(from: record.startTime), observedAt: nil, source: "Legacy start snapshot", sourceKind: "manual", provider: nil, stationName: nil, isStale: true, temperatureC: record.temperature, humidityPct: record.humidity, windSpeedKmh: record.windSpeed, windGustKmh: nil, windDirectionDeg: nil, rainMm: nil, stationId: nil, retrievalMode: "legacy_snapshot", providerRecordId: nil, retrievedAt: nil, retrievalHistory: [])]
             warnings.append("Hourly weather was not recorded; showing the legacy start snapshot.")
         } else {
             warnings.append("No hourly weather observations were recorded.")

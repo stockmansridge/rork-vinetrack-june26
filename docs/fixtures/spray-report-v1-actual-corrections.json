@@ -13,6 +13,7 @@
     ]
   },
   "expectedDisplay": ["Water | 1,500 L | 1,420 L", "Oil | 35.714 L | Not added", "Substitution: Substitute Sulphur | — | 9.100 kg", "Additional: Wetting Agent | — | 1.250 L"],
+  "costingGap": { "chemicalCost": null, "isComplete": false, "incompleteReasons": [{ "component": "chemical", "code": "missing_or_ambiguous_chemical_unit_price", "kind": "missing_data" }], "explanation": "The additional Wetting Agent has neither a safely applicable frozen tank-line unit price nor one unambiguous saved-product purchase price in the actual base unit. The calculation is implemented; its input is missing." },
   "actualChemicalTotals": [
     { "identityKey": "b1b2c3d4-0000-4000-8000-000000000004", "name": "Oil", "unit": "Litres", "actualAmountBase": 0 },
     { "identityKey": "b1b2c3d4-0000-4000-8000-000000000006", "name": "Substitute Sulphur", "unit": "Kg", "actualAmountBase": 9100 },

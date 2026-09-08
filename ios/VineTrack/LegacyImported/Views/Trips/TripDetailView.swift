@@ -1036,6 +1036,7 @@ struct TripDetailView: View {
                         return
                     }
                 }
+                await SprayReportRepository.shared.captureUnavailableIfDue(for: tripCopy, at: tripCopy.endTime ?? Date(), isFinal: tripCopy.endTime != nil)
                 let payload = (try? await SprayReportRepository.shared.fetch(tripId: tripCopy.id)) ?? offlinePayload
                 let snapshot = await SprayReportRepository.shared.routeImage(for: payload, fallbackTrip: tripCopy)
                 let pdfData = SprayRecordPDFService.generatePDF(

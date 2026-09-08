@@ -175,7 +175,7 @@ object SprayProgramPdfExporter {
         if (records.isEmpty()) return false
         return try {
             val doc = PdfDocument()
-            val s = PageState(doc, BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher))
+            val s = PageState(doc, BitmapFactory.decodeResource(context.resources, R.drawable.vinetrack_logo))
             render(s, records, trips, vineyardName, canViewFinancials, machines, fuelPurchases, operatorCategories, paddocks, tankActuals, logo)
             s.finish()
 

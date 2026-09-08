@@ -174,6 +174,7 @@ object SprayRecordPdfExporter {
                 pinCount = pinCount,
             )
             val repository = SprayReportRepository(session)
+            repository.captureUnavailableIfDue(trip, trip.endTime?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() } ?: java.time.Instant.now(), isFinal = trip.endTime != null)
             val payload = runCatching { repository.fetch(trip.id) }.getOrDefault(offlinePayload)
             val resolvedRoute = payload.route ?: runCatching { repository.ensureRoute(trip) }.getOrNull()
             val sharedRoute = resolvedRoute?.let { route ->
@@ -183,7 +184,7 @@ object SprayRecordPdfExporter {
                 }.getOrNull()
             }
             val doc = PdfDocument()
-            val officialLogo = BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher)
+            val officialLogo = BitmapFactory.decodeResource(context.resources, R.drawable.vinetrack_logo)
             val s = PageState(doc, officialLogo)
             render(
                 s, payload, record, vineyardName, machines, equipment, trip, workTask,

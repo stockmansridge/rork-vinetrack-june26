@@ -1,6 +1,6 @@
 # Lovable handoff — Spray Report v1
 
-Lovable must implement these portal changes separately after SQL 224 and 225 are run:
+SQL 224–227 are already applied. Lovable must implement these portal changes only after the user manually applies SQL 228/229 and confirms the functions below are deployed:
 
 - Fetch `get_spray_report_v1(p_trip_id)` for every spraying export from Trips, Spray Records, and Documents.
 - Classify linked legacy spray records as spraying and never send them to generic `downloadTripPdf`.
@@ -132,26 +132,19 @@ Response is `{ "correction": { ... "version": 3 }, "report": { ...schema 1.1... 
 
 Canonical precedence is: explicit correction overlay → trip recorded identity → spray-record historical snapshot. Fuel rate precedence is explicit trip correction → selected machine default → legacy tractor default → Not recorded. Metadata history is separate from the original operator identity and from tank-actual history.
 
-### Row/block recovery action
+### Shared row/block recovery action
 
-RPC: `recover_spray_row_assignments_v1(p_operation_id, p_trip_id, p_assignments)` is Owner/Manager/Supervisor only. Each assignment requires stable `blockId` plus a `rowIdentity`; row number alone is never accepted as identity. Preserve source evidence verbatim:
+Lovable does not derive assignments and must not call the persistence RPC. Invoke the authenticated `spray-row-recovery` function with `{ "tripId": "uuid" }`. The function verifies Owner/Manager/Supervisor access, reads the trip's saved row sequence, completed/skipped paths, tank sessions, recorded application blocks, trip/job block plans, saved row UUIDs/geometry and complete GPS route, applies the shared `spray-row-recovery-v1` rules, then invokes the service-only persistence boundary.
 
-```json
-{
-  "blockId": "uuid",
-  "blockName": "North Block",
-  "rowIdentity": "north-block:row:24.5",
-  "rowNumber": 24.5,
-  "tankSessionId": "recorded session id or null",
-  "tankNumber": 1,
-  "status": "Complete | Partial | Skipped/Not complete | Not recorded",
-  "assignmentSource": "recorded_path_identity | saved_plan_identity | session_boundary_order | gps_geometry_intersection",
-  "confidence": 1.0,
-  "originalEvidence": { "immutable": "provider/input evidence" }
-}
-```
+The shared derivation process:
 
-Precedence is recorded stable path identity, explicitly labelled saved-plan identity, valid session boundaries over the recorded ordered row sequence, then GPS/geometry intersection. GPS/geometry evidence is rejected below 0.90 confidence. Repeated row numbers across blocks remain separate because block and row identities are mandatory. Render `isDerived`, source and confidence; never rewrite or hide `originalEvidence`. If the evidence does not clear these thresholds, leave the assignment null and show the warning.
+- Builds path identity from `blockId` plus the exact adjacent saved row identities; row number alone is never identity.
+- Uses a recorded application-block scope first, then the saved trip/job plan only when exactly one block contains the required saved row pair.
+- Uses tank-session `pathsCovered` only when exactly one recorded session contains that path.
+- Uses GPS only against the centreline derived from the exact saved row pair. It requires at least three points within 8 m, a contiguous run of at least three points, median distance at most 6 m, at least 3 m separation from the next candidate and final confidence at least 0.90.
+- Returns ambiguous/no-identity paths under `unresolved[]` without writing an assignment.
+
+Response is `{ success, operationId?, recovered, unresolved, evidenceVersion, assignments? }`. Refresh `get_spray_report_v1` after `recovered > 0`. Render `isDerived`, source, confidence and `originalEvidence`; never hide its `derivationVersion`, attribution basis, candidate blocks, matching saved row IDs, session identity or geometry metrics. Repeated row numbers remain separate by block and row identity. Direct execution of `recover_spray_row_assignments_v1` is denied to authenticated clients; only the trusted function's service client can persist centrally derived evidence.
 
 ## Additive SQL 229 — genuine hourly weather and archive recovery
 
@@ -159,9 +152,11 @@ Run `sql/229_trip_hourly_weather_recovery_v1.sql` once after 228, then `sql/test
 
 Clients call the authenticated function with `{ "tripId": "uuid", "through": "ISO-8601 UTC" }` at spray start, each scheduled hour, resume/restart, trip end and before an online export. The database computes every missing scheduled slot, so absence itself is a durable retry queue across suspension, offline periods and process restarts. A transient network/provider error leaves the slot missing for retry; it is not relabelled unavailable.
 
-The deployed recovery function currently supports genuine Weather Underground PWS current observations and its hourly archive. It selects only an observation within 30 minutes of the requested slot and preserves `observedAt`, `stationId`, provider record identity, retrieval time, and `retrievalMode` (`live` or `historical_archive`). A definitive archive no-data response may record unavailable. Current observations and daily summaries must never fill historical slots. Providers without a supported hourly archive remain pending/not recorded rather than receiving invented values.
+The function resolves the vineyard's active configured station centrally. Davis WeatherLink is preferred when an active Davis station is configured; otherwise the active Weather Underground station is used. It never silently substitutes another provider/station after a configured-provider failure. Davis uses the configured vineyard API key/secret stored in `vineyard_weather_integrations`; Weather Underground uses the configured station plus the server secret named exactly `WUNDERGROUND_API_KEY`.
 
-`weather[]` also carries a separate `legacy_snapshot` item when historical scalar values survive on the spray record. It is not an hourly sample. Genuine observed/manual evidence cannot be overwritten by a later unavailable/modelled retry.
+Both providers have distinct normalizers. Davis archive records normalize `temp_out`, `hum_out`, `wind_speed_avg`, `wind_speed_hi`, `wind_dir_of_prevail` and interval `rainfall_mm`, including metric/imperial conversion and provider record identity. Weather Underground archive records normalize `tempAvg`, `humidityAvg`, `windspeedAvg`, archive gust/direction and `precipTotal`; current-only field names and precipitation rate are not reused for archive slots. Weather Underground archive dates use the vineyard timezone. Only an observation within 30 minutes is accepted. Current observations and daily summaries never fill a historical slot.
+
+`weather[]` preserves provider, station ID/name, original observation time, provider record identity, retrieval mode/time and append-only `retrievalHistory`. Definitive no-data remains an explicit gap and stays eligible for later recovery; transient failures remain pending. Both archive no-data and transient attempts are retained in `retrievalHistory`, including attempt mode and station, without converting a failed fetch into an observation. A separate `legacy_snapshot` item is never treated as hourly evidence. Genuine observed/manual evidence cannot be replaced by unavailable/modelled retries.
 
 ## Authenticated canonical route upload/register/reuse
 
@@ -193,10 +188,23 @@ Route input hash bytes are UTF-8 for `spray-route-red-green-v1|1030x700|lat,lon|
 - Use one wrapping `Item | Planned | Actual` table per tank, Water first. Missing actual is `Not recorded`; explicit chemical zero is `Not added`.
 - Repeat table headers over page breaks. Render rate/basis details below the table, not inside squeezed legacy columns.
 - Humanize status/provenance tokens while retaining their machine value for diagnostics.
-- `cost` is null for non-Owner/Manager callers. Never reconstruct or leak financials locally.
+- `cost` is null for non-Owner/Manager callers. Never reconstruct or leak financials locally. For authorized users, fuel uses weighted recorded purchases; completed-trip labour uses stored trip cost allocations; open-trip labour uses the trip/member worker-type hourly rate times active duration. Planned chemical usage uses its frozen price/quantity pair; recorded actual usage uses an unambiguous saved purchase price per base mL/g. Ambiguous legacy display-unit pricing remains incomplete rather than being scaled by assumption. `incompleteReasons[]` identifies missing or ambiguous data by component/code; when incomplete, `knownCostSubtotal` may show the sum of known components but `totalCost` and `costPerTreatedHa` remain null; do not describe an implemented calculation as unimplemented.
 - Show active, elapsed and paused duration separately. A completed trip with an open tank session is `End not recorded`, not Active.
 - Fetch fresh canonical data on open and after every successful correction/recovery/upload action. A failed read is not an empty record.
 
-## Deployment and verification boundary
+## Exact manual deployment order
 
-Required order: SQL 228 + test, SQL 229 + test, deploy `spray-weather-recovery`, deploy `spray-report-route-upload`, then wire/release portal changes. The repository implementation is not production deployment evidence. Verify with an ordinary authorized user: correction/reopen/conflict, historical slot retrieval, upload/register/download/SHA reuse, repeated row numbers in two blocks, unauthorized cost read, and rendered multipage PDFs.
+The user runs all SQL manually. Do not rerun SQL 224–227.
+
+1. Run `sql/228_spray_report_canonical_facts_and_trip_corrections_v1.sql`, then run rollback-only `sql/tests/228_spray_report_canonical_facts_and_trip_corrections_v1_tests.sql` and retain its `ALL PASSED` notice.
+2. Run `sql/229_trip_hourly_weather_recovery_v1.sql`, then run rollback-only `sql/tests/229_trip_hourly_weather_recovery_v1_tests.sql` and retain its `ALL PASSED` notice.
+3. Confirm the Supabase Edge environment contains `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` (Supabase supplies these). If any vineyard uses Weather Underground, set the server secret with the exact name `WUNDERGROUND_API_KEY`. Davis credentials remain per-vineyard database configuration and must not be copied into Edge secrets. If server-side route generation is required, set `GOOGLE_MAPS_API_KEY`.
+4. Set secrets privately in the Supabase dashboard or a local terminal, never in chat. Example names only: `supabase secrets set WUNDERGROUND_API_KEY=... GOOGLE_MAPS_API_KEY=... --project-ref <PROJECT_REF>`.
+5. From the repository root deploy with normal JWT verification—do not use `--no-verify-jwt`:
+   - `supabase functions deploy spray-row-recovery --project-ref <PROJECT_REF>`
+   - `supabase functions deploy spray-weather-recovery --project-ref <PROJECT_REF>`
+   - `supabase functions deploy spray-report-route-upload --project-ref <PROJECT_REF>`
+6. No database trigger, webhook, cron or scheduler is required. Mobile/portal clients invoke weather recovery at start, each scheduled hour, resume/restart, trip end and before online export; they invoke row recovery on report open or before export. The database missing-slot query provides restart durability. A periodic authenticated job is optional operational redundancy, not a prerequisite.
+7. Verify with an ordinary authenticated user, not a service key: row recovery leaves repeated ambiguous row numbers unresolved; Davis and WU each retrieve their own configured station; unavailable history retains a gap and attempt history; route upload returns and re-downloads the same SHA-verified winner. Verify Owner/Manager costs, Supervisor/Operator `cost: null`, and multipage branding/tables.
+
+Repository implementation and successful local checks are not deployment evidence.

@@ -40,7 +40,25 @@ class SprayReportRepository(private val session: SessionStore) {
         @SerialName("p_is_stale") val isStale: Boolean = false,
     )
 
-    suspend fun fetch(tripId: String): SprayReportPayloadV1 = rpc("get_spray_report_v1", ReportArgs(tripId))
+    suspend fun fetch(tripId: String): SprayReportPayloadV1 {
+        recoverRows(tripId)
+        return rpc("get_spray_report_v1", ReportArgs(tripId))
+    }
+
+    /** Runs the shared server derivation; ambiguous paths are intentionally left unresolved. */
+    private suspend fun recoverRows(tripId: String) {
+        if (!SupabaseClient.isConfigured) return
+        val token = session.accessToken ?: return
+        runCatching {
+            SupabaseClient.http.post("${SupabaseClient.baseUrl}/functions/v1/spray-row-recovery") {
+                headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
+                contentType(ContentType.Application.Json)
+                setBody(RowRecoveryArgs(tripId))
+            }
+        }
+    }
+
+    @Serializable private data class RowRecoveryArgs(val tripId: String)
 
     /** Generates/registers the immutable hybrid route when no canonical winner exists. */
     suspend fun ensureRoute(trip: Trip): SprayReportPayloadV1.Route? {
