@@ -3,9 +3,11 @@ package com.rork.vinetrack.data
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import androidx.core.content.FileProvider
@@ -17,6 +19,9 @@ import com.rork.vinetrack.data.model.chemicalUnitFromBase
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.VineyardMachine
 import com.rork.vinetrack.data.model.WorkTask
+import com.rork.vinetrack.data.reporting.SprayReportPayloadV1
+import com.rork.vinetrack.data.reporting.SprayReportRepository
+import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.resolveSprayEquipmentName
 import com.rork.vinetrack.data.model.SprayEquipment
 import com.rork.vinetrack.data.model.parseIsoToEpochMs
@@ -114,7 +119,7 @@ object SprayRecordPdfExporter {
      * sheet. Returns false if generation failed (the caller can surface a
      * message); never throws.
      */
-    fun exportAndShare(
+    suspend fun exportAndShare(
         context: Context,
         record: SprayRecord,
         vineyardName: String,
@@ -127,19 +132,43 @@ object SprayRecordPdfExporter {
         operatorCategories: List<OperatorCategory> = emptyList(),
         paddocks: List<Paddock> = emptyList(),
         logo: Bitmap? = null,
+        regionFormatter: RegionFormatter = RegionFormatter(),
+        vineyardTimeZone: String = regionFormatter.settings.timezone ?: "UTC",
+        pinCount: Int = 0,
     ): Boolean {
         return try {
+            require(trip != null) { "Spray record not available yet—sync and retry" }
+            val actuals = SprayTankActualStore(context).load().filter { it.sprayRecordId == record.id }
+            val offlinePayload = SprayReportPayloadV1.offlineProjection(
+                trip = trip,
+                record = record,
+                vineyardName = vineyardName,
+                vineyardTimeZone = vineyardTimeZone,
+                paddocks = paddocks,
+                machines = machines,
+                sprayEquipment = equipment,
+                tankActuals = actuals,
+                pinCount = pinCount,
+            )
+            val repository = SprayReportRepository(SessionStore(context))
+            val payload = runCatching { repository.fetch(trip.id) }.getOrDefault(offlinePayload)
+            val sharedRoute = payload.route?.let { route ->
+                runCatching {
+                    val bytes = repository.downloadRoute(route)
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                }.getOrNull()
+            }
             val doc = PdfDocument()
             val s = PageState(doc)
             render(
-                s, record, vineyardName, machines, equipment, trip, workTask,
+                s, payload, record, vineyardName, machines, equipment, trip, workTask,
                 canViewFinancials, fuelPurchases, operatorCategories, paddocks, logo,
-                SprayTankActualStore(context).load().filter { it.sprayRecordId == record.id },
+                actuals, regionFormatter, sharedRoute,
             )
             s.finish()
 
             val dir = File(context.cacheDir, "exports").apply { mkdirs() }
-            val file = File(dir, fileName(record))
+            val file = File(dir, payload.exportFileName("android"))
             file.outputStream().use { doc.writeTo(it) }
             doc.close()
 
@@ -167,6 +196,7 @@ object SprayRecordPdfExporter {
 
     private fun render(
         s: PageState,
+        payload: SprayReportPayloadV1,
         record: SprayRecord,
         vineyardName: String,
         machines: List<VineyardMachine>,
@@ -179,12 +209,14 @@ object SprayRecordPdfExporter {
         paddocks: List<Paddock>,
         logo: Bitmap?,
         actuals: List<com.rork.vinetrack.data.model.SprayTankActual>,
+        regionFormatter: RegionFormatter,
+        sharedRoute: Bitmap?,
     ) {
         // Header
         val textX = PdfHeaderUtil.drawLogo(s.canvas, logo, MARGIN, s.y)
         s.canvas.drawText(vineyardName.ifBlank { "Vineyard" }, textX, s.y + 18f, titlePaint)
         s.y += 26f
-        s.canvas.drawText("Spray Record", textX, s.y + 12f, headerPaint)
+        s.canvas.drawText("Spray Report", textX, s.y + 12f, headerPaint)
         s.y += 22f
         drawDivider(s)
         s.y += 8f
@@ -224,10 +256,9 @@ object SprayRecordPdfExporter {
             sectionHeader(s, "Trip Information")
             tripDateTime(trip.startTime)?.let { row(s, "Start Time", it) }
             tripDateTime(trip.endTime)?.let { row(s, "End Time", it) }
-            trip.personName?.takeIf { it.isNotBlank() }?.let { row(s, "Operator", it) }
-            trip.totalDistance?.takeIf { it > 0 }?.let {
-                row(s, "Total Distance", "${fmt(it)} m")
-            }
+            payload.trip.operatorName?.let { row(s, "Operator", it) }
+            row(s, "Active Duration", payload.trip.activeDurationSeconds?.let { com.rork.vinetrack.data.model.formatTripDuration(it) } ?: "Not recorded")
+            row(s, "Total Distance", payload.trip.distanceMetres?.let { regionFormatter.formatDistance(it) } ?: "Not recorded")
         }
 
         // Row Coverage (planned-trip row sequence). Read-only summary + per-row table.
@@ -241,68 +272,69 @@ object SprayRecordPdfExporter {
             row(s, "Not Complete", "${trip.notCompletedRowCount}")
 
             // Compact per-row table: Path / Status.
-            val done = trip.completedPaths?.toSet() ?: emptySet()
-            val skip = trip.skippedPaths?.toSet() ?: emptySet()
             s.y += 6f
             s.ensure(24f)
             val c0 = MARGIN + 8f
-            val c1 = MARGIN + 200f
-            s.canvas.drawText("PATH", c0, s.y, captionPaint)
+            val c1 = MARGIN + 105f
+            val c2 = MARGIN + 220f
+            val c3 = MARGIN + 355f
+            s.canvas.drawText("ROW / BLOCK", c0, s.y, captionPaint)
             s.canvas.drawText("STATUS", c1, s.y, captionPaint)
+            s.canvas.drawText("SOURCE", c2, s.y, captionPaint)
+            s.canvas.drawText("TANK", c3, s.y, captionPaint)
             s.y += 14f
-            for (path in trip.rowSequence.sorted()) {
+            for (reportRow in payload.rows) {
                 s.ensure(18f)
-                val status = when {
-                    done.contains(path) -> "Completed"
-                    skip.contains(path) -> "Skipped"
-                    else -> "Not complete"
-                }
-                s.canvas.drawText("Row ${TripRowSequencePlanner.formatPath(path)}", c0, s.y, bodyPaint)
-                s.canvas.drawText(status, c1, s.y, bodyBoldPaint)
+                val rowAndBlock = "${TripRowSequencePlanner.formatPath(reportRow.rowNumber)} · ${reportRow.blockName ?: "Not recorded"}"
+                s.canvas.drawText(rowAndBlock, c0, s.y, bodyPaint)
+                s.canvas.drawText(reportRow.status, c1, s.y, bodyBoldPaint)
+                s.canvas.drawText(reportRow.source, c2, s.y, captionPaint)
+                s.canvas.drawText(reportRow.tankLabel, c3, s.y, bodyPaint)
                 s.y += 18f
             }
         }
 
-        // Conditions
-        sectionHeader(s, "Conditions")
-        formatDate(record.dateEpochMs)?.let { row(s, "Date", it) }
-        timeOfDay(record.startTime)?.let { row(s, "Start Time", it) }
-        timeOfDay(record.endTime)?.let { row(s, "End Time", it) }
-        if (trip == null) {
-            // Android records carry no standalone operator field; only show via trip.
+        sectionHeader(s, "Hourly Weather")
+        if (payload.weather.isEmpty()) {
+            text(s, "No hourly observations recorded.", bodyPaint)
+        } else {
+            payload.weather.forEach { observation ->
+                val time = timeOfDay(observation.sampleSlot) ?: observation.sampleSlot
+                val temperature = observation.temperatureC?.let { regionFormatter.formatTemperature(it) } ?: "—"
+                val humidity = observation.humidityPct?.let { "${fmt(it)}%" } ?: "—"
+                val wind = observation.windSpeedKmh?.let { regionFormatter.formatSpeed(it) } ?: "—"
+                val gust = observation.windGustKmh?.let { regionFormatter.formatSpeed(it) } ?: "—"
+                val rain = observation.rainMm?.let { regionFormatter.formatRainfall(it) } ?: "—"
+                text(s, "$time  $temperature  RH $humidity  Wind $wind  Gust $gust  Rain $rain", bodyPaint)
+                text(s, "${observation.source} · ${observation.sourceKind}${if (observation.isStale) " · stale" else ""}", captionPaint)
+            }
         }
-        record.temperature?.let { row(s, "Temperature", "${fmt(it)}\u00B0C") }
-        record.windSpeed?.let { row(s, "Wind Speed", "${fmt(it)} km/h") }
-        record.windDirection?.takeIf { it.isNotBlank() }?.let { row(s, "Wind Direction", it) }
-        record.humidity?.let { row(s, "Humidity", "${fmt(it)}%") }
-        record.sprayReference?.takeIf { it.isNotBlank() }?.let { row(s, "Spray Ref #", it) }
 
         // Equipment
-        val machineName = record.displayMachine(machines)
-        val sprayEquipName = resolveSprayEquipmentName(record, equipment)
-        val hasEquipment = !machineName.isNullOrBlank() || !sprayEquipName.isNullOrBlank() ||
-            !record.tractorGear.isNullOrBlank() || !record.numberOfFansJets.isNullOrBlank() ||
-            record.averageSpeed != null
+        val hasEquipment = payload.equipment.tractorName != null || payload.equipment.sprayUnitName != null ||
+            payload.equipment.startEngineHours != null || payload.equipment.endEngineHours != null ||
+            !record.tractorGear.isNullOrBlank() || !record.numberOfFansJets.isNullOrBlank() || record.averageSpeed != null
         if (hasEquipment) {
             sectionHeader(s, "Equipment")
-            sprayEquipName?.takeIf { it.isNotBlank() }?.let { row(s, "Spray Equipment", it) }
-            machineName?.takeIf { it.isNotBlank() }?.let { row(s, "Tractor / Machine", it) }
+            row(s, "Tractor", payload.equipment.tractorName ?: "Not recorded")
+            row(s, "Engine hours start", payload.equipment.startEngineHours?.let { "${fmt(it)} h" } ?: "Not recorded")
+            row(s, "Engine hours end", payload.equipment.endEngineHours?.let { "${fmt(it)} h" } ?: "Not recorded")
+            row(s, "Engine hours used", payload.equipment.engineHoursUsed?.let { "${fmt(it)} h" } ?: "Not recorded")
+            row(s, "Spray Unit", payload.equipment.sprayUnitName ?: "Not recorded")
             record.tractorGear?.takeIf { it.isNotBlank() }?.let { row(s, "Tractor Gear", it) }
             record.numberOfFansJets?.takeIf { it.isNotBlank() }?.let { row(s, "No. Fans/Jets", it) }
-            record.averageSpeed?.let { row(s, "Average Speed", "${fmt(it)} km/h") }
+            record.averageSpeed?.let { row(s, "Average Speed", regionFormatter.formatSpeed(it)) }
         }
 
         // Tanks
         val tanks = record.tanks.orEmpty()
         for (tank in tanks) {
             sectionHeader(s, "Tank ${tank.tankNumber}")
-            val sessionId = trip?.tankSessions?.firstOrNull { it.tankNumber == tank.tankNumber }?.id
-            val actual = sessionId?.let { id -> actuals.filter { it.tankSessionId == id }.maxByOrNull { it.clientUpdatedAt } }
-                ?: actuals.filter { it.tankNumber == tank.tankNumber }.maxByOrNull { it.clientUpdatedAt }
-            row(s, "Planned Water", "${fmt(tank.waterVolume)} L")
-            row(s, "Actual Water", actual?.let { "${fmt(it.waterVolumeL)} L" } ?: "Not recorded")
-            if (actual != null && kotlin.math.abs(actual.waterVolumeL - tank.waterVolume) > 0.0000001) {
-                row(s, "Water Difference", String.format(Locale.US, "%+.3f L", actual.waterVolumeL - tank.waterVolume))
+            val reportTank = payload.tanks.firstOrNull { it.tankNumber == tank.tankNumber }
+            row(s, "Water — Planned", reportTank?.let { regionFormatter.formatVolume(it.plannedWaterLitres) } ?: "Not recorded")
+            row(s, "Water — Actual", reportTank?.actualWaterLitres?.let { regionFormatter.formatVolume(it) } ?: "Not recorded")
+            if (reportTank?.actualWaterLitres != null && kotlin.math.abs(reportTank.actualWaterLitres - reportTank.plannedWaterLitres) > 0.0000001) {
+                row(s, "Water Difference", String.format(Locale.US, "%+.3f L", reportTank.actualWaterLitres - reportTank.plannedWaterLitres))
             }
             if (tank.sprayRatePerHa > 0) row(s, "Spray Rate", "${fmt(tank.sprayRatePerHa)} L/ha")
             if (tank.concentrationFactor > 0) row(s, "Concentration Factor", fmt(tank.concentrationFactor))
@@ -323,19 +355,20 @@ object SprayRecordPdfExporter {
                     s.ensure(18f)
                     val unit = chemUnitAbbrev(chem.unit)
                     s.canvas.drawText(chem.name.ifBlank { "Unnamed" }, c0, s.y, bodyPaint)
-                    val actualChemical = actual?.chemicals?.firstOrNull { it.plannedChemicalId == chem.id }
+                    val reportChemical = reportTank?.chemicals?.firstOrNull { it.plannedChemicalId == chem.id }
                     val actualText = when {
-                        actualChemical == null -> "Not recorded"
-                        actualChemical.actualAmountBase == 0.0 -> "Not added"
-                        else -> "${fmt(chemicalUnitFromBase(actualChemical.unit, actualChemical.actualAmountBase))} ${actualChemical.unit}"
+                        reportChemical?.actualAmountBase == null -> "Not recorded"
+                        reportChemical.actualAmountBase == 0.0 -> "Not added"
+                        else -> "${fmt(chemicalUnitFromBase(chem.unit, reportChemical.actualAmountBase))} $unit"
                     }
-                    s.canvas.drawText("P ${fmt(chemicalUnitFromBase(chem.unit, chem.volumePerTank))} $unit / A $actualText", c1, s.y, bodyBoldPaint)
+                    val plannedAmount = reportChemical?.plannedAmountBase ?: chem.volumePerTank
+                    s.canvas.drawText("P ${fmt(chemicalUnitFromBase(chem.unit, plannedAmount))} $unit / A $actualText", c1, s.y, bodyBoldPaint)
                     if (chem.ratePerHa > 0) {
                         s.canvas.drawText("${fmt(chem.ratePerHa)} $unit/ha", c2, s.y, bodyBoldPaint)
                     }
                     s.y += 18f
-                    if (actualChemical != null && kotlin.math.abs(actualChemical.actualAmountBase - chem.volumePerTank) > 0.000_001) {
-                        val difference = chemicalUnitFromBase(chem.unit, actualChemical.actualAmountBase - chem.volumePerTank)
+                    if (reportChemical?.actualAmountBase != null && kotlin.math.abs(reportChemical.actualAmountBase - plannedAmount) > 0.000_001) {
+                        val difference = chemicalUnitFromBase(chem.unit, reportChemical.actualAmountBase - plannedAmount)
                         rowIndented(s, "Difference", "${if (difference > 0) "+" else ""}${fmt(difference)} ${chem.unit}")
                     }
                 }
@@ -431,6 +464,17 @@ object SprayRecordPdfExporter {
             }
         }
 
+        if (sharedRoute != null) {
+            drawSharedRouteMap(s, sharedRoute)
+        } else {
+            trip?.takeIf { it.pathPoints.orEmpty().size >= 2 }?.let { drawRouteMap(s, it) }
+        }
+
+        if (payload.warnings.isNotEmpty()) {
+            sectionHeader(s, "Completeness")
+            payload.warnings.forEach { text(s, "• $it", captionPaint) }
+        }
+
         // Notes (strip the legacy "Paddocks:" prefix line like iOS)
         val notes = record.notes.orEmpty()
             .split("\n")
@@ -457,6 +501,49 @@ object SprayRecordPdfExporter {
         val generated = "Generated by VineTrack \u2022 " +
             SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date())
         text(s, generated, captionPaint)
+    }
+
+    private fun drawSharedRouteMap(s: PageState, bitmap: Bitmap) {
+        sectionHeader(s, "Route Map")
+        val height = 250f
+        s.ensure(height + 12f)
+        val destination = RectF(MARGIN, s.y, PAGE_WIDTH - MARGIN, s.y + height)
+        s.canvas.drawBitmap(bitmap, null, destination, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+        s.y += height + 12f
+    }
+
+    private fun drawRouteMap(s: PageState, trip: Trip) {
+        val points = trip.pathPoints.orEmpty()
+        if (points.size < 2) return
+        sectionHeader(s, "Route Map")
+        val height = 250f
+        s.ensure(height + 12f)
+        val rect = RectF(MARGIN, s.y, PAGE_WIDTH - MARGIN, s.y + height)
+        s.canvas.drawRoundRect(rect, 8f, 8f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(42, 48, 42) })
+        val minLat = points.minOf { it.latitude }
+        val maxLat = points.maxOf { it.latitude }
+        val minLon = points.minOf { it.longitude }
+        val maxLon = points.maxOf { it.longitude }
+        val latSpan = (maxLat - minLat).takeIf { it > 0.000001 } ?: 0.000001
+        val lonSpan = (maxLon - minLon).takeIf { it > 0.000001 } ?: 0.000001
+        fun x(index: Int): Float = rect.left + 12f + (((points[index].longitude - minLon) / lonSpan) * (rect.width() - 24f)).toFloat()
+        fun y(index: Int): Float = rect.bottom - 12f - (((points[index].latitude - minLat) / latSpan) * (rect.height() - 24f)).toFloat()
+        val colors = intArrayOf(
+            Color.rgb(219, 26, 26), Color.rgb(245, 82, 15), Color.rgb(250, 173, 13),
+            Color.rgb(166, 194, 20), Color.rgb(26, 158, 56),
+        )
+        val routePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 4f; strokeCap = Paint.Cap.ROUND }
+        for (index in 0 until points.lastIndex) {
+            val progress = index.toDouble() / points.lastIndex.coerceAtLeast(1)
+            routePaint.color = colors[(progress * colors.size).toInt().coerceIn(0, colors.lastIndex)]
+            s.canvas.drawLine(x(index), y(index), x(index + 1), y(index + 1), routePaint)
+        }
+        val markerPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        markerPaint.color = Color.RED
+        s.canvas.drawCircle(x(0), y(0), 7f, markerPaint)
+        markerPaint.color = Color.GREEN
+        s.canvas.drawCircle(x(points.lastIndex), y(points.lastIndex), 7f, markerPaint)
+        s.y += height + 12f
     }
 
     // MARK: drawing helpers
@@ -562,16 +649,4 @@ object SprayRecordPdfExporter {
             SimpleDateFormat("dd/MM/yyyy h:mm a", Locale.getDefault()).format(Date(it))
         }
 
-    private fun fileName(record: SprayRecord): String {
-        val ref = record.sprayReference?.takeIf { it.isNotBlank() } ?: "Record"
-        val date = record.dateEpochMs?.let {
-            SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(it))
-        } ?: SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-        val safe = "${ref}_$date"
-            .replace(" ", "_")
-            .replace("/", "-")
-            .replace(":", "-")
-            .replace(Regex("[^A-Za-z0-9_\\-]"), "")
-        return "SprayRecord_$safe.pdf"
-    }
 }

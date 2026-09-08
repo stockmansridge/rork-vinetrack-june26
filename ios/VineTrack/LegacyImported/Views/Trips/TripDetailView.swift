@@ -12,6 +12,7 @@ struct TripDetailView: View {
     @State private var showDeleteConfirmation: Bool = false
     @State private var position: MapCameraPosition = .automatic
     @State private var isExporting: Bool = false
+    @State private var sprayExportError: String?
     @State private var displayTrailSegments: [TrailSegment] = []
     @State private var showRowCompletion: Bool = false
     @State private var showPathMap: Bool = false
@@ -384,6 +385,14 @@ struct TripDetailView: View {
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+        }
+        .alert("Spray Report Unavailable", isPresented: Binding(
+            get: { sprayExportError != nil },
+            set: { if !$0 { sprayExportError = nil } }
+        )) {
+            Button("OK", role: .cancel) { sprayExportError = nil }
+        } message: {
+            Text(sprayExportError ?? "")
         }
         .alert("Delete Trip", isPresented: $showDeleteConfirmation) {
             Button("Delete", role: .destructive) {
@@ -996,6 +1005,57 @@ struct TripDetailView: View {
         let formatter = store.settings.regionFormatter
         let sprayRecord = sprayRecord
         let tankActuals = SprayTankActualStore.shared.records.filter { $0.tripId == tripCopy.id }
+
+        if SprayReportPayloadV1.isSprayTrip(tripCopy, linkedRecord: sprayRecord) {
+            guard let sprayRecord else {
+                isExporting = false
+                sprayExportError = "Spray record not available yet—sync and retry."
+                return
+            }
+            let tractorName = store.resolvedSprayTractorName(sprayRecord)
+            let equipmentName = store.resolvedSprayEquipmentName(sprayRecord)
+            let offlinePayload = SprayReportPayloadV1.offlineProjection(
+                trip: tripCopy,
+                record: sprayRecord,
+                vineyardName: vineyardName,
+                timeZone: exportTimeZone,
+                paddocks: store.paddocks,
+                tractorName: tractorName,
+                sprayUnitName: equipmentName,
+                tankActuals: tankActuals
+            )
+            Task {
+                let payload = (try? await SprayReportRepository.shared.fetch(tripId: tripCopy.id)) ?? offlinePayload
+                let snapshot = await SprayReportRepository.shared.routeImage(for: payload, fallbackTrip: tripCopy)
+                let pdfData = SprayRecordPDFService.generatePDF(
+                    payload: payload,
+                    record: sprayRecord,
+                    trip: tripCopy,
+                    vineyardName: vineyardName,
+                    paddockName: paddockName,
+                    personName: tripCopy.personName,
+                    paddocks: store.paddocks,
+                    mapSnapshot: snapshot,
+                    logoData: logoData,
+                    includeCostings: includeCostings,
+                    timeZone: exportTimeZone,
+                    formatter: formatter,
+                    resolvedTractorName: tractorName,
+                    resolvedEquipmentName: equipmentName,
+                    tripCostResult: costResult
+                )
+                let url = SprayRecordPDFService.savePDFToTemp(data: pdfData, fileName: String(payload.exportFileName(platform: "ios").dropLast(4)))
+                isExporting = false
+                let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                   let rootVC = windowScene.windows.first?.rootViewController {
+                    var presenter = rootVC
+                    while let presented = presenter.presentedViewController { presenter = presented }
+                    presenter.present(activityVC, animated: true)
+                }
+            }
+            return
+        }
 
         Task {
             let snapshot = await TripPDFService.captureMapSnapshot(trip: tripCopy)

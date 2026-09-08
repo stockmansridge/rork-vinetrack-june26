@@ -43,13 +43,19 @@ object TripPathDisplayProcessor {
         return selected.sorted().map(points::get)
     }
 
-    /** Produces one continuous chronological polyline for the restored trip. */
+    /** Produces up to five overlapping chronological buckets: red, orange, yellow, lime, green. */
     fun displaySegments(
         points: List<CoordinatePoint>,
         maxDisplayPoints: Int = DEFAULT_MAX_DISPLAY_POINTS,
     ): List<List<CoordinatePoint>> {
         val displayed = displayPoints(points, maxDisplayPoints)
-        return if (displayed.size < 2) emptyList() else listOf(displayed)
+        if (displayed.size < 2) return emptyList()
+        val segmentCount = minOf(5, displayed.lastIndex)
+        return List(segmentCount) { bucket ->
+            val start = (bucket * displayed.lastIndex) / segmentCount
+            val end = ((bucket + 1) * displayed.lastIndex) / segmentCount
+            displayed.subList(start, end + 1)
+        }
     }
 
     private fun largestTriangleThreeBucketsIndices(

@@ -846,11 +846,27 @@ extension SprayRecordDetailView {
         }()
 
         Task {
-            var snapshot: UIImage? = nil
-            if let trip, trip.pathPoints.count > 1 {
-                snapshot = await SprayRecordPDFService.captureMapSnapshot(trip: trip)
+            guard let trip else {
+                await MainActor.run {
+                    exportError = "Spray record not available yet—sync and retry."
+                    isGeneratingPDF = false
+                }
+                return
             }
+            let offlinePayload = SprayReportPayloadV1.offlineProjection(
+                trip: trip,
+                record: recordCopy,
+                vineyardName: vineyardName,
+                timeZone: exportTimeZone,
+                paddocks: paddocks,
+                tractorName: resolvedTractorName,
+                sprayUnitName: resolvedEquipmentName,
+                tankActuals: SprayTankActualStore.shared.records.filter { $0.tripId == trip.id && $0.sprayRecordId == recordCopy.id }
+            )
+            let payload = (try? await SprayReportRepository.shared.fetch(tripId: trip.id)) ?? offlinePayload
+            let snapshot = await SprayReportRepository.shared.routeImage(for: payload, fallbackTrip: trip)
             let data = SprayRecordPDFService.generatePDF(
+                payload: payload,
                 record: recordCopy,
                 trip: trip,
                 vineyardName: vineyardName,
@@ -869,7 +885,7 @@ extension SprayRecordDetailView {
                 resolvedEquipmentName: resolvedEquipmentName,
                 tripCostResult: costResult
             )
-            let fileName = "SprayRecord_\(recordCopy.sprayReference.isEmpty ? "Record" : recordCopy.sprayReference)_\(recordCopy.date.formatted(.iso8601.year().month().day()))"
+            let fileName = String(payload.exportFileName(platform: "ios").dropLast(4))
             let url = SprayRecordPDFService.savePDFToTemp(data: data, fileName: fileName)
             await MainActor.run {
                 sharePDFURL = ShareURL(url: url)

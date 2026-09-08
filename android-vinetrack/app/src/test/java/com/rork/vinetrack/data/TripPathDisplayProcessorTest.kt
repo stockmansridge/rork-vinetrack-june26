@@ -38,6 +38,17 @@ class TripPathDisplayProcessorTest {
     }
 
     @Test
+    fun routeIsSplitIntoFiveContinuousChronologicalColourBuckets() {
+        val source = makeRoute(100)
+        val segments = TripPathDisplayProcessor.displaySegments(source)
+
+        assertEquals(5, segments.size)
+        assertEquals(source.first(), segments.first().first())
+        assertEquals(source.last(), segments.last().last())
+        segments.zipWithNext().forEach { (left, right) -> assertEquals(left.last(), right.first()) }
+    }
+
+    @Test
     fun twentyThousandPointRouteRepresentsBeginningMiddleAndEnd() {
         val source = makeRoute(20_000)
         val displayed = TripPathDisplayProcessor.displayPoints(source, displayCap)

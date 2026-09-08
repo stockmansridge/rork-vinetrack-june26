@@ -106,6 +106,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
@@ -165,6 +166,7 @@ import java.text.SimpleDateFormat
 import java.time.Instant
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 @Composable
@@ -1010,6 +1012,8 @@ private fun SprayDetailView(
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
+    val regionFormatter = LocalRegionFormatter.current
+    val exportScope = rememberCoroutineScope()
     // A portal Program Step is the SHARED `spray_jobs` row: the portal, iOS
     // and Android edit the same row, gated by `spray_jobs_update_managers`
     // (owner/manager). Deletion of the shared row stays out of scope.
@@ -1027,22 +1031,32 @@ private fun SprayDetailView(
     }
 
     fun exportPdf() {
-        val ok = SprayRecordPdfExporter.exportAndShare(
-            context = context,
+        val reportTrip = resolveSprayTrip(record, state.trips)
+        if (reportTrip == null) {
+            Toast.makeText(context, "Spray record not available yet—sync and retry.", Toast.LENGTH_LONG).show()
+            return
+        }
+        exportScope.launch {
+            val ok = SprayRecordPdfExporter.exportAndShare(
+                context = context,
             record = record,
             vineyardName = state.selectedVineyard?.name ?: "Vineyard",
             machines = state.machines,
             equipment = state.sprayEquipment,
-            trip = resolveSprayTrip(record, state.trips),
+            trip = reportTrip,
             workTask = resolveSprayWorkTask(record, state.trips, state.workTasks),
             canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager",
             fuelPurchases = state.fuelPurchases,
             operatorCategories = state.operatorCategories,
             paddocks = state.paddocks,
             logo = state.selectedVineyardLogo,
+            regionFormatter = regionFormatter,
+            vineyardTimeZone = regionFormatter.settings.timezone ?: "UTC",
+            pinCount = state.pins.count { it.tripId == reportTrip.id },
         )
-        if (!ok) {
-            Toast.makeText(context, "Couldn't create the PDF. Please try again.", Toast.LENGTH_SHORT).show()
+            if (!ok) {
+                Toast.makeText(context, "Couldn't create the PDF. Please try again.", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 

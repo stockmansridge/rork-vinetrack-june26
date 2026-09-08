@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "1.0",
+  "identity": {
+    "tripId": "a1b2c3d4-0000-4000-8000-000000000001",
+    "sprayRecordId": "a1b2c3d4-0000-4000-8000-000000000002",
+    "vineyardId": "a1b2c3d4-0000-4000-8000-000000000003",
+    "vineyardName": "Stockmans Ridge",
+    "reference": "Late Woolly Bud E-L Stage 2-3",
+    "vineyardTimeZone": "Australia/Sydney"
+  },
+  "trip": {
+    "startUtc": "2026-09-03T21:00:00Z",
+    "endUtc": "2026-09-04T00:35:00Z",
+    "activeDurationSeconds": 10860,
+    "distanceMetres": 12439.15,
+    "operatorName": "Sanitized Operator",
+    "pinCount": 50
+  },
+  "blocks": [{"blockId":"a1b2c3d4-0000-4000-8000-000000000004","name":"Sanitized Block","grossAreaHa":null,"treatedAreaHa":null}],
+  "equipment": {"tractorName":"Sanitized Tractor","startEngineHours":1200.0,"endEngineHours":1203.1,"engineHoursUsed":3.1,"sprayUnitName":"Sanitized Spray Unit"},
+  "rows": [
+    {"rowNumber":1.5,"blockName":"Sanitized Block","status":"Complete","source":"completedPaths","tank":1},
+    {"rowNumber":2.5,"blockName":"Sanitized Block","status":"Partial","source":"incompletePlannedPath","tank":"Multiple"}
+  ],
+  "tanks": [{"tankNumber":1,"plannedWaterLitres":1500,"actualWaterLitres":1500,"chemicals":[{"plannedChemicalId":"a1b2c3d4-0000-4000-8000-000000000005","savedChemicalId":null,"name":"Sanitized Chemical","unit":"Litres","plannedAmountBase":3000,"actualAmountBase":2800,"matchSource":"plannedChemicalId"}]}],
+  "weather": [{"sampleSlot":"2026-09-03T21:00:00Z","observedAt":"2026-09-03T20:55:00Z","source":"Sanitized station","sourceKind":"observed","isStale":false,"temperatureC":16.2,"humidityPct":59,"windSpeedKmh":0,"windGustKmh":null,"windDirectionDeg":0,"rainMm":0}],
+  "route": null,
+  "cost": null,
+  "warnings": ["Fixture is sanitized and route bytes are intentionally omitted."]
+}

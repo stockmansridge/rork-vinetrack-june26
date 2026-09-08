@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vinetrack.app/schemas/spray-report-v1.schema.json",
+  "title": "SprayReportPayloadV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "identity", "trip", "blocks", "equipment", "rows", "tanks", "weather", "route", "warnings"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tripId", "sprayRecordId", "vineyardId", "vineyardName", "reference", "vineyardTimeZone"],
+      "properties": {
+        "tripId": { "type": "string", "format": "uuid" },
+        "sprayRecordId": { "type": "string", "format": "uuid" },
+        "vineyardId": { "type": "string", "format": "uuid" },
+        "vineyardName": { "type": "string" },
+        "reference": { "type": "string" },
+        "vineyardTimeZone": { "type": "string" }
+      }
+    },
+    "trip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startUtc", "endUtc", "activeDurationSeconds", "distanceMetres", "operatorName", "pinCount"],
+      "properties": {
+        "startUtc": { "type": ["string", "null"], "format": "date-time" },
+        "endUtc": { "type": ["string", "null"], "format": "date-time" },
+        "activeDurationSeconds": { "type": ["integer", "null"], "minimum": 0 },
+        "distanceMetres": { "type": ["number", "null"], "minimum": 0 },
+        "operatorName": { "type": ["string", "null"] },
+        "pinCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "blocks": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["blockId", "name"],
+        "properties": {
+          "blockId": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "grossAreaHa": { "type": ["number", "null"], "minimum": 0 },
+          "treatedAreaHa": { "type": ["number", "null"], "minimum": 0 }
+        }
+      }
+    },
+    "equipment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tractorName", "startEngineHours", "endEngineHours", "engineHoursUsed", "sprayUnitName"],
+      "properties": {
+        "tractorName": { "type": ["string", "null"] },
+        "startEngineHours": { "type": ["number", "null"], "minimum": 0 },
+        "endEngineHours": { "type": ["number", "null"], "minimum": 0 },
+        "engineHoursUsed": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "sprayUnitName": { "type": ["string", "null"] }
+      }
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rowNumber", "blockName", "status", "source", "tank"],
+        "properties": {
+          "rowNumber": { "type": "number" },
+          "blockName": { "type": ["string", "null"] },
+          "status": { "enum": ["Complete", "Partial", "Skipped/Not complete"] },
+          "source": { "type": "string" },
+          "tank": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "const": "Multiple" }, { "type": "null" }] }
+        }
+      }
+    },
+    "tanks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tankNumber", "plannedWaterLitres", "actualWaterLitres", "chemicals"],
+        "properties": {
+          "tankNumber": { "type": "integer", "minimum": 1 },
+          "plannedWaterLitres": { "type": "number", "minimum": 0 },
+          "actualWaterLitres": { "type": ["number", "null"], "minimum": 0 },
+          "chemicals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["plannedChemicalId", "savedChemicalId", "name", "unit", "plannedAmountBase", "actualAmountBase", "matchSource"],
+              "properties": {
+                "plannedChemicalId": { "type": "string", "format": "uuid" },
+                "savedChemicalId": { "type": ["string", "null"], "format": "uuid" },
+                "name": { "type": "string" },
+                "unit": { "enum": ["Litres", "mL", "Kg", "g"] },
+                "plannedAmountBase": { "type": "number", "minimum": 0 },
+                "actualAmountBase": { "type": ["number", "null"], "minimum": 0 },
+                "matchSource": { "enum": ["plannedChemicalId", "savedChemicalId", "nameUnit", "notRecorded", "ambiguous"] }
+              }
+            }
+          }
+        }
+      }
+    },
+    "weather": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sampleSlot", "observedAt", "source", "sourceKind", "isStale", "temperatureC", "humidityPct", "windSpeedKmh", "windGustKmh", "windDirectionDeg", "rainMm"],
+        "properties": {
+          "sampleSlot": { "type": "string", "format": "date-time" },
+          "observedAt": { "type": ["string", "null"], "format": "date-time" },
+          "source": { "type": "string" },
+          "sourceKind": { "enum": ["observed", "modelled", "manual", "unavailable"] },
+          "isStale": { "type": "boolean" },
+          "temperatureC": { "type": ["number", "null"] },
+          "humidityPct": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+          "windSpeedKmh": { "type": ["number", "null"], "minimum": 0 },
+          "windGustKmh": { "type": ["number", "null"], "minimum": 0 },
+          "windDirectionDeg": { "type": ["number", "null"], "minimum": 0, "maximum": 360 },
+          "rainMm": { "type": ["number", "null"], "minimum": 0 }
+        }
+      }
+    },
+    "route": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["bucket", "objectPath", "sha256", "routeHash", "styleVersion"],
+      "properties": {
+        "bucket": { "const": "trip-report-assets" },
+        "objectPath": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "routeHash": { "type": "string" },
+        "styleVersion": { "const": "spray-route-red-green-v1" }
+      }
+    },
+    "cost": { "type": ["object", "null"] },
+    "warnings": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+  }
+}

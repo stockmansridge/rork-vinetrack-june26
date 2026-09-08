@@ -198,6 +198,8 @@ import com.rork.vinetrack.data.TrackingPattern
 import com.rork.vinetrack.data.TripCostEstimator
 import com.rork.vinetrack.data.TripCsvExporter
 import com.rork.vinetrack.data.TripPdfExporter
+import com.rork.vinetrack.data.SprayRecordPdfExporter
+import com.rork.vinetrack.data.reporting.SprayReportPayloadV1
 import com.rork.vinetrack.data.TripFuelEstimator
 import com.rork.vinetrack.data.TripPathDisplayProcessor
 import com.rork.vinetrack.data.TripRowSequencePlanner
@@ -954,6 +956,8 @@ private fun TripDetailView(
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
+    val regionFormatter = LocalRegionFormatter.current
+    val exportScope = rememberCoroutineScope()
     val trip = state.trips.firstOrNull { it.id == tripId }
     var confirmDelete by remember { mutableStateOf(false) }
     var ending by remember { mutableStateOf(false) }
@@ -1023,25 +1027,53 @@ private fun TripDetailView(
                         val linkedSprayForExport = state.sprayRecords.firstOrNull { it.tripId == trip.id }
                         val pinCount = state.pins.count { it.tripId == trip.id }
                         fun exportPdf() {
-                            val ok = TripPdfExporter.exportAndShare(
-                                context = context,
-                                trip = trip,
-                                vineyardName = state.selectedVineyard?.name ?: "Vineyard",
-                                blockLabel = blockLabel,
-                                operatorName = operatorName,
-                                pinCount = pinCount,
-                                includeCostings = canViewFinancials,
-                                linkedSpray = linkedSprayForExport,
-                                tankActuals = linkedSprayForExport?.tanks.orEmpty().mapNotNull { vm.actualTankUse(trip.id, it.tankNumber) },
-                                operatorCategories = state.operatorCategories,
-                                machines = state.machines,
-                                fuelPurchases = state.fuelPurchases,
-                                paddocks = state.paddocks,
-                                yieldRecords = state.yieldRecords,
-                                savedInputs = state.savedInputs,
-                                logo = state.selectedVineyardLogo,
-                            )
-                            if (!ok) Toast.makeText(context, "Couldn't create the PDF. Please try again.", Toast.LENGTH_SHORT).show()
+                            val isSpray = SprayReportPayloadV1.isSprayTrip(trip, linkedSprayForExport)
+                            if (isSpray && linkedSprayForExport == null) {
+                                Toast.makeText(context, "Spray record not available yet—sync and retry.", Toast.LENGTH_LONG).show()
+                                return
+                            }
+                            exportScope.launch {
+                                val ok = if (isSpray) {
+                                    SprayRecordPdfExporter.exportAndShare(
+                                    context = context,
+                                    record = requireNotNull(linkedSprayForExport),
+                                    vineyardName = state.selectedVineyard?.name ?: "Vineyard",
+                                    machines = state.machines,
+                                    equipment = state.sprayEquipment,
+                                    trip = trip,
+                                    workTask = resolveTripWorkTask(trip, state.workTasks),
+                                    canViewFinancials = canViewFinancials,
+                                    fuelPurchases = state.fuelPurchases,
+                                    operatorCategories = state.operatorCategories,
+                                    paddocks = state.paddocks,
+                                    logo = state.selectedVineyardLogo,
+                                    regionFormatter = regionFormatter,
+                                    vineyardTimeZone = regionFormatter.settings.timezone ?: "UTC",
+                                    pinCount = pinCount,
+                                )
+                            } else {
+                                TripPdfExporter.exportAndShare(
+                                    context = context,
+                                    trip = trip,
+                                    vineyardName = state.selectedVineyard?.name ?: "Vineyard",
+                                    blockLabel = blockLabel,
+                                    operatorName = operatorName,
+                                    pinCount = pinCount,
+                                    includeCostings = canViewFinancials,
+                                    linkedSpray = null,
+                                    tankActuals = emptyList(),
+                                    operatorCategories = state.operatorCategories,
+                                    machines = state.machines,
+                                    fuelPurchases = state.fuelPurchases,
+                                    paddocks = state.paddocks,
+                                    yieldRecords = state.yieldRecords,
+                                    savedInputs = state.savedInputs,
+                                    logo = state.selectedVineyardLogo,
+                                    regionFormatter = regionFormatter,
+                                )
+                            }
+                                if (!ok) Toast.makeText(context, "Couldn't create the PDF. Please try again.", Toast.LENGTH_SHORT).show()
+                            }
                         }
                         fun exportCsv() {
                             val ok = TripCsvExporter.exportAndShare(
@@ -1919,8 +1951,9 @@ private fun ActiveTripHud(
                     )
                 }
             }
-            pathSegments.forEach { segment ->
-                Polyline(points = segment, color = VineColors.Cyan, width = 9f, zIndex = 1f)
+            val routeColors = listOf(Color(0xFFDB1A1A), Color(0xFFF5520F), Color(0xFFFAAD0D), Color(0xFFA6C214), Color(0xFF1A9E38))
+            pathSegments.forEachIndexed { index, segment ->
+                Polyline(points = segment, color = routeColors[index.coerceAtMost(routeColors.lastIndex)], width = 9f, zIndex = 1f)
             }
             current?.let {
                 // Dot/puck for "where I am now" — never a pin, so the live
@@ -4677,8 +4710,9 @@ private fun TripPathMap(pathSegments: List<List<LatLng>>, blocks: List<Paddock>)
                     )
                 }
             }
-            pathSegments.forEach { segment ->
-                Polyline(points = segment, color = VineColors.Cyan, width = 7f, zIndex = 1f)
+            val routeColors = listOf(Color(0xFFDB1A1A), Color(0xFFF5520F), Color(0xFFFAAD0D), Color(0xFFA6C214), Color(0xFF1A9E38))
+            pathSegments.forEachIndexed { index, segment ->
+                Polyline(points = segment, color = routeColors[index.coerceAtMost(routeColors.lastIndex)], width = 7f, zIndex = 1f)
             }
             pathSegments.firstOrNull()?.firstOrNull()?.let {
                 Marker(state = MarkerState(position = it), title = "Start", icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN))

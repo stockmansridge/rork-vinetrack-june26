@@ -129,6 +129,7 @@ object TripPdfExporter {
         yieldRecords: List<HistoricalYieldRecord> = emptyList(),
         savedInputs: List<SavedInput> = emptyList(),
         logo: Bitmap? = null,
+        regionFormatter: RegionFormatter = RegionFormatter(),
     ): Boolean {
         return try {
             val doc = PdfDocument()
@@ -136,12 +137,12 @@ object TripPdfExporter {
             render(
                 s, trip, vineyardName, blockLabel, operatorName, pinCount,
                 includeCostings, linkedSpray, tankActuals, operatorCategories, machines,
-                fuelPurchases, paddocks, yieldRecords, savedInputs, logo,
+                fuelPurchases, paddocks, yieldRecords, savedInputs, logo, regionFormatter,
             )
             s.finish()
 
             val dir = File(context.cacheDir, "exports").apply { mkdirs() }
-            val file = File(dir, fileName(trip, vineyardName))
+            val file = File(dir, fileName(trip, vineyardName, regionFormatter))
             file.outputStream().use { doc.writeTo(it) }
             doc.close()
 
@@ -184,6 +185,7 @@ object TripPdfExporter {
         yieldRecords: List<HistoricalYieldRecord>,
         savedInputs: List<SavedInput>,
         logo: Bitmap?,
+        regionFormatter: RegionFormatter,
     ) {
         // Header
         val textX = PdfHeaderUtil.drawLogo(s.canvas, logo, MARGIN, s.y)
@@ -208,8 +210,8 @@ object TripPdfExporter {
         timeOfDay(trip.startTime)?.let { row(s, "Start time", it) }
         timeOfDay(trip.endTime)?.let { row(s, "Finish time", it) }
         row(s, "Duration", formatTripDuration(trip.activeDurationSeconds ?: 0L))
-        trip.totalDistance?.takeIf { it > 0 }?.let { row(s, "Distance", "${fmt(it)} m") }
-        averageSpeedKmh(trip)?.let { row(s, "Average speed", "${fmt(it)} km/h") }
+        trip.totalDistance?.takeIf { it > 0 }?.let { row(s, "Distance", regionFormatter.formatDistance(it)) }
+        averageSpeedKmh(trip)?.let { row(s, "Average speed", regionFormatter.formatSpeed(it)) }
         row(s, "Pattern", TrackingPattern.fromRaw(trip.trackingPattern).title)
         if (pinCount > 0) row(s, "Pins logged", pinCount.toString())
 
@@ -560,15 +562,15 @@ object TripPdfExporter {
     private fun timeOfDay(iso: String?): String? =
         parseIsoToEpochMs(iso)?.let { SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(it)) }
 
-    private fun fileName(trip: Trip, vineyardName: String): String {
+    private fun fileName(trip: Trip, vineyardName: String, formatter: RegionFormatter): String {
+        val zone = java.util.TimeZone.getTimeZone(formatter.settings.timezone ?: "UTC")
         val date = trip.startEpochMs?.let {
-            SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(it))
-        } ?: SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-        val safe = "${vineyardName.ifBlank { "Vineyard" }}_$date"
-            .replace(" ", "_")
-            .replace("/", "-")
-            .replace(":", "-")
-            .replace(Regex("[^A-Za-z0-9_\\-]"), "")
-        return "TripReport_$safe.pdf"
+            SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = zone }.format(Date(it))
+        } ?: "Not-recorded"
+        fun safe(value: String, fallback: String): String {
+            val normalized = java.text.Normalizer.normalize(value.trim(), java.text.Normalizer.Form.NFC).replace(Regex("\\s+"), "_")
+            return normalized.replace(Regex("[^\\p{L}\\p{N}_-]"), "").ifBlank { fallback }
+        }
+        return "TripReport_${safe(vineyardName, "Vineyard")}_${date}_${safe(trip.displayLabel, "Trip")}_${trip.id.take(8).lowercase(Locale.ROOT)}-android.pdf"
     }
 }

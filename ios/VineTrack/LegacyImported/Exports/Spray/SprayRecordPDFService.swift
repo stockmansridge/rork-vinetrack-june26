@@ -18,7 +18,7 @@ struct SprayRecordPDFService {
     /// With Australian defaults the numeric values are identical to before;
     /// only unit-label casing is normalised (e.g. "Ha" → "ha"), currency gains
     /// locale grouping, and dates render in the configured DD/MM/YYYY order.
-    static func generatePDF(record: SprayRecord, trip: Trip?, vineyardName: String, paddockName: String, personName: String, paddocks: [Paddock] = [], mapSnapshot: UIImage? = nil, logoData: Data? = nil, fuelCost: Double = 0, operatorCost: Double = 0, operatorCategoryName: String? = nil, includeCostings: Bool = true, timeZone: TimeZone = .current, formatter: RegionFormatter = .australian, resolvedTractorName: String? = nil, resolvedEquipmentName: String? = nil, tripCostResult: TripCostService.Result? = nil) -> Data {
+    static func generatePDF(payload: SprayReportPayloadV1, record: SprayRecord, trip: Trip?, vineyardName: String, paddockName: String, personName: String, paddocks: [Paddock] = [], mapSnapshot: UIImage? = nil, logoData: Data? = nil, fuelCost: Double = 0, operatorCost: Double = 0, operatorCategoryName: String? = nil, includeCostings: Bool = true, timeZone: TimeZone = .current, formatter: RegionFormatter = .australian, resolvedTractorName: String? = nil, resolvedEquipmentName: String? = nil, tripCostResult: TripCostService.Result? = nil) -> Data {
         // Prefer stable-link resolved names when provided; fall back to the
         // record's text snapshots so old records still render unchanged.
         let tractorName = (resolvedTractorName?.isEmpty == false) ? resolvedTractorName! : record.tractor
@@ -103,7 +103,7 @@ struct SprayRecordPDFService {
             PDFHeaderHelper.drawHeader(
                 vineyardName: vineyardName,
                 logoData: logoData,
-                title: "Spray Record",
+                title: "Spray Report",
                 accentColor: accentColor,
                 margin: margin,
                 contentWidth: contentWidth,
@@ -157,13 +157,10 @@ struct SprayRecordPDFService {
                 if let endTime = trip.endTime {
                     drawRow(label: "End Time", value: "\(formatter.formatDate(endTime)) \(timeFormatter.string(from: endTime))")
                 }
-                let duration = trip.activeDuration
-                let hours = Int(duration) / 3600
-                let minutes = (Int(duration) % 3600) / 60
-                if hours > 0 {
-                    drawRow(label: "Duration", value: "\(hours)h \(minutes)m")
+                if let duration = payload.trip.activeDurationSeconds {
+                    drawRow(label: "Active Duration", value: RegionFormatter.formatDuration(seconds: TimeInterval(duration)))
                 } else {
-                    drawRow(label: "Duration", value: "\(minutes)m")
+                    drawRow(label: "Active Duration", value: "Not recorded")
                 }
                 if !trip.pauseTimestamps.isEmpty {
                     drawRow(label: "Pauses", value: "\(trip.pauseTimestamps.count)")
@@ -171,8 +168,10 @@ struct SprayRecordPDFService {
                 if !trip.personName.isEmpty {
                     drawRow(label: "Operator", value: trip.personName)
                 }
-                if trip.totalDistance > 0 {
-                    drawRow(label: "Total Distance", value: formatter.formatDistance(metres: trip.totalDistance))
+                if let distance = payload.trip.distanceMetres {
+                    drawRow(label: "Total Distance", value: formatter.formatDistance(metres: distance))
+                } else {
+                    drawRow(label: "Total Distance", value: "Not recorded")
                 }
                 drawRow(label: "Tracking Pattern", value: trip.trackingPattern.rawValue.capitalized)
                 drawRow(label: "Total Rows", value: "\(trip.rowSequence.count)")
@@ -202,45 +201,36 @@ struct SprayRecordPDFService {
                 }
             }
 
-            // Conditions
-            drawSectionHeader("Conditions")
-
-            drawRow(label: "Date", value: formatter.formatDate(record.date))
-
-            let timeFormatter = DateFormatter()
-            timeFormatter.timeStyle = .short
-            timeFormatter.timeZone = timeZone
-            drawRow(label: "Start Time", value: timeFormatter.string(from: record.startTime))
-            if let endTime = record.endTime {
-                drawRow(label: "End Time", value: timeFormatter.string(from: endTime))
-            }
-            if trip == nil && !personName.isEmpty {
-                drawRow(label: "Operator", value: personName)
-            }
-            if let temp = record.temperature {
-                drawRow(label: "Temperature", value: String(format: "%.1f\u{00B0}C", temp))
-            }
-            if let wind = record.windSpeed {
-                drawRow(label: "Wind Speed (10 min avg)", value: String(format: "%.1f km/h", wind))
-            }
-            if !record.windDirection.isEmpty {
-                drawRow(label: "Wind Direction", value: record.windDirection)
-            }
-            if let humidity = record.humidity {
-                drawRow(label: "Humidity", value: String(format: "%.0f%%", humidity))
-            }
-            if !record.sprayReference.isEmpty {
-                drawRow(label: "Spray Ref #", value: record.sprayReference)
+            drawSectionHeader("Hourly Weather")
+            let weatherTimeFormatter = DateFormatter()
+            weatherTimeFormatter.timeStyle = .short
+            weatherTimeFormatter.timeZone = timeZone
+            let isoFormatter = ISO8601DateFormatter()
+            if payload.weather.isEmpty {
+                drawText("No hourly observations recorded.", font: bodyFont, color: .darkGray)
+            } else {
+                for observation in payload.weather {
+                    let time = isoFormatter.date(from: observation.sampleSlot).map(weatherTimeFormatter.string) ?? observation.sampleSlot
+                    let temperature = observation.temperatureC.map { formatter.formatTemperature(celsius: $0) } ?? "—"
+                    let humidity = observation.humidityPct.map { String(format: "%.0f%%", $0) } ?? "—"
+                    let wind = observation.windSpeedKmh.map { formatter.formatSpeed(kmh: $0) } ?? "—"
+                    let gust = observation.windGustKmh.map { formatter.formatSpeed(kmh: $0) } ?? "—"
+                    let rain = observation.rainMm.map { formatter.formatRainfall(mm: $0) } ?? "—"
+                    drawText("\(time)  \(temperature)  RH \(humidity)  Wind \(wind)  Gust \(gust)  Rain \(rain)", font: bodyFont)
+                    drawText("\(observation.source) · \(observation.sourceKind)\(observation.isStale ? " · stale" : "")", font: captionFont, color: .darkGray)
+                }
             }
 
             // Equipment
-            let hasEquipment = !tractorName.isEmpty || !equipmentName.isEmpty || !record.tractorGear.isEmpty || !record.numberOfFansJets.isEmpty || record.averageSpeed != nil
+            let hasEquipment = payload.equipment.tractorName != nil || payload.equipment.sprayUnitName != nil || payload.equipment.startEngineHours != nil || payload.equipment.endEngineHours != nil || !record.tractorGear.isEmpty || !record.numberOfFansJets.isEmpty || record.averageSpeed != nil
             if hasEquipment {
                 drawSectionHeader("Equipment")
-                if !tractorName.isEmpty {
-                    drawRow(label: "Tractor", value: tractorName)
-                }
-                if !equipmentName.isEmpty {
+                drawRow(label: "Tractor", value: payload.equipment.tractorName ?? "Not recorded")
+                drawRow(label: "Engine hours start", value: payload.equipment.startEngineHours.map { String(format: "%.1f h", $0) } ?? "Not recorded")
+                drawRow(label: "Engine hours end", value: payload.equipment.endEngineHours.map { String(format: "%.1f h", $0) } ?? "Not recorded")
+                drawRow(label: "Engine hours used", value: payload.equipment.engineHoursUsed.map { String(format: "%.1f h", $0) } ?? "Not recorded")
+                drawRow(label: "Spray Unit", value: payload.equipment.sprayUnitName ?? "Not recorded")
+                if !equipmentName.isEmpty && payload.equipment.sprayUnitName == nil {
                     drawRow(label: "Equipment Type", value: equipmentName)
                 }
                 if !record.tractorGear.isEmpty {
@@ -258,14 +248,11 @@ struct SprayRecordPDFService {
             for tank in record.tanks {
                 drawSectionHeader("Tank \(tank.tankNumber)")
 
-                let sessionId = trip?.tankSessions.first(where: { $0.tankNumber == tank.tankNumber })?.id.uuidString
-                let tripActuals = trip.map { trip in SprayTankActualStore.shared.records.filter { $0.tripId == trip.id && $0.sprayRecordId == record.id } } ?? []
-                let actual = sessionId.flatMap { id in tripActuals.filter { $0.tankSessionId == id }.max(by: { $0.clientUpdatedAt < $1.clientUpdatedAt }) }
-                    ?? tripActuals.filter { $0.tankNumber == tank.tankNumber }.max(by: { $0.clientUpdatedAt < $1.clientUpdatedAt })
-                drawRow(label: "Planned Water", value: formatter.formatVolume(litres: tank.waterVolume))
-                drawRow(label: "Actual Water", value: actual.map { formatter.formatVolume(litres: $0.waterVolumeL) } ?? "Not recorded")
-                if let actual, abs(actual.waterVolumeL - tank.waterVolume) > 0.000_000_1 {
-                    drawRow(label: "Water Difference", value: String(format: "%+.3f L", actual.waterVolumeL - tank.waterVolume))
+                let reportTank = payload.tanks.first(where: { $0.tankNumber == tank.tankNumber })
+                drawRow(label: "Water — Planned", value: reportTank.map { formatter.formatVolume(litres: $0.plannedWaterLitres) } ?? "Not recorded")
+                drawRow(label: "Water — Actual", value: reportTank?.actualWaterLitres.map { formatter.formatVolume(litres: $0) } ?? "Not recorded")
+                if let plannedWater = reportTank?.plannedWaterLitres, let actualWater = reportTank?.actualWaterLitres, abs(actualWater - plannedWater) > 0.000_000_1 {
+                    drawRow(label: "Water Difference", value: String(format: "%+.3f L", actualWater - plannedWater))
                 }
                 drawRow(label: "Spray Rate", value: formatter.formatSprayRate(perHectare: tank.sprayRatePerHa, unitLabel: "L", fractionDigits: 1))
                 drawRow(label: "Concentration Factor", value: String(format: "%.2f", tank.concentrationFactor))
@@ -305,18 +292,19 @@ struct SprayRecordPDFService {
                         // unit (L/kg) — those are manufacturer-specified, not a
                         // region preference. Only the per-area denominator is
                         // region-aware via the spray-rate formatter.
-                        let actualChemical = actual?.chemicals.first { $0.plannedChemicalId == chemical.id }
-                        let actualText = actualChemical.map { line in
-                            line.actualAmountBase == 0 ? "Not added" : String(format: "%.3f %@", line.displayAmount, line.unit.rawValue)
+                        let reportChemical = reportTank?.chemicals.first { $0.plannedChemicalId == chemical.id }
+                        let actualText = reportChemical?.actualAmountBase.map { amount in
+                            amount == 0 ? "Not added" : String(format: "%.3f %@", chemical.unit.fromBase(amount), chemical.unit.rawValue)
                         } ?? "Not recorded"
-                        (String(format: "P %.3f %@ / A %@", chemical.displayVolume, chemical.unitLabel, actualText) as NSString).draw(at: CGPoint(x: colX[1], y: y), withAttributes: valAttrs)
+                        let plannedAmount = reportChemical?.plannedAmountBase ?? chemical.volumePerTank
+                        (String(format: "P %.3f %@ / A %@", chemical.unit.fromBase(plannedAmount), chemical.unitLabel, actualText) as NSString).draw(at: CGPoint(x: colX[1], y: y), withAttributes: valAttrs)
                         // Read from the line's own recorded basis. Printing
                         // `ratePerHa` unconditionally reported every per-100 L
                         // line as "0.00 L/ha" on a compliance document.
                         (chemical.reportedRateText(formatter: formatter) as NSString).draw(at: CGPoint(x: colX[2], y: y), withAttributes: valAttrs)
                         y += 18
-                        if let actualChemical, abs(actualChemical.actualAmountBase - chemical.volumePerTank) > 0.000_001 {
-                            let difference = chemical.unit.fromBase(actualChemical.actualAmountBase - chemical.volumePerTank)
+                        if let actualAmount = reportChemical?.actualAmountBase, abs(actualAmount - plannedAmount) > 0.000_001 {
+                            let difference = chemical.unit.fromBase(actualAmount - plannedAmount)
                             drawRow(label: "  Difference", value: "\(difference > 0 ? "+" : "")\(String(format: "%.3f", difference)) \(chemical.unit.rawValue)", indent: 12)
                         }
                     }
@@ -473,6 +461,11 @@ struct SprayRecordPDFService {
                 }
             }
 
+            if !payload.warnings.isEmpty {
+                drawSectionHeader("Completeness")
+                for warning in payload.warnings { drawText("• \(warning)", font: captionFont, color: .darkGray) }
+            }
+
             if let snapshot = mapSnapshot {
                 drawSectionHeader("Route Map")
 
@@ -515,51 +508,35 @@ struct SprayRecordPDFService {
 
                 let colRowX: CGFloat = margin + 8
                 let colBlockX: CGFloat = margin + 70
-                let colStatusX: CGFloat = margin + 200
-                let colTankX: CGFloat = margin + 330
+                let colStatusX: CGFloat = margin + 190
+                let colSourceX: CGFloat = margin + 285
+                let colTankX: CGFloat = margin + 405
                 let tableHeaderAttrs: [NSAttributedString.Key: Any] = [.font: captionFont, .foregroundColor: UIColor.black]
                 checkPageBreak(needed: 16)
                 ("ROW" as NSString).draw(at: CGPoint(x: colRowX, y: y), withAttributes: tableHeaderAttrs)
                 (formatter.blockTerm.uppercased() as NSString).draw(at: CGPoint(x: colBlockX, y: y), withAttributes: tableHeaderAttrs)
                 ("STATUS" as NSString).draw(at: CGPoint(x: colStatusX, y: y), withAttributes: tableHeaderAttrs)
+                ("SOURCE" as NSString).draw(at: CGPoint(x: colSourceX, y: y), withAttributes: tableHeaderAttrs)
                 ("TANK" as NSString).draw(at: CGPoint(x: colTankX, y: y), withAttributes: tableHeaderAttrs)
                 y += 14
 
-                for row in trip.rowSequence.sorted() {
+                for row in payload.rows {
                     checkPageBreak(needed: 18)
-                    let rowLabel = "Row \(formatPath(row))"
-                    let isCompleted = trip.completedPaths.contains(row)
-                    let isSkipped = trip.skippedPaths.contains(row)
-                    let status: String
-                    let statusColor: UIColor
-                    if isCompleted {
-                        status = "Completed"
-                        statusColor = VineyardTheme.uiOlive
-                    } else if isSkipped {
-                        status = "Skipped"
-                        statusColor = UIColor(red: 0.8, green: 0.2, blue: 0.2, alpha: 1.0)
-                    } else {
-                        status = "Pending"
-                        statusColor = UIColor.darkGray
-                    }
-
-                    var tankLabel = "–"
-                    for session in trip.tankSessions {
-                        if session.pathsCovered.contains(row) {
-                            tankLabel = "Tank \(session.tankNumber)"
-                            break
-                        }
-                    }
-
-                    let blockName = blockNameForPath(row, paddocks: paddocks)
+                    let rowLabel = "Row \(formatPath(row.rowNumber))"
+                    let status = row.status
+                    let statusColor: UIColor = status == "Complete" ? VineyardTheme.uiOlive : (status == "Skipped/Not complete" ? UIColor(red: 0.8, green: 0.2, blue: 0.2, alpha: 1.0) : UIColor.darkGray)
+                    let tankLabel = row.tank?.displayText ?? "Not recorded"
+                    let blockName = row.blockName ?? "Not recorded"
 
                     let rowAttrs: [NSAttributedString.Key: Any] = [.font: bodyFont, .foregroundColor: UIColor.black]
                     let blockAttrs: [NSAttributedString.Key: Any] = [.font: bodyFont, .foregroundColor: UIColor.black]
                     let statusAttrs: [NSAttributedString.Key: Any] = [.font: bodyBoldFont, .foregroundColor: statusColor]
+                    let sourceAttrs: [NSAttributedString.Key: Any] = [.font: captionFont, .foregroundColor: UIColor.darkGray]
                     let tankAttrs: [NSAttributedString.Key: Any] = [.font: bodyFont, .foregroundColor: UIColor.black]
                     (rowLabel as NSString).draw(at: CGPoint(x: colRowX, y: y), withAttributes: rowAttrs)
                     (blockName as NSString).draw(at: CGPoint(x: colBlockX, y: y), withAttributes: blockAttrs)
                     (status as NSString).draw(at: CGPoint(x: colStatusX, y: y), withAttributes: statusAttrs)
+                    (row.source as NSString).draw(at: CGPoint(x: colSourceX, y: y), withAttributes: sourceAttrs)
                     (tankLabel as NSString).draw(at: CGPoint(x: colTankX, y: y), withAttributes: tankAttrs)
                     y += 18
                 }
@@ -636,9 +613,15 @@ struct SprayRecordPDFService {
                     let p1 = snapshot.point(for: coords[i])
                     let p2 = snapshot.point(for: coords[i + 1])
                     let progress = Double(i) / Double(max(coords.count - 1, 1))
-                    let r = CGFloat(1.0 - progress)
-                    let g = CGFloat(progress)
-                    ctx.setStrokeColor(UIColor(red: r, green: g, blue: 0, alpha: 1.0).cgColor)
+                    let routeColors: [UIColor] = [
+                        UIColor(red: 0.86, green: 0.10, blue: 0.10, alpha: 1),
+                        UIColor(red: 0.96, green: 0.32, blue: 0.06, alpha: 1),
+                        UIColor(red: 0.98, green: 0.68, blue: 0.05, alpha: 1),
+                        UIColor(red: 0.65, green: 0.76, blue: 0.08, alpha: 1),
+                        UIColor(red: 0.10, green: 0.62, blue: 0.22, alpha: 1)
+                    ]
+                    let colorIndex = min(Int(progress * Double(routeColors.count)), routeColors.count - 1)
+                    ctx.setStrokeColor(routeColors[colorIndex].cgColor)
                     ctx.move(to: p1)
                     ctx.addLine(to: p2)
                     ctx.strokePath()
@@ -647,12 +630,12 @@ struct SprayRecordPDFService {
                 let startPoint = snapshot.point(for: coords.first!)
                 let endPoint = snapshot.point(for: coords.last!)
 
-                ctx.setFillColor(UIColor.systemGreen.cgColor)
+                ctx.setFillColor(UIColor.systemRed.cgColor)
                 ctx.fillEllipse(in: CGRect(x: startPoint.x - 8, y: startPoint.y - 8, width: 16, height: 16))
                 ctx.setFillColor(UIColor.white.cgColor)
                 ctx.fillEllipse(in: CGRect(x: startPoint.x - 4, y: startPoint.y - 4, width: 8, height: 8))
 
-                ctx.setFillColor(UIColor.systemRed.cgColor)
+                ctx.setFillColor(UIColor.systemGreen.cgColor)
                 ctx.fillEllipse(in: CGRect(x: endPoint.x - 8, y: endPoint.y - 8, width: 16, height: 16))
                 ctx.setFillColor(UIColor.white.cgColor)
                 ctx.fillEllipse(in: CGRect(x: endPoint.x - 4, y: endPoint.y - 4, width: 8, height: 8))

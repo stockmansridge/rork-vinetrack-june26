@@ -153,6 +153,7 @@ final class TripTrackingService {
 
     private var trackingTask: Task<Void, Never>?
     private var tickerTask: Task<Void, Never>?
+    private var sprayWeatherTask: Task<Void, Never>?
     private var lastObservedLocation: CLLocation?
 
     // Path-distance tracking for auto path completion (global path → metres).
@@ -323,6 +324,7 @@ final class TripTrackingService {
         // dependent trip event can observe it.
         store.startTrip(trip)
         errorMessage = nil
+        beginSprayWeatherCapture(for: trip)
         beginTracking()
         _ = type
     }
@@ -386,6 +388,7 @@ final class TripTrackingService {
         store.updateSprayRecord(record)
         store.updateTrip(activated)
         errorMessage = nil
+        beginSprayWeatherCapture(for: activated)
         beginTracking()
     }
 
@@ -431,6 +434,9 @@ final class TripTrackingService {
             trip.manualCorrectionEvents = diagManualCorrectionEvents
             store?.updateTrip(trip)
         }
+        Task { await SprayReportRepository.shared.captureUnavailableIfDue(for: trip, at: Date(), isFinal: true) }
+        sprayWeatherTask?.cancel()
+        sprayWeatherTask = nil
         store?.endTrip(trip.id)
         stopTrackingLoops(stopLocation: true)
         isTracking = false
@@ -865,6 +871,19 @@ final class TripTrackingService {
                         self.elapsedTime = trip.activeDuration
                     }
                 }
+            }
+        }
+    }
+
+    private func beginSprayWeatherCapture(for trip: Trip) {
+        guard trip.tripFunction == TripFunction.spraying.rawValue else { return }
+        Task { await SprayReportRepository.shared.captureUnavailableIfDue(for: trip, at: trip.startTime) }
+        guard sprayWeatherTask == nil else { return }
+        sprayWeatherTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                guard let self, let active = self.activeTrip else { return }
+                await SprayReportRepository.shared.captureUnavailableIfDue(for: active)
             }
         }
     }

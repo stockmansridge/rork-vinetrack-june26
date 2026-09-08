@@ -105,6 +105,7 @@ import com.rork.vinetrack.data.PinPlacementResult
 import com.rork.vinetrack.data.PinRepository
 import com.rork.vinetrack.data.ProfileRepository
 import com.rork.vinetrack.data.RegionFormatter
+import com.rork.vinetrack.data.reporting.SprayReportRepository
 import com.rork.vinetrack.data.PickingRecordCreateSync
 import com.rork.vinetrack.data.PickingRecordDeleteSync
 import com.rork.vinetrack.data.GrapeAllocationRepository
@@ -1019,6 +1020,7 @@ internal fun resolveTripPinAttribution(
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val session = SessionStore(app)
+    private val sprayReportRepository = SprayReportRepository(session)
     private val auth = AuthRepository(session)
     private val biometricStore = BiometricStore(app)
     private val onboardingStore = OnboardingStore(app)
@@ -1662,6 +1664,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Foreground GPS tracker for the currently active trip (null when idle). */
     private var tracker: LocationTracker? = null
+    private var sprayWeatherJob: kotlinx.coroutines.Job? = null
 
     /**
      * Active-trip row-lock state machine. Mirrors iOS so a future trip
@@ -7236,7 +7239,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val tripId = trip.id
         val capturedPoints = tracker?.points?.toList() ?: trip.pathPoints ?: emptyList()
         val capturedDistance = tracker?.distanceMetres ?: trip.totalDistance ?: 0.0
-        val requestedEndTime = java.time.Instant.now().toString()
+        val requestedEndInstant = java.time.Instant.now()
+        val requestedEndTime = requestedEndInstant.toString()
+        if (trip.tripFunction == "spraying") {
+            viewModelScope.launch { sprayReportRepository.captureUnavailableIfDue(trip, requestedEndInstant, isFinal = true) }
+        }
+        sprayWeatherJob?.cancel()
+        sprayWeatherJob = null
         val cleanNotes = notes?.ifBlank { null }
         tracker?.stop()
         tracker = null
@@ -7600,6 +7609,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun hasLocationPermission(): Boolean = LocationTracker(getApplication()).hasPermission
 
     private fun beginTracking(trip: Trip) {
+        beginSprayWeatherCapture(trip)
         val t = LocationTracker(getApplication())
         if (!t.hasPermission) {
             tracker = null
@@ -7642,6 +7652,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * (nearest row − 0.5) and corridor membership, then advances the lock
      * state machine. Read-only: never persists to pins or trips.
      */
+    private fun beginSprayWeatherCapture(trip: Trip) {
+        if (trip.tripFunction != "spraying") return
+        viewModelScope.launch { sprayReportRepository.captureUnavailableIfDue(trip) }
+        if (sprayWeatherJob?.isActive == true) return
+        sprayWeatherJob = viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(60_000)
+                val active = _ui.value.activeTrip ?: break
+                sprayReportRepository.captureUnavailableIfDue(active)
+            }
+        }
+    }
+
     private fun updateRowLockState(tripId: String, sample: LocationTracker.MovementSample?) {
         if (sample == null) return
         val st = _ui.value
