@@ -33,6 +33,8 @@ struct SprayRecordPDFService {
         let data = renderer.pdfData { context in
             context.beginPage()
             var y: CGFloat = margin
+            var pageNumber: Int = 1
+            let officialLogo = UIImage(named: "vinetrack_logo")
 
             let titleFont = UIFont.systemFont(ofSize: 22, weight: .bold)
             let headerFont = UIFont.systemFont(ofSize: 14, weight: .semibold)
@@ -41,11 +43,28 @@ struct SprayRecordPDFService {
             let captionFont = UIFont.systemFont(ofSize: 9, weight: .regular)
             let accentColor = VineyardTheme.uiOlive
 
-            func checkPageBreak(needed: CGFloat) {
-                if y + needed > pageHeight - margin {
-                    context.beginPage()
-                    y = margin
+            func drawPageFooter() {
+                let footerY = pageHeight - 30
+                if let officialLogo {
+                    let maxSize = CGSize(width: 78, height: 18)
+                    let scale = min(maxSize.width / officialLogo.size.width, maxSize.height / officialLogo.size.height)
+                    officialLogo.draw(in: CGRect(x: margin, y: footerY, width: officialLogo.size.width * scale, height: officialLogo.size.height * scale))
                 }
+                let pageText = "Page \(pageNumber)"
+                let attrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 8), .foregroundColor: UIColor.darkGray]
+                let width = (pageText as NSString).size(withAttributes: attrs).width
+                (pageText as NSString).draw(at: CGPoint(x: pageWidth - margin - width, y: footerY + 4), withAttributes: attrs)
+            }
+
+            func beginContinuationPage() {
+                drawPageFooter()
+                context.beginPage()
+                pageNumber += 1
+                y = margin
+            }
+
+            func checkPageBreak(needed: CGFloat) {
+                if y + needed > pageHeight - margin - 18 { beginContinuationPage() }
             }
 
             func drawText(_ text: String, font: UIFont, color: UIColor = .black, x: CGFloat = margin, maxWidth: CGFloat? = nil) {
@@ -308,6 +327,22 @@ struct SprayRecordPDFService {
                             drawRow(label: "  Difference", value: "\(difference > 0 ? "+" : "")\(String(format: "%.3f", difference)) \(chemical.unit.rawValue)", indent: 12)
                         }
                     }
+                    for actualOnly in reportTank?.chemicals.filter({ $0.plannedChemicalId == nil }) ?? [] {
+                        checkPageBreak(needed: 22)
+                        let kind = actualOnly.usageKind == "substitution" ? "Substituted actual" : "Additional actual"
+                        let actualUnit = ChemicalUnit(rawValue: actualOnly.unit) ?? .litres
+                        drawRow(label: "  \(kind): \(actualOnly.name)", value: actualOnly.actualAmountBase.map { "\(String(format: "%.3f", actualUnit.fromBase($0))) \(actualUnit.rawValue)" } ?? "Not recorded", indent: 12)
+                    }
+                }
+            }
+
+            if !payload.amendments.isEmpty {
+                drawSectionHeader("Amendment History")
+                for amendment in payload.amendments {
+                    let oldValue = amendment.previousValue?.displayText ?? "Not recorded"
+                    let newValue = amendment.newValue?.displayText ?? "Not recorded"
+                    drawText("Tank \(amendment.tankNumber) · \(amendment.field): \(oldValue) → \(newValue)", font: bodyFont)
+                    drawText("Updated by \(amendment.editorName) · \(amendment.editedAt) (\(payload.identity.vineyardTimeZone))", font: captionFont, color: .darkGray)
                 }
             }
 
@@ -322,11 +357,18 @@ struct SprayRecordPDFService {
             }.sorted { $0.0.lowercased() < $1.0.lowercased() }
 
             if !chemTotals.isEmpty {
-                drawSectionHeader("Chemical Totals (All Tanks)")
+                drawSectionHeader("Planned Chemical Totals (All Tanks)")
                 for (name, totalBase, unit) in chemTotals {
                     let displayTotal = unit.fromBase(totalBase)
                     let unitAbbrev = unit == .litres ? "L" : unit == .kilograms ? "Kg" : unit.rawValue
                     drawRow(label: name, value: String(format: "%.2f%@", displayTotal, unitAbbrev))
+                }
+            }
+            if !payload.actualChemicalTotals.isEmpty {
+                drawSectionHeader("Actual Chemical Totals (All Tanks)")
+                for total in payload.actualChemicalTotals {
+                    let unit = ChemicalUnit(rawValue: total.unit) ?? .litres
+                    drawRow(label: total.name, value: String(format: "%.3f %@", unit.fromBase(total.actualAmountBase), unit.rawValue))
                 }
             }
 
@@ -501,8 +543,7 @@ struct SprayRecordPDFService {
             }
 
             if let trip = trip, !trip.rowSequence.isEmpty {
-                context.beginPage()
-                y = margin
+                beginContinuationPage()
 
                 drawSectionHeader("Row Summary")
 
@@ -548,6 +589,7 @@ struct SprayRecordPDFService {
             let tzAbbrev = timeZone.abbreviation() ?? timeZone.identifier
             let footerText = "Generated by VineTrack \u{2022} \(formatter.formatDate(Date())) (\(tzAbbrev))"
             drawText(footerText, font: captionFont, color: .darkGray)
+            drawPageFooter()
         }
 
         return data

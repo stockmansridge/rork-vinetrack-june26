@@ -33,8 +33,11 @@ class SprayReportPayloadV1Test {
             id = "a1b2c3d4-0000-4000-8000-000000000005", vineyardId = vineyardId,
             sprayRecordId = recordId, tripId = tripId, tankSessionId = "session-1", tankNumber = 1,
             waterVolumeL = 1450.0,
-            chemicals = listOf(SprayTankActualChemical("a1b2c3d4-0000-4000-8000-000000000006", lineId, null, "Product", 2800.0, "Litres")),
-            confirmedAt = "2026-09-04T01:00:00Z", confirmedBy = "a1b2c3d4-0000-4000-8000-000000000007",
+            chemicals = listOf(
+                SprayTankActualChemical("a1b2c3d4-0000-4000-8000-000000000006", lineId, null, "Product", 2800.0, "Litres"),
+                SprayTankActualChemical("a1b2c3d4-0000-4000-8000-000000000008", null, null, "Replacement", 500.0, "mL", lineId, "substitution"),
+            ),
+            confirmedAt = "2026-09-04T01:00:00Z", confirmedBy = "a1b2c3d4-0000-4000-8000-000000000007", correctionVersion = 2,
         )
 
         val payload = SprayReportPayloadV1.offlineProjection(trip, record, "Stockmans Ridge", "Australia/Sydney", emptyList(), emptyList(), emptyList(), listOf(actual), 50)
@@ -44,6 +47,10 @@ class SprayReportPayloadV1Test {
         assertEquals(1450.0, payload.tanks.first().actualWaterLitres!!, 0.0)
         assertEquals(3000.0, payload.tanks.first().chemicals.first().plannedAmountBase, 0.0)
         assertEquals(2800.0, payload.tanks.first().chemicals.first().actualAmountBase!!, 0.0)
+        assertEquals(2L, payload.tanks.first().actualVersion)
+        assertEquals("substitution", payload.tanks.first().chemicals.last().usageKind)
+        assertEquals(null, payload.tanks.first().chemicals.last().plannedAmountBase)
+        assertEquals(2, payload.actualChemicalTotals.size)
         assertEquals(3.1, payload.equipment.engineHoursUsed!!, 0.000001)
     }
 

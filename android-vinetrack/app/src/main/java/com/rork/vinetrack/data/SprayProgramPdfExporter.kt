@@ -243,7 +243,7 @@ object SprayProgramPdfExporter {
         val relevantActuals = tankActuals.filter { actual -> records.any { it.id == actual.sprayRecordId } }
         s.y += 8f
         s.ensure(20f)
-        s.canvas.drawText("Actual tanks recorded: ${relevantActuals.size} • Actual water used: ${String.format(Locale.US, "%.2f", relevantActuals.sumOf { it.waterVolumeL })} L", MARGIN, s.y, bodyBoldPaint)
+        s.canvas.drawText("Actual tanks recorded: ${relevantActuals.size} • Actual water used: ${String.format(Locale.US, "%.2f", relevantActuals.mapNotNull { it.waterVolumeL }.sum())} L", MARGIN, s.y, bodyBoldPaint)
         s.y += 16f
 
         drawRowCoverage(s, records, trips)

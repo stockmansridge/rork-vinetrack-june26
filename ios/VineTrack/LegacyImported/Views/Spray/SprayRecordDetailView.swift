@@ -788,8 +788,9 @@ extension SprayRecordDetailView {
         guard !isGeneratingPDF else { return }
         isGeneratingPDF = true
         let trip = tripForRecord
-        let vineyardName = store.selectedVineyard?.name ?? "Vineyard"
-        let logoData = store.selectedVineyard?.logoData
+        let exportVineyard = store.vineyards.first { $0.id == (trip?.vineyardId ?? record.vineyardId) }
+        let vineyardName = exportVineyard?.name ?? "Vineyard"
+        let logoData = exportVineyard?.logoData
         let paddockName: String = trip?.paddockName ?? ""
         let personName: String = trip?.personName ?? ""
         let paddocks = store.paddocks
@@ -853,6 +854,18 @@ extension SprayRecordDetailView {
                 }
                 return
             }
+            var resolvedLogoData = logoData
+            if resolvedLogoData == nil, let logoPath = exportVineyard?.logoPath {
+                do {
+                    resolvedLogoData = try await VineyardLogoStorageService().downloadLogo(path: logoPath, vineyardId: trip.vineyardId, remoteUpdatedAt: exportVineyard?.logoUpdatedAt)
+                } catch {
+                    await MainActor.run {
+                        exportError = "The configured vineyard logo could not be loaded. Check your connection and try the export again."
+                        isGeneratingPDF = false
+                    }
+                    return
+                }
+            }
             let offlinePayload = SprayReportPayloadV1.offlineProjection(
                 trip: trip,
                 record: recordCopy,
@@ -874,7 +887,7 @@ extension SprayRecordDetailView {
                 personName: personName,
                 paddocks: paddocks,
                 mapSnapshot: snapshot,
-                logoData: logoData,
+                logoData: resolvedLogoData,
                 fuelCost: fuelCost,
                 operatorCost: operatorCost,
                 operatorCategoryName: operatorCatName,

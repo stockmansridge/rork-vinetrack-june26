@@ -31,3 +31,65 @@ Request fields:
 - `p_style_version`: exactly `spray-route-red-green-v1`.
 
 Response fields are the canonical `SprayReportPayloadV1.route` object: `bucket`, `objectPath`, `sha256`, `routeHash`, and `styleVersion`. Always use the returned object; when another export registered first, the RPC returns that existing immutable winner instead of replacing it.
+
+## Audited actual-use corrections (SQL 227)
+
+Run `sql/227_spray_actual_corrections_v1.sql`, then the rollback-only `sql/tests/227_spray_actual_corrections_v1_tests.sql`. Do not rerun SQL 224–226.
+
+Use only `correct_spray_tank_actual_v1`; never write `spray_tank_actuals` or `spray_tank_actual_amendments` directly. Send the authenticated user's JWT. The server derives the editor ID, display-name snapshot, and timestamp.
+
+Request:
+
+- `p_operation_id`: a new UUID generated once per Save attempt and reused for retries of that same Save.
+- `p_actual_id`: existing `tanks[].actualId`, or a new UUID when `actualVersion` is `0` and no actual row exists.
+- `p_trip_id`, `p_spray_record_id`, `p_tank_session_id`, `p_tank_number`: the exact canonical identities; they are cross-checked against the frozen trip and spray plan.
+- `p_expected_version`: the current `tanks[].actualVersion`; use `0` for first entry. SQLSTATE `40001` means reload and reconcile a version conflict.
+- `p_water_volume_l`: litres, nullable. JSON `null` means Not recorded; `0` is an explicit recorded zero.
+- `p_chemicals`: the complete saved actual-chemical snapshot for that tank. Omitting a prior line clears/removes that actual observation. Amounts are non-negative base units: mL for liquid dimensions and g for solid dimensions.
+
+Each chemical object is:
+
+```json
+{
+  "id": "stable-actual-line-uuid",
+  "plannedChemicalId": "planned-line-uuid-or-null",
+  "savedChemicalId": "vineyard-product-uuid-or-null",
+  "replacesPlannedChemicalId": "planned-line-uuid-or-null",
+  "usageKind": "planned | substitution | additional",
+  "name": "Recorded product name",
+  "actualAmountBase": 1250,
+  "unit": "Litres | mL | Kg | g"
+}
+```
+
+Rules:
+
+- `planned` requires `plannedChemicalId` and no replacement ID.
+- `substitution` requires `plannedChemicalId: null` plus `replacesPlannedChemicalId`; the planned line remains unchanged and visible.
+- `additional` has both planned/replacement IDs null.
+- Any `savedChemicalId` must be a live product in the trip vineyard. Planned/replacement IDs must belong to that exact frozen tank plan.
+- Blank UI quantity means remove/omit the actual line; zero means retain the line with `actualAmountBase: 0`.
+- Save all edited tanks separately with distinct operation IDs. Do not update worksheet state or export draft values until every required RPC has succeeded and `get_spray_report_v1` has been refreshed. Cancel performs no calls.
+
+Response:
+
+```json
+{
+  "actual": { "id": "...", "water_volume_l": 1200, "chemicals": [], "correction_version": 3, "last_corrected_at": "..." },
+  "amendments": []
+}
+```
+
+A repeated operation ID is idempotent. A semantic no-op appends no history. Actual and history changes commit in one transaction. Once a row has a correction version, the legacy offline-confirmation RPC cannot overwrite it; mobile sync receives the authoritative row.
+
+Canonical report schema is now `1.1`:
+
+- `tanks[].actualId` and `tanks[].actualVersion` drive version-checked edits.
+- Planned chemical rows remain in `tanks[].chemicals` with `usageKind: "planned"` and their frozen `plannedAmountBase`.
+- Substituted/additional rows are appended with nullable `plannedChemicalId`/`plannedAmountBase`, `matchSource: "actualOnly"`, and explicit `usageKind`/`replacesPlannedChemicalId`.
+- Top-level `actualChemicalTotals[]` groups every recorded actual line once by saved-product identity, or normalized name + unit when no saved identity exists.
+- Top-level `amendments[]` contains `operationId`, tank/product identities, field, change kind, previous/new JSON value and units, revision, server-authored `editedBy`, `editorName`, and `editedAt`.
+
+Render the current actuals and a readable amendment history in the vineyard timezone. Actual totals must include every actual line once, including substitutions and additions, without changing planned totals. Keep all monetary output under the existing financial-role gate.
+
+For PDF branding, resolve the vineyard from `identity.vineyardId`, not the portal's currently selected vineyard. Wait for that configured logo to load; fail with an honest warning if a configured object cannot be fetched/decoded. Draw it aspect-fit at top left. Draw the bundled official VineTrack mark at bottom left of every page, reserve header/footer space, and keep page numbering clear.

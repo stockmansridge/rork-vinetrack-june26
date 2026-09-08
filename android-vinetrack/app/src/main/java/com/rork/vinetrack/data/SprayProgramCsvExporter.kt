@@ -343,7 +343,8 @@ object SprayProgramCsvExporter {
 
             val recordActuals = actuals.filter { it.sprayRecordId == record.id }
             row.add(recordActuals.size.toString())
-            row.add(if (recordActuals.isEmpty()) "" else String.format(Locale.US, "%.12g", recordActuals.sumOf { it.waterVolumeL }))
+            val recordedWater = recordActuals.mapNotNull { it.waterVolumeL }
+            row.add(if (recordedWater.isEmpty()) "" else String.format(Locale.US, "%.12g", recordedWater.sum()))
             val actualChemicals = recordActuals.flatMap { it.chemicals }
                 .groupBy { it.plannedChemicalId ?: it.savedChemicalId ?: "${it.name.trim().lowercase(Locale.US)}|${it.unit}" }
                 .values.map { lines -> Triple(lines.first().name, lines.sumOf { it.actualAmountBase }, lines.first().unit) }

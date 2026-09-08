@@ -33,7 +33,8 @@ struct SprayReportPayloadV1Tests {
         let chemical = SprayChemical(id: lineId, name: "Product", volumePerTank: 3_000, unit: .litres)
         let record = SprayRecord(tripId: tripId, vineyardId: vineyardId, sprayReference: "Late Woolly", tanks: [SprayTank(tankNumber: 1, waterVolume: 1_500, chemicals: [chemical])])
         let actualChemical = try SprayTankActualChemical(plannedChemicalId: lineId, savedChemicalId: nil, name: "Product", actualAmountBase: 2_800, unit: .litres)
-        let actual = try SprayTankActual(vineyardId: vineyardId, sprayRecordId: record.id, tripId: tripId, tankSessionId: session.id.uuidString, tankNumber: 1, waterVolumeL: 1_450, chemicals: [actualChemical], confirmedAt: Date(), confirmedBy: UUID())
+        let substitute = try SprayTankActualChemical(plannedChemicalId: nil, savedChemicalId: nil, replacesPlannedChemicalId: lineId, usageKind: "substitution", name: "Replacement", actualAmountBase: 500, unit: .millilitres)
+        let actual = try SprayTankActual(vineyardId: vineyardId, sprayRecordId: record.id, tripId: tripId, tankSessionId: session.id.uuidString, tankNumber: 1, waterVolumeL: 1_450, chemicals: [actualChemical, substitute], confirmedAt: Date(), confirmedBy: UUID(), correctionVersion: 2)
 
         let payload = SprayReportPayloadV1.offlineProjection(trip: trip, record: record, vineyardName: "Stockmans Ridge", timeZone: TimeZone(identifier: "Australia/Sydney")!, paddocks: [], tractorName: "Tractor", sprayUnitName: "Sprayer", tankActuals: [actual])
 
@@ -42,6 +43,10 @@ struct SprayReportPayloadV1Tests {
         #expect(payload.tanks.first?.actualWaterLitres == 1_450)
         #expect(payload.tanks.first?.chemicals.first?.plannedAmountBase == 3_000)
         #expect(payload.tanks.first?.chemicals.first?.actualAmountBase == 2_800)
+        #expect(payload.tanks.first?.actualVersion == 2)
+        #expect(payload.tanks.first?.chemicals.last?.usageKind == "substitution")
+        #expect(payload.tanks.first?.chemicals.last?.plannedAmountBase == nil)
+        #expect(payload.actualChemicalTotals.count == 2)
         #expect(abs((payload.equipment.engineHoursUsed ?? 0) - 3.1) < 0.000_001)
     }
 

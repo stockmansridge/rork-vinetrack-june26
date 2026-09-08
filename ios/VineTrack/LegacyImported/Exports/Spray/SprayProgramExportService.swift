@@ -224,7 +224,7 @@ struct SprayProgramExportService {
             y += 8
             checkPageBreak(needed: 30)
             let actualCount = tankActuals.filter { actual in records.contains { $0.id == actual.sprayRecordId } }.count
-            let actualWater = tankActuals.filter { actual in records.contains { $0.id == actual.sprayRecordId } }.reduce(0) { $0 + $1.waterVolumeL }
+            let actualWater = tankActuals.filter { actual in records.contains { $0.id == actual.sprayRecordId } }.compactMap(\.waterVolumeL).reduce(0, +)
             let actualSummaryAttrs: [NSAttributedString.Key: Any] = [.font: bodyBoldFont, .foregroundColor: UIColor.black]
             ("Actual tanks recorded: \(actualCount) • Actual water used: \(String(format: "%.2f", actualWater)) L" as NSString).draw(at: CGPoint(x: margin, y: y), withAttributes: actualSummaryAttrs)
             y += 16

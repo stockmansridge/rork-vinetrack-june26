@@ -12,6 +12,8 @@ data class SprayTankActualChemical(
     val name: String,
     val actualAmountBase: Double,
     val unit: String,
+    val replacesPlannedChemicalId: String? = null,
+    val usageKind: String? = null,
 ) {
     init {
         require(id.isNotBlank() && actualAmountBase.isFinite() && actualAmountBase >= 0.0)
@@ -27,15 +29,17 @@ data class SprayTankActual(
     @SerialName("trip_id") val tripId: String,
     @SerialName("tank_session_id") val tankSessionId: String,
     @SerialName("tank_number") val tankNumber: Int,
-    @SerialName("water_volume_l") val waterVolumeL: Double,
+    @SerialName("water_volume_l") val waterVolumeL: Double? = null,
     val chemicals: List<SprayTankActualChemical>,
     @SerialName("confirmed_at") val confirmedAt: String,
     @SerialName("confirmed_by") val confirmedBy: String,
     @SerialName("client_updated_at") val clientUpdatedAt: String = confirmedAt,
+    @SerialName("correction_version") val correctionVersion: Long = 0,
+    @SerialName("last_corrected_at") val lastCorrectedAt: String? = null,
 ) {
     init {
         require(tankSessionId.isNotBlank() && tankNumber >= 1)
-        require(waterVolumeL.isFinite() && waterVolumeL >= 0.0)
+        require(waterVolumeL == null || (waterVolumeL.isFinite() && waterVolumeL >= 0.0))
     }
 }
 

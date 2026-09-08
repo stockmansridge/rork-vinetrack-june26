@@ -53,12 +53,19 @@ class SprayTankActualStore(context: Context) {
     @Synchronized fun mergeRemote(remote: List<SprayTankActual>): Boolean {
         val current = cache()
         val records = current.records.toMutableList()
+        val pending = current.pendingIds.toMutableSet()
         remote.forEach { incoming ->
             val index = records.indexOfFirst { it.tripId == incoming.tripId && it.tankSessionId == incoming.tankSessionId }
             if (index < 0) records.add(incoming)
-            else if (records[index].id !in current.pendingIds && records[index].clientUpdatedAt < incoming.clientUpdatedAt) records[index] = incoming
+            else {
+                val hasServerCorrection = incoming.correctionVersion > records[index].correctionVersion
+                if (hasServerCorrection || (records[index].id !in pending && records[index].clientUpdatedAt < incoming.clientUpdatedAt)) {
+                    pending.remove(records[index].id)
+                    records[index] = incoming
+                }
+            }
         }
-        return write(current.copy(records = records))
+        return write(current.copy(records = records, pendingIds = pending))
     }
 
     @Synchronized fun markSynced(id: String): Boolean {

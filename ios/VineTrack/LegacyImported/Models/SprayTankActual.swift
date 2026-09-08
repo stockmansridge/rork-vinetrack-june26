@@ -5,6 +5,8 @@ nonisolated struct SprayTankActualChemical: Codable, Identifiable, Sendable, Has
     let id: UUID
     let plannedChemicalId: UUID?
     let savedChemicalId: UUID?
+    let replacesPlannedChemicalId: UUID?
+    let usageKind: String?
     let name: String
     let actualAmountBase: Double
     let unit: ChemicalUnit
@@ -13,6 +15,8 @@ nonisolated struct SprayTankActualChemical: Codable, Identifiable, Sendable, Has
         id: UUID = UUID(),
         plannedChemicalId: UUID?,
         savedChemicalId: UUID?,
+        replacesPlannedChemicalId: UUID? = nil,
+        usageKind: String? = nil,
         name: String,
         actualAmountBase: Double,
         unit: ChemicalUnit
@@ -21,6 +25,8 @@ nonisolated struct SprayTankActualChemical: Codable, Identifiable, Sendable, Has
         self.id = id
         self.plannedChemicalId = plannedChemicalId
         self.savedChemicalId = savedChemicalId
+        self.replacesPlannedChemicalId = replacesPlannedChemicalId
+        self.usageKind = usageKind
         self.name = name
         self.actualAmountBase = actualAmountBase
         self.unit = unit
@@ -36,11 +42,13 @@ nonisolated struct SprayTankActual: Codable, Identifiable, Sendable, Hashable {
     let tripId: UUID
     let tankSessionId: String
     let tankNumber: Int
-    let waterVolumeL: Double
+    let waterVolumeL: Double?
     let chemicals: [SprayTankActualChemical]
     let confirmedAt: Date
     let confirmedBy: UUID
     let clientUpdatedAt: Date
+    let correctionVersion: Int?
+    let lastCorrectedAt: Date?
 
     init(
         id: UUID = UUID(),
@@ -49,14 +57,16 @@ nonisolated struct SprayTankActual: Codable, Identifiable, Sendable, Hashable {
         tripId: UUID,
         tankSessionId: String,
         tankNumber: Int,
-        waterVolumeL: Double,
+        waterVolumeL: Double?,
         chemicals: [SprayTankActualChemical],
         confirmedAt: Date,
         confirmedBy: UUID,
-        clientUpdatedAt: Date? = nil
+        clientUpdatedAt: Date? = nil,
+        correctionVersion: Int? = nil,
+        lastCorrectedAt: Date? = nil
     ) throws {
         guard tankNumber >= 1, !tankSessionId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              waterVolumeL.isFinite, waterVolumeL >= 0,
+              waterVolumeL.map({ $0.isFinite && $0 >= 0 }) ?? true,
               chemicals.allSatisfy({ $0.actualAmountBase.isFinite && $0.actualAmountBase >= 0 })
         else { throw SprayTankActualValidationError.invalidAmount }
         self.id = id
@@ -70,6 +80,8 @@ nonisolated struct SprayTankActual: Codable, Identifiable, Sendable, Hashable {
         self.confirmedAt = confirmedAt
         self.confirmedBy = confirmedBy
         self.clientUpdatedAt = clientUpdatedAt ?? confirmedAt
+        self.correctionVersion = correctionVersion
+        self.lastCorrectedAt = lastCorrectedAt
     }
 }
 

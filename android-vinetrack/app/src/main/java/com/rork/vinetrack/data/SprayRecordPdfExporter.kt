@@ -11,6 +11,7 @@ import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import androidx.core.content.FileProvider
+import com.rork.vinetrack.R
 import com.rork.vinetrack.data.model.FuelPurchase
 import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
@@ -26,6 +27,7 @@ import com.rork.vinetrack.data.model.resolveSprayEquipmentName
 import com.rork.vinetrack.data.model.SprayEquipment
 import com.rork.vinetrack.data.model.parseIsoToEpochMs
 import com.rork.vinetrack.data.spray.SprayBlockAttributionDisplay
+import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -55,7 +57,7 @@ object SprayRecordPdfExporter {
     private val accent = Color.rgb(85, 107, 47) // olive, matching iOS VineyardTheme
 
     /** Drawing cursor + paging state for a single export. */
-    private class PageState(val doc: PdfDocument) {
+    private class PageState(val doc: PdfDocument, private val officialLogo: Bitmap?) {
         var page: PdfDocument.Page = doc.startPage(pageInfo(1))
         var canvas = page.canvas
         var y = MARGIN
@@ -65,10 +67,24 @@ object SprayRecordPdfExporter {
             PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, n).create()
 
         fun ensure(needed: Float) {
-            if (y + needed > PAGE_HEIGHT - MARGIN) newPage()
+            if (y + needed > PAGE_HEIGHT - MARGIN - 18f) newPage()
+        }
+
+        private fun drawFooter() {
+            officialLogo?.let { logo ->
+                val maxWidth = 58f
+                val maxHeight = 20f
+                val scale = minOf(maxWidth / logo.width, maxHeight / logo.height)
+                val width = logo.width * scale
+                val height = logo.height * scale
+                canvas.drawBitmap(logo, null, RectF(MARGIN, PAGE_HEIGHT - 30f, MARGIN + width, PAGE_HEIGHT - 30f + height), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            }
+            val pageLabel = "Page $pageNumber"
+            canvas.drawText(pageLabel, PAGE_WIDTH - MARGIN - captionPaint.measureText(pageLabel), PAGE_HEIGHT - 18f, captionPaint)
         }
 
         fun newPage() {
+            drawFooter()
             doc.finishPage(page)
             pageNumber += 1
             page = doc.startPage(pageInfo(pageNumber))
@@ -77,6 +93,7 @@ object SprayRecordPdfExporter {
         }
 
         fun finish() {
+            drawFooter()
             doc.finishPage(page)
         }
     }
@@ -132,12 +149,18 @@ object SprayRecordPdfExporter {
         operatorCategories: List<OperatorCategory> = emptyList(),
         paddocks: List<Paddock> = emptyList(),
         logo: Bitmap? = null,
+        vineyardLogoPath: String? = null,
         regionFormatter: RegionFormatter = RegionFormatter(),
         vineyardTimeZone: String = regionFormatter.settings.timezone ?: "UTC",
         pinCount: Int = 0,
     ): Boolean {
         return try {
             require(trip != null) { "Spray record not available yet—sync and retry" }
+            val session = SessionStore(context)
+            val resolvedVineyardLogo = if (!vineyardLogoPath.isNullOrBlank()) {
+                val bytes = withTimeout(5_000) { VineyardLogoRepository(session).download(vineyardLogoPath) }
+                requireNotNull(BitmapFactory.decodeByteArray(bytes, 0, bytes.size)) { "Configured vineyard logo could not be decoded" }
+            } else logo
             val actuals = SprayTankActualStore(context).load().filter { it.sprayRecordId == record.id }
             val offlinePayload = SprayReportPayloadV1.offlineProjection(
                 trip = trip,
@@ -150,7 +173,7 @@ object SprayRecordPdfExporter {
                 tankActuals = actuals,
                 pinCount = pinCount,
             )
-            val repository = SprayReportRepository(SessionStore(context))
+            val repository = SprayReportRepository(session)
             val payload = runCatching { repository.fetch(trip.id) }.getOrDefault(offlinePayload)
             val sharedRoute = payload.route?.let { route ->
                 runCatching {
@@ -159,10 +182,11 @@ object SprayRecordPdfExporter {
                 }.getOrNull()
             }
             val doc = PdfDocument()
-            val s = PageState(doc)
+            val officialLogo = BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher)
+            val s = PageState(doc, officialLogo)
             render(
                 s, payload, record, vineyardName, machines, equipment, trip, workTask,
-                canViewFinancials, fuelPurchases, operatorCategories, paddocks, logo,
+                canViewFinancials, fuelPurchases, operatorCategories, paddocks, resolvedVineyardLogo,
                 actuals, regionFormatter, sharedRoute,
             )
             s.finish()
@@ -372,6 +396,20 @@ object SprayRecordPdfExporter {
                         rowIndented(s, "Difference", "${if (difference > 0) "+" else ""}${fmt(difference)} ${chem.unit}")
                     }
                 }
+                reportTank?.chemicals?.filter { it.plannedChemicalId == null }?.forEach { actualOnly ->
+                    val kind = if (actualOnly.usageKind == "substitution") "Substituted actual" else "Additional actual"
+                    rowIndented(s, "$kind: ${actualOnly.name}", actualOnly.actualAmountBase?.let { "${fmt(chemicalUnitFromBase(actualOnly.unit, it))} ${chemUnitAbbrev(actualOnly.unit)}" } ?: "Not recorded")
+                }
+            }
+        }
+
+        if (payload.amendments.isNotEmpty()) {
+            sectionHeader(s, "Amendment History")
+            payload.amendments.forEach { amendment ->
+                val before = amendment.previousValue.toString().takeUnless { it == "null" } ?: "Not recorded"
+                val after = amendment.newValue.toString().takeUnless { it == "null" } ?: "Not recorded"
+                text(s, "Tank ${amendment.tankNumber} · ${amendment.field}: $before → $after", bodyPaint)
+                text(s, "Updated by ${amendment.editorName} · ${amendment.editedAt} (${payload.identity.vineyardTimeZone})", captionPaint)
             }
         }
 
@@ -388,9 +426,15 @@ object SprayRecordPdfExporter {
             }
             .sortedBy { it.first.lowercase(Locale.getDefault()) }
         if (totals.isNotEmpty()) {
-            sectionHeader(s, "Chemical Totals (All Tanks)")
+            sectionHeader(s, "Planned Chemical Totals (All Tanks)")
             for ((name, total, unit) in totals) {
                 row(s, name, "${fmt(total)}$unit")
+            }
+        }
+        if (payload.actualChemicalTotals.isNotEmpty()) {
+            sectionHeader(s, "Actual Chemical Totals (All Tanks)")
+            payload.actualChemicalTotals.forEach { total ->
+                row(s, total.name, "${fmt(chemicalUnitFromBase(total.unit, total.actualAmountBase))} ${chemUnitAbbrev(total.unit)}")
             }
         }
 

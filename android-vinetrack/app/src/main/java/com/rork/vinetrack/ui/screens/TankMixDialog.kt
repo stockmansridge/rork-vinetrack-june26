@@ -355,9 +355,9 @@ private fun TankMixContent(
             Column(modifier = Modifier.padding(horizontal = 14.dp)) {
                 PlannedDetailRow("Planned water", "${tankMixNumber(selectedTank.waterVolume)} L")
                 HorizontalDivider(color = vine.cardBorder)
-                PlannedDetailRow("Actual water", actual?.let { "${tankMixNumber(it.waterVolumeL)} L" } ?: "Not recorded")
-                actual?.let {
-                    val difference = it.waterVolumeL - selectedTank.waterVolume
+                PlannedDetailRow("Actual water", actual?.waterVolumeL?.let { "${tankMixNumber(it)} L" } ?: "Not recorded")
+                actual?.waterVolumeL?.let { actualWater ->
+                    val difference = actualWater - selectedTank.waterVolume
                     if (abs(difference) > 0.000001) {
                         Text(
                             "Difference: ${signedTankMixNumber(difference)} L",

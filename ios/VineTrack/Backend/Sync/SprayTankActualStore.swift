@@ -14,11 +14,13 @@ nonisolated private struct BackendSprayTankActual: Decodable, Sendable {
     let tripId: UUID
     let tankSessionId: String
     let tankNumber: Int
-    let waterVolumeL: Double
+    let waterVolumeL: Double?
     let chemicals: [SprayTankActualChemical]
     let confirmedAt: Date
     let confirmedBy: UUID
     let clientUpdatedAt: Date
+    let correctionVersion: Int?
+    let lastCorrectedAt: Date?
 
     enum CodingKeys: String, CodingKey {
         case id, chemicals
@@ -31,13 +33,16 @@ nonisolated private struct BackendSprayTankActual: Decodable, Sendable {
         case confirmedAt = "confirmed_at"
         case confirmedBy = "confirmed_by"
         case clientUpdatedAt = "client_updated_at"
+        case correctionVersion = "correction_version"
+        case lastCorrectedAt = "last_corrected_at"
     }
 
     func actual() throws -> SprayTankActual {
         try SprayTankActual(id: id, vineyardId: vineyardId, sprayRecordId: sprayRecordId,
             tripId: tripId, tankSessionId: tankSessionId, tankNumber: tankNumber,
             waterVolumeL: waterVolumeL, chemicals: chemicals, confirmedAt: confirmedAt,
-            confirmedBy: confirmedBy, clientUpdatedAt: clientUpdatedAt)
+            confirmedBy: confirmedBy, clientUpdatedAt: clientUpdatedAt,
+            correctionVersion: correctionVersion, lastCorrectedAt: lastCorrectedAt)
     }
 }
 
@@ -59,7 +64,7 @@ nonisolated private struct SprayTankActualUpsertRequest: Encodable, Sendable {
         try container.encode(actual.tripId, forKey: .tripId)
         try container.encode(actual.tankSessionId, forKey: .tankSessionId)
         try container.encode(actual.tankNumber, forKey: .tankNumber)
-        try container.encode(actual.waterVolumeL, forKey: .waterVolumeL)
+        try container.encodeIfPresent(actual.waterVolumeL, forKey: .waterVolumeL)
         try container.encode(actual.chemicals, forKey: .chemicals)
         try container.encode(actual.confirmedAt, forKey: .confirmedAt)
         try container.encode(actual.clientUpdatedAt, forKey: .clientUpdatedAt)
@@ -134,17 +139,21 @@ final class SprayTankActualStore {
                 .execute()
                 .value
             var merged = records
+            var pending = pendingIds
             for remote in try rows.map({ try $0.actual() }) {
                 if let index = merged.firstIndex(where: { $0.tripId == remote.tripId && $0.tankSessionId == remote.tankSessionId }) {
-                    if merged[index].clientUpdatedAt < remote.clientUpdatedAt && !pendingIds.contains(merged[index].id) {
+                    let hasServerCorrection = (remote.correctionVersion ?? 0) > (merged[index].correctionVersion ?? 0)
+                    if hasServerCorrection || (merged[index].clientUpdatedAt < remote.clientUpdatedAt && !pending.contains(merged[index].id)) {
+                        pending.remove(merged[index].id)
                         merged[index] = remote
                     }
                 } else {
                     merged.append(remote)
                 }
             }
-            try persistence.saveOrThrow(SprayTankActualCache(records: merged, pendingIds: pendingIds), key: Self.persistenceKey)
+            try persistence.saveOrThrow(SprayTankActualCache(records: merged, pendingIds: pending), key: Self.persistenceKey)
             records = merged
+            pendingIds = pending
         } catch {
             // Keep the durable local authority when offline or before migration deployment.
         }

@@ -288,10 +288,12 @@ struct TripPDFService {
                         let actual = tankActuals.filter { $0.tankSessionId == session.id.uuidString }.max(by: { $0.clientUpdatedAt < $1.clientUpdatedAt })
                             ?? tankActuals.filter { $0.tankNumber == session.tankNumber }.max(by: { $0.clientUpdatedAt < $1.clientUpdatedAt })
                         if let actual {
-                            drawRow(label: "  Actual water", value: "\(formatNumber(actual.waterVolumeL)) L", indent: 12)
-                            let waterDifference = actual.waterVolumeL - planned.waterVolume
-                            if abs(waterDifference) > 0.000_001 {
-                                drawRow(label: "  Water difference", value: "\(waterDifference > 0 ? "+" : "")\(formatNumber(waterDifference)) L", indent: 12)
+                            drawRow(label: "  Actual water", value: actual.waterVolumeL.map { "\(formatNumber($0)) L" } ?? "Not recorded", indent: 12)
+                            if let actualWater = actual.waterVolumeL {
+                                let waterDifference = actualWater - planned.waterVolume
+                                if abs(waterDifference) > 0.000_001 {
+                                    drawRow(label: "  Water difference", value: "\(waterDifference > 0 ? "+" : "")\(formatNumber(waterDifference)) L", indent: 12)
+                                }
                             }
                             for chemical in planned.chemicals {
                                 let confirmed = actual.chemicals.first { $0.plannedChemicalId == chemical.id }

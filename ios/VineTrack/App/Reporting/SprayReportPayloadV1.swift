@@ -2,7 +2,7 @@ import Foundation
 
 /// Canonical semantic input for every Spray Report export.
 nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
-    static let currentSchemaVersion: String = "1.0"
+    static let currentSchemaVersion: String = "1.1"
     static let routeStyleVersion: String = "spray-route-red-green-v1"
 
     let schemaVersion: String
@@ -12,8 +12,10 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
     let equipment: Equipment
     let rows: [Row]
     let tanks: [Tank]
+    let actualChemicalTotals: [ChemicalTotal]
     let weather: [Weather]
     let route: Route?
+    let amendments: [Amendment]
     let warnings: [String]
 
     nonisolated struct Identity: Codable, Sendable, Hashable {
@@ -86,19 +88,76 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
 
     nonisolated struct Tank: Codable, Sendable, Hashable {
         let tankNumber: Int
+        let actualId: UUID?
+        let actualVersion: Int?
         let plannedWaterLitres: Double
         let actualWaterLitres: Double?
         let chemicals: [Chemical]
     }
 
     nonisolated struct Chemical: Codable, Sendable, Hashable {
-        let plannedChemicalId: UUID
+        let actualChemicalId: UUID?
+        let plannedChemicalId: UUID?
         let savedChemicalId: UUID?
+        let replacesPlannedChemicalId: UUID?
+        let usageKind: String
         let name: String
         let unit: String
-        let plannedAmountBase: Double
+        let plannedAmountBase: Double?
         let actualAmountBase: Double?
         let matchSource: String
+    }
+
+    nonisolated struct ChemicalTotal: Codable, Sendable, Hashable {
+        let identityKey: String
+        let name: String
+        let unit: String
+        let actualAmountBase: Double
+    }
+
+    nonisolated struct Amendment: Codable, Sendable, Hashable {
+        let id: UUID
+        let operationId: UUID
+        let tankNumber: Int
+        let chemicalActualId: UUID?
+        let plannedChemicalId: UUID?
+        let savedChemicalId: UUID?
+        let field: String
+        let changeKind: String
+        let previousValue: AmendmentValue?
+        let newValue: AmendmentValue?
+        let previousUnit: String?
+        let newUnit: String?
+        let revision: Int
+        let editedBy: UUID
+        let editorName: String
+        let editedAt: String
+    }
+
+    nonisolated enum AmendmentValue: Codable, Sendable, Hashable {
+        case number(Double)
+        case chemical(SprayTankActualChemical)
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let number = try? container.decode(Double.self) { self = .number(number); return }
+            self = .chemical(try container.decode(SprayTankActualChemical.self))
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            switch self {
+            case .number(let value): try container.encode(value)
+            case .chemical(let value): try container.encode(value)
+            }
+        }
+
+        var displayText: String {
+            switch self {
+            case .number(let value): return String(format: "%.3f", value)
+            case .chemical(let value): return "\(value.name) · \(String(format: "%.3f", value.displayAmount)) \(value.unit.rawValue)"
+            }
+        }
     }
 
     nonisolated struct Weather: Codable, Sendable, Hashable {
@@ -194,10 +253,21 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
                 else if byNameUnit.count == 1 { match = byNameUnit[0]; source = "nameUnit" }
                 else if byNameUnit.count > 1 { match = nil; source = "ambiguous" }
                 else { match = nil; source = "notRecorded" }
-                return Chemical(plannedChemicalId: line.id, savedChemicalId: line.savedChemicalId, name: line.name.isEmpty ? "Unnamed chemical" : line.name, unit: line.unit.rawValue, plannedAmountBase: line.volumePerTank, actualAmountBase: match?.actualAmountBase, matchSource: source)
+                return Chemical(actualChemicalId: match?.id, plannedChemicalId: line.id, savedChemicalId: line.savedChemicalId, replacesPlannedChemicalId: nil, usageKind: "planned", name: line.name.isEmpty ? "Unnamed chemical" : line.name, unit: line.unit.rawValue, plannedAmountBase: line.volumePerTank, actualAmountBase: match?.actualAmountBase, matchSource: source)
             }
-            return Tank(tankNumber: planned.tankNumber, plannedWaterLitres: planned.waterVolume, actualWaterLitres: actual?.waterVolumeL, chemicals: chemicals)
+            let representedIds = Set(chemicals.compactMap(\.actualChemicalId))
+            let actualOnly = actual?.chemicals.filter { !representedIds.contains($0.id) }.map { line in
+                Chemical(actualChemicalId: line.id, plannedChemicalId: nil, savedChemicalId: line.savedChemicalId, replacesPlannedChemicalId: line.replacesPlannedChemicalId, usageKind: line.usageKind ?? "additional", name: line.name, unit: line.unit.rawValue, plannedAmountBase: nil, actualAmountBase: line.actualAmountBase, matchSource: "actualOnly")
+            } ?? []
+            return Tank(tankNumber: planned.tankNumber, actualId: actual?.id, actualVersion: actual?.correctionVersion, plannedWaterLitres: planned.waterVolume, actualWaterLitres: actual?.waterVolumeL, chemicals: chemicals + actualOnly)
         }
+
+        let totalGroups = Dictionary(grouping: tanks.flatMap(\.chemicals).filter { $0.actualAmountBase != nil }) { line in
+            line.savedChemicalId?.uuidString ?? "\(line.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())|\(line.unit.lowercased())"
+        }
+        let actualChemicalTotals = totalGroups.map { key, lines in
+            ChemicalTotal(identityKey: key, name: lines.first?.name ?? "Unnamed chemical", unit: lines.first?.unit ?? "", actualAmountBase: lines.compactMap(\.actualAmountBase).reduce(0, +))
+        }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
         var weather: [Weather] = []
         if record.temperature != nil || record.humidity != nil || record.windSpeed != nil || !record.windDirection.isEmpty {
@@ -214,7 +284,7 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
             trip: TripSummary(startUtc: iso.string(from: trip.startTime), endUtc: trip.endTime.map(iso.string), activeDurationSeconds: Int(trip.activeDuration), distanceMetres: trip.totalDistance, operatorName: trip.personName.isEmpty ? nil : trip.personName, pinCount: trip.pinIds.count),
             blocks: canonicalBlocks,
             equipment: Equipment(tractorName: tractorName.isEmpty ? nil : tractorName, startEngineHours: trip.startEngineHours, endEngineHours: trip.endEngineHours, engineHoursUsed: engineDelta, sprayUnitName: sprayUnitName.isEmpty ? nil : sprayUnitName),
-            rows: rows, tanks: tanks, weather: weather, route: nil, warnings: warnings
+            rows: rows, tanks: tanks, actualChemicalTotals: actualChemicalTotals, weather: weather, route: nil, amendments: [], warnings: warnings
         )
     }
 

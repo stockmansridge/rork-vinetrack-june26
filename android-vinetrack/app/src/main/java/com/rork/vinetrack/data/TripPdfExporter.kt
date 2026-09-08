@@ -277,9 +277,11 @@ object TripPdfExporter {
                     if (actual == null) {
                         rowIndented(s, "Actual amounts", "Not recorded")
                     } else {
-                        rowIndented(s, "Actual water", "${fmt(actual.waterVolumeL)} L")
-                        val waterDifference = actual.waterVolumeL - planned.waterVolume
-                        if (kotlin.math.abs(waterDifference) > 0.000_001) rowIndented(s, "Water difference", "${if (waterDifference > 0) "+" else ""}${fmt(waterDifference)} L")
+                        rowIndented(s, "Actual water", actual.waterVolumeL?.let { "${fmt(it)} L" } ?: "Not recorded")
+                        actual.waterVolumeL?.let { actualWater ->
+                            val waterDifference = actualWater - planned.waterVolume
+                            if (kotlin.math.abs(waterDifference) > 0.000_001) rowIndented(s, "Water difference", "${if (waterDifference > 0) "+" else ""}${fmt(waterDifference)} L")
+                        }
                         planned.chemicals.forEach { chemical ->
                             val confirmed = actual.chemicals.firstOrNull { it.plannedChemicalId == chemical.id }
                             rowIndented(s, "Planned ${chemical.name}", "${fmt(chemicalUnitFromBase(chemical.unit, chemical.volumePerTank))} ${chemical.unit}")

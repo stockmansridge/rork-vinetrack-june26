@@ -24,7 +24,10 @@ object PdfHeaderUtil {
         size: Float = 44f,
     ): Float {
         if (logo == null) return margin
-        val dst = RectF(margin, top, margin + size, top + size)
+        val scale = minOf(size / logo.width.toFloat(), size / logo.height.toFloat())
+        val width = logo.width * scale
+        val height = logo.height * scale
+        val dst = RectF(margin, top + (size - height) / 2f, margin + width, top + (size + height) / 2f)
         canvas.drawBitmap(logo, null, dst, bitmapPaint)
         return margin + size + 12f
     }

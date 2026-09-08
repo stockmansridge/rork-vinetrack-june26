@@ -173,7 +173,8 @@ struct SprayProgramCSVService {
 
             let actuals = SprayTankActualStore.shared.records.filter { $0.sprayRecordId == record.id }
             row.append(String(actuals.count))
-            row.append(actuals.isEmpty ? "" : String(format: "%.12g", actuals.reduce(0) { $0 + $1.waterVolumeL }))
+            let recordedWater = actuals.compactMap(\.waterVolumeL)
+            row.append(recordedWater.isEmpty ? "" : String(format: "%.12g", recordedWater.reduce(0, +)))
             var actualGroups: [String: [SprayTankActualChemical]] = [:]
             for actual in actuals {
                 for chemical in actual.chemicals {

@@ -990,8 +990,9 @@ struct TripDetailView: View {
     private func exportTrip() {
         guard !isExporting else { return }
         isExporting = true
-        let vineyardName = store.selectedVineyard?.name ?? "Vineyard"
-        let logoData = store.selectedVineyard?.logoData
+        let exportVineyard = store.vineyards.first { $0.id == trip.vineyardId }
+        let vineyardName = exportVineyard?.name ?? "Vineyard"
+        let logoData = exportVineyard?.logoData
         let paddockName = trip.paddockName
         let pinCount = pinsForTrip.count
         let tripCopy = currentTrip
@@ -1025,6 +1026,16 @@ struct TripDetailView: View {
                 tankActuals: tankActuals
             )
             Task {
+                var resolvedLogoData = logoData
+                if resolvedLogoData == nil, let logoPath = exportVineyard?.logoPath {
+                    do {
+                        resolvedLogoData = try await VineyardLogoStorageService().downloadLogo(path: logoPath, vineyardId: tripCopy.vineyardId, remoteUpdatedAt: exportVineyard?.logoUpdatedAt)
+                    } catch {
+                        isExporting = false
+                        sprayExportError = "The configured vineyard logo could not be loaded. Check your connection and try the export again."
+                        return
+                    }
+                }
                 let payload = (try? await SprayReportRepository.shared.fetch(tripId: tripCopy.id)) ?? offlinePayload
                 let snapshot = await SprayReportRepository.shared.routeImage(for: payload, fallbackTrip: tripCopy)
                 let pdfData = SprayRecordPDFService.generatePDF(
@@ -1036,7 +1047,7 @@ struct TripDetailView: View {
                     personName: tripCopy.personName,
                     paddocks: store.paddocks,
                     mapSnapshot: snapshot,
-                    logoData: logoData,
+                    logoData: resolvedLogoData,
                     includeCostings: includeCostings,
                     timeZone: exportTimeZone,
                     formatter: formatter,

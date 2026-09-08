@@ -29,7 +29,9 @@ data class SprayReportPayloadV1(
     val tanks: List<Tank>,
     val weather: List<Weather>,
     val route: Route? = null,
+    val amendments: List<Amendment> = emptyList(),
     val warnings: List<String>,
+    val actualChemicalTotals: List<ChemicalTotal> = emptyList(),
 ) {
     @Serializable data class Identity(val tripId: String, val sprayRecordId: String, val vineyardId: String, val vineyardName: String, val reference: String, val vineyardTimeZone: String)
     @Serializable data class TripSummary(val startUtc: String?, val endUtc: String?, val activeDurationSeconds: Long?, val distanceMetres: Double?, val operatorName: String?, val pinCount: Int)
@@ -42,8 +44,10 @@ data class SprayReportPayloadV1(
             else -> "Not recorded"
         }
     }
-    @Serializable data class Tank(val tankNumber: Int, val plannedWaterLitres: Double, val actualWaterLitres: Double?, val chemicals: List<Chemical>)
-    @Serializable data class Chemical(val plannedChemicalId: String, val savedChemicalId: String?, val name: String, val unit: String, val plannedAmountBase: Double, val actualAmountBase: Double?, val matchSource: String)
+    @Serializable data class Tank(val tankNumber: Int, val actualId: String? = null, val actualVersion: Long? = null, val plannedWaterLitres: Double, val actualWaterLitres: Double?, val chemicals: List<Chemical>)
+    @Serializable data class Chemical(val actualChemicalId: String? = null, val plannedChemicalId: String? = null, val savedChemicalId: String?, val replacesPlannedChemicalId: String? = null, val usageKind: String = "planned", val name: String, val unit: String, val plannedAmountBase: Double? = null, val actualAmountBase: Double?, val matchSource: String)
+    @Serializable data class ChemicalTotal(val identityKey: String, val name: String, val unit: String, val actualAmountBase: Double)
+    @Serializable data class Amendment(val id: String, val operationId: String, val tankNumber: Int, val chemicalActualId: String? = null, val plannedChemicalId: String? = null, val savedChemicalId: String? = null, val field: String, val changeKind: String, val previousValue: JsonElement = JsonNull, val newValue: JsonElement = JsonNull, val previousUnit: String? = null, val newUnit: String? = null, val revision: Long, val editedBy: String, val editorName: String, val editedAt: String)
     @Serializable data class Weather(val sampleSlot: String, val observedAt: String?, val source: String, val sourceKind: String, val isStale: Boolean, val temperatureC: Double?, val humidityPct: Double?, val windSpeedKmh: Double?, val windGustKmh: Double?, val windDirectionDeg: Double?, val rainMm: Double?)
     @Serializable data class Route(val bucket: String, val objectPath: String, val sha256: String, val routeHash: String, val styleVersion: String)
 
@@ -56,7 +60,7 @@ data class SprayReportPayloadV1(
     }
 
     companion object {
-        const val SCHEMA_VERSION: String = "1.0"
+        const val SCHEMA_VERSION: String = "1.1"
         const val ROUTE_STYLE_VERSION: String = "spray-route-red-green-v1"
 
         fun isSprayTrip(trip: Trip, linkedRecord: SprayRecord?): Boolean =
@@ -121,10 +125,18 @@ data class SprayReportPayloadV1(
                         byNameUnit.size > 1 -> { selected = null; matchSource = "ambiguous" }
                         else -> { selected = null; matchSource = "notRecorded" }
                     }
-                    Chemical(planned.id, planned.savedChemicalId, planned.name.ifBlank { "Unnamed chemical" }, planned.unit, planned.volumePerTank, selected?.actualAmountBase, matchSource)
+                    Chemical(selected?.id, planned.id, planned.savedChemicalId, null, "planned", planned.name.ifBlank { "Unnamed chemical" }, planned.unit, planned.volumePerTank, selected?.actualAmountBase, matchSource)
                 }
-                Tank(plannedTank.tankNumber, plannedTank.waterVolume, actual?.waterVolumeL, chemicals)
+                val representedIds = chemicals.mapNotNull { it.actualChemicalId }.toSet()
+                val actualOnly = actual?.chemicals.orEmpty().filter { it.id !in representedIds }.map { line ->
+                    Chemical(line.id, null, line.savedChemicalId, line.replacesPlannedChemicalId, line.usageKind ?: "additional", line.name, line.unit, null, line.actualAmountBase, "actualOnly")
+                }
+                Tank(plannedTank.tankNumber, actual?.id, actual?.correctionVersion, plannedTank.waterVolume, actual?.waterVolumeL, chemicals + actualOnly)
             }
+            val actualChemicalTotals = tanks.flatMap { it.chemicals }.filter { it.actualAmountBase != null }
+                .groupBy { it.savedChemicalId ?: "${it.name.trim().lowercase()}|${it.unit.lowercase()}" }
+                .map { (key, lines) -> ChemicalTotal(key, lines.first().name, lines.first().unit, lines.sumOf { it.actualAmountBase ?: 0.0 }) }
+                .sortedBy { it.name.lowercase() }
             val weather = if (record.temperature != null || record.humidity != null || record.windSpeed != null || !record.windDirection.isNullOrBlank()) {
                 warnings += "Hourly weather was not recorded; showing the legacy start snapshot."
                 listOf(Weather(record.startTime ?: record.date ?: "", null, "Legacy start snapshot", "manual", true, record.temperature, record.humidity, record.windSpeed, null, null, null))
@@ -141,7 +153,7 @@ data class SprayReportPayloadV1(
                 TripSummary(trip.startTime, trip.endTime, trip.activeDurationSeconds, trip.totalDistance, trip.personName?.takeIf { it.isNotBlank() }, pinCount),
                 blocks,
                 Equipment(machineName, trip.startEngineHours, trip.endEngineHours, trip.engineHoursUsed, unitName),
-                rows, tanks, weather, null, warnings.distinct(),
+                rows, tanks, weather, null, emptyList(), warnings.distinct(), actualChemicalTotals,
             )
         }
 

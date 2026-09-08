@@ -22,8 +22,10 @@ enum PDFHeaderHelper {
         let logoSize: CGFloat = 48
 
         var textOriginX = margin
-        if let logoData, let logo = UIImage(data: logoData) {
-            let rect = CGRect(x: margin, y: y, width: logoSize, height: logoSize)
+        if let logoData, let logo = UIImage(data: logoData), logo.size.width > 0, logo.size.height > 0 {
+            let scale = min(logoSize / logo.size.width, logoSize / logo.size.height)
+            let size = CGSize(width: logo.size.width * scale, height: logo.size.height * scale)
+            let rect = CGRect(x: margin, y: y + (logoSize - size.height) / 2, width: size.width, height: size.height)
             logo.draw(in: rect)
             textOriginX = margin + logoSize + 12
         }

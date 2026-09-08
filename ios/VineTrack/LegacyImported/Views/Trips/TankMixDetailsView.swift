@@ -198,10 +198,10 @@ struct TankMixDetailsView: View {
         return VStack(spacing: 0) {
             detailRow("Planned water", value: "\(Self.number(tank.waterVolume)) L")
             Divider()
-            detailRow("Actual water", value: actual.map { "\(Self.number($0.waterVolumeL)) L" } ?? "Not recorded")
-            if let actual, abs(actual.waterVolumeL - tank.waterVolume) > 0.000_000_1 {
+            detailRow("Actual water", value: actual?.waterVolumeL.map { "\(Self.number($0)) L" } ?? "Not recorded")
+            if let actualWater = actual?.waterVolumeL, abs(actualWater - tank.waterVolume) > 0.000_000_1 {
                 Divider()
-                detailRow("Difference", value: "\(actual.waterVolumeL > tank.waterVolume ? "+" : "")\(Self.number(actual.waterVolumeL - tank.waterVolume)) L")
+                detailRow("Difference", value: "\(actualWater > tank.waterVolume ? "+" : "")\(Self.number(actualWater - tank.waterVolume)) L")
             }
             if let actual {
                 Divider()

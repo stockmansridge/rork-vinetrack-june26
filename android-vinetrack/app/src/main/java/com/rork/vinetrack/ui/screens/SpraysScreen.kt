@@ -1036,11 +1036,12 @@ private fun SprayDetailView(
             Toast.makeText(context, "Spray record not available yet—sync and retry.", Toast.LENGTH_LONG).show()
             return
         }
+        val reportVineyard = state.vineyards.firstOrNull { it.id == reportTrip.vineyardId }
         exportScope.launch {
             val ok = SprayRecordPdfExporter.exportAndShare(
                 context = context,
             record = record,
-            vineyardName = state.selectedVineyard?.name ?: "Vineyard",
+            vineyardName = reportVineyard?.name ?: "Vineyard",
             machines = state.machines,
             equipment = state.sprayEquipment,
             trip = reportTrip,
@@ -1049,7 +1050,8 @@ private fun SprayDetailView(
             fuelPurchases = state.fuelPurchases,
             operatorCategories = state.operatorCategories,
             paddocks = state.paddocks,
-            logo = state.selectedVineyardLogo,
+            logo = state.selectedVineyardLogo.takeIf { state.selectedVineyardId == reportTrip.vineyardId },
+            vineyardLogoPath = reportVineyard?.logoPath,
             regionFormatter = regionFormatter,
             vineyardTimeZone = regionFormatter.settings.timezone ?: "UTC",
             pinCount = state.pins.count { it.tripId == reportTrip.id },

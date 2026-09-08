@@ -37,7 +37,7 @@ class SprayTankActualRepository(private val session: SessionStore) {
                 append(HttpHeaders.Authorization, "Bearer $token")
                 append("apikey", SupabaseClient.anonKey)
             }
-            parameter("select", "id,vineyard_id,spray_record_id,trip_id,tank_session_id,tank_number,water_volume_l,chemicals,confirmed_at,confirmed_by,client_updated_at")
+            parameter("select", "id,vineyard_id,spray_record_id,trip_id,tank_session_id,tank_number,water_volume_l,chemicals,confirmed_at,confirmed_by,client_updated_at,correction_version,last_corrected_at")
             parameter("vineyard_id", "eq.$vineyardId")
             parameter("deleted_at", "is.null")
         }
@@ -54,7 +54,7 @@ class SprayTankActualRepository(private val session: SessionStore) {
             }
             contentType(ContentType.Application.Json)
             setBody(Request(actual.id, actual.vineyardId, actual.sprayRecordId, actual.tripId,
-                actual.tankSessionId, actual.tankNumber, actual.waterVolumeL, actual.chemicals,
+                actual.tankSessionId, actual.tankNumber, requireNotNull(actual.waterVolumeL), actual.chemicals,
                 actual.confirmedAt, actual.clientUpdatedAt))
         }
         if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
