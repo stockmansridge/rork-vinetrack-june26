@@ -5616,25 +5616,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Rename a vineyard and/or change its country (owner/manager only), mirroring
-     * the iOS vineyard detail sheet. Optimistically updates the in-memory list so
-     * the change shows immediately, then reverts on failure.
+     * Rename a vineyard and/or change its country (owner/manager only). The UI
+     * remains on the last confirmed value until both the write and authoritative
+     * vineyard refresh succeed, so chemical search cannot unlock optimistically.
      */
     fun updateVineyard(id: String, name: String, country: String?, onResult: (Boolean) -> Unit) {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) { onResult(false); return }
-        val previous = _ui.value.vineyards
-        _ui.update { state ->
-            state.copy(vineyards = state.vineyards.map { if (it.id == id) it.copy(name = trimmed, country = country) else it })
-        }
         viewModelScope.launch {
-            val ok = runCatching { repo.updateVineyard(id, trimmed, country) }.isSuccess
-            if (ok) {
-                runCatching { domainCache.saveVineyards(session.userId, _ui.value.vineyards) }
-            } else {
-                _ui.update { it.copy(vineyards = previous) }
+            val refreshed = runCatching {
+                repo.updateVineyard(id, trimmed, country)
+                repo.listMyVineyards()
+            }.getOrNull()
+            if (refreshed == null) {
+                onResult(false)
+                return@launch
             }
-            onResult(ok)
+            val confirmed = refreshed.firstOrNull { it.id == id }
+            if (confirmed == null || confirmed.name != trimmed || confirmed.country.orEmpty() != country.orEmpty()) {
+                onResult(false)
+                return@launch
+            }
+            _ui.update { state -> state.copy(vineyards = refreshed) }
+            runCatching { domainCache.saveVineyards(session.userId, refreshed) }
+            onResult(true)
         }
     }
 
@@ -10334,7 +10339,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val chemicalInfoService = ChemicalInfoService()
 
-    /** Country used to localize AI chemical lookups (vineyard country or device region). */
+    /** Country used to localize chemical lookups; the selected vineyard is the only source. */
     private fun chemicalLookupCountry(): String =
         ChemicalInfoService.resolveCountry(_ui.value.selectedVineyard?.country)
 
@@ -10346,9 +10351,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         query: String,
         onResult: (Result<List<ChemicalInfoService.ChemicalSearchResult>>) -> Unit,
     ) {
+        val country = chemicalLookupCountry()
+        if (country.isBlank()) {
+            onResult(Result.failure(ChemicalInfoService.LookupException(
+                "Set this vineyard’s country to search the correct national chemical register.",
+            )))
+            return
+        }
         viewModelScope.launch {
             try {
-                val results = chemicalInfoService.searchChemicals(query.trim(), chemicalLookupCountry())
+                val results = chemicalInfoService.searchChemicals(query.trim(), country)
                 onResult(Result.success(results))
             } catch (e: ChemicalInfoService.LookupException) {
                 onResult(Result.failure(e))

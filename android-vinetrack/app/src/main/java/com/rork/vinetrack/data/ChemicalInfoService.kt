@@ -230,12 +230,13 @@ class ChemicalInfoService {
     /** A failed lookup with a user-facing message. */
     class LookupException(message: String) : Exception(message)
 
-    suspend fun searchChemicals(query: String, country: String): List<ChemicalSearchResult> =
-        withContext(Dispatchers.IO) {
+    suspend fun searchChemicals(query: String, country: String): List<ChemicalSearchResult> {
+        val vineyardCountry = requireVineyardCountry(country)
+        return withContext(Dispatchers.IO) {
             val payload = buildMap {
                 put("action", "search")
                 put("query", query)
-                if (country.isNotBlank()) put("country", country)
+                put("country", vineyardCountry)
             }
             // A slow search is normal (the advisory says so); a HUNG one is
             // not. The bound matches the iOS `searchTimeout`, and hitting it
@@ -255,6 +256,7 @@ class ChemicalInfoService {
                 throw LookupException("AI returned an unexpected response. Please try again.")
             }
         }
+    }
 
     /**
      * LEGACY AI info path — quarantined (P3C).
@@ -267,12 +269,13 @@ class ChemicalInfoService {
      * documents and registered uses arrive through the structured lookup with
      * verification evidence — or the operator types them. Fail closed.
      */
-    suspend fun lookupChemicalInfo(productName: String, country: String): ChemicalInfoResponse =
-        withContext(Dispatchers.IO) {
+    suspend fun lookupChemicalInfo(productName: String, country: String): ChemicalInfoResponse {
+        val vineyardCountry = requireVineyardCountry(country)
+        return withContext(Dispatchers.IO) {
             val payload = buildMap {
                 put("action", "info")
                 put("productName", productName)
-                if (country.isNotBlank()) put("country", country)
+                put("country", vineyardCountry)
             }
             val data = postEdge(payload)
             try {
@@ -281,6 +284,7 @@ class ChemicalInfoService {
                 throw LookupException("AI returned an unexpected response. Please try again.")
             }
         }
+    }
 
     /**
      * Structured Chemical Intelligence lookup.
@@ -298,12 +302,13 @@ class ChemicalInfoService {
         productName: String,
         country: String,
         registrationNumber: String? = null,
-    ): ChemicalStructuredLookup =
-        withContext(Dispatchers.IO) {
+    ): ChemicalStructuredLookup {
+        val vineyardCountry = requireVineyardCountry(country)
+        return withContext(Dispatchers.IO) {
             val payload = buildMap {
                 put("action", "structured")
                 put("productName", productName)
-                if (country.isNotBlank()) put("country", country)
+                put("country", vineyardCountry)
                 // Identity hint from a selected register candidate. Only ever
                 // a POINTER: the server re-verifies name↔number against the
                 // official register before anything binds.
@@ -331,6 +336,7 @@ class ChemicalInfoService {
                 throw LookupException("AI returned an unexpected response. Please try again.")
             }
         }
+    }
 
     private suspend fun postEdge(payload: Map<String, String>): String {
         if (!SupabaseClient.isConfigured) {
@@ -394,5 +400,16 @@ class ChemicalInfoService {
          * `ChemicalInfoService.resolveCountry`.
          */
         fun resolveCountry(vineyardCountry: String?): String = vineyardCountry?.trim().orEmpty()
+
+        /** Zero-network jurisdiction guard shared by search and structured lookup. */
+        fun requireVineyardCountry(country: String): String {
+            val trimmed = country.trim()
+            if (trimmed.isEmpty()) {
+                throw LookupException(
+                    "Set this vineyard’s country to search the correct national chemical register.",
+                )
+            }
+            return trimmed
+        }
     }
 }

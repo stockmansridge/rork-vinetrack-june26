@@ -974,11 +974,13 @@ private fun RowDivider(color: Color) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun VineyardDetailSheet(
+internal fun VineyardDetailSheet(
     vm: AppViewModel,
     state: AppUiState,
     vineyard: Vineyard,
     onDismiss: () -> Unit,
+    initialFocusCountry: Boolean = false,
+    onCountrySaved: () -> Unit = {},
 ) {
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
@@ -996,6 +998,13 @@ private fun VineyardDetailSheet(
     var archiveConfirm by remember { mutableStateOf("") }
     var working by remember { mutableStateOf(false) }
     var showRemoveLogo by remember { mutableStateOf(false) }
+
+    LaunchedEffect(initialFocusCountry) {
+        if (initialFocusCountry && canEdit) {
+            kotlinx.coroutines.delay(250)
+            countryMenu = true
+        }
+    }
 
     // Resolve a short-lived signed URL for the private logo so Coil can load it.
     var logoUrl by remember(live.id, live.logoPath, live.logoUpdatedAt) { mutableStateOf<String?>(null) }
@@ -1104,7 +1113,10 @@ private fun VineyardDetailSheet(
                     }
                     RowDivider(vine.cardBorder)
                     if (canEdit) {
-                        ExposedDropdownMenuBox(expanded = countryMenu, onExpandedChange = { countryMenu = it }) {
+                        ExposedDropdownMenuBox(
+                            expanded = countryMenu,
+                            onExpandedChange = { if (!working) countryMenu = it },
+                        ) {
                             OutlinedTextField(
                                 value = country.ifBlank { "Not Set" },
                                 onValueChange = {},
@@ -1117,12 +1129,24 @@ private fun VineyardDetailSheet(
                             ExposedDropdownMenu(expanded = countryMenu, onDismissRequest = { countryMenu = false }) {
                                 DropdownMenuItem(text = { Text("Not Set") }, onClick = {
                                     countryMenu = false
-                                    if (country.isNotBlank()) { country = ""; vm.updateVineyard(live.id, live.name, null) {} }
+                                    if (country.isNotBlank() && !working) {
+                                        working = true
+                                        vm.updateVineyard(live.id, live.name, null) { ok ->
+                                            if (ok) { country = ""; onCountrySaved() }
+                                            working = false
+                                        }
+                                    }
                                 })
                                 WINE_COUNTRIES.forEach { c ->
                                     DropdownMenuItem(text = { Text(c) }, onClick = {
                                         countryMenu = false
-                                        if (c != country) { country = c; vm.updateVineyard(live.id, live.name, c) {} }
+                                        if (c != country && !working) {
+                                            working = true
+                                            vm.updateVineyard(live.id, live.name, c) { ok ->
+                                                if (ok) { country = c; onCountrySaved() }
+                                                working = false
+                                            }
+                                        }
                                     })
                                 }
                             }

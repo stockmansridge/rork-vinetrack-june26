@@ -120,6 +120,7 @@ final class ChemicalLookupCoordinator {
     private var hasSeededQuery: Bool = false
     private var searchTask: Task<Void, Never>?
     private var resolveTask: Task<Void, Never>?
+    private var searchContextKey: String?
 
     init() {}
 
@@ -135,6 +136,13 @@ final class ChemicalLookupCoordinator {
     /// True while the pre-research same-name decision is awaiting an answer.
     var isAwaitingDuplicateDecision: Bool { !sameNameMatches.isEmpty }
 
+    /// The button and keyboard-submit path share this exact fail-closed gate.
+    static func canStartSearch(query: String, country: String, isSearching: Bool) -> Bool {
+        !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !country.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !isSearching
+    }
+
     // MARK: - Lifecycle
 
     /// Seeds the search box ONCE per session. Re-seeding on a second
@@ -143,6 +151,27 @@ final class ChemicalLookupCoordinator {
         guard !hasSeededQuery else { return }
         hasSeededQuery = true
         if query.isEmpty { query = initial }
+    }
+
+    /// Cancels or invalidates work tied to another vineyard/jurisdiction while
+    /// deliberately retaining the typed query and any unsaved chemical draft.
+    func updateSearchContext(vineyardId: UUID?, country: String) {
+        let next = "\(vineyardId?.uuidString ?? "none")|\(country.trimmingCharacters(in: .whitespacesAndNewlines))"
+        guard searchContextKey != next else { return }
+        searchContextKey = next
+        searchTask?.cancel()
+        resolveTask?.cancel()
+        searchTask = nil
+        resolveTask = nil
+        isSearching = false
+        isResolving = false
+        rows = []
+        ranking = nil
+        requiresOperatorChoice = false
+        searchError = nil
+        unresolvedRow = nil
+        duplicateDecision = nil
+        sameNameMatches = []
     }
 
     /// The ONLY way in-flight work is cancelled.
@@ -180,6 +209,9 @@ final class ChemicalLookupCoordinator {
         savedChemicals: [SavedChemical],
         existing: SavedChemical?
     ) -> Bool {
+        guard Self.canStartSearch(query: query, country: country, isSearching: isSearching) else {
+            return false
+        }
         if duplicateDecision == nil {
             let matches = ChemicalStoreMatching.findByProductName(
                 in: savedChemicals,
@@ -207,6 +239,7 @@ final class ChemicalLookupCoordinator {
 
     /// "This is a different product." Only now may the register be searched.
     func createSeparate(country: String, savedChemicals: [SavedChemical]) {
+        guard Self.canStartSearch(query: query, country: country, isSearching: isSearching) else { return }
         ChemicalLookupTrace.log("duplicate_decision", "create_separate")
         duplicateDecision = .createSeparate
         sameNameMatches = []
@@ -230,15 +263,17 @@ final class ChemicalLookupCoordinator {
     // MARK: - Search
 
     func startSearch(country: String, savedChemicals: [SavedChemical]) {
+        guard Self.canStartSearch(query: query, country: country, isSearching: isSearching) else { return }
         // A new search supersedes the previous one — and ONLY the previous one.
         searchTask?.cancel()
+        let context = searchContextKey
         ChemicalLookupTrace.log("search_started")
         searchTask = Task { [weak self] in
-            await self?.runSearch(country: country, savedChemicals: savedChemicals)
+            await self?.runSearch(country: country, savedChemicals: savedChemicals, context: context)
         }
     }
 
-    private func runSearch(country: String, savedChemicals: [SavedChemical]) async {
+    private func runSearch(country: String, savedChemicals: [SavedChemical], context: String?) async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         isSearching = true
@@ -246,11 +281,12 @@ final class ChemicalLookupCoordinator {
         unresolvedRow = nil
         ranking = nil
         requiresOperatorChoice = false
-        defer { isSearching = false }
+        defer { if searchContextKey == context { isSearching = false } }
         do {
             let response = try await ChemicalInfoService()
                 .searchResponse(query: trimmed, country: country)
             try Task.checkCancellation()
+            guard searchContextKey == context else { return }
             ranking = response.ranking
 
             // The SERVER decides whether identity is settled. The app reads
@@ -283,6 +319,7 @@ final class ChemicalLookupCoordinator {
             ChemicalLookupTrace.log("search_cancelled")
             return
         } catch {
+            guard searchContextKey == context else { return }
             // The typed query is deliberately left intact so a failed lookup
             // never costs the operator their input.
             rows = []
@@ -302,10 +339,18 @@ final class ChemicalLookupCoordinator {
         existing: SavedChemical?,
         vineyardId: UUID
     ) {
+        guard !country.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         resolveTask?.cancel()
+        let context = searchContextKey
         ChemicalLookupTrace.log("resolve_started")
         resolveTask = Task { [weak self] in
-            await self?.resolve(row, country: country, existing: existing, vineyardId: vineyardId)
+            await self?.resolve(
+                row,
+                country: country,
+                existing: existing,
+                vineyardId: vineyardId,
+                context: context
+            )
         }
     }
 
@@ -318,12 +363,13 @@ final class ChemicalLookupCoordinator {
         _ row: ChemicalSearchRow,
         country: String,
         existing: SavedChemical?,
-        vineyardId: UUID
+        vineyardId: UUID,
+        context: String?
     ) async {
         isResolving = true
         searchError = nil
         unresolvedRow = nil
-        defer { isResolving = false }
+        defer { if searchContextKey == context { isResolving = false } }
 
         let lookup: ChemicalStructuredLookup
         do {
@@ -335,10 +381,12 @@ final class ChemicalLookupCoordinator {
                 )
             )
             try Task.checkCancellation()
+            guard searchContextKey == context else { return }
         } catch is CancellationError {
             ChemicalLookupTrace.log("resolve_cancelled")
             return
         } catch {
+            guard searchContextKey == context else { return }
             unresolvedRow = row
             searchError = (error as? LocalizedError)?.errorDescription
                 ?? "Could not load this product's registered details. Check your connection and try again."

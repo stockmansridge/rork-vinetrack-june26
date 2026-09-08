@@ -1,12 +1,20 @@
 import SwiftUI
 import PhotosUI
 
+/// Destination used when another workflow opens the existing vineyard editor.
+enum BackendVineyardDetailFocus: Sendable {
+    case overview
+    case country
+}
+
 /// Backend-aware vineyard detail sheet. Supports rename, country, logo
 /// upload/change/remove (synced via Supabase Storage), and soft-delete.
 struct BackendVineyardDetailSheet: View {
     let initialVineyard: Vineyard
     let vineyardRepository: any VineyardRepositoryProtocol
     private let logoStorage: VineyardLogoStorageService
+    private let initialFocus: BackendVineyardDetailFocus
+    private let onCountrySaved: (() -> Void)?
 
     @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
@@ -27,11 +35,15 @@ struct BackendVineyardDetailSheet: View {
     init(
         vineyard: Vineyard,
         vineyardRepository: any VineyardRepositoryProtocol = SupabaseVineyardRepository(),
-        logoStorage: VineyardLogoStorageService = VineyardLogoStorageService()
+        logoStorage: VineyardLogoStorageService = VineyardLogoStorageService(),
+        initialFocus: BackendVineyardDetailFocus = .overview,
+        onCountrySaved: (() -> Void)? = nil
     ) {
         self.initialVineyard = vineyard
         self.vineyardRepository = vineyardRepository
         self.logoStorage = logoStorage
+        self.initialFocus = initialFocus
+        self.onCountrySaved = onCountrySaved
     }
 
     private var vineyard: Vineyard {
@@ -45,6 +57,7 @@ struct BackendVineyardDetailSheet: View {
 
     var body: some View {
         NavigationStack {
+            ScrollViewReader { proxy in
             List {
                 logoSection
                 infoSection
@@ -60,6 +73,10 @@ struct BackendVineyardDetailSheet: View {
                 memberCount = max(memberCount, 1)
                 await ensureLogoCached()
                 await loadMemberCount()
+                if case .country = initialFocus {
+                    await Task.yield()
+                    withAnimation { proxy.scrollTo("vineyard-country", anchor: .center) }
+                }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -90,6 +107,7 @@ struct BackendVineyardDetailSheet: View {
                 Button("OK", role: .cancel) { errorMessage = nil }
             } message: { message in
                 Text(message)
+            }
             }
         }
     }
@@ -303,7 +321,8 @@ struct BackendVineyardDetailSheet: View {
                     Text(c).tag(c)
                 }
             }
-            .disabled(!accessControl.canChangeSettings)
+            .id("vineyard-country")
+            .disabled(!accessControl.canChangeSettings || isWorking)
             .onChange(of: selectedCountry) { _, newValue in
                 Task { await updateCountry(newValue) }
             }
@@ -401,9 +420,14 @@ struct BackendVineyardDetailSheet: View {
         )
         do {
             try await vineyardRepository.updateVineyard(backend)
-            var updated = vineyard
-            updated.country = newValue
-            store.upsertLocalVineyard(updated)
+            let refreshed = try await vineyardRepository.listMyVineyards()
+            store.mapBackendVineyardsIntoLocal(refreshed)
+            guard store.vineyards.contains(where: {
+                $0.id == vineyard.id && $0.country == newValue
+            }) else {
+                throw ChemicalLookupError.network("The saved vineyard country could not be refreshed")
+            }
+            onCountrySaved?()
         } catch {
             errorMessage = error.localizedDescription
             selectedCountry = vineyard.country

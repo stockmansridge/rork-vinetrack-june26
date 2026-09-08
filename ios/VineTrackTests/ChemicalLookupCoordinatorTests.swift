@@ -122,6 +122,45 @@ struct ChemicalLookupCoordinatorTests {
 
     /// A failed resolve must not silently produce a degraded draft. Continuing
     /// with only the search row is a decision the operator takes.
+    @Test("Only owners and managers may open vineyard settings recovery")
+    func countryRecoveryPermissions() {
+        #expect(BackendRole.owner.canChangeSettings)
+        #expect(BackendRole.manager.canChangeSettings)
+        #expect(!BackendRole.supervisor.canChangeSettings)
+        #expect(!BackendRole.operator.canChangeSettings)
+    }
+
+    @Test("Keyboard submission and button search both fail closed without a country")
+    func missingCountrySearchGate() {
+        #expect(!ChemicalLookupCoordinator.canStartSearch(
+            query: "Dithane", country: "   ", isSearching: false
+        ))
+        #expect(ChemicalLookupCoordinator.canStartSearch(
+            query: "Dithane", country: "AU", isSearching: false
+        ))
+    }
+
+    @Test("The service rejects missing country before networking")
+    func serviceCountryGuard() throws {
+        #expect(throws: ChemicalLookupError.missingVineyardCountry) {
+            try ChemicalInfoService.requireVineyardCountry(" \n ")
+        }
+        #expect(try ChemicalInfoService.requireVineyardCountry(" Australia ") == "Australia")
+    }
+
+    @Test("Changing vineyard context preserves query and unsaved draft")
+    func contextChangePreservesDraft() {
+        let coordinator = ChemicalLookupCoordinator()
+        coordinator.query = "Switch"
+        coordinator.handOff(
+            row(), lookup: nil, country: "AU", existing: nil, vineyardId: UUID()
+        )
+        let draftId = coordinator.reviewDraft?.id
+        coordinator.updateSearchContext(vineyardId: UUID(), country: "NZ")
+        #expect(coordinator.query == "Switch")
+        #expect(coordinator.reviewDraft?.id == draftId)
+    }
+
     @Test("Continuing without register details does nothing unless a row failed")
     func continueRequiresAFailedRow() {
         let coordinator = ChemicalLookupCoordinator()

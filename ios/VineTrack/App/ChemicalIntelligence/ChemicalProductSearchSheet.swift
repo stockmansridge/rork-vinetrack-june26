@@ -40,7 +40,9 @@ struct ChemicalProductSearchSheet: View {
     let onManualEntry: (() -> Void)?
 
     @Environment(MigratedDataStore.self) private var store
+    @Environment(BackendAccessControl.self) private var accessControl
     @Environment(\.dismiss) private var dismiss
+    @State private var showsCountryEditor: Bool = false
 
     init(
         coordinator: ChemicalLookupCoordinator,
@@ -119,6 +121,10 @@ struct ChemicalProductSearchSheet: View {
             .onAppear {
                 ChemicalLookupTrace.log("search_view_appear")
                 coordinator.seedQueryIfNeeded(initialQuery)
+                coordinator.updateSearchContext(
+                    vineyardId: store.selectedVineyard?.id,
+                    country: countryCode
+                )
             }
             .onDisappear {
                 // Deliberately NOT a cancellation point. Rotation, screenshots
@@ -127,6 +133,27 @@ struct ChemicalProductSearchSheet: View {
             }
             .onChange(of: coordinator.reviewDraft?.id) { _, _ in
                 if let draft = coordinator.reviewDraft { onReviewed(draft) }
+            }
+            .onChange(of: store.selectedVineyard?.id) { _, _ in
+                coordinator.updateSearchContext(
+                    vineyardId: store.selectedVineyard?.id,
+                    country: countryCode
+                )
+            }
+            .onChange(of: store.selectedVineyard?.country) { _, _ in
+                coordinator.updateSearchContext(
+                    vineyardId: store.selectedVineyard?.id,
+                    country: countryCode
+                )
+            }
+        }
+        .sheet(isPresented: $showsCountryEditor) {
+            if let vineyard = store.selectedVineyard {
+                BackendVineyardDetailSheet(
+                    vineyard: vineyard,
+                    initialFocus: .country
+                )
+                .interactiveDismissDisabled(false)
             }
         }
     }
@@ -160,9 +187,21 @@ struct ChemicalProductSearchSheet: View {
             )
         } header: {
             Text("Search for product")
+            if countryCode.isEmpty {
+                Text("Set this vineyard’s country to search the correct national chemical register.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if accessControl.canChangeSettings, store.selectedVineyard != nil {
+                    Button("Set vineyard country") { showsCountryEditor = true }
+                } else {
+                    Text("Ask a vineyard Owner or Manager to set the country.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         } footer: {
             if countryCode.isEmpty {
-                Text("Set your vineyard's country so products can be matched to the right national register.")
+                EmptyView()
             } else {
                 Text("Searching products registered in \(countryCode). An AU and an NZ product with the same name are different registrations.")
             }
@@ -380,6 +419,11 @@ struct ChemicalProductSearchSheet: View {
     /// same-name record in the operator's own store stops the flow before any
     /// request is issued (item 5).
     private func startSearch() {
+        guard ChemicalLookupCoordinator.canStartSearch(
+            query: coordinator.query,
+            country: countryCode,
+            isSearching: coordinator.isSearching
+        ) else { return }
         coordinator.startSearchUnlessDuplicate(
             country: countryCode,
             savedChemicals: store.savedChemicals,

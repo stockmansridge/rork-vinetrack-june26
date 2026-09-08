@@ -750,9 +750,10 @@ nonisolated struct ChemicalStructuredLookupRequest: Sendable, Hashable {
     }
 }
 
-nonisolated enum ChemicalLookupError: Error, LocalizedError, Sendable {
+nonisolated enum ChemicalLookupError: Error, LocalizedError, Sendable, Equatable {
     case notConfigured
     case missingProviderKey
+    case missingVineyardCountry
     case network(String)
     case parseFailed
     /// The request outlived its own deadline.
@@ -768,6 +769,8 @@ nonisolated enum ChemicalLookupError: Error, LocalizedError, Sendable {
             return "AI lookup is not configured. Please try again later."
         case .missingProviderKey:
             return "AI provider key is not set on the server. Ask an admin to configure OPENAI_API_KEY."
+        case .missingVineyardCountry:
+            return "Set this vineyard’s country to search the correct national chemical register."
         case .network(let m):
             return "AI lookup failed: \(m)"
         case .parseFailed:
@@ -833,12 +836,13 @@ nonisolated struct ChemicalInfoService: Sendable {
     /// them, which is the only thing entitled to decide whether a human must
     /// choose.
     func searchResponse(query: String, country: String = "") async throws -> ChemicalSearchResponse {
+        let country = try Self.requireVineyardCountry(country)
         var payload: [String: Any] = [
             "action": "search",
             "query": query,
+            "country": country,
             "client": ChemicalLookupClientContext().wirePayload,
         ]
-        if !country.isEmpty { payload["country"] = country }
         let data = try await postEdge(
             path: "chemical-info-lookup",
             payload: payload,
@@ -905,12 +909,13 @@ nonisolated struct ChemicalInfoService: Sendable {
         registrationNumber: String? = nil,
         registrationScheme: String? = nil
     ) async throws -> ChemicalStructuredLookup {
+        let country = try Self.requireVineyardCountry(country)
         var payload: [String: Any] = [
             "action": "structured",
             "productName": productName,
+            "country": country,
             "client": ChemicalLookupClientContext().wirePayload,
         ]
-        if !country.isEmpty { payload["country"] = country }
         // Identity hint from a selected register candidate. Only ever a
         // POINTER: the server re-verifies name↔number against the official
         // register before anything binds.
@@ -943,6 +948,14 @@ nonisolated struct ChemicalInfoService: Sendable {
     // arrives only through `searchChemicals` → `lookupStructured` →
     // `ChemicalReviewMerge`. The Edge Function still serves the action for other
     // clients; nothing here calls it.
+
+    /// Fails before request construction so every caller has a zero-network
+    /// missing-country boundary, including keyboard submission and re-search.
+    static func requireVineyardCountry(_ country: String) throws -> String {
+        let trimmed = country.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw ChemicalLookupError.missingVineyardCountry }
+        return trimmed
+    }
 
     private func postEdge(
         path: String,

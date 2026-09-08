@@ -39,6 +39,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -87,6 +88,8 @@ import com.rork.vinetrack.ui.components.ChemicalVerificationEvidenceView
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
@@ -172,6 +175,9 @@ internal fun ChemicalMatchFlowSheet(
     }
     var searching by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
+    var searchJob by remember { mutableStateOf<Job?>(null) }
+    var structuredJob by remember { mutableStateOf<Job?>(null) }
+    var showCountryEditor by remember { mutableStateOf(false) }
 
     var selected by remember { mutableStateOf<ChemicalInfoService.ChemicalSearchResult?>(null) }
     var loadingStructured by remember { mutableStateOf(false) }
@@ -221,12 +227,30 @@ internal fun ChemicalMatchFlowSheet(
      * annoying and a chance to get it wrong, and country is part of product
      * identity rather than a search preference.
      */
+    val selectedVineyard = state.vineyards.firstOrNull { it.id == state.selectedVineyardId }
+    val canChangeVineyardSettings = state.currentRole == "owner" || state.currentRole == "manager"
     val countryCode: String = remember(state.selectedVineyardId, state.vineyards) {
         ChemicalRegistration.normaliseCountry(
             ChemicalInfoService.resolveCountry(
                 state.vineyards.firstOrNull { it.id == state.selectedVineyardId }?.country,
             ),
         )
+    }
+    val contextKey = "${state.selectedVineyardId.orEmpty()}|$countryCode"
+    val latestContextKey by rememberUpdatedState(contextKey)
+    var activeContextKey by remember { mutableStateOf(contextKey) }
+    LaunchedEffect(contextKey) {
+        if (activeContextKey != contextKey) {
+            activeContextKey = contextKey
+            searchJob?.cancel()
+            searchJob = null
+            structuredJob?.cancel()
+            structuredJob = null
+            searching = false
+            loadingStructured = false
+            results = emptyList()
+            searchError = null
+        }
     }
 
     fun runSearch() {
@@ -236,21 +260,27 @@ internal fun ChemicalMatchFlowSheet(
         if (!ChemicalLookupAdvisory.canStartSearch(query, searching, countryCode)) return
         searching = true
         searchError = null
-        scope.launch {
+        val requestContext = contextKey
+        searchJob = scope.launch {
             try {
-                results = service.searchChemicals(trimmed, countryCode)
+                val response = service.searchChemicals(trimmed, countryCode)
+                if (requestContext != latestContextKey) return@launch
+                results = response
                 if (results.isEmpty()) {
                     searchError =
                         "No products found. Try a different spelling, or enter the product manually."
                 }
+            } catch (_: CancellationException) {
+                // Vineyard/country changed or a newer request superseded this one.
             } catch (e: Exception) {
+                if (requestContext != latestContextKey) return@launch
                 // The typed query is deliberately left intact so a failed lookup
                 // never costs the operator their input.
                 results = emptyList()
                 searchError = e.message
                     ?: "Lookup is unavailable. Check your connection and try again."
             } finally {
-                searching = false
+                if (requestContext == latestContextKey) searching = false
             }
         }
     }
@@ -289,7 +319,8 @@ internal fun ChemicalMatchFlowSheet(
         structuredError = null
         lookupFormType = null
         defaultSelection = null
-        scope.launch {
+        val requestContext = contextKey
+        structuredJob = scope.launch {
             try {
                 // A register candidate carries its registration number;
                 // passing it makes the strict resolver verify THAT exact
@@ -305,6 +336,7 @@ internal fun ChemicalMatchFlowSheet(
                 // like a failed lookup. Foreign label rates, WHP, re-entry
                 // statements and uses must never be convertible, saveable or
                 // linkable here.
+                if (requestContext != latestContextKey) return@launch
                 val rejection = ChemicalJurisdiction.rejectionReason(lookup, countryCode)
                 if (rejection != null) {
                     masterMatch = null
@@ -345,7 +377,10 @@ internal fun ChemicalMatchFlowSheet(
                         jurisdiction = null,
                     ),
                 )
+            } catch (_: CancellationException) {
+                // Vineyard/country changed; retain the user's draft and ignore this response.
             } catch (e: Exception) {
+                if (requestContext != latestContextKey) return@launch
                 // No silent downgrade to the old AI shape: treating an
                 // unstructured answer as if it were verified evidence is the
                 // exact failure this stage exists to prevent.
@@ -443,8 +478,7 @@ internal fun ChemicalMatchFlowSheet(
                     )
                     Text(
                         if (countryCode.isBlank()) {
-                            "Set your vineyard's country so products can be matched to the " +
-                                "right national register."
+                            "Set this vineyard’s country to search the correct national chemical register."
                         } else {
                             "Searching products registered in $countryCode. An AU and an NZ " +
                                 "product with the same name are different registrations."
@@ -452,6 +486,24 @@ internal fun ChemicalMatchFlowSheet(
                         fontSize = 11.sp,
                         color = vine.textSecondary,
                     )
+                    if (countryCode.isBlank()) {
+                        if (canChangeVineyardSettings && selectedVineyard != null) {
+                            OutlinedButton(
+                                onClick = { showCountryEditor = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Set vineyard country") }
+                        } else {
+                            Text(
+                                "Ask a vineyard Owner or Manager to set the country.",
+                                fontSize = 12.sp,
+                                color = vine.textSecondary,
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = onEnterManually,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Enter Manually") }
+                    }
                     Button(
                         onClick = { attemptSearch() },
                         // No vineyard country -> no jurisdiction -> fail closed.
@@ -895,6 +947,17 @@ internal fun ChemicalMatchFlowSheet(
         // so the same-name check would always fire on itself — `existing` is
         // excluded from it, and the search runs as before.
         if (prefillQuery.trim().isNotEmpty() && results.isEmpty()) attemptSearch()
+    }
+
+    if (showCountryEditor && selectedVineyard != null) {
+        VineyardDetailSheet(
+            vm = vm,
+            state = state,
+            vineyard = selectedVineyard,
+            initialFocusCountry = true,
+            onCountrySaved = {},
+            onDismiss = { showCountryEditor = false },
+        )
     }
 }
 
