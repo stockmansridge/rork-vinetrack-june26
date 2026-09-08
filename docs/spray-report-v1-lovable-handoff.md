@@ -14,3 +14,20 @@ Lovable must implement these portal changes separately after SQL 224 and 225 are
 - Add portal fixture/schema tests and RLS tests; compare semantic output against `docs/fixtures/spray-report-v1-stockmans-ridge.json`.
 
 Do not create a competing payload, weather table, route style, or tank matching rule in Lovable.
+
+## Controlled canonical route registration
+
+After SQL 226 is applied, stop writing `trip_report_assets` directly. Upload the PNG to the private `trip-report-assets` bucket through the existing trusted upload path, beneath `{tripId}/`, then call the RPC with the exporting user's authenticated JWT.
+
+RPC: `register_spray_report_route_asset_v1`
+
+Request fields:
+
+- `p_trip_id`: trip UUID.
+- `p_bucket`: exactly `trip-report-assets`.
+- `p_object_path`: safe `.png` path beginning `{tripId}/`.
+- `p_sha256`: lowercase 64-character SHA-256 of the PNG.
+- `p_route_hash`: non-empty shared route-input hash.
+- `p_style_version`: exactly `spray-route-red-green-v1`.
+
+Response fields are the canonical `SprayReportPayloadV1.route` object: `bucket`, `objectPath`, `sha256`, `routeHash`, and `styleVersion`. Always use the returned object; when another export registered first, the RPC returns that existing immutable winner instead of replacing it.
