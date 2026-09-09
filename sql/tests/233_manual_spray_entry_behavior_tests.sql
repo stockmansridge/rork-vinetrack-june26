@@ -1,6 +1,39 @@
--- Executable rollback-isolated behavioral tests for SQL 232 + additive correction 233.
+-- Executable rollback-isolated behavioral tests for SQL 232 + additive corrections 233/234.
 -- Uses only synthetic @test.local fixtures and rolls every row back.
 begin;
+
+-- SQL 234 must patch both runtime aggregates before the end-to-end report calls below.
+do $aggregate_guard$
+declare
+  v_planned jsonb;
+  v_actual jsonb;
+  v_tanks jsonb:=jsonb_build_array(
+    jsonb_build_object('chemicals',jsonb_build_array(
+      jsonb_build_object('savedChemicalId','11111111-1111-4111-8111-111111111111','name','Aggregate Liquid','unit','Litres','volumePerTank',125,'actualAmountBase',100)
+    )),
+    jsonb_build_object('chemicals',jsonb_build_array(
+      jsonb_build_object('savedChemicalId','11111111-1111-4111-8111-111111111111','name','Aggregate Liquid','unit','mL','volumePerTank',375,'actualAmountBase',200)
+    ))
+  );
+begin
+  if to_regprocedure('public.spray_report_planned_chemical_totals_v1(jsonb)') is null
+     or to_regprocedure('public.spray_report_actual_chemical_totals_v1(jsonb)') is null
+     or position('spray_report_planned_chemical_totals_v1' in pg_get_functiondef('public.get_spray_report_v1_pre_weather_provenance_v1(uuid)'::regprocedure))=0
+     or position('spray_report_actual_chemical_totals_v1' in pg_get_functiondef('public.get_spray_report_v1_pre_weather_provenance_v1(uuid)'::regprocedure))=0 then
+    raise exception 'T0 FAILED: SQL 234 canonical report aggregate correction is not installed';
+  end if;
+  v_planned:=public.spray_report_planned_chemical_totals_v1(v_tanks);
+  v_actual:=public.spray_report_actual_chemical_totals_v1(v_tanks);
+  if jsonb_array_length(v_planned)<>1
+     or (v_planned#>>'{0,actualAmountBase}')::numeric<>500
+     or v_planned#>>'{0,unit}'<>'Litres'
+     or jsonb_array_length(v_actual)<>1
+     or (v_actual#>>'{0,actualAmountBase}')::numeric<>300
+     or v_actual#>>'{0,unit}'<>'Litres' then
+    raise exception 'T0 FAILED: SQL 234 chemical totals are incorrect';
+  end if;
+end
+$aggregate_guard$;
 
 create or replace function public._t233_login(p_user_id uuid)
 returns void language plpgsql as $fn$
@@ -148,7 +181,7 @@ begin
   begin perform public.save_manual_spray_v1(v_missing_save_op,jsonb_set(jsonb_set(jsonb_set(v_payload,'{manualEntryId}',to_jsonb(v_missing_manual)),'{sprayRecordId}',to_jsonb(v_missing_spray)),'{tripId}',to_jsonb(v_missing_trip)),0); exception when others then v_state:=sqlstate; end;
   if v_state is distinct from '55000' or exists(select 1 from public.spray_records where id=v_missing_spray) or exists(select 1 from public.trips where id=v_missing_trip) then raise exception 'T12 FAILED: delete-before-create did not suppress save'; end if;
 
-  raise notice 'SQL 233 manual spray behavioral tests passed; transaction will roll back.';
+  raise notice 'SQL 233/234 manual spray behavioral tests passed; transaction will roll back.';
 end
 $tests$;
 rollback;

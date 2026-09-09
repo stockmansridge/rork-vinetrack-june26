@@ -6,7 +6,7 @@ Jonathan confirmed that `sql/232_manual_spray_entry_v1.sql` and its supplied rol
 
 Latest synced implementation baseline: `f90b8658` (`Finished mobile corrections and delivered the shared manual spray entry groundwork`).
 
-A post-deployment ordering/compatibility correction is now prepared as `sql/233_manual_spray_entry_corrections.sql`, with executable rollback-isolated coverage in `sql/tests/233_manual_spray_entry_behavior_tests.sql`. Jonathan must run those two new files, in that order. SQL 233 keeps every public RPC signature and report schema unchanged.
+Jonathan successfully applied `sql/233_manual_spray_entry_corrections.sql`. Its first behavioral-test run then exposed a pre-existing runtime grouping defect in the canonical report layer from SQL 228 (`SQLSTATE 42803`); the SQL 233 transaction itself is not to be rerun. The additive repair is `sql/234_spray_report_chemical_aggregate_fix.sql`. Jonathan must run SQL 234, then rerun the updated rollback-isolated `sql/tests/233_manual_spray_entry_behavior_tests.sql`. SQL 234 changes no public RPC signature or report schema.
 
 ## Source and identity
 
@@ -215,4 +215,4 @@ Supported recovery providers are `davis_weatherlink` and `wunderground`. `captur
 
 Lovable owns the Portal form and PDF renderer. It should reuse current vineyard catalog queries for tractors, team members, spray units, blocks and Chemical Store products; call only the RPCs above for mutations; consume canonical report 1.2; and remove its expectation of weather `filled`.
 
-Current dependency status: SQL 232 and its supplied tests are confirmed complete. SQL 233 plus its behavioral test are newly pending with Jonathan. Live deployment/configuration of `spray-weather-recovery` remains separately unverified.
+Current dependency status: SQL 232 and its supplied tests are confirmed complete, and SQL 233 is applied. SQL 233's behavioral test stopped at a pre-existing canonical-report aggregate error; SQL 234 and the updated SQL 233/234 behavioral-test rerun are pending with Jonathan. Live deployment/configuration of `spray-weather-recovery` remains separately unverified.
