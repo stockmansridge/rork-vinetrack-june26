@@ -40,6 +40,10 @@ begin
      't230-owner@test.local', 'x', now(), now(), now()),
     (v_operator, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
      't230-operator@test.local', 'x', now(), now(), now());
+  insert into public.profiles (id, email) values
+    (v_owner, 't230-owner@test.local'),
+    (v_operator, 't230-operator@test.local')
+  on conflict (id) do nothing;
   insert into public.vineyards (id, name) values (v_vineyard, 'T230 Vineyard');
   insert into public.vineyard_members (vineyard_id, user_id, role) values
     (v_vineyard, v_owner, 'owner'),
