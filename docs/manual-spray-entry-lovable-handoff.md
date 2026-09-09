@@ -2,13 +2,11 @@
 
 ## Deployment status and prerequisites
 
-This contract is **implemented in source but is not deployed**. Jonathan must run, in order:
+Jonathan confirmed that `sql/232_manual_spray_entry_v1.sql` and its supplied rollback-only test SQL ran successfully. **Do not rerun either file.** The deployed 232 contract is therefore available now.
 
-1. Confirm SQL 223, 228 and 229 are already applied. Do not rerun them.
-2. Run `sql/232_manual_spray_entry_v1.sql` once.
-3. Run `sql/tests/232_manual_spray_entry_v1_tests.sql`; it is rollback-only.
+Latest synced implementation baseline: `f90b8658` (`Finished mobile corrections and delivered the shared manual spray entry groundwork`).
 
-The repository sequence was rechecked at `755a5a2b`; 231 was the prior migration. Portal must not call the functions below until Jonathan confirms 232 is applied.
+A post-deployment ordering/compatibility correction is now prepared as `sql/233_manual_spray_entry_corrections.sql`, with executable rollback-isolated coverage in `sql/tests/233_manual_spray_entry_behavior_tests.sql`. Jonathan must run those two new files, in that order. SQL 233 keeps every public RPC signature and report schema unchanged.
 
 ## Source and identity
 
@@ -19,6 +17,14 @@ Database fields on both `spray_records` and `trips`:
 
 Never infer source. A manual application is exactly `entry_source === "manual"`. Display **Manual entry** and a pencil icon separately from **Completed**. Unknown is not tracked. Triggers preserve an existing manual source when an older client omits or tries to clear it.
 
+## Released-client and report compatibility
+
+SQL 232 changes `get_spray_report_v1` to schema `1.2` for manual **and tracked** applications. The change is additive: existing tracked report fields, planned-versus-actual semantics, rows, route, weather and financial visibility remain unchanged. Current iOS and Android decoders accept the 1.2 additions and do not reject a report merely because `schemaVersion` changed.
+
+Already released clients still matter. Their report decoders ignore unknown additive fields, so tracked report parsing remains compatible. However, released spray-record decoders require legacy tank JSON keys. SQL 232's first manual projection omitted several of those keys, so an older installation may fail to decode a manual `spray_records` row even though its canonical report is valid. SQL 233 adds/backfills only those compatibility keys without inventing planned quantities; actual authority remains `spray_tank_actuals`. Lovable should not work around this by inventing plan values.
+
+Lovable must parse schema 1.2 now, preserve tracked behavior, read `provenance` additively, allow nullable planned amounts, and use `captured` (never `filled`) for historical weather responses.
+
 ## Functions
 
 ### Save or edit
@@ -28,7 +34,7 @@ Never infer source. A manual application is exactly `entry_source === "manual"`.
 - Create: pass `p_expected_version: 0` (or null).
 - Edit: pass the current spray-record `syncVersion`.
 - Allocate `operationId`, `manualEntryId`, `sprayRecordId`, `tripId`, every tank `id`/`actualId`, and every chemical-line `id` once. Persist them in the draft and reuse them for every retry.
-- A repeated operation ID with the identical payload returns its original result.
+- A repeated operation ID with the identical payload returns its original result while the application is active. After deletion, the tombstone is authoritative and SQL 233 makes the same cached save retry fail with SQLSTATE `55000`; clients must never present that historical response as current confirmation.
 - Reuse with a different payload/expected version is rejected.
 - A stale edit is rejected with SQLSTATE `40001`; reload and ask the user to reconcile. Never silently overwrite.
 
@@ -201,10 +207,12 @@ Response (there is no `filled` field):
 }
 ```
 
-Supported recovery providers are `davis_weatherlink` and `wunderground`. `captured` means persisted genuine observations. Reload `get_spray_report_v1` after recovery. Missing credentials/archive data must not block manual save. The function exists in source, but its live deployment has not been verified and default deploy scripts do not include it.
+Supported recovery providers are `davis_weatherlink` and `wunderground`. `captured` means persisted genuine observations. Reload `get_spray_report_v1` after recovery. Missing credentials/archive data must not block manual save.
+
+**Deployment status, verified separately from SQL:** source exists at `supabase/functions/spray-weather-recovery/index.ts`, but live deployment is still **unverified**. Repository searches show it is not included by the default deploy scripts. The available project deployment/log tooling could not enumerate this external Supabase project, so SQL 232 confirmation must not be treated as Edge Function confirmation. Portal and mobile must show `unavailable`/`pending` clearly and keep saving independent of this endpoint.
 
 ## Portal implementation boundary
 
 Lovable owns the Portal form and PDF renderer. It should reuse current vineyard catalog queries for tractors, team members, spray units, blocks and Chemical Store products; call only the RPCs above for mutations; consume canonical report 1.2; and remove its expectation of weather `filled`.
 
-Dependencies still awaiting confirmation: SQL 232 application/tests and live deployment/configuration of `spray-weather-recovery`.
+Current dependency status: SQL 232 and its supplied tests are confirmed complete. SQL 233 plus its behavioral test are newly pending with Jonathan. Live deployment/configuration of `spray-weather-recovery` remains separately unverified.

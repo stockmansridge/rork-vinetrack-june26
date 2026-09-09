@@ -14,6 +14,9 @@ data class SprayTankActualChemical(
     val unit: String,
     val replacesPlannedChemicalId: String? = null,
     val usageKind: String? = null,
+    val productCategory: String? = null,
+    val physicalForm: String? = null,
+    val snapshotAt: String? = null,
 ) {
     init {
         require(id.isNotBlank() && actualAmountBase.isFinite() && actualAmountBase >= 0.0)

@@ -20,6 +20,15 @@ extension MigratedDataStore {
         deleteSprayRecord(record.id)
     }
 
+    /// Hides a manual application after its coordinated delete has been durably
+    /// queued. This deliberately does not enter the generic spray delete outbox.
+    func removeManualSprayLocallyOnly(_ record: SprayRecord) {
+        guard record.isManualEntry, let vineyardId = selectedVineyardId else { return }
+        sprayRecords.removeAll { $0.id == record.id }
+        sprayRepo.saveRecordsSlice(sprayRecords, for: vineyardId)
+        trips.removeAll { $0.id == record.tripId }
+    }
+
     // MARK: - Saved chemicals
 
     func addSavedChemical(_ chemical: SavedChemical) {

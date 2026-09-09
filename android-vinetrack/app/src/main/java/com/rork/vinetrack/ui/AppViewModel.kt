@@ -1026,6 +1026,10 @@ internal fun resolveTripPinAttribution(
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val session = SessionStore(app)
+    private val manualSprayCoordinator = com.rork.vinetrack.data.ManualSprayEntryCoordinator(
+        com.rork.vinetrack.data.ManualSprayEntryRepository(session),
+        com.rork.vinetrack.data.ManualSprayOperationStore(app),
+    )
     private val sprayReportRepository = SprayReportRepository(session)
 
     fun loadCanonicalSprayReport(tripId: String, onResult: (Result<com.rork.vinetrack.data.reporting.SprayReportPayloadV1>) -> Unit) {
@@ -2382,6 +2386,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!phase5ReplayRunning.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
+                // Manual saves/deletes replay with their original operation IDs before
+                // generic trip/spray queues can touch related rows.
+                manualSprayCoordinator.replay(_ui.value.currentRole)
                 tripStartSync.replayAll { trip ->
                     _ui.update { st -> st.copy(trips = st.trips.map { existing ->
                         if (existing.id == trip.id) TripStartReconciliation.reconcile(server = trip, local = existing) else existing
@@ -10281,6 +10288,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * Server soft-delete is RLS-restricted (owner / manager / supervisor), so a
      * permanent permission rejection rolls the row back rather than queueing.
      */
+    fun hideManualSprayLocally(sprayRecordId: String, tripId: String) {
+        _ui.update { state -> state.copy(
+            sprayRecords = state.sprayRecords.filterNot { it.id == sprayRecordId },
+            trips = state.trips.filterNot { it.id == tripId },
+            sprayTankActuals = state.sprayTankActuals.filterNot { it.sprayRecordId == sprayRecordId },
+        ) }
+    }
+
     fun deleteSprayRecord(id: String, onResult: (Boolean) -> Unit) {
         // Local-only offline-created record: cancel the queued create (and any
         // same-record update) instead of sending a server delete, so

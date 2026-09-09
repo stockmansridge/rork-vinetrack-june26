@@ -46,8 +46,26 @@ final class ManualSprayEntryStore: ManualSprayEntryStoring, @unchecked Sendable 
     }
 }
 
+final class ManualSprayDraftStore: @unchecked Sendable {
+    static let shared = ManualSprayDraftStore()
+    private let defaults: UserDefaults
+    private let encoder: JSONEncoder
+    private let decoder: JSONDecoder
+    private init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+    }
+    private func key(_ vineyardId: UUID) -> String { "vinetrack_manual_spray_draft_v1_\(vineyardId.uuidString.lowercased())" }
+    func load(vineyardId: UUID) -> ManualSprayPayload? { defaults.data(forKey: key(vineyardId)).flatMap { try? decoder.decode(ManualSprayPayload.self, from: $0) } }
+    func save(_ payload: ManualSprayPayload) { if let data = try? encoder.encode(payload) { defaults.set(data, forKey: key(payload.vineyardId)) } }
+    func clear(vineyardId: UUID) { defaults.removeObject(forKey: key(vineyardId)) }
+}
+
 @MainActor
 final class ManualSprayEntryCoordinator {
+    static let shared: ManualSprayEntryCoordinator = ManualSprayEntryCoordinator()
+
     private let repository: ManualSprayEntryRepositoryProtocol
     private let store: ManualSprayEntryStoring
     private(set) var operations: [PendingManualSprayOperation]
@@ -65,9 +83,14 @@ final class ManualSprayEntryCoordinator {
 
     func save(payload: ManualSprayPayload, expectedVersion: Int?) async throws -> ManualSpraySaveResponse? {
         let valid = try payload.validated()
-        let operation = PendingManualSprayOperation(id: UUID(), kind: .save, payload: valid, expectedVersion: expectedVersion, attemptCount: 0, lastError: nil)
-        replaceSave(with: operation)
-        guard store.save(operations) else { throw ManualSprayPersistenceError.couldNotPersist }
+        let operation: PendingManualSprayOperation
+        if let queued = operations.first(where: { $0.kind == .save && $0.payload == valid && $0.expectedVersion == expectedVersion }) {
+            operation = queued
+        } else {
+            operation = PendingManualSprayOperation(id: UUID(), kind: .save, payload: valid, expectedVersion: expectedVersion, attemptCount: 0, lastError: nil)
+            replaceSave(with: operation)
+            guard store.save(operations) else { throw ManualSprayPersistenceError.couldNotPersist }
+        }
         do {
             let response = try await repository.save(operationId: operation.id, payload: valid, expectedVersion: expectedVersion)
             operations.removeAll { $0.id == operation.id }

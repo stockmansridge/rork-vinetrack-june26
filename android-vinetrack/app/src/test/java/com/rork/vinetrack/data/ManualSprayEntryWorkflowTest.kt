@@ -35,7 +35,7 @@ class ManualSprayEntryWorkflowTest {
         val payload = fixture()
         assertNull(coordinator.save(payload, 0))
         assertEquals(payload.manualEntryId, coordinator.pendingPayloads().single().manualEntryId)
-        coordinator.replay("supervisor")
+        assertTrue(coordinator.save(payload, 0)?.serverConfirmed == true)
         assertTrue(coordinator.pendingPayloads().isEmpty())
         assertEquals(1, gateway.operationIds.distinct().size)
 

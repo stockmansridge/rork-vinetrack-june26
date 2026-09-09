@@ -44,9 +44,9 @@ class SprayReportPayloadV1Test {
         val payload = SprayReportPayloadV1.offlineProjection(trip, record, "Stockmans Ridge", "Australia/Sydney", emptyList(), emptyList(), emptyList(), listOf(actual), 50)
 
         assertEquals("Tank 1", payload.rows.first().tankLabel)
-        assertEquals(1500.0, payload.tanks.first().plannedWaterLitres, 0.0)
+        assertEquals(1500.0, payload.tanks.first().plannedWaterLitres!!, 0.0)
         assertEquals(1450.0, payload.tanks.first().actualWaterLitres!!, 0.0)
-        assertEquals(3000.0, payload.tanks.first().chemicals.first().plannedAmountBase, 0.0)
+        assertEquals(3000.0, payload.tanks.first().chemicals.first().plannedAmountBase!!, 0.0)
         assertEquals(2800.0, payload.tanks.first().chemicals.first().actualAmountBase!!, 0.0)
         assertEquals(2L, payload.tanks.first().actualVersion)
         assertEquals("substitution", payload.tanks.first().chemicals.last().usageKind)

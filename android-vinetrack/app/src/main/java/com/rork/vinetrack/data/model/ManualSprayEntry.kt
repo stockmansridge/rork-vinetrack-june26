@@ -91,6 +91,7 @@ data class ManualSprayPayload(
         if (startEngineHours != null && (!startEngineHours.isFinite() || startEngineHours < 0)) return "Start engine hours are invalid."
         if (endEngineHours != null && (!endEngineHours.isFinite() || endEngineHours < 0)) return "End engine hours are invalid."
         if (startEngineHours != null && endEngineHours != null && endEngineHours < startEngineHours) return "End engine hours cannot be below start."
+        if (manualWeather != null && listOf(manualWeather.temperatureC, manualWeather.humidityPct, manualWeather.windSpeedKmh, manualWeather.windGustKmh, manualWeather.windDirectionDeg, manualWeather.rainMm).all { it == null }) return "Enter at least one weather measurement or turn manual weather off."
         if (tanks.map { it.id }.distinct().size != tanks.size || tanks.map { it.tankNumber }.distinct().size != tanks.size) return "Tank identities and numbers must be unique."
         tanks.forEach { tank ->
             if (tank.tankNumber < 1 || !tank.waterVolumeLitres.isFinite() || tank.waterVolumeLitres < 0) return "Tank ${tank.tankNumber} has an invalid water amount."

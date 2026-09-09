@@ -103,10 +103,12 @@ class ManualSprayEntryCoordinator(
 
     suspend fun save(payload: ManualSprayPayload, expectedVersion: Int?): ManualSpraySaveResponse? {
         payload.validationError()?.let { throw IllegalArgumentException(it) }
-        operations.removeAll { it.kind == PendingManualSprayKind.SAVE && it.payload.manualEntryId == payload.manualEntryId }
-        val operation = PendingManualSprayOperation(UUID.randomUUID().toString(), PendingManualSprayKind.SAVE, payload, expectedVersion)
-        operations += operation
-        check(store.save(operations)) { "The complete manual spray could not be saved on this device." }
+        val operation = operations.firstOrNull { it.kind == PendingManualSprayKind.SAVE && it.payload == payload && it.expectedVersion == expectedVersion }
+            ?: PendingManualSprayOperation(UUID.randomUUID().toString(), PendingManualSprayKind.SAVE, payload, expectedVersion).also { created ->
+                operations.removeAll { it.kind == PendingManualSprayKind.SAVE && it.payload.manualEntryId == payload.manualEntryId }
+                operations += created
+                check(store.save(operations)) { "The complete manual spray could not be saved on this device." }
+            }
         return runCatching { gateway.save(operation.id, payload, expectedVersion) }.fold(
             onSuccess = { response ->
                 operations.removeAll { it.id == operation.id }

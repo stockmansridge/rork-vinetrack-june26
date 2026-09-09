@@ -297,6 +297,10 @@ struct NewMainTabView: View {
         guard network.isOnline else { return }
 
         syncStatusCenter.syncDidStart()
+        // Manual mutations replay first with their original operation IDs. A queued
+        // delete suppresses its save, and the normal pulls below then reconcile the
+        // authoritative spray/trip/actual rows.
+        await ManualSprayEntryCoordinator.shared.replay(currentRole: accessControl.currentRole)
         await pinSync.syncPinsForSelectedVineyard()
         await paddockSync.syncPaddocksForSelectedVineyard()
         await tripSync.syncTripsForSelectedVineyard()

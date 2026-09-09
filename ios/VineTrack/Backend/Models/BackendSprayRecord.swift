@@ -346,7 +346,8 @@ extension BackendSprayRecord {
             applicationGeometry: applicationGeometrySnapshot,
             sprayJobId: sprayJobId,
             entrySource: entrySource,
-            manualEntryId: manualEntryId
+            manualEntryId: manualEntryId,
+            syncVersion: syncVersion
         )
     }
 

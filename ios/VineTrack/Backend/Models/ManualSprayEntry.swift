@@ -100,6 +100,49 @@ nonisolated struct ManualSprayPayload: Codable, Sendable, Hashable {
         )
     }
 
+    static func existing(
+        record: SprayRecord,
+        trip: Trip,
+        report: SprayReportPayloadV1,
+        actuals: [SprayTankActual],
+        timeZone: TimeZone
+    ) throws -> ManualSprayPayload {
+        guard record.isManualEntry, let manualEntryId = record.manualEntryId else {
+            throw ManualSprayValidationError.invalidIdentity
+        }
+        let iso = ISO8601DateFormatter()
+        let tanks: [ManualSprayTank] = try report.tanks.sorted { $0.tankNumber < $1.tankNumber }.map { tank in
+            guard let actual = actuals.first(where: { $0.id == tank.actualId }) ?? actuals.first(where: { $0.tankNumber == tank.tankNumber }),
+                  let tankId = UUID(uuidString: actual.tankSessionId), let actualId = tank.actualId else {
+                throw ManualSprayValidationError.missingActuals
+            }
+            let chemicals: [ManualSprayChemical] = try tank.chemicals.map { chemical in
+                guard let id = chemical.actualChemicalId, let savedChemicalId = chemical.savedChemicalId,
+                      let amount = chemical.actualAmountBase, let unit = ChemicalUnit(rawValue: chemical.unit),
+                      let category = chemical.productCategory, let formRaw = chemical.physicalForm,
+                      let form = ManualSprayPhysicalForm(rawValue: formRaw), let snapshotRaw = chemical.snapshotAt,
+                      let snapshotAt = iso.date(from: snapshotRaw) else { throw ManualSprayValidationError.missingActuals }
+                return ManualSprayChemical(id: id, savedChemicalId: savedChemicalId, name: chemical.name, actualAmountBase: amount, unit: unit, productCategory: category, physicalForm: form, snapshotAt: snapshotAt)
+            }
+            return ManualSprayTank(id: tankId, actualId: actualId, tankNumber: tank.tankNumber, waterVolumeLitres: tank.actualWaterLitres ?? actual.waterVolumeL ?? 0, chemicals: chemicals)
+        }
+        let weather = report.weather.first(where: { $0.provider == "manual_entry" && $0.sourceKind == "manual" }).map { item in
+            ManualSprayWeather(observedAt: item.observedAt.flatMap(iso.date) ?? trip.startTime, source: item.source, temperatureC: item.temperatureC, humidityPct: item.humidityPct, windSpeedKmh: item.windSpeedKmh, windGustKmh: item.windGustKmh, windDirectionDeg: item.windDirectionDeg, rainMm: item.rainMm)
+        }
+        return ManualSprayPayload(
+            vineyardId: record.vineyardId, manualEntryId: manualEntryId, sprayRecordId: record.id, tripId: trip.id,
+            reference: record.sprayReference, operationType: report.application?.operationType ?? record.operationType.rawValue,
+            startUtc: trip.startTime, endUtc: trip.endTime ?? record.endTime ?? record.startTime,
+            vineyardTimeZone: report.identity.vineyardTimeZone.isEmpty ? timeZone.identifier : report.identity.vineyardTimeZone,
+            tractorId: report.equipment.tractorId ?? trip.tractorId, operatorUserId: report.trip.operatorId ?? trip.operatorUserId,
+            sprayEquipmentId: report.equipment.sprayEquipmentId ?? record.sprayEquipmentId,
+            startEngineHours: report.equipment.startEngineHours ?? trip.startEngineHours,
+            endEngineHours: report.equipment.endEngineHours ?? trip.endEngineHours, notes: report.application?.notes ?? record.notes,
+            clientUpdatedAt: Date(), blocks: report.blocks?.compactMap { guard let id = UUID(uuidString: $0.blockId) else { return nil }; return ManualSprayBlock(blockId: id, blockName: $0.name) } ?? [],
+            tanks: tanks, manualWeather: weather
+        )
+    }
+
     func validated() throws -> ManualSprayPayload {
         guard !reference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ManualSprayValidationError.missingReference }
         guard endUtc > startUtc else { throw ManualSprayValidationError.invalidInterval }
@@ -111,6 +154,7 @@ nonisolated struct ManualSprayPayload: Codable, Sendable, Hashable {
         if let startEngineHours, !startEngineHours.isFinite || startEngineHours < 0 { throw ManualSprayValidationError.invalidEngineHours }
         if let endEngineHours, !endEngineHours.isFinite || endEngineHours < 0 { throw ManualSprayValidationError.invalidEngineHours }
         if let startEngineHours, let endEngineHours, endEngineHours < startEngineHours { throw ManualSprayValidationError.invalidEngineHours }
+        if let manualWeather, [manualWeather.temperatureC, manualWeather.humidityPct, manualWeather.windSpeedKmh, manualWeather.windGustKmh, manualWeather.windDirectionDeg, manualWeather.rainMm].allSatisfy({ $0 == nil }) { throw ManualSprayValidationError.emptyWeather }
         for tank in tanks {
             guard tank.tankNumber > 0, tank.waterVolumeLitres.isFinite, tank.waterVolumeLitres >= 0 else { throw ManualSprayValidationError.invalidTank }
             guard !tank.chemicals.isEmpty else { throw ManualSprayValidationError.missingChemicals(tank.tankNumber) }
@@ -128,6 +172,7 @@ nonisolated struct ManualSprayPayload: Codable, Sendable, Hashable {
 nonisolated enum ManualSprayValidationError: LocalizedError, Sendable, Equatable {
     case missingReference, invalidInterval, missingTractor, missingOperator, missingSprayUnit
     case missingBlocks, missingTanks, invalidEngineHours, invalidTank, missingChemicals(Int), invalidChemical(Int)
+    case invalidIdentity, missingActuals, emptyWeather
 
     var errorDescription: String? {
         switch self {
@@ -142,6 +187,9 @@ nonisolated enum ManualSprayValidationError: LocalizedError, Sendable, Equatable
         case .invalidTank: "Each tank needs a valid water amount."
         case .missingChemicals(let tank): "Tank \(tank) needs at least one chemical."
         case .invalidChemical(let tank): "Tank \(tank) has an invalid chemical amount, unit, category, or form."
+        case .invalidIdentity: "This manual application does not have a valid shared identity."
+        case .missingActuals: "The saved actual tank quantities could not be reloaded. Sync and try again."
+        case .emptyWeather: "Enter at least one weather measurement or turn manual weather off."
         }
     }
 }

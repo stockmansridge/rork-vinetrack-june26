@@ -119,6 +119,32 @@ final class SprayReportRepository {
 
     private nonisolated struct RouteUploadResponse: Decodable, Sendable { let route: SprayReportPayloadV1.Route }
 
+    nonisolated struct WeatherRecoveryResult: Decodable, Sendable {
+        let success: Bool
+        let captured: Int
+        let unavailable: Int
+        let pending: Int
+        let provider: String?
+        let stationId: String?
+        let errors: [String]?
+    }
+
+    /// Explicit historical recovery for a completed application. Station absence
+    /// is a result, never a prerequisite for saving the spray.
+    func recoverWeather(tripId: UUID, through: Date) async throws -> WeatherRecoveryResult {
+        guard let session = try? await SupabaseClientProvider.shared.client.auth.session,
+              let url = URL(string: "\(AppConfig.supabaseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/functions/v1/spray-weather-recovery") else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(AppConfig.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["tripId": tripId.uuidString.lowercased(), "through": ISO8601DateFormatter().string(from: through)])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+        return try JSONDecoder().decode(WeatherRecoveryResult.self, from: data)
+    }
+
     /// Creates the scheduled slot even when no genuine provider sample is available.
     /// The server's `(trip_id, sample_slot)` constraint makes retries idempotent.
     func captureUnavailableIfDue(for trip: Trip, at now: Date = Date(), isFinal: Bool = false) async {

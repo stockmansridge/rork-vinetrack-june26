@@ -261,7 +261,11 @@ fun SpraysScreen(
         SpraySheet(vm = vm, state = state, existing = tmpl, asTemplate = false, fromTemplate = true, onDismiss = { prefillFromTemplate = null }, onSaved = { prefillFromTemplate = null })
     }
     editing?.let { rec ->
-        SpraySheet(vm = vm, state = state, existing = rec, asTemplate = rec.isTemplate, onDismiss = { editing = null }, onSaved = { editing = null })
+        if (rec.isManualEntry) {
+            ManualSprayEntrySheet(state = state, existing = rec, onDismiss = { editing = null }, onSaved = { editing = null })
+        } else {
+            SpraySheet(vm = vm, state = state, existing = rec, asTemplate = rec.isTemplate, onDismiss = { editing = null }, onSaved = { editing = null })
+        }
     }
     editingProgramStep?.let { (rec, isPortal) ->
         SprayProgramStepEditSheet(
@@ -1084,7 +1088,9 @@ private fun SprayDetailView(
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                 },
                 actions = {
-                    IconButton(onClick = { exportPdf() }) { Icon(Icons.Filled.PictureAsPdf, contentDescription = "Export as PDF") }
+                    if (!record.isManualEntry || com.rork.vinetrack.data.model.canManageManualSprays(state.currentRole)) {
+                        IconButton(onClick = { exportPdf() }) { Icon(Icons.Filled.PictureAsPdf, contentDescription = "Export as PDF") }
+                    }
                     if (record.isTemplate) {
                         // The Program is a shared vineyard resource: an authorised
                         // user edits the SAME Program Step from either interface.
@@ -1116,7 +1122,9 @@ private fun SprayDetailView(
                                 else Icon(Icons.Filled.LocalGasStation, contentDescription = "Correct equipment and fuel")
                             }
                         }
-                        IconButton(onClick = { onEdit(record) }) { Icon(Icons.Filled.Edit, contentDescription = "Edit record") }
+                        if (!record.isManualEntry || com.rork.vinetrack.data.model.canManageManualSprays(state.currentRole)) {
+                            IconButton(onClick = { onEdit(record) }) { Icon(Icons.Filled.Edit, contentDescription = "Edit record") }
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
@@ -1212,9 +1220,25 @@ private fun SprayDetailView(
                 }
             }
 
-            // Tanks
+            // Tanks. Manual applications are actual-only and must never render the
+            // compatibility projection as if it were a plan.
+            val manualActuals = state.sprayTankActuals.filter { it.sprayRecordId == record.id && it.tripId == record.tripId }.sortedBy { it.tankNumber }
             val tanks = record.tanks.orEmpty()
-            if (tanks.isNotEmpty()) {
+            if (record.isManualEntry && manualActuals.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SectionHeader("Actual tanks · ${manualActuals.size}", onLight = true)
+                    manualActuals.forEach { actual ->
+                        VineyardCard {
+                            Text("Tank ${actual.tankNumber}", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                            Text("${state.regionFormatter.formatVolume(actual.waterVolumeL ?: 0.0, 0)} actual water", fontSize = 13.sp, color = vine.textSecondary)
+                            actual.chemicals.forEach { chemical ->
+                                DividerSP(vine.cardBorder)
+                                DetailRowSP(Icons.Filled.Science, chemical.name, "${trimNum(if (chemical.unit in setOf("Litres", "Kg")) chemical.actualAmountBase / 1000.0 else chemical.actualAmountBase)} ${chemical.unit}", VineColors.LeafGreen)
+                            }
+                        }
+                    }
+                }
+            } else if (tanks.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     SectionHeader("Tanks · ${tanks.size}", onLight = true)
                     tanks.forEach { tank ->
@@ -1512,7 +1536,20 @@ private fun SprayDetailView(
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false
-                    vm.deleteSprayRecord(record.id) { ok -> if (ok) onBack() }
+                    if (record.isManualEntry) {
+                        val trip = record.tripId?.let { id -> state.trips.firstOrNull { it.id == id } }
+                        val payload = record.toManualPayload(trip, state, state.seasonZone)
+                        if (payload != null) exportScope.launch {
+                            val coordinator = com.rork.vinetrack.data.ManualSprayEntryCoordinator(
+                                com.rork.vinetrack.data.ManualSprayEntryRepository(com.rork.vinetrack.data.auth.SessionStore(context)),
+                                com.rork.vinetrack.data.ManualSprayOperationStore(context),
+                            )
+                            runCatching { coordinator.delete(payload) }.onSuccess {
+                                vm.hideManualSprayLocally(record.id, payload.tripId)
+                                onBack()
+                            }
+                        }
+                    } else vm.deleteSprayRecord(record.id) { ok -> if (ok) onBack() }
                 }) { Text("Delete", color = VineColors.Destructive) }
             },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },

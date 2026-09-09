@@ -25,7 +25,8 @@ final class ManualSprayEntryWorkflowTests: XCTestCase {
         let response = try await coordinator.save(payload: payload, expectedVersion: 0)
         XCTAssertNil(response)
         XCTAssertEqual(coordinator.pendingPayloads.first?.manualEntryId, payload.manualEntryId)
-        await coordinator.replay(currentRole: .supervisor)
+        let retryResponse = try await coordinator.save(payload: payload, expectedVersion: 0)
+        XCTAssertTrue(retryResponse?.serverConfirmed == true)
         XCTAssertTrue(coordinator.pendingPayloads.isEmpty)
         let calls = await repository.saveCalls
         XCTAssertEqual(Set(calls.map(\.operationId)).count, 1)

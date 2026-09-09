@@ -50,6 +50,8 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
     /// Explicit origin from SQL 232. Nil means historical origin is unknown.
     var entrySource: String?
     var manualEntryId: UUID?
+    /// Authoritative optimistic-lock version from the shared spray row.
+    var syncVersion: Int?
     var isManualEntry: Bool { entrySource == "manual" }
 
     init(
@@ -79,7 +81,8 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         applicationGeometry: SprayApplicationSnapshot? = nil,
         sprayJobId: UUID? = nil,
         entrySource: String? = nil,
-        manualEntryId: UUID? = nil
+        manualEntryId: UUID? = nil,
+        syncVersion: Int? = nil
     ) {
         self.id = id
         self.tripId = tripId
@@ -108,6 +111,7 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         self.sprayJobId = sprayJobId
         self.entrySource = entrySource
         self.manualEntryId = manualEntryId
+        self.syncVersion = syncVersion
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -118,7 +122,7 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         case machineId, tractorId, sprayEquipmentId, isTemplate, operationType
         case applicationGeometry
         case sprayJobId
-        case entrySource, manualEntryId
+        case entrySource, manualEntryId, syncVersion
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -157,6 +161,7 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         sprayJobId = try container.decodeIfPresent(UUID.self, forKey: .sprayJobId)
         entrySource = try container.decodeIfPresent(String.self, forKey: .entrySource)
         manualEntryId = try container.decodeIfPresent(UUID.self, forKey: .manualEntryId)
+        syncVersion = try container.decodeIfPresent(Int.self, forKey: .syncVersion)
     }
 }
 

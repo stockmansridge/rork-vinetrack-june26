@@ -8,33 +8,45 @@ struct ManualSprayEntryView: View {
     private let vineyardId: UUID
     private let timeZone: TimeZone
     private let teamRepository: any TeamRepositoryProtocol
+    private let existingRecord: SprayRecord?
+    private let existingTrip: Trip?
     @State private var coordinator: ManualSprayEntryCoordinator
     @State private var draft: ManualSprayPayload
+    @State private var expectedVersion: Int?
+    @State private var isLoadingExisting: Bool
+    @State private var savedResponse: ManualSpraySaveResponse?
     @State private var members: [BackendVineyardMember] = []
     @State private var isReviewing: Bool = false
     @State private var isSaving: Bool = false
     @State private var message: String?
 
-    init(vineyardId: UUID, timeZone: TimeZone, teamRepository: any TeamRepositoryProtocol = SupabaseTeamRepository()) {
+    init(vineyardId: UUID, timeZone: TimeZone, existingRecord: SprayRecord? = nil, existingTrip: Trip? = nil, teamRepository: any TeamRepositoryProtocol = SupabaseTeamRepository()) {
         self.vineyardId = vineyardId
         self.timeZone = timeZone
+        self.existingRecord = existingRecord
+        self.existingTrip = existingTrip
         self.teamRepository = teamRepository
-        _draft = State(initialValue: ManualSprayPayload.empty(vineyardId: vineyardId, timeZone: timeZone))
-        _coordinator = State(initialValue: ManualSprayEntryCoordinator())
+        _draft = State(initialValue: existingRecord == nil ? (ManualSprayDraftStore.shared.load(vineyardId: vineyardId) ?? ManualSprayPayload.empty(vineyardId: vineyardId, timeZone: timeZone)) : ManualSprayPayload.empty(vineyardId: vineyardId, timeZone: timeZone))
+        _coordinator = State(initialValue: ManualSprayEntryCoordinator.shared)
+        _expectedVersion = State(initialValue: existingRecord?.syncVersion ?? 0)
+        _isLoadingExisting = State(initialValue: existingRecord != nil)
+        _savedResponse = State(initialValue: nil)
     }
 
     var body: some View {
         Group {
             if accessControl.canManageManualSprays {
                 Form {
-                    if isReviewing { reviewSections } else { entrySections }
+                    if isLoadingExisting {
+                        Section { ProgressView("Reloading saved actual quantities…") }
+                    } else if isReviewing { reviewSections } else { entrySections }
                     if let message { Text(message).foregroundStyle(.secondary) }
                 }
             } else {
                 ContentUnavailableView("Manual spray entry unavailable", systemImage: "lock.fill", description: Text("Only Owners, Managers and Supervisors can add completed manual sprays."))
             }
         }
-        .navigationTitle(isReviewing ? "Review manual spray" : "Add manual spray")
+        .navigationTitle(isReviewing ? "Review manual spray" : (existingRecord == nil ? "Add manual spray" : "Edit manual spray"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -42,11 +54,22 @@ struct ManualSprayEntryView: View {
                 Button(isReviewing ? "Save manual spray" : "Review") {
                     if isReviewing { Task { await save() } } else { validateForReview() }
                 }
-                .disabled(isSaving || !accessControl.canManageManualSprays)
+                .disabled(isSaving || isLoadingExisting || !accessControl.canManageManualSprays)
             }
+        }
+        .onChange(of: draft) { _, updated in
+            if existingRecord == nil && savedResponse == nil { ManualSprayDraftStore.shared.save(updated) }
         }
         .task {
             members = (try? await teamRepository.listMembers(vineyardId: vineyardId)) ?? []
+            guard let existingRecord, let existingTrip else { return }
+            do {
+                let report = try await SprayReportRepository.shared.fetch(tripId: existingTrip.id)
+                let actuals = SprayTankActualStore.shared.records.filter { $0.tripId == existingTrip.id && $0.sprayRecordId == existingRecord.id }
+                draft = try ManualSprayPayload.existing(record: existingRecord, trip: existingTrip, report: report, actuals: actuals, timeZone: timeZone)
+                expectedVersion = existingRecord.syncVersion
+            } catch { message = error.localizedDescription }
+            isLoadingExisting = false
         }
     }
 
@@ -133,7 +156,15 @@ struct ManualSprayEntryView: View {
         Section { Label("Manual entry", systemImage: "pencil").foregroundStyle(.purple); LabeledContent("Status", value: "Completed") }
         Section("Application") { LabeledContent("Reference", value: draft.reference); LabeledContent("Start", value: draft.startUtc.formatted()); LabeledContent("End", value: draft.endUtc.formatted()); LabeledContent("Timezone", value: draft.vineyardTimeZone) }
         Section("Summary") { LabeledContent("Blocks", value: "\(draft.blocks.count)"); LabeledContent("Tanks", value: "\(draft.tanks.count)"); LabeledContent("Actual water", value: "\(draft.tanks.reduce(0) { $0 + $1.waterVolumeLitres }.formatted()) L") }
-        Button("Back to edit") { isReviewing = false }
+        if let savedResponse {
+            Section("Weather station") {
+                Button("Retrieve historical station weather", systemImage: "cloud.sun") { Task { await recoverWeather(savedResponse) } }
+                Text("This lookup is optional. An unavailable station never changes the saved application or replaces manual observations.").font(.caption).foregroundStyle(.secondary)
+            }
+            Button("Done") { dismiss() }
+        } else {
+            Button("Back to edit") { isReviewing = false }
+        }
     }
 
     private func addChemical(_ product: SavedChemical, to tankId: UUID) {
@@ -165,11 +196,25 @@ struct ManualSprayEntryView: View {
     private func save() async {
         isSaving = true
         defer { isSaving = false }
-        draft.clientUpdatedAt = Date()
+        if draft.manualWeather != nil { draft.manualWeather?.observedAt = draft.startUtc }
         do {
-            let response = try await coordinator.save(payload: draft, expectedVersion: 0)
-            if response?.serverConfirmed == true { dismiss() }
-            else { message = "Saved on this device — awaiting sync" }
+            let response = try await coordinator.save(payload: draft, expectedVersion: expectedVersion)
+            if let response, response.serverConfirmed {
+                expectedVersion = response.syncVersion
+                savedResponse = response
+                ManualSprayDraftStore.shared.clear(vineyardId: vineyardId)
+                message = "Manual spray saved. Historical station weather is optional."
+            } else { message = "Saved on this device — awaiting sync" }
         } catch { message = error.localizedDescription }
+    }
+
+    private func recoverWeather(_ response: ManualSpraySaveResponse) async {
+        do {
+            let result = try await SprayReportRepository.shared.recoverWeather(tripId: response.tripId, through: draft.endUtc)
+            _ = try? await SprayReportRepository.shared.fetch(tripId: response.tripId)
+            if result.captured > 0 { message = "Captured \(result.captured) historical station observation\(result.captured == 1 ? "" : "s")." }
+            else if result.pending > 0 { message = "Station weather is pending or not configured. The manual spray remains saved." }
+            else { message = "Historical station weather was unavailable. The manual spray remains saved." }
+        } catch { message = "Station weather could not be retrieved. The manual spray remains saved." }
     }
 }

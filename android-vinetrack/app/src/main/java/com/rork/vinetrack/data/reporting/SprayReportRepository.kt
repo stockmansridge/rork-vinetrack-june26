@@ -139,6 +139,31 @@ class SprayReportRepository(private val session: SessionStore) {
         return bytes
     }
 
+    @Serializable
+    data class WeatherRecoveryResult(
+        val success: Boolean,
+        val captured: Int,
+        val unavailable: Int,
+        val pending: Int,
+        val provider: String? = null,
+        val stationId: String? = null,
+        val reason: String? = null,
+        val errors: List<String> = emptyList(),
+    )
+
+    /** Explicit historical recovery. Station availability never controls spray saving. */
+    suspend fun recoverWeather(tripId: String, through: Instant): WeatherRecoveryResult {
+        if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.post("${SupabaseClient.baseUrl}/functions/v1/spray-weather-recovery") {
+            headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
+            contentType(ContentType.Application.Json)
+            setBody(WeatherRecoveryArgs(tripId, through.toString()))
+        }
+        if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
+        return response.body()
+    }
+
     /** Recovers every missing scheduled slot; server-side absence is the durable retry queue. */
     suspend fun captureUnavailableIfDue(trip: Trip, now: Instant = Instant.now(), isFinal: Boolean = false) {
         if (trip.tripFunction != "spraying" || !SupabaseClient.isConfigured) return

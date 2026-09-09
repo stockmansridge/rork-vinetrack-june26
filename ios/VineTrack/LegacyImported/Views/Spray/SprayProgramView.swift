@@ -283,7 +283,8 @@ struct SprayProgramView: View {
             )) {
                 Button("Delete", role: .destructive) {
                     if let record = recordToDelete {
-                        store.deleteSprayRecord(record)
+                        if record.isManualEntry { Task { await deleteManualRecord(record) } }
+                        else { store.deleteSprayRecord(record) }
                     }
                     recordToDelete = nil
                 }
@@ -355,6 +356,27 @@ struct SprayProgramView: View {
             } message: {
                 Text(exportError ?? "")
             }
+        }
+    }
+
+    @MainActor
+    private func deleteManualRecord(_ record: SprayRecord) async {
+        guard accessControl?.canManageManualSprays == true, let manualEntryId = record.manualEntryId,
+              let trip = store.trips.first(where: { $0.id == record.tripId }) else { return }
+        let payload = ManualSprayPayload(
+            vineyardId: record.vineyardId, manualEntryId: manualEntryId, sprayRecordId: record.id, tripId: trip.id,
+            reference: record.sprayReference, operationType: record.operationType.rawValue,
+            startUtc: trip.startTime, endUtc: trip.endTime ?? record.endTime ?? record.startTime,
+            vineyardTimeZone: store.settings.resolvedTimeZone.identifier, tractorId: trip.tractorId,
+            operatorUserId: trip.operatorUserId, sprayEquipmentId: record.sprayEquipmentId,
+            startEngineHours: trip.startEngineHours, endEngineHours: trip.endEngineHours, notes: record.notes,
+            clientUpdatedAt: Date(), blocks: [], tanks: [], manualWeather: nil
+        )
+        do {
+            _ = try await ManualSprayEntryCoordinator.shared.delete(payload: payload)
+            store.removeManualSprayLocallyOnly(record)
+        } catch {
+            // Keep the record visible if the durable delete operation could not be saved.
         }
     }
 

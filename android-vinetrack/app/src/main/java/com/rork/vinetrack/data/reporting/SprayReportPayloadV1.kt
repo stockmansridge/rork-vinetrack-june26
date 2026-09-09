@@ -101,7 +101,8 @@ data class SprayReportPayloadV1(
             }
             if (blocks == null) warnings += "Blocks treated were not recorded."
             val singleBlockName = blocks?.singleOrNull()?.name
-            val rows = trip.rowSequence.sorted().map { rowNumber ->
+            val isManual = record.entrySource == "manual"
+            val rows = (if (isManual) emptyList() else trip.rowSequence.sorted()).map { rowNumber ->
                 val (status, source) = when {
                     trip.completedPaths.orEmpty().contains(rowNumber) -> "Complete" to "completedPaths"
                     trip.skippedPaths.orEmpty().contains(rowNumber) -> "Skipped/Not complete" to "skippedPaths"
@@ -126,7 +127,7 @@ data class SprayReportPayloadV1(
                 Row(rowNumber, singleBlockName, status, source, tank)
             }
             if (rows.any { it.tank is JsonPrimitive && it.tank.content == "Multiple" }) warnings += "One or more rows overlap multiple tank sessions."
-            val tanks = record.tanks.orEmpty().sortedBy { it.tankNumber }.map { plannedTank ->
+            val trackedTanks = record.tanks.orEmpty().sortedBy { it.tankNumber }.map { plannedTank ->
                 val actual = tankActuals.filter { it.tankNumber == plannedTank.tankNumber }.maxByOrNull { it.clientUpdatedAt }
                 val chemicals = plannedTank.chemicals.map { planned ->
                     val byPlan = actual?.chemicals.orEmpty().filter { it.plannedChemicalId == planned.id }
@@ -151,6 +152,11 @@ data class SprayReportPayloadV1(
                 }
                 Tank(plannedTank.tankNumber, actual?.id, actual?.correctionVersion, plannedTank.waterVolume, actual?.waterVolumeL, chemicals + actualOnly)
             }
+            val tanks = if (isManual) tankActuals.sortedBy { it.tankNumber }.map { actual ->
+                Tank(actual.tankNumber, actual.id, actual.correctionVersion, null, actual.waterVolumeL, actual.chemicals.map { line ->
+                    Chemical(line.id, null, line.savedChemicalId, null, "additional", line.name, line.unit, null, line.actualAmountBase, "actualOnly", line.productCategory, line.physicalForm, line.snapshotAt)
+                })
+            } else trackedTanks
             val actualChemicalTotals = tanks.flatMap { it.chemicals }.filter { it.actualAmountBase != null }
                 .groupBy { it.savedChemicalId ?: "${it.name.trim().lowercase()}|${it.unit.lowercase()}" }
                 .map { (key, lines) -> ChemicalTotal(key, lines.first().name, lines.first().unit, lines.sumOf { it.actualAmountBase ?: 0.0 }) }
@@ -166,12 +172,20 @@ data class SprayReportPayloadV1(
             val machineName = record.displayMachine(machines)
             val unitName = resolveSprayEquipmentName(record, sprayEquipment)
             return SprayReportPayloadV1(
-                SCHEMA_VERSION,
-                Identity(trip.id, record.id, trip.vineyardId, vineyardName, record.sprayReference.orEmpty(), vineyardTimeZone),
-                TripSummary(trip.startTime, trip.endTime, trip.activeDurationSeconds, trip.totalDistance, trip.personName?.takeIf { it.isNotBlank() }, pinCount),
-                blocks,
-                Equipment(machineName, trip.startEngineHours, trip.endEngineHours, trip.engineHoursUsed, unitName),
-                rows, tanks, weather, null, emptyList(), warnings.distinct(), actualChemicalTotals,
+                schemaVersion = SCHEMA_VERSION,
+                identity = Identity(trip.id, record.id, trip.vineyardId, vineyardName, record.sprayReference.orEmpty(), vineyardTimeZone),
+                trip = TripSummary(trip.startTime, trip.endTime, trip.activeDurationSeconds, trip.totalDistance, trip.personName?.takeIf { it.isNotBlank() }, pinCount),
+                blocks = blocks,
+                equipment = Equipment(machineName, trip.startEngineHours, trip.endEngineHours, trip.engineHoursUsed, unitName),
+                rows = rows,
+                tanks = tanks,
+                weather = weather,
+                warnings = warnings.distinct(),
+                actualChemicalTotals = actualChemicalTotals,
+                plannedChemicalTotals = if (isManual) emptyList() else emptyList(),
+                application = if (isManual) Application(operationType = record.operationType, carrierVolumeBasis = "manual_actual_total", totalCarrierLitres = tankActuals.mapNotNull { it.waterVolumeL }.sum(), notes = record.notes, actualUseBasis = "manually_recorded_actual_use") else null,
+                provenance = Provenance(record.entrySource, record.manualEntryId, isManual, if (isManual) "Manual entry" else if (record.entrySource == "tracked") "Tracked application" else "Origin not recorded"),
+                recordingEvidence = if (isManual) RecordingEvidence("Not recorded — manual application", "Not recorded — manual application") else null,
             )
         }
 

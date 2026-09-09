@@ -20,6 +20,8 @@ struct SprayRecordDetailView: View {
     @State private var showCorrectionEditor: Bool = false
     @State private var isLoadingCorrection: Bool = false
     @State private var correctionError: String?
+    @State private var isConfirmingManualDelete: Bool = false
+    @State private var manualDeleteError: String?
 
     private var tripForRecord: Trip? {
         store.trips.first(where: { $0.id == record.tripId })
@@ -66,7 +68,9 @@ struct SprayRecordDetailView: View {
                     notesCard
                 }
 
-                exportCard
+                if !record.isManualEntry || accessControl?.canManageManualSprays == true {
+                    exportCard
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
@@ -85,8 +89,11 @@ struct SprayRecordDetailView: View {
                     .disabled(isLoadingCorrection || tripForRecord == nil)
                     .accessibilityLabel("Correct equipment and fuel")
                 }
-                Button("Done") { dismiss() }
-                    .font(.headline)
+                if record.isManualEntry && accessControl?.canManageManualSprays == true {
+                    Button(role: .destructive) { isConfirmingManualDelete = true } label: { Image(systemName: "trash") }
+                        .accessibilityLabel("Delete manual spray")
+                }
+                Button("Done") { dismiss() }.font(.headline)
             }
         }
         .sheet(item: $sharePDFURL) { wrapper in
@@ -98,11 +105,13 @@ struct SprayRecordDetailView: View {
             Text(exportError ?? "")
         }
         .sheet(isPresented: $showEditSheet) {
-            SprayRecordFormView(
-                tripId: record.tripId,
-                paddockIds: paddockIdsForTrip,
-                existingRecord: record
-            )
+            if record.isManualEntry, let trip = tripForRecord {
+                NavigationStack {
+                    ManualSprayEntryView(vineyardId: record.vineyardId, timeZone: store.settings.resolvedTimeZone, existingRecord: currentRecord, existingTrip: trip)
+                }
+            } else {
+                SprayRecordFormView(tripId: record.tripId, paddockIds: paddockIdsForTrip, existingRecord: record)
+            }
         }
         .sheet(isPresented: $showCorrectionEditor) {
             if let trip = tripForRecord, let canonicalReport {
@@ -120,9 +129,28 @@ struct SprayRecordDetailView: View {
         .alert("Correction unavailable", isPresented: Binding(get: { correctionError != nil }, set: { if !$0 { correctionError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(correctionError ?? "") }
+        .alert("Delete manual spray?", isPresented: $isConfirmingManualDelete) {
+            Button("Delete", role: .destructive) { Task { await deleteManualRecord() } }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This deletes the manual application, its backing trip and its exclusively owned actual tank records.") }
+        .alert("Delete unavailable", isPresented: Binding(get: { manualDeleteError != nil }, set: { if !$0 { manualDeleteError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(manualDeleteError ?? "") }
         .onAppear {
             includeCostingsInExport = canViewFinancials
         }
+    }
+
+    @MainActor
+    private func deleteManualRecord() async {
+        guard record.isManualEntry, accessControl?.canManageManualSprays == true,
+              let manualEntryId = record.manualEntryId, let trip = tripForRecord else { return }
+        let payload = ManualSprayPayload(vineyardId: record.vineyardId, manualEntryId: manualEntryId, sprayRecordId: record.id, tripId: trip.id, reference: record.sprayReference, operationType: record.operationType.rawValue, startUtc: trip.startTime, endUtc: trip.endTime ?? record.endTime ?? record.startTime, vineyardTimeZone: store.settings.resolvedTimeZone.identifier, tractorId: trip.tractorId, operatorUserId: trip.operatorUserId, sprayEquipmentId: record.sprayEquipmentId, startEngineHours: trip.startEngineHours, endEngineHours: trip.endEngineHours, notes: record.notes, clientUpdatedAt: Date(), blocks: [], tanks: [], manualWeather: nil)
+        do {
+            _ = try await ManualSprayEntryCoordinator.shared.delete(payload: payload)
+            store.removeManualSprayLocallyOnly(record)
+            dismiss()
+        } catch { manualDeleteError = error.localizedDescription }
     }
 
     @MainActor
@@ -183,7 +211,7 @@ struct SprayRecordDetailView: View {
                 }
                 RecordSyncBadge(state: RecordSyncState.forSprayRecord(record.id, spraySync: sprayRecordSync))
                 Spacer()
-                if !isPortalTemplate {
+                if !isPortalTemplate && (!record.isManualEntry || accessControl?.canManageManualSprays == true) {
                     Button {
                         showEditSheet = true
                     } label: {
@@ -407,11 +435,22 @@ struct SprayRecordDetailView: View {
     // MARK: - Tanks
 
     private var tanksCard: some View {
-        cardContainer {
-            sectionHeader("Tanks", systemImage: "drop.fill", color: .blue)
+        let actuals = SprayTankActualStore.shared.records.filter { $0.tripId == record.tripId && $0.sprayRecordId == record.id }.sorted { $0.tankNumber < $1.tankNumber }
+        return cardContainer {
+            sectionHeader(record.isManualEntry ? "Actual tanks" : "Tanks", systemImage: "drop.fill", color: .blue)
             VStack(spacing: 12) {
-                ForEach(record.tanks) { tank in
-                    tankCard(tank)
+                if record.isManualEntry {
+                    ForEach(actuals) { actual in
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Tank \(actual.tankNumber)").font(.title3.bold())
+                            detailRow("Actual water", value: String(format: "%.0f L", actual.waterVolumeL ?? 0))
+                            ForEach(actual.chemicals) { chemical in
+                                detailRow(chemical.name, value: String(format: "%.2f %@", chemical.displayAmount, chemical.unit.rawValue))
+                            }
+                        }.padding(14).background(Color(.secondarySystemBackground)).clipShape(.rect(cornerRadius: 12))
+                    }
+                } else {
+                    ForEach(record.tanks) { tank in tankCard(tank) }
                 }
             }
         }
@@ -504,15 +543,20 @@ struct SprayRecordDetailView: View {
     // MARK: - Chemical Totals
 
     private var chemicalTotalsCard: some View {
-        let allChemicals = record.tanks.flatMap { $0.chemicals }
-        let grouped = Dictionary(grouping: allChemicals, by: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
-        let totals = grouped.compactMap { (key, chems) -> (String, Double, ChemicalUnit)? in
-            guard !key.isEmpty else { return nil }
-            let displayName = chems.first?.name ?? key
-            let unit = chems.first?.unit ?? .litres
-            let totalBase = chems.reduce(0.0) { $0 + $1.volumePerTank }
-            return (displayName, totalBase, unit)
-        }.sorted { $0.0.lowercased() < $1.0.lowercased() }
+        let totals: [(String, Double, ChemicalUnit)]
+        if record.isManualEntry {
+            let actualChemicals = SprayTankActualStore.shared.records.filter { $0.tripId == record.tripId && $0.sprayRecordId == record.id }.flatMap(\.chemicals)
+            totals = Dictionary(grouping: actualChemicals, by: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }).compactMap { key, chemicals in
+                guard !key.isEmpty, let first = chemicals.first else { return nil }
+                return (first.name, chemicals.reduce(0) { $0 + $1.actualAmountBase }, first.unit)
+            }.sorted { $0.0.lowercased() < $1.0.lowercased() }
+        } else {
+            let allChemicals = record.tanks.flatMap { $0.chemicals }
+            totals = Dictionary(grouping: allChemicals, by: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }).compactMap { key, chems in
+                guard !key.isEmpty else { return nil }
+                return (chems.first?.name ?? key, chems.reduce(0.0) { $0 + $1.volumePerTank }, chems.first?.unit ?? .litres)
+            }.sorted { $0.0.lowercased() < $1.0.lowercased() }
+        }
 
         return Group {
             if !totals.isEmpty {
