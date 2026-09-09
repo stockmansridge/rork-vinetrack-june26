@@ -99,6 +99,8 @@ import com.rork.vinetrack.data.PinCreateSync
 import com.rork.vinetrack.data.PinDeleteSync
 import com.rork.vinetrack.data.PinEditSync
 import com.rork.vinetrack.data.PinPhotoSync
+import com.rork.vinetrack.data.PinPresentationTarget
+import com.rork.vinetrack.data.model.PendingPhotoEntityKind
 import com.rork.vinetrack.data.model.PendingPhotoStatus
 import com.rork.vinetrack.data.PinPlacement
 import com.rork.vinetrack.data.PinPlacementResult
@@ -720,6 +722,9 @@ data class AppUiState(
      * the production write paths enqueues yet (Stage 4A-ii is skeleton only).
      */
     val pendingSyncCount: Int = 0,
+    /** Source identities hidden while a durable delete is unresolved. */
+    val pendingPinDeleteIds: Set<String> = emptySet(),
+    val pendingGrowthDeleteIds: Set<String> = emptySet(),
     /**
      * Read-only summaries of the unresolved outbox entries (Stage 4A-iv). Only
      * queued pin creates land here today; shown on the Sync Status screen.
@@ -1562,7 +1567,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val yieldSessionDeleteSync = YieldSessionDeleteSync(yieldSessionRepo, pendingWrites)
 
-    private val pinPhotoSync = PinPhotoSync(pinPhotoRepo, pinRepo, pendingPhotos, pendingWrites)
+    private val pinPhotoSync = PinPhotoSync(pinPhotoRepo, pinRepo, growthRepo, pendingPhotos, pendingWrites)
 
     /**
      * Offline replay coordinator for pin COMPLETION toggles only (Stage 9A).
@@ -2014,10 +2019,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // (a real transient failure or a dependency-deferred marker).
                 // BLOCKED rows are deliberately excluded from "Retry all".
                 val canRetry = unresolved.any { it.status == PendingWriteStatus.FAILED }
+                val pendingPinDeleteIds = unresolved.filter {
+                    it.entityType == PendingEntityType.PIN && it.opType == PendingOpType.DELETE
+                }.mapTo(HashSet()) { it.clientId }
+                val pendingGrowthDeleteIds = unresolved.filter {
+                    it.entityType == PendingEntityType.GROWTH_RECORD && it.opType == PendingOpType.DELETE
+                }.mapTo(HashSet()) { it.clientId }
                 _ui.update {
                     it.copy(
                         pendingSyncCount = unresolved.size,
                         pendingSyncItems = items,
+                        pendingPinDeleteIds = pendingPinDeleteIds,
+                        pendingGrowthDeleteIds = pendingGrowthDeleteIds,
                         canRetrySync = canRetry,
                         pendingPinIds = pendingPinIds,
                         blockedPinIds = blockedPinIds,
@@ -3514,9 +3527,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun syncPendingPinPhotos() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        pinPhotoSync.replayAll { pinId, path ->
+        pinPhotoSync.replayAll { attachment, path ->
             _ui.update { st ->
-                st.copy(pins = st.pins.map { if (it.id == pinId) it.copy(photoPath = path) else it })
+                st.copy(
+                    pins = st.pins.map {
+                        if (attachment.entityKind != PendingPhotoEntityKind.GROWTH && it.id == attachment.clientPinId) it.copy(photoPath = path) else it
+                    },
+                    growthRecords = st.growthRecords.map {
+                        if (it.id == attachment.growthRecordId) it.copy(photoPaths = listOf(path)) else it
+                    },
+                )
             }
         }
     }
@@ -6717,6 +6737,60 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 } else {
                     _ui.update { it.copy(pinError = "Couldn't read the selected image.") }
                     onResult(false)
+                }
+            }
+        }
+    }
+
+    /**
+     * Retain a Pins-surface capture before network work, then replay it against
+     * the actual pin, standalone growth row, or linked pair.
+     */
+    fun attachPresentationPhoto(target: PinPresentationTarget, uri: Uri, onResult: (Boolean) -> Unit) {
+        _ui.update { it.copy(pinPhotoBusy = true, pinError = null) }
+        viewModelScope.launch {
+            val jpeg = runCatching { PinPhotoImageUtil.compress(getApplication(), uri) }.getOrNull()
+            if (jpeg == null || jpeg.isEmpty()) {
+                _ui.update { it.copy(pinPhotoBusy = false, pinError = "Couldn't read the captured photo.") }
+                onResult(false)
+                return@launch
+            }
+            val retained = runCatching { pendingPhotos.enqueue(target, jpeg) }.isSuccess
+            if (!retained) {
+                _ui.update { it.copy(pinPhotoBusy = false, pinError = "Couldn't save the photo on this device.") }
+                onResult(false)
+                return@launch
+            }
+            _ui.update {
+                it.copy(
+                    pinPhotoBusy = false,
+                    pinError = if (it.isOnline) "Photo saved — finishing sync." else "Photo saved offline — it will upload when sync is available.",
+                )
+            }
+            onResult(true)
+            syncPendingPinPhotos()
+        }
+    }
+
+    /** Source-aware delete; SQL 230 makes either legacy RPC delete a linked pair atomically. */
+    fun deletePresentationTarget(target: PinPresentationTarget, onResult: (Boolean) -> Unit) {
+        when (target.kind) {
+            PinPresentationTarget.Kind.PIN -> {
+                val pinId = target.pinId ?: return onResult(false)
+                deletePin(pinId, onResult)
+            }
+            PinPresentationTarget.Kind.STANDALONE_GROWTH,
+            PinPresentationTarget.Kind.LINKED_GROWTH -> {
+                val growthId = target.growthRecordId ?: return onResult(false)
+                val linkedPin = target.pinId?.let { id -> _ui.value.pins.firstOrNull { it.id == id } }
+                if (linkedPin != null) {
+                    _ui.update { st -> st.copy(pins = st.pins.filterNot { it.id == linkedPin.id }) }
+                }
+                deleteGrowthStageRecord(growthId) { ok ->
+                    if (!ok && linkedPin != null) {
+                        _ui.update { st -> st.copy(pins = (st.pins + linkedPin).distinctBy { it.id }) }
+                    }
+                    onResult(ok)
                 }
             }
         }
@@ -12081,6 +12155,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearGrowthError() {
         _ui.update { it.copy(growthError = null) }
+    }
+
+    fun reportGrowthError(message: String) {
+        _ui.update { it.copy(growthError = message) }
     }
 
     // MARK: - Growth-stage record photos

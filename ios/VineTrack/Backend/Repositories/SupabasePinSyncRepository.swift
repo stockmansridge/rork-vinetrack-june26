@@ -52,11 +52,30 @@ final class SupabasePinSyncRepository: PinSyncRepositoryProtocol {
             .execute()
     }
 
+    func updatePhotoPath(pinId: UUID, path: String?) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        try await provider.client
+            .from("pins")
+            .update(PinPhotoPathPatch(photoPath: path, clientUpdatedAt: Date()))
+            .eq("id", value: pinId.uuidString)
+            .execute()
+    }
+
     func softDeletePin(id: UUID) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         try await provider.client
             .rpc("soft_delete_pin", params: SoftDeletePinRequest(pinId: id))
             .execute()
+    }
+}
+
+nonisolated private struct PinPhotoPathPatch: Encodable, Sendable {
+    let photoPath: String?
+    let clientUpdatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case photoPath = "photo_path"
+        case clientUpdatedAt = "client_updated_at"
     }
 }
 

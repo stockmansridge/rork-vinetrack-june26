@@ -332,8 +332,15 @@ final class PinSyncService {
                     print("[PinSync] stamped created_by=\(uid) on pin \(pin.id) before push")
                     #endif
                 }
-                // If the pin has local photo bytes but no synced path yet, upload first.
-                if let data = pin.photoData, pin.photoPath == nil {
+                // A retained replacement must upload even when the old remote path
+                // is unchanged. Capture writes a stale cache marker first.
+                let photoKey = SharedImageCacheKey.pinPhoto(vineyardId: pin.vineyardId, pinId: pin.id)
+                let needsPhotoUpload = pin.photoData != nil && !SharedImageCache.shared.isCacheCurrent(
+                    for: photoKey,
+                    remotePath: pin.photoPath,
+                    remoteUpdatedAt: nil
+                )
+                if let data = pin.photoData, needsPhotoUpload {
                     // Cache locally first so even an upload failure leaves a
                     // hot cache entry for the next sync attempt.
                     SharedImageCache.shared.saveImageData(
@@ -503,6 +510,9 @@ final class PinSyncService {
 
     private func applyRemote(_ backendPin: BackendPin, vineyardId: UUID, store: MigratedDataStore, nameColorMap: [String: String]) async {
         let existingIndex = store.pins.firstIndex { $0.id == backendPin.id }
+
+        // Never resurrect a row while its durable local delete is unresolved.
+        if metadata.pendingDeletes[backendPin.id] != nil { return }
 
         // Soft-deleted remotely.
         if backendPin.deletedAt != nil {

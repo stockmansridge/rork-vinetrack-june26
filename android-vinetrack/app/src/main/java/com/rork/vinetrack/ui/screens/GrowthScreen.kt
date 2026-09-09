@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Notes
+import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Schedule
@@ -67,6 +68,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
+import com.rork.vinetrack.ui.components.rememberPhotoCaptureCoordinator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -94,6 +96,7 @@ import com.rork.vinetrack.data.GrowthStageReportPdfExporter
 import com.rork.vinetrack.data.RegionDateFormat
 import com.rork.vinetrack.data.GrapeVarietyDeleteOutcome
 import com.rork.vinetrack.data.PaddockRepository
+import com.rork.vinetrack.data.PinPresentationTarget
 import com.rork.vinetrack.data.RowAttachment
 import com.rork.vinetrack.data.model.GrowthStage
 import com.rork.vinetrack.data.model.GrowthStageRecord
@@ -1135,13 +1138,25 @@ private fun GrowthDetailView(
     val blockName = resolveGrowthRecordBlockName(record, state.paddocks)
 
     var pendingPhotoUri by remember(record.id) { mutableStateOf<Uri?>(null) }
-    val photoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickVisualMedia(),
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        pendingPhotoUri = uri
-        vm.uploadGrowthPhoto(record, uri) { pendingPhotoUri = null }
+    val photoTarget = PinPresentationTarget(
+        vineyardId = record.vineyardId,
+        pinId = record.pinId,
+        growthRecordId = record.id,
+        kind = if (record.isFromPin) PinPresentationTarget.Kind.LINKED_GROWTH else PinPresentationTarget.Kind.STANDALONE_GROWTH,
+    )
+    val photoCapture = rememberPhotoCaptureCoordinator(
+        onPhoto = { uri ->
+            if (uri != null) {
+                pendingPhotoUri = uri
+                vm.attachPresentationPhoto(photoTarget, uri) { ok -> if (!ok) pendingPhotoUri = null }
+            }
+        },
+        onError = { vm.reportGrowthError(it) },
+    )
+    LaunchedEffect(record.photoPaths) {
+        if (!record.photoPaths.isNullOrEmpty()) pendingPhotoUri = null
     }
+    val canDelete = state.currentRole in setOf("owner", "manager", "supervisor")
 
     Box(modifier = Modifier.fillMaxSize().background(vine.appBackground)) {
         Column(
@@ -1156,7 +1171,9 @@ private fun GrowthDetailView(
                 if (!record.isFromPin) {
                     IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = "Edit", tint = VineColors.LeafGreen) }
                 }
-                IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = VineColors.Destructive) }
+                if (canDelete) {
+                    IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = VineColors.Destructive) }
+                }
             }
 
             Column(modifier = Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -1213,11 +1230,8 @@ private fun GrowthDetailView(
                     record = record,
                     pendingPhotoUri = pendingPhotoUri,
                     busy = state.growthPhotoBusy,
-                    onPick = {
-                        photoPicker.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                        )
-                    },
+                    onTakePhoto = photoCapture.takePhoto,
+                    onChooseFromGallery = photoCapture.chooseFromGallery,
                     onRemove = { vm.removeGrowthPhoto(record) { pendingPhotoUri = null } },
                 )
 
@@ -1239,7 +1253,7 @@ private fun GrowthDetailView(
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false
-                    vm.deleteGrowthStageRecord(record.id) { ok -> if (ok) onBack() }
+                    vm.deletePresentationTarget(photoTarget) { ok -> if (ok) onBack() }
                 }) { Text("Delete", color = VineColors.Destructive) }
             },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
@@ -1260,7 +1274,8 @@ private fun GrowthPhotoSection(
     record: GrowthStageRecord,
     pendingPhotoUri: Uri?,
     busy: Boolean,
-    onPick: () -> Unit,
+    onTakePhoto: () -> Unit,
+    onChooseFromGallery: () -> Unit,
     onRemove: () -> Unit,
 ) {
     val vine = LocalVineColors.current
@@ -1274,7 +1289,7 @@ private fun GrowthPhotoSection(
         }
     }
 
-    val editable = !record.isFromPin
+    val editable = true
     val hasImage = pendingPhotoUri != null || !photoPath.isNullOrBlank()
     if (!hasImage && !editable) return
 
@@ -1314,7 +1329,7 @@ private fun GrowthPhotoSection(
 
                 if (editable) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = onPick, enabled = !busy, modifier = Modifier.weight(1f)) {
+                        OutlinedButton(onClick = onTakePhoto, enabled = !busy, modifier = Modifier.weight(1f)) {
                             Icon(Icons.Filled.PhotoCamera, contentDescription = null)
                             Text("  Replace")
                         }
@@ -1325,13 +1340,16 @@ private fun GrowthPhotoSection(
                     }
                 }
             } else {
-                OutlinedButton(onClick = onPick, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                    if (busy) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = VineColors.LeafGreen)
-                    } else {
+                OutlinedButton(onClick = onTakePhoto, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                    if (busy) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = VineColors.LeafGreen)
+                    else {
                         Icon(Icons.Filled.PhotoCamera, contentDescription = null)
-                        Text("  Add photo")
+                        Text("  Take Photo")
                     }
+                }
+                OutlinedButton(onClick = onChooseFromGallery, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Filled.Photo, contentDescription = null)
+                    Text("  Choose from Gallery")
                 }
             }
         }

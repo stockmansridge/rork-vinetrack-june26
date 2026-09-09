@@ -2,6 +2,7 @@ package com.rork.vinetrack.data
 
 import android.content.Context
 import com.rork.vinetrack.data.model.PendingPhotoAttachment
+import com.rork.vinetrack.data.model.PendingPhotoEntityKind
 import com.rork.vinetrack.data.model.PendingPhotoStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -51,8 +52,14 @@ class PendingPhotoRepository(context: Context) {
     /** Snapshot of all attachments. */
     fun list(): List<PendingPhotoAttachment> = _attachments.value
 
-    /** Local file the photo for [clientPinId] is (or would be) stored at. */
-    fun fileFor(clientPinId: String): File = File(photoDir, "${clientPinId.lowercase()}.jpg")
+    /** Latest retained file for a source identity, if one exists. */
+    fun latestFile(entityId: String): File? = _attachments.value
+        .filter { it.clientPinId == entityId || it.growthRecordId == entityId }
+        .maxByOrNull { it.updatedAt }
+        ?.let { File(it.localPath) }
+
+    private fun fileFor(entityId: String, revision: String): File =
+        File(photoDir, "${entityId.lowercase()}-${revision.lowercase()}.jpg")
 
     /**
      * Persist compressed JPEG [jpeg] for [clientPinId] and record a pending
@@ -62,31 +69,41 @@ class PendingPhotoRepository(context: Context) {
      *
      * Does NOT upload — Stage 7B retains the photo only.
      */
-    fun enqueue(clientPinId: String, vineyardId: String, jpeg: ByteArray): PendingPhotoAttachment {
-        val file = fileFor(clientPinId)
+    fun enqueue(clientPinId: String, vineyardId: String, jpeg: ByteArray): PendingPhotoAttachment =
+        enqueue(
+            target = PinPresentationTarget(vineyardId, clientPinId, null, PinPresentationTarget.Kind.PIN),
+            jpeg = jpeg,
+        )
+
+    /** Atomically retain the newest capture for its actual pin/growth identity. */
+    fun enqueue(target: PinPresentationTarget, jpeg: ByteArray): PendingPhotoAttachment {
+        require(jpeg.isNotEmpty()) { "Photo data is empty." }
+        val entityId = target.pinId ?: requireNotNull(target.growthRecordId)
+        val revision = UUID.randomUUID().toString()
+        val file = fileFor(entityId, revision)
         file.writeBytes(jpeg)
         val now = System.currentTimeMillis()
-        val existing = _attachments.value.firstOrNull { it.clientPinId == clientPinId }
-        val attachment = if (existing != null) {
-            existing.copy(
-                vineyardId = vineyardId,
-                localPath = file.absolutePath,
-                updatedAt = now,
-                status = PendingPhotoStatus.PENDING,
-                attemptCount = 0,
-                lastError = null,
-            )
-        } else {
-            PendingPhotoAttachment(
-                id = UUID.randomUUID().toString(),
-                clientPinId = clientPinId,
-                vineyardId = vineyardId,
-                localPath = file.absolutePath,
-                createdAt = now,
-                updatedAt = now,
-            )
+        val kind = when (target.kind) {
+            PinPresentationTarget.Kind.PIN -> PendingPhotoEntityKind.PIN
+            PinPresentationTarget.Kind.LINKED_GROWTH -> PendingPhotoEntityKind.LINKED_GROWTH
+            PinPresentationTarget.Kind.STANDALONE_GROWTH -> PendingPhotoEntityKind.GROWTH
         }
-        update { list -> list.filterNot { it.clientPinId == clientPinId } + attachment }
+        val attachment = PendingPhotoAttachment(
+            id = UUID.randomUUID().toString(),
+            clientPinId = target.pinId ?: entityId,
+            entityKind = kind,
+            growthRecordId = target.growthRecordId,
+            revision = revision,
+            vineyardId = target.vineyardId,
+            localPath = file.absolutePath,
+            createdAt = now,
+            updatedAt = now,
+        )
+        val replaced = _attachments.value.filter {
+            it.clientPinId == attachment.clientPinId && it.growthRecordId == attachment.growthRecordId
+        }
+        update { list -> list - replaced.toSet() + attachment }
+        replaced.forEach { runCatching { File(it.localPath).delete() } }
         return attachment
     }
 

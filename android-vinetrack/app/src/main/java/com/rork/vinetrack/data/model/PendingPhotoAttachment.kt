@@ -21,9 +21,15 @@ import kotlinx.serialization.Serializable
 data class PendingPhotoAttachment(
     /** Local primary key for this attachment row (client-generated UUID string). */
     val id: String,
-    /** The client-generated pin UUID this photo belongs to. */
+    /** Pin UUID, or the growth-record UUID for legacy queued rows. */
     val clientPinId: String,
-    /** Vineyard the pin (and therefore its storage path) lives under. */
+    /** Entity that owns the attachment reference. Defaults preserve old queues. */
+    val entityKind: String = PendingPhotoEntityKind.PIN,
+    /** Growth identity for standalone or pin-linked growth observations. */
+    val growthRecordId: String? = null,
+    /** Monotonic capture revision; stale completions cannot remove newer work. */
+    val revision: String = id,
+    /** Vineyard the attachment lives under. */
     val vineyardId: String,
     /** Absolute path to the compressed JPEG saved in app-private storage. */
     val localPath: String,
@@ -38,6 +44,13 @@ data class PendingPhotoAttachment(
     /** Last failure message, if any, for diagnostics/UX. */
     val lastError: String? = null,
 )
+
+/** Attachment ownership used by source-aware photo replay. */
+object PendingPhotoEntityKind {
+    const val PIN = "pin"
+    const val GROWTH = "growth"
+    const val LINKED_GROWTH = "linked_growth"
+}
 
 /** Lifecycle a pending photo attachment moves through once upload retry exists. */
 object PendingPhotoStatus {

@@ -68,6 +68,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -113,6 +114,7 @@ import com.rork.vinetrack.ui.components.AutoPhotoPromptSheet
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.MapMyLocationButton
 import com.rork.vinetrack.ui.components.hasDeviceLocationPermission
+import com.rork.vinetrack.ui.components.rememberPhotoCaptureCoordinator
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.time.Instant
@@ -196,7 +198,7 @@ fun UnifiedPinComposerScreen(
     // The pin this composer just created, waiting on the photo question. Only
     // its id is held: the pin is saved FIRST, so ignoring the question,
     // swiping it away or cancelling the picker can never lose it.
-    var photoPinId by remember { mutableStateOf<String?>(null) }
+    var photoPinId by rememberSaveable { mutableStateOf<String?>(null) }
     var showAutoPhoto by remember { mutableStateOf(false) }
     // Latches the instant a pin is created. Together with [finished] below it
     // makes the whole save single-shot: no timeout, dismissal or photo
@@ -211,23 +213,21 @@ fun UnifiedPinComposerScreen(
         onSaved()
     }
 
-    val photoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickVisualMedia(),
-    ) { uri: Uri? ->
-        val pin = photoPinId?.let { id -> state.pins.firstOrNull { it.id == id } }
-        if (uri != null && pin != null) {
-            // The EXISTING upload / pending-photo queue, attached to the exact
-            // pin just created.
-            vm.attachQuickPinPhoto(pin, uri) { ok ->
-                scope.launch {
-                    snackbarHostState.showSnackbar(if (ok) "Photo added to pin" else "Couldn't add the photo")
+    val photoCapture = rememberPhotoCaptureCoordinator(
+        onPhoto = { uri: Uri? ->
+            val pin = photoPinId?.let { id -> state.pins.firstOrNull { it.id == id } }
+            if (uri != null && pin != null) {
+                vm.attachQuickPinPhoto(pin, uri) { ok ->
+                    scope.launch { snackbarHostState.showSnackbar(if (ok) "Photo saved" else "Couldn't save the photo") }
                 }
             }
-        }
-        // A cancelled picker ends exactly like a successful one: the pin is
-        // already saved, it simply keeps no photo.
-        finish()
-    }
+            finish()
+        },
+        onError = { message ->
+            scope.launch { snackbarHostState.showSnackbar(message) }
+            finish()
+        },
+    )
 
     /**
      * Ask the photo question for the pin that was just created.
@@ -591,9 +591,11 @@ fun UnifiedPinComposerScreen(
             },
             onTakePhoto = {
                 showAutoPhoto = false
-                photoPicker.launch(
-                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                )
+                photoCapture.takePhoto()
+            },
+            onChooseFromGallery = {
+                showAutoPhoto = false
+                photoCapture.chooseFromGallery()
             },
         )
     }

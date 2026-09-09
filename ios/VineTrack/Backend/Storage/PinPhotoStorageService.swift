@@ -9,6 +9,10 @@ nonisolated enum PinPhotoStorage {
         "\(vineyardId.uuidString.lowercased())/pins/\(pinId.uuidString.lowercased())/photo.jpg"
     }
 
+    static func growthPath(vineyardId: UUID, recordId: UUID) -> String {
+        "\(vineyardId.uuidString.lowercased())/growth/\(recordId.uuidString.lowercased())/photo.jpg"
+    }
+
     /// Resize JPEG to a max edge of ~1600 px and quality 0.8.
     static func compress(_ data: Data, maxEdge: CGFloat = 1600, quality: CGFloat = 0.8) -> Data? {
         guard let image = UIImage(data: data) else { return nil }
@@ -58,6 +62,25 @@ final class PinPhotoStorageService {
         return path
     }
 
+    @discardableResult
+    func uploadGrowthPhoto(vineyardId: UUID, recordId: UUID, imageData: Data) async throws -> String {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let path = PinPhotoStorage.growthPath(vineyardId: vineyardId, recordId: recordId)
+        let payload = PinPhotoStorage.compress(imageData) ?? imageData
+        _ = try await provider.client.storage.from(PinPhotoStorage.bucket).upload(
+            path,
+            data: payload,
+            options: FileOptions(cacheControl: "3600", contentType: "image/jpeg", upsert: true)
+        )
+        SharedImageCache.shared.saveImageData(
+            payload,
+            for: .growthRecordPhoto(vineyardId: vineyardId, recordId: recordId),
+            remotePath: path,
+            remoteUpdatedAt: nil
+        )
+        return path
+    }
+
     func downloadPhoto(path: String, vineyardId: UUID, pinId: UUID) async throws -> Data {
         guard provider.isConfigured else {
             throw BackendRepositoryError.missingSupabaseConfiguration
@@ -68,6 +91,18 @@ final class PinPhotoStorageService {
         SharedImageCache.shared.saveImageData(
             data,
             for: .pinPhoto(vineyardId: vineyardId, pinId: pinId),
+            remotePath: path,
+            remoteUpdatedAt: nil
+        )
+        return data
+    }
+
+    func downloadGrowthPhoto(path: String, vineyardId: UUID, recordId: UUID) async throws -> Data {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let data = try await provider.client.storage.from(PinPhotoStorage.bucket).download(path: path)
+        SharedImageCache.shared.saveImageData(
+            data,
+            for: .growthRecordPhoto(vineyardId: vineyardId, recordId: recordId),
             remotePath: path,
             remoteUpdatedAt: nil
         )

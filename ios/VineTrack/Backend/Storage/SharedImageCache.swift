@@ -4,6 +4,7 @@ import Foundation
 nonisolated enum SharedImageCacheKey: Hashable, Sendable {
     case vineyardLogo(vineyardId: UUID)
     case pinPhoto(vineyardId: UUID, pinId: UUID)
+    case growthRecordPhoto(vineyardId: UUID, recordId: UUID)
     case elStageImage(vineyardId: UUID, stageCode: String)
     case maintenancePhoto(vineyardId: UUID, maintenanceId: UUID)
 
@@ -13,6 +14,8 @@ nonisolated enum SharedImageCacheKey: Hashable, Sendable {
             return "vineyards/\(vineyardId.uuidString.lowercased())/logo.jpg"
         case .pinPhoto(let vineyardId, let pinId):
             return "vineyards/\(vineyardId.uuidString.lowercased())/pins/\(pinId.uuidString.lowercased()).jpg"
+        case .growthRecordPhoto(let vineyardId, let recordId):
+            return "vineyards/\(vineyardId.uuidString.lowercased())/growth/\(recordId.uuidString.lowercased()).jpg"
         case .elStageImage(let vineyardId, let stageCode):
             let safe = stageCode
                 .replacingOccurrences(of: "/", with: "_")

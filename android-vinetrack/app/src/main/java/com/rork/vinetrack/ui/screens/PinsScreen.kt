@@ -118,6 +118,7 @@ import com.rork.vinetrack.data.SeasonSelection
 import com.rork.vinetrack.ui.components.SeasonSelector
 import com.rork.vinetrack.data.PinPlacement
 import com.rork.vinetrack.data.RowAttachment
+import com.rork.vinetrack.data.resolvePinPresentationTarget
 import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.LauncherButton
 import com.rork.vinetrack.data.model.Paddock
@@ -134,6 +135,7 @@ import com.rork.vinetrack.ui.components.ScreenAwakeController
 import com.rork.vinetrack.ui.components.compassTrueHeading
 import com.rork.vinetrack.ui.components.AutoPhotoPromptSheet
 import com.rork.vinetrack.ui.components.rememberCompassHeading
+import com.rork.vinetrack.ui.components.rememberPhotoCaptureCoordinator
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.StatusBadge
 import com.rork.vinetrack.ui.components.VineyardCard
@@ -192,7 +194,7 @@ fun PinsScreen(
     }
 
     // Per-pin action state (iOS list-row parity).
-    var photoTarget by remember { mutableStateOf<Pin?>(null) }
+    var photoTargetId by rememberSaveable { mutableStateOf<String?>(null) }
     var uploadingPinId by remember { mutableStateOf<String?>(null) }
     var deleteTarget by remember { mutableStateOf<Pin?>(null) }
     // Pin whose in-app direct-line directions view is open (iOS
@@ -233,8 +235,22 @@ fun PinsScreen(
     // growth_stage_records rows without a matching pin (iOS PinsView parity).
     // This guarantees growth-stage observations always appear here even when
     // the originating pins row sync was missed or delayed.
-    val sourcePins = remember(state.pins, state.growthRecords) {
-        state.pins + synthesizeGrowthPins(state.pins, state.growthRecords)
+    val sourcePins = remember(
+        state.pins,
+        state.growthRecords,
+        state.pendingPinDeleteIds,
+        state.pendingGrowthDeleteIds,
+    ) {
+        val deletingGrowthPinIds = state.growthRecords
+            .filter { it.id in state.pendingGrowthDeleteIds }
+            .mapNotNullTo(HashSet()) { it.pinId }
+        val visibleRealPins = state.pins.filterNot {
+            it.id in state.pendingPinDeleteIds || it.id in deletingGrowthPinIds
+        }
+        val visibleGrowth = state.growthRecords.filterNot {
+            it.id in state.pendingGrowthDeleteIds || it.pinId in state.pendingPinDeleteIds
+        }
+        visibleRealPins + synthesizeGrowthPins(visibleRealPins, visibleGrowth)
     }
     // Season scope built from EVERY non-deleted pin on this vineyard — never
     // from the already-filtered list — so selecting one vintage can't remove
@@ -274,22 +290,27 @@ fun PinsScreen(
     // permission on the delete call regardless.
     val canDelete = state.currentRole == null || state.currentRole in setOf("owner", "manager", "supervisor")
 
-    // Photo picker for attaching/replacing an existing pin's photo.
-    val photoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickVisualMedia(),
-    ) { uri: Uri? ->
-        val pin = photoTarget
-        photoTarget = null
-        if (uri != null && pin != null) {
-            uploadingPinId = pin.id
-            vm.uploadPinPhoto(pin, uri) { ok ->
-                uploadingPinId = null
-                scope.launch {
-                    snackbarHostState.showSnackbar(if (ok) "Photo added to pin" else "Couldn't add the photo")
+    // Camera capture is distinct from gallery selection and routes using the
+    // backing pin/growth identity rather than the synthesized display id.
+    val photoCapture = rememberPhotoCaptureCoordinator(
+        onPhoto = { uri: Uri? ->
+            val displayId = photoTargetId
+            photoTargetId = null
+            if (uri != null && displayId != null) {
+                val target = resolvePinPresentationTarget(displayId, state.pins, state.growthRecords)
+                if (target == null) {
+                    scope.launch { snackbarHostState.showSnackbar("This item's source is no longer available.") }
+                } else {
+                    uploadingPinId = displayId
+                    vm.attachPresentationPhoto(target, uri) { ok ->
+                        uploadingPinId = null
+                        scope.launch { snackbarHostState.showSnackbar(if (ok) "Photo saved" else "Couldn't save the photo") }
+                    }
                 }
             }
-        }
-    }
+        },
+        onError = { message -> scope.launch { snackbarHostState.showSnackbar(message) } },
+    )
 
     /** Open the pin's location in the device's maps app. */
     fun openMap(pin: Pin) {
@@ -408,8 +429,8 @@ fun PinsScreen(
                     onMap = { openMap(it) },
                     onDirections = { openDirections(it) },
                     onPhoto = {
-                        photoTarget = it
-                        photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        photoTargetId = it.id
+                        photoCapture.takePhoto()
                     },
                     canDelete = canDelete,
                     onDelete = { deleteTarget = it },
@@ -491,8 +512,8 @@ fun PinsScreen(
             },
             onDirections = { openDirections(detailPin) },
             onPhoto = {
-                photoTarget = detailPin
-                photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                photoTargetId = detailPin.id
+                photoCapture.takePhoto()
             },
             onToggle = { vm.togglePinCompleted(detailPin) },
             onDelete = { deleteTarget = detailPin },
@@ -517,9 +538,12 @@ fun PinsScreen(
             confirmButton = {
                 TextButton(onClick = {
                     deleteTarget = null
-                    vm.deletePin(pin.id) { ok ->
-                        scope.launch {
-                            snackbarHostState.showSnackbar(if (ok) "Pin deleted" else "Couldn't delete the pin")
+                    val target = resolvePinPresentationTarget(pin.id, state.pins, state.growthRecords)
+                    if (target == null) {
+                        scope.launch { snackbarHostState.showSnackbar("This item's source is no longer available.") }
+                    } else {
+                        vm.deletePresentationTarget(target) { ok ->
+                            scope.launch { snackbarHostState.showSnackbar(if (ok) "Item deleted" else "Couldn't delete the item") }
                         }
                     }
                 }) { Text("Delete", color = VineColors.Destructive) }
@@ -1499,7 +1523,7 @@ fun PinCategoryLauncherScreen(
     // Floating success card shown after a quick pin is dropped (auto-dismisses).
     var successToast by remember { mutableStateOf<QuickPinToast?>(null) }
     // The freshly-created pin awaiting the optional "Add a photo?" prompt.
-    var autoPhotoPin by remember { mutableStateOf<Pin?>(null) }
+    var autoPhotoPinId by rememberSaveable { mutableStateOf<String?>(null) }
     var showAutoPhoto by remember { mutableStateOf(false) }
 
     // Category pending a GPS fix / permission decision before creation.
@@ -1513,21 +1537,18 @@ fun PinCategoryLauncherScreen(
         }
     }
 
-    // Photo picker for the optional auto-photo prompt. Reuses the existing
-    // pin-photo upload / pending-photo queue via [attachQuickPinPhoto].
-    val autoPhotoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickVisualMedia(),
-    ) { uri: Uri? ->
-        val pin = autoPhotoPin
-        autoPhotoPin = null
-        if (uri != null && pin != null) {
-            vm.attachQuickPinPhoto(pin, uri) { ok ->
-                scope.launch {
-                    snackbarHostState.showSnackbar(if (ok) "Photo added to pin" else "Couldn't add the photo")
+    val autoPhotoCapture = rememberPhotoCaptureCoordinator(
+        onPhoto = { uri: Uri? ->
+            val pin = autoPhotoPinId?.let { id -> state.pins.firstOrNull { it.id == id } }
+            autoPhotoPinId = null
+            if (uri != null && pin != null) {
+                vm.attachQuickPinPhoto(pin, uri) { ok ->
+                    scope.launch { snackbarHostState.showSnackbar(if (ok) "Photo saved" else "Couldn't save the photo") }
                 }
             }
-        }
-    }
+        },
+        onError = { message -> scope.launch { snackbarHostState.showSnackbar(message) } },
+    )
 
     /**
      * Quick-create a pin for [category]/[side] at a real GPS [loc], reusing the
@@ -1584,7 +1605,7 @@ fun PinCategoryLauncherScreen(
                         offline = offline,
                     )
                     if (autoPhotoEnabled) {
-                        autoPhotoPin = pin
+                        autoPhotoPinId = pin.id
                         showAutoPhoto = true
                     }
                 },
@@ -1844,13 +1865,15 @@ fun PinCategoryLauncherScreen(
         AutoPhotoPromptSheet(
             onSkip = {
                 showAutoPhoto = false
-                autoPhotoPin = null
+                autoPhotoPinId = null
             },
             onTakePhoto = {
                 showAutoPhoto = false
-                autoPhotoPicker.launch(
-                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                )
+                autoPhotoCapture.takePhoto()
+            },
+            onChooseFromGallery = {
+                showAutoPhoto = false
+                autoPhotoCapture.chooseFromGallery()
             },
         )
     }
@@ -2671,12 +2694,16 @@ private fun PinEditSheet(
     var paddockMenu by remember { mutableStateOf(false) }
     // Photo selected for the new pin (uploaded after the pin is created).
     var pendingPhotoUri by remember { mutableStateOf<Uri?>(null) }
-
-    val photoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickVisualMedia(),
-    ) { uri ->
-        if (uri != null) pendingPhotoUri = uri
-    }
+    var photoError by remember { mutableStateOf<String?>(null) }
+    val photoCapture = rememberPhotoCaptureCoordinator(
+        onPhoto = { uri ->
+            if (uri != null) {
+                pendingPhotoUri = uri
+                photoError = null
+            }
+        },
+        onError = { photoError = it },
+    )
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
@@ -2787,11 +2814,9 @@ private fun PinEditSheet(
 
             PinPhotoSection(
                 pendingPhotoUri = pendingPhotoUri,
-                onPick = {
-                    photoPicker.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                    )
-                },
+                photoError = photoError,
+                onTakePhoto = photoCapture.takePhoto,
+                onChooseFromGallery = photoCapture.chooseFromGallery,
                 onRemove = { pendingPhotoUri = null },
             )
 
@@ -2837,7 +2862,9 @@ private fun PinEditSheet(
 @Composable
 private fun PinPhotoSection(
     pendingPhotoUri: Uri?,
-    onPick: () -> Unit,
+    photoError: String?,
+    onTakePhoto: () -> Unit,
+    onChooseFromGallery: () -> Unit,
     onRemove: () -> Unit,
 ) {
     val vine = LocalVineColors.current
@@ -2863,7 +2890,7 @@ private fun PinPhotoSection(
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onPick, modifier = Modifier.weight(1f)) {
+                OutlinedButton(onClick = onTakePhoto, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Filled.PhotoCamera, contentDescription = null)
                     Text("  Replace")
                 }
@@ -2873,13 +2900,17 @@ private fun PinPhotoSection(
                 }
             }
         } else {
-            OutlinedButton(
-                onClick = onPick,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Outlined.AddAPhoto, contentDescription = null)
-                Text("  Add photo")
+            OutlinedButton(onClick = onTakePhoto, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Filled.PhotoCamera, contentDescription = null)
+                Text("  Take Photo")
             }
+            OutlinedButton(onClick = onChooseFromGallery, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Filled.Photo, contentDescription = null)
+                Text("  Choose from Gallery")
+            }
+        }
+        if (photoError != null) {
+            Text(photoError, fontSize = 12.sp, color = VineColors.Destructive)
         }
     }
 }

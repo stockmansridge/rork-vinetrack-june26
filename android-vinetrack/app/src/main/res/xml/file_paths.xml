@@ -2,4 +2,6 @@
 <paths>
     <!-- Generated spray-record PDFs are written here and shared via FileProvider. -->
     <cache-path name="exports" path="exports/" />
+    <!-- Narrowly scoped output for ActivityResultContracts.TakePicture. -->
+    <cache-path name="camera_captures" path="camera-captures/" />
 </paths>

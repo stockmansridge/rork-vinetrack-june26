@@ -3,6 +3,7 @@ package com.rork.vinetrack.data
 import com.rork.vinetrack.data.model.PendingEntityType
 import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingPhotoAttachment
+import com.rork.vinetrack.data.model.PendingPhotoEntityKind
 import com.rork.vinetrack.data.model.PendingPhotoStatus
 import kotlinx.coroutines.sync.Mutex
 import java.io.File
@@ -31,6 +32,7 @@ import java.io.File
 class PinPhotoSync(
     private val pinPhotoRepo: PinPhotoRepository,
     private val pinRepo: PinRepository,
+    private val growthRepo: GrowthStageRecordRepository,
     private val pending: PendingPhotoRepository,
     private val pendingCreates: PendingWriteRepository,
 ) {
@@ -47,7 +49,7 @@ class PinPhotoSync(
      * Caller is responsible for only invoking this when online and a session
      * token exists.
      */
-    suspend fun replayAll(onUploaded: (pinId: String, path: String) -> Unit) {
+    suspend fun replayAll(onUploaded: (attachment: PendingPhotoAttachment, path: String) -> Unit) {
         if (!replayLock.tryLock()) return
         try {
             // Pins still queued for create haven't synced yet — their photos must
@@ -62,7 +64,7 @@ class PinPhotoSync(
             for (att in candidates) {
                 // Pin-exists ordering: leave the attachment pending until its pin
                 // create has synced. Don't touch the file or counters.
-                if (att.clientPinId in queuedPinIds) continue
+                if (att.entityKind != PendingPhotoEntityKind.GROWTH && att.clientPinId in queuedPinIds) continue
 
                 val file = File(att.localPath)
                 if (!file.exists()) {
@@ -77,14 +79,27 @@ class PinPhotoSync(
 
                 pending.updateStatus(att.id, PendingPhotoStatus.IN_PROGRESS)
                 try {
-                    // Upsert upload — safe to retry against the deterministic path.
-                    val path = pinPhotoRepo.upload(att.vineyardId, att.clientPinId, bytes)
+                    val path = when (att.entityKind) {
+                        PendingPhotoEntityKind.GROWTH -> pinPhotoRepo.uploadAtPath(
+                            pinPhotoRepo.growthStoragePath(att.vineyardId, requireNotNull(att.growthRecordId)),
+                            bytes,
+                        )
+                        else -> pinPhotoRepo.upload(att.vineyardId, att.clientPinId, bytes)
+                    }
                     try {
-                        pinRepo.updatePhotoPath(att.clientPinId, path)
-                        // Both steps done — drop the local file and remove the row.
+                        when (att.entityKind) {
+                            PendingPhotoEntityKind.GROWTH ->
+                                growthRepo.updatePhotoPaths(requireNotNull(att.growthRecordId), listOf(path))
+                            PendingPhotoEntityKind.LINKED_GROWTH -> {
+                                pinRepo.updatePhotoPath(att.clientPinId, path)
+                                att.growthRecordId?.let { growthRepo.updatePhotoPaths(it, listOf(path)) }
+                            }
+                            else -> pinRepo.updatePhotoPath(att.clientPinId, path)
+                        }
+                        // Remove only this revision; a newer capture has a different id.
                         pending.markUploaded(att.id)
                         pending.remove(att.id)
-                        onUploaded(att.clientPinId, path)
+                        onUploaded(att, path)
                     } catch (e: BackendError.Unauthorized) {
                         // Upload succeeded but the row update needs re-auth. Keep
                         // the file so a later retry re-runs updatePhotoPath.

@@ -61,6 +61,11 @@ struct PinsView: View {
                 createdBy: record.recordedByName,
                 createdByUserId: record.createdBy,
                 isCompleted: false,
+                photoData: growthStageRecordSync.localPhotoData(recordId: record.id)
+                    ?? SharedImageCache.shared.cachedImageData(
+                        for: record.pinId.map { .pinPhoto(vineyardId: record.vineyardId, pinId: $0) }
+                            ?? .growthRecordPhoto(vineyardId: record.vineyardId, recordId: record.id)
+                    ),
                 photoPath: record.photoPaths.first,
                 growthStageCode: record.stageCode,
                 notes: record.notes
@@ -790,6 +795,7 @@ struct PinsListView: View {
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(LocationService.self) private var locationService
     @Environment(BackendAccessControl.self) private var accessControl
+    @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
     private var canDelete: Bool { accessControl.canDeleteOperationalRecords }
     @State private var selectedPinForMap: VinePin?
     @State private var selectedPinForDirections: VinePin?
@@ -952,7 +958,7 @@ struct PinsListView: View {
         .confirmationDialog("Delete Pin?", isPresented: $showDeleteConfirmation, presenting: pinToDelete) { pin in
             if canDelete {
                 Button("Delete", role: .destructive) {
-                    store.deletePin(pin.id)
+                    deletePresentation(pin)
                     pinToDelete = nil
                 }
             }
@@ -987,11 +993,39 @@ struct PinsListView: View {
         store.updatePin(updated)
     }
 
+    private func target(for pin: VinePin) -> PinPresentationTarget? {
+        PinPresentationTarget.resolve(
+            displayId: pin.id,
+            pins: store.pins,
+            growthRecords: growthStageRecordSync.records
+        )
+    }
+
+    private func deletePresentation(_ pin: VinePin) {
+        guard let target = target(for: pin) else { return }
+        if let growthId = target.growthRecordId {
+            growthStageRecordSync.deleteRecord(id: growthId)
+        } else if let pinId = target.pinId {
+            store.deletePin(pinId)
+        }
+    }
+
     private func handlePhotoCaptured(_ data: Data?, for pin: VinePin) {
-        guard let data else { return }
-        var updatedPin = pin
-        updatedPin.photoData = data
-        store.updatePin(updatedPin)
+        guard let data, let target = target(for: pin) else { return }
+        if let growthId = target.growthRecordId {
+            try? growthStageRecordSync.attachPhoto(recordId: growthId, imageData: data)
+            return
+        }
+        guard let pinId = target.pinId,
+              var live = store.pins.first(where: { $0.id == pinId }) else { return }
+        SharedImageCache.shared.saveImageData(
+            data,
+            for: .pinPhoto(vineyardId: live.vineyardId, pinId: pinId),
+            remotePath: nil,
+            remoteUpdatedAt: nil
+        )
+        live.photoData = data
+        store.updatePin(live)
     }
 }
 
@@ -1010,9 +1044,23 @@ struct PinRowView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(PinSyncService.self) private var pinSync
+    @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
     private var canDelete: Bool { accessControl.canDeleteOperationalRecords }
     private var fmt: RegionFormatter { store.settings.regionFormatter }
     @State private var showFullPhoto: Bool = false
+    @State private var loadedPhotoData: Data?
+    @State private var isPhotoLoading: Bool = false
+    @State private var photoLoadFailed: Bool = false
+
+    private var photoTarget: PinPresentationTarget? {
+        PinPresentationTarget.resolve(displayId: pin.id, pins: store.pins, growthRecords: growthStageRecordSync.records)
+    }
+    private var photoPath: String? {
+        if let path = store.pins.first(where: { $0.id == pin.id })?.photoPath ?? pin.photoPath { return path }
+        guard let growthId = photoTarget?.growthRecordId else { return nil }
+        return growthStageRecordSync.records.first { $0.id == growthId }?.photoPaths.first
+    }
+    private var displayPhotoData: Data? { loadedPhotoData ?? pin.photoData }
 
     private var headingText: String {
         // No recorded compass direction — show an honest dash, not North.
@@ -1065,10 +1113,8 @@ struct PinRowView: View {
                 }
                 .buttonStyle(.plain)
 
-                if let photoData = pin.photoData, let uiImage = UIImage(data: photoData) {
-                    Button {
-                        showFullPhoto = true
-                    } label: {
+                if let photoData = displayPhotoData, let uiImage = UIImage(data: photoData) {
+                    Button { showFullPhoto = true } label: {
                         Image(uiImage: uiImage)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
@@ -1076,6 +1122,16 @@ struct PinRowView: View {
                             .clipShape(.rect(cornerRadius: 6))
                     }
                     .buttonStyle(.plain)
+                    .padding(.leading, 10)
+                } else if photoPath != nil {
+                    Button { Task { await loadPhoto(force: true) } } label: {
+                        Group {
+                            if isPhotoLoading { ProgressView() }
+                            else { Image(systemName: photoLoadFailed ? "arrow.clockwise" : "photo") }
+                        }
+                        .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel(photoLoadFailed ? "Retry photo" : "Load photo")
                     .padding(.leading, 10)
                 }
             }
@@ -1174,11 +1230,30 @@ struct PinRowView: View {
         }
         .padding(.vertical, 6)
         .opacity(pin.isCompleted ? 0.7 : 1)
+        .task(id: photoPath) { await loadPhoto(force: false) }
         .fullScreenCover(isPresented: $showFullPhoto) {
-            if let photoData = pin.photoData, let uiImage = UIImage(data: photoData) {
+            if let photoData = displayPhotoData, let uiImage = UIImage(data: photoData) {
                 PhotoViewerSheet(image: uiImage)
             }
         }
+    }
+
+    private func loadPhoto(force: Bool) async {
+        guard let path = photoPath, let target = photoTarget else { return }
+        if !force, displayPhotoData != nil { return }
+        isPhotoLoading = true
+        photoLoadFailed = false
+        do {
+            let storage = PinPhotoStorageService()
+            if let pinId = target.pinId {
+                loadedPhotoData = try await storage.downloadPhoto(path: path, vineyardId: target.vineyardId, pinId: pinId)
+            } else if let growthId = target.growthRecordId {
+                loadedPhotoData = try await storage.downloadGrowthPhoto(path: path, vineyardId: target.vineyardId, recordId: growthId)
+            }
+        } catch {
+            photoLoadFailed = true
+        }
+        isPhotoLoading = false
     }
 }
 
@@ -1402,12 +1477,16 @@ struct PinDetailSheet: View {
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(PinSyncService.self) private var pinSync
+    @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
     @Environment(\.dismiss) private var dismiss
     private var canDelete: Bool { accessControl.canDeleteOperationalRecords }
     @State private var notesDraft: String = ""
     @State private var showDirections: Bool = false
     @State private var showPhotoPicker: Bool = false
     @State private var showFullPhoto: Bool = false
+    @State private var loadedPhotoData: Data?
+    @State private var isPhotoLoading: Bool = false
+    @State private var photoLoadError: String?
     /// Locally-applied type change so the sheet reflects the new type
     /// immediately (the `pin` snapshot it was presented with is immutable).
     @State private var typeDraft: PinTypeOption?
@@ -1437,6 +1516,33 @@ struct PinDetailSheet: View {
 
     /// The live pin row backing this sheet, when it still exists locally.
     private var livePin: VinePin? { store.pins.first(where: { $0.id == pin.id }) }
+    private var target: PinPresentationTarget? {
+        PinPresentationTarget.resolve(
+            displayId: pin.id,
+            pins: store.pins,
+            growthRecords: growthStageRecordSync.records
+        )
+    }
+    private var currentPin: VinePin { livePin ?? pin }
+    private var currentPhotoData: Data? {
+        if let loadedPhotoData { return loadedPhotoData }
+        if let data = currentPin.photoData { return data }
+        guard let target else { return nil }
+        if let growthId = target.growthRecordId,
+           let data = growthStageRecordSync.localPhotoData(recordId: growthId) { return data }
+        if let pinId = target.pinId {
+            return SharedImageCache.shared.cachedImageData(for: .pinPhoto(vineyardId: target.vineyardId, pinId: pinId))
+        }
+        if let growthId = target.growthRecordId {
+            return SharedImageCache.shared.cachedImageData(for: .growthRecordPhoto(vineyardId: target.vineyardId, recordId: growthId))
+        }
+        return nil
+    }
+    private var currentPhotoPath: String? {
+        if let path = currentPin.photoPath { return path }
+        guard let growthId = target?.growthRecordId else { return nil }
+        return growthStageRecordSync.records.first { $0.id == growthId }?.photoPaths.first
+    }
 
     /// Change Pin Type is offered for real repair/growth pins only:
     /// growth-stage observations are managed by the growth flow (their type IS
@@ -1576,7 +1682,7 @@ struct PinDetailSheet: View {
                         if canDelete {
                             Spacer()
                             ActionButton(icon: "trash", label: "Delete", color: .red) {
-                                store.deletePin(pin.id)
+                                deletePresentation()
                                 dismiss()
                             }
                         }
@@ -1614,7 +1720,7 @@ struct PinDetailSheet: View {
                     }
                 }
 
-                if let photoData = pin.photoData, let uiImage = UIImage(data: photoData) {
+                if let photoData = currentPhotoData, let uiImage = UIImage(data: photoData) {
                     Section("Photo") {
                         Button {
                             showFullPhoto = true
@@ -1627,6 +1733,17 @@ struct PinDetailSheet: View {
                         }
                         .buttonStyle(.plain)
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    }
+                } else if currentPhotoPath != nil {
+                    Section("Photo") {
+                        if isPhotoLoading {
+                            HStack { ProgressView(); Text("Loading photo…") }
+                        } else {
+                            Button("Retry photo") { Task { await loadPhotoIfNeeded(force: true) } }
+                            if let photoLoadError {
+                                Text(photoLoadError).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 }
 
@@ -1696,8 +1813,11 @@ struct PinDetailSheet: View {
                 }
             }
             .onAppear {
-                notesDraft = pin.notes ?? ""
-                Task { await loadMemberDirectory() }
+                notesDraft = currentPin.notes ?? ""
+                Task {
+                    await loadMemberDirectory()
+                    await loadPhotoIfNeeded(force: false)
+                }
             }
             .sheet(isPresented: $showDirections) {
                 PinDirectionsSheet(pin: pin)
@@ -1711,21 +1831,48 @@ struct PinDetailSheet: View {
                 .ignoresSafeArea()
             }
             .fullScreenCover(isPresented: $showFullPhoto) {
-                if let photoData = pin.photoData, let uiImage = UIImage(data: photoData) {
+                if let photoData = currentPhotoData, let uiImage = UIImage(data: photoData) {
                     PhotoViewerSheet(image: uiImage)
                 }
             }
         }
     }
 
+    private func loadPhotoIfNeeded(force: Bool) async {
+        guard let path = currentPhotoPath, let target else { return }
+        if !force, currentPhotoData != nil { return }
+        isPhotoLoading = true
+        photoLoadError = nil
+        do {
+            let storage = PinPhotoStorageService()
+            if let pinId = target.pinId {
+                loadedPhotoData = try await storage.downloadPhoto(path: path, vineyardId: target.vineyardId, pinId: pinId)
+            } else if let growthId = target.growthRecordId {
+                loadedPhotoData = try await storage.downloadGrowthPhoto(path: path, vineyardId: target.vineyardId, recordId: growthId)
+            }
+        } catch {
+            photoLoadError = "Photo unavailable offline. Check your connection and retry."
+        }
+        isPhotoLoading = false
+    }
+
+    private func deletePresentation() {
+        guard let target else { return }
+        if let growthId = target.growthRecordId {
+            growthStageRecordSync.deleteRecord(id: growthId)
+        } else if let pinId = target.pinId {
+            store.deletePin(pinId)
+        }
+    }
+
     private func saveNotes(_ text: String) {
-        var updated = pin
+        var updated = currentPin
         updated.notes = text.isEmpty ? nil : text
         store.updatePin(updated)
     }
 
     private func toggleCompletion() {
-        var updated = pin
+        var updated = currentPin
         updated.isCompleted.toggle()
         if updated.isCompleted {
             updated.completedAt = Date()
@@ -1740,8 +1887,19 @@ struct PinDetailSheet: View {
     }
 
     private func handlePhotoCaptured(_ data: Data?) {
-        guard let data else { return }
-        var updated = pin
+        guard let data, let target else { return }
+        if let growthId = target.growthRecordId {
+            try? growthStageRecordSync.attachPhoto(recordId: growthId, imageData: data)
+            return
+        }
+        guard let pinId = target.pinId,
+              var updated = store.pins.first(where: { $0.id == pinId }) else { return }
+        SharedImageCache.shared.saveImageData(
+            data,
+            for: .pinPhoto(vineyardId: updated.vineyardId, pinId: pinId),
+            remotePath: nil,
+            remoteUpdatedAt: nil
+        )
         updated.photoData = data
         store.updatePin(updated)
     }

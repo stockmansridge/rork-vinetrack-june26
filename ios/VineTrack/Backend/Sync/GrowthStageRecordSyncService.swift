@@ -33,9 +33,13 @@ final class GrowthStageRecordSyncService {
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
     private let repository: any GrowthStageRecordSyncRepositoryProtocol
+    private let pinRepository: any PinSyncRepositoryProtocol
+    private let photoStorage: PinPhotoStorageService
     private let metadata: GrowthStageRecordSyncMetadata
     private let persistence: PersistenceStore
     private let persistenceKey = "vinetrack_growth_stage_records"
+    private let pendingPhotosKey = "vinetrack_pending_growth_photos_v1"
+    private var pendingPhotos: [UUID: PendingGrowthPhoto] = [:]
     private var isConfigured: Bool = false
     private var eagerPushTask: Task<Void, Never>?
 
@@ -51,13 +55,18 @@ final class GrowthStageRecordSyncService {
 
     init(
         repository: (any GrowthStageRecordSyncRepositoryProtocol)? = nil,
+        pinRepository: (any PinSyncRepositoryProtocol)? = nil,
+        photoStorage: PinPhotoStorageService? = nil,
         metadata: GrowthStageRecordSyncMetadata? = nil,
         persistence: PersistenceStore = .shared
     ) {
         self.repository = repository ?? SupabaseGrowthStageRecordSyncRepository()
+        self.pinRepository = pinRepository ?? SupabasePinSyncRepository()
+        self.photoStorage = photoStorage ?? PinPhotoStorageService()
         self.metadata = metadata ?? GrowthStageRecordSyncMetadata()
         self.persistence = persistence
         self.records = persistence.load(key: persistenceKey) ?? []
+        self.pendingPhotos = persistence.load(key: pendingPhotosKey) ?? [:]
     }
 
     // MARK: - Configuration
@@ -200,6 +209,52 @@ final class GrowthStageRecordSyncService {
         return nil
     }
 
+    func localPhotoData(recordId: UUID) -> Data? {
+        pendingPhotos[recordId]?.imageData
+    }
+
+    /// Retain a captured growth photo before any network work. A newer capture
+    /// replaces the pending revision for this observation without affecting metadata.
+    func attachPhoto(recordId: UUID, imageData: Data) throws {
+        guard let record = records.first(where: { $0.id == recordId }) else {
+            throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "The growth observation is no longer available."])
+        }
+        let payload = PinPhotoStorage.compress(imageData) ?? imageData
+        guard !payload.isEmpty else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: "The captured photo was empty."])
+        }
+        let pending = PendingGrowthPhoto(
+            recordId: record.id,
+            vineyardId: record.vineyardId,
+            pinId: record.pinId,
+            revision: UUID(),
+            imageData: payload,
+            capturedAt: Date()
+        )
+        pendingPhotos[record.id] = pending
+        persistence.save(pendingPhotos, key: pendingPhotosKey)
+        let cacheKey: SharedImageCacheKey = record.pinId.map {
+            .pinPhoto(vineyardId: record.vineyardId, pinId: $0)
+        } ?? .growthRecordPhoto(vineyardId: record.vineyardId, recordId: record.id)
+        SharedImageCache.shared.saveImageData(payload, for: cacheKey, remotePath: nil, remoteUpdatedAt: nil)
+        scheduleEagerPush()
+    }
+
+    /// Source-aware local delete. SQL 230 makes the existing growth RPC delete
+    /// a linked pin and observation atomically when this queue replays.
+    func deleteRecord(id: UUID) {
+        guard let record = records.first(where: { $0.id == id }) else { return }
+        records.removeAll { $0.id == id }
+        pendingPhotos.removeValue(forKey: id)
+        metadata.markDeleted(id, at: Date())
+        persist()
+        persistence.save(pendingPhotos, key: pendingPhotosKey)
+        if let pinId = record.pinId {
+            store?.applyRemotePinDelete(pinId)
+        }
+        scheduleEagerPush()
+    }
+
     private func softDeleteByPin(_ pinId: UUID) {
         guard let idx = records.firstIndex(where: { $0.pinId == pinId }) else { return }
         let recordId = records[idx].id
@@ -240,6 +295,7 @@ final class GrowthStageRecordSyncService {
     // MARK: - Push
 
     private func pushLocal(vineyardId: UUID) async throws {
+        try await pushPendingPhotos(vineyardId: vineyardId)
         let createdBy = auth?.userId
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
@@ -291,6 +347,56 @@ final class GrowthStageRecordSyncService {
         }
     }
 
+    private func pushPendingPhotos(vineyardId: UUID) async throws {
+        let candidates = pendingPhotos.values
+            .filter { $0.vineyardId == vineyardId }
+            .sorted { $0.capturedAt < $1.capturedAt }
+        for pending in candidates {
+            guard metadata.pendingDeletes[pending.recordId] == nil,
+                  let index = records.firstIndex(where: { $0.id == pending.recordId }) else {
+                pendingPhotos.removeValue(forKey: pending.recordId)
+                continue
+            }
+            let path: String
+            if let pinId = pending.pinId {
+                path = try await photoStorage.uploadPhoto(
+                    vineyardId: pending.vineyardId,
+                    pinId: pinId,
+                    imageData: pending.imageData
+                )
+                try await pinRepository.updatePhotoPath(pinId: pinId, path: path)
+                if let localPin = store?.pins.first(where: { $0.id == pinId }) {
+                    var updatedPin = localPin
+                    updatedPin.photoData = pending.imageData
+                    updatedPin.photoPath = path
+                    store?.applyRemotePinUpsert(updatedPin)
+                }
+            } else {
+                path = try await photoStorage.uploadGrowthPhoto(
+                    vineyardId: pending.vineyardId,
+                    recordId: pending.recordId,
+                    imageData: pending.imageData
+                )
+            }
+            var updated = records[index]
+            updated.photoPaths = [path]
+            updated.updatedAt = Date()
+            try await repository.upsertGrowthStageRecord(
+                BackendGrowthStageRecord.upsert(
+                    from: updated,
+                    createdBy: auth?.userId,
+                    clientUpdatedAt: Date()
+                )
+            )
+            records[index] = updated
+            if pendingPhotos[pending.recordId]?.revision == pending.revision {
+                pendingPhotos.removeValue(forKey: pending.recordId)
+            }
+        }
+        persist()
+        persistence.save(pendingPhotos, key: pendingPhotosKey)
+    }
+
     // MARK: - Pull
 
     private func pullRemote(vineyardId: UUID) async throws {
@@ -318,6 +424,8 @@ final class GrowthStageRecordSyncService {
     }
 
     private func apply(_ backend: BackendGrowthStageRecord, vineyardId: UUID) {
+        if metadata.pendingDeletes[backend.id] != nil { return }
+
         if backend.deletedAt != nil {
             records.removeAll { $0.id == backend.id }
             metadata.clearDirty([backend.id])

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -57,6 +58,7 @@ const val AUTO_PHOTO_PROMPT_SECONDS: Int = 3
 fun AutoPhotoPromptSheet(
     onSkip: () -> Unit,
     onTakePhoto: () -> Unit,
+    onChooseFromGallery: (() -> Unit)? = null,
 ) {
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
@@ -109,24 +111,29 @@ fun AutoPhotoPromptSheet(
                 fontSize = 14.sp,
                 color = vine.textSecondary,
             )
-            Row(
+            Button(
+                onClick = { if (!responded) { responded = true; onTakePhoto() } },
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
             ) {
+                Icon(Icons.Filled.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.size(6.dp))
+                Text("Take Photo")
+            }
+            if (onChooseFromGallery != null) {
                 OutlinedButton(
-                    onClick = { if (!responded) { responded = true; onSkip() } },
-                    modifier = Modifier.weight(1f),
-                ) { Text("Skip") }
-                Button(
-                    onClick = { if (!responded) { responded = true; onTakePhoto() } },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
+                    onClick = { if (!responded) { responded = true; onChooseFromGallery() } },
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Icon(Icons.Filled.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Filled.Photo, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.size(6.dp))
-                    Text("Take Photo")
+                    Text("Choose from Gallery")
                 }
             }
+            OutlinedButton(
+                onClick = { if (!responded) { responded = true; onSkip() } },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Skip") }
         }
     }
 }
