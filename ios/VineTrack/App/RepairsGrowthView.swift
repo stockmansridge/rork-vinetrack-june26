@@ -9,6 +9,8 @@ struct RepairsGrowthView: View {
     @Environment(LocationService.self) private var locationService
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(TripTrackingService.self) private var tracking
+    @Environment(PinSyncService.self) private var pinSync
+    @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
 
     @State private var selection: Tab
     @State private var showEditButtons: Bool = false
@@ -178,9 +180,15 @@ struct RepairsGrowthView: View {
     private func attachPhoto(data: Data?) {
         defer { pendingPhotoPinId = nil }
         guard let data, let pinId = pendingPhotoPinId else { return }
-        guard var pin = store.pins.first(where: { $0.id == pinId }) else { return }
-        pin.photoData = data
-        store.updatePin(pin)
+        do {
+            if let recordId = growthStageRecordSync.records.first(where: { $0.pinId == pinId })?.id {
+                try growthStageRecordSync.attachPhoto(recordId: recordId, imageData: data)
+            } else {
+                try pinSync.attachPhoto(pinId: pinId, imageData: data)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     // MARK: - Segmented header

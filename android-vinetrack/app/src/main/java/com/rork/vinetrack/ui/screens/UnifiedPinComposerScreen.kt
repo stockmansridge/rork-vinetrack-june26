@@ -99,6 +99,7 @@ import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.PinPlacement
+import com.rork.vinetrack.data.PinPresentationTarget
 import com.rork.vinetrack.data.model.CustomPinCreateParams
 import com.rork.vinetrack.data.model.CustomPinType
 import com.rork.vinetrack.data.model.GrowthStage
@@ -199,29 +200,43 @@ fun UnifiedPinComposerScreen(
     // its id is held: the pin is saved FIRST, so ignoring the question,
     // swiping it away or cancelling the picker can never lose it.
     var photoPinId by rememberSaveable { mutableStateOf<String?>(null) }
-    var showAutoPhoto by remember { mutableStateOf(false) }
+    var photoVineyardId by rememberSaveable { mutableStateOf<String?>(null) }
+    var showAutoPhoto by rememberSaveable { mutableStateOf(false) }
     // Latches the instant a pin is created. Together with [finished] below it
     // makes the whole save single-shot: no timeout, dismissal or photo
     // callback can create or finish a second time.
-    var pinCreated by remember { mutableStateOf(false) }
-    var finished by remember { mutableStateOf(false) }
+    var pinCreated by rememberSaveable { mutableStateOf(false) }
+    var finished by rememberSaveable { mutableStateOf(false) }
 
     fun finish() {
         if (finished) return
         finished = true
         photoPinId = null
+        photoVineyardId = null
         onSaved()
     }
 
     val photoCapture = rememberPhotoCaptureCoordinator(
         onPhoto = { uri: Uri? ->
-            val pin = photoPinId?.let { id -> state.pins.firstOrNull { it.id == id } }
-            if (uri != null && pin != null) {
-                vm.attachQuickPinPhoto(pin, uri) { ok ->
+            val pinId = photoPinId
+            val vineyardId = photoVineyardId
+            if (uri == null) {
+                finish()
+            } else if (pinId != null && vineyardId != null) {
+                val growthId = state.growthRecords.firstOrNull { it.pinId == pinId }?.id
+                val target = PinPresentationTarget(
+                    vineyardId,
+                    pinId,
+                    growthId,
+                    if (growthId == null) PinPresentationTarget.Kind.PIN else PinPresentationTarget.Kind.LINKED_GROWTH,
+                )
+                vm.attachPresentationPhoto(target, uri) { ok ->
                     scope.launch { snackbarHostState.showSnackbar(if (ok) "Photo saved" else "Couldn't save the photo") }
+                    if (ok) finish()
                 }
+            } else {
+                scope.launch { snackbarHostState.showSnackbar("Couldn't resolve the saved pin for this photo.") }
             }
-            finish()
         },
         onError = { message ->
             scope.launch { snackbarHostState.showSnackbar(message) }
@@ -241,6 +256,7 @@ fun UnifiedPinComposerScreen(
     fun promptForPhoto(pinId: String) {
         pinCreated = true
         photoPinId = pinId
+        photoVineyardId = state.selectedVineyardId
         saving = false
         showAutoPhoto = true
     }

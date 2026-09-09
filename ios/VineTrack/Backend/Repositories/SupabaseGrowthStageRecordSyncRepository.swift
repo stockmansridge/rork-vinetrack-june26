@@ -45,11 +45,32 @@ final class SupabaseGrowthStageRecordSyncRepository: GrowthStageRecordSyncReposi
             .execute()
     }
 
+    func updatePhotoPaths(recordId: UUID, vineyardId: UUID, photoPaths: [String]) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        try await provider.client
+            .from("growth_stage_records")
+            .update(GrowthPhotoPathsPatch(photoPaths: photoPaths, clientUpdatedAt: Date()))
+            .eq("id", value: recordId.uuidString)
+            .eq("vineyard_id", value: vineyardId.uuidString)
+            .is("deleted_at", value: nil)
+            .execute()
+    }
+
     func softDeleteGrowthStageRecord(id: UUID) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         try await provider.client
             .rpc("soft_delete_growth_stage_record", params: SoftDeleteGrowthStageRecordRequest(id: id))
             .execute()
+    }
+}
+
+nonisolated private struct GrowthPhotoPathsPatch: Encodable, Sendable {
+    let photoPaths: [String]
+    let clientUpdatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case photoPaths = "photo_paths"
+        case clientUpdatedAt = "client_updated_at"
     }
 }
 

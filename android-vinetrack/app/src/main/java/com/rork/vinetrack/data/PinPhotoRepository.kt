@@ -29,8 +29,8 @@ import kotlinx.serialization.Serializable
  */
 class PinPhotoRepository(private val session: SessionStore) {
 
-    fun storagePath(vineyardId: String, pinId: String): String =
-        "${vineyardId.lowercase()}/pins/${pinId.lowercase()}/photo.jpg"
+    fun storagePath(vineyardId: String, pinId: String, revision: String? = null): String =
+        pinStoragePath(vineyardId, pinId, revision)
 
     /**
      * Canonical path for a directly-authored growth-stage record photo. Android
@@ -39,12 +39,14 @@ class PinPhotoRepository(private val session: SessionStore) {
      * membership-based RLS applies unchanged. One photo per record, matching the
      * single pin photo iOS mirrors into `growth_stage_records.photo_paths`.
      */
-    fun growthStoragePath(vineyardId: String, recordId: String): String =
-        "${vineyardId.lowercase()}/growth/${recordId.lowercase()}/photo.jpg"
+    fun growthStoragePath(vineyardId: String, recordId: String, revision: String? = null): String {
+        val filename = revision?.let { "photo-${it.lowercase()}.jpg" } ?: "photo.jpg"
+        return "${vineyardId.lowercase()}/growth/${recordId.lowercase()}/$filename"
+    }
 
     /** Upload compressed JPEG bytes, upserting over any existing photo. Returns the object path. */
-    suspend fun upload(vineyardId: String, pinId: String, jpeg: ByteArray): String =
-        uploadAtPath(storagePath(vineyardId, pinId), jpeg)
+    suspend fun upload(vineyardId: String, pinId: String, jpeg: ByteArray, revision: String? = null): String =
+        uploadAtPath(storagePath(vineyardId, pinId, revision), jpeg)
 
     /** Upload compressed JPEG bytes to an explicit object path, upserting. Returns the path. */
     suspend fun uploadAtPath(path: String, jpeg: ByteArray): String =
@@ -127,5 +129,10 @@ class PinPhotoRepository(private val session: SessionStore) {
 
     companion object {
         const val BUCKET = "vineyard-pin-photos"
+
+        internal fun pinStoragePath(vineyardId: String, pinId: String, revision: String? = null): String {
+            val filename = revision?.let { "photo-${it.lowercase()}.jpg" } ?: "photo.jpg"
+            return "${vineyardId.lowercase()}/pins/${pinId.lowercase()}/$filename"
+        }
     }
 }

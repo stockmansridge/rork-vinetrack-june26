@@ -41,6 +41,10 @@ data class PendingPhotoAttachment(
     val status: String = PendingPhotoStatus.PENDING,
     /** How many upload attempts have been made (0 until upload retry exists). */
     val attemptCount: Int = 0,
+    /** Paths observed at capture; only the attachment-owned first entry is replaced. */
+    val previousPhotoPaths: List<String> = emptyList(),
+    /** Uploaded revision path retained when the reference write must retry. */
+    val uploadedPath: String? = null,
     /** Last failure message, if any, for diagnostics/UX. */
     val lastError: String? = null,
 )

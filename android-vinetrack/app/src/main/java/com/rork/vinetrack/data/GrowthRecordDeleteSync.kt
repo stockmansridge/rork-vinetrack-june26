@@ -4,6 +4,8 @@ import com.rork.vinetrack.data.model.PendingEntityType
 import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
+import com.rork.vinetrack.data.model.GrowthStageRecord
+import com.rork.vinetrack.data.model.Pin
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -62,7 +64,13 @@ class GrowthRecordDeleteSync(
 
     /** Soft-delete-only replay payload. Just the target growth-record id — nothing else. */
     @Serializable
-    data class Payload(val growthRecordId: String)
+    data class Payload(
+        val growthRecordId: String,
+        val vineyardId: String = "",
+        val pinId: String? = null,
+        val growthSnapshot: GrowthStageRecord? = null,
+        val pinSnapshot: Pin? = null,
+    )
 
     /**
      * Queue (or replace) a soft-delete for [growthRecordId]. Coalesces by record
@@ -72,7 +80,13 @@ class GrowthRecordDeleteSync(
      * local-only pending-create record is cancelled in place rather than queued
      * for delete.
      */
-    fun enqueue(growthRecordId: String): PendingWrite {
+    fun enqueue(
+        growthRecordId: String,
+        vineyardId: String = "",
+        pinId: String? = null,
+        growthSnapshot: GrowthStageRecord? = null,
+        pinSnapshot: Pin? = null,
+    ): PendingWrite {
         pending.list()
             .filter {
                 it.entityType == PendingEntityType.GROWTH_RECORD &&
@@ -81,7 +95,10 @@ class GrowthRecordDeleteSync(
                     it.status != PendingWriteStatus.SYNCED
             }
             .forEach { pending.remove(it.id) }
-        val payload = json.encodeToString(Payload.serializer(), Payload(growthRecordId))
+        val payload = json.encodeToString(
+            Payload.serializer(),
+            Payload(growthRecordId, vineyardId, pinId, growthSnapshot, pinSnapshot),
+        )
         return pending.enqueue(
             entityType = PendingEntityType.GROWTH_RECORD,
             opType = PendingOpType.DELETE,
@@ -89,6 +106,14 @@ class GrowthRecordDeleteSync(
             clientId = growthRecordId,
         )
     }
+
+    fun pendingTargets(): List<Payload> = pending.list()
+        .filter {
+            it.entityType == PendingEntityType.GROWTH_RECORD &&
+                it.opType == PendingOpType.DELETE &&
+                it.status != PendingWriteStatus.SYNCED
+        }
+        .mapNotNull { runCatching { json.decodeFromString(Payload.serializer(), it.payloadJson) }.getOrNull() }
 
     /**
      * Cancel a never-synced growth record locally (Android Stage N-3). When the
@@ -104,7 +129,7 @@ class GrowthRecordDeleteSync(
             it.entityType == PendingEntityType.GROWTH_RECORD &&
                 it.opType == PendingOpType.CREATE &&
                 it.clientId == growthRecordId &&
-                it.status != PendingWriteStatus.SYNCED
+                it.status == PendingWriteStatus.PENDING
         } ?: return false
         pending.remove(pendingCreate.id)
         pending.list()
@@ -133,7 +158,10 @@ class GrowthRecordDeleteSync(
      *
      * Caller must only invoke this when online and a session token exists.
      */
-    suspend fun replayAll(onDeleted: (growthRecordId: String) -> Unit) {
+    suspend fun replayAll(
+        onDeleted: (growthRecordId: String) -> Unit,
+        onRejected: (Payload, String) -> Unit = { _, _ -> },
+    ) {
         if (!replayLock.tryLock()) return
         try {
             val candidates = pending.list().filter {
@@ -176,11 +204,11 @@ class GrowthRecordDeleteSync(
                             onDeleted(payload.growthRecordId)
                         }
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
-                        else -> pending.updateStatus(
-                            write.id,
-                            PendingWriteStatus.BLOCKED,
-                            "The delete was rejected (${e.code}).",
-                        )
+                        else -> {
+                            val reason = "The delete was rejected (${e.code})."
+                            pending.remove(write.id)
+                            onRejected(payload, reason)
+                        }
                     }
                 } catch (e: Exception) {
                     retryOrBlock(write, e.message ?: "No connection.")

@@ -23,6 +23,8 @@ struct UnifiedPinComposerView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(CustomPinTypeService.self) private var customPinService
+    @Environment(PinSyncService.self) private var pinSync
+    @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
     // The app's ONE location service — reused here for the blue current
     // location dot and the opening camera. No second GPS source exists.
     @Environment(LocationService.self) private var locationService
@@ -1371,9 +1373,15 @@ struct UnifiedPinComposerView: View {
     private func attachPhoto(data: Data?) {
         defer { pendingPhotoPinId = nil }
         guard let data, let pinId = pendingPhotoPinId else { return }
-        guard var pin = store.pins.first(where: { $0.id == pinId }) else { return }
-        pin.photoData = data
-        store.updatePin(pin)
+        do {
+            if let recordId = growthStageRecordSync.records.first(where: { $0.pinId == pinId })?.id {
+                try growthStageRecordSync.attachPhoto(recordId: recordId, imageData: data)
+            } else {
+                try pinSync.attachPhoto(pinId: pinId, imageData: data)
+            }
+        } catch {
+            validationMessage = error.localizedDescription
+        }
     }
 
     /// Leave the composer once the photo question is fully resolved. Guarded

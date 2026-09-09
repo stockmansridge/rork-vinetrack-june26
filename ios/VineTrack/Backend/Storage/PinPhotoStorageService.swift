@@ -5,12 +5,14 @@ import Supabase
 nonisolated enum PinPhotoStorage {
     static let bucket = "vineyard-pin-photos"
 
-    static func path(vineyardId: UUID, pinId: UUID) -> String {
-        "\(vineyardId.uuidString.lowercased())/pins/\(pinId.uuidString.lowercased())/photo.jpg"
+    static func path(vineyardId: UUID, pinId: UUID, revision: UUID? = nil) -> String {
+        let filename = revision.map { "photo-\($0.uuidString.lowercased()).jpg" } ?? "photo.jpg"
+        return "\(vineyardId.uuidString.lowercased())/pins/\(pinId.uuidString.lowercased())/\(filename)"
     }
 
-    static func growthPath(vineyardId: UUID, recordId: UUID) -> String {
-        "\(vineyardId.uuidString.lowercased())/growth/\(recordId.uuidString.lowercased())/photo.jpg"
+    static func growthPath(vineyardId: UUID, recordId: UUID, revision: UUID? = nil) -> String {
+        let filename = revision.map { "photo-\($0.uuidString.lowercased()).jpg" } ?? "photo.jpg"
+        return "\(vineyardId.uuidString.lowercased())/growth/\(recordId.uuidString.lowercased())/\(filename)"
     }
 
     /// Resize JPEG to a max edge of ~1600 px and quality 0.8.
@@ -28,7 +30,14 @@ nonisolated enum PinPhotoStorage {
     }
 }
 
-final class PinPhotoStorageService {
+protocol PinPhotoStorageProtocol: Sendable {
+    func uploadPhoto(vineyardId: UUID, pinId: UUID, revision: UUID, imageData: Data) async throws -> String
+    func uploadGrowthPhoto(vineyardId: UUID, recordId: UUID, revision: UUID, imageData: Data) async throws -> String
+    func downloadPhoto(path: String, vineyardId: UUID, pinId: UUID) async throws -> Data
+    func downloadGrowthPhoto(path: String, vineyardId: UUID, recordId: UUID) async throws -> Data
+}
+
+final class PinPhotoStorageService: PinPhotoStorageProtocol, @unchecked Sendable {
     private let provider: SupabaseClientProvider
 
     init(provider: SupabaseClientProvider = .shared) {
@@ -36,11 +45,11 @@ final class PinPhotoStorageService {
     }
 
     @discardableResult
-    func uploadPhoto(vineyardId: UUID, pinId: UUID, imageData: Data) async throws -> String {
+    func uploadPhoto(vineyardId: UUID, pinId: UUID, revision: UUID, imageData: Data) async throws -> String {
         guard provider.isConfigured else {
             throw BackendRepositoryError.missingSupabaseConfiguration
         }
-        let path = PinPhotoStorage.path(vineyardId: vineyardId, pinId: pinId)
+        let path = PinPhotoStorage.path(vineyardId: vineyardId, pinId: pinId, revision: revision)
         let payload = PinPhotoStorage.compress(imageData) ?? imageData
         _ = try await provider.client.storage
             .from(PinPhotoStorage.bucket)
@@ -57,15 +66,16 @@ final class PinPhotoStorageService {
             payload,
             for: .pinPhoto(vineyardId: vineyardId, pinId: pinId),
             remotePath: path,
-            remoteUpdatedAt: nil
+            remoteUpdatedAt: nil,
+            attachmentRevision: revision
         )
         return path
     }
 
     @discardableResult
-    func uploadGrowthPhoto(vineyardId: UUID, recordId: UUID, imageData: Data) async throws -> String {
+    func uploadGrowthPhoto(vineyardId: UUID, recordId: UUID, revision: UUID, imageData: Data) async throws -> String {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let path = PinPhotoStorage.growthPath(vineyardId: vineyardId, recordId: recordId)
+        let path = PinPhotoStorage.growthPath(vineyardId: vineyardId, recordId: recordId, revision: revision)
         let payload = PinPhotoStorage.compress(imageData) ?? imageData
         _ = try await provider.client.storage.from(PinPhotoStorage.bucket).upload(
             path,
@@ -76,7 +86,8 @@ final class PinPhotoStorageService {
             payload,
             for: .growthRecordPhoto(vineyardId: vineyardId, recordId: recordId),
             remotePath: path,
-            remoteUpdatedAt: nil
+            remoteUpdatedAt: nil,
+            attachmentRevision: revision
         )
         return path
     }

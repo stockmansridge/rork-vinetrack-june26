@@ -52,11 +52,21 @@ class PendingPhotoRepository(context: Context) {
     /** Snapshot of all attachments. */
     fun list(): List<PendingPhotoAttachment> = _attachments.value
 
-    /** Latest retained file for a source identity, if one exists. */
-    fun latestFile(entityId: String): File? = _attachments.value
-        .filter { it.clientPinId == entityId || it.growthRecordId == entityId }
-        .maxByOrNull { it.updatedAt }
+    /** Latest readable retained file for a source identity, if one exists. */
+    fun latestFile(entityId: String): File? = latestAttachment(entityId)
         ?.let { File(it.localPath) }
+        ?.takeIf { it.exists() && it.length() > 0L }
+
+    fun latestAttachment(entityId: String): PendingPhotoAttachment? = _attachments.value
+        .filter {
+            (it.clientPinId == entityId || it.growthRecordId == entityId) &&
+                it.status in PendingPhotoStatus.unresolved && File(it.localPath).exists()
+        }
+        .maxByOrNull { it.createdAt }
+
+    fun isCurrent(id: String, revision: String): Boolean = _attachments.value.any {
+        it.id == id && it.revision == revision && it.status in PendingPhotoStatus.unresolved
+    }
 
     private fun fileFor(entityId: String, revision: String): File =
         File(photoDir, "${entityId.lowercase()}-${revision.lowercase()}.jpg")
@@ -76,7 +86,12 @@ class PendingPhotoRepository(context: Context) {
         )
 
     /** Atomically retain the newest capture for its actual pin/growth identity. */
-    fun enqueue(target: PinPresentationTarget, jpeg: ByteArray): PendingPhotoAttachment {
+    @Synchronized
+    fun enqueue(
+        target: PinPresentationTarget,
+        jpeg: ByteArray,
+        previousPhotoPaths: List<String> = emptyList(),
+    ): PendingPhotoAttachment {
         require(jpeg.isNotEmpty()) { "Photo data is empty." }
         val entityId = target.pinId ?: requireNotNull(target.growthRecordId)
         val revision = UUID.randomUUID().toString()
@@ -97,6 +112,7 @@ class PendingPhotoRepository(context: Context) {
             vineyardId = target.vineyardId,
             localPath = file.absolutePath,
             createdAt = now,
+            previousPhotoPaths = previousPhotoPaths,
             updatedAt = now,
         )
         val replaced = _attachments.value.filter {
@@ -105,6 +121,41 @@ class PendingPhotoRepository(context: Context) {
         update { list -> list - replaced.toSet() + attachment }
         replaced.forEach { runCatching { File(it.localPath).delete() } }
         return attachment
+    }
+
+    fun recordUploadedPath(id: String, revision: String, path: String): Boolean {
+        if (!isCurrent(id, revision)) return false
+        val now = System.currentTimeMillis()
+        update { list ->
+            list.map { if (it.id == id && it.revision == revision) it.copy(uploadedPath = path, updatedAt = now) else it }
+        }
+        return isCurrent(id, revision)
+    }
+
+    fun removeForTarget(pinId: String?, growthRecordId: String?) {
+        list().filter {
+            (pinId != null && it.clientPinId == pinId) ||
+                (growthRecordId != null && it.growthRecordId == growthRecordId)
+        }.forEach { remove(it.id) }
+    }
+
+    /** Copy the successful revision into durable display storage before queue cleanup. */
+    fun promoteToDisplayCache(attachment: PendingPhotoAttachment): File? {
+        val source = File(attachment.localPath)
+        if (!source.exists()) return null
+        val directory = File(appContext.filesDir, DISPLAY_DIR).apply { mkdirs() }
+        val entityId = attachment.growthRecordId ?: attachment.clientPinId
+        directory.listFiles()?.filter { it.name.startsWith("${entityId.lowercase()}__") }?.forEach { it.delete() }
+        val destination = File(directory, "${entityId.lowercase()}__${attachment.revision.lowercase()}.jpg")
+        return runCatching { source.copyTo(destination, overwrite = true) }.getOrNull()
+    }
+
+    fun retainedDisplayFile(entityId: String): File? {
+        latestFile(entityId)?.let { return it }
+        val directory = File(appContext.filesDir, DISPLAY_DIR)
+        return directory.listFiles()
+            ?.filter { it.name.startsWith("${entityId.lowercase()}__") && it.length() > 0L }
+            ?.maxByOrNull { it.lastModified() }
     }
 
     /** Update the status and optional error of an attachment by id. */
@@ -163,6 +214,7 @@ class PendingPhotoRepository(context: Context) {
         _attachments.value.firstOrNull { it.id == id }?.let { runCatching { File(it.localPath).delete() } }
     }
 
+    @Synchronized
     private fun update(transform: (List<PendingPhotoAttachment>) -> List<PendingPhotoAttachment>) {
         val next = transform(_attachments.value)
         _attachments.value = next
@@ -175,5 +227,6 @@ class PendingPhotoRepository(context: Context) {
 
     private companion object {
         const val PHOTO_DIR = "pending_pin_photos"
+        const val DISPLAY_DIR = "pin_photo_display_cache"
     }
 }

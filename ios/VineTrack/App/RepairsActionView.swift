@@ -7,6 +7,7 @@ struct RepairsActionView: View {
     @Environment(LocationService.self) private var locationService
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(TripTrackingService.self) private var tracking
+    @Environment(PinSyncService.self) private var pinSync
 
     @State private var showEditButtons: Bool = false
     @State private var feedbackMessage: String?
@@ -108,9 +109,12 @@ struct RepairsActionView: View {
     private func attachPhoto(data: Data?) {
         defer { pendingPhotoPinId = nil }
         guard let data, let pinId = pendingPhotoPinId else { return }
-        guard var pin = store.pins.first(where: { $0.id == pinId }) else { return }
-        pin.photoData = data
-        store.updatePin(pin)
+        do {
+            try pinSync.attachPhoto(pinId: pinId, imageData: data)
+            showFeedback("Photo saved on this device.", kind: .success)
+        } catch {
+            showFeedback(error.localizedDescription, kind: .destructive)
+        }
     }
 
     private func handleTap(button: ButtonConfig, side: PinSide) {

@@ -41,10 +41,11 @@ fun rememberPhotoCaptureCoordinator(
         } else {
             file?.delete()
             if (saved) currentOnError("The camera didn't return a readable photo.")
+            else currentOnPhoto(null)
         }
     }
     val gallery = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) currentOnPhoto(uri)
+        currentOnPhoto(uri)
     }
 
     return remember(context, camera, gallery) {

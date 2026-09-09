@@ -101,18 +101,28 @@ final class PinSyncService {
     private weak var auth: NewBackendAuthService?
     private let repository: any PinSyncRepositoryProtocol
     private let metadata: PinSyncMetadata
-    private let photoStorage: PinPhotoStorageService
+    private let photoStorage: any PinPhotoStorageProtocol
+    private let persistence: PersistenceStore
+    private let deletionStore: LinkedPinGrowthDeletionStore
+    private let pendingPhotosKey = "vinetrack_pending_pin_photos_v2"
+    private var pendingPhotos: [UUID: PendingPinPhoto]
     private var isConfigured: Bool = false
+    private var isSyncInFlight: Bool = false
     private var eagerPushTask: Task<Void, Never>?
 
     init(
         repository: (any PinSyncRepositoryProtocol)? = nil,
         metadata: PinSyncMetadata? = nil,
-        photoStorage: PinPhotoStorageService? = nil
+        photoStorage: (any PinPhotoStorageProtocol)? = nil,
+        persistence: PersistenceStore = .shared,
+        deletionStore: LinkedPinGrowthDeletionStore? = nil
     ) {
         self.repository = repository ?? SupabasePinSyncRepository()
-        self.metadata = metadata ?? PinSyncMetadata()
+        self.metadata = metadata ?? PinSyncMetadata(persistence: persistence)
         self.photoStorage = photoStorage ?? PinPhotoStorageService()
+        self.persistence = persistence
+        self.deletionStore = deletionStore ?? .shared
+        self.pendingPhotos = persistence.load(key: pendingPhotosKey) ?? [:]
     }
 
     // MARK: - Configuration
@@ -120,6 +130,7 @@ final class PinSyncService {
     func configure(store: MigratedDataStore, auth: NewBackendAuthService) {
         self.store = store
         self.auth = auth
+        for pinId in deletionStore.pinIds { store.applyRemotePinDelete(pinId) }
         // Always refresh the user-id/name providers so addPin/updatePin can
         // self-heal even on subsequent sign-ins. Safe to overwrite.
         store.currentUserIdProvider = { [weak auth] in auth?.userId }
@@ -153,7 +164,48 @@ final class PinSyncService {
     }
 
     func markPinDeleted(_ id: UUID) {
+        pendingPhotos.removeValue(forKey: id)
+        try? persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
         metadata.markDeleted(id, at: Date())
+    }
+
+    func localPhotoData(pinId: UUID) -> Data? { pendingPhotos[pinId]?.imageData }
+    func attachmentRevision(pinId: UUID) -> UUID? { pendingPhotos[pinId]?.revision }
+    func hasPendingPhoto(pinId: UUID) -> Bool { pendingPhotos[pinId] != nil }
+
+    /// Retains bytes and target identity durably before updating display state.
+    func attachPhoto(pinId: UUID, imageData: Data) throws {
+        guard var pin = store?.pins.first(where: { $0.id == pinId }) else {
+            throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "The pin is no longer available."])
+        }
+        let payload = PinPhotoStorage.compress(imageData) ?? imageData
+        guard !payload.isEmpty else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: "The captured photo was empty."])
+        }
+        let revision = UUID()
+        let work = PendingPinPhoto(
+            pinId: pin.id,
+            vineyardId: pin.vineyardId,
+            revision: revision,
+            imageData: payload,
+            capturedAt: Date(),
+            previousRemotePath: pin.photoPath,
+            uploadedPath: nil
+        )
+        var next = pendingPhotos
+        next[pin.id] = work
+        try persistence.saveOrThrow(next, key: pendingPhotosKey)
+        try SharedImageCache.shared.saveImageDataOrThrow(
+            payload,
+            for: .pinPhoto(vineyardId: pin.vineyardId, pinId: pin.id),
+            remotePath: nil,
+            remoteUpdatedAt: nil,
+            attachmentRevision: revision
+        )
+        pendingPhotos = next
+        pin.photoData = payload
+        store?.updatePin(pin)
+        scheduleEagerPush()
     }
 
     // MARK: - Public sync entry points
@@ -275,11 +327,14 @@ final class PinSyncService {
     }
 
     func sync(vineyardId: UUID) async {
+        guard !isSyncInFlight else { return }
         guard SupabaseClientProvider.shared.isConfigured else {
             errorMessage = "Supabase not configured"
             syncStatus = .failure("Supabase not configured")
             return
         }
+        isSyncInFlight = true
+        defer { isSyncInFlight = false }
         syncStatus = .syncing
         errorMessage = nil
         do {
@@ -298,6 +353,10 @@ final class PinSyncService {
 
     func pushLocalPins(vineyardId: UUID) async throws {
         guard let store else { return }
+        for target in deletionStore.targets.values where target.isConfirmed {
+            if let pinId = target.pinId { metadata.clearDeleted([pinId]) }
+            try deletionStore.remove(target.id)
+        }
         let currentUserId = auth?.userId
         let currentUserName = auth?.userName
         let dirty = metadata.pendingUpserts
@@ -306,7 +365,6 @@ final class PinSyncService {
             var payloads: [BackendPinUpsert] = []
             var pushedIds: [UUID] = []
             var orphans: [UUID] = []
-            var photoUploadFailures: [String] = []
             for (pinId, ts) in dirty {
                 // Reclaim queue entries whose local pin no longer exists — they
                 // can never upload and used to wedge the queue forever. Pins
@@ -331,39 +389,6 @@ final class PinSyncService {
                     #if DEBUG
                     print("[PinSync] stamped created_by=\(uid) on pin \(pin.id) before push")
                     #endif
-                }
-                // A retained replacement must upload even when the old remote path
-                // is unchanged. Capture writes a stale cache marker first.
-                let photoKey = SharedImageCacheKey.pinPhoto(vineyardId: pin.vineyardId, pinId: pin.id)
-                let needsPhotoUpload = pin.photoData != nil && !SharedImageCache.shared.isCacheCurrent(
-                    for: photoKey,
-                    remotePath: pin.photoPath,
-                    remoteUpdatedAt: nil
-                )
-                if let data = pin.photoData, needsPhotoUpload {
-                    // Cache locally first so even an upload failure leaves a
-                    // hot cache entry for the next sync attempt.
-                    SharedImageCache.shared.saveImageData(
-                        data,
-                        for: .pinPhoto(vineyardId: vineyardId, pinId: pin.id),
-                        remotePath: nil,
-                        remoteUpdatedAt: nil
-                    )
-                    do {
-                        let path = try await photoStorage.uploadPhoto(
-                            vineyardId: vineyardId,
-                            pinId: pin.id,
-                            imageData: data
-                        )
-                        pin.photoPath = path
-                        store.applyRemotePinUpsert(pin)
-                    } catch {
-                        #if DEBUG
-                        print("[PinSync] photo upload failed for \(pin.id): \(error.localizedDescription)")
-                        #endif
-                        photoUploadFailures.append(error.localizedDescription)
-                        // Still upsert pin metadata; photo will retry next sync.
-                    }
                 }
                 let payload = BackendPin.upsert(from: pin, clientUpdatedAt: ts)
                 #if DEBUG
@@ -406,14 +431,14 @@ final class PinSyncService {
             metadata.clearDirty(orphans)
             SyncIssueCenter.shared.clearIssues(orphans)
             SyncIssueCenter.shared.notePending(entity: "Pins", count: metadata.pendingUpserts.count)
-            if !photoUploadFailures.isEmpty {
-                errorMessage = "Some pin photos failed to upload: \(photoUploadFailures.first ?? "unknown")"
-            }
         }
+
+        try await pushPendingPhotos(vineyardId: vineyardId)
 
         let deletes = metadata.pendingDeletes
         var deleteFailures: [String] = []
         for (pinId, _) in deletes {
+            if deletionStore.pinIds.contains(pinId) { continue }
             do {
                 try await repository.softDeletePin(id: pinId)
                 metadata.clearDeleted([pinId])
@@ -439,6 +464,54 @@ final class PinSyncService {
             // Surface a non-fatal warning via errorMessage but don't throw — let pull and
             // future upserts continue.
             errorMessage = "Some pin deletes failed: \(deleteFailures.first ?? "unknown")"
+        }
+    }
+
+    private func pushPendingPhotos(vineyardId: UUID) async throws {
+        let candidates = pendingPhotos.values
+            .filter { $0.vineyardId == vineyardId }
+            .sorted { $0.capturedAt < $1.capturedAt }
+        for snapshot in candidates {
+            guard metadata.pendingDeletes[snapshot.pinId] == nil,
+                  metadata.pendingUpserts[snapshot.pinId] == nil,
+                  store?.pins.contains(where: { $0.id == snapshot.pinId }) == true,
+                  pendingPhotos[snapshot.pinId]?.revision == snapshot.revision else { continue }
+
+            var work = snapshot
+            if work.uploadedPath == nil {
+                let path = try await photoStorage.uploadPhoto(
+                    vineyardId: work.vineyardId,
+                    pinId: work.pinId,
+                    revision: work.revision,
+                    imageData: work.imageData
+                )
+                guard metadata.pendingDeletes[work.pinId] == nil,
+                      pendingPhotos[work.pinId]?.revision == work.revision else { continue }
+                work.uploadedPath = path
+                pendingPhotos[work.pinId] = work
+                try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
+            }
+
+            guard let path = work.uploadedPath,
+                  metadata.pendingDeletes[work.pinId] == nil,
+                  pendingPhotos[work.pinId]?.revision == work.revision else { continue }
+            try await repository.updatePhotoPath(pinId: work.pinId, path: path)
+            guard metadata.pendingDeletes[work.pinId] == nil,
+                  pendingPhotos[work.pinId]?.revision == work.revision else { continue }
+            if var pin = store?.pins.first(where: { $0.id == work.pinId }) {
+                pin.photoPath = path
+                pin.photoData = work.imageData
+                store?.applyRemotePinUpsert(pin)
+            }
+            try SharedImageCache.shared.saveImageDataOrThrow(
+                work.imageData,
+                for: .pinPhoto(vineyardId: work.vineyardId, pinId: work.pinId),
+                remotePath: path,
+                remoteUpdatedAt: nil,
+                attachmentRevision: work.revision
+            )
+            pendingPhotos.removeValue(forKey: work.pinId)
+            try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
         }
     }
 
@@ -512,7 +585,8 @@ final class PinSyncService {
         let existingIndex = store.pins.firstIndex { $0.id == backendPin.id }
 
         // Never resurrect a row while its durable local delete is unresolved.
-        if metadata.pendingDeletes[backendPin.id] != nil { return }
+        if metadata.pendingDeletes[backendPin.id] != nil || deletionStore.pinIds.contains(backendPin.id) { return }
+        if pendingPhotos[backendPin.id] != nil { return }
 
         // Soft-deleted remotely.
         if backendPin.deletedAt != nil {

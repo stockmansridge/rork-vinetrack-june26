@@ -7,6 +7,8 @@ struct GrowthObservationActionView: View {
     @Environment(LocationService.self) private var locationService
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(TripTrackingService.self) private var tracking
+    @Environment(PinSyncService.self) private var pinSync
+    @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
 
     @State private var showEditButtons: Bool = false
     @State private var showGrowthPicker: Bool = false
@@ -112,9 +114,16 @@ struct GrowthObservationActionView: View {
     private func attachPhoto(data: Data?) {
         defer { pendingPhotoPinId = nil }
         guard let data, let pinId = pendingPhotoPinId else { return }
-        guard var pin = store.pins.first(where: { $0.id == pinId }) else { return }
-        pin.photoData = data
-        store.updatePin(pin)
+        do {
+            if let recordId = growthStageRecordSync.records.first(where: { $0.pinId == pinId })?.id {
+                try growthStageRecordSync.attachPhoto(recordId: recordId, imageData: data)
+            } else {
+                try pinSync.attachPhoto(pinId: pinId, imageData: data)
+            }
+            showFeedback("Photo saved on this device.", kind: .success)
+        } catch {
+            showFeedback(error.localizedDescription, kind: .destructive)
+        }
     }
 
     // MARK: - Growth Stage bar

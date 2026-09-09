@@ -118,6 +118,7 @@ import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.text.SimpleDateFormat
 import java.time.Instant
+import java.io.File
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -145,7 +146,9 @@ fun GrowthScreen(
     var creating by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<GrowthStageRecord?>(null) }
 
-    val selected = state.growthRecords.firstOrNull { it.id == selectedId }
+    val selected = state.growthRecords
+        .filterNot { it.id in state.pendingGrowthDeleteIds || it.pinId in state.pendingPinDeleteIds }
+        .firstOrNull { it.id == selectedId }
     val canExport = state.currentRole == "owner" || state.currentRole == "manager"
 
     AnimatedContent(
@@ -250,13 +253,16 @@ private fun GrowthListView(
         onDispose { heatmapModel.teardown() }
     }
     val timeZone = remember(state.seasonZone) { TimeZone.getTimeZone(state.seasonZone) }
-    LaunchedEffect(state.selectedVineyardId, state.paddocks, state.isOnline) {
+    val visibleGrowthRecords = state.growthRecords.filterNot {
+        it.id in state.pendingGrowthDeleteIds || it.pinId in state.pendingPinDeleteIds
+    }
+    LaunchedEffect(state.selectedVineyardId, state.paddocks, state.isOnline, visibleGrowthRecords) {
         state.selectedVineyardId?.let { vineyardId ->
             heatmapModel.load(
                 vineyardId = vineyardId,
                 paddocks = state.paddocks,
                 pendingRecords = emptyList(),
-                localRecords = state.growthRecords,
+                localRecords = visibleGrowthRecords,
                 seasonStartMonth = state.seasonStartMonth,
                 seasonStartDay = state.seasonStartDay,
                 timeZone = timeZone,
@@ -264,14 +270,14 @@ private fun GrowthListView(
             )
         }
     }
-    LaunchedEffect(state.growthRecords) {
-        heatmapModel.refreshLocal(state.growthRecords, emptyList(), timeZone)
+    LaunchedEffect(visibleGrowthRecords) {
+        heatmapModel.refreshLocal(visibleGrowthRecords, emptyList(), timeZone)
     }
     val resolvedRecords = heatmapModel.summaryRecords()
     val records = if (resolvedRecords.isNotEmpty() || heatmapUi.availableVintages.isNotEmpty()) {
         resolvedRecords
     } else {
-        state.growthRecords
+        visibleGrowthRecords
     }
     var viewMode by remember { mutableStateOf(GrowthRecordsViewMode.SUMMARY) }
     var exporting by remember { mutableStateOf(false) }
@@ -1229,7 +1235,7 @@ private fun GrowthDetailView(
                     vm = vm,
                     record = record,
                     pendingPhotoUri = pendingPhotoUri,
-                    busy = state.growthPhotoBusy,
+                    busy = state.pinPhotoBusy || state.growthPhotoBusy,
                     onTakePhoto = photoCapture.takePhoto,
                     onChooseFromGallery = photoCapture.chooseFromGallery,
                     onRemove = { vm.removeGrowthPhoto(record) { pendingPhotoUri = null } },
@@ -1280,9 +1286,11 @@ private fun GrowthPhotoSection(
 ) {
     val vine = LocalVineColors.current
     val photoPath = record.photoPaths?.firstOrNull()
-    var signedUrl by remember(photoPath) { mutableStateOf<String?>(null) }
+    val retainedPath = vm.retainedPhotoPath(record.id)
+        ?: record.pinId?.let(vm::retainedPhotoPath)
+    var signedUrl by remember(photoPath, retainedPath) { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(photoPath) {
+    LaunchedEffect(photoPath, retainedPath) {
         signedUrl = null
         if (!photoPath.isNullOrBlank()) {
             vm.requestGrowthPhotoUrl(photoPath) { url -> signedUrl = url }
@@ -1290,7 +1298,7 @@ private fun GrowthPhotoSection(
     }
 
     val editable = true
-    val hasImage = pendingPhotoUri != null || !photoPath.isNullOrBlank()
+    val hasImage = pendingPhotoUri != null || retainedPath != null || !photoPath.isNullOrBlank()
     if (!hasImage && !editable) return
 
     VineyardCard {
@@ -1306,7 +1314,7 @@ private fun GrowthPhotoSection(
                         .background(vine.textSecondary.copy(alpha = 0.1f)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    val model: Any? = pendingPhotoUri ?: signedUrl
+                    val model: Any? = pendingPhotoUri ?: retainedPath?.let(::File) ?: signedUrl
                     if (model != null) {
                         AsyncImage(
                             model = model,

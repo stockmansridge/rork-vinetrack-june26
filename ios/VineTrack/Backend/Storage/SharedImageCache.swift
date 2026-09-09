@@ -31,6 +31,7 @@ nonisolated enum SharedImageCacheKey: Hashable, Sendable {
 nonisolated struct SharedImageCacheMetadata: Codable, Sendable {
     var remotePath: String?
     var remoteUpdatedAt: Date?
+    var attachmentRevision: UUID?
     var cachedAt: Date
 }
 
@@ -109,27 +110,45 @@ nonisolated final class SharedImageCache: @unchecked Sendable {
         _ data: Data,
         for key: SharedImageCacheKey,
         remotePath: String?,
-        remoteUpdatedAt: Date?
+        remoteUpdatedAt: Date?,
+        attachmentRevision: UUID? = nil
     ) {
-        let fileURL = localFileURL(for: key)
-        ensureDir(for: fileURL)
         do {
-            try data.write(to: fileURL, options: .atomic)
+            try saveImageDataOrThrow(
+                data,
+                for: key,
+                remotePath: remotePath,
+                remoteUpdatedAt: remoteUpdatedAt,
+                attachmentRevision: attachmentRevision
+            )
         } catch {
             #if DEBUG
-            print("[SharedImageCache] write failed \(fileURL.lastPathComponent): \(error.localizedDescription)")
+            print("[SharedImageCache] write failed \(key.relativePath): \(error.localizedDescription)")
             #endif
-            return
         }
+    }
+
+    /// Durable cache write used for captured photos. Callers must not report a
+    /// successful local save until both bytes and revision metadata are stored.
+    func saveImageDataOrThrow(
+        _ data: Data,
+        for key: SharedImageCacheKey,
+        remotePath: String?,
+        remoteUpdatedAt: Date?,
+        attachmentRevision: UUID?
+    ) throws {
+        let fileURL = localFileURL(for: key)
+        let directory = fileURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try data.write(to: fileURL, options: .atomic)
         let meta = SharedImageCacheMetadata(
             remotePath: remotePath,
             remoteUpdatedAt: remoteUpdatedAt,
+            attachmentRevision: attachmentRevision,
             cachedAt: Date()
         )
-        if let encoded = try? encoder.encode(meta) {
-            let metaURL = metadataURL(for: key)
-            try? encoded.write(to: metaURL, options: .atomic)
-        }
+        let encoded = try encoder.encode(meta)
+        try encoded.write(to: metadataURL(for: key), options: .atomic)
     }
 
     func removeCachedImage(for key: SharedImageCacheKey) {
@@ -152,7 +171,8 @@ nonisolated final class SharedImageCache: @unchecked Sendable {
     func isCacheCurrent(
         for key: SharedImageCacheKey,
         remotePath: String?,
-        remoteUpdatedAt: Date?
+        remoteUpdatedAt: Date?,
+        attachmentRevision: UUID? = nil
     ) -> Bool {
         let url = localFileURL(for: key)
         guard FileManager.default.fileExists(atPath: url.path) else { return false }
@@ -163,6 +183,10 @@ nonisolated final class SharedImageCache: @unchecked Sendable {
                 return false
             }
             if meta.remotePath == nil { return false }
+        }
+
+        if let attachmentRevision, meta.attachmentRevision != attachmentRevision {
+            return false
         }
 
         if let remoteUpdatedAt, let cachedAt = meta.remoteUpdatedAt {

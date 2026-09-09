@@ -2022,14 +2022,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val pendingPinDeleteIds = unresolved.filter {
                     it.entityType == PendingEntityType.PIN && it.opType == PendingOpType.DELETE
                 }.mapTo(HashSet()) { it.clientId }
+                val linkedDeleteTargets = growthDeleteSync.pendingTargets()
                 val pendingGrowthDeleteIds = unresolved.filter {
                     it.entityType == PendingEntityType.GROWTH_RECORD && it.opType == PendingOpType.DELETE
                 }.mapTo(HashSet()) { it.clientId }
+                pendingGrowthDeleteIds.addAll(linkedDeleteTargets.map { it.growthRecordId })
+                val completePendingPinDeleteIds = HashSet(pendingPinDeleteIds)
+                completePendingPinDeleteIds.addAll(linkedDeleteTargets.mapNotNull { it.pinId })
                 _ui.update {
                     it.copy(
                         pendingSyncCount = unresolved.size,
                         pendingSyncItems = items,
-                        pendingPinDeleteIds = pendingPinDeleteIds,
+                        pendingPinDeleteIds = completePendingPinDeleteIds,
                         pendingGrowthDeleteIds = pendingGrowthDeleteIds,
                         canRetrySync = canRetry,
                         pendingPinIds = pendingPinIds,
@@ -3407,11 +3411,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun replayPendingGrowthDeletes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
         viewModelScope.launch {
-            growthDeleteSync.replayAll { recordId ->
-                _ui.update { st ->
-                    st.copy(growthRecords = st.growthRecords.filterNot { it.id == recordId })
-                }
-            }
+            growthDeleteSync.replayAll(
+                onDeleted = { recordId ->
+                    _ui.update { st ->
+                        st.copy(growthRecords = st.growthRecords.filterNot { it.id == recordId })
+                    }
+                },
+                onRejected = { payload, reason ->
+                    _ui.update { st ->
+                        st.copy(
+                            growthRecords = payload.growthSnapshot?.let { (st.growthRecords + it).distinctBy { row -> row.id } }
+                                ?: st.growthRecords,
+                            pins = payload.pinSnapshot?.let { (st.pins + it).distinctBy { row -> row.id } } ?: st.pins,
+                            growthError = reason,
+                        )
+                    }
+                },
+            )
         }
     }
 
@@ -6606,7 +6622,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             it.entityType == PendingEntityType.PIN &&
                 it.opType == PendingOpType.CREATE &&
                 it.clientId == pinId &&
-                it.status != PendingWriteStatus.SYNCED
+                it.status == PendingWriteStatus.PENDING
         }
         if (pendingCreate != null) {
             pendingWrites.remove(pendingCreate.id)
@@ -6619,6 +6635,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         val previous = _ui.value.pins
+        pendingPhotos.removeForTarget(pinId, null)
         // Optimistic hide for a synced pin.
         _ui.update { st -> st.copy(pins = st.pins.filterNot { it.id == pinId }) }
 
@@ -6699,6 +6716,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * [uploadPinPhoto].
      */
     fun attachQuickPinPhoto(pin: Pin, uri: Uri, onResult: (Boolean) -> Unit) {
+        val growth = _ui.value.growthRecords.firstOrNull { it.pinId == pin.id }
+        val target = if (growth != null) {
+            PinPresentationTarget(pin.vineyardId, pin.id, growth.id, PinPresentationTarget.Kind.LINKED_GROWTH)
+        } else {
+            PinPresentationTarget(pin.vineyardId, pin.id, null, PinPresentationTarget.Kind.PIN)
+        }
+        attachPresentationPhoto(target, uri, onResult)
+    }
+
+    private fun legacyAttachQuickPinPhoto(pin: Pin, uri: Uri, onResult: (Boolean) -> Unit) {
         // Known-offline: keep the photo pending against this pin (Stage 7B queue).
         if (!_ui.value.isOnline) {
             persistPendingPhoto(pin.id, pin.vineyardId, uri)
@@ -6755,7 +6782,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(false)
                 return@launch
             }
-            val retained = runCatching { pendingPhotos.enqueue(target, jpeg) }.isSuccess
+            val existingPaths = target.growthRecordId
+                ?.let { id -> _ui.value.growthRecords.firstOrNull { it.id == id }?.photoPaths }
+                .orEmpty()
+            val retained = runCatching { pendingPhotos.enqueue(target, jpeg, existingPaths) }.isSuccess
             if (!retained) {
                 _ui.update { it.copy(pinPhotoBusy = false, pinError = "Couldn't save the photo on this device.") }
                 onResult(false)
@@ -6772,6 +6802,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun retainedPhotoPath(entityId: String): String? =
+        pendingPhotos.retainedDisplayFile(entityId)?.absolutePath
+
     /** Source-aware delete; SQL 230 makes either legacy RPC delete a linked pair atomically. */
     fun deletePresentationTarget(target: PinPresentationTarget, onResult: (Boolean) -> Unit) {
         when (target.kind) {
@@ -6782,29 +6815,49 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             PinPresentationTarget.Kind.STANDALONE_GROWTH,
             PinPresentationTarget.Kind.LINKED_GROWTH -> {
                 val growthId = target.growthRecordId ?: return onResult(false)
+                val growth = _ui.value.growthRecords.firstOrNull { it.id == growthId }
                 val linkedPin = target.pinId?.let { id -> _ui.value.pins.firstOrNull { it.id == id } }
-                if (linkedPin != null) {
-                    _ui.update { st -> st.copy(pins = st.pins.filterNot { it.id == linkedPin.id }) }
-                }
-                deleteGrowthStageRecord(growthId) { ok ->
-                    if (!ok && linkedPin != null) {
-                        _ui.update { st -> st.copy(pins = (st.pins + linkedPin).distinctBy { it.id }) }
+                pendingPhotos.removeForTarget(target.pinId, growthId)
+                if (growthDeleteSync.cancelLocalCreate(growthId)) {
+                    _ui.update { st ->
+                        st.copy(
+                            growthRecords = st.growthRecords.filterNot { it.id == growthId },
+                            pins = st.pins.filterNot { it.id == target.pinId },
+                        )
                     }
-                    onResult(ok)
+                    onResult(true)
+                    return
                 }
+                growthDeleteSync.enqueue(
+                    growthRecordId = growthId,
+                    vineyardId = target.vineyardId,
+                    pinId = target.pinId,
+                    growthSnapshot = growth,
+                    pinSnapshot = linkedPin,
+                )
+                _ui.update { st ->
+                    st.copy(
+                        growthRecords = st.growthRecords.filterNot { it.id == growthId },
+                        pins = st.pins.filterNot { it.id == target.pinId },
+                        growthError = if (st.isOnline) null else "Observation deleted offline — will sync when connection is available.",
+                    )
+                }
+                onResult(true)
+                replayPendingGrowthDeletes()
             }
         }
     }
 
     /** Remove a pin's photo from storage and clear its reference. */
     fun removePinPhoto(pin: Pin, onResult: (Boolean) -> Unit) {
+        pendingPhotos.removeForTarget(pin.id, null)
         val path = pin.photoPath
         if (path.isNullOrBlank()) { onResult(true); return }
         _ui.update { it.copy(pinPhotoBusy = true, pinError = null) }
         viewModelScope.launch {
             try {
-                pinPhotoRepo.delete(path)
                 val updated = pinRepo.updatePhotoPath(pin.id, null)
+                pinPhotoRepo.delete(path)
                 _ui.update { st ->
                     st.copy(
                         pins = st.pins.map { if (it.id == pin.id) updated else it },
@@ -12203,13 +12256,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Remove a growth-stage record's photo from storage and clear its reference. */
     fun removeGrowthPhoto(record: GrowthStageRecord, onResult: (Boolean) -> Unit) {
         if (record.isFromPin) { onResult(false); return }
+        pendingPhotos.removeForTarget(record.pinId, record.id)
         val path = record.photoPaths?.firstOrNull()
         if (path.isNullOrBlank()) { onResult(true); return }
         _ui.update { it.copy(growthPhotoBusy = true, growthError = null) }
         viewModelScope.launch {
             try {
-                pinPhotoRepo.delete(path)
                 val updated = growthRepo.updatePhotoPaths(record.id, null)
+                pinPhotoRepo.delete(path)
                 _ui.update { st ->
                     st.copy(
                         growthRecords = st.growthRecords.map { if (it.id == record.id) updated else it },

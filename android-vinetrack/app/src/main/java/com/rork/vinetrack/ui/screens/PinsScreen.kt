@@ -117,6 +117,7 @@ import com.rork.vinetrack.data.SeasonScope
 import com.rork.vinetrack.data.SeasonSelection
 import com.rork.vinetrack.ui.components.SeasonSelector
 import com.rork.vinetrack.data.PinPlacement
+import com.rork.vinetrack.data.PinPresentationTarget
 import com.rork.vinetrack.data.RowAttachment
 import com.rork.vinetrack.data.resolvePinPresentationTarget
 import com.rork.vinetrack.data.model.CoordinatePoint
@@ -142,6 +143,7 @@ import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import com.rork.vinetrack.data.AppPreferencesStore
+import java.io.File
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -1539,10 +1541,18 @@ fun PinCategoryLauncherScreen(
 
     val autoPhotoCapture = rememberPhotoCaptureCoordinator(
         onPhoto = { uri: Uri? ->
-            val pin = autoPhotoPinId?.let { id -> state.pins.firstOrNull { it.id == id } }
+            val pinId = autoPhotoPinId
+            val pin = pinId?.let { id -> state.pins.firstOrNull { it.id == id } }
             autoPhotoPinId = null
-            if (uri != null && pin != null) {
-                vm.attachQuickPinPhoto(pin, uri) { ok ->
+            if (uri != null && pinId != null) {
+                val growthId = state.growthRecords.firstOrNull { it.pinId == pinId }?.id
+                val target = PinPresentationTarget(
+                    pin?.vineyardId ?: state.selectedVineyardId.orEmpty(),
+                    pinId,
+                    growthId,
+                    if (growthId == null) PinPresentationTarget.Kind.PIN else PinPresentationTarget.Kind.LINKED_GROWTH,
+                )
+                vm.attachPresentationPhoto(target, uri) { ok ->
                     scope.launch { snackbarHostState.showSnackbar(if (ok) "Photo saved" else "Couldn't save the photo") }
                 }
             }
@@ -2237,8 +2247,8 @@ private fun PinRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (pin.hasPhoto) {
-                    PinRowThumbnail(vm = vm, photoPath = pin.photoPath, tint = onColor)
+                if (pin.hasPhoto || vm.retainedPhotoPath(pin.id) != null) {
+                    PinRowThumbnail(vm = vm, entityId = pin.id, photoPath = pin.photoPath, tint = onColor)
                 }
                 if (pin.isCompleted) {
                     Icon(Icons.Filled.Check, contentDescription = "Completed", tint = onColor, modifier = Modifier.size(18.dp))
@@ -2322,10 +2332,11 @@ private fun PinRow(
  * offline). Display-only — it never mutates the photo queue or triggers retries.
  */
 @Composable
-private fun PinRowThumbnail(vm: AppViewModel, photoPath: String?, tint: Color) {
-    var signedUrl by remember(photoPath) { mutableStateOf<String?>(null) }
-    var unavailable by remember(photoPath) { mutableStateOf(false) }
-    LaunchedEffect(photoPath) {
+private fun PinRowThumbnail(vm: AppViewModel, entityId: String, photoPath: String?, tint: Color) {
+    val retainedPath = vm.retainedPhotoPath(entityId)
+    var signedUrl by remember(photoPath, retainedPath) { mutableStateOf<String?>(null) }
+    var unavailable by remember(photoPath, retainedPath) { mutableStateOf(false) }
+    LaunchedEffect(photoPath, retainedPath) {
         signedUrl = null
         unavailable = false
         if (!photoPath.isNullOrBlank()) {
@@ -2342,10 +2353,10 @@ private fun PinRowThumbnail(vm: AppViewModel, photoPath: String?, tint: Color) {
             .background(tint.copy(alpha = 0.18f)),
         contentAlignment = Alignment.Center,
     ) {
-        val url = signedUrl
+        val model: Any? = retainedPath?.let(::File) ?: signedUrl
         when {
-            url != null -> AsyncImage(
-                model = url,
+            model != null -> AsyncImage(
+                model = model,
                 contentDescription = "Pin photo",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
@@ -3050,8 +3061,8 @@ private fun PinDetailSheet(
             }
 
             // Photo preview (hidden entirely when the pin has no photo).
-            if (pin.hasPhoto) {
-                PinDetailPhoto(vm = vm, photoPath = pin.photoPath)
+            if (pin.hasPhoto || vm.retainedPhotoPath(pin.id) != null) {
+                PinDetailPhoto(vm = vm, entityId = pin.id, photoPath = pin.photoPath)
             }
 
             // Notes — the only editable field (iOS PinDetailSheet parity).
@@ -3240,11 +3251,12 @@ private fun PinDetailRow(label: String, value: String) {
  * demand and collapses quietly when the photo can't be fetched (e.g. offline).
  */
 @Composable
-private fun PinDetailPhoto(vm: AppViewModel, photoPath: String?) {
+private fun PinDetailPhoto(vm: AppViewModel, entityId: String, photoPath: String?) {
     val vine = LocalVineColors.current
-    var signedUrl by remember(photoPath) { mutableStateOf<String?>(null) }
-    var unavailable by remember(photoPath) { mutableStateOf(false) }
-    LaunchedEffect(photoPath) {
+    val retainedPath = vm.retainedPhotoPath(entityId)
+    var signedUrl by remember(photoPath, retainedPath) { mutableStateOf<String?>(null) }
+    var unavailable by remember(photoPath, retainedPath) { mutableStateOf(false) }
+    LaunchedEffect(photoPath, retainedPath) {
         signedUrl = null
         unavailable = false
         if (!photoPath.isNullOrBlank()) {
@@ -3263,10 +3275,10 @@ private fun PinDetailPhoto(vm: AppViewModel, photoPath: String?) {
             .background(vine.textSecondary.copy(alpha = 0.08f)),
         contentAlignment = Alignment.Center,
     ) {
-        val url = signedUrl
-        if (url != null) {
+        val model: Any? = retainedPath?.let(::File) ?: signedUrl
+        if (model != null) {
             AsyncImage(
-                model = url,
+                model = model,
                 contentDescription = "Pin photo",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),

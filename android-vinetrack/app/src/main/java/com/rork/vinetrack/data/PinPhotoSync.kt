@@ -54,8 +54,17 @@ class PinPhotoSync(
         try {
             // Pins still queued for create haven't synced yet — their photos must
             // wait so the PATCH lands on an existing row.
-            val queuedPinIds = pendingCreates.list()
+            val writes = pendingCreates.list()
+            val queuedPinIds = writes
                 .filter { it.entityType == PendingEntityType.PIN && it.opType == PendingOpType.CREATE }
+                .map { it.clientId }
+                .toSet()
+            val queuedGrowthIds = writes
+                .filter { it.entityType == PendingEntityType.GROWTH_RECORD && it.opType == PendingOpType.CREATE }
+                .map { it.clientId }
+                .toSet()
+            val deletingIds = writes
+                .filter { it.opType == PendingOpType.DELETE }
                 .map { it.clientId }
                 .toSet()
             val candidates = pending.list().filter {
@@ -64,7 +73,12 @@ class PinPhotoSync(
             for (att in candidates) {
                 // Pin-exists ordering: leave the attachment pending until its pin
                 // create has synced. Don't touch the file or counters.
-                if (att.entityKind != PendingPhotoEntityKind.GROWTH && att.clientPinId in queuedPinIds) continue
+                if (att.clientPinId in deletingIds || att.growthRecordId in deletingIds) {
+                    pending.remove(att.id)
+                    continue
+                }
+                if (shouldWaitForParent(att, queuedPinIds, queuedGrowthIds)) continue
+                if (!pending.isCurrent(att.id, att.revision)) continue
 
                 val file = File(att.localPath)
                 if (!file.exists()) {
@@ -79,27 +93,36 @@ class PinPhotoSync(
 
                 pending.updateStatus(att.id, PendingPhotoStatus.IN_PROGRESS)
                 try {
-                    val path = when (att.entityKind) {
+                    val path = att.uploadedPath ?: when (att.entityKind) {
                         PendingPhotoEntityKind.GROWTH -> pinPhotoRepo.uploadAtPath(
-                            pinPhotoRepo.growthStoragePath(att.vineyardId, requireNotNull(att.growthRecordId)),
+                            pinPhotoRepo.growthStoragePath(att.vineyardId, requireNotNull(att.growthRecordId), att.revision),
                             bytes,
                         )
-                        else -> pinPhotoRepo.upload(att.vineyardId, att.clientPinId, bytes)
+                        else -> pinPhotoRepo.upload(att.vineyardId, att.clientPinId, bytes, att.revision)
                     }
+                    if (!pending.recordUploadedPath(att.id, att.revision, path)) continue
                     try {
+                        if (!pending.isCurrent(att.id, att.revision)) continue
+                        val growthPaths = replacingOwnedPhoto(att.previousPhotoPaths, path)
                         when (att.entityKind) {
                             PendingPhotoEntityKind.GROWTH ->
-                                growthRepo.updatePhotoPaths(requireNotNull(att.growthRecordId), listOf(path))
+                                growthRepo.updatePhotoPaths(requireNotNull(att.growthRecordId), growthPaths)
                             PendingPhotoEntityKind.LINKED_GROWTH -> {
                                 pinRepo.updatePhotoPath(att.clientPinId, path)
-                                att.growthRecordId?.let { growthRepo.updatePhotoPaths(it, listOf(path)) }
+                                att.growthRecordId?.let {
+                                    if (!pending.isCurrent(att.id, att.revision)) return@let
+                                    growthRepo.updatePhotoPaths(it, growthPaths)
+                                }
                             }
                             else -> pinRepo.updatePhotoPath(att.clientPinId, path)
                         }
-                        // Remove only this revision; a newer capture has a different id.
-                        pending.markUploaded(att.id)
-                        pending.remove(att.id)
+                        if (!pending.isCurrent(att.id, att.revision)) continue
+                        pending.promoteToDisplayCache(att)
                         onUploaded(att, path)
+                        if (pending.isCurrent(att.id, att.revision)) {
+                            pending.markUploaded(att.id)
+                            pending.remove(att.id)
+                        }
                     } catch (e: BackendError.Unauthorized) {
                         // Upload succeeded but the row update needs re-auth. Keep
                         // the file so a later retry re-runs updatePhotoPath.
@@ -143,8 +166,19 @@ class PinPhotoSync(
         pending.updateStatus(att.id, status, error)
     }
 
-    private companion object {
+    companion object {
         /** Cap retries so a persistently-failing photo can't loop indefinitely. */
-        const val MAX_ATTEMPTS = 8
+        private const val MAX_ATTEMPTS = 8
+
+        internal fun shouldWaitForParent(
+            attachment: PendingPhotoAttachment,
+            queuedPinIds: Set<String>,
+            queuedGrowthIds: Set<String>,
+        ): Boolean =
+            (attachment.entityKind != PendingPhotoEntityKind.GROWTH && attachment.clientPinId in queuedPinIds) ||
+                (attachment.growthRecordId != null && attachment.growthRecordId in queuedGrowthIds)
+
+        internal fun replacingOwnedPhoto(previous: List<String>, newPath: String): List<String> =
+            listOf(newPath) + previous.drop(1).filterNot { it == newPath }
     }
 }
