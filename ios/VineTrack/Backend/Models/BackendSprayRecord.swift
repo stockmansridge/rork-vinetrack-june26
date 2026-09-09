@@ -62,6 +62,9 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
     /// sql/033: the planned `spray_jobs` row this record fulfilled. Written by
     /// the client only for job-originated completions (Stage 5B).
     let sprayJobId: UUID?
+    /// SQL 232 provenance is read-only here; manual writes use the atomic RPC.
+    let entrySource: String?
+    let manualEntryId: UUID?
     let createdBy: UUID?
     let updatedBy: UUID?
     let createdAt: Date?
@@ -116,6 +119,8 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
         case applicationBlocks = "application_blocks"
         case blockIds = "block_ids"
         case sprayJobId = "spray_job_id"
+        case entrySource = "entry_source"
+        case manualEntryId = "manual_entry_id"
         case createdBy = "created_by"
         case updatedBy = "updated_by"
         case createdAt = "created_at"
@@ -339,7 +344,9 @@ extension BackendSprayRecord {
             isTemplate: isTemplate ?? false,
             operationType: operationType.flatMap { OperationType(rawValue: $0) } ?? .foliarSpray,
             applicationGeometry: applicationGeometrySnapshot,
-            sprayJobId: sprayJobId
+            sprayJobId: sprayJobId,
+            entrySource: entrySource,
+            manualEntryId: manualEntryId
         )
     }
 

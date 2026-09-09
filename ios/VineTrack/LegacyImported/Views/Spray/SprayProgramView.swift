@@ -330,8 +330,13 @@ struct SprayProgramView: View {
                 }
             }
             .sheet(isPresented: $showManualRecordForm) {
-                NavigationStack {
-                    SprayRecordFormView(tripId: UUID(), paddockIds: [])
+                if let vineyardId = store.selectedVineyardId {
+                    NavigationStack {
+                        ManualSprayEntryView(
+                            vineyardId: vineyardId,
+                            timeZone: TimeZone(identifier: store.settings.timezone) ?? .current
+                        )
+                    }
                 }
             }
             .sheet(isPresented: $showProgramPicker) {
@@ -414,10 +419,12 @@ struct SprayProgramView: View {
                 Label("Add Program Step", systemImage: "plus.rectangle.on.folder")
             }
 
-            Button {
-                showManualRecordForm = true
-            } label: {
-                Label("Log Spray Record", systemImage: "square.and.pencil")
+            if accessControl?.canManageManualSprays == true {
+                Button {
+                    showManualRecordForm = true
+                } label: {
+                    Label("Add manual spray", systemImage: "square.and.pencil")
+                }
             }
         } label: {
             Image(systemName: "plus")
@@ -523,6 +530,11 @@ struct SprayProgramView: View {
                 statusIcon(status: status)
 
                 VStack(alignment: .leading, spacing: 5) {
+                    if record.isManualEntry {
+                        Label("Manual entry", systemImage: "pencil")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.purple)
+                    }
                     if !record.sprayReference.isEmpty {
                         Text(record.sprayReference)
                             .font(.subheadline.weight(.semibold))
@@ -573,7 +585,7 @@ struct SprayProgramView: View {
         }
         .buttonStyle(.plain)
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            if accessControl?.canDelete ?? false {
+            if record.isManualEntry ? (accessControl?.canManageManualSprays ?? false) : (accessControl?.canDelete ?? false) {
                 Button(role: .destructive) {
                     recordToDelete = record
                 } label: {

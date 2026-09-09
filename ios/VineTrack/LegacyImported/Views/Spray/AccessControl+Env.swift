@@ -30,6 +30,8 @@ struct LegacyAccessControl {
     /// Mirrors the `spray_jobs` UPDATE policy (sql/032) rather than reusing a
     /// neighbouring flag, so the two can never drift apart silently.
     var canManageSprayProgram: Bool = false
+    /// Owner, manager, supervisor: completed manual spray create/edit/delete/report.
+    var canManageManualSprays: Bool = false
     /// Every role. The existing rule for editing a LOCAL Program Step, carried
     /// here unchanged so the shared editor does not tighten it.
     var canEditRecords: Bool = false

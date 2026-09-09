@@ -32,6 +32,7 @@ final class BackendAccessControl {
     var canEnterPricing: Bool { currentRole?.canEnterPricing ?? false }
     /// Owner/manager — the client-side mirror of the `spray_jobs` UPDATE policy.
     var canManageSprayProgram: Bool { currentRole?.canManageSprayProgram ?? false }
+    var canManageManualSprays: Bool { currentRole?.canManageManualSprays ?? false }
     var canChangeSettings: Bool { currentRole?.canChangeSettings ?? false }
     var canDeleteOperationalRecords: Bool { currentRole?.canDeleteOperationalRecords ?? false }
     var canInviteMembers: Bool { currentRole?.canInviteMembers ?? false }
@@ -58,6 +59,7 @@ final class BackendAccessControl {
             canReopenRecords: canDeleteOperationalRecords,
             canManageSetup: canChangeSettings,
             canManageSprayProgram: canManageSprayProgram,
+            canManageManualSprays: canManageManualSprays,
             canEditRecords: canEditRecords
         )
     }

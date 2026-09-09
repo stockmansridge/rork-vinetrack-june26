@@ -27,11 +27,28 @@ struct SprayRecordPDFService {
         let pageHeight: CGFloat = 842.0
         let margin: CGFloat = 40.0
         let contentWidth = pageWidth - margin * 2
+        let isManualEntry = payload.provenance?.isManualEntry == true || record.isManualEntry
 
         let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight))
 
         let data = renderer.pdfData { context in
+            func drawManualWatermark() {
+                guard isManualEntry else { return }
+                let graphics = context.cgContext
+                graphics.saveGState()
+                graphics.translateBy(x: pageWidth / 2, y: pageHeight / 2)
+                graphics.rotate(by: -.pi / 5)
+                let text = "MANUAL ENTRY" as NSString
+                let attributes: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 58, weight: .bold),
+                    .foregroundColor: UIColor.systemPurple.withAlphaComponent(0.09)
+                ]
+                let size = text.size(withAttributes: attributes)
+                text.draw(at: CGPoint(x: -size.width / 2, y: -size.height / 2), withAttributes: attributes)
+                graphics.restoreGState()
+            }
             context.beginPage()
+            drawManualWatermark()
             var y: CGFloat = margin
             var pageNumber: Int = 1
             let officialLogo = UIImage(named: "vinetrack_logo")
@@ -59,6 +76,7 @@ struct SprayRecordPDFService {
             func beginContinuationPage() {
                 drawPageFooter()
                 context.beginPage()
+                drawManualWatermark()
                 pageNumber += 1
                 y = margin
             }
@@ -112,7 +130,7 @@ struct SprayRecordPDFService {
                     drawDivider()
                 }
                 header()
-                tableRow(item: "Water", planned: formatter.formatVolume(litres: tank.plannedWaterLitres), actual: tank.actualWaterLitres.map { $0 == 0 ? "0 L" : formatter.formatVolume(litres: $0) } ?? "Not recorded")
+                tableRow(item: "Water", planned: tank.plannedWaterLitres.map { formatter.formatVolume(litres: $0) } ?? "Not planned", actual: tank.actualWaterLitres.map { $0 == 0 ? "0 L" : formatter.formatVolume(litres: $0) } ?? "Not recorded")
                 for chemical in tank.chemicals {
                     let unit = ChemicalUnit(rawValue: chemical.unit) ?? .litres
                     let planned = chemical.plannedAmountBase.map { String(format: "%.3f %@", unit.fromBase($0), unit.rawValue) } ?? "—"
@@ -163,6 +181,10 @@ struct SprayRecordPDFService {
                 contentWidth: contentWidth,
                 y: &y
             )
+
+            if isManualEntry {
+                drawText("Manual entry", font: headerFont, color: .systemPurple)
+            }
 
             if !record.sprayReference.isEmpty {
                 let sprayNameFont = UIFont.systemFont(ofSize: 16, weight: .semibold)

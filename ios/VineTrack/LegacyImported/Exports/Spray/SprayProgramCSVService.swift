@@ -78,6 +78,7 @@ struct SprayProgramCSVService {
         // (owner/manager). Supervisors and operators MUST receive
         // `includeCostings: false` so cost data never leaves the app for them.
         var headers = templateHeaders
+        headers.insert("Source", at: 1)
         // sql/195 block attribution. EXPORT-ONLY — deliberately not added to
         // `templateHeaders`, because the template is filled in by hand and no
         // operator should be typing uuids into a spreadsheet. `Block IDs` is the
@@ -124,6 +125,7 @@ struct SprayProgramCSVService {
 
             var row: [String] = []
             row.append(escapeCSV(record.sprayReference))
+            row.append(escapeCSV(record.entrySource == "manual" ? "Manual entry" : (record.entrySource == "tracked" ? "Tracked application" : "Origin not recorded")))
             row.append(dateFormatter.string(from: record.date))
             row.append(escapeCSV(trip?.paddockName ?? ""))
             row.append(escapeCSV(trip?.personName ?? ""))

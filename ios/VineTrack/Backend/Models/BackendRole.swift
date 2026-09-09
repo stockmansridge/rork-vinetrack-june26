@@ -65,6 +65,17 @@ nonisolated enum BackendRole: String, Codable, CaseIterable, Sendable {
         }
     }
 
+    /// Manual completed applications are compliance corrections and are restricted
+    /// to the same three roles enforced by save_manual_spray_v1.
+    var canManageManualSprays: Bool {
+        switch self {
+        case .owner, .manager, .supervisor:
+            true
+        case .operator:
+            false
+        }
+    }
+
     var canDeleteOperationalRecords: Bool {
         switch self {
         case .owner, .manager, .supervisor:

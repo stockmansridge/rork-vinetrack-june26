@@ -667,7 +667,11 @@ data class Trip(
      * (see [com.rork.vinetrack.data.TripMetadataSync]). No schema change.
      */
     @SerialName("client_updated_at") val clientUpdatedAt: String? = null,
+    @SerialName("entry_source") val entrySource: String? = null,
+    @SerialName("manual_entry_id") val manualEntryId: String? = null,
 ) {
+    val isManualEntry: Boolean get() = entrySource == "manual"
+
     /** User-facing label, mirroring iOS `Trip.displayFunctionLabel`. */
     val displayLabel: String
         get() {
@@ -1712,6 +1716,9 @@ data class SprayRecord(
     @SerialName("application_blocks")
     val applicationBlocks: List<SprayApplicationBlockSnapshot>? = null,
     @SerialName("block_ids") val blockIds: List<String>? = null,
+    @SerialName("entry_source") val entrySource: String? = null,
+    @SerialName("manual_entry_id") val manualEntryId: String? = null,
+    @SerialName("sync_version") val syncVersion: Long? = null,
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
     /**
@@ -1725,6 +1732,7 @@ data class SprayRecord(
     @Transient val prefillCanopy: SprayCanopySelection? = null,
 ) {
     val dateEpochMs: Long? get() = parseIsoToEpochMs(date ?: startTime)
+    val isManualEntry: Boolean get() = entrySource == "manual"
 
     /**
      * The frozen canonical calculation snapshot for this record, read back

@@ -2,11 +2,13 @@ import Foundation
 
 /// Canonical semantic input for every Spray Report export.
 nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
-    static let currentSchemaVersion: String = "1.1"
+    static let currentSchemaVersion: String = "1.2"
     static let routeStyleVersion: String = "spray-route-red-green-v1"
 
     let schemaVersion: String
     let identity: Identity
+    let provenance: Provenance? = nil
+    let recordingEvidence: RecordingEvidence? = nil
     let trip: TripSummary
     let blocks: [Block]?
     let equipment: Equipment
@@ -32,6 +34,18 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         let vineyardName: String
         let reference: String
         let vineyardTimeZone: String
+    }
+
+    nonisolated struct Provenance: Codable, Sendable, Hashable {
+        let source: String?
+        let manualEntryId: UUID?
+        let isManualEntry: Bool
+        let label: String
+    }
+
+    nonisolated struct RecordingEvidence: Codable, Sendable, Hashable {
+        let route: String?
+        let rows: String?
     }
 
     nonisolated struct TripSummary: Codable, Sendable, Hashable {
@@ -88,6 +102,7 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         let appliedLitresPer100m: Double?
         let concentrationFactor: Double?
         let notes: String?
+        let actualUseBasis: String? = nil
     }
 
     nonisolated struct ProgramStep: Codable, Sendable, Hashable {
@@ -209,7 +224,7 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         let tankNumber: Int
         let actualId: UUID?
         let actualVersion: Int?
-        let plannedWaterLitres: Double
+        let plannedWaterLitres: Double?
         let actualWaterLitres: Double?
         let chemicals: [Chemical]
     }
@@ -225,6 +240,9 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         let plannedAmountBase: Double?
         let actualAmountBase: Double?
         let matchSource: String
+        let productCategory: String? = nil
+        let physicalForm: String? = nil
+        let snapshotAt: String? = nil
     }
 
     nonisolated struct ChemicalTotal: Codable, Sendable, Hashable {

@@ -47,6 +47,10 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
     /// completion) — never inferred afterwards. `nil` for ad-hoc records and
     /// every record written before Stage 5B.
     var sprayJobId: UUID?
+    /// Explicit origin from SQL 232. Nil means historical origin is unknown.
+    var entrySource: String?
+    var manualEntryId: UUID?
+    var isManualEntry: Bool { entrySource == "manual" }
 
     init(
         id: UUID = UUID(),
@@ -73,7 +77,9 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         isTemplate: Bool = false,
         operationType: OperationType = .foliarSpray,
         applicationGeometry: SprayApplicationSnapshot? = nil,
-        sprayJobId: UUID? = nil
+        sprayJobId: UUID? = nil,
+        entrySource: String? = nil,
+        manualEntryId: UUID? = nil
     ) {
         self.id = id
         self.tripId = tripId
@@ -100,6 +106,8 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         self.operationType = operationType
         self.applicationGeometry = applicationGeometry
         self.sprayJobId = sprayJobId
+        self.entrySource = entrySource
+        self.manualEntryId = manualEntryId
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -110,6 +118,7 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         case machineId, tractorId, sprayEquipmentId, isTemplate, operationType
         case applicationGeometry
         case sprayJobId
+        case entrySource, manualEntryId
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -146,6 +155,8 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         applicationGeometry = (decodedGeometry?.isEmpty ?? true) ? nil : decodedGeometry
         // Additive: records cached before Stage 5B simply have no job link.
         sprayJobId = try container.decodeIfPresent(UUID.self, forKey: .sprayJobId)
+        entrySource = try container.decodeIfPresent(String.self, forKey: .entrySource)
+        manualEntryId = try container.decodeIfPresent(UUID.self, forKey: .manualEntryId)
     }
 }
 

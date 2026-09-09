@@ -232,7 +232,7 @@ fun SpraysScreen(
                 state = state,
                 onBack = onBack,
                 onSelect = { selectedId = it.id },
-                onAdd = { creating = true },
+                onAdd = { if (com.rork.vinetrack.data.model.canManageManualSprays(state.currentRole)) creating = true },
                 onAddTemplate = { creatingTemplate = true },
                 onOpenCalculator = { calculatorPrefillId = null; calculating = true },
                 onPlanFromProgram = { step -> calculatorPrefillId = step.id; calculating = true },
@@ -252,7 +252,7 @@ fun SpraysScreen(
     }
 
     if (creating) {
-        SpraySheet(vm = vm, state = state, existing = null, asTemplate = false, onDismiss = { creating = false }, onSaved = { creating = false })
+        ManualSprayEntrySheet(state = state, onDismiss = { creating = false }, onSaved = { creating = false })
     }
     if (creatingTemplate) {
         SpraySheet(vm = vm, state = state, existing = null, asTemplate = true, onDismiss = { creatingTemplate = false }, onSaved = { creatingTemplate = false })
@@ -936,6 +936,12 @@ private fun SprayRow(
                 Icon(icon, contentDescription = null, tint = iconTint)
             }
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                if (record.isManualEntry) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(Icons.Filled.Edit, contentDescription = null, tint = VineColors.Purple, modifier = Modifier.size(12.dp))
+                        Text("Manual entry", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = VineColors.Purple)
+                    }
+                }
                 Text(record.displayLabel, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, fontSize = 16.sp, maxLines = 1)
                 formatSprayDate(record.dateEpochMs)?.let { date ->
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {

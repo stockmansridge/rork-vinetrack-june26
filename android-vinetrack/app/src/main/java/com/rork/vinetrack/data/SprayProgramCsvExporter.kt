@@ -129,7 +129,9 @@ object SprayProgramCsvExporter {
     }
 
     private fun exportHeaders(includeCostings: Boolean): List<String> = buildList {
-        addAll(coreHeaders)
+        add(coreHeaders.first())
+        add("Source")
+        addAll(coreHeaders.drop(1))
         addAll(actualHeaders)
         if (includeCostings) addAll(summaryHeaders)
         addAll(blockAttributionHeaders)
@@ -304,6 +306,7 @@ object SprayProgramCsvExporter {
             val row = ArrayList<String>(exportHeaders(includeCostings).size)
 
             row.add(record.sprayReference.orEmpty())
+            row.add(when (record.entrySource) { "manual" -> "Manual entry"; "tracked" -> "Tracked application"; else -> "Origin not recorded" })
             row.add(record.dateEpochMs?.let { dateFmt.format(Date(it)) } ?: "")
             row.add(trip?.paddockName ?: "")
             row.add(trip?.personName ?: "")

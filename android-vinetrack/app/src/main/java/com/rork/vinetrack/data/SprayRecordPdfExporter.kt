@@ -57,11 +57,28 @@ object SprayRecordPdfExporter {
     private val accent = Color.rgb(85, 107, 47) // olive, matching iOS VineyardTheme
 
     /** Drawing cursor + paging state for a single export. */
-    private class PageState(val doc: PdfDocument, private val officialLogo: Bitmap?) {
+    private class PageState(val doc: PdfDocument, private val officialLogo: Bitmap?, private val isManualEntry: Boolean) {
         var page: PdfDocument.Page = doc.startPage(pageInfo(1))
         var canvas = page.canvas
         var y = MARGIN
         private var pageNumber = 1
+
+        init { drawManualWatermark() }
+
+        private fun drawManualWatermark() {
+            if (!isManualEntry) return
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(111, 45, 168)
+                alpha = 24
+                textSize = 58f
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                textAlign = Paint.Align.CENTER
+            }
+            canvas.save()
+            canvas.rotate(-32f, PAGE_WIDTH / 2f, PAGE_HEIGHT / 2f)
+            canvas.drawText("MANUAL ENTRY", PAGE_WIDTH / 2f, PAGE_HEIGHT / 2f, paint)
+            canvas.restore()
+        }
 
         private fun pageInfo(n: Int) =
             PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, n).create()
@@ -89,6 +106,7 @@ object SprayRecordPdfExporter {
             pageNumber += 1
             page = doc.startPage(pageInfo(pageNumber))
             canvas = page.canvas
+            drawManualWatermark()
             y = MARGIN
         }
 
@@ -185,7 +203,7 @@ object SprayRecordPdfExporter {
             }
             val doc = PdfDocument()
             val officialLogo = BitmapFactory.decodeResource(context.resources, R.drawable.vinetrack_logo)
-            val s = PageState(doc, officialLogo)
+            val s = PageState(doc, officialLogo, payload.provenance?.isManualEntry == true || record.isManualEntry)
             render(
                 s, payload, record, vineyardName, machines, equipment, trip, workTask,
                 canViewFinancials, fuelPurchases, operatorCategories, paddocks, resolvedVineyardLogo,
@@ -244,6 +262,11 @@ object SprayRecordPdfExporter {
         s.y += 26f
         s.canvas.drawText("Spray Report", textX, s.y + 12f, headerPaint)
         s.y += 22f
+        if (payload.provenance?.isManualEntry == true || record.isManualEntry) {
+            val manualPaint = Paint(headerPaint).apply { color = Color.rgb(111, 45, 168) }
+            s.canvas.drawText("Manual entry", textX, s.y + 12f, manualPaint)
+            s.y += 22f
+        }
         drawDivider(s)
         s.y += 8f
 
@@ -595,7 +618,7 @@ object SprayRecordPdfExporter {
             drawDivider(s)
         }
         header()
-        tableRow("Water", formatter.formatVolume(tank.plannedWaterLitres), tank.actualWaterLitres?.let { if (it == 0.0) "0 L" else formatter.formatVolume(it) } ?: "Not recorded")
+        tableRow("Water", tank.plannedWaterLitres?.let(formatter::formatVolume) ?: "Not planned", tank.actualWaterLitres?.let { if (it == 0.0) "0 L" else formatter.formatVolume(it) } ?: "Not recorded")
         tank.chemicals.forEach { chemical ->
             val unit = chemUnitAbbrev(chemical.unit)
             val planned = chemical.plannedAmountBase?.let { "${fmt(chemicalUnitFromBase(chemical.unit, it))} $unit" } ?: "—"

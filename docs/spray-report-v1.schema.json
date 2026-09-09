@@ -4,10 +4,12 @@
   "title": "SprayReportPayloadV1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "identity", "trip", "blocks", "equipment", "application", "programStep", "rows", "tanks", "tankSessions", "plannedChemicalTotals", "actualChemicalTotals", "weather", "route", "cost", "amendments", "metadataCorrectionVersion", "metadataAmendments", "warnings"],
+  "required": ["schemaVersion", "identity", "provenance", "recordingEvidence", "trip", "blocks", "equipment", "application", "programStep", "rows", "tanks", "tankSessions", "plannedChemicalTotals", "actualChemicalTotals", "weather", "route", "cost", "amendments", "metadataCorrectionVersion", "metadataAmendments", "warnings"],
   "properties": {
-    "schemaVersion": { "const": "1.1" },
+    "schemaVersion": { "const": "1.2" },
     "identity": { "$ref": "#/$defs/identity" },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "recordingEvidence": { "$ref": "#/$defs/recordingEvidence" },
     "trip": { "$ref": "#/$defs/trip" },
     "blocks": { "type": ["array", "null"], "items": { "$ref": "#/$defs/block" } },
     "equipment": { "$ref": "#/$defs/equipment" },
@@ -35,6 +37,16 @@
       "required": ["tripId", "sprayRecordId", "vineyardId", "vineyardName", "reference", "vineyardTimeZone"],
       "properties": { "tripId": { "type": "string", "format": "uuid" }, "sprayRecordId": { "type": "string", "format": "uuid" }, "vineyardId": { "type": "string", "format": "uuid" }, "vineyardName": { "type": "string" }, "reference": { "type": "string" }, "vineyardTimeZone": { "type": "string" } }
     },
+    "provenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "manualEntryId", "isManualEntry", "label"],
+      "properties": { "source": { "type": ["string", "null"], "enum": ["manual", "tracked", null] }, "manualEntryId": { "$ref": "#/$defs/uuidOrNull" }, "isManualEntry": { "type": "boolean" }, "label": { "enum": ["Manual entry", "Tracked application", "Origin not recorded"] } }
+    },
+    "recordingEvidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["route", "rows"],
+      "properties": { "route": { "type": ["string", "null"] }, "rows": { "type": ["string", "null"] } }
+    },
     "trip": {
       "type": "object", "additionalProperties": false,
       "required": ["startUtc", "endUtc", "activeDurationSeconds", "elapsedDurationSeconds", "pausedDurationSeconds", "distanceMetres", "operatorId", "operatorName", "operatorSource", "pinCount"],
@@ -52,7 +64,7 @@
     "application": {
       "type": "object", "additionalProperties": false,
       "required": ["operationType", "applicationMode", "grossAreaHa", "treatedAreaHa", "treatedAreaMethod", "geometrySource", "geometryQuality", "carrierVolumeBasis", "totalCarrierLitres", "carrierLitresPerHectare", "diluteLitresPer100m", "appliedLitresPer100m", "concentrationFactor", "notes"],
-      "properties": { "operationType": { "$ref": "#/$defs/stringOrNull" }, "applicationMode": { "$ref": "#/$defs/stringOrNull" }, "grossAreaHa": { "$ref": "#/$defs/numberOrNull" }, "treatedAreaHa": { "$ref": "#/$defs/numberOrNull" }, "treatedAreaMethod": { "$ref": "#/$defs/stringOrNull" }, "geometrySource": { "$ref": "#/$defs/stringOrNull" }, "geometryQuality": { "$ref": "#/$defs/stringOrNull" }, "carrierVolumeBasis": { "$ref": "#/$defs/stringOrNull" }, "totalCarrierLitres": { "$ref": "#/$defs/numberOrNull" }, "carrierLitresPerHectare": { "$ref": "#/$defs/numberOrNull" }, "diluteLitresPer100m": { "$ref": "#/$defs/numberOrNull" }, "appliedLitresPer100m": { "$ref": "#/$defs/numberOrNull" }, "concentrationFactor": { "$ref": "#/$defs/numberOrNull" }, "notes": { "$ref": "#/$defs/stringOrNull" } }
+      "properties": { "operationType": { "$ref": "#/$defs/stringOrNull" }, "applicationMode": { "$ref": "#/$defs/stringOrNull" }, "grossAreaHa": { "$ref": "#/$defs/numberOrNull" }, "treatedAreaHa": { "$ref": "#/$defs/numberOrNull" }, "treatedAreaMethod": { "$ref": "#/$defs/stringOrNull" }, "geometrySource": { "$ref": "#/$defs/stringOrNull" }, "geometryQuality": { "$ref": "#/$defs/stringOrNull" }, "carrierVolumeBasis": { "$ref": "#/$defs/stringOrNull" }, "totalCarrierLitres": { "$ref": "#/$defs/numberOrNull" }, "carrierLitresPerHectare": { "$ref": "#/$defs/numberOrNull" }, "diluteLitresPer100m": { "$ref": "#/$defs/numberOrNull" }, "appliedLitresPer100m": { "$ref": "#/$defs/numberOrNull" }, "concentrationFactor": { "$ref": "#/$defs/numberOrNull" }, "notes": { "$ref": "#/$defs/stringOrNull" }, "actualUseBasis": { "type": ["string", "null"], "enum": ["manually_recorded_actual_use", null] } }
     },
     "programStep": {
       "type": "object", "additionalProperties": false,
@@ -66,12 +78,12 @@
     "tank": {
       "type": "object", "additionalProperties": false,
       "required": ["tankNumber", "actualId", "actualVersion", "plannedWaterLitres", "actualWaterLitres", "chemicals"],
-      "properties": { "tankNumber": { "type": "integer", "minimum": 1 }, "actualId": { "$ref": "#/$defs/uuidOrNull" }, "actualVersion": { "type": "integer", "minimum": 0 }, "plannedWaterLitres": { "type": "number", "minimum": 0 }, "actualWaterLitres": { "type": ["number", "null"], "minimum": 0 }, "chemicals": { "type": "array", "items": { "$ref": "#/$defs/chemical" } } }
+      "properties": { "tankNumber": { "type": "integer", "minimum": 1 }, "actualId": { "$ref": "#/$defs/uuidOrNull" }, "actualVersion": { "type": "integer", "minimum": 0 }, "plannedWaterLitres": { "type": ["number", "null"], "minimum": 0 }, "actualWaterLitres": { "type": ["number", "null"], "minimum": 0 }, "chemicals": { "type": "array", "items": { "$ref": "#/$defs/chemical" } } }
     },
     "chemical": {
       "type": "object", "additionalProperties": false,
       "required": ["actualChemicalId", "plannedChemicalId", "savedChemicalId", "replacesPlannedChemicalId", "usageKind", "name", "unit", "plannedAmountBase", "actualAmountBase", "matchSource"],
-      "properties": { "actualChemicalId": { "$ref": "#/$defs/uuidOrNull" }, "plannedChemicalId": { "$ref": "#/$defs/uuidOrNull" }, "savedChemicalId": { "$ref": "#/$defs/uuidOrNull" }, "replacesPlannedChemicalId": { "$ref": "#/$defs/uuidOrNull" }, "usageKind": { "enum": ["planned", "substitution", "additional"] }, "name": { "type": "string" }, "unit": { "enum": ["Litres", "mL", "Kg", "g"] }, "plannedAmountBase": { "type": ["number", "null"], "minimum": 0 }, "actualAmountBase": { "type": ["number", "null"], "minimum": 0 }, "matchSource": { "enum": ["plannedChemicalId", "savedChemicalId", "nameUnit", "notRecorded", "ambiguous", "actualOnly"] } }
+      "properties": { "actualChemicalId": { "$ref": "#/$defs/uuidOrNull" }, "plannedChemicalId": { "$ref": "#/$defs/uuidOrNull" }, "savedChemicalId": { "$ref": "#/$defs/uuidOrNull" }, "replacesPlannedChemicalId": { "$ref": "#/$defs/uuidOrNull" }, "usageKind": { "enum": ["planned", "substitution", "additional"] }, "name": { "type": "string" }, "unit": { "enum": ["Litres", "mL", "Kg", "g"] }, "plannedAmountBase": { "type": ["number", "null"], "minimum": 0 }, "actualAmountBase": { "type": ["number", "null"], "minimum": 0 }, "matchSource": { "enum": ["plannedChemicalId", "savedChemicalId", "nameUnit", "notRecorded", "ambiguous", "actualOnly"] }, "productCategory": { "$ref": "#/$defs/stringOrNull" }, "physicalForm": { "type": ["string", "null"], "enum": ["liquid", "solid", null] }, "snapshotAt": { "type": ["string", "null"], "format": "date-time" } }
     },
     "chemicalTotal": {
       "type": "object", "additionalProperties": false,

@@ -39,12 +39,16 @@ data class SprayReportPayloadV1(
     val cost: Cost? = null,
     val metadataCorrectionVersion: Long = 0,
     val metadataAmendments: List<MetadataAmendment> = emptyList(),
+    val provenance: Provenance? = null,
+    val recordingEvidence: RecordingEvidence? = null,
 ) {
     @Serializable data class Identity(val tripId: String, val sprayRecordId: String, val vineyardId: String, val vineyardName: String, val reference: String, val vineyardTimeZone: String)
+    @Serializable data class Provenance(val source: String? = null, val manualEntryId: String? = null, val isManualEntry: Boolean, val label: String)
+    @Serializable data class RecordingEvidence(val route: String? = null, val rows: String? = null)
     @Serializable data class TripSummary(val startUtc: String?, val endUtc: String?, val activeDurationSeconds: Long?, val distanceMetres: Double?, val operatorName: String?, val pinCount: Int, val operatorId: String? = null, val operatorSource: String? = null, val elapsedDurationSeconds: Long? = null, val pausedDurationSeconds: Long? = null)
     @Serializable data class Block(val blockId: String, val name: String, val grossAreaHa: Double? = null, val treatedAreaHa: Double? = null)
     @Serializable data class Equipment(val tractorName: String?, val startEngineHours: Double?, val endEngineHours: Double?, val engineHoursUsed: Double?, val sprayUnitName: String?, val machineId: String? = null, val tractorId: String? = null, val sprayEquipmentId: String? = null, val equipmentSource: String? = null, val tractorGear: String? = null, val numberOfFansJets: String? = null, val averageSpeedKmh: Double? = null, val fuelConsumptionLPerHour: Double? = null, val fuelConsumptionSource: String? = null, val fuelHours: Double? = null, val fuelHoursSource: String? = null)
-    @Serializable data class Application(val operationType: String? = null, val applicationMode: String? = null, val grossAreaHa: Double? = null, val treatedAreaHa: Double? = null, val treatedAreaMethod: String? = null, val geometrySource: String? = null, val geometryQuality: String? = null, val carrierVolumeBasis: String? = null, val totalCarrierLitres: Double? = null, val carrierLitresPerHectare: Double? = null, val diluteLitresPer100m: Double? = null, val appliedLitresPer100m: Double? = null, val concentrationFactor: Double? = null, val notes: String? = null)
+    @Serializable data class Application(val operationType: String? = null, val applicationMode: String? = null, val grossAreaHa: Double? = null, val treatedAreaHa: Double? = null, val treatedAreaMethod: String? = null, val geometrySource: String? = null, val geometryQuality: String? = null, val carrierVolumeBasis: String? = null, val totalCarrierLitres: Double? = null, val carrierLitresPerHectare: Double? = null, val diluteLitresPer100m: Double? = null, val appliedLitresPer100m: Double? = null, val concentrationFactor: Double? = null, val notes: String? = null, val actualUseBasis: String? = null)
     @Serializable data class ProgramStep(val linkState: String, val sprayJobId: String? = null, val name: String? = null, val status: String? = null, val plannedDate: String? = null, val operationType: String? = null, val target: String? = null, val notes: String? = null)
     @Serializable data class TankSessionSummary(val tankSessionId: String? = null, val tankNumber: Int, val startedAt: String? = null, val endedAt: String? = null, val startRow: Double? = null, val endRow: Double? = null, val pathsCovered: List<Double> = emptyList(), val status: String, val assignmentSource: String)
     @Serializable data class Cost(val visibility: String, val currencyCode: String, val fuelLitres: Double? = null, val fuelRateLPerHour: Double? = null, val fuelHours: Double? = null, val fuelPricePerLitre: Double? = null, val fuelCost: Double? = null, val chemicalCost: Double? = null, val chemicalCostBasis: String? = null, val labourRatePerHour: Double? = null, val labourRateSource: String? = null, val labourCost: Double? = null, val knownCostSubtotal: Double? = null, val totalCost: Double? = null, val treatedAreaHa: Double? = null, val costPerTreatedHa: Double? = null, val isComplete: Boolean, val incompleteReasons: List<CostReason> = emptyList(), val basis: String)
@@ -57,8 +61,8 @@ data class SprayReportPayloadV1(
             else -> "Not recorded"
         }
     }
-    @Serializable data class Tank(val tankNumber: Int, val actualId: String? = null, val actualVersion: Long? = null, val plannedWaterLitres: Double, val actualWaterLitres: Double?, val chemicals: List<Chemical>)
-    @Serializable data class Chemical(val actualChemicalId: String? = null, val plannedChemicalId: String? = null, val savedChemicalId: String?, val replacesPlannedChemicalId: String? = null, val usageKind: String = "planned", val name: String, val unit: String, val plannedAmountBase: Double? = null, val actualAmountBase: Double?, val matchSource: String)
+    @Serializable data class Tank(val tankNumber: Int, val actualId: String? = null, val actualVersion: Long? = null, val plannedWaterLitres: Double?, val actualWaterLitres: Double?, val chemicals: List<Chemical>)
+    @Serializable data class Chemical(val actualChemicalId: String? = null, val plannedChemicalId: String? = null, val savedChemicalId: String?, val replacesPlannedChemicalId: String? = null, val usageKind: String = "planned", val name: String, val unit: String, val plannedAmountBase: Double? = null, val actualAmountBase: Double?, val matchSource: String, val productCategory: String? = null, val physicalForm: String? = null, val snapshotAt: String? = null)
     @Serializable data class ChemicalTotal(val identityKey: String, val name: String, val unit: String, val actualAmountBase: Double)
     @Serializable data class Amendment(val id: String, val operationId: String, val tankNumber: Int, val chemicalActualId: String? = null, val plannedChemicalId: String? = null, val savedChemicalId: String? = null, val field: String, val changeKind: String, val previousValue: JsonElement = JsonNull, val newValue: JsonElement = JsonNull, val previousUnit: String? = null, val newUnit: String? = null, val revision: Long, val editedBy: String, val editorName: String, val editedAt: String)
     @Serializable data class Weather(val sampleSlot: String, val observedAt: String?, val source: String, val sourceKind: String, val isStale: Boolean, val temperatureC: Double?, val humidityPct: Double?, val windSpeedKmh: Double?, val windGustKmh: Double?, val windDirectionDeg: Double?, val rainMm: Double?, val provider: String? = null, val stationId: String? = null, val stationName: String? = null, val retrievalMode: String? = null, val providerRecordId: String? = null, val retrievedAt: String? = null, val retrievalHistory: List<WeatherAttempt> = emptyList())
@@ -74,7 +78,7 @@ data class SprayReportPayloadV1(
     }
 
     companion object {
-        const val SCHEMA_VERSION: String = "1.1"
+        const val SCHEMA_VERSION: String = "1.2"
         const val ROUTE_STYLE_VERSION: String = "spray-route-red-green-v1"
 
         fun isSprayTrip(trip: Trip, linkedRecord: SprayRecord?): Boolean =
