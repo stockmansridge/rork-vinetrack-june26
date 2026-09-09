@@ -1,8 +1,26 @@
 -- 228: Canonical Spray Report 1.1 facts, evidence-labelled row recovery, and audited trip metadata corrections.
--- Run manually once after SQL 227. Do not rerun SQL 224-227.
+-- Run manually after SQL 227. This version also upgrades the earlier SQL 228/229 drafts without deleting operational data.
+-- Do not rerun SQL 224-227.
 begin;
+select pg_advisory_xact_lock(hashtext('vinetrack:spray-report-228-upgrade'));
 
-create table public.spray_trip_corrections (
+-- An earlier SQL 229 draft wrapped the earlier SQL 228 report. Unwrap only that
+-- known chain so this transaction can replace SQL 228 beneath the final weather wrapper.
+do $upgrade$
+begin
+  if to_regprocedure('public.get_spray_report_v1_pre_weather_provenance_v1(uuid)') is not null then
+    if to_regprocedure('public.get_spray_report_v1(uuid)') is null
+       or to_regprocedure('public.get_spray_report_v1_pre_canonical_facts_v1(uuid)') is null
+       or pg_get_functiondef('public.get_spray_report_v1(uuid)'::regprocedure) not like '%get_spray_report_v1_pre_weather_provenance_v1%'
+       or pg_get_functiondef('public.get_spray_report_v1_pre_weather_provenance_v1(uuid)'::regprocedure) not like '%get_spray_report_v1_pre_canonical_facts_v1%' then
+      raise exception 'Unexpected Spray Report function chain; reconciliation stopped without changes';
+    end if;
+    drop function public.get_spray_report_v1(uuid);
+    alter function public.get_spray_report_v1_pre_weather_provenance_v1(uuid) rename to get_spray_report_v1;
+  end if;
+end $upgrade$;
+
+create table if not exists public.spray_trip_corrections (
   trip_id uuid primary key references public.trips(id) on delete cascade,
   vineyard_id uuid not null references public.vineyards(id) on delete cascade,
   version bigint not null default 0,
@@ -24,7 +42,7 @@ create table public.spray_trip_corrections (
   constraint spray_trip_corrections_source_check check (fuel_consumption_source is null or fuel_consumption_source = 'explicit_correction')
 );
 
-create table public.spray_trip_correction_amendments (
+create table if not exists public.spray_trip_correction_amendments (
   id uuid primary key default gen_random_uuid(),
   operation_id uuid not null unique,
   trip_id uuid not null references public.trips(id) on delete cascade,
@@ -36,9 +54,9 @@ create table public.spray_trip_correction_amendments (
   editor_name text not null,
   edited_at timestamptz not null default now()
 );
-create index spray_trip_correction_amendments_trip_idx on public.spray_trip_correction_amendments(trip_id, revision);
+create index if not exists spray_trip_correction_amendments_trip_idx on public.spray_trip_correction_amendments(trip_id, revision);
 
-create table public.spray_trip_correction_operations (
+create table if not exists public.spray_trip_correction_operations (
   operation_id uuid primary key,
   vineyard_id uuid not null references public.vineyards(id) on delete cascade,
   trip_id uuid not null references public.trips(id) on delete cascade,
@@ -47,7 +65,7 @@ create table public.spray_trip_correction_operations (
   completed_at timestamptz not null default now()
 );
 
-create table public.spray_row_assignment_evidence (
+create table if not exists public.spray_row_assignment_evidence (
   id uuid primary key default gen_random_uuid(),
   operation_id uuid not null,
   vineyard_id uuid not null references public.vineyards(id) on delete cascade,
@@ -73,9 +91,26 @@ create table public.spray_row_assignment_evidence (
   constraint spray_row_assignment_tank_check check (tank_number is null or tank_number >= 1),
   constraint spray_row_assignment_identity_check check (btrim(row_identity) <> '')
 );
-create index spray_row_assignment_evidence_trip_idx on public.spray_row_assignment_evidence(trip_id, block_id, row_number);
+create index if not exists spray_row_assignment_evidence_trip_idx on public.spray_row_assignment_evidence(trip_id, block_id, row_number);
 
-create table public.spray_row_recovery_operations (
+-- The early draft allowed NULL session IDs. Refuse to collapse genuinely
+-- conflicting historical rows, otherwise normalize NULL to the canonical empty key.
+do $upgrade$
+begin
+  if exists (
+    select 1
+    from public.spray_row_assignment_evidence
+    group by trip_id, block_id, row_identity, coalesce(tank_session_id, '')
+    having count(*) > 1
+  ) then
+    raise exception 'Duplicate historical row evidence would collide after session normalization; reconciliation stopped without changes';
+  end if;
+end $upgrade$;
+update public.spray_row_assignment_evidence set tank_session_id='' where tank_session_id is null;
+alter table public.spray_row_assignment_evidence alter column tank_session_id set default '';
+alter table public.spray_row_assignment_evidence alter column tank_session_id set not null;
+
+create table if not exists public.spray_row_recovery_operations (
   operation_id uuid primary key,
   vineyard_id uuid not null references public.vineyards(id) on delete cascade,
   trip_id uuid not null references public.trips(id) on delete cascade,
@@ -90,11 +125,40 @@ alter table public.spray_trip_correction_amendments enable row level security;
 alter table public.spray_trip_correction_operations enable row level security;
 alter table public.spray_row_assignment_evidence enable row level security;
 alter table public.spray_row_recovery_operations enable row level security;
+drop policy if exists spray_trip_corrections_member_read on public.spray_trip_corrections;
+drop policy if exists spray_trip_amendments_member_read on public.spray_trip_correction_amendments;
+drop policy if exists spray_trip_operations_member_read on public.spray_trip_correction_operations;
+drop policy if exists spray_row_evidence_member_read on public.spray_row_assignment_evidence;
+drop policy if exists spray_row_operations_member_read on public.spray_row_recovery_operations;
 create policy spray_trip_corrections_member_read on public.spray_trip_corrections for select to authenticated using (public.is_vineyard_member(vineyard_id));
 create policy spray_trip_amendments_member_read on public.spray_trip_correction_amendments for select to authenticated using (public.is_vineyard_member(vineyard_id));
 create policy spray_trip_operations_member_read on public.spray_trip_correction_operations for select to authenticated using (public.is_vineyard_member(vineyard_id));
 create policy spray_row_evidence_member_read on public.spray_row_assignment_evidence for select to authenticated using (public.is_vineyard_member(vineyard_id));
 create policy spray_row_operations_member_read on public.spray_row_recovery_operations for select to authenticated using (public.is_vineyard_member(vineyard_id));
+
+-- Preserve historical operation IDs from the early draft. Correction requests can
+-- be reconstructed from immutable amendment snapshots. Legacy row-recovery IDs
+-- are reserved because their original request array order was not stored.
+insert into public.spray_trip_correction_operations(operation_id,vineyard_id,trip_id,request_fingerprint,result_version,completed_at)
+select a.operation_id,a.vineyard_id,a.trip_id,
+  md5(jsonb_build_object(
+    'machineId',a.new_value->'machine_id',
+    'tractorId',a.new_value->'tractor_id',
+    'sprayEquipmentId',a.new_value->'spray_equipment_id',
+    'operatorUserId',a.new_value->'operator_user_id',
+    'fuelRate',a.new_value->'fuel_consumption_l_per_hour',
+    'startEngineHours',a.new_value->'start_engine_hours',
+    'endEngineHours',a.new_value->'end_engine_hours'
+  )::text),a.revision,a.edited_at
+from public.spray_trip_correction_amendments a
+on conflict(operation_id) do nothing;
+
+insert into public.spray_row_recovery_operations(operation_id,vineyard_id,trip_id,actor_user_id,assignment_fingerprint,assignment_count,completed_at)
+select e.operation_id,e.vineyard_id,e.trip_id,(array_agg(e.derived_by order by e.derived_at,e.id))[1],
+  'legacy_unverifiable:'||md5(jsonb_agg(to_jsonb(e) order by e.derived_at,e.id)::text),count(*)::integer,min(e.derived_at)
+from public.spray_row_assignment_evidence e
+group by e.operation_id,e.vineyard_id,e.trip_id
+on conflict(operation_id) do nothing;
 revoke all on public.spray_trip_corrections, public.spray_trip_correction_amendments, public.spray_trip_correction_operations, public.spray_row_assignment_evidence, public.spray_row_recovery_operations from public, anon, authenticated;
 grant select on public.spray_trip_corrections, public.spray_trip_correction_amendments, public.spray_trip_correction_operations, public.spray_row_assignment_evidence, public.spray_row_recovery_operations to authenticated, service_role;
 
@@ -186,14 +250,30 @@ begin
 end $fn$;
 
 -- Parse optional legacy JSON numerics without allowing malformed text, NaN, or infinity to break a report.
-create or replace function public.spray_report_safe_number_v1(p_value text) returns double precision language sql immutable set search_path=public as $safe$
-  select case when btrim(coalesce(p_value,'')) ~ '^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$' then p_value::double precision end
-$safe$;
+create or replace function public.spray_report_safe_number_v1(p_value text) returns double precision language plpgsql immutable set search_path=public as $safe$
+declare parsed double precision;
+begin
+  if btrim(coalesce(p_value,'')) !~ '^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$' then return null; end if;
+  begin
+    parsed:=p_value::double precision;
+  exception when invalid_text_representation or numeric_value_out_of_range then
+    return null;
+  end;
+  if parsed<>parsed or parsed in ('Infinity'::double precision,'-Infinity'::double precision) then return null; end if;
+  return parsed;
+end $safe$;
 revoke all on function public.spray_report_safe_number_v1(text) from public,anon,authenticated;
 grant execute on function public.spray_report_safe_number_v1(text) to service_role;
 
 -- Add canonical report facts without modifying the applied SQL 227 body.
-alter function public.get_spray_report_v1(uuid) rename to get_spray_report_v1_pre_canonical_facts_v1;
+do $upgrade$
+begin
+  if to_regprocedure('public.get_spray_report_v1_pre_canonical_facts_v1(uuid)') is null then
+    alter function public.get_spray_report_v1(uuid) rename to get_spray_report_v1_pre_canonical_facts_v1;
+  elsif to_regprocedure('public.get_spray_report_v1(uuid)') is null then
+    raise exception 'Canonical Spray Report base exists but its public wrapper is missing';
+  end if;
+end $upgrade$;
 create or replace function public.get_spray_report_v1(p_trip_id uuid) returns jsonb language plpgsql security definer set search_path=public as $fn$
 declare payload jsonb; t public.trips; r public.spray_records; c public.spray_trip_corrections; j public.spray_jobs;
   machine_id uuid; tractor_id uuid; unit_id uuid; operator_id uuid; machine_name text; unit_name text; operator_name text;
@@ -296,6 +376,7 @@ revoke all on function public.correct_spray_trip_metadata_v1(uuid,uuid,bigint,uu
 grant execute on function public.correct_spray_trip_metadata_v1(uuid,uuid,bigint,uuid,uuid,uuid,uuid,double precision,double precision,double precision) to authenticated;
 revoke all on function public.recover_spray_row_assignments_v1(uuid,uuid,uuid,jsonb) from public,anon,authenticated;
 grant execute on function public.recover_spray_row_assignments_v1(uuid,uuid,uuid,jsonb) to service_role;
+drop function if exists public.recover_spray_row_assignments_v1(uuid,uuid,jsonb);
 revoke all on function public.get_spray_report_v1_pre_canonical_facts_v1(uuid) from public,anon,authenticated;
 revoke all on function public.get_spray_report_v1(uuid) from public,anon;
 grant execute on function public.get_spray_report_v1(uuid) to authenticated;

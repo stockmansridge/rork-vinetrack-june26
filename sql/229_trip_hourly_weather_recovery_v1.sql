@@ -1,6 +1,7 @@
 -- 229: Durable hourly weather slots and provenance for Spray Reports.
--- Run manually after SQL 228. Does not alter or rerun SQL 224-228.
+-- Run manually after SQL 228. Safe for the earlier SQL 229 draft and does not alter or rerun SQL 224-227.
 begin;
+select pg_advisory_xact_lock(hashtext('vinetrack:spray-report-229-upgrade'));
 
 alter table public.trip_weather_observations
   add column if not exists retrieval_mode text,
@@ -17,7 +18,7 @@ alter table public.trip_weather_observations alter column retrieval_mode set not
 alter table public.trip_weather_observations alter column retrieved_at set default now();
 alter table public.trip_weather_observations alter column retrieved_at set not null;
 
-create table public.trip_weather_retrieval_attempts (
+create table if not exists public.trip_weather_retrieval_attempts (
   id uuid primary key default gen_random_uuid(),
   vineyard_id uuid not null references public.vineyards(id) on delete cascade,
   trip_id uuid not null references public.trips(id) on delete cascade,
@@ -41,10 +42,20 @@ create table public.trip_weather_retrieval_attempts (
   constraint trip_weather_attempt_mode_check check (retrieval_mode in ('live','historical_archive','legacy_snapshot','unavailable')),
   constraint trip_weather_attempt_outcome_check check (outcome in ('observed','manual','modelled','unavailable','transient_error'))
 );
-create index trip_weather_retrieval_attempts_trip_idx on public.trip_weather_retrieval_attempts(trip_id,sample_slot,retrieved_at);
+create index if not exists trip_weather_retrieval_attempts_trip_idx on public.trip_weather_retrieval_attempts(trip_id,sample_slot,retrieved_at);
 insert into public.trip_weather_retrieval_attempts(vineyard_id,trip_id,sample_slot,provider,station_id,station_name,retrieval_mode,outcome,observed_at,source,temperature_c,humidity_pct,wind_speed_kmh,wind_gust_kmh,wind_direction_deg,rain_mm,is_stale,provider_record_id,retrieved_at)
-select vineyard_id,trip_id,sample_slot,coalesce(nullif(provider,''),'legacy_unknown'),station_id,station_name,retrieval_mode,source_kind,observed_at,source,temperature_c,humidity_pct,wind_speed_kmh,wind_gust_kmh,wind_direction_deg,rain_mm,is_stale,provider_record_id,retrieved_at from public.trip_weather_observations;
+select w.vineyard_id,w.trip_id,w.sample_slot,coalesce(nullif(w.provider,''),'legacy_unknown'),w.station_id,w.station_name,w.retrieval_mode,w.source_kind,w.observed_at,w.source,w.temperature_c,w.humidity_pct,w.wind_speed_kmh,w.wind_gust_kmh,w.wind_direction_deg,w.rain_mm,w.is_stale,w.provider_record_id,w.retrieved_at
+from public.trip_weather_observations w
+where not exists (
+  select 1 from public.trip_weather_retrieval_attempts a
+  where a.trip_id=w.trip_id and a.sample_slot=w.sample_slot and a.retrieved_at=w.retrieved_at
+    and a.outcome=w.source_kind and a.retrieval_mode=w.retrieval_mode
+    and a.provider=coalesce(nullif(w.provider,''),'legacy_unknown')
+    and a.station_id is not distinct from w.station_id
+    and a.provider_record_id is not distinct from w.provider_record_id
+);
 alter table public.trip_weather_retrieval_attempts enable row level security;
+drop policy if exists trip_weather_attempts_member_read on public.trip_weather_retrieval_attempts;
 create policy trip_weather_attempts_member_read on public.trip_weather_retrieval_attempts for select to authenticated using (public.is_vineyard_member(vineyard_id));
 revoke all on public.trip_weather_retrieval_attempts from public,anon,authenticated;
 grant select on public.trip_weather_retrieval_attempts to authenticated;
@@ -73,10 +84,10 @@ create or replace function public.spray_weather_missing_slots_v1(p_trip_id uuid,
 returns table(sample_slot timestamptz) language plpgsql stable security definer set search_path=public as $fn$
 declare t public.trips; through_at timestamptz;
 begin
-  if auth.uid() is null then raise exception 'Authentication required' using errcode='42501'; end if;
+  if auth.role()<>'service_role' and auth.uid() is null then raise exception 'Authentication required' using errcode='42501'; end if;
   select * into t from public.trips where id=p_trip_id and deleted_at is null;
   if t.id is null then raise exception 'Trip not found' using errcode='P0002'; end if;
-  if not public.is_vineyard_member(t.vineyard_id) then raise exception 'Vineyard membership required' using errcode='42501'; end if;
+  if auth.role()<>'service_role' and not public.is_vineyard_member(t.vineyard_id) then raise exception 'Vineyard membership required' using errcode='42501'; end if;
   if not (coalesce(t.trip_function,'')='spraying' or exists(select 1 from public.spray_records r where r.trip_id=t.id and not r.is_template and r.deleted_at is null)) then raise exception 'Trip is not a spray trip' using errcode='22023'; end if;
   if t.start_time is null then return; end if;
   through_at:=least(coalesce(p_through,t.end_time,now()),coalesce(t.end_time,p_through,now()));
@@ -139,7 +150,14 @@ begin
   return public.record_trip_weather_observation_v2(p_trip_id,p_sample_slot,p_observed_at,p_source,p_source_kind,p_station_id,p_temperature_c,p_humidity_pct,p_wind_speed_kmh,p_wind_gust_kmh,p_wind_direction_deg,p_rain_mm,p_is_stale,case when p_source_kind='unavailable' then 'unavailable' else 'live' end,null,null,null);
 end $fn$;
 
-alter function public.get_spray_report_v1(uuid) rename to get_spray_report_v1_pre_weather_provenance_v1;
+do $upgrade$
+begin
+  if to_regprocedure('public.get_spray_report_v1_pre_weather_provenance_v1(uuid)') is null then
+    alter function public.get_spray_report_v1(uuid) rename to get_spray_report_v1_pre_weather_provenance_v1;
+  elsif to_regprocedure('public.get_spray_report_v1(uuid)') is null then
+    raise exception 'Weather Spray Report base exists but its public wrapper is missing';
+  end if;
+end $upgrade$;
 create or replace function public.get_spray_report_v1(p_trip_id uuid) returns jsonb language plpgsql security definer set search_path=public as $fn$
 declare payload jsonb; r public.spray_records; weather_json jsonb;
 begin

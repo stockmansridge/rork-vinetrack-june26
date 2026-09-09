@@ -21,6 +21,9 @@ begin
   if has_function_privilege('authenticated','public.recover_spray_row_assignments_v1(uuid,uuid,uuid,jsonb)','execute') or not has_function_privilege('service_role','public.recover_spray_row_assignments_v1(uuid,uuid,uuid,jsonb)','execute') then raise exception 'T11: row recovery must be service-only'; end if;
   body:=pg_get_functiondef('public.get_spray_report_v1(uuid)'::regprocedure);
   if body not like '%missing_worker_type_rate%' or body not like '%missing_or_ambiguous_chemical_unit_price%' or body not like '%weighted recorded purchases%' then raise exception 'T12: implemented costing or specific missing-data reasons absent'; end if;
+  if public.spray_report_safe_number_v1('1e999') is not null or public.spray_report_safe_number_v1('NaN') is not null or public.spray_report_safe_number_v1('not-a-number') is not null or public.spray_report_safe_number_v1('12.5') is distinct from 12.5 then raise exception 'T13: exception-safe legacy number parsing missing'; end if;
+  if to_regprocedure('public.recover_spray_row_assignments_v1(uuid,uuid,jsonb)') is not null then raise exception 'T14: obsolete client-write row recovery RPC remains exposed'; end if;
+  if exists(select 1 from public.spray_row_assignment_evidence where tank_session_id is null) then raise exception 'T15: row evidence session identity was not normalized'; end if;
   raise notice 'SQL 228 contract tests passed (transaction will roll back).';
 end $test$;
 rollback;
