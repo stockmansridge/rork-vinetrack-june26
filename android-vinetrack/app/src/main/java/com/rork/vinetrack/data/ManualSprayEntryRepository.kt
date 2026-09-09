@@ -19,6 +19,26 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.util.UUID
 
+sealed class ManualSprayMutationException(message: String) : Exception(message) {
+    class StaleVersion : ManualSprayMutationException("This spray changed on another device. Reload it and reconcile your changes before saving again.")
+    class Deleted : ManualSprayMutationException("This manual spray has already been deleted. Its saved retry was discarded.")
+
+    companion object {
+        fun classify(error: Throwable): ManualSprayMutationException? {
+            if (error is ManualSprayMutationException) return error
+            val diagnostic = buildString {
+                append(error.message.orEmpty())
+                if (error is BackendError.Server) append(' ').append(error.body)
+            }
+            return when {
+                "40001" in diagnostic -> StaleVersion()
+                "55000" in diagnostic -> Deleted()
+                else -> null
+            }
+        }
+    }
+}
+
 interface ManualSprayGateway {
     suspend fun save(operationId: String, payload: ManualSprayPayload, expectedVersion: Int?): ManualSpraySaveResponse
     suspend fun delete(operationId: String, payload: ManualSprayPayload)
@@ -115,7 +135,16 @@ class ManualSprayEntryCoordinator(
                 check(store.save(operations)) { "The server saved the spray, but confirmation could not be retained." }
                 response
             },
-            onFailure = { error -> markFailed(operation.id, error); null },
+            onFailure = { error ->
+                val terminal = ManualSprayMutationException.classify(error)
+                if (terminal != null) {
+                    operations.removeAll { it.id == operation.id }
+                    check(store.save(operations)) { "The rejected spray retry could not be cleared from this device." }
+                    throw terminal
+                }
+                markFailed(operation.id, error)
+                null
+            },
         )
     }
 
@@ -138,7 +167,12 @@ class ManualSprayEntryCoordinator(
                 if (operation.kind == PendingManualSprayKind.SAVE) gateway.save(operation.id, operation.payload, operation.expectedVersion)
                 else gateway.delete(operation.id, operation.payload)
             }.onSuccess { operations.removeAll { it.id == operation.id }; store.save(operations) }
-                .onFailure { markFailed(operation.id, it) }
+                .onFailure { error ->
+                    if (ManualSprayMutationException.classify(error) != null) {
+                        operations.removeAll { it.id == operation.id }
+                        store.save(operations)
+                    } else markFailed(operation.id, error)
+                }
         }
     }
 

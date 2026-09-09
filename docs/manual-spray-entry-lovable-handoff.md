@@ -4,9 +4,9 @@
 
 Jonathan confirmed that `sql/232_manual_spray_entry_v1.sql` and its supplied rollback-only test SQL ran successfully. **Do not rerun either file.** The deployed 232 contract is therefore available now.
 
-Latest synced implementation baseline: `f90b8658` (`Finished mobile corrections and delivered the shared manual spray entry groundwork`).
+Synced completion revision: `56a462a2` (`Completed manual spray entry and fixed database and photo deletion issues`). The managed `main` remote was verified at this exact revision on 9 September 2026. It contains the completed mobile corrections, SQL 233/234, and their handoff; the older `f90b8658` revision is only the initial mobile-groundwork baseline.
 
-Jonathan successfully applied `sql/233_manual_spray_entry_corrections.sql`. Its first behavioral-test run then exposed a pre-existing runtime grouping defect in the canonical report layer from SQL 228 (`SQLSTATE 42803`); the SQL 233 transaction itself is not to be rerun. The additive repair is `sql/234_spray_report_chemical_aggregate_fix.sql`. Jonathan must run SQL 234, then rerun the updated rollback-isolated `sql/tests/233_manual_spray_entry_behavior_tests.sql`. SQL 234 changes no public RPC signature or report schema.
+Jonathan confirmed `sql/233_manual_spray_entry_corrections.sql` and `sql/234_spray_report_chemical_aggregate_fix.sql` were applied successfully. The updated rollback-isolated `sql/tests/233_manual_spray_entry_behavior_tests.sql` then passed. **Do not rerun SQL 232, its supplied tests, SQL 233, SQL 234, or the completed SQL 233/234 behavioral test.** The database blocker is closed, with no public RPC signature or report-schema change.
 
 ## Source and identity
 
@@ -209,10 +209,10 @@ Response (there is no `filled` field):
 
 Supported recovery providers are `davis_weatherlink` and `wunderground`. `captured` means persisted genuine observations. Reload `get_spray_report_v1` after recovery. Missing credentials/archive data must not block manual save.
 
-**Deployment status, verified separately from SQL:** source exists at `supabase/functions/spray-weather-recovery/index.ts`, but live deployment is still **unverified**. Repository searches show it is not included by the default deploy scripts. The available project deployment/log tooling could not enumerate this external Supabase project, so SQL 232 confirmation must not be treated as Edge Function confirmation. Portal and mobile must show `unavailable`/`pending` clearly and keep saving independent of this endpoint.
+**Deployment status, verified separately from SQL:** `spray-weather-recovery` is deployed on shared project `tbafuqwruefgkbyxrxyb`. On 9 September 2026 its exact endpoint returned the expected authenticated-function `401 UNAUTHORIZED_NO_AUTH_HEADER`, while a deliberately nonexistent function on the same project returned `404 NOT_FOUND`. This verifies function routing without conflating it with SQL. Provider-secret configuration and an authenticated historical-trip result still require project access: Jonathan should open this exact project's Supabase Dashboard, select **Edge Functions → spray-weather-recovery**, confirm the current deployment and invocation logs, then check **Project Settings → Edge Functions/Secrets** for the provider credentials used by that vineyard. Missing credentials/archive data must return `unavailable` or `pending` without affecting manual saving.
 
 ## Portal implementation boundary
 
 Lovable owns the Portal form and PDF renderer. It should reuse current vineyard catalog queries for tractors, team members, spray units, blocks and Chemical Store products; call only the RPCs above for mutations; consume canonical report 1.2; and remove its expectation of weather `filled`.
 
-Current dependency status: SQL 232 and its supplied tests are confirmed complete, and SQL 233 is applied. SQL 233's behavioral test stopped at a pre-existing canonical-report aggregate error; SQL 234 and the updated SQL 233/234 behavioral-test rerun are pending with Jonathan. Live deployment/configuration of `spray-weather-recovery` remains separately unverified.
+Current dependency status: SQL 232–234 and the requested rollback-only database behavior tests are complete. No database rerun is pending. The weather function route is deployed; only its provider-secret/authenticated-trip configuration check remains. Remaining release work is mobile/device and cross-platform acceptance.

@@ -185,10 +185,15 @@ fun ManualSprayEntrySheet(
                     val candidate = payload(); val error = candidate.validationError()
                     if (error != null) message = error else if (!isReviewing) isReviewing = true else scope.launch {
                         isSaving = true
-                        val response = runCatching { coordinator.save(candidate, expectedVersion) }.getOrElse { message = it.message; null }
-                        isSaving = false
-                        if (response?.serverConfirmed == true) { expectedVersion = response.syncVersion; savedTripId = response.tripId; draftStore.clear(vineyardId); message = "Manual spray saved. Historical station weather is optional." }
-                        else message = "Saved on this device — awaiting sync"
+                        try {
+                            val response = coordinator.save(candidate, expectedVersion)
+                            if (response?.serverConfirmed == true) { expectedVersion = response.syncVersion; savedTripId = response.tripId; draftStore.clear(vineyardId); message = "Manual spray saved. Historical station weather is optional." }
+                            else message = "Saved on this device — awaiting sync"
+                        } catch (error: Exception) {
+                            message = error.message ?: "The manual spray could not be saved."
+                        } finally {
+                            isSaving = false
+                        }
                     }
                 }) { Text(if (isReviewing) "Save manual spray" else "Review") }
                 else Button(onClick = onSaved) { Text("Done") }

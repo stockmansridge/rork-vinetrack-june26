@@ -97,6 +97,11 @@ final class ManualSprayEntryCoordinator {
             guard store.save(operations) else { throw ManualSprayPersistenceError.couldNotPersistConfirmation }
             return response
         } catch {
+            if let terminalError = ManualSprayMutationError.classify(error) {
+                operations.removeAll { $0.id == operation.id }
+                guard store.save(operations) else { throw ManualSprayPersistenceError.couldNotPersistConfirmation }
+                throw terminalError
+            }
             markFailed(operation.id, error: error)
             return nil
         }
@@ -133,7 +138,12 @@ final class ManualSprayEntryCoordinator {
                 operations.removeAll { $0.id == operation.id }
                 _ = store.save(operations)
             } catch {
-                markFailed(operation.id, error: error)
+                if ManualSprayMutationError.classify(error) != nil {
+                    operations.removeAll { $0.id == operation.id }
+                    _ = store.save(operations)
+                } else {
+                    markFailed(operation.id, error: error)
+                }
             }
         }
     }
@@ -148,6 +158,27 @@ final class ManualSprayEntryCoordinator {
         operations[index].attemptCount += 1
         operations[index].lastError = error.localizedDescription
         _ = store.save(operations)
+    }
+}
+
+nonisolated enum ManualSprayMutationError: LocalizedError, Sendable {
+    case staleVersion
+    case deleted
+
+    static func classify(_ error: Error) -> ManualSprayMutationError? {
+        if let mutationError = error as? ManualSprayMutationError { return mutationError }
+        let nsError = error as NSError
+        let diagnostic = ([String(reflecting: error), error.localizedDescription, nsError.domain] + nsError.userInfo.values.map { String(describing: $0) }).joined(separator: " ")
+        if diagnostic.contains("40001") { return .staleVersion }
+        if diagnostic.contains("55000") { return .deleted }
+        return nil
+    }
+
+    var errorDescription: String? {
+        switch self {
+        case .staleVersion: "This spray changed on another device. Reload it and reconcile your changes before saving again."
+        case .deleted: "This manual spray has already been deleted. Its saved retry was discarded."
+        }
     }
 }
 

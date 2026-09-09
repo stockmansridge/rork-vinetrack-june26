@@ -28,6 +28,17 @@ class ManualSprayEntryWorkflowTest {
         assertEquals(750.0, payload.tanks.last().chemicals.first().actualAmountBase, 0.0)
     }
 
+    @Test fun terminalConflictAndDeletedErrorsAreNotQueuedForReplay() = runBlocking {
+        listOf(ManualSprayMutationException.StaleVersion(), ManualSprayMutationException.Deleted()).forEach { terminal ->
+            val store = MemoryStore()
+            val coordinator = ManualSprayEntryCoordinator(TerminalGateway(terminal), store)
+            val result = runCatching { coordinator.save(fixture(), 1) }
+            assertTrue(result.exceptionOrNull() is ManualSprayMutationException)
+            assertTrue(coordinator.pendingPayloads().isEmpty())
+            assertTrue(store.values.isEmpty())
+        }
+    }
+
     @Test fun lostResponseReplaysSameOperationAndDeleteSuppressesCreate() = runBlocking {
         val gateway = GatewayDouble(failSave = true)
         val store = MemoryStore()
@@ -66,6 +77,11 @@ private class MemoryStore : ManualSprayOperationStoring {
     var values: List<PendingManualSprayOperation> = emptyList()
     override fun load(): List<PendingManualSprayOperation> = values
     override fun save(operations: List<PendingManualSprayOperation>): Boolean { values = operations; return true }
+}
+
+private class TerminalGateway(private val error: Throwable) : ManualSprayGateway {
+    override suspend fun save(operationId: String, payload: ManualSprayPayload, expectedVersion: Int?): ManualSpraySaveResponse = throw error
+    override suspend fun delete(operationId: String, payload: ManualSprayPayload) = Unit
 }
 
 private class GatewayDouble(var failSave: Boolean = false, var failDelete: Boolean = false) : ManualSprayGateway {

@@ -33,6 +33,22 @@ final class ManualSprayEntryWorkflowTests: XCTestCase {
         XCTAssertEqual(Set(calls.map(\.payload.manualEntryId)), [payload.manualEntryId])
     }
 
+    func testTerminalConflictAndDeletedErrorsAreNotQueuedForReplay() async throws {
+        let payload = fixture()
+        for terminalError in [ManualSprayMutationError.staleVersion, .deleted] {
+            let repository = ManualSprayTerminalRepositoryDouble(error: terminalError)
+            let store = ManualSprayMemoryStore()
+            let coordinator = ManualSprayEntryCoordinator(repository: repository, store: store)
+            do {
+                _ = try await coordinator.save(payload: payload, expectedVersion: 1)
+                XCTFail("Expected terminal mutation error")
+            } catch let error as ManualSprayMutationError {
+                XCTAssertEqual(error.localizedDescription, terminalError.localizedDescription)
+            }
+            XCTAssertTrue(coordinator.pendingPayloads.isEmpty)
+        }
+    }
+
     func testDeleteBeforeReplaySuppressesSave() async throws {
         let repository = ManualSprayRepositoryDouble(failSaves: 1, failDeletes: 1)
         let store = ManualSprayMemoryStore()
@@ -75,6 +91,13 @@ private actor ManualSprayRepositoryDouble: ManualSprayEntryRepositoryProtocol {
     func delete(operationId: UUID, payload: ManualSprayPayload) async throws {
         if remainingDeleteFailures > 0 { remainingDeleteFailures -= 1; throw URLError(.notConnectedToInternet) }
     }
+}
+
+private actor ManualSprayTerminalRepositoryDouble: ManualSprayEntryRepositoryProtocol {
+    let error: ManualSprayMutationError
+    init(error: ManualSprayMutationError) { self.error = error }
+    func save(operationId: UUID, payload: ManualSprayPayload, expectedVersion: Int?) async throws -> ManualSpraySaveResponse { throw error }
+    func delete(operationId: UUID, payload: ManualSprayPayload) async throws {}
 }
 
 private final class ManualSprayMemoryStore: ManualSprayEntryStoring, @unchecked Sendable {
