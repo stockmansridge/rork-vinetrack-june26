@@ -16,6 +16,10 @@ struct SprayRecordDetailView: View {
     @State private var isRowsExpanded: Bool = false
     @State private var mapPosition: MapCameraPosition = .automatic
     @State private var includeCostingsInExport: Bool = true
+    @State private var canonicalReport: SprayReportPayloadV1?
+    @State private var showCorrectionEditor: Bool = false
+    @State private var isLoadingCorrection: Bool = false
+    @State private var correctionError: String?
 
     private var tripForRecord: Trip? {
         store.trips.first(where: { $0.id == record.tripId })
@@ -71,7 +75,16 @@ struct SprayRecordDetailView: View {
         .navigationTitle("Spray Record")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                if !record.isTemplate && (accessControl?.canEnterPricing == true || accessControl?.canViewFinancials == true) {
+                    Button {
+                        Task { await openCorrectionEditor() }
+                    } label: {
+                        if isLoadingCorrection { ProgressView() } else { Image(systemName: "fuelpump") }
+                    }
+                    .disabled(isLoadingCorrection || tripForRecord == nil)
+                    .accessibilityLabel("Correct equipment and fuel")
+                }
                 Button("Done") { dismiss() }
                     .font(.headline)
             }
@@ -91,8 +104,37 @@ struct SprayRecordDetailView: View {
                 existingRecord: record
             )
         }
+        .sheet(isPresented: $showCorrectionEditor) {
+            if let trip = tripForRecord, let canonicalReport {
+                SprayTripCorrectionEditor(
+                    tripId: trip.id,
+                    report: canonicalReport,
+                    machines: store.currentVineyardMachines,
+                    tractors: store.currentTractors,
+                    sprayEquipment: store.sprayEquipment
+                ) { updated in
+                    self.canonicalReport = updated
+                }
+            }
+        }
+        .alert("Correction unavailable", isPresented: Binding(get: { correctionError != nil }, set: { if !$0 { correctionError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(correctionError ?? "") }
         .onAppear {
             includeCostingsInExport = canViewFinancials
+        }
+    }
+
+    @MainActor
+    private func openCorrectionEditor() async {
+        guard let trip = tripForRecord else { return }
+        isLoadingCorrection = true
+        defer { isLoadingCorrection = false }
+        do {
+            canonicalReport = try await SprayReportRepository.shared.fetch(tripId: trip.id)
+            showCorrectionEditor = true
+        } catch {
+            correctionError = "Sync this spray record and check your connection, then try again."
         }
     }
 

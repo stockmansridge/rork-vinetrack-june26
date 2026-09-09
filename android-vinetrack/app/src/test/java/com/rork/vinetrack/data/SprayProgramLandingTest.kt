@@ -109,6 +109,18 @@ class SprayProgramLandingTest {
     }
 
     @Test
+    fun `operational list collapses duplicate cache snapshots and keeps newest`() {
+        val older = step("same", "Older", isTemplate = false).copy(date = "2026-09-01T00:00:00Z")
+        val newer = step("same", "Newer", isTemplate = false).copy(date = "2026-09-02T00:00:00Z")
+        val other = step("other", "Other", isTemplate = false)
+
+        val result = SprayProgramLanding.uniqueOperational(listOf(older, newer, other, newer))
+
+        assertEquals(2, result.size)
+        assertEquals("Newer", result.first { it.id == "same" }.displayLabel)
+    }
+
+    @Test
     fun `merge dedupes by id and local wins`() {
         val local = listOf(
             step("shared", "Local copy"),

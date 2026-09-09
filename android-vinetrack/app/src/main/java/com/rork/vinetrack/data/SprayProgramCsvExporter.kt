@@ -10,6 +10,7 @@ import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.spray.SprayBlockAttributionDisplay
 import com.rork.vinetrack.data.model.SprayChemical
 import com.rork.vinetrack.data.model.SprayRecord
+import com.rork.vinetrack.data.reporting.SprayReportPayloadV1
 import com.rork.vinetrack.data.model.chemicalUnitFromBase
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.VineyardMachine
@@ -87,7 +88,7 @@ object SprayProgramCsvExporter {
      *
      * Non-financial, so emitted for every role.
      */
-    private val blockAttributionHeaders: List<String> = listOf("Block IDs", "Blocks")
+    private val blockAttributionHeaders: List<String> = listOf("Block IDs", "Blocks", "Canonical Rows")
 
     /** Export-only row-coverage + tank fill-timer columns (ignored by importer). */
     private val coverageHeaders: List<String> = listOf(
@@ -239,6 +240,7 @@ object SprayProgramCsvExporter {
         fuelPurchases: List<FuelPurchase> = emptyList(),
         operatorCategories: List<OperatorCategory> = emptyList(),
         paddocks: List<Paddock> = emptyList(),
+        canonicalReports: Map<String, SprayReportPayloadV1> = emptyMap(),
     ): Boolean {
         return try {
             val csv = buildCsv(
@@ -250,6 +252,7 @@ object SprayProgramCsvExporter {
                 operatorCategories = operatorCategories,
                 paddocks = paddocks,
                 actuals = SprayTankActualStore(context).load(),
+                canonicalReports = canonicalReports,
             )
 
             val dir = File(context.cacheDir, "exports").apply { mkdirs() }
@@ -287,6 +290,7 @@ object SprayProgramCsvExporter {
         operatorCategories: List<OperatorCategory>,
         paddocks: List<Paddock>,
         actuals: List<com.rork.vinetrack.data.model.SprayTankActual>,
+        canonicalReports: Map<String, SprayReportPayloadV1>,
     ): String {
         val sb = StringBuilder()
         sb.append(exportHeaders(includeCostings).joinToString(",") { escape(it) }).append("\n")
@@ -295,6 +299,8 @@ object SprayProgramCsvExporter {
 
         for (record in records) {
             val trip = resolveSprayTrip(record, trips)
+            val canonical = record.tripId?.let(canonicalReports::get)
+            val canonicalWeather = canonical?.weather?.firstOrNull { it.sourceKind == "observed" || it.sourceKind == "manual" }
             val row = ArrayList<String>(exportHeaders(includeCostings).size)
 
             row.add(record.sprayReference.orEmpty())
@@ -318,8 +324,8 @@ object SprayProgramCsvExporter {
             // Growth stage isn't surfaced on Android spray records yet.
             row.add("")
 
-            row.add(record.temperature?.let { String.format(Locale.US, "%.1f", it) } ?: "")
-            row.add(record.windSpeed?.let { String.format(Locale.US, "%.1f", it) } ?: "")
+            row.add((canonicalWeather?.temperatureC ?: record.temperature)?.let { String.format(Locale.US, "%.1f", it) } ?: "")
+            row.add((canonicalWeather?.windSpeedKmh ?: record.windSpeed)?.let { String.format(Locale.US, "%.1f", it) } ?: "")
             row.add(record.windDirection.orEmpty())
             row.add(record.humidity?.let { String.format(Locale.US, "%.0f", it) } ?: "")
             row.add(record.notes.orEmpty())
@@ -369,8 +375,9 @@ object SprayProgramCsvExporter {
             // reconstructed from the linked trip, the row coverage or the current
             // vineyard geometry.
             val treatedBlocks = record.applicationGeometry?.blocks
-            row.add(SprayBlockAttributionDisplay.idsCell(treatedBlocks))
-            row.add(SprayBlockAttributionDisplay.namesCell(treatedBlocks, paddocks))
+            row.add(canonical?.blocks?.joinToString("; ") { it.blockId } ?: SprayBlockAttributionDisplay.idsCell(treatedBlocks))
+            row.add(canonical?.blocks?.joinToString("; ") { it.name } ?: SprayBlockAttributionDisplay.namesCell(treatedBlocks, paddocks))
+            row.add(canonical?.rows?.joinToString("; ") { String.format(Locale.US, "%g", it.rowNumber) }.orEmpty())
 
             // Row-coverage columns — populated only for planned trips; blank otherwise.
             if (trip != null && trip.hasRowPlan) {

@@ -45,6 +45,47 @@ class SprayReportRepository(private val session: SessionStore) {
         return rpc("get_spray_report_v1", ReportArgs(tripId))
     }
 
+    /** Fetches every distinct trip separately; failures are omitted for caller fallback. */
+    suspend fun fetchAll(tripIds: List<String>): Map<String, SprayReportPayloadV1> = buildMap {
+        tripIds.distinct().forEach { tripId ->
+            runCatching { fetch(tripId) }.getOrNull()?.let { put(tripId, it) }
+        }
+    }
+
+    @Serializable
+    private data class CorrectionArgs(
+        @SerialName("p_operation_id") val operationId: String,
+        @SerialName("p_trip_id") val tripId: String,
+        @SerialName("p_expected_version") val expectedVersion: Long,
+        @SerialName("p_machine_id") val machineId: String?,
+        @SerialName("p_tractor_id") val tractorId: String?,
+        @SerialName("p_spray_equipment_id") val sprayEquipmentId: String?,
+        @SerialName("p_operator_user_id") val operatorUserId: String?,
+        @SerialName("p_fuel_consumption_l_per_hour") val fuelRate: Double?,
+        @SerialName("p_start_engine_hours") val startEngineHours: Double?,
+        @SerialName("p_end_engine_hours") val endEngineHours: Double?,
+    )
+    @Serializable private data class CorrectionResponse(val report: SprayReportPayloadV1)
+
+    suspend fun correctMetadata(
+        tripId: String,
+        expectedVersion: Long,
+        machineId: String?,
+        tractorId: String?,
+        sprayEquipmentId: String?,
+        operatorUserId: String?,
+        fuelRate: Double?,
+        startEngineHours: Double?,
+        endEngineHours: Double?,
+    ): SprayReportPayloadV1 {
+        val response: CorrectionResponse = rpc(
+            "correct_spray_trip_metadata_v1",
+            CorrectionArgs(java.util.UUID.randomUUID().toString(), tripId, expectedVersion, machineId, tractorId,
+                sprayEquipmentId, operatorUserId, fuelRate, startEngineHours, endEngineHours),
+        )
+        return response.report
+    }
+
     /** Runs the shared server derivation; ambiguous paths are intentionally left unresolved. */
     private suspend fun recoverRows(tripId: String) {
         if (!SupabaseClient.isConfigured) return

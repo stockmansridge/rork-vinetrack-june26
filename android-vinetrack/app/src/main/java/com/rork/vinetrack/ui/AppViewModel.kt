@@ -1021,6 +1021,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val session = SessionStore(app)
     private val sprayReportRepository = SprayReportRepository(session)
+
+    fun loadCanonicalSprayReport(tripId: String, onResult: (Result<com.rork.vinetrack.data.reporting.SprayReportPayloadV1>) -> Unit) {
+        viewModelScope.launch { onResult(runCatching { sprayReportRepository.fetch(tripId) }) }
+    }
+
+    fun correctSprayTripMetadata(
+        tripId: String,
+        expectedVersion: Long,
+        machineId: String?,
+        tractorId: String?,
+        sprayEquipmentId: String?,
+        operatorUserId: String?,
+        fuelRate: Double?,
+        startEngineHours: Double?,
+        endEngineHours: Double?,
+        onResult: (Result<com.rork.vinetrack.data.reporting.SprayReportPayloadV1>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            onResult(runCatching {
+                sprayReportRepository.correctMetadata(tripId, expectedVersion, machineId, tractorId,
+                    sprayEquipmentId, operatorUserId, fuelRate, startEngineHours, endEngineHours)
+            })
+        }
+    }
+
+    suspend fun canonicalSprayReports(tripIds: List<String>): Map<String, com.rork.vinetrack.data.reporting.SprayReportPayloadV1> =
+        sprayReportRepository.fetchAll(tripIds)
     private val auth = AuthRepository(session)
     private val biometricStore = BiometricStore(app)
     private val onboardingStore = OnboardingStore(app)

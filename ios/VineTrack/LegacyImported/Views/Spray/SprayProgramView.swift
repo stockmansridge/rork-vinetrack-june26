@@ -627,26 +627,33 @@ struct SprayProgramView: View {
     // MARK: - Export
 
     private func exportCSV() {
-        // Costing columns are only included for owner/manager. Supervisors and
-        // operators receive a CSV without any pricing columns.
+        guard !isExporting else { return }
+        isExporting = true
+        let records = operationalRecords
+        let trips = store.trips
         let vineyardName = store.selectedVineyard?.name ?? "Vineyard"
         let includeCostings = accessControl?.canViewCosting ?? false
-        let url = SprayProgramCSVService.exportRecords(
-            records: operationalRecords,
-            trips: store.trips,
-            vineyardName: vineyardName,
-            timeZone: store.settings.resolvedTimeZone,
-            includeCostings: includeCostings,
-            tractors: includeCostings ? store.currentTractors : [],
-            fuelPurchases: includeCostings ? store.currentFuelPurchases : [],
-            operatorCategories: includeCostings ? store.operatorCategories : [],
-            operatorCategoryForName: includeCostings ? { store.operatorCategoryForName($0) } : nil,
-            savedChemicals: includeCostings ? store.savedChemicals : [],
-            tankActuals: includeCostings ? SprayTankActualStore.shared.records : [],
-            paddocks: includeCostings ? store.paddocks : [],
-            historicalYieldRecords: includeCostings ? store.historicalYieldRecords : []
-        )
-        sharePDFURL = ShareURL(url: url)
+        Task {
+            let canonicalReports = await SprayReportRepository.shared.fetchAll(tripIds: records.compactMap(\.tripId))
+            let url = SprayProgramCSVService.exportRecords(
+                records: records,
+                trips: trips,
+                vineyardName: vineyardName,
+                timeZone: store.settings.resolvedTimeZone,
+                includeCostings: includeCostings,
+                tractors: includeCostings ? store.currentTractors : [],
+                fuelPurchases: includeCostings ? store.currentFuelPurchases : [],
+                operatorCategories: includeCostings ? store.operatorCategories : [],
+                operatorCategoryForName: includeCostings ? { store.operatorCategoryForName($0) } : nil,
+                savedChemicals: includeCostings ? store.savedChemicals : [],
+                tankActuals: includeCostings ? SprayTankActualStore.shared.records : [],
+                paddocks: store.paddocks,
+                historicalYieldRecords: includeCostings ? store.historicalYieldRecords : [],
+                canonicalReports: canonicalReports
+            )
+            sharePDFURL = ShareURL(url: url)
+            isExporting = false
+        }
     }
 
     private func exportImportCSV() {
@@ -677,7 +684,9 @@ struct SprayProgramView: View {
         let formatter = store.settings.regionFormatter
         let tankActuals = SprayTankActualStore.shared.records.filter { actual in records.contains { $0.id == actual.sprayRecordId } }
 
-        Task.detached {
+        Task {
+            let includedTripIds = records.compactMap(\.tripId)
+            let canonicalReports = await SprayReportRepository.shared.fetchAll(tripIds: includedTripIds)
             let url = SprayProgramExportService.generateProgramPDF(
                 records: records,
                 trips: trips,
@@ -693,7 +702,8 @@ struct SprayProgramView: View {
                 tankActuals: tankActuals,
                 includeCostings: includeCostings,
                 timeZone: exportTimeZone,
-                formatter: formatter
+                formatter: formatter,
+                canonicalReports: canonicalReports
             )
             await MainActor.run {
                 sharePDFURL = ShareURL(url: url)

@@ -39,6 +39,14 @@ data class SprayResumeSection(
 
 object SprayProgramLanding {
 
+    /** Presentation-boundary repair for duplicate cache snapshots; newest wins. */
+    fun uniqueOperational(records: List<SprayRecord>): List<SprayRecord> = records
+        .asSequence()
+        .filter { !it.isTemplate }
+        .groupBy { it.id }
+        .values
+        .mapNotNull { copies -> copies.maxWithOrNull(compareBy<SprayRecord> { it.dateEpochMs ?: 0L }.thenBy { it.id }) }
+
     /**
      * Finds an E-L (Eichhorn–Lorenz) stage mention in free text — "EL12",
      * "EL 12", "E-L 12", "el-7" — so sorting can use the numeric stage value.

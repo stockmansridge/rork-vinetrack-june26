@@ -130,6 +130,7 @@ import com.rork.vinetrack.data.TripRowSequencePlanner
 import com.rork.vinetrack.data.SprayProgramPdfExporter
 import com.rork.vinetrack.data.SprayRecordPdfExporter
 import com.rork.vinetrack.data.SprayRecordRepository
+import com.rork.vinetrack.data.reporting.SprayReportPayloadV1
 import com.rork.vinetrack.data.model.SprayChemical
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.SprayStatus
@@ -307,6 +308,7 @@ private fun SprayListView(
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
+    val exportScope = rememberCoroutineScope()
     // The two halves of the Spray Program. Opens on Program — the vineyard's
     // master program is the primary landing view, exactly as on iOS.
     var tab by rememberSaveable { mutableStateOf(SprayProgramTabChoice.PROGRAM) }
@@ -364,8 +366,7 @@ private fun SprayListView(
     }
     val operational = remember(state.sprayRecords, query, sort, state.trips) {
         SprayProgramLanding.sort(
-            state.sprayRecords
-                .filter { !it.isTemplate }
+            SprayProgramLanding.uniqueOperational(state.sprayRecords)
                 .filter { query.isEmpty() || SprayProgramLanding.sprayMatches(it, state.trips, query) },
             sort,
         )
@@ -466,19 +467,21 @@ private fun SprayListView(
                                 enabled = operational.isNotEmpty(),
                                 onClick = {
                                     sortMenu = false
-                                    val ok = SprayProgramCsvExporter.exportAndShare(
-                                        context = context,
-                                        records = operational,
-                                        trips = state.trips,
-                                        vineyardName = state.selectedVineyard?.name ?: "Vineyard",
-                                        canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager",
-                                        machines = state.machines,
-                                        fuelPurchases = state.fuelPurchases,
-                                        operatorCategories = state.operatorCategories,
-                                        paddocks = state.paddocks,
-                                    )
-                                    if (!ok) {
-                                        Toast.makeText(context, "Couldn't export the CSV. Please try again.", Toast.LENGTH_SHORT).show()
+                                    exportScope.launch {
+                                        val canonicalReports = vm.canonicalSprayReports(operational.mapNotNull { it.tripId })
+                                        val ok = SprayProgramCsvExporter.exportAndShare(
+                                            context = context,
+                                            records = operational,
+                                            trips = state.trips,
+                                            vineyardName = state.selectedVineyard?.name ?: "Vineyard",
+                                            canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager",
+                                            machines = state.machines,
+                                            fuelPurchases = state.fuelPurchases,
+                                            operatorCategories = state.operatorCategories,
+                                            paddocks = state.paddocks,
+                                            canonicalReports = canonicalReports,
+                                        )
+                                        if (!ok) Toast.makeText(context, "Couldn't export the CSV. Please try again.", Toast.LENGTH_SHORT).show()
                                     }
                                 },
                             )
@@ -488,21 +491,23 @@ private fun SprayListView(
                                 enabled = operational.isNotEmpty(),
                                 onClick = {
                                     sortMenu = false
-                                    val ok = SprayProgramPdfExporter.exportAndShare(
-                                        context = context,
-                                        records = operational,
-                                        trips = state.trips,
-                                        vineyardName = state.selectedVineyard?.name ?: "Vineyard",
-                                        canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager",
-                                        machines = state.machines,
-                                        fuelPurchases = state.fuelPurchases,
-                                        operatorCategories = state.operatorCategories,
-                                        paddocks = state.paddocks,
-                                        tankActuals = operational.flatMap { record -> record.tripId?.let { tripId -> record.tanks.orEmpty().mapNotNull { vm.actualTankUse(tripId, it.tankNumber) } }.orEmpty() },
-                                        logo = state.selectedVineyardLogo,
-                                    )
-                                    if (!ok) {
-                                        Toast.makeText(context, "Couldn't export the PDF. Please try again.", Toast.LENGTH_SHORT).show()
+                                    exportScope.launch {
+                                        val canonicalReports = vm.canonicalSprayReports(operational.mapNotNull { it.tripId })
+                                        val ok = SprayProgramPdfExporter.exportAndShare(
+                                            context = context,
+                                            records = operational,
+                                            trips = state.trips,
+                                            vineyardName = state.selectedVineyard?.name ?: "Vineyard",
+                                            canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager",
+                                            machines = state.machines,
+                                            fuelPurchases = state.fuelPurchases,
+                                            operatorCategories = state.operatorCategories,
+                                            paddocks = state.paddocks,
+                                            tankActuals = operational.flatMap { record -> record.tripId?.let { tripId -> record.tanks.orEmpty().mapNotNull { vm.actualTankUse(tripId, it.tankNumber) } }.orEmpty() },
+                                            logo = state.selectedVineyardLogo,
+                                            canonicalReports = canonicalReports,
+                                        )
+                                        if (!ok) Toast.makeText(context, "Couldn't export the PDF. Please try again.", Toast.LENGTH_SHORT).show()
                                     }
                                 },
                             )
@@ -1024,6 +1029,8 @@ private fun SprayDetailView(
     var confirmDelete by remember { mutableStateOf(false) }
     var starting by remember { mutableStateOf(false) }
     var showStartConfirmation by remember { mutableStateOf(false) }
+    var correctionReport by remember { mutableStateOf<SprayReportPayloadV1?>(null) }
+    var loadingCorrection by remember { mutableStateOf(false) }
 
     if (record == null) {
         LaunchedEffectBack(onBack)
@@ -1086,6 +1093,23 @@ private fun SprayDetailView(
                             }
                         }
                     } else {
+                        if (state.currentRole in setOf("owner", "manager", "supervisor")) {
+                            IconButton(
+                                enabled = !loadingCorrection,
+                                onClick = {
+                                    val tripId = record.tripId ?: return@IconButton
+                                    loadingCorrection = true
+                                    vm.loadCanonicalSprayReport(tripId) { result ->
+                                        loadingCorrection = false
+                                        result.onSuccess { correctionReport = it }
+                                            .onFailure { Toast.makeText(context, "Correction unavailable. Sync and try again.", Toast.LENGTH_LONG).show() }
+                                    }
+                                },
+                            ) {
+                                if (loadingCorrection) CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                                else Icon(Icons.Filled.LocalGasStation, contentDescription = "Correct equipment and fuel")
+                            }
+                        }
                         IconButton(onClick = { onEdit(record) }) { Icon(Icons.Filled.Edit, contentDescription = "Edit record") }
                     }
                 },
@@ -1434,6 +1458,16 @@ private fun SprayDetailView(
             }
             Spacer(Modifier.height(8.dp))
         }
+    }
+
+    correctionReport?.let { report ->
+        SprayTripCorrectionSheet(
+            vm = vm,
+            state = state,
+            report = report,
+            onDismiss = { correctionReport = null },
+            onSaved = { correctionReport = null },
+        )
     }
 
     if (showStartConfirmation) {

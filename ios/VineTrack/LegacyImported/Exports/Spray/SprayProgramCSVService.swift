@@ -71,7 +71,8 @@ struct SprayProgramCSVService {
         savedChemicals: [SavedChemical] = [],
         tankActuals: [SprayTankActual] = [],
         paddocks: [Paddock] = [],
-        historicalYieldRecords: [HistoricalYieldRecord] = []
+        historicalYieldRecords: [HistoricalYieldRecord] = [],
+        canonicalReports: [UUID: SprayReportPayloadV1] = [:]
     ) -> URL {
         // Cost columns are only emitted when the caller explicitly opts in
         // (owner/manager). Supervisors and operators MUST receive
@@ -86,7 +87,7 @@ struct SprayProgramCSVService {
         // must not have to string-match English prose.
         //
         // Non-financial, so they are emitted for every role.
-        headers.append(contentsOf: ["Block IDs", "Blocks", "Actual Tanks Recorded", "Actual Water Used (L)"])
+        headers.append(contentsOf: ["Block IDs", "Blocks", "Canonical Rows", "Actual Tanks Recorded", "Actual Water Used (L)"])
         for index in 1...maxChemicals {
             headers.append(contentsOf: [
                 "Actual Chemical \(index) Name",
@@ -118,6 +119,8 @@ struct SprayProgramCSVService {
 
         for record in records {
             let trip = trips.first { $0.id == record.tripId }
+            let canonical = trip.flatMap { canonicalReports[$0.id] }
+            let canonicalWeather = canonical?.weather.first { $0.sourceKind == "observed" || $0.sourceKind == "manual" }
 
             var row: [String] = []
             row.append(escapeCSV(record.sprayReference))
@@ -139,8 +142,8 @@ struct SprayProgramCSVService {
 
             row.append(escapeCSV(growthStageLookup?(record) ?? ""))
 
-            row.append(record.temperature.map { String(format: "%.1f", $0) } ?? "")
-            row.append(record.windSpeed.map { String(format: "%.1f", $0) } ?? "")
+            row.append((canonicalWeather?.temperatureC ?? record.temperature).map { String(format: "%.1f", $0) } ?? "")
+            row.append((canonicalWeather?.windSpeedKmh ?? record.windSpeed).map { String(format: "%.1f", $0) } ?? "")
             row.append(record.windDirection)
             row.append(record.humidity.map { String(format: "%.0f", $0) } ?? "")
             row.append(escapeCSV(record.notes))
@@ -168,8 +171,9 @@ struct SprayProgramCSVService {
             // reconstructed from the linked trip, the row coverage or the current
             // vineyard geometry.
             let treatedBlocks = record.applicationGeometry?.blocks
-            row.append(escapeCSV(SprayBlockAttributionDisplay.idsCell(treatedBlocks)))
-            row.append(escapeCSV(SprayBlockAttributionDisplay.namesCell(treatedBlocks, paddocks: paddocks)))
+            row.append(escapeCSV(canonical?.blocks?.map(\.blockId).joined(separator: "; ") ?? SprayBlockAttributionDisplay.idsCell(treatedBlocks)))
+            row.append(escapeCSV(canonical?.blocks?.map(\.name).joined(separator: "; ") ?? SprayBlockAttributionDisplay.namesCell(treatedBlocks, paddocks: paddocks)))
+            row.append(escapeCSV(canonical?.rows.map { String(format: "%g", $0.rowNumber) }.joined(separator: "; ") ?? ""))
 
             let actuals = SprayTankActualStore.shared.records.filter { $0.sprayRecordId == record.id }
             row.append(String(actuals.count))

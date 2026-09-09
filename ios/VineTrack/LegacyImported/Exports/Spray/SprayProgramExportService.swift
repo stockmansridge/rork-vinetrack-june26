@@ -26,7 +26,8 @@ struct SprayProgramExportService {
         tankActuals: [SprayTankActual] = [],
         includeCostings: Bool = true,
         timeZone: TimeZone = .current,
-        formatter: RegionFormatter = .australian
+        formatter: RegionFormatter = .australian,
+        canonicalReports: [UUID: SprayReportPayloadV1] = [:]
     ) -> URL {
         // Prefer stable equipment links when present; fall back to text snapshots.
         // Routed through the shared `EquipmentResolver` so spray-equipment naming
@@ -53,8 +54,6 @@ struct SprayProgramExportService {
             var pageNumber: Int = 1
             let officialLogo = UIImage(named: "vinetrack_logo")
 
-            let titleFont = UIFont.systemFont(ofSize: 20, weight: .bold)
-            let subtitleFont = UIFont.systemFont(ofSize: 11, weight: .medium)
             let headerFont = UIFont.systemFont(ofSize: 8, weight: .bold)
             let bodyFont = UIFont.systemFont(ofSize: 8, weight: .regular)
             let bodyBoldFont = UIFont.systemFont(ofSize: 8, weight: .semibold)
@@ -129,6 +128,7 @@ struct SprayProgramExportService {
                 checkPageBreak(needed: 22)
 
                 let trip = trips.first { $0.id == record.tripId }
+                let canonical = trip.flatMap { canonicalReports[$0.id] }
 
                 if index % 2 == 0 {
                     let bg = UIBezierPath(rect: CGRect(x: margin, y: y, width: contentWidth, height: 20))
@@ -156,10 +156,12 @@ struct SprayProgramExportService {
                 // footnote; the vineyard's current blocks are never substituted.
                 let treatedBlocks = record.applicationGeometry?.blocks
                 let blockCell: String = {
-                    guard let resolved = SprayBlockAttributionDisplay.resolve(
-                        treatedBlocks,
-                        paddocks: paddocks
-                    ) else {
+                    if let canonical, let blocks = canonical.blocks, !blocks.isEmpty {
+                        let names = blocks.map(\.name).joined(separator: ", ")
+                        let rows = canonical.rows.map { String(format: "%g", $0.rowNumber) }.joined(separator: ", ")
+                        return rows.isEmpty ? names : "\(names) · rows \(rows)"
+                    }
+                    guard let resolved = SprayBlockAttributionDisplay.resolve(treatedBlocks, paddocks: paddocks) else {
                         hasUnrecordedBlocks = true
                         return "Not recorded"
                     }
@@ -177,10 +179,11 @@ struct SprayProgramExportService {
                 let rateStr = avgRate > 0 ? String(format: "%.0f", formatter.sprayRateValue(perHectare: avgRate)) : "–"
                 (rateStr as NSString).draw(at: CGPoint(x: columns[5].1 + 3, y: rowY), withAttributes: rowAttrs)
 
-                let tempStr = record.temperature.map { String(format: "%.0f°C", $0) } ?? "–"
+                let canonicalWeather = canonical?.weather.first(where: { $0.sourceKind == "observed" || $0.sourceKind == "manual" })
+                let tempStr = (canonicalWeather?.temperatureC ?? record.temperature).map { String(format: "%.0f°C", $0) } ?? "–"
                 (tempStr as NSString).draw(at: CGPoint(x: columns[6].1 + 3, y: rowY), withAttributes: rowAttrs)
 
-                let windStr = record.windSpeed.map { String(format: "%.0f km/h", $0) } ?? "–"
+                let windStr = (canonicalWeather?.windSpeedKmh ?? record.windSpeed).map { String(format: "%.0f km/h", $0) } ?? "–"
                 (windStr as NSString).draw(at: CGPoint(x: columns[7].1 + 3, y: rowY), withAttributes: rowAttrs)
 
                 let equipName = resolvedEquipmentName(record)

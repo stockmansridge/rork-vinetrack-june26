@@ -23,6 +23,7 @@ import com.rork.vinetrack.data.model.formatTripDuration
 import com.rork.vinetrack.data.model.resolveSprayTrip
 import com.rork.vinetrack.data.model.sprayRecordStatus
 import com.rork.vinetrack.data.model.SprayStatus
+import com.rork.vinetrack.data.reporting.SprayReportPayloadV1
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -171,12 +172,13 @@ object SprayProgramPdfExporter {
         paddocks: List<Paddock> = emptyList(),
         tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual> = emptyList(),
         logo: Bitmap? = null,
+        canonicalReports: Map<String, SprayReportPayloadV1> = emptyMap(),
     ): Boolean {
         if (records.isEmpty()) return false
         return try {
             val doc = PdfDocument()
             val s = PageState(doc, BitmapFactory.decodeResource(context.resources, R.drawable.vinetrack_logo))
-            render(s, records, trips, vineyardName, canViewFinancials, machines, fuelPurchases, operatorCategories, paddocks, tankActuals, logo)
+            render(s, records, trips, vineyardName, canViewFinancials, machines, fuelPurchases, operatorCategories, paddocks, tankActuals, logo, canonicalReports)
             s.finish()
 
             val dir = File(context.cacheDir, "exports").apply { mkdirs() }
@@ -218,6 +220,7 @@ object SprayProgramPdfExporter {
         paddocks: List<Paddock>,
         tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual>,
         logo: Bitmap?,
+        canonicalReports: Map<String, SprayReportPayloadV1>,
     ) {
         // Header
         val textX = PdfHeaderUtil.drawLogo(s.canvas, logo, MARGIN, s.y)
@@ -248,7 +251,7 @@ object SprayProgramPdfExporter {
         var hasUnrecordedBlocks = false
         records.forEachIndexed { index, record ->
             s.ensure(20f) { drawTableHeader(it) }
-            if (!drawRow(s, index, record, trips, paddocks)) hasUnrecordedBlocks = true
+            if (!drawRow(s, index, record, trips, paddocks, record.tripId?.let(canonicalReports::get))) hasUnrecordedBlocks = true
         }
 
         drawChemicalTotals(s, records)
@@ -306,6 +309,7 @@ object SprayProgramPdfExporter {
         record: SprayRecord,
         trips: List<Trip>,
         paddocks: List<Paddock>,
+        canonical: SprayReportPayloadV1?,
     ): Boolean {
         val contentWidth = PAGE_WIDTH - MARGIN * 2
         if (index % 2 == 0) {
@@ -323,12 +327,13 @@ object SprayProgramPdfExporter {
         // Kept to the existing column so the program stays one line per
         // application. The vineyard's current blocks are never substituted for a
         // record that never recorded its own.
-        val treatedBlocks = SprayBlockAttributionDisplay.resolve(
-            record.applicationGeometry?.blocks,
-            paddocks,
-        )
-        val blocksRecorded = treatedBlocks != null
-        val blockCell = treatedBlocks?.joinToString(", ") { it.name } ?: "Not recorded"
+        val treatedBlocks = SprayBlockAttributionDisplay.resolve(record.applicationGeometry?.blocks, paddocks)
+        val blocksRecorded = canonical?.blocks?.isNotEmpty() == true || treatedBlocks != null
+        val blockCell = canonical?.blocks?.takeIf { it.isNotEmpty() }?.let { blocks ->
+            val names = blocks.joinToString(", ") { it.name }
+            val rows = canonical.rows.joinToString(", ") { String.format(Locale.US, "%g", it.rowNumber) }
+            if (rows.isBlank()) names else "$names · rows $rows"
+        } ?: treatedBlocks?.joinToString(", ") { it.name } ?: "Not recorded"
         cell(s, 2, blockCell, rowY, bodyPaint)
 
         val chemicals = record.chemicalNames.joinToString(", ")
@@ -340,8 +345,9 @@ object SprayProgramPdfExporter {
         val avgRate = if (tanks.isEmpty()) 0.0 else tanks.sumOf { it.sprayRatePerHa } / tanks.size
         cell(s, 5, if (avgRate > 0) String.format(Locale.getDefault(), "%.0f", avgRate) else "\u2013", rowY, bodyPaint)
 
-        cell(s, 6, record.temperature?.let { String.format(Locale.getDefault(), "%.0f\u00B0C", it) } ?: "\u2013", rowY, bodyPaint)
-        cell(s, 7, record.windSpeed?.let { String.format(Locale.getDefault(), "%.0f km/h", it) } ?: "\u2013", rowY, bodyPaint)
+        val canonicalWeather = canonical?.weather?.firstOrNull { it.sourceKind == "observed" || it.sourceKind == "manual" }
+        cell(s, 6, (canonicalWeather?.temperatureC ?: record.temperature)?.let { String.format(Locale.getDefault(), "%.0f\u00B0C", it) } ?: "\u2013", rowY, bodyPaint)
+        cell(s, 7, (canonicalWeather?.windSpeedKmh ?: record.windSpeed)?.let { String.format(Locale.getDefault(), "%.0f km/h", it) } ?: "\u2013", rowY, bodyPaint)
         cell(s, 8, dash(record.equipmentType), rowY, bodyPaint)
         cell(s, 9, dash(trip?.personName), rowY, bodyPaint)
 

@@ -19,6 +19,54 @@ final class SprayReportRepository {
             .value
     }
 
+    /// Resolves each distinct trip independently so multi-record exports never inherit
+    /// another trip's weather or row evidence. Failed trips remain available for offline fallback.
+    func fetchAll(tripIds: [UUID]) async -> [UUID: SprayReportPayloadV1] {
+        var reports: [UUID: SprayReportPayloadV1] = [:]
+        var seen: Set<UUID> = []
+        for tripId in tripIds where seen.insert(tripId).inserted {
+            if let report = try? await fetch(tripId: tripId) { reports[tripId] = report }
+        }
+        return reports
+    }
+
+    func correctMetadata(
+        tripId: UUID,
+        expectedVersion: Int,
+        machineId: UUID?,
+        tractorId: UUID?,
+        sprayEquipmentId: UUID?,
+        operatorUserId: UUID?,
+        fuelConsumptionLPerHour: Double?,
+        startEngineHours: Double?,
+        endEngineHours: Double?
+    ) async throws -> SprayReportPayloadV1 {
+        struct Request: Encodable {
+            let p_operation_id: UUID
+            let p_trip_id: UUID
+            let p_expected_version: Int
+            let p_machine_id: UUID?
+            let p_tractor_id: UUID?
+            let p_spray_equipment_id: UUID?
+            let p_operator_user_id: UUID?
+            let p_fuel_consumption_l_per_hour: Double?
+            let p_start_engine_hours: Double?
+            let p_end_engine_hours: Double?
+        }
+        struct Response: Decodable { let report: SprayReportPayloadV1 }
+        let request = Request(
+            p_operation_id: UUID(), p_trip_id: tripId, p_expected_version: expectedVersion,
+            p_machine_id: machineId, p_tractor_id: tractorId, p_spray_equipment_id: sprayEquipmentId,
+            p_operator_user_id: operatorUserId, p_fuel_consumption_l_per_hour: fuelConsumptionLPerHour,
+            p_start_engine_hours: startEngineHours, p_end_engine_hours: endEngineHours
+        )
+        let response: Response = try await SupabaseClientProvider.shared.client
+            .rpc("correct_spray_trip_metadata_v1", params: request)
+            .execute()
+            .value
+        return response.report
+    }
+
     /// Runs the shared server derivation; ambiguous paths are intentionally left unresolved.
     private func recoverRows(tripId: UUID) async {
         guard SupabaseClientProvider.shared.isConfigured,
