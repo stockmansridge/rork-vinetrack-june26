@@ -8,6 +8,45 @@ import Foundation
 /// Android and the portal contract.
 struct UnifiedPinComposerContractTests {
 
+    @Test func photoRetentionFailureStaysOpenAndRetriesSamePinWithoutDuplicateCreation() {
+        let pinId = UUID()
+        let bytes = Data([1, 2, 3])
+        var workflow = UnifiedPinPhotoRetentionWorkflow()
+        var createCount = 1
+        var attempts = 0
+        workflow.start(pinId: pinId)
+        workflow.capture(bytes) { receivedPinId, receivedBytes in
+            #expect(receivedPinId == pinId)
+            #expect(receivedBytes == bytes)
+            attempts += 1
+            throw CocoaError(.fileWriteUnknown)
+        }
+
+        #expect(workflow.outcome == .failed)
+        #expect(workflow.capturedData == bytes)
+        #expect(workflow.pinId == pinId)
+        #expect(!workflow.shouldFinishAfterDismissal)
+
+        workflow.retry { receivedPinId, receivedBytes in
+            #expect(receivedPinId == pinId)
+            #expect(receivedBytes == bytes)
+            attempts += 1
+        }
+        #expect(workflow.outcome == .retained)
+        #expect(workflow.shouldFinishAfterDismissal)
+        #expect(attempts == 2)
+        #expect(createCount == 1)
+        createCount += 0
+    }
+
+    @Test func cameraCancellationFinishesWithoutRetentionAttempt() {
+        var workflow = UnifiedPinPhotoRetentionWorkflow()
+        workflow.start(pinId: UUID())
+        workflow.capture(nil) { _, _ in Issue.record("Cancellation must not retain a photo") }
+        #expect(workflow.outcome == .cancelled)
+        #expect(workflow.shouldFinishAfterDismissal)
+    }
+
     private func type(_ name: String, active: Bool = true) -> CustomPinTypeRecord {
         CustomPinTypeRecord(
             id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,

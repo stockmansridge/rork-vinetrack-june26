@@ -97,6 +97,7 @@ import com.rork.vinetrack.data.RegionDateFormat
 import com.rork.vinetrack.data.GrapeVarietyDeleteOutcome
 import com.rork.vinetrack.data.PaddockRepository
 import com.rork.vinetrack.data.PinPresentationTarget
+import com.rork.vinetrack.data.PinPhotoSync
 import com.rork.vinetrack.data.RowAttachment
 import com.rork.vinetrack.data.model.GrowthStage
 import com.rork.vinetrack.data.model.GrowthStageRecord
@@ -1286,19 +1287,16 @@ private fun GrowthPhotoSection(
 ) {
     val vine = LocalVineColors.current
     val photoPath = record.photoPaths?.firstOrNull()
-    val retainedPath = vm.retainedPhotoPath(record.id)
-        ?: record.pinId?.let(vm::retainedPhotoPath)
-    var signedUrl by remember(photoPath, retainedPath) { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(photoPath, retainedPath) {
-        signedUrl = null
-        if (!photoPath.isNullOrBlank()) {
-            vm.requestGrowthPhotoUrl(photoPath) { url -> signedUrl = url }
-        }
+    val entityId = record.id
+    val remoteIdentity = photoPath?.let { PinPhotoSync.growthRemoteIdentity(record, it) }
+    var display by remember(entityId, photoPath, remoteIdentity) {
+        mutableStateOf(vm.photoDisplaySource(entityId, photoPath, remoteIdentity))
     }
+    fun retry(): Unit = vm.refreshPhotoDisplay(entityId, photoPath, remoteIdentity) { display = it }
+    LaunchedEffect(entityId, photoPath, remoteIdentity) { retry() }
 
     val editable = true
-    val hasImage = pendingPhotoUri != null || retainedPath != null || !photoPath.isNullOrBlank()
+    val hasImage = pendingPhotoUri != null || display.localPath != null || !photoPath.isNullOrBlank()
     if (!hasImage && !editable) return
 
     VineyardCard {
@@ -1314,7 +1312,7 @@ private fun GrowthPhotoSection(
                         .background(vine.textSecondary.copy(alpha = 0.1f)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    val model: Any? = pendingPhotoUri ?: retainedPath?.let(::File) ?: signedUrl
+                    val model: Any? = pendingPhotoUri ?: display.localPath?.let(::File)
                     if (model != null) {
                         AsyncImage(
                             model = model,
@@ -1322,6 +1320,19 @@ private fun GrowthPhotoSection(
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxWidth().height(220.dp),
                         )
+                        if (pendingPhotoUri == null && display.isStaleCompletedCache) {
+                            Text(
+                                "Showing older offline photo",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                modifier = Modifier.align(Alignment.BottomStart).background(Color.Black.copy(alpha = 0.65f)).padding(8.dp),
+                            )
+                        }
+                    } else if (display.error != null) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(display.error ?: "Photo unavailable", color = VineColors.Destructive, fontSize = 12.sp)
+                            TextButton(onClick = { retry() }) { Text("Retry") }
+                        }
                     } else {
                         CircularProgressIndicator(color = VineColors.Primary)
                     }

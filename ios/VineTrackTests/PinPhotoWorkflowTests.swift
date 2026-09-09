@@ -125,12 +125,18 @@ private actor PinRepositoryDouble: PinSyncRepositoryProtocol {
     func fetchAllPins(vineyardId: UUID) async throws -> [BackendPin] { [] }
     func upsertPin(_ pin: BackendPinUpsert) async throws { upserts += 1 }
     func upsertPins(_ pins: [BackendPinUpsert]) async throws { upserts += pins.count }
-    func updatePhotoPath(pinId: UUID, path: String?) async throws {
+    func updatePhotoPath(pinId: UUID, vineyardId: UUID, path: String?) async throws -> AttachmentReferenceConfirmation {
         if remainingPhotoFailures > 0 {
             remainingPhotoFailures -= 1
             throw URLError(.cannotConnectToHost)
         }
         self.path = path
+        return AttachmentReferenceConfirmation(
+            recordId: pinId,
+            vineyardId: vineyardId,
+            photoPath: path,
+            photoPaths: nil
+        )
     }
     func softDeletePin(id: UUID) async throws {}
     func lastPhotoPath() -> String? { path }

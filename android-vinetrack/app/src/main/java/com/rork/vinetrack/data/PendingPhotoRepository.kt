@@ -1,7 +1,9 @@
 package com.rork.vinetrack.data
 
 import android.content.Context
+import com.rork.vinetrack.data.model.CompletedPhotoCacheEntry
 import com.rork.vinetrack.data.model.PendingPhotoAttachment
+import com.rork.vinetrack.data.model.PhotoDisplaySource
 import com.rork.vinetrack.data.model.PendingPhotoEntityKind
 import com.rork.vinetrack.data.model.PendingPhotoStatus
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,15 +29,20 @@ import java.util.UUID
  * `filesDir/pending_pin_photos/{clientPinId}.jpg` — never the original content
  * Uri, which can expire across app restarts.
  */
-class PendingPhotoRepository(context: Context) {
-
-    private val appContext = context.applicationContext
-    private val store = PendingPhotoStore(appContext)
+class PendingPhotoRepository internal constructor(
+    private val rootDir: File,
+    private val store: PendingPhotoStoring,
+) {
+    constructor(context: Context) : this(
+        context.applicationContext.filesDir,
+        PendingPhotoStore(context.applicationContext),
+    )
 
     private val photoDir: File
-        get() = File(appContext.filesDir, PHOTO_DIR).apply { if (!exists()) mkdirs() }
+        get() = File(rootDir, PHOTO_DIR).apply { if (!exists()) mkdirs() }
 
-    private val _attachments = MutableStateFlow(store.load())
+    private val _attachments = MutableStateFlow(recoverPreviousProcessWork())
+    private var completedCache: List<CompletedPhotoCacheEntry> = store.loadCompletedCache()
     /** Live view of every persisted pending photo attachment. */
     val attachments: StateFlow<List<PendingPhotoAttachment>> = _attachments.asStateFlow()
 
@@ -52,10 +59,10 @@ class PendingPhotoRepository(context: Context) {
     /** Snapshot of all attachments. */
     fun list(): List<PendingPhotoAttachment> = _attachments.value
 
-    /** Latest readable retained file for a source identity, if one exists. */
+    /** Latest readable unresolved capture for a source identity, if one exists. */
     fun latestFile(entityId: String): File? = latestAttachment(entityId)
         ?.let { File(it.localPath) }
-        ?.takeIf { it.exists() && it.length() > 0L }
+        ?.takeIf { it.exists() && it.canRead() && it.length() > 0L }
 
     fun latestAttachment(entityId: String): PendingPhotoAttachment? = _attachments.value
         .filter {
@@ -140,23 +147,84 @@ class PendingPhotoRepository(context: Context) {
     }
 
     /** Copy the successful revision into durable display storage before queue cleanup. */
-    fun promoteToDisplayCache(attachment: PendingPhotoAttachment): File? {
+    fun promoteToDisplayCache(
+        attachment: PendingPhotoAttachment,
+        remotePath: String,
+        remoteIdentity: String,
+    ): File {
         val source = File(attachment.localPath)
-        if (!source.exists()) return null
-        val directory = File(appContext.filesDir, DISPLAY_DIR).apply { mkdirs() }
+        check(source.exists() && source.canRead() && source.length() > 0L) {
+            "The retained photo couldn't be preserved for offline display."
+        }
+        val directory = File(rootDir, DISPLAY_DIR).apply {
+            check(exists() || mkdirs()) { "Couldn't create offline photo storage." }
+        }
         val entityId = attachment.growthRecordId ?: attachment.clientPinId
-        directory.listFiles()?.filter { it.name.startsWith("${entityId.lowercase()}__") }?.forEach { it.delete() }
         val destination = File(directory, "${entityId.lowercase()}__${attachment.revision.lowercase()}.jpg")
-        return runCatching { source.copyTo(destination, overwrite = true) }.getOrNull()
+        source.copyTo(destination, overwrite = true)
+        val next = completedCache.filterNot { it.entityId == entityId } + CompletedPhotoCacheEntry(
+            entityId = entityId,
+            localPath = destination.absolutePath,
+            remotePath = remotePath,
+            remoteIdentity = remoteIdentity,
+            cachedAt = System.currentTimeMillis(),
+        )
+        store.saveCompletedCache(next)
+        completedCache.filter { it.entityId == entityId && it.localPath != destination.absolutePath }
+            .forEach { runCatching { File(it.localPath).delete() } }
+        completedCache = next
+        return destination
     }
 
-    fun retainedDisplayFile(entityId: String): File? {
-        latestFile(entityId)?.let { return it }
-        val directory = File(appContext.filesDir, DISPLAY_DIR)
-        return directory.listFiles()
-            ?.filter { it.name.startsWith("${entityId.lowercase()}__") && it.length() > 0L }
-            ?.maxByOrNull { it.lastModified() }
+    fun cacheRemoteDisplay(entityId: String, remotePath: String, remoteIdentity: String, bytes: ByteArray): File {
+        require(bytes.isNotEmpty()) { "Downloaded photo was empty." }
+        check(latestAttachment(entityId) == null) { "A newer local capture is pending." }
+        val directory = File(rootDir, DISPLAY_DIR).apply {
+            check(exists() || mkdirs()) { "Couldn't create offline photo storage." }
+        }
+        val destination = File(directory, "${entityId.lowercase()}__remote-${remoteIdentity.hashCode()}.jpg")
+        destination.writeBytes(bytes)
+        val next = completedCache.filterNot { it.entityId == entityId } + CompletedPhotoCacheEntry(
+            entityId = entityId,
+            localPath = destination.absolutePath,
+            remotePath = remotePath,
+            remoteIdentity = remoteIdentity,
+            cachedAt = System.currentTimeMillis(),
+        )
+        store.saveCompletedCache(next)
+        completedCache.filter { it.entityId == entityId && it.localPath != destination.absolutePath }
+            .forEach { runCatching { File(it.localPath).delete() } }
+        completedCache = next
+        return destination
     }
+
+    /** Resolve local display independently from signed-URL availability. */
+    fun displaySource(entityId: String, remotePath: String?, remoteIdentity: String?): PhotoDisplaySource {
+        latestAttachment(entityId)?.let { pending ->
+            val file = File(pending.localPath)
+            if (file.exists() && file.canRead() && file.length() > 0L) {
+                return PhotoDisplaySource(file.absolutePath, isPending = true, isStaleCompletedCache = false)
+            }
+            return PhotoDisplaySource(
+                localPath = null,
+                isPending = true,
+                isStaleCompletedCache = false,
+                error = pending.lastError ?: "Saved photo is unavailable. Tap retry after checking device storage.",
+            )
+        }
+        val entry = completedCache.firstOrNull { it.entityId == entityId }
+        val file = entry?.let { File(it.localPath) }?.takeIf { it.exists() && it.canRead() && it.length() > 0L }
+        val isCurrent = entry != null && remotePath == entry.remotePath && remoteIdentity == entry.remoteIdentity
+        return PhotoDisplaySource(
+            localPath = file?.absolutePath,
+            isPending = false,
+            isStaleCompletedCache = file != null && !isCurrent,
+        )
+    }
+
+    @Deprecated("Use displaySource with authoritative attachment identity")
+    fun retainedDisplayFile(entityId: String): File? =
+        displaySource(entityId, remotePath = null, remoteIdentity = null).localPath?.let(::File)
 
     /** Update the status and optional error of an attachment by id. */
     fun updateStatus(id: String, status: String, lastError: String? = null) {
@@ -206,6 +274,8 @@ class PendingPhotoRepository(context: Context) {
             photoDir.listFiles()?.forEach { runCatching { it.delete() } }
         }
         store.clear()
+        completedCache.forEach { runCatching { File(it.localPath).delete() } }
+        completedCache = emptyList()
         _attachments.value = emptyList()
         _pendingCount.value = 0
     }
@@ -217,9 +287,26 @@ class PendingPhotoRepository(context: Context) {
     @Synchronized
     private fun update(transform: (List<PendingPhotoAttachment>) -> List<PendingPhotoAttachment>) {
         val next = transform(_attachments.value)
+        store.save(next)
         _attachments.value = next
         _pendingCount.value = countUnresolved(next)
-        store.save(next)
+    }
+
+    /** Constructor-only recovery: no current-process replay can be active yet. */
+    private fun recoverPreviousProcessWork(): List<PendingPhotoAttachment> {
+        val loaded = store.load()
+        val now = System.currentTimeMillis()
+        val recovered = loaded.map { attachment ->
+            if (attachment.status == PendingPhotoStatus.IN_PROGRESS) {
+                attachment.copy(
+                    status = PendingPhotoStatus.FAILED,
+                    lastError = "Photo upload was interrupted. Tap retry or reconnect to continue.",
+                    updatedAt = now,
+                )
+            } else attachment
+        }
+        if (recovered != loaded) store.save(recovered)
+        return recovered
     }
 
     private fun countUnresolved(list: List<PendingPhotoAttachment>): Int =

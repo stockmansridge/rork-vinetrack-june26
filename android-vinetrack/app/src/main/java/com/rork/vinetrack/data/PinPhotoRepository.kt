@@ -3,6 +3,7 @@ package com.rork.vinetrack.data
 import com.rork.vinetrack.data.auth.SessionStore
 import io.ktor.client.call.body
 import io.ktor.client.request.delete
+import io.ktor.client.request.get
 import io.ktor.client.request.headers
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -27,7 +28,7 @@ import kotlinx.serialization.Serializable
  * short-lived signed URL (the bucket is private), and deletes are gated by the
  * existing manager-only storage RLS policy.
  */
-class PinPhotoRepository(private val session: SessionStore) {
+class PinPhotoRepository(private val session: SessionStore) : PinPhotoObjectGateway {
 
     fun storagePath(vineyardId: String, pinId: String, revision: String? = null): String =
         pinStoragePath(vineyardId, pinId, revision)
@@ -39,17 +40,17 @@ class PinPhotoRepository(private val session: SessionStore) {
      * membership-based RLS applies unchanged. One photo per record, matching the
      * single pin photo iOS mirrors into `growth_stage_records.photo_paths`.
      */
-    fun growthStoragePath(vineyardId: String, recordId: String, revision: String? = null): String {
+    override fun growthStoragePath(vineyardId: String, recordId: String, revision: String?): String {
         val filename = revision?.let { "photo-${it.lowercase()}.jpg" } ?: "photo.jpg"
         return "${vineyardId.lowercase()}/growth/${recordId.lowercase()}/$filename"
     }
 
     /** Upload compressed JPEG bytes, upserting over any existing photo. Returns the object path. */
-    suspend fun upload(vineyardId: String, pinId: String, jpeg: ByteArray, revision: String? = null): String =
+    override suspend fun upload(vineyardId: String, pinId: String, jpeg: ByteArray, revision: String?): String =
         uploadAtPath(storagePath(vineyardId, pinId, revision), jpeg)
 
     /** Upload compressed JPEG bytes to an explicit object path, upserting. Returns the path. */
-    suspend fun uploadAtPath(path: String, jpeg: ByteArray): String =
+    override suspend fun uploadAtPath(path: String, jpeg: ByteArray): String =
         withContext(Dispatchers.IO) {
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -93,6 +94,20 @@ class PinPhotoRepository(private val session: SessionStore) {
                 else -> throw BackendError.Server(response.status.value, response.bodyAsText())
             }
         }
+
+    /** Download private object bytes for durable offline display caching. */
+    suspend fun download(path: String): ByteArray = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.get(SupabaseClient.storageUrl("object/authenticated/$BUCKET/$path")) {
+            authHeaders(token)
+        }
+        when {
+            response.status.isSuccess() -> response.body()
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
 
     /** Remove the stored photo. Gated server-side by the manager-only delete policy. */
     suspend fun delete(path: String) = withContext(Dispatchers.IO) {

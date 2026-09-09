@@ -2,6 +2,24 @@ package com.rork.vinetrack.data.model
 
 import kotlinx.serialization.Serializable
 
+/** Durable metadata for an image copied into completed offline display storage. */
+@Serializable
+data class CompletedPhotoCacheEntry(
+    val entityId: String,
+    val localPath: String,
+    val remotePath: String,
+    val remoteIdentity: String,
+    val cachedAt: Long,
+)
+
+/** Display decision that keeps unresolved captures distinct from completed cache files. */
+data class PhotoDisplaySource(
+    val localPath: String?,
+    val isPending: Boolean,
+    val isStaleCompletedCache: Boolean,
+    val error: String? = null,
+)
+
 /**
  * A pin photo retained locally because it couldn't be uploaded immediately
  * (Stage 7B — local persistence only).

@@ -52,13 +52,40 @@ final class SupabasePinSyncRepository: PinSyncRepositoryProtocol {
             .execute()
     }
 
-    func updatePhotoPath(pinId: UUID, path: String?) async throws {
+    func updatePhotoPath(pinId: UUID, vineyardId: UUID, path: String?) async throws -> AttachmentReferenceConfirmation {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        try await provider.client
+        let updated: [BackendPin] = try await provider.client
             .from("pins")
             .update(PinPhotoPathPatch(photoPath: path, clientUpdatedAt: Date()))
             .eq("id", value: pinId.uuidString)
+            .eq("vineyard_id", value: vineyardId.uuidString)
+            .is("deleted_at", value: nil)
+            .select()
             .execute()
+            .value
+        if let row = updated.first {
+            guard updated.count == 1,
+                  row.id == pinId,
+                  row.vineyardId == vineyardId,
+                  row.deletedAt == nil,
+                  row.photoPath == path else { throw AttachmentReferenceWriteError.unexpectedRecord }
+            return AttachmentReferenceConfirmation(
+                recordId: row.id,
+                vineyardId: row.vineyardId,
+                photoPath: row.photoPath,
+                photoPaths: nil
+            )
+        }
+        let existing: [BackendPin] = try await provider.client
+            .from("pins")
+            .select()
+            .eq("id", value: pinId.uuidString)
+            .eq("vineyard_id", value: vineyardId.uuidString)
+            .limit(1)
+            .execute()
+            .value
+        if existing.first?.deletedAt != nil { throw AttachmentReferenceWriteError.recordDeleted }
+        throw AttachmentReferenceWriteError.unresolved
     }
 
     func softDeletePin(id: UUID) async throws {

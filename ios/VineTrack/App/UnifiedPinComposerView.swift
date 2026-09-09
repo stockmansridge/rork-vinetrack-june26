@@ -90,6 +90,7 @@ struct UnifiedPinComposerView: View {
     @State private var showAutoPhotoConfirm = false
     @State private var showPhotoPicker = false
     @State private var pendingShowPicker = false
+    @State private var photoRetention = UnifiedPinPhotoRetentionWorkflow()
     /// Set the instant a pin is created, so no timeout, dismissal or photo
     /// callback can ever run the save a second time.
     @State private var hasCreatedPin = false
@@ -141,7 +142,7 @@ struct UnifiedPinComposerView: View {
         .onChange(of: locationService.location?.timestamp) { _, _ in
             frameCamerasIfNeeded()
         }
-        .sheet(isPresented: $showPhotoPicker, onDismiss: { finishSave() }) {
+        .sheet(isPresented: $showPhotoPicker, onDismiss: { handlePhotoPickerDismissal() }) {
             // Cancelling the camera keeps the pin exactly as saved.
             CameraImagePicker { data in
                 attachPhoto(data: data)
@@ -181,6 +182,22 @@ struct UnifiedPinComposerView: View {
                 selectedCustom = nil
                 validationMessage = nil
             }
+        }
+        .alert(
+            "Photo not saved",
+            isPresented: Binding(
+                get: { photoRetention.outcome == .failed },
+                set: { _ in }
+            )
+        ) {
+            Button("Retry") { retryFailedPhoto() }
+            Button("Continue without photo", role: .destructive) {
+                photoRetention.continueWithoutPhoto()
+                pendingPhotoPinId = nil
+                finishSave()
+            }
+        } message: {
+            Text("Pin saved, but the photo could not be saved on this device.")
         }
         .alert("Add custom item", isPresented: $showAddCustom) {
             TextField("Custom item name", text: $newCustomName)
@@ -1365,23 +1382,40 @@ struct UnifiedPinComposerView: View {
         hasCreatedPin = true
         pendingPhotoPinId = pinId
         pendingShowPicker = false
+        photoRetention.start(pinId: pinId)
         showAutoPhotoConfirm = true
     }
 
     /// Attach the captured photo to the exact pin this composer created.
     /// A cancelled camera returns nil and the pin simply keeps no photo.
     private func attachPhoto(data: Data?) {
-        defer { pendingPhotoPinId = nil }
-        guard let data, let pinId = pendingPhotoPinId else { return }
-        do {
+        photoRetention.capture(data) { pinId, captured in
             if let recordId = growthStageRecordSync.records.first(where: { $0.pinId == pinId })?.id {
-                try growthStageRecordSync.attachPhoto(recordId: recordId, imageData: data)
+                try growthStageRecordSync.attachPhoto(recordId: recordId, imageData: captured)
             } else {
-                try pinSync.attachPhoto(pinId: pinId, imageData: data)
+                try pinSync.attachPhoto(pinId: pinId, imageData: captured)
             }
-        } catch {
-            validationMessage = error.localizedDescription
         }
+        pendingPhotoPinId = photoRetention.pinId
+        if photoRetention.outcome == .failed {
+            validationMessage = "Pin saved, but the photo could not be saved on this device."
+        }
+    }
+
+    private func handlePhotoPickerDismissal() {
+        if photoRetention.shouldFinishAfterDismissal { finishSave() }
+    }
+
+    private func retryFailedPhoto() {
+        photoRetention.retry { pinId, captured in
+            if let recordId = growthStageRecordSync.records.first(where: { $0.pinId == pinId })?.id {
+                try growthStageRecordSync.attachPhoto(recordId: recordId, imageData: captured)
+            } else {
+                try pinSync.attachPhoto(pinId: pinId, imageData: captured)
+            }
+        }
+        pendingPhotoPinId = photoRetention.pinId
+        if photoRetention.outcome == .retained { finishSave() }
     }
 
     /// Leave the composer once the photo question is fully resolved. Guarded
@@ -1391,5 +1425,52 @@ struct UnifiedPinComposerView: View {
         didFinish = true
         dismiss()
         onSaved()
+    }
+}
+
+nonisolated struct UnifiedPinPhotoRetentionWorkflow {
+    enum Outcome: Equatable { case awaiting, retained, cancelled, failed }
+
+    private(set) var pinId: UUID?
+    private(set) var capturedData: Data?
+    private(set) var outcome: Outcome = .awaiting
+
+    var shouldFinishAfterDismissal: Bool { outcome == .retained || outcome == .cancelled }
+
+    mutating func start(pinId: UUID) {
+        self.pinId = pinId
+        capturedData = nil
+        outcome = .awaiting
+    }
+
+    mutating func capture(_ data: Data?, retain: (UUID, Data) throws -> Void) {
+        guard let data else {
+            capturedData = nil
+            pinId = nil
+            outcome = .cancelled
+            return
+        }
+        guard let pinId else { return }
+        do {
+            try retain(pinId, data)
+            capturedData = nil
+            self.pinId = nil
+            outcome = .retained
+        } catch {
+            capturedData = data
+            outcome = .failed
+        }
+    }
+
+    mutating func retry(retain: (UUID, Data) throws -> Void) {
+        guard let capturedData else { return }
+        outcome = .awaiting
+        capture(capturedData, retain: retain)
+    }
+
+    mutating func continueWithoutPhoto() {
+        capturedData = nil
+        pinId = nil
+        outcome = .cancelled
     }
 }

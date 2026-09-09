@@ -45,15 +45,40 @@ final class SupabaseGrowthStageRecordSyncRepository: GrowthStageRecordSyncReposi
             .execute()
     }
 
-    func updatePhotoPaths(recordId: UUID, vineyardId: UUID, photoPaths: [String]) async throws {
+    func updatePhotoPaths(recordId: UUID, vineyardId: UUID, photoPaths: [String]) async throws -> AttachmentReferenceConfirmation {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        try await provider.client
+        let updated: [BackendGrowthStageRecord] = try await provider.client
             .from("growth_stage_records")
             .update(GrowthPhotoPathsPatch(photoPaths: photoPaths, clientUpdatedAt: Date()))
             .eq("id", value: recordId.uuidString)
             .eq("vineyard_id", value: vineyardId.uuidString)
             .is("deleted_at", value: nil)
+            .select()
             .execute()
+            .value
+        if let row = updated.first {
+            guard updated.count == 1,
+                  row.id == recordId,
+                  row.vineyardId == vineyardId,
+                  row.deletedAt == nil,
+                  row.photoPaths ?? [] == photoPaths else { throw AttachmentReferenceWriteError.unexpectedRecord }
+            return AttachmentReferenceConfirmation(
+                recordId: row.id,
+                vineyardId: row.vineyardId,
+                photoPath: nil,
+                photoPaths: row.photoPaths
+            )
+        }
+        let existing: [BackendGrowthStageRecord] = try await provider.client
+            .from("growth_stage_records")
+            .select()
+            .eq("id", value: recordId.uuidString)
+            .eq("vineyard_id", value: vineyardId.uuidString)
+            .limit(1)
+            .execute()
+            .value
+        if existing.first?.deletedAt != nil { throw AttachmentReferenceWriteError.recordDeleted }
+        throw AttachmentReferenceWriteError.unresolved
     }
 
     func softDeleteGrowthStageRecord(id: UUID) async throws {

@@ -2426,6 +2426,9 @@ data class GrowthStageRecord(
     @SerialName("photo_paths") val photoPaths: List<String>? = null,
     @SerialName("recorded_by_name") val recordedByName: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("updated_at") val updatedAt: String? = null,
+    @SerialName("client_updated_at") val clientUpdatedAt: String? = null,
+    @SerialName("sync_version") val syncVersion: Long? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
     val observedEpochMs: Long? get() = parseIsoToEpochMs(observedAt ?: createdAt)

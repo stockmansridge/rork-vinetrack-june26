@@ -433,7 +433,9 @@ final class PinSyncService {
             SyncIssueCenter.shared.notePending(entity: "Pins", count: metadata.pendingUpserts.count)
         }
 
-        try await pushPendingPhotos(vineyardId: vineyardId)
+        var independentPhotoError: Error?
+        do { try await pushPendingPhotos(vineyardId: vineyardId) }
+        catch { independentPhotoError = error }
 
         let deletes = metadata.pendingDeletes
         var deleteFailures: [String] = []
@@ -461,58 +463,71 @@ final class PinSyncService {
             }
         }
         if !deleteFailures.isEmpty {
-            // Surface a non-fatal warning via errorMessage but don't throw — let pull and
-            // future upserts continue.
             errorMessage = "Some pin deletes failed: \(deleteFailures.first ?? "unknown")"
         }
+        if let independentPhotoError { throw independentPhotoError }
     }
 
     private func pushPendingPhotos(vineyardId: UUID) async throws {
         let candidates = pendingPhotos.values
             .filter { $0.vineyardId == vineyardId }
             .sorted { $0.capturedAt < $1.capturedAt }
+        var firstFailure: Error?
         for snapshot in candidates {
             guard metadata.pendingDeletes[snapshot.pinId] == nil,
                   metadata.pendingUpserts[snapshot.pinId] == nil,
                   store?.pins.contains(where: { $0.id == snapshot.pinId }) == true,
                   pendingPhotos[snapshot.pinId]?.revision == snapshot.revision else { continue }
+            do {
+                var work = snapshot
+                if work.uploadedPath == nil {
+                    let path = try await photoStorage.uploadPhoto(
+                        vineyardId: work.vineyardId,
+                        pinId: work.pinId,
+                        revision: work.revision,
+                        imageData: work.imageData
+                    )
+                    guard metadata.pendingDeletes[work.pinId] == nil,
+                          pendingPhotos[work.pinId]?.revision == work.revision else { continue }
+                    work.uploadedPath = path
+                    pendingPhotos[work.pinId] = work
+                    try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
+                }
 
-            var work = snapshot
-            if work.uploadedPath == nil {
-                let path = try await photoStorage.uploadPhoto(
-                    vineyardId: work.vineyardId,
+                guard let path = work.uploadedPath,
+                      metadata.pendingDeletes[work.pinId] == nil,
+                      pendingPhotos[work.pinId]?.revision == work.revision else { continue }
+                _ = try await repository.updatePhotoPath(
                     pinId: work.pinId,
-                    revision: work.revision,
-                    imageData: work.imageData
+                    vineyardId: work.vineyardId,
+                    path: path
                 )
                 guard metadata.pendingDeletes[work.pinId] == nil,
                       pendingPhotos[work.pinId]?.revision == work.revision else { continue }
-                work.uploadedPath = path
-                pendingPhotos[work.pinId] = work
+                if var pin = store?.pins.first(where: { $0.id == work.pinId }) {
+                    pin.photoPath = path
+                    pin.photoData = work.imageData
+                    store?.applyRemotePinUpsert(pin)
+                }
+                try SharedImageCache.shared.saveImageDataOrThrow(
+                    work.imageData,
+                    for: .pinPhoto(vineyardId: work.vineyardId, pinId: work.pinId),
+                    remotePath: path,
+                    remoteUpdatedAt: nil,
+                    attachmentRevision: work.revision
+                )
+                guard pendingPhotos[work.pinId]?.revision == work.revision else { continue }
+                pendingPhotos.removeValue(forKey: work.pinId)
                 try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
+            } catch AttachmentReferenceWriteError.recordDeleted {
+                guard pendingPhotos[snapshot.pinId]?.revision == snapshot.revision else { continue }
+                pendingPhotos.removeValue(forKey: snapshot.pinId)
+                try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
+            } catch {
+                if firstFailure == nil { firstFailure = error }
             }
-
-            guard let path = work.uploadedPath,
-                  metadata.pendingDeletes[work.pinId] == nil,
-                  pendingPhotos[work.pinId]?.revision == work.revision else { continue }
-            try await repository.updatePhotoPath(pinId: work.pinId, path: path)
-            guard metadata.pendingDeletes[work.pinId] == nil,
-                  pendingPhotos[work.pinId]?.revision == work.revision else { continue }
-            if var pin = store?.pins.first(where: { $0.id == work.pinId }) {
-                pin.photoPath = path
-                pin.photoData = work.imageData
-                store?.applyRemotePinUpsert(pin)
-            }
-            try SharedImageCache.shared.saveImageDataOrThrow(
-                work.imageData,
-                for: .pinPhoto(vineyardId: work.vineyardId, pinId: work.pinId),
-                remotePath: path,
-                remoteUpdatedAt: nil,
-                attachmentRevision: work.revision
-            )
-            pendingPhotos.removeValue(forKey: work.pinId)
-            try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
         }
+        if let firstFailure { throw firstFailure }
     }
 
     private static func isMissingRowError(_ error: Error) -> Bool {

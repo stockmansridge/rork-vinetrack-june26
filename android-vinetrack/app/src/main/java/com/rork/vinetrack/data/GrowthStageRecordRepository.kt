@@ -31,7 +31,7 @@ import java.util.UUID
  * left untouched on edit. Records mirrored from iOS pins (with a `pin_id`) are
  * still readable and editable through the same path.
  */
-class GrowthStageRecordRepository(private val session: SessionStore) {
+class GrowthStageRecordRepository(private val session: SessionStore) : GrowthPhotoReferenceGateway {
 
     @Serializable
     private data class GrowthInsert(
@@ -204,7 +204,7 @@ class GrowthStageRecordRepository(private val session: SessionStore) {
      * Mirrors iOS's single-photo contract (the array holds at most one path) and
      * touches no other column. `null`/empty clears the photo reference.
      */
-    suspend fun updatePhotoPaths(id: String, paths: List<String>?): GrowthStageRecord =
+    override suspend fun updatePhotoPaths(id: String, paths: List<String>?): GrowthStageRecord =
         withContext(Dispatchers.IO) {
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized

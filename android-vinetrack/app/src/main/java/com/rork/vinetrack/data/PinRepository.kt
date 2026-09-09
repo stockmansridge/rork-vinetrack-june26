@@ -31,7 +31,7 @@ import kotlinx.serialization.Serializable
  * Display-only — it never mutates records it doesn't own and only sends the
  * fields the Android UI edits, leaving every other column untouched.
  */
-class PinRepository(private val session: SessionStore) {
+class PinRepository(private val session: SessionStore) : PinPhotoReferenceGateway {
 
     /** Mutable fields the Android pin editor exposes. */
     @Serializable
@@ -266,7 +266,7 @@ class PinRepository(private val session: SessionStore) {
      * separate from [updatePin] so photo writes don't disturb the editable
      * field set, and returns the reconciled row so the UI can refresh.
      */
-    suspend fun updatePhotoPath(id: String, photoPath: String?): Pin = withContext(Dispatchers.IO) {
+    override suspend fun updatePhotoPath(id: String, photoPath: String?): Pin = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.patch(SupabaseClient.restUrl("pins?id=eq.$id")) {

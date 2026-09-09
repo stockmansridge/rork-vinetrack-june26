@@ -102,6 +102,7 @@ import com.rork.vinetrack.data.PinPhotoSync
 import com.rork.vinetrack.data.PinPresentationTarget
 import com.rork.vinetrack.data.model.PendingPhotoEntityKind
 import com.rork.vinetrack.data.model.PendingPhotoStatus
+import com.rork.vinetrack.data.model.PhotoDisplaySource
 import com.rork.vinetrack.data.PinPlacement
 import com.rork.vinetrack.data.PinPlacementResult
 import com.rork.vinetrack.data.PinRepository
@@ -1567,7 +1568,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val yieldSessionDeleteSync = YieldSessionDeleteSync(yieldSessionRepo, pendingWrites)
 
-    private val pinPhotoSync = PinPhotoSync(pinPhotoRepo, pinRepo, growthRepo, pendingPhotos, pendingWrites)
+    private val pinPhotoSync = PinPhotoSync(pinPhotoRepo, pinRepo, growthRepo, pendingPhotos) { pendingWrites.list() }
 
     /**
      * Offline replay coordinator for pin COMPLETION toggles only (Stage 9A).
@@ -6802,8 +6803,55 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun photoDisplaySource(entityId: String, remotePath: String?, remoteIdentity: String?): PhotoDisplaySource =
+        pendingPhotos.displaySource(entityId, remotePath, remoteIdentity)
+
+    /**
+     * Resolve local-first display, then refresh stale/missing completed cache.
+     * Callers key the callback to the same authoritative identity so late work
+     * cannot replace a newer capture or metadata revision.
+     */
+    fun refreshPhotoDisplay(
+        entityId: String,
+        remotePath: String?,
+        remoteIdentity: String?,
+        onResult: (PhotoDisplaySource) -> Unit,
+    ) {
+        val initial = pendingPhotos.displaySource(entityId, remotePath, remoteIdentity)
+        onResult(initial)
+        if (initial.isPending || remotePath.isNullOrBlank() || remoteIdentity.isNullOrBlank()) return
+        if (initial.localPath != null && !initial.isStaleCompletedCache) return
+        viewModelScope.launch {
+            val refreshed = runCatching {
+                check(currentPhotoIdentity(entityId, remotePath) == remoteIdentity) { "Attachment metadata changed." }
+                val bytes = pinPhotoRepo.download(remotePath)
+                val current = pendingPhotos.displaySource(entityId, remotePath, remoteIdentity)
+                check(!current.isPending) { "A newer local capture is pending." }
+                check(currentPhotoIdentity(entityId, remotePath) == remoteIdentity) { "Attachment metadata changed." }
+                pendingPhotos.cacheRemoteDisplay(entityId, remotePath, remoteIdentity, bytes)
+                pendingPhotos.displaySource(entityId, remotePath, remoteIdentity)
+            }.getOrElse {
+                initial.copy(error = "Photo couldn't be refreshed. Tap retry when online.")
+            }
+            if (currentPhotoIdentity(entityId, remotePath) == remoteIdentity || refreshed.isPending) {
+                onResult(refreshed)
+            }
+        }
+    }
+
+    private fun currentPhotoIdentity(entityId: String, remotePath: String): String? {
+        _ui.value.pins.firstOrNull { it.id == entityId && it.photoPath == remotePath }?.let {
+            return PinPhotoSync.pinRemoteIdentity(it, remotePath)
+        }
+        _ui.value.growthRecords.firstOrNull {
+            (it.id == entityId || it.pinId == entityId) && it.photoPaths?.firstOrNull() == remotePath
+        }?.let { return PinPhotoSync.growthRemoteIdentity(it, remotePath) }
+        return null
+    }
+
+    @Deprecated("Use photoDisplaySource with authoritative metadata")
     fun retainedPhotoPath(entityId: String): String? =
-        pendingPhotos.retainedDisplayFile(entityId)?.absolutePath
+        pendingPhotos.displaySource(entityId, null, null).localPath
 
     /** Source-aware delete; SQL 230 makes either legacy RPC delete a linked pair atomically. */
     fun deletePresentationTarget(target: PinPresentationTarget, onResult: (Boolean) -> Unit) {

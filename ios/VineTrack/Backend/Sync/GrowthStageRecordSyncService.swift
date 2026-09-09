@@ -90,8 +90,8 @@ final class GrowthStageRecordSyncService {
         }
         // When a growth-stage pin is soft-deleted locally, also soft-delete
         // its mirrored record so the dedicated table stays in sync.
-        store.onGrowthStagePinDeleted = { [weak self] pinId in
-            self?.softDeleteByPin(pinId)
+        store.onGrowthStagePinDeleted = { [weak self] pin in
+            self?.softDeleteByPin(pin) ?? false
         }
         // Backfill: mirror any growth-stage pins that already exist locally
         // (e.g. pins created before this sync service was wired up, or
@@ -265,6 +265,16 @@ final class GrowthStageRecordSyncService {
     /// a linked pin and observation atomically when this queue replays.
     func deleteRecord(id: UUID) throws {
         guard let record = records.first(where: { $0.id == id }) else { return }
+        if record.pinId == nil,
+           metadata.pendingUpserts[id] != nil,
+           !metadata.isUnknownOutcome(id) {
+            pendingPhotos.removeValue(forKey: id)
+            try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
+            metadata.clearDirty([id])
+            records.removeAll { $0.id == id }
+            persist()
+            return
+        }
         let pinSnapshot = record.pinId.flatMap { pinId in store?.pins.first(where: { $0.id == pinId }) }
         let target = PendingLinkedPinGrowthDeletion(
             id: record.id,
@@ -285,16 +295,16 @@ final class GrowthStageRecordSyncService {
         scheduleEagerPush()
     }
 
-    private func softDeleteByPin(_ pinId: UUID) {
-        guard let record = records.first(where: { $0.pinId == pinId }) else { return }
+    private func softDeleteByPin(_ pin: VinePin) -> Bool {
+        guard let record = records.first(where: { $0.pinId == pin.id }) else { return true }
         let target = PendingLinkedPinGrowthDeletion(
             id: record.id,
             vineyardId: record.vineyardId,
-            pinId: pinId,
+            pinId: pin.id,
             growthRecordId: record.id,
             queuedAt: Date(),
             growthSnapshot: record,
-            pinSnapshot: nil
+            pinSnapshot: pin
         )
         do {
             try deletionStore.enqueue(target)
@@ -304,8 +314,10 @@ final class GrowthStageRecordSyncService {
             metadata.markDeleted(record.id, at: Date())
             persist()
             scheduleEagerPush()
+            return true
         } catch {
             errorMessage = "Couldn't retain the deletion on this device."
+            return false
         }
     }
 
@@ -363,6 +375,7 @@ final class GrowthStageRecordSyncService {
             }
             metadata.clearDirty(orphans)
             SyncIssueCenter.shared.clearIssues(orphans)
+            metadata.markUnknownOutcome(pushedIds)
             let result = await SyncQueuePush.run(
                 entity: "Growth Stages",
                 ids: pushedIds,
@@ -371,126 +384,179 @@ final class GrowthStageRecordSyncService {
                 vineyardId: vineyardId
             ) { try await repository.upsertGrowthStageRecords($0) }
             metadata.clearDirty(result.uploaded)
+            metadata.clearUnknownOutcome(result.uploaded)
             SyncIssueCenter.shared.notePending(entity: "Growth Stages", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }
         }
 
-        // Attachment work waits for its parent create/upsert to be confirmed.
-        try await pushPendingPhotos(vineyardId: vineyardId)
+        // Attachment failures must not prevent independent linked deletions.
+        var independentPhotoError: Error?
+        do { try await pushPendingPhotos(vineyardId: vineyardId) }
+        catch { independentPhotoError = error }
 
         let targets = deletionStore.targets.values.filter { $0.vineyardId == vineyardId }
+        var firstDeletionError: Error?
         for target in targets {
             do {
-                if let growthId = target.growthRecordId {
-                    try await repository.softDeleteGrowthStageRecord(id: growthId)
-                } else if let pinId = target.pinId {
-                    try await pinRepository.softDeletePin(id: pinId)
-                }
+                try await deletePersistedTarget(target)
                 if target.pinId != nil {
                     try deletionStore.markConfirmed(target.id)
                 } else {
                     try deletionStore.remove(target.id)
                 }
-                if let growthId = target.growthRecordId { metadata.clearDeleted([growthId]) }
+                if let growthId = target.growthRecordId {
+                    metadata.clearDeleted([growthId])
+                    metadata.clearUnknownOutcome([growthId])
+                }
             } catch {
-                let message = String(describing: error).lowercased()
-                if message.contains("permission") || message.contains("forbidden") || message.contains("403") {
+                if Self.isPermissionError(error) {
                     if let growth = target.growthSnapshot, !records.contains(where: { $0.id == growth.id }) {
                         records.append(growth)
                     }
                     if let pin = target.pinSnapshot { store?.applyRemotePinUpsert(pin) }
                     try deletionStore.remove(target.id)
-                    if let growthId = target.growthRecordId { metadata.clearDeleted([growthId]) }
+                    if let growthId = target.growthRecordId {
+                        metadata.clearDeleted([growthId])
+                        metadata.clearUnknownOutcome([growthId])
+                    }
                     persist()
                     errorMessage = "You don't have permission to delete this observation."
+                } else if firstDeletionError == nil {
+                    firstDeletionError = error
                 }
             }
         }
+        if let firstDeletionError { throw firstDeletionError }
+        if let independentPhotoError { throw independentPhotoError }
+    }
+
+    func deletePersistedTarget(_ target: PendingLinkedPinGrowthDeletion) async throws {
+        if let pinId = target.pinId, let growthId = target.growthRecordId {
+            do {
+                try await pinRepository.softDeletePin(id: pinId)
+                return
+            } catch where Self.isMissingRowError(error) {
+                try await repository.softDeleteGrowthStageRecord(id: growthId)
+                return
+            }
+        }
+        if let growthId = target.growthRecordId {
+            do { try await repository.softDeleteGrowthStageRecord(id: growthId) }
+            catch where Self.isMissingRowError(error) { return }
+            return
+        }
+        if let pinId = target.pinId {
+            do { try await pinRepository.softDeletePin(id: pinId) }
+            catch where Self.isMissingRowError(error) { return }
+        }
+    }
+
+    nonisolated private static func isMissingRowError(_ error: Error) -> Bool {
+        let message = String(describing: error).lowercased()
+        return message.contains("not found") || message.contains("pgrst116") ||
+            message.contains("no rows") || message.contains("0 rows")
+    }
+
+    nonisolated private static func isPermissionError(_ error: Error) -> Bool {
+        let message = String(describing: error).lowercased()
+        return message.contains("permission") || message.contains("forbidden") || message.contains("403")
     }
 
     func pushPendingPhotos(vineyardId: UUID) async throws {
         let candidates = pendingPhotos.values
             .filter { $0.vineyardId == vineyardId }
             .sorted { $0.capturedAt < $1.capturedAt }
+        var firstFailure: Error?
         for snapshot in candidates {
             guard metadata.pendingDeletes[snapshot.recordId] == nil,
                   metadata.pendingUpserts[snapshot.recordId] == nil,
                   records.contains(where: { $0.id == snapshot.recordId }),
                   pendingPhotos[snapshot.recordId]?.revision == snapshot.revision else { continue }
-
-            var work = snapshot
-            if work.uploadedPath == nil {
-                let path: String
-                if let pinId = work.pinId {
-                    path = try await photoStorage.uploadPhoto(
-                        vineyardId: work.vineyardId,
-                        pinId: pinId,
-                        revision: work.revision,
-                        imageData: work.imageData
-                    )
-                } else {
-                    path = try await photoStorage.uploadGrowthPhoto(
-                        vineyardId: work.vineyardId,
-                        recordId: work.recordId,
-                        revision: work.revision,
-                        imageData: work.imageData
-                    )
+            do {
+                var work = snapshot
+                if work.uploadedPath == nil {
+                    let path: String
+                    if let pinId = work.pinId {
+                        path = try await photoStorage.uploadPhoto(
+                            vineyardId: work.vineyardId,
+                            pinId: pinId,
+                            revision: work.revision,
+                            imageData: work.imageData
+                        )
+                    } else {
+                        path = try await photoStorage.uploadGrowthPhoto(
+                            vineyardId: work.vineyardId,
+                            recordId: work.recordId,
+                            revision: work.revision,
+                            imageData: work.imageData
+                        )
+                    }
+                    guard metadata.pendingDeletes[work.recordId] == nil,
+                          pendingPhotos[work.recordId]?.revision == work.revision else { continue }
+                    work.uploadedPath = path
+                    pendingPhotos[work.recordId] = work
+                    try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
                 }
+
+                guard let path = work.uploadedPath,
+                      metadata.pendingDeletes[work.recordId] == nil,
+                      pendingPhotos[work.recordId]?.revision == work.revision,
+                      let current = records.first(where: { $0.id == work.recordId }) else { continue }
+                let photoPaths = Self.replacingOwnedPhoto(
+                    in: current.photoPaths,
+                    previousPath: work.previousRemotePath,
+                    with: path
+                )
+
+                if let pinId = work.pinId {
+                    _ = try await pinRepository.updatePhotoPath(
+                        pinId: pinId,
+                        vineyardId: work.vineyardId,
+                        path: path
+                    )
+                    guard metadata.pendingDeletes[work.recordId] == nil,
+                          pendingPhotos[work.recordId]?.revision == work.revision else { continue }
+                }
+                _ = try await repository.updatePhotoPaths(
+                    recordId: work.recordId,
+                    vineyardId: work.vineyardId,
+                    photoPaths: photoPaths
+                )
                 guard metadata.pendingDeletes[work.recordId] == nil,
-                      pendingPhotos[work.recordId]?.revision == work.revision else { continue }
-                work.uploadedPath = path
-                pendingPhotos[work.recordId] = work
+                      pendingPhotos[work.recordId]?.revision == work.revision,
+                      let currentIndex = records.firstIndex(where: { $0.id == work.recordId }) else { continue }
+
+                records[currentIndex].photoPaths = photoPaths
+                records[currentIndex].updatedAt = Date()
+                if let pinId = work.pinId,
+                   var pin = store?.pins.first(where: { $0.id == pinId }) {
+                    pin.photoData = work.imageData
+                    pin.photoPath = path
+                    store?.applyRemotePinUpsert(pin)
+                }
+                let cacheKey: SharedImageCacheKey = work.pinId.map {
+                    .pinPhoto(vineyardId: work.vineyardId, pinId: $0)
+                } ?? .growthRecordPhoto(vineyardId: work.vineyardId, recordId: work.recordId)
+                try SharedImageCache.shared.saveImageDataOrThrow(
+                    work.imageData,
+                    for: cacheKey,
+                    remotePath: path,
+                    remoteUpdatedAt: nil,
+                    attachmentRevision: work.revision
+                )
+                guard pendingPhotos[work.recordId]?.revision == work.revision else { continue }
+                pendingPhotos.removeValue(forKey: work.recordId)
                 try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
+                persist()
+            } catch AttachmentReferenceWriteError.recordDeleted {
+                guard pendingPhotos[snapshot.recordId]?.revision == snapshot.revision else { continue }
+                pendingPhotos.removeValue(forKey: snapshot.recordId)
+                try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
+            } catch {
+                if firstFailure == nil { firstFailure = error }
             }
-
-            guard let path = work.uploadedPath,
-                  metadata.pendingDeletes[work.recordId] == nil,
-                  pendingPhotos[work.recordId]?.revision == work.revision,
-                  let current = records.first(where: { $0.id == work.recordId }) else { continue }
-            let photoPaths = Self.replacingOwnedPhoto(
-                in: current.photoPaths,
-                previousPath: work.previousRemotePath,
-                with: path
-            )
-
-            // Each representation is narrow and independently retryable. A
-            // failure leaves uploadedPath and the revision queued on disk.
-            if let pinId = work.pinId {
-                try await pinRepository.updatePhotoPath(pinId: pinId, path: path)
-                guard metadata.pendingDeletes[work.recordId] == nil,
-                      pendingPhotos[work.recordId]?.revision == work.revision else { continue }
-            }
-            try await repository.updatePhotoPaths(
-                recordId: work.recordId,
-                vineyardId: work.vineyardId,
-                photoPaths: photoPaths
-            )
-            guard metadata.pendingDeletes[work.recordId] == nil,
-                  pendingPhotos[work.recordId]?.revision == work.revision,
-                  let currentIndex = records.firstIndex(where: { $0.id == work.recordId }) else { continue }
-
-            records[currentIndex].photoPaths = photoPaths
-            records[currentIndex].updatedAt = Date()
-            if let pinId = work.pinId,
-               var pin = store?.pins.first(where: { $0.id == pinId }) {
-                pin.photoData = work.imageData
-                pin.photoPath = path
-                store?.applyRemotePinUpsert(pin)
-            }
-            let cacheKey: SharedImageCacheKey = work.pinId.map {
-                .pinPhoto(vineyardId: work.vineyardId, pinId: $0)
-            } ?? .growthRecordPhoto(vineyardId: work.vineyardId, recordId: work.recordId)
-            try SharedImageCache.shared.saveImageDataOrThrow(
-                work.imageData,
-                for: cacheKey,
-                remotePath: path,
-                remoteUpdatedAt: nil,
-                attachmentRevision: work.revision
-            )
-            pendingPhotos.removeValue(forKey: work.recordId)
-            try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
-            persist()
         }
+        if let firstFailure { throw firstFailure }
     }
 
     nonisolated static func replacingOwnedPhoto(
@@ -572,6 +638,7 @@ final class GrowthStageRecordSyncMetadata {
         var lastSyncByVineyard: [UUID: Date] = [:]
         var pendingUpserts: [UUID: Date] = [:]
         var pendingDeletes: [UUID: Date] = [:]
+        var unknownOutcomeUpserts: Set<UUID>?
     }
 
     init(persistence: PersistenceStore = .shared) {
@@ -581,6 +648,7 @@ final class GrowthStageRecordSyncMetadata {
 
     var pendingUpserts: [UUID: Date] { state.pendingUpserts }
     var pendingDeletes: [UUID: Date] { state.pendingDeletes }
+    func isUnknownOutcome(_ id: UUID) -> Bool { state.unknownOutcomeUpserts?.contains(id) == true }
 
     func lastSync(for vineyardId: UUID) -> Date? {
         state.lastSyncByVineyard[vineyardId]
@@ -593,12 +661,28 @@ final class GrowthStageRecordSyncMetadata {
 
     func markDirty(_ id: UUID, at date: Date) {
         state.pendingUpserts[id] = date
+        state.unknownOutcomeUpserts?.remove(id)
         save()
     }
 
     func markDeleted(_ id: UUID, at date: Date) {
         state.pendingUpserts.removeValue(forKey: id)
+        state.unknownOutcomeUpserts?.remove(id)
         state.pendingDeletes[id] = date
+        save()
+    }
+
+    func markUnknownOutcome(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        var values = state.unknownOutcomeUpserts ?? []
+        values.formUnion(ids)
+        state.unknownOutcomeUpserts = values
+        save()
+    }
+
+    func clearUnknownOutcome(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        state.unknownOutcomeUpserts?.subtract(ids)
         save()
     }
 

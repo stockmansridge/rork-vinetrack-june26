@@ -29,12 +29,26 @@ import java.io.File
  * (`{vineyardId}/pins/{clientPinId}/photo.jpg`) and uploads upsert, so a
  * retried upload is safe; `updatePhotoPath` re-runs against the same row.
  */
+interface PinPhotoObjectGateway {
+    suspend fun upload(vineyardId: String, pinId: String, jpeg: ByteArray, revision: String? = null): String
+    suspend fun uploadAtPath(path: String, jpeg: ByteArray): String
+    fun growthStoragePath(vineyardId: String, recordId: String, revision: String? = null): String
+}
+
+interface PinPhotoReferenceGateway {
+    suspend fun updatePhotoPath(id: String, photoPath: String?): com.rork.vinetrack.data.model.Pin
+}
+
+interface GrowthPhotoReferenceGateway {
+    suspend fun updatePhotoPaths(id: String, paths: List<String>?): com.rork.vinetrack.data.model.GrowthStageRecord
+}
+
 class PinPhotoSync(
-    private val pinPhotoRepo: PinPhotoRepository,
-    private val pinRepo: PinRepository,
-    private val growthRepo: GrowthStageRecordRepository,
+    private val pinPhotoRepo: PinPhotoObjectGateway,
+    private val pinRepo: PinPhotoReferenceGateway,
+    private val growthRepo: GrowthPhotoReferenceGateway,
     private val pending: PendingPhotoRepository,
-    private val pendingCreates: PendingWriteRepository,
+    private val pendingCreates: () -> List<com.rork.vinetrack.data.model.PendingWrite>,
 ) {
     /** Serialises replay so overlapping connectivity/load events can't double-fire. */
     private val replayLock = Mutex()
@@ -54,7 +68,7 @@ class PinPhotoSync(
         try {
             // Pins still queued for create haven't synced yet — their photos must
             // wait so the PATCH lands on an existing row.
-            val writes = pendingCreates.list()
+            val writes = pendingCreates()
             val queuedPinIds = writes
                 .filter { it.entityType == PendingEntityType.PIN && it.opType == PendingOpType.CREATE }
                 .map { it.clientId }
@@ -104,20 +118,24 @@ class PinPhotoSync(
                     try {
                         if (!pending.isCurrent(att.id, att.revision)) continue
                         val growthPaths = replacingOwnedPhoto(att.previousPhotoPaths, path)
-                        when (att.entityKind) {
-                            PendingPhotoEntityKind.GROWTH ->
-                                growthRepo.updatePhotoPaths(requireNotNull(att.growthRecordId), growthPaths)
+                        val remoteIdentity = when (att.entityKind) {
+                            PendingPhotoEntityKind.GROWTH -> {
+                                val updated = growthRepo.updatePhotoPaths(requireNotNull(att.growthRecordId), growthPaths)
+                                growthRemoteIdentity(updated, path)
+                            }
                             PendingPhotoEntityKind.LINKED_GROWTH -> {
-                                pinRepo.updatePhotoPath(att.clientPinId, path)
-                                att.growthRecordId?.let {
-                                    if (!pending.isCurrent(att.id, att.revision)) return@let
+                                val updatedPin = pinRepo.updatePhotoPath(att.clientPinId, path)
+                                val updatedGrowth = att.growthRecordId?.let {
+                                    if (!pending.isCurrent(att.id, att.revision)) return@let null
                                     growthRepo.updatePhotoPaths(it, growthPaths)
                                 }
+                                updatedGrowth?.let { growthRemoteIdentity(it, path) }
+                                    ?: pinRemoteIdentity(updatedPin, path)
                             }
-                            else -> pinRepo.updatePhotoPath(att.clientPinId, path)
+                            else -> pinRemoteIdentity(pinRepo.updatePhotoPath(att.clientPinId, path), path)
                         }
                         if (!pending.isCurrent(att.id, att.revision)) continue
-                        pending.promoteToDisplayCache(att)
+                        pending.promoteToDisplayCache(att, path, remoteIdentity)
                         onUploaded(att, path)
                         if (pending.isCurrent(att.id, att.revision)) {
                             pending.markUploaded(att.id)
@@ -180,5 +198,11 @@ class PinPhotoSync(
 
         internal fun replacingOwnedPhoto(previous: List<String>, newPath: String): List<String> =
             listOf(newPath) + previous.drop(1).filterNot { it == newPath }
+
+        internal fun pinRemoteIdentity(pin: com.rork.vinetrack.data.model.Pin, path: String): String =
+            listOf(path, pin.clientUpdatedAt, pin.updatedAt, pin.syncVersion?.toString()).joinToString("|") { it.orEmpty() }
+
+        internal fun growthRemoteIdentity(record: com.rork.vinetrack.data.model.GrowthStageRecord, path: String): String =
+            listOf(path, record.clientUpdatedAt, record.updatedAt, record.syncVersion?.toString()).joinToString("|") { it.orEmpty() }
     }
 }

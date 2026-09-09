@@ -86,7 +86,7 @@ final class MigratedDataStore {
     var onGrowthStagePinAdded: ((VinePin) -> Void)?
     /// Called when a growth-stage pin is soft-deleted locally so the
     /// mirrored growth-stage record can also be soft-deleted.
-    var onGrowthStagePinDeleted: ((UUID) -> Void)?
+    var onGrowthStagePinDeleted: ((VinePin) -> Bool)?
 
     /// Provides the currently-authenticated user UUID, used to self-heal
     /// `createdByUserId` on pins that were saved before auth was wired up
@@ -843,14 +843,14 @@ final class MigratedDataStore {
     }
 
     func deletePin(_ pinId: UUID) {
-        guard let vineyardId = selectedVineyardId else { return }
-        let wasGrowthStagePin = pins.first(where: { $0.id == pinId })?.growthStageCode != nil
+        guard let vineyardId = selectedVineyardId,
+              let pin = pins.first(where: { $0.id == pinId }) else { return }
+        if pin.growthStageCode != nil, onGrowthStagePinDeleted?(pin) == false {
+            return
+        }
         pins.removeAll { $0.id == pinId }
         pinRepo.saveSlice(pins, for: vineyardId)
         onPinDeleted?(pinId)
-        if wasGrowthStagePin {
-            onGrowthStagePinDeleted?(pinId)
-        }
     }
 
     func togglePinCompletion(_ pinId: UUID) {

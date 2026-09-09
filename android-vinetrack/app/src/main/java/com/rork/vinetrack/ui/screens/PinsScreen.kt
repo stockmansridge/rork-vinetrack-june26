@@ -118,6 +118,7 @@ import com.rork.vinetrack.data.SeasonSelection
 import com.rork.vinetrack.ui.components.SeasonSelector
 import com.rork.vinetrack.data.PinPlacement
 import com.rork.vinetrack.data.PinPresentationTarget
+import com.rork.vinetrack.data.PinPhotoSync
 import com.rork.vinetrack.data.RowAttachment
 import com.rork.vinetrack.data.resolvePinPresentationTarget
 import com.rork.vinetrack.data.model.CoordinatePoint
@@ -2248,7 +2249,13 @@ private fun PinRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (pin.hasPhoto || vm.retainedPhotoPath(pin.id) != null) {
-                    PinRowThumbnail(vm = vm, entityId = pin.id, photoPath = pin.photoPath, tint = onColor)
+                    PinRowThumbnail(
+                        vm = vm,
+                        entityId = pin.id,
+                        photoPath = pin.photoPath,
+                        remoteIdentity = pin.photoPath?.let { PinPhotoSync.pinRemoteIdentity(pin, it) },
+                        tint = onColor,
+                    )
                 }
                 if (pin.isCompleted) {
                     Icon(Icons.Filled.Check, contentDescription = "Completed", tint = onColor, modifier = Modifier.size(18.dp))
@@ -2332,19 +2339,18 @@ private fun PinRow(
  * offline). Display-only — it never mutates the photo queue or triggers retries.
  */
 @Composable
-private fun PinRowThumbnail(vm: AppViewModel, entityId: String, photoPath: String?, tint: Color) {
-    val retainedPath = vm.retainedPhotoPath(entityId)
-    var signedUrl by remember(photoPath, retainedPath) { mutableStateOf<String?>(null) }
-    var unavailable by remember(photoPath, retainedPath) { mutableStateOf(false) }
-    LaunchedEffect(photoPath, retainedPath) {
-        signedUrl = null
-        unavailable = false
-        if (!photoPath.isNullOrBlank()) {
-            vm.requestPinPhotoUrl(photoPath) { url ->
-                signedUrl = url
-                unavailable = url.isNullOrBlank()
-            }
-        }
+private fun PinRowThumbnail(
+    vm: AppViewModel,
+    entityId: String,
+    photoPath: String?,
+    remoteIdentity: String?,
+    tint: Color,
+) {
+    var display by remember(entityId, photoPath, remoteIdentity) {
+        mutableStateOf(vm.photoDisplaySource(entityId, photoPath, remoteIdentity))
+    }
+    LaunchedEffect(entityId, photoPath, remoteIdentity) {
+        vm.refreshPhotoDisplay(entityId, photoPath, remoteIdentity) { display = it }
     }
     Box(
         modifier = Modifier
@@ -2353,7 +2359,7 @@ private fun PinRowThumbnail(vm: AppViewModel, entityId: String, photoPath: Strin
             .background(tint.copy(alpha = 0.18f)),
         contentAlignment = Alignment.Center,
     ) {
-        val model: Any? = retainedPath?.let(::File) ?: signedUrl
+        val model: Any? = display.localPath?.let(::File)
         when {
             model != null -> AsyncImage(
                 model = model,
@@ -2361,7 +2367,7 @@ private fun PinRowThumbnail(vm: AppViewModel, entityId: String, photoPath: Strin
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
-            unavailable || photoPath.isNullOrBlank() -> Icon(
+            display.error != null || photoPath.isNullOrBlank() -> Icon(
                 Icons.Filled.Photo,
                 contentDescription = "Photo",
                 tint = tint.copy(alpha = 0.85f),
@@ -3062,7 +3068,12 @@ private fun PinDetailSheet(
 
             // Photo preview (hidden entirely when the pin has no photo).
             if (pin.hasPhoto || vm.retainedPhotoPath(pin.id) != null) {
-                PinDetailPhoto(vm = vm, entityId = pin.id, photoPath = pin.photoPath)
+                PinDetailPhoto(
+                    vm = vm,
+                    entityId = pin.id,
+                    photoPath = pin.photoPath,
+                    remoteIdentity = pin.photoPath?.let { PinPhotoSync.pinRemoteIdentity(pin, it) },
+                )
             }
 
             // Notes — the only editable field (iOS PinDetailSheet parity).
@@ -3251,22 +3262,18 @@ private fun PinDetailRow(label: String, value: String) {
  * demand and collapses quietly when the photo can't be fetched (e.g. offline).
  */
 @Composable
-private fun PinDetailPhoto(vm: AppViewModel, entityId: String, photoPath: String?) {
+private fun PinDetailPhoto(
+    vm: AppViewModel,
+    entityId: String,
+    photoPath: String?,
+    remoteIdentity: String?,
+) {
     val vine = LocalVineColors.current
-    val retainedPath = vm.retainedPhotoPath(entityId)
-    var signedUrl by remember(photoPath, retainedPath) { mutableStateOf<String?>(null) }
-    var unavailable by remember(photoPath, retainedPath) { mutableStateOf(false) }
-    LaunchedEffect(photoPath, retainedPath) {
-        signedUrl = null
-        unavailable = false
-        if (!photoPath.isNullOrBlank()) {
-            vm.requestPinPhotoUrl(photoPath) { url ->
-                signedUrl = url
-                unavailable = url.isNullOrBlank()
-            }
-        }
+    var display by remember(entityId, photoPath, remoteIdentity) {
+        mutableStateOf(vm.photoDisplaySource(entityId, photoPath, remoteIdentity))
     }
-    if (unavailable) return
+    fun retry(): Unit = vm.refreshPhotoDisplay(entityId, photoPath, remoteIdentity) { display = it }
+    LaunchedEffect(entityId, photoPath, remoteIdentity) { retry() }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -3275,7 +3282,7 @@ private fun PinDetailPhoto(vm: AppViewModel, entityId: String, photoPath: String
             .background(vine.textSecondary.copy(alpha = 0.08f)),
         contentAlignment = Alignment.Center,
     ) {
-        val model: Any? = retainedPath?.let(::File) ?: signedUrl
+        val model: Any? = display.localPath?.let(::File)
         if (model != null) {
             AsyncImage(
                 model = model,
@@ -3283,6 +3290,19 @@ private fun PinDetailPhoto(vm: AppViewModel, entityId: String, photoPath: String
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
+            if (display.isStaleCompletedCache) {
+                Text(
+                    "Showing older offline photo",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    modifier = Modifier.align(Alignment.BottomStart).background(Color.Black.copy(alpha = 0.65f)).padding(8.dp),
+                )
+            }
+        } else if (display.error != null) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(display.error ?: "Photo unavailable", color = VineColors.Destructive, fontSize = 12.sp)
+                TextButton(onClick = { retry() }) { Text("Retry") }
+            }
         } else {
             CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = vine.textSecondary)
         }
