@@ -2,6 +2,18 @@
 -- READ ONLY. Run after the APPLY file commits.
 -- Both reports share one repeatable-read snapshot. They check the exact three
 -- IDs, joined block name, audited transition, and every unrelated pin field.
+-- If this prerequisite fails, APPLY did not commit in this database. Do not
+-- create the audit table manually and do not interpret the pin repair as applied.
+
+do $preflight$
+begin
+  if to_regclass('public.pin_block_link_repair_audit') is null then
+    raise exception using
+      message = 'APPLY_NOT_COMMITTED: public.pin_block_link_repair_audit does not exist',
+      hint = 'Review and run the complete APPLY file first. If APPLY was already attempted, return its first error; its transaction rolled back and verification must not continue.';
+  end if;
+end;
+$preflight$;
 
 begin transaction isolation level repeatable read read only;
 

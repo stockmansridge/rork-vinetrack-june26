@@ -3,6 +3,17 @@
 -- This refuses to overwrite any pin changed after APPLY. It restores only the
 -- audited paddock_id (NULL for this package), increments sync_version, and lets
 -- the existing pins_set_updated_at trigger set a new server updated_at.
+-- A missing audit table means APPLY did not commit; never create it manually.
+
+do $preflight$
+begin
+  if to_regclass('public.pin_block_link_repair_audit') is null then
+    raise exception using
+      message = 'APPLY_NOT_COMMITTED: public.pin_block_link_repair_audit does not exist',
+      hint = 'There is no committed repair audit to roll back. Do not create the table manually.';
+  end if;
+end;
+$preflight$;
 
 begin transaction isolation level serializable;
 
@@ -16,7 +27,7 @@ declare
     '2c981eca-2981-435a-ac2a-a10aaaabf0ee'::uuid,
     'b46d0087-76ec-443b-936f-f010c8baffe3'::uuid
   ];
-  v_audit public.pin_block_link_repair_audit%rowtype;
+  v_audit record;
   v_current jsonb;
   v_rollback_after jsonb;
   v_audit_count integer;
@@ -24,10 +35,6 @@ declare
   v_changed_count integer := 0;
 begin
   perform pg_advisory_xact_lock(hashtextextended(v_run_id::text, 0));
-
-  if to_regclass('public.pin_block_link_repair_audit') is null then
-    raise exception 'AUDIT_TABLE_MISSING: apply package has not established its durable audit';
-  end if;
 
   select count(*)::integer
     into v_audit_count
