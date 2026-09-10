@@ -47,7 +47,11 @@ final class ManualSprayEntryWorkflowTests: XCTestCase {
         let payload = fixture()
         let repository = ManualSprayRepositoryDouble(serverConfirmed: false)
         let coordinator = ManualSprayEntryCoordinator(repository: repository, store: ManualSprayMemoryStore())
-        XCTAssertNil(try await coordinator.save(payload: payload, expectedVersion: 0))
+        let response = try await coordinator.save(
+            payload: payload,
+            expectedVersion: 0
+        )
+        XCTAssertNil(response)
         XCTAssertEqual(coordinator.pendingPayloads, [payload])
     }
 
