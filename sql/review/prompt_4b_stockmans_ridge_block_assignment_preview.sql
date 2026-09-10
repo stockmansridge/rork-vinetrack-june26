@@ -1,6 +1,8 @@
--- Prompt 4B: Stockmans Ridge historical pin block-assignment preview.
+-- Prompt 4D: all-vineyard historical pin block-assignment preview.
 --
--- ONE SELECT statement only. This preview does not modify pins or blocks, create
+-- This directly extends the reviewed Prompt 4B Stockmans Ridge query to every
+-- vineyard. ONE SELECT statement only. It returns vineyard summary rows followed
+-- by review-detail rows. This preview does not modify pins or blocks, create
 -- helper objects, infer row/path/side/facing values, or choose a nearest block.
 -- `pins.paddock_id` is the existing block relationship; block names are read
 -- only from `paddocks.name`.
@@ -24,9 +26,7 @@
 --   * heading and trip order are deliberately not used for block attribution.
 with
 params as (
-  select
-    'fe952afe-437f-4be7-8cbf-fdd8e630411c'::uuid as vineyard_id,
-    3.0::double precision as boundary_review_metres
+  select 3.0::double precision as boundary_review_metres
 ),
 segment_stats as (
   select s.pin_id, count(*)::integer as segment_count
@@ -72,7 +72,6 @@ scoped_pins as materialized (
       and p.snapped_longitude between -180 and 180
     ) as has_valid_snapped_coordinate
   from public.pins p
-  join params x on x.vineyard_id = p.vineyard_id
   left join segment_stats ss on ss.pin_id = p.id
   where p.deleted_at is null
 ),
@@ -93,8 +92,8 @@ block_inventory as materialized (
           case
             when jsonb_typeof(vertex.value->'latitude') = 'number'
              and jsonb_typeof(vertex.value->'longitude') = 'number'
-              then (vertex.value->>'latitude')::double precision between -90 and 90
-               and (vertex.value->>'longitude')::double precision between -180 and 180
+              then (vertex.value->>'latitude')::numeric between -90::numeric and 90::numeric
+               and (vertex.value->>'longitude')::numeric between -180::numeric and 180::numeric
             else false
           end
         )
@@ -102,7 +101,6 @@ block_inventory as materialized (
       else 'usable_current_polygon'
     end as geometry_status
   from public.paddocks pd
-  join params x on x.vineyard_id = pd.vineyard_id
   where pd.deleted_at is null
 ),
 valid_blocks as materialized (
@@ -121,6 +119,7 @@ valid_blocks as materialized (
 ),
 block_geometry_summary as (
   select
+    vineyard_id,
     count(*)::integer as active_block_count,
     count(*) filter (where geometry_status = 'usable_current_polygon')::integer
       as valid_polygon_count,
@@ -135,12 +134,14 @@ block_geometry_summary as (
     ) filter (where geometry_status <> 'usable_current_polygon')
       as excluded_block_geometry
   from block_inventory
+  group by vineyard_id
 ),
 base_matches as (
   select sp.id as pin_id, vb.id as block_id, vb.name as block_name
   from scoped_pins sp
   cross join valid_blocks vb
-  where sp.has_valid_base_coordinate
+  where vb.vineyard_id = sp.vineyard_id
+    and sp.has_valid_base_coordinate
     and public._pin_point_in_polygon(
       sp.latitude,
       sp.longitude,
@@ -163,7 +164,8 @@ snapped_matches as (
   select sp.id as pin_id, vb.id as block_id, vb.name as block_name
   from scoped_pins sp
   cross join valid_blocks vb
-  where sp.has_valid_snapped_coordinate
+  where vb.vineyard_id = sp.vineyard_id
+    and sp.has_valid_snapped_coordinate
     and public._pin_point_in_polygon(
       sp.snapped_latitude,
       sp.snapped_longitude,
@@ -185,6 +187,7 @@ snapped_candidates as (
 boundary_edges as materialized (
   select
     vb.id as block_id,
+    vb.vineyard_id,
     vb.centroid_latitude,
     edge_index,
     (vb.polygon_points->edge_index->>'latitude')::double precision as a_lat,
@@ -235,7 +238,8 @@ base_edge_distances as (
       select 111320.0 * cos(be.centroid_latitude * pi() / 180.0) as m_per_lon
     ) scale
   ) metric
-  where sp.has_valid_base_coordinate
+  where be.vineyard_id = sp.vineyard_id
+    and sp.has_valid_base_coordinate
 ),
 base_boundary_stats as (
   select pin_id, min(distance_metres) as nearest_boundary_metres
@@ -278,7 +282,8 @@ snapped_edge_distances as (
       select 111320.0 * cos(be.centroid_latitude * pi() / 180.0) as m_per_lon
     ) scale
   ) metric
-  where sp.has_valid_snapped_coordinate
+  where be.vineyard_id = sp.vineyard_id
+    and sp.has_valid_snapped_coordinate
 ),
 snapped_boundary_stats as (
   select pin_id, min(distance_metres) as nearest_boundary_metres
@@ -305,6 +310,7 @@ coordinate_disagreement as (
 assembled as (
   select
     sp.*,
+    vineyard.name as vineyard_name,
     current_block.name as current_block_name,
     current_block.vineyard_id as current_block_vineyard_id,
     current_block.deleted_at as current_block_deleted_at,
@@ -317,9 +323,9 @@ assembled as (
     bbs.nearest_boundary_metres,
     sbs.nearest_boundary_metres as snapped_nearest_boundary_metres,
     cd.base_to_snapped_metres,
-    bgs.active_block_count,
-    bgs.valid_polygon_count,
-    bgs.excluded_polygon_count,
+    coalesce(bgs.active_block_count, 0) as active_block_count,
+    coalesce(bgs.valid_polygon_count, 0) as valid_polygon_count,
+    coalesce(bgs.excluded_polygon_count, 0) as excluded_polygon_count,
     bgs.excluded_block_geometry,
     x.boundary_review_metres,
     (
@@ -329,7 +335,8 @@ assembled as (
     ) as base_and_snapped_candidates_disagree
   from scoped_pins sp
   cross join params x
-  cross join block_geometry_summary bgs
+  left join block_geometry_summary bgs on bgs.vineyard_id = sp.vineyard_id
+  left join public.vineyards vineyard on vineyard.id = sp.vineyard_id
   left join public.paddocks current_block on current_block.id = sp.paddock_id
   left join base_candidates bc on bc.pin_id = sp.id
   left join snapped_candidates sc on sc.pin_id = sp.id
@@ -362,18 +369,116 @@ classified as (
       else 'insufficient geometry/evidence'
     end as classification
   from assembled a
+),
+vineyard_summary as (
+  select
+    c.vineyard_id,
+    max(c.vineyard_name) as vineyard_name,
+    count(*)::integer as total_pin_count,
+    count(*) filter (where not c.is_completed)::integer as active_pin_count,
+    count(*) filter (where c.is_completed)::integer as completed_pin_count,
+    count(*) filter (where c.classification = 'existing assignment supported')::integer
+      as supported_assignment_count,
+    count(*) filter (where c.classification = 'missing link with unique candidate')::integer
+      as missing_link_unique_candidate_count,
+    count(*) filter (where c.classification = 'outside all blocks')::integer
+      as outside_block_pin_count,
+    count(*) filter (where c.classification = 'overlapping/boundary ambiguity')::integer
+      as boundary_coordinate_ambiguity_count,
+    count(*) filter (where c.classification = 'conflicting existing assignment')::integer
+      as conflicting_assignment_count,
+    count(*) filter (where c.classification = 'insufficient geometry/evidence')::integer
+      as insufficient_geometry_count
+  from classified c
+  group by c.vineyard_id
 )
 select
+  'vineyard_summary'::text as result_type,
+  s.vineyard_id,
+  s.vineyard_name,
+  s.total_pin_count,
+  s.active_pin_count,
+  s.completed_pin_count,
+  s.supported_assignment_count,
+  s.missing_link_unique_candidate_count,
+  s.outside_block_pin_count,
+  s.boundary_coordinate_ambiguity_count,
+  s.conflicting_assignment_count,
+  s.insufficient_geometry_count,
+  null::uuid as pin_id,
+  null::text as pin_type,
+  null::text as pin_mode,
+  null::text as completion_state,
+  null::double precision as stored_latitude,
+  null::double precision as stored_longitude,
+  null::double precision as stored_heading_degrees_evidence_only,
+  null::uuid as current_block_id,
+  null::text as current_block_name,
+  null::uuid as proposed_block_id,
+  null::text as proposed_block_name,
+  null::uuid[] as candidate_block_ids,
+  null::jsonb as candidate_blocks,
+  null::integer as candidate_match_count,
+  null::text as classification,
+  null::text as placement_origin,
+  null::text as stored_location_scope,
+  null::integer as segment_count,
+  null::double precision as stored_snapped_latitude,
+  null::double precision as stored_snapped_longitude,
+  null::boolean as stored_snapped_to_row,
+  null::uuid[] as snapped_candidate_block_ids,
+  null::jsonb as snapped_candidate_blocks,
+  null::integer as snapped_candidate_match_count,
+  null::numeric as base_to_snapped_metres,
+  null::boolean as base_and_snapped_candidates_disagree,
+  null::numeric as nearest_current_boundary_metres,
+  null::numeric as snapped_nearest_current_boundary_metres,
+  null::boolean as is_near_boundary,
+  null::timestamptz as pin_capture_time,
+  null::integer as active_block_count,
+  null::integer as valid_polygon_count,
+  null::integer as excluded_polygon_count,
+  null::jsonb as excluded_block_geometry,
+  null::text[] as evidence,
+  null::text as exclusion_or_review_reason,
+  'row/path/side/facing recovery remains outstanding and is not calculated here'::text
+    as remaining_work
+from vineyard_summary s
+
+union all
+
+select
+  'review_detail'::text as result_type,
+  c.vineyard_id,
+  c.vineyard_name,
+  null::integer as total_pin_count,
+  null::integer as active_pin_count,
+  null::integer as completed_pin_count,
+  null::integer as supported_assignment_count,
+  null::integer as missing_link_unique_candidate_count,
+  null::integer as outside_block_pin_count,
+  null::integer as boundary_coordinate_ambiguity_count,
+  null::integer as conflicting_assignment_count,
+  null::integer as insufficient_geometry_count,
   c.id as pin_id,
   c.button_name as pin_type,
   c.mode as pin_mode,
-  c.is_completed,
   case when c.is_completed then 'completed' else 'active' end as completion_state,
   c.latitude as stored_latitude,
   c.longitude as stored_longitude,
   c.heading as stored_heading_degrees_evidence_only,
   c.paddock_id as current_block_id,
   c.current_block_name,
+  case
+    when c.classification = 'missing link with unique candidate'
+     and c.placement_origin = 'unknown_origin' then c.candidate_ids[1]
+    else null
+  end as proposed_block_id,
+  case
+    when c.classification = 'missing link with unique candidate'
+     and c.placement_origin = 'unknown_origin' then proposed_block.name
+    else null
+  end as proposed_block_name,
   c.candidate_ids as candidate_block_ids,
   c.candidates as candidate_blocks,
   c.candidate_match_count,
@@ -423,34 +528,41 @@ select
       then 'stored_block_is_soft_deleted' end,
     case when lower(coalesce(c.button_name, '')) = 'blackberries'
       then 'Blackberries type may legitimately be outside mapped blocks' end,
-    'boundary history unavailable; only current non-deleted polygons were tested',
+    case when c.placement_origin <> 'unknown_origin'
+      then 'manual placement intent preserved; no proposal emitted automatically' end,
+    'boundary history unavailable; only current non-deleted same-vineyard polygons were tested',
     'heading and trip ordering were not used for block attribution',
-    'unique containment is review evidence, not automatic proof'
+    'unique containment is review evidence, not automatic or historical proof'
   ]::text[], null) as evidence,
   case
-    when c.classification = 'existing assignment supported'
-      then 'no relationship repair needed'
     when c.placement_origin <> 'unknown_origin'
-      then 'deliberate manual placement: never approve automatically; review intent separately'
+      then 'deliberate manual placement: proposed block withheld; review intent separately'
     when lower(coalesce(c.button_name, '')) = 'blackberries'
          and c.classification = 'outside all blocks'
       then 'possible legitimate outside-block Blackberries pin; do not force to nearest block'
     when c.classification = 'missing link with unique candidate'
-      then 'review proposed block relationship; no automatic proof'
+      then 'review proposed block relationship; current containment is not historical proof'
     when c.classification = 'conflicting existing assignment'
-      then 'existing relationship conflicts with current containment; separate manual review required'
+      then 'existing relationship conflicts with current same-vineyard containment; separate manual review required'
     when c.classification = 'overlapping/boundary ambiguity'
-      then 'ambiguous geometry or coordinate evidence; exclude from automatic repair'
+      then 'ambiguous geometry or coordinate provenance; exclude from automatic repair'
     when c.classification = 'outside all blocks'
-      then 'outside every valid current polygon; do not assign nearest block'
+      then 'outside every valid current same-vineyard polygon; do not assign nearest block'
     else 'insufficient coordinate or current polygon evidence'
   end as exclusion_or_review_reason,
   'row/path/side/facing recovery remains outstanding and is not calculated here'
     as remaining_work
 from classified c
+left join valid_blocks proposed_block
+  on proposed_block.id = c.candidate_ids[1]
+ and proposed_block.vineyard_id = c.vineyard_id
+where c.classification <> 'existing assignment supported'
 order by
-  c.classification,
-  c.is_completed,
-  c.button_name nulls last,
-  c.created_at,
-  c.id;
+  vineyard_name nulls last,
+  vineyard_id,
+  result_type desc,
+  classification nulls first,
+  completion_state nulls first,
+  pin_type nulls last,
+  pin_capture_time,
+  pin_id;

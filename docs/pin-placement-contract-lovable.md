@@ -1,17 +1,29 @@
 # Canonical pin placement contract — portal (Lovable) handoff
 
-Applies after `sql/171_pin_placement_contract.sql`. iOS and Android already
-follow this contract; the portal must adopt it verbatim.
+Applies after `sql/171_pin_placement_contract.sql`. Mobile implementation is
+reported complete, subject to the open behavioural and handset checks. Portal
+adoption is proposed by this handoff but has not been confirmed implemented.
 
-> **Important:** running SQL 171 alone does NOT change what the portal
-> displays. The portal computes "Unassigned location" in its own front-end
-> code from the base `pins` columns. Until the portal's queries are switched
-> to `pin_placements` / `pins_export`, it will keep showing the old, wrong
-> labels. See "Prompt to paste into Lovable" at the bottom.
+## Current status — 10 September 2026
+
+- Historical pin-location assessment: run; broader historical metrics and recovery remain outstanding.
+- Stockmans Ridge block-assignment preview: run.
+- Limited Stockmans Ridge three-pin repair: applied and package verification passed (`expected=3`, `audited=3`, `verified=3`, `package_verified=true`).
+- Other-vineyard recovery and historical row/path/side/facing recovery: outstanding.
+- Portal changes below: proposed, not confirmed implemented.
+
+The limited repair must not be read as historical recovery across all vineyards.
+
+> **Important:** running SQL 171 alone does NOT prove that the portal changed.
+> The known prior portal behavior computed "Unassigned location" in front-end
+> code from the base `pins` columns. Until implementation and acceptance are
+> confirmed against `pin_placements` / `pins_export`, treat the changes below
+> as proposed and the old labels as potentially still present. See "Prompt to
+> paste into Lovable" at the bottom.
 
 ## The bug this replaces
 
-The portal currently treats a pin as assigned only when
+The known prior portal implementation treated a pin as assigned only when
 `paddock_id IS NOT NULL AND <a row number exists on the pins row>`.
 That is incorrect and mislabels as "unassigned":
 
