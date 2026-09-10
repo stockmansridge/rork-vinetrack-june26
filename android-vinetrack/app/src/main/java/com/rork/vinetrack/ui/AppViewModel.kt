@@ -10011,7 +10011,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         actualChemicalBaseAmounts: Map<String, Double>,
     ): Boolean {
         val trip = _ui.value.trips.firstOrNull { it.id == pending.sourceTrip.id && it.isActive } ?: return false
-        if (trip != pending.sourceTrip || trip.id in _ui.value.locallyEndedTripIds) {
+        val selectedVineyardId = _ui.value.selectedVineyardId
+        val currentRecord = TankMixPresentation.linkedRecord(trip.id, _ui.value.sprayRecords)
+        val currentTank = currentRecord?.tanks.orEmpty().firstOrNull { it.tankNumber == pending.result.tankNumber }
+        val tankStateUnchanged = trip.tankSessions == pending.sourceTrip.tankSessions &&
+            trip.activeTankNumber == pending.sourceTrip.activeTankNumber &&
+            trip.isFillingTank == pending.sourceTrip.isFillingTank &&
+            trip.fillingTankNumber == pending.sourceTrip.fillingTankNumber
+        if (trip.endTime != null || trip.deletedAt != null || trip.id in _ui.value.locallyEndedTripIds ||
+            selectedVineyardId != trip.vineyardId || trip.vineyardId != pending.sourceTrip.vineyardId ||
+            currentRecord?.id != pending.record.id || currentTank?.id != pending.tank.id || !tankStateUnchanged
+        ) {
             _ui.update { it.copy(tripError = "The trip changed while this tank was open. Reopen Start Tank and confirm again.") }
             return false
         }
@@ -10045,20 +10055,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             confirmedBy = userId,
         )
         val ownerId = session.userId ?: return false
-        val vineyardId = _ui.value.selectedVineyardId ?: return false
-        if (!startTankCommitCoordinator.commit(ownerId, vineyardId, result.trip, actual)) return false
+        val vineyardId = selectedVineyardId ?: return false
+        val committedTrip = com.rork.vinetrack.data.StartTankOperationMerge.apply(
+            current = trip,
+            source = pending.sourceTrip,
+            intended = result.trip,
+            tankSessionId = result.tankSessionId,
+            tankNumber = result.tankNumber,
+        ) ?: return false
+        if (!startTankCommitCoordinator.commit(ownerId, vineyardId, pending.sourceTrip, committedTrip, actual)) return false
         val marker = pendingWrites.list().firstOrNull {
             it.clientId == trip.id &&
                 it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK &&
                 it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
         }
-        _ui.update { state -> state.copy(trips = state.trips.map { if (it.id == trip.id) result.trip else it }) }
+        _ui.update { state -> state.copy(trips = state.trips.map { if (it.id == trip.id) committedTrip else it }) }
         if (_ui.value.isOnline) {
             viewModelScope.launch {
                 runCatching {
                     tripRepo.updateTripTankSessions(
-                        trip.id, result.trip.tankSessions, result.trip.activeTankNumber,
-                        result.trip.isFillingTank, result.trip.fillingTankNumber,
+                        trip.id, committedTrip.tankSessions, committedTrip.activeTankNumber,
+                        committedTrip.isFillingTank, committedTrip.fillingTankNumber,
                     )
                 }.onSuccess {
                     marker?.let { pendingWrites.remove(it.id) }

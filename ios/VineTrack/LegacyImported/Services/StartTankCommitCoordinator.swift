@@ -10,6 +10,7 @@ final class StartTankCommitCoordinator {
         let confirmationTimestamp: Date
         let updatedTrip: Trip
         let actual: SprayTankActual
+        let sourceTrip: Trip?
         var state: String
     }
 
@@ -31,7 +32,10 @@ final class StartTankCommitCoordinator {
         self.failurePoint = failurePoint
     }
 
-    func commit(updatedTrip: Trip, actual: SprayTankActual, store: MigratedDataStore) throws {
+    func commit(sourceTrip: Trip, updatedTrip: Trip, actual: SprayTankActual, store: MigratedDataStore) throws {
+        guard persistence.load(key: Self.persistenceKey) as Journal? == nil else {
+            throw SprayTankActualValidationError.localSaveFailed
+        }
         let journal = Journal(
             actualRecordId: actual.id,
             tankSessionId: actual.tankSessionId,
@@ -39,10 +43,11 @@ final class StartTankCommitCoordinator {
             confirmationTimestamp: actual.confirmedAt,
             updatedTrip: updatedTrip,
             actual: actual,
+            sourceTrip: sourceTrip,
             state: "prepared"
         )
         try persistence.saveOrThrow(journal, key: Self.persistenceKey)
-        try finish(journal, store: store)
+        try finish(journal, store: store, currentOverride: updatedTrip)
     }
 
     /// Completes the exact stable-ID operation saved before process termination.
@@ -50,15 +55,26 @@ final class StartTankCommitCoordinator {
     func recover(store: MigratedDataStore) -> Bool {
         guard let journal: Journal = persistence.load(key: Self.persistenceKey) else { return false }
         do {
-            try finish(journal, store: store)
+            try finish(journal, store: store, currentOverride: nil)
             return true
         } catch {
             return false
         }
     }
 
-    private func finish(_ initial: Journal, store: MigratedDataStore) throws {
+    private func finish(_ initial: Journal, store: MigratedDataStore, currentOverride: Trip?) throws {
         var journal = initial
+        guard store.selectedVineyardId == journal.updatedTrip.vineyardId,
+              let current = currentOverride ?? store.trips.first(where: { $0.id == journal.updatedTrip.id }),
+              let mergedTrip = Self.applyOperation(
+                current: current,
+                source: journal.sourceTrip,
+                intended: journal.updatedTrip,
+                tankSessionId: journal.tankSessionId,
+                tankNumber: journal.tankNumber
+              )
+        else { throw SprayTankActualValidationError.localSaveFailed }
+
         try failIfRequested(.beforeActual)
         if !actualStore.records.contains(where: { $0.id == journal.actualRecordId && $0.tripId == journal.actual.tripId && $0.tankSessionId == journal.tankSessionId }) {
             try actualStore.saveLocally(journal.actual)
@@ -67,8 +83,8 @@ final class StartTankCommitCoordinator {
         journal.state = "actual_durable"
         try persistence.saveOrThrow(journal, key: Self.persistenceKey)
 
-        if store.trips.first(where: { $0.id == journal.updatedTrip.id }) != journal.updatedTrip {
-            try store.updateTripOrThrow(journal.updatedTrip)
+        if store.trips.first(where: { $0.id == journal.updatedTrip.id }) != mergedTrip {
+            try store.updateTripOrThrow(mergedTrip)
         } else {
             // Reassert the Trip dirty marker after a relaunch even when its file write landed.
             store.onTripChanged?(journal.updatedTrip.id)
@@ -78,10 +94,49 @@ final class StartTankCommitCoordinator {
         try persistence.saveOrThrow(journal, key: Self.persistenceKey)
 
         guard actualStore.records.contains(where: { $0.id == journal.actualRecordId && $0.tankSessionId == journal.tankSessionId }),
-              store.trips.contains(journal.updatedTrip)
+              let durableTrip = store.trips.first(where: { $0.id == journal.updatedTrip.id }),
+              operationIsEstablished(in: durableTrip, tankSessionId: journal.tankSessionId, tankNumber: journal.tankNumber)
         else { throw SprayTankActualValidationError.localSaveFailed }
         try failIfRequested(.beforeClear)
         try persistence.removeOrThrow(key: Self.persistenceKey)
+    }
+
+    private static func applyOperation(
+        current: Trip,
+        source: Trip?,
+        intended: Trip,
+        tankSessionId: String,
+        tankNumber: Int
+    ) -> Trip? {
+        guard current.id == intended.id,
+              current.vineyardId == intended.vineyardId,
+              current.isActive,
+              current.endTime == nil,
+              let intendedSession = intended.tankSessions.first(where: {
+                $0.id.uuidString == tankSessionId && $0.tankNumber == tankNumber
+              })
+        else { return nil }
+        if let existing = current.tankSessions.first(where: { $0.id.uuidString == tankSessionId }) {
+            return existing.tankNumber == intendedSession.tankNumber ? current : nil
+        }
+        guard let source,
+              current.id == source.id,
+              current.vineyardId == source.vineyardId,
+              current.tankSessions == source.tankSessions,
+              current.activeTankNumber == source.activeTankNumber,
+              current.isFillingTank == source.isFillingTank,
+              current.fillingTankNumber == source.fillingTankNumber
+        else { return nil }
+        var merged = current
+        merged.tankSessions = intended.tankSessions
+        merged.activeTankNumber = intended.activeTankNumber
+        merged.isFillingTank = intended.isFillingTank
+        merged.fillingTankNumber = intended.fillingTankNumber
+        return merged
+    }
+
+    private func operationIsEstablished(in trip: Trip, tankSessionId: String, tankNumber: Int) -> Bool {
+        trip.tankSessions.contains { $0.id.uuidString == tankSessionId && $0.tankNumber == tankNumber }
     }
 
     private func failIfRequested(_ point: FailurePoint) throws {

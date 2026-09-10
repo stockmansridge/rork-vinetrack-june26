@@ -743,7 +743,14 @@ final class TripTrackingService {
         actualChemicalBaseAmounts: [UUID: Double]
     ) -> Bool {
         guard let trip = activeTrip,
+              trip.isActive,
+              trip.endTime == nil,
+              store?.selectedVineyardId == trip.vineyardId,
+              pending.sourceTrip.id == trip.id,
+              pending.sourceTrip.vineyardId == trip.vineyardId,
               pending.record.tripId == trip.id,
+              TankMixPresentation.linkedRecord(for: trip.id, in: store?.sprayRecords ?? [])?.id == pending.record.id,
+              pending.record.tanks.first(where: { $0.tankNumber == pending.result.tankNumber })?.id == pending.tank.id,
               let userId = SupabaseClientProvider.shared.client.auth.currentUser?.id
         else { return false }
         guard trip.tankSessions == pending.sourceTrip.tankSessions,
@@ -784,7 +791,12 @@ final class TripTrackingService {
                 confirmedBy: userId
             )
             guard let store else { throw SprayTankActualValidationError.localSaveFailed }
-            try startTankCommitCoordinator.commit(updatedTrip: committedTrip, actual: actual, store: store)
+            try startTankCommitCoordinator.commit(
+                sourceTrip: pending.sourceTrip,
+                updatedTrip: committedTrip,
+                actual: actual,
+                store: store
+            )
             return true
         } catch {
             errorMessage = error.localizedDescription
