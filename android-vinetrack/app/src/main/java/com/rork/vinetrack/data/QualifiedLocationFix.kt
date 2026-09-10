@@ -16,6 +16,10 @@ data class PinCaptureContext(
     val vineyardId: String,
     val tripId: String?,
     val observedAtIso: String,
+    /** Placement resolved once from the trip and block selection that existed at capture. */
+    val resolvedPaddockId: String? = null,
+    val resolvedRowNumber: Int? = null,
+    val resolvedPlacement: PinPlacementResult? = null,
 )
 
 /** Explicit outcome for a pin-location request; failure never carries coordinates. */
@@ -43,7 +47,20 @@ sealed interface PinLocationResult {
     }
 }
 
-/** Pure gate used by the UI to reject unresolved and late tap callbacks. */
+/** Synchronous source used at the exact instant an automatic-placement action is pressed. */
+fun interface PinFixSnapshotSource {
+    fun snapshotPinFix(): PinLocationResult
+}
+
+/**
+ * Tap coordinator with no pending acceptance state. A rejected tap is final: later source
+ * updates only warm the next tap and can never complete the rejected one.
+ */
+class PinTapCaptureCoordinator(private val source: PinFixSnapshotSource) {
+    fun captureNow(): PinLocationResult = source.snapshotPinFix()
+}
+
+/** Guards callbacks that belong to an already accepted and frozen capture. */
 object PinTapCaptureGate {
     fun acceptedFix(contextIsCurrent: Boolean, result: PinLocationResult): QualifiedLocationFix? =
         if (contextIsCurrent) (result as? PinLocationResult.Success)?.fix else null

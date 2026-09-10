@@ -118,11 +118,12 @@ import com.rork.vinetrack.data.PinRecoveryDiagnosticExporter
 import com.rork.vinetrack.data.SeasonScope
 import com.rork.vinetrack.data.SeasonSelection
 import com.rork.vinetrack.ui.components.SeasonSelector
+import com.rork.vinetrack.ui.components.ForegroundLocationSubscriptionEffect
 import com.rork.vinetrack.data.PinPlacement
 import com.rork.vinetrack.data.PinCaptureContext
 import com.rork.vinetrack.data.PinCaptureEvidenceStore
 import com.rork.vinetrack.data.PinLocationResult
-import com.rork.vinetrack.data.PinTapCaptureGate
+import com.rork.vinetrack.data.PinTapCaptureCoordinator
 import com.rork.vinetrack.data.QualifiedLocationFix
 import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.PinPresentationTarget
@@ -1522,6 +1523,8 @@ fun PinCategoryLauncherScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var showGrowthStageSheet by remember { mutableStateOf(false) }
+    var growthCapture by remember { mutableStateOf<PinCaptureContext?>(null) }
+    var growthLocationResult by remember { mutableStateOf<PinLocationResult?>(null) }
     var showEditButtons by remember { mutableStateOf(false) }
     var showTemplates by remember { mutableStateOf(false) }
     var locating by remember { mutableStateOf(false) }
@@ -1555,10 +1558,7 @@ fun PinCategoryLauncherScreen(
     // Dedicated foreground subscription owned by this launcher. It runs even
     // without an active trip and is disposed as soon as the launcher leaves.
     val pinLocationTracker = remember { LocationTracker(context) }
-    DisposableEffect(pinLocationTracker) {
-        pinLocationTracker.startPinFixUpdates()
-        onDispose { pinLocationTracker.stopPinFixUpdates() }
-    }
+    ForegroundLocationSubscriptionEffect(pinLocationTracker)
 
     // Auto-dismiss the success card after a short moment, like the iOS toast.
     LaunchedEffect(successToast) {
@@ -1606,19 +1606,12 @@ fun PinCategoryLauncherScreen(
     ) {
         val lat = fix.latitude
         val lng = fix.longitude
-        // One-shot immutable placement: block by polygon containment, nearest
-        // row snap, side carried verbatim. Reused by the duplicate check, the
-        // success toast and the save payload so they always agree.
-        val placement = PinPlacement.resolve(
-            paddocks = capturedPaddocks,
-            selectedPaddockId = null,
-            latitude = lat,
-            longitude = lng,
-            side = side,
-        )
-        val paddock = capturedPaddocks.firstOrNull { it.id == placement.paddockId }
-        val paddockId = placement.paddockId
-        val attachment = placement.toAttachment()
+        // This placement was resolved at the accepted tap through the existing
+        // active-trip boundary contract and is immutable through confirmation/replay.
+        val placement = capture.resolvedPlacement
+        val paddockId = capture.resolvedPaddockId
+        val paddock = capturedPaddocks.firstOrNull { it.id == paddockId }
+        val attachment = placement?.toAttachment()
         val offline = !state.isOnline
         val autoPhotoEnabled = AppPreferencesStore(context).load().autoPhotoPrompt
         // iOS-parity identity: store the tapped button's name and colour token
@@ -1646,12 +1639,12 @@ fun PinCategoryLauncherScreen(
                     observationTimeIso = capture.observedAtIso,
                     headingDegrees = capturedHeading ?: fix.bearingDegrees,
                     paddockId = paddockId,
-                    pinRowNumber = placement.pinRowNumber,
-                    pinSide = placement.pinSide,
-                    snappedLatitude = placement.snappedLatitude,
-                    snappedLongitude = placement.snappedLongitude,
-                    alongRowDistanceMetres = placement.alongRowDistanceM,
-                    snappedToRow = placement.snappedToRow,
+                    pinRowNumber = placement?.pinRowNumber,
+                    pinSide = placement?.pinSide,
+                    snappedLatitude = placement?.snappedLatitude,
+                    snappedLongitude = placement?.snappedLongitude,
+                    alongRowDistanceMetres = placement?.alongRowDistanceM,
+                    snappedToRow = placement?.snappedToRow ?: false,
                 ),
             )
             if (!evidenceSaved) {
@@ -1737,34 +1730,28 @@ fun PinCategoryLauncherScreen(
 
     /** Quick tap freezes its context and either creates now or requires a new tap. */
     fun launchCategory(category: String, side: String) {
-        val vineyardId = state.selectedVineyardId ?: run {
+        if (state.selectedVineyardId == null) {
             scope.launch { snackbarHostState.showSnackbar("No vineyard selected.") }
             return
         }
-        val tripId = state.activeTrip?.id
-        val capture = PinCaptureContext(
-            pinId = UUID.randomUUID().toString(),
-            vineyardId = vineyardId,
-            tripId = tripId,
-            observedAtIso = Instant.now().toString(),
-        )
-        val capturedMode = mode
-        val capturedHeading = compassHeadingDegrees
-        val capturedPaddocks = state.paddocks.toList()
-        locating = true
-        scope.launch {
-            val result = pinLocationTracker.currentPinLocation()
-            locating = false
-            val fix = PinTapCaptureGate.acceptedFix(
-                contextIsCurrent = vm.isPinCaptureContextCurrent(vineyardId, tripId),
-                result = result,
-            )
-            if (fix != null) {
-                quickCreate(category, side, fix, capture, capturedMode, capturedHeading, capturedPaddocks)
-            } else if (vm.isPinCaptureContextCurrent(vineyardId, tripId)) {
-                snackbarHostState.showSnackbar(result.operatorMessage())
-            }
+        // Acceptance is synchronous. A missing/stale fix rejects this tap forever;
+        // the foreground subscription may warm a later tap but has no callback here.
+        val result = PinTapCaptureCoordinator(pinLocationTracker).captureNow()
+        val fix = (result as? PinLocationResult.Success)?.fix
+        val capture = fix?.let { vm.freezePinCapture(it, side) }
+        if (fix == null || capture == null) {
+            scope.launch { snackbarHostState.showSnackbar(result.operatorMessage()) }
+            return
         }
+        quickCreate(
+            category,
+            side,
+            fix,
+            capture,
+            mode,
+            compassHeadingDegrees,
+            state.paddocks.toList(),
+        )
     }
 
     val locationPermission = rememberLauncherForActivityResult(
@@ -1840,7 +1827,12 @@ fun PinCategoryLauncherScreen(
             // canonical E-L growth-stage authoring sheet (shared with the Growth
             // screen) rather than a generic Growth pin.
             if (mode == "Growth") {
-                GrowthStageButton { showGrowthStageSheet = true }
+                GrowthStageButton {
+                    val result = PinTapCaptureCoordinator(pinLocationTracker).captureNow()
+                    growthLocationResult = result
+                    growthCapture = (result as? PinLocationResult.Success)?.fix?.let { vm.freezePinCapture(it, null) }
+                    showGrowthStageSheet = true
+                }
             }
 
             // LEFT / RIGHT column labels.
@@ -1912,8 +1904,10 @@ fun PinCategoryLauncherScreen(
             vm = vm,
             state = state,
             existing = null,
-            onDismiss = { showGrowthStageSheet = false },
-            onSaved = { showGrowthStageSheet = false },
+            automaticCapture = growthCapture,
+            automaticLocationResult = growthLocationResult,
+            onDismiss = { showGrowthStageSheet = false; growthCapture = null; growthLocationResult = null },
+            onSaved = { showGrowthStageSheet = false; growthCapture = null; growthLocationResult = null },
         )
     }
 

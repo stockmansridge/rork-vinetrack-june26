@@ -31,6 +31,16 @@ class PendingWriteStore(context: Context) : PendingWriteStoring {
         return runCatching { json.decodeFromString(serializer, raw) }.getOrDefault(emptyList())
     }
 
+    /** Recovery read that reports malformed persisted bytes instead of hiding them as empty. */
+    fun loadForRecovery(): LocalEvidenceRead<PendingWrite> {
+        val raw = prefs.getString(KEY_WRITES, null) ?: return LocalEvidenceRead(emptyList())
+        return runCatching { json.decodeFromString(serializer, raw) }
+            .fold(
+                onSuccess = { LocalEvidenceRead(it) },
+                onFailure = { LocalEvidenceRead(emptyList(), "Persisted pending-write evidence could not be decoded.") },
+            )
+    }
+
     /** Persist the full outbox, replacing any previous contents. */
     override fun save(writes: List<PendingWrite>): Boolean =
         prefs.edit().putString(KEY_WRITES, json.encodeToString(serializer, writes)).commit()

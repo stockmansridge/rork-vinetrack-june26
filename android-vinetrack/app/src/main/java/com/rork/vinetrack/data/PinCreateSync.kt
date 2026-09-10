@@ -22,12 +22,23 @@ import kotlinx.serialization.json.Json
  * a retried insert is safe — if the server reports a duplicate (409) the row is
  * already there and we treat it as synced rather than creating a second pin.
  */
-class PinCreateSync(
-    private val pinRepo: PinRepository?,
+class PinCreateSync private constructor(
+    private val createRemote: (suspend (PinRepository.PinInput) -> Pin)?,
     private val pending: PendingWriteRepository,
 ) {
+    constructor(pinRepo: PinRepository, pending: PendingWriteRepository) : this(
+        createRemote = { input -> pinRepo.createPin(input) },
+        pending = pending,
+    )
+
     /** Queue-only constructor used by durable production-payload tests. */
     internal constructor(pending: PendingWriteRepository) : this(null, pending)
+
+    /** Production replay seam for executable persistence/network tests. */
+    internal constructor(
+        pending: PendingWriteRepository,
+        createRemote: suspend (PinRepository.PinInput) -> Pin,
+    ) : this(createRemote, pending)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     /** Serialises replay so overlapping connectivity events can't double-fire. */
@@ -81,7 +92,7 @@ class PinCreateSync(
                     continue
                 }
                 try {
-                    val pin = requireNotNull(pinRepo) { "Pin repository is required for replay." }.createPin(input)
+                    val pin = requireNotNull(createRemote) { "Pin repository is required for replay." }(input)
                     pending.remove(write.id)
                     onSynced(pin)
                 } catch (e: BackendError.Unauthorized) {

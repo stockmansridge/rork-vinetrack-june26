@@ -375,6 +375,37 @@ class SprayMultiBlockTripTest {
     }
 
     @Test
+    fun `active trip clears assignment inside neighbouring unselected block but preserves raw GPS`() {
+        val blocks = listOf(block(ids[0], 1, 149.000), block(ids[1], 69, 149.010))
+        val trip = completeTrip(active = true).copy(paddockId = ids[0], paddockIds = listOf(ids[0]))
+        val rawLatitude = -33.0
+        val rawLongitude = 149.010
+        val attribution = resolveTripPinAttribution(
+            activeTrip = trip,
+            paddocks = blocks,
+            latitude = rawLatitude,
+            longitude = rawLongitude,
+            side = "left",
+            callerPaddockId = ids[1],
+            callerRowNumber = 69,
+            callerPlacement = PinPlacement.resolve(blocks, null, rawLatitude, rawLongitude, "left"),
+        )
+        assertNull(attribution.paddockId)
+        assertNull(attribution.rowNumber)
+        assertNull(attribution.placement)
+        val payload = PinRepository.PinInput(
+            id = "outside-selected-block",
+            vineyardId = "vineyard",
+            tripId = trip.id,
+            paddockId = attribution.paddockId,
+            latitude = rawLatitude,
+            longitude = rawLongitude,
+        )
+        assertEquals(rawLatitude, payload.latitude!!, 0.0)
+        assertEquals(rawLongitude, payload.longitude!!, 0.0)
+    }
+
+    @Test
     fun `trip pin attribution follows containing selected block`() {
         val blocks = listOf(
             block(ids[0], 1, 149.000),

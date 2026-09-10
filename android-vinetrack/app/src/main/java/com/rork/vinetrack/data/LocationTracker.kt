@@ -32,7 +32,7 @@ import kotlin.math.sqrt
  * the app is in the foreground and the tracker is started. True background
  * tracking (foreground service + notification) is a deferred follow-up.
  */
-class LocationTracker(context: Context) {
+class LocationTracker(context: Context) : PinFixSnapshotSource {
 
     private val appContext = context.applicationContext
     private val client = LocationServices.getFusedLocationProviderClient(appContext)
@@ -197,7 +197,28 @@ class LocationTracker(context: Context) {
     }
 
     /**
-     * Qualified one-shot observation for automatic pin placement. A cached fix
+     * Synchronously validates only the fix already delivered to this foreground
+     * subscription. It never requests or waits for another position.
+     */
+    override fun snapshotPinFix(): PinLocationResult {
+        if (!hasPermission) return PinLocationResult.PermissionDenied
+        if (!hasFinePermission) return PinLocationResult.ApproximatePermission
+        if (!areLocationServicesEnabled) return PinLocationResult.ServicesDisabled
+        val fix = latestPinFix ?: return PinLocationResult.Stale
+        return PinLocationFixValidator.validate(
+            latitude = fix.latitude,
+            longitude = fix.longitude,
+            hasAccuracy = true,
+            accuracyMetres = fix.accuracyMetres,
+            fixTimeEpochMs = fix.fixTimeEpochMs,
+            fixElapsedRealtimeNanos = fix.fixElapsedRealtimeNanos,
+            nowElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos(),
+            bearingDegrees = fix.bearingDegrees,
+        )
+    }
+
+    /**
+     * Qualified one-shot observation for non-tap tools. A cached fix
      * is accepted only when it is at most five seconds old and accurate to 15 m;
      * otherwise a new high-accuracy fix is requested. Age uses Android's
      * monotonic elapsed-realtime timestamp carried by the Location itself.

@@ -92,6 +92,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.GrowthStageRecordRepository
+import com.rork.vinetrack.data.LocationTracker
+import com.rork.vinetrack.data.PinCaptureContext
+import com.rork.vinetrack.data.PinLocationResult
+import com.rork.vinetrack.data.PinTapCaptureCoordinator
 import com.rork.vinetrack.data.GrowthStageReportPdfExporter
 import com.rork.vinetrack.data.RegionDateFormat
 import com.rork.vinetrack.data.GrapeVarietyDeleteOutcome
@@ -113,6 +117,7 @@ import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.OverviewStat
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.StatusBadge
+import com.rork.vinetrack.ui.components.ForegroundLocationSubscriptionEffect
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
@@ -143,9 +148,14 @@ fun GrowthScreen(
     onBack: (() -> Unit)? = null,
     onOpenStageImages: (() -> Unit)? = null,
 ) {
+    val context = LocalContext.current
+    val locationTracker = remember { LocationTracker(context) }
+    ForegroundLocationSubscriptionEffect(locationTracker)
     var selectedId by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<GrowthStageRecord?>(null) }
+    var automaticCapture by remember { mutableStateOf<PinCaptureContext?>(null) }
+    var automaticLocationResult by remember { mutableStateOf<PinLocationResult?>(null) }
 
     val selected = state.growthRecords
         .filterNot { it.id in state.pendingGrowthDeleteIds || it.pinId in state.pendingPinDeleteIds }
@@ -171,7 +181,12 @@ fun GrowthScreen(
                 state = state,
                 onBack = onBack,
                 onOpen = { selectedId = it.id },
-                onCreate = { creating = true },
+                onCreate = {
+                    val result = PinTapCaptureCoordinator(locationTracker).captureNow()
+                    automaticLocationResult = result
+                    automaticCapture = (result as? PinLocationResult.Success)?.fix?.let { vm.freezePinCapture(it, null) }
+                    creating = true
+                },
                 canExport = canExport,
             )
         }
@@ -182,8 +197,10 @@ fun GrowthScreen(
             vm = vm,
             state = state,
             existing = editing,
-            onDismiss = { creating = false; editing = null },
-            onSaved = { creating = false; editing = null },
+            automaticCapture = if (editing == null) automaticCapture else null,
+            automaticLocationResult = if (editing == null) automaticLocationResult else null,
+            onDismiss = { creating = false; editing = null; automaticCapture = null; automaticLocationResult = null },
+            onSaved = { creating = false; editing = null; automaticCapture = null; automaticLocationResult = null },
         )
     }
 }
@@ -1395,6 +1412,8 @@ fun GrowthSheet(
     vm: AppViewModel,
     state: AppUiState,
     existing: GrowthStageRecord?,
+    automaticCapture: PinCaptureContext? = null,
+    automaticLocationResult: PinLocationResult? = null,
     onDismiss: () -> Unit,
     onSaved: () -> Unit,
     initialBlock: Paddock? = null,
@@ -1423,29 +1442,16 @@ fun GrowthSheet(
     // and resolves the block whose polygon contains it (with a snapped row),
     // exactly like dropping a map pin — no manual block picker. Editing keeps the
     // record's existing placement untouched.
-    var locatedLat by remember { mutableStateOf(existing?.latitude) }
-    var locatedLng by remember { mutableStateOf(existing?.longitude) }
-    var locatedRow by remember { mutableStateOf(existing?.rowNumber) }
+    val capturedFix = (automaticLocationResult as? PinLocationResult.Success)?.fix
+    var locatedLat by remember { mutableStateOf(existing?.latitude ?: capturedFix?.latitude) }
+    var locatedLng by remember { mutableStateOf(existing?.longitude ?: capturedFix?.longitude) }
+    var locatedRow by remember { mutableStateOf(existing?.rowNumber ?: automaticCapture?.resolvedRowNumber) }
     var locating by remember { mutableStateOf(false) }
-    var locationResolved by remember { mutableStateOf(existing != null || initialBlock != null) }
+    var locationResolved by remember { mutableStateOf(true) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(automaticCapture?.pinId) {
         if (existing == null && initialBlock == null) {
-            locating = true
-            vm.fetchCurrentLocation { latlng ->
-                if (latlng != null) {
-                    val (lat, lng) = latlng
-                    locatedLat = lat
-                    locatedLng = lng
-                    val hit = state.paddocks.firstOrNull { RowAttachment.containsPoint(it, lat, lng) }
-                    if (hit != null) {
-                        block = hit
-                        locatedRow = RowAttachment.nearestRow(hit, lat, lng)?.rowNumber
-                    }
-                }
-                locating = false
-                locationResolved = true
-            }
+            block = automaticCapture?.resolvedPaddockId?.let { id -> state.paddocks.firstOrNull { it.id == id } }
         }
     }
 
@@ -1473,6 +1479,10 @@ fun GrowthSheet(
     fun save() {
         val chosen = stage ?: return
         if (saving) return
+        if (existing == null && initialBlock == null) {
+            val capture = automaticCapture ?: return
+            if (!vm.isPinCaptureContextCurrent(capture.vineyardId, capture.tripId)) return
+        }
         saving = true
         // Snapshot the block's primary variety so historical records stay
         // readable if the allocation changes later (mirrors iOS).
@@ -1672,9 +1682,9 @@ private enum class GrowthSheetPhase { Pick, Confirm, Details }
 /**
  * Read-only placement status for a new observation. Mirrors a map-pin drop:
  * while the GPS fix resolves it shows "Locating…", then the block whose polygon
- * contains the fix (with the snapped row). When the fix lands outside every
- * mapped block, or location is unavailable, it says so but still lets the
- * operator save an unplaced observation.
+ * contains the fix (with the snapped row). A missing qualified fix is final for
+ * this attempt and requires closing the sheet and pressing again; a coordinate
+ * outside the active trip's selected blocks remains raw GPS with no assignment.
  */
 @Composable
 private fun AutoPlacementCard(

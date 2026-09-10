@@ -111,6 +111,9 @@ class DomainCacheStore(context: Context) {
     fun loadPins(vineyardId: String): List<Pin> =
         decode(prefs.getString(keyPins(vineyardId), null), pinSerializer)
 
+    fun loadPinsForRecovery(vineyardId: String): LocalEvidenceRead<Pin> =
+        recoveryDecode(prefs.getString(keyPins(vineyardId), null), pinSerializer, "cached pin")
+
     fun savePins(vineyardId: String, pins: List<Pin>, syncedAt: Long) {
         prefs.edit {
             putString(keyPins(vineyardId), json.encodeToString(pinSerializer, pins))
@@ -306,6 +309,9 @@ class DomainCacheStore(context: Context) {
     fun loadTrips(vineyardId: String): List<Trip> =
         decode(prefs.getString(keyTrips(vineyardId), null), tripSerializer)
 
+    fun loadTripsForRecovery(vineyardId: String): LocalEvidenceRead<Trip> =
+        recoveryDecode(prefs.getString(keyTrips(vineyardId), null), tripSerializer, "cached trip")
+
     fun saveTrips(vineyardId: String, trips: List<Trip>, syncedAt: Long) {
         prefs.edit {
             putString(keyTrips(vineyardId), json.encodeToString(tripSerializer, trips))
@@ -387,6 +393,19 @@ class DomainCacheStore(context: Context) {
 
     /** Wipe the entire cache (used when the cache owner changes). */
     fun clearAll() = prefs.edit { clear() }
+
+    private fun <T> recoveryDecode(
+        raw: String?,
+        serializer: kotlinx.serialization.KSerializer<List<T>>,
+        label: String,
+    ): LocalEvidenceRead<T> {
+        if (raw == null) return LocalEvidenceRead(emptyList())
+        return runCatching { json.decodeFromString(serializer, raw) }
+            .fold(
+                onSuccess = { LocalEvidenceRead(it) },
+                onFailure = { LocalEvidenceRead(emptyList(), "Persisted $label evidence could not be decoded.") },
+            )
+    }
 
     private fun <T> decode(raw: String?, serializer: kotlinx.serialization.KSerializer<List<T>>): List<T> {
         if (raw == null) return emptyList()

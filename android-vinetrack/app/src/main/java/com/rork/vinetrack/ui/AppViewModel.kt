@@ -106,6 +106,7 @@ import com.rork.vinetrack.data.model.PhotoDisplaySource
 import com.rork.vinetrack.data.PinPlacement
 import com.rork.vinetrack.data.PinPlacementResult
 import com.rork.vinetrack.data.PinCaptureContext
+import com.rork.vinetrack.data.QualifiedLocationFix
 import com.rork.vinetrack.data.PinLocationResult
 import com.rork.vinetrack.data.PinRepository
 import com.rork.vinetrack.data.ProfileRepository
@@ -2276,6 +2277,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingPinCreates() {
         if (session.accessToken == null) return
+        _ui.value.selectedVineyardId?.let { vineyardId ->
+            com.rork.vinetrack.data.RecoverySnapshotStore.captureBeforeMutation(getApplication(), vineyardId)
+        }
         viewModelScope.launch {
             pinCreateSync.replayAll { pin ->
                 _ui.update { st ->
@@ -6106,15 +6110,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val vineyardId = captureContext?.vineyardId
             ?: _ui.value.selectedVineyardId
             ?: run { onResult(false); return }
-        val activeTrip = if (captureContext == null) _ui.value.activeTrip else null
         val attribution = if (captureContext != null) {
+            // Automatic capture already ran the established trip-aware resolver at
+            // the tap. Consume that immutable answer; never re-resolve after movement.
             TripPinAttribution(
-                paddockId = paddockId ?: placement?.paddockId,
-                rowNumber = rowNumber ?: placement?.pinRowNumber?.toInt(),
-                placement = placement,
+                paddockId = captureContext.resolvedPaddockId,
+                rowNumber = captureContext.resolvedRowNumber,
+                placement = captureContext.resolvedPlacement,
             )
         } else resolveTripPinAttribution(
-            activeTrip = activeTrip,
+            activeTrip = _ui.value.activeTrip,
             paddocks = _ui.value.paddocks,
             latitude = latitude,
             longitude = longitude,
@@ -7820,7 +7825,48 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Id of the currently active trip, if any (used to navigate after start). */
     fun activeTripIdOrNull(): String? = _ui.value.activeTrip?.id
 
-    /** Reject delayed GPS callbacks after the operator changes vineyard or trip. */
+    /**
+     * Freeze identity, time and the established trip-aware placement answer for one
+     * already-qualified observation. Raw coordinates remain unchanged even when an
+     * active trip's selected-block boundary clears its block/row assignment.
+     */
+    fun freezePinCapture(
+        fix: QualifiedLocationFix,
+        side: String?,
+        observedAtIso: String = java.time.Instant.now().toString(),
+        pinId: String = java.util.UUID.randomUUID().toString(),
+    ): PinCaptureContext? {
+        val state = _ui.value
+        val vineyardId = state.selectedVineyardId ?: return null
+        val standalonePlacement = PinPlacement.resolve(
+            paddocks = state.paddocks,
+            selectedPaddockId = null,
+            latitude = fix.latitude,
+            longitude = fix.longitude,
+            side = side,
+        )
+        val attribution = resolveTripPinAttribution(
+            activeTrip = state.activeTrip,
+            paddocks = state.paddocks,
+            latitude = fix.latitude,
+            longitude = fix.longitude,
+            side = side,
+            callerPaddockId = standalonePlacement.paddockId,
+            callerRowNumber = standalonePlacement.pinRowNumber?.toInt(),
+            callerPlacement = standalonePlacement,
+        )
+        return PinCaptureContext(
+            pinId = pinId,
+            vineyardId = vineyardId,
+            tripId = state.activeTrip?.id,
+            observedAtIso = observedAtIso,
+            resolvedPaddockId = attribution.paddockId,
+            resolvedRowNumber = attribution.rowNumber,
+            resolvedPlacement = attribution.placement,
+        )
+    }
+
+    /** Reject delayed UI work after the operator changes vineyard or trip. */
     fun isPinCaptureContextCurrent(vineyardId: String, tripId: String?): Boolean =
         _ui.value.selectedVineyardId == vineyardId && _ui.value.activeTrip?.id == tripId
 
@@ -13828,6 +13874,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun loadVineyardData(vineyardId: String) {
+        // Preserve the first local evidence before hydration/server reads can replace
+        // caches and before the successful-load reconnect pipeline drains outboxes.
+        com.rork.vinetrack.data.RecoverySnapshotStore.captureBeforeMutation(getApplication(), vineyardId)
         _ui.update { it.copy(isLoadingVineyardData = true) }
         val userId = session.userId
         val cachedPaddocks = domainCache.loadPaddocks(userId, vineyardId)
