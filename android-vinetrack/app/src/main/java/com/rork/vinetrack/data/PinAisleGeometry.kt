@@ -90,10 +90,43 @@ object PinAisleGeometry {
      * that is not where the operator is looking, so a course is accepted only
      * with genuine forward travel evidence.
      */
-    fun qualifiedCourseHeading(bearingDegrees: Double?, speedMetresPerSecond: Double?): Double? {
+    fun qualifiedCourseHeading(
+        bearingDegrees: Double?,
+        speedMetresPerSecond: Double?,
+        hasForwardTravelEvidence: Boolean,
+    ): Double? {
+        if (!hasForwardTravelEvidence) return null
         val speed = speedMetresPerSecond ?: return null
         if (!speed.isFinite() || speed < MIN_COURSE_SPEED_MPS) return null
         return validHeading(bearingDegrees)
+    }
+
+    /**
+     * Freeze one facing for both row selection and persistence. Compass evidence
+     * must carry a current sensor timestamp. GPS course is accepted only when a
+     * caller has independent evidence that travel is forward, not reversing.
+     */
+    fun frozenCaptureHeading(
+        compassHeadingDegrees: Double?,
+        compassObservedAtElapsedRealtimeNanos: Long?,
+        captureElapsedRealtimeNanos: Long,
+        courseDegrees: Double?,
+        speedMetresPerSecond: Double?,
+        hasForwardTravelEvidence: Boolean,
+    ): Double? {
+        val compassAgeMs = compassObservedAtElapsedRealtimeNanos?.let { observedAt ->
+            (captureElapsedRealtimeNanos - observedAt) / 1_000_000L
+        }
+        val compass = if (compassObservedAtElapsedRealtimeNanos == null) {
+            null
+        } else {
+            validHeading(compassHeadingDegrees, compassAgeMs)
+        }
+        return compass ?: qualifiedCourseHeading(
+            courseDegrees,
+            speedMetresPerSecond,
+            hasForwardTravelEvidence,
+        )
     }
 
     /**
@@ -103,11 +136,16 @@ object PinAisleGeometry {
      * the operator occupied; an absent or invalid accuracy is no evidence at all
      * and is rejected.
      */
-    fun uncertaintyFitsAisle(accuracyMetres: Double?, aisleWidthMetres: Double): Boolean {
+    fun uncertaintyFitsBetweenRows(
+        accuracyMetres: Double?,
+        distanceToNearRowMetres: Double,
+        distanceToFarRowMetres: Double,
+    ): Boolean {
         val accuracy = accuracyMetres ?: return false
         if (!accuracy.isFinite() || accuracy < 0.0) return false
-        if (!aisleWidthMetres.isFinite() || aisleWidthMetres <= 0.0) return false
-        return accuracy < aisleWidthMetres
+        if (!distanceToNearRowMetres.isFinite() || distanceToNearRowMetres <= 0.0) return false
+        if (!distanceToFarRowMetres.isFinite() || distanceToFarRowMetres <= 0.0) return false
+        return accuracy < distanceToNearRowMetres && accuracy < distanceToFarRowMetres
     }
 
     /**
@@ -161,6 +199,7 @@ object PinAisleGeometry {
 
         var farRow: Int? = null
         var farOffset = Double.MAX_VALUE
+        var farDistance = Double.MAX_VALUE
         for (row in rows) {
             if (row.number == nearNumber) continue
             val projection = projectOntoRow(frame, row, point) ?: continue
@@ -171,6 +210,7 @@ object PinAisleGeometry {
             if (offset <= nearDistance) continue
             if (offset < farOffset) {
                 farOffset = offset
+                farDistance = closest.distanceTo(point)
                 farRow = row.number
             }
         }
@@ -180,9 +220,9 @@ object PinAisleGeometry {
         val maxWidth = if (rowWidth != null) rowWidth * 2.5 else FALLBACK_MAX_AISLE_WIDTH_M
         if (farOffset > maxWidth) return null
 
-        // Uncertainty evidence: an accuracy radius reaching past this aisle
-        // could equally place the operator in the neighbouring one.
-        if (!uncertaintyFitsAisle(accuracyMetres, farOffset)) return null
+        // The full uncertainty circle must remain between both bounding rows.
+        // Merely being narrower than the whole aisle is insufficient near a row.
+        if (!uncertaintyFitsBetweenRows(accuracyMetres, nearDistance, farDistance)) return null
 
         return Aisle(
             aisleNumber = (nearNumber.toDouble() + farNumber.toDouble()) / 2.0,

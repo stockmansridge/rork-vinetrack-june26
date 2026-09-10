@@ -323,6 +323,25 @@ struct PinAisleAttachmentTests {
         #expect(precise.pinRowNumber == 32)
     }
 
+    @Test func twoMetreUncertaintyNearARowCannotConfirmAThreeMetreAisle() {
+        let metresPerDegreeLongitude = 111_320.0 * cos(-33.0 * .pi / 180.0)
+        let nearRowLongitude = 149.0 + 0.2 / metresPerDegreeLongitude
+        let ambiguous = automatic(
+            rowEndsBlock(),
+            latitude: -33.0 + 50.0 / 111_320.0,
+            longitude: nearRowLongitude,
+            side: .left,
+            heading: 0,
+            accuracyMetres: 2
+        )
+
+        #expect(!ambiguous.snappedToRow)
+        #expect(ambiguous.pinRowNumber == nil)
+        #expect(ambiguous.drivingRowNumber == nil)
+        #expect(ambiguous.pinSide == .left)
+        #expect(ambiguous.heading == 0)
+    }
+
     @Test func anUnreportedOrInvalidAccuracyIsNeverAccurateEnough() {
         for accuracy in [nil, -1.0, Double.nan] as [Double?] {
             let attachment = automatic(

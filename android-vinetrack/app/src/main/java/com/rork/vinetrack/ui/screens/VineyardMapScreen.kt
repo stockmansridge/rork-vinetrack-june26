@@ -64,6 +64,7 @@ import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.maps.android.compose.CameraMoveStartedReason
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
+import com.rork.vinetrack.data.FollowSessionGate
 import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.MapDefaults
 import com.rork.vinetrack.data.PinLocationResult
@@ -276,8 +277,24 @@ fun VineyardMapContent(
     var hasUserRecentred by remember { mutableStateOf(false) }
     var isFollowingUser by remember { mutableStateOf(false) }
     var isFollowWaiting by remember { mutableStateOf(false) }
-    var followCoordinate by remember { mutableStateOf<LatLng?>(null) }
+    val followSessionGate = remember { FollowSessionGate() }
+    var followSessionId by remember { mutableStateOf(0L) }
+    var followCoordinate by remember { mutableStateOf<Pair<Long, LatLng>?>(null) }
     var followUpdateSerial by remember { mutableStateOf(0) }
+
+    fun startFollowSession() {
+        followSessionId = followSessionGate.enable()
+        followCoordinate = null
+        isFollowingUser = true
+        isFollowWaiting = true
+    }
+
+    fun stopFollowSession() {
+        followSessionGate.disable()
+        followCoordinate = null
+        isFollowingUser = false
+        isFollowWaiting = false
+    }
     var gestureStartCamera by remember { mutableStateOf<CameraPosition?>(null) }
     var settledCamera by remember { mutableStateOf(cameraPositionState.position) }
     // Measured map size, used to keep a tapped pin visible above the detail sheet.
@@ -321,14 +338,16 @@ fun VineyardMapContent(
         framedHadPins = hasPins
     }
 
-    DisposableEffect(isPinsMap, isFollowingUser, hasLocationPermission, lifecycleOwner) {
+    DisposableEffect(isPinsMap, isFollowingUser, followSessionId, hasLocationPermission, lifecycleOwner) {
         if (!isPinsMap || !isFollowingUser || !hasLocationPermission) {
             onDispose { }
         } else {
+            val subscribedSessionId = followSessionId
             fun startFollowingUpdates() {
                 locationTracker.startPinFixUpdates { result ->
+                    if (!followSessionGate.accepts(subscribedSessionId)) return@startPinFixUpdates
                     if (result is PinLocationResult.Success) {
-                        followCoordinate = LatLng(result.fix.latitude, result.fix.longitude)
+                        followCoordinate = subscribedSessionId to LatLng(result.fix.latitude, result.fix.longitude)
                         followUpdateSerial += 1
                         isFollowWaiting = false
                     } else {
@@ -360,9 +379,12 @@ fun VineyardMapContent(
         if (isFollowingUser) isFollowWaiting = true
     }
 
-    LaunchedEffect(followCoordinate, isFollowingUser) {
-        val coordinate = followCoordinate ?: return@LaunchedEffect
-        if (!isFollowingUser || !lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@LaunchedEffect
+    LaunchedEffect(followCoordinate, isFollowingUser, followSessionId) {
+        val update = followCoordinate ?: return@LaunchedEffect
+        if (!isFollowingUser || update.first != followSessionId || !followSessionGate.accepts(update.first) ||
+            !lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        ) return@LaunchedEffect
+        val coordinate = update.second
         val current = cameraPositionState.position
         val target = CameraPosition.Builder()
             .target(coordinate)
@@ -389,8 +411,7 @@ fun VineyardMapContent(
                     kotlin.math.abs(start.target.longitude - end.target.longitude) > 0.0000005
                 val zoomUnchanged = kotlin.math.abs(start.zoom - end.zoom) < 0.05f
                 if (isFollowingUser && centreMoved && zoomUnchanged) {
-                    isFollowingUser = false
-                    isFollowWaiting = false
+                    stopFollowSession()
                 }
                 gestureStartCamera = null
             }
@@ -403,11 +424,9 @@ fun VineyardMapContent(
     ) { grants ->
         if (grants.values.any { it }) {
             hasLocationPermission = true
-            isFollowingUser = true
-            isFollowWaiting = true
+            startFollowSession()
         } else {
-            isFollowingUser = false
-            isFollowWaiting = false
+            stopFollowSession()
             onLocationMessage?.invoke("Location permission is needed to follow your current position.")
         }
     }
@@ -584,11 +603,9 @@ fun VineyardMapContent(
                             .background(if (isFollowingUser) BlockAmber else Color(0xCC1C1C1E))
                             .clickable {
                                 if (isFollowingUser) {
-                                    isFollowingUser = false
-                                    isFollowWaiting = false
+                                    stopFollowSession()
                                 } else if (locationTracker.hasPermission) {
-                                    isFollowingUser = true
-                                    isFollowWaiting = true
+                                    startFollowSession()
                                 } else {
                                     followPermissionLauncher.launch(
                                         arrayOf(

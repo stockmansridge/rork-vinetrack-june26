@@ -1535,7 +1535,7 @@ fun PinCategoryLauncherScreen(
     // is *facing* even when standing still — the GPS fix bearing is course over
     // ground and only exists while moving, which is why launcher pins were
     // saved without a direction. Mirrors the iOS CLLocation heading capture.
-    val compassHeadingDegrees by rememberCompassHeading()
+    val compassHeadingObservation by rememberCompassHeading()
 
     // Operators keep this launcher open while working rows (often mid-trip):
     // hold the screen awake exactly like the active-trip screen, gated by the
@@ -1602,7 +1602,6 @@ fun PinCategoryLauncherScreen(
         fix: QualifiedLocationFix,
         capture: PinCaptureContext,
         capturedMode: String,
-        capturedHeading: Double?,
         capturedPaddocks: List<Paddock>,
     ) {
         val lat = fix.latitude
@@ -1638,11 +1637,7 @@ fun PinCategoryLauncherScreen(
                     fixTimeEpochMs = fix.fixTimeEpochMs,
                     accuracyMetres = fix.accuracyMetres,
                     observationTimeIso = capture.observedAtIso,
-                    headingDegrees = capturedHeading
-                        ?: PinAisleGeometry.qualifiedCourseHeading(
-                            fix.bearingDegrees,
-                            fix.speedMetresPerSecond,
-                        ),
+                    headingDegrees = capture.headingDegrees,
                     paddockId = paddockId,
                     pinRowNumber = placement?.pinRowNumber,
                     pinSide = placement?.pinSide,
@@ -1669,14 +1664,8 @@ fun PinCategoryLauncherScreen(
                 longitude = lng,
                 buttonName = category,
                 buttonColor = colorToken,
-                // Compass-first (converted to true north at the drop location).
-                // A GPS course is used only when the fix proves real travel — a
-                // stationary or reversing course is not confirmed facing.
-                heading = capturedHeading?.let { compassTrueHeading(it, lat, lng) }
-                    ?: PinAisleGeometry.qualifiedCourseHeading(
-                        fix.bearingDegrees,
-                        fix.speedMetresPerSecond,
-                    ),
+                // The exact fresh facing already used for row selection.
+                heading = capture.headingDegrees,
                 placement = placement,
                 captureContext = capture,
                 photoUri = null,
@@ -1735,7 +1724,7 @@ fun PinCategoryLauncherScreen(
     fun openFullForm() {
         // Snapshot the compass at launch so a manually-created pin still
         // records the facing direction (magnetic; corrected to true on save).
-        editing = PinEditTarget(mode = mode, bearing = compassHeadingDegrees)
+        editing = PinEditTarget(mode = mode, bearing = compassHeadingObservation?.magneticDegrees)
     }
 
     /** Quick tap freezes its context and either creates now or requires a new tap. */
@@ -1752,10 +1741,16 @@ fun PinCategoryLauncherScreen(
         // true north at this fix), so the heading used to choose the vine row
         // and the heading stored on the pin are one value.
         val capture = fix?.let { accepted ->
-            val trueHeading = compassHeadingDegrees?.let {
-                compassTrueHeading(it, accepted.latitude, accepted.longitude)
+            val observation = compassHeadingObservation
+            val trueHeading = observation?.let {
+                compassTrueHeading(it.magneticDegrees, accepted.latitude, accepted.longitude)
             }
-            vm.freezePinCapture(accepted, side, headingDegrees = trueHeading)
+            vm.freezePinCapture(
+                accepted,
+                side,
+                headingDegrees = trueHeading,
+                headingObservedAtElapsedRealtimeNanos = observation?.observedAtElapsedRealtimeNanos,
+            )
         }
         if (fix == null || capture == null) {
             scope.launch { snackbarHostState.showSnackbar(result.operatorMessage()) }
@@ -1767,7 +1762,6 @@ fun PinCategoryLauncherScreen(
             fix,
             capture,
             mode,
-            compassHeadingDegrees,
             state.paddocks.toList(),
         )
     }
@@ -1849,10 +1843,16 @@ fun PinCategoryLauncherScreen(
                     val result = PinTapCaptureCoordinator(pinLocationTracker).captureNow()
                     growthLocationResult = result
                     growthCapture = (result as? PinLocationResult.Success)?.fix?.let { accepted ->
-                        val trueHeading = compassHeadingDegrees?.let {
-                            compassTrueHeading(it, accepted.latitude, accepted.longitude)
+                        val observation = compassHeadingObservation
+                        val trueHeading = observation?.let {
+                            compassTrueHeading(it.magneticDegrees, accepted.latitude, accepted.longitude)
                         }
-                        vm.freezePinCapture(accepted, null, headingDegrees = trueHeading)
+                        vm.freezePinCapture(
+                            accepted,
+                            null,
+                            headingDegrees = trueHeading,
+                            headingObservedAtElapsedRealtimeNanos = observation?.observedAtElapsedRealtimeNanos,
+                        )
                     }
                     showGrowthStageSheet = true
                 }

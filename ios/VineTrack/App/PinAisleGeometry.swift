@@ -74,17 +74,20 @@ nonisolated enum PinAisleGeometry {
     /// aisles, so the fix cannot establish WHICH aisle the operator occupied.
     /// An absent or invalid accuracy is no evidence at all and is rejected — it
     /// never counts as "accurate enough".
-    static func uncertaintyFitsAisle(
+    static func uncertaintyFitsBetweenRows(
         horizontalAccuracyMetres: Double?,
-        aisleWidthMetres: Double
+        distanceToNearRowMetres: Double,
+        distanceToFarRowMetres: Double
     ) -> Bool {
         guard let accuracy = horizontalAccuracyMetres,
               accuracy.isFinite,
               accuracy >= 0,
-              aisleWidthMetres.isFinite,
-              aisleWidthMetres > 0
+              distanceToNearRowMetres.isFinite,
+              distanceToNearRowMetres > 0,
+              distanceToFarRowMetres.isFinite,
+              distanceToFarRowMetres > 0
         else { return false }
-        return accuracy < aisleWidthMetres
+        return accuracy < distanceToNearRowMetres && accuracy < distanceToFarRowMetres
     }
 
     /// Resolve the aisle physically containing `coordinate`: the nearest mapped
@@ -156,11 +159,13 @@ nonisolated enum PinAisleGeometry {
         let maxWidth = paddock.rowWidth > 0 ? paddock.rowWidth * 2.5 : fallbackMaxAisleWidthMetres
         guard far.offset <= maxWidth else { return nil }
 
-        // Uncertainty evidence: an accuracy radius reaching past this aisle
-        // could equally place the operator in the neighbouring one.
-        guard uncertaintyFitsAisle(
+        // The full uncertainty circle must remain between both bounding rows.
+        // Merely being narrower than the whole aisle is insufficient near a row.
+        let farDistance = far.closest.point.distance(to: point)
+        guard uncertaintyFitsBetweenRows(
             horizontalAccuracyMetres: horizontalAccuracyMetres,
-            aisleWidthMetres: far.offset
+            distanceToNearRowMetres: near.distance,
+            distanceToFarRowMetres: farDistance
         ) else { return nil }
 
         return Aisle(

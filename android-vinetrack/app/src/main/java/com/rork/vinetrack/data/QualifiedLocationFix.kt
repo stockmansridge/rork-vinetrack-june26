@@ -26,6 +26,8 @@ data class PinCaptureContext(
     val resolvedPaddockId: String? = null,
     val resolvedRowNumber: Int? = null,
     val resolvedPlacement: PinPlacementResult? = null,
+    /** The single fresh facing used for both row selection and persistence. */
+    val headingDegrees: Double? = null,
 )
 
 /** Explicit outcome for a pin-location request; failure never carries coordinates. */

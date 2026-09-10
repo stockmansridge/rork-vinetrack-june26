@@ -16,6 +16,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 
+/** One compass observation with the sensor clock timestamp that proves freshness. */
+data class CompassHeadingObservation(
+    val magneticDegrees: Double,
+    val observedAtElapsedRealtimeNanos: Long,
+)
+
 /**
  * Live magnetometer compass heading (degrees 0–360, magnetic north) from the
  * rotation-vector sensor, or null until the first reading / when the device
@@ -28,9 +34,9 @@ import androidx.compose.ui.platform.LocalContext
  * composition and is always unregistered on dispose.
  */
 @Composable
-fun rememberCompassHeading(): State<Double?> {
+fun rememberCompassHeading(): State<CompassHeadingObservation?> {
     val context = LocalContext.current
-    val heading = remember { mutableStateOf<Double?>(null) }
+    val heading = remember { mutableStateOf<CompassHeadingObservation?>(null) }
 
     DisposableEffect(context) {
         val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
@@ -53,7 +59,10 @@ fun rememberCompassHeading(): State<Double?> {
                 SensorManager.remapCoordinateSystem(rotationMatrix, axisX, axisY, remapped)
                 SensorManager.getOrientation(remapped, orientation)
                 val azimuth = Math.toDegrees(orientation[0].toDouble())
-                heading.value = ((azimuth % 360.0) + 360.0) % 360.0
+                heading.value = CompassHeadingObservation(
+                    magneticDegrees = ((azimuth % 360.0) + 360.0) % 360.0,
+                    observedAtElapsedRealtimeNanos = event.timestamp,
+                )
             }
 
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit

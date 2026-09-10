@@ -18,9 +18,37 @@ class PinsMapFollowMeRegressionTest {
     )
 
     @Test
+    fun `off move unavailable then on rejects the previous follow coordinate`() {
+        val gate = FollowSessionGate()
+        val firstSession = gate.enable()
+        var cameraCoordinate = "first-fix"
+        gate.disable()
+
+        val secondSession = gate.enable()
+        val unavailableUpdate: String? = null
+        if (unavailableUpdate != null && gate.accepts(firstSession)) cameraCoordinate = unavailableUpdate
+
+        assertFalse(gate.accepts(firstSession))
+        assertTrue(gate.accepts(secondSession))
+        assertTrue(cameraCoordinate == "first-fix")
+    }
+
+    @Test
+    fun `foreground recovery accepts only the current follow session`() {
+        val gate = FollowSessionGate()
+        val currentSession = gate.enable()
+        assertTrue(gate.accepts(currentSession))
+
+        gate.disable()
+        val restartedSession = gate.enable()
+        assertFalse(gate.accepts(currentSession))
+        assertTrue(gate.accepts(restartedSession))
+    }
+
+    @Test
     fun `fresh movement follows while preserving zoom bearing and tilt`() {
         val source = map()
-        val followEffect = source.substringAfter("LaunchedEffect(followCoordinate, isFollowingUser)")
+        val followEffect = source.substringAfter("LaunchedEffect(followCoordinate, isFollowingUser, followSessionId)")
             .substringBefore("// A one-finger pan")
 
         assertTrue(followEffect.contains(".target(coordinate)"))
@@ -48,7 +76,8 @@ class PinsMapFollowMeRegressionTest {
             .substringBefore("val observer")
 
         assertTrue(subscription.contains("result is PinLocationResult.Success"))
-        assertTrue(subscription.contains("followCoordinate = LatLng"))
+        assertTrue(subscription.contains("followSessionGate.accepts(subscribedSessionId)"))
+        assertTrue(subscription.contains("followCoordinate = subscribedSessionId to LatLng"))
         assertTrue(subscription.contains("isFollowWaiting = true"))
         assertFalse(subscription.contains("cameraPositionState"))
     }

@@ -388,6 +388,26 @@ class PinAisleAttachmentTest {
     }
 
     @Test
+    fun `two metre uncertainty near a row cannot confirm a three metre aisle`() {
+        val metresPerDegreeLongitude = 111_320.0 * kotlin.math.cos(-33.0 * Math.PI / 180.0)
+        val nearRowLongitude = 149.0 + 0.2 / metresPerDegreeLongitude
+        val ambiguous = automatic(
+            eastwardBlock(),
+            -33.0,
+            nearRowLongitude,
+            "left",
+            0.0,
+            accuracyMetres = 2.0,
+        )
+
+        assertEquals(PinSnapState.UNCONFIRMED_ROW, ambiguous.snapState)
+        assertNull(ambiguous.pinRowNumber)
+        assertNull(ambiguous.drivingRowNumber)
+        assertEquals("left", ambiguous.pinSide)
+        assertEquals(0.0, ambiguous.headingDegrees!!, 1e-9)
+    }
+
+    @Test
     fun `an unreported or invalid accuracy is never treated as accurate enough`() {
         val block = eastwardBlock()
         val lon = aisle32_5Longitude()
@@ -495,18 +515,42 @@ class PinAisleAttachmentTest {
     }
 
     @Test
-    fun `a stationary or reversing GPS course is never labelled operator facing`() {
-        // Stationary: a course exists but proves no direction of travel.
-        assertNull(PinAisleGeometry.qualifiedCourseHeading(180.0, 0.0))
-        // Crawling below the movement threshold is equally unproven.
-        assertNull(PinAisleGeometry.qualifiedCourseHeading(180.0, 0.2))
-        // No speed reported at all: no evidence, no facing.
-        assertNull(PinAisleGeometry.qualifiedCourseHeading(180.0, null))
-        // Genuine travel qualifies, and a valid 0° stays 0°.
-        assertEquals(180.0, PinAisleGeometry.qualifiedCourseHeading(180.0, 2.5)!!, 1e-9)
-        assertEquals(0.0, PinAisleGeometry.qualifiedCourseHeading(0.0, 2.5)!!, 1e-9)
-        // An invalid course stays invalid even at speed.
-        assertNull(PinAisleGeometry.qualifiedCourseHeading(400.0, 5.0))
+    fun `GPS course requires independent forward travel evidence`() {
+        // Positive speed alone cannot distinguish forward travel from reversing.
+        assertNull(PinAisleGeometry.qualifiedCourseHeading(180.0, 2.5, false))
+        assertNull(PinAisleGeometry.qualifiedCourseHeading(0.0, 5.0, false))
+        // Even with forward evidence, stationary/crawling/missing speed stays unknown.
+        assertNull(PinAisleGeometry.qualifiedCourseHeading(180.0, 0.0, true))
+        assertNull(PinAisleGeometry.qualifiedCourseHeading(180.0, 0.2, true))
+        assertNull(PinAisleGeometry.qualifiedCourseHeading(180.0, null, true))
+        assertEquals(180.0, PinAisleGeometry.qualifiedCourseHeading(180.0, 2.5, true)!!, 1e-9)
+        assertEquals(0.0, PinAisleGeometry.qualifiedCourseHeading(0.0, 2.5, true)!!, 1e-9)
+        assertNull(PinAisleGeometry.qualifiedCourseHeading(400.0, 5.0, true))
+    }
+
+    @Test
+    fun `capture freezes only a fresh timestamped compass heading`() {
+        val captureNanos = 20_000_000_000L
+        val fresh = PinAisleGeometry.frozenCaptureHeading(
+            346.0,
+            captureNanos - 1_000_000_000L,
+            captureNanos,
+            180.0,
+            4.0,
+            false,
+        )
+        assertEquals(346.0, fresh!!, 1e-9)
+
+        val stale = PinAisleGeometry.frozenCaptureHeading(
+            346.0,
+            captureNanos - 30_000_000_000L,
+            captureNanos,
+            180.0,
+            4.0,
+            false,
+        )
+        assertNull(stale)
+        assertNull(PinAisleGeometry.frozenCaptureHeading(346.0, null, captureNanos, 180.0, 4.0, false))
     }
 
     @Test

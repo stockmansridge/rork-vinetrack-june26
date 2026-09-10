@@ -7980,14 +7980,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
          * value stays invalid rather than becoming North.
          */
         headingDegrees: Double? = null,
+        headingObservedAtElapsedRealtimeNanos: Long? = null,
+        captureElapsedRealtimeNanos: Long = android.os.SystemClock.elapsedRealtimeNanos(),
     ): PinCaptureContext? {
         val state = _ui.value
         val vineyardId = state.selectedVineyardId ?: return null
-        // A GPS course is only the operator's facing when the machine was
-        // genuinely travelling; a stationary or reversing course is not
-        // confirmed facing, so it is dropped rather than recorded as one.
-        val captureHeading = PinAisleGeometry.validHeading(headingDegrees)
-            ?: PinAisleGeometry.qualifiedCourseHeading(fix.bearingDegrees, fix.speedMetresPerSecond)
+        // This flow has no independent forward/reverse signal, so GPS course
+        // cannot establish where the operator is facing. Only a fresh compass
+        // observation is eligible; otherwise facing remains unknown.
+        val captureHeading = PinAisleGeometry.frozenCaptureHeading(
+            compassHeadingDegrees = headingDegrees,
+            compassObservedAtElapsedRealtimeNanos = headingObservedAtElapsedRealtimeNanos,
+            captureElapsedRealtimeNanos = captureElapsedRealtimeNanos,
+            courseDegrees = fix.bearingDegrees,
+            speedMetresPerSecond = fix.speedMetresPerSecond,
+            hasForwardTravelEvidence = false,
+        )
         val standalonePlacement = PinPlacement.resolveAutomatic(
             paddocks = state.paddocks,
             selectedPaddockId = null,
@@ -8018,6 +8026,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             resolvedPaddockId = attribution.paddockId,
             resolvedRowNumber = attribution.rowNumber,
             resolvedPlacement = attribution.placement,
+            headingDegrees = captureHeading,
         )
     }
 
