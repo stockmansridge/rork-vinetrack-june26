@@ -17,6 +17,8 @@ data class PhotoDisplaySource(
     val localPath: String?,
     val isPending: Boolean,
     val isStaleCompletedCache: Boolean,
+    /** Capture revision rendered from local retained storage, if unresolved. */
+    val localRevision: String? = null,
     val error: String? = null,
 )
 

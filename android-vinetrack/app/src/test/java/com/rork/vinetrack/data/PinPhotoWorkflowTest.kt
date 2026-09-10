@@ -6,6 +6,7 @@ import com.rork.vinetrack.data.model.PendingPhotoEntityKind
 import com.rork.vinetrack.data.model.PendingPhotoStatus
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.data.model.GrowthStageRecord
+import com.rork.vinetrack.ui.screens.synthesizeGrowthPins
 import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.test.runTest
@@ -46,7 +47,7 @@ class PinPhotoWorkflowTest {
 
         val objects = ObjectGateway()
         val pins = PinGateway()
-        PinPhotoSync(objects, pins, GrowthGateway(), repository) { emptyList() }.replayAll { _, _ -> }
+        PinPhotoSync(objects, pins, GrowthGateway(), repository) { emptyList() }.replayAll { }
 
         assertEquals(1, objects.uploadCount)
         assertEquals("uploaded/revision-1.jpg", pins.referencedPath)
@@ -70,12 +71,12 @@ class PinPhotoWorkflowTest {
         val firstRepository = PendingPhotoRepository(root, store)
         val objects = ObjectGateway()
         val pins = PinGateway(failures = 1)
-        PinPhotoSync(objects, pins, GrowthGateway(), firstRepository) { emptyList() }.replayAll { _, _ -> }
+        PinPhotoSync(objects, pins, GrowthGateway(), firstRepository) { emptyList() }.replayAll { }
         assertEquals(0, objects.uploadCount)
         assertEquals("already-uploaded.jpg", firstRepository.list().single().uploadedPath)
 
         val relaunched = PendingPhotoRepository(root, store)
-        PinPhotoSync(objects, pins, GrowthGateway(), relaunched) { emptyList() }.replayAll { _, _ -> }
+        PinPhotoSync(objects, pins, GrowthGateway(), relaunched) { emptyList() }.replayAll { }
         assertEquals(0, objects.uploadCount)
         assertEquals("already-uploaded.jpg", pins.referencedPath)
         assertTrue(relaunched.list().isEmpty())
@@ -107,6 +108,103 @@ class PinPhotoWorkflowTest {
     }
 
     @Test
+    fun `standalone growth photo uses authoritative identity in synthesized list and detail presentation`() {
+        val growth = growthRecord(id = "growth-standalone", pinId = null, syncVersion = 7)
+        val synthetic = synthesizeGrowthPins(emptyList(), listOf(growth)).single()
+        assertEquals(growth.clientUpdatedAt, synthetic.clientUpdatedAt)
+        assertEquals(growth.updatedAt, synthetic.updatedAt)
+        assertEquals(growth.syncVersion, synthetic.syncVersion)
+
+        val presentation = resolvePhotoPresentation(synthetic.id, emptyList(), listOf(growth))
+        assertEquals(growth.id, presentation.entityId)
+        assertEquals(growth.photoPaths?.first(), presentation.remotePath)
+        assertEquals(PinPhotoSync.growthRemoteIdentity(growth, "same.jpg"), presentation.remoteIdentity)
+    }
+
+    @Test
+    fun `linked growth without local pin representation uses growth photo identity`() {
+        val growth = growthRecord(id = "growth-linked", pinId = "missing-pin", syncVersion = 4)
+        val synthetic = synthesizeGrowthPins(emptyList(), listOf(growth)).single()
+        val presentation = resolvePhotoPresentation(synthetic.id, emptyList(), listOf(growth))
+
+        assertEquals("missing-pin", synthetic.id)
+        assertEquals("growth-linked", presentation.entityId)
+        assertEquals(PinPhotoSync.growthRemoteIdentity(growth, "same.jpg"), presentation.remoteIdentity)
+    }
+
+    @Test
+    fun `open display changes immediately from pending capture A to replacement B`() {
+        val root = Files.createTempDirectory("photo-replacement").toFile()
+        val repository = PendingPhotoRepository(root, MemoryPhotoStore())
+        val target = PinPresentationTarget("vineyard-1", "pin-1", null, PinPresentationTarget.Kind.PIN)
+        val first = repository.enqueue(target, byteArrayOf(1))
+        assertEquals(first.revision, repository.displaySource("pin-1", null, null).localRevision)
+
+        val second = repository.enqueue(target, byteArrayOf(2))
+        val display = repository.displaySource("pin-1", null, null)
+        assertEquals(second.revision, display.localRevision)
+        assertEquals(listOf<Byte>(2), File(requireNotNull(display.localPath)).readBytes().toList())
+        assertFalse(repository.isCurrent(first.id, first.revision))
+    }
+
+    @Test
+    fun `delayed download A cannot replace or obscure pending B`() {
+        val root = Files.createTempDirectory("photo-delayed-download").toFile()
+        val repository = PendingPhotoRepository(root, MemoryPhotoStore())
+        val target = PinPresentationTarget("vineyard-1", "pin-1", null, PinPresentationTarget.Kind.PIN)
+        val pendingB = repository.enqueue(target, byteArrayOf(9))
+
+        val result = runCatching {
+            repository.cacheRemoteDisplay("pin-1", "a.jpg", "a|1", byteArrayOf(1))
+        }
+        assertTrue(result.isFailure)
+        val display = repository.displaySource("pin-1", "a.jpg", "a|1")
+        assertEquals(pendingB.revision, display.localRevision)
+        assertEquals(listOf<Byte>(9), File(requireNotNull(display.localPath)).readBytes().toList())
+    }
+
+    @Test
+    fun `same path replacement with changed version metadata invalidates and refreshes cache`() {
+        val root = Files.createTempDirectory("photo-same-path").toFile()
+        val repository = PendingPhotoRepository(root, MemoryPhotoStore())
+        val original = growthRecord(syncVersion = 1)
+        val replacement = original.copy(syncVersion = 2, updatedAt = "2026-09-10T01:00:00Z")
+        val firstIdentity = PinPhotoSync.growthRemoteIdentity(original, "same.jpg")
+        val secondIdentity = PinPhotoSync.growthRemoteIdentity(replacement, "same.jpg")
+
+        repository.cacheRemoteDisplay(original.id, "same.jpg", firstIdentity, byteArrayOf(1))
+        assertTrue(repository.displaySource(original.id, "same.jpg", secondIdentity).isStaleCompletedCache)
+        repository.cacheRemoteDisplay(original.id, "same.jpg", secondIdentity, byteArrayOf(2))
+        val refreshed = repository.displaySource(original.id, "same.jpg", secondIdentity)
+        assertFalse(refreshed.isStaleCompletedCache)
+        assertEquals(listOf<Byte>(2), File(requireNotNull(refreshed.localPath)).readBytes().toList())
+    }
+
+    @Test
+    fun `confirmed upload metadata and completed cache identity agree`() = runTest {
+        val root = Files.createTempDirectory("photo-confirmation").toFile()
+        val repository = PendingPhotoRepository(root, MemoryPhotoStore())
+        val retained = repository.enqueue(
+            PinPresentationTarget("vineyard-1", null, "growth-1", PinPresentationTarget.Kind.STANDALONE_GROWTH),
+            byteArrayOf(3, 4),
+        )
+        var confirmation: PhotoUploadConfirmation? = null
+
+        PinPhotoSync(ObjectGateway(), PinGateway(), GrowthGateway(), repository) { emptyList() }
+            .replayAll { confirmation = it }
+
+        val confirmed = requireNotNull(confirmation)
+        assertEquals(retained.revision, confirmed.attachment.revision)
+        assertEquals(
+            PinPhotoSync.growthRemoteIdentity(requireNotNull(confirmed.growthRecord), confirmed.path),
+            confirmed.remoteIdentity,
+        )
+        val cached = repository.displaySource("growth-1", confirmed.path, confirmed.remoteIdentity)
+        assertFalse(cached.isStaleCompletedCache)
+        assertNotNull(cached.localPath)
+    }
+
+    @Test
     fun `photo only replacement preserves unrelated evidence paths`() {
         assertEquals(
             listOf("revision.jpg", "evidence.jpg"),
@@ -125,6 +223,23 @@ class PinPhotoWorkflowTest {
         assertEquals("pin-1", payload.pinId)
         assertEquals("growth-1", payload.growthRecordId)
     }
+
+    private fun growthRecord(
+        id: String = "growth-1",
+        pinId: String? = null,
+        syncVersion: Long = 2,
+    ): GrowthStageRecord = GrowthStageRecord(
+        id = id,
+        vineyardId = "vineyard-1",
+        pinId = pinId,
+        stageCode = "EL12",
+        latitude = -33.0,
+        longitude = 149.0,
+        photoPaths = listOf("same.jpg"),
+        clientUpdatedAt = "2026-09-10T00:00:00Z",
+        updatedAt = "2026-09-10T00:00:00Z",
+        syncVersion = syncVersion,
+    )
 
     private fun attachment(
         kind: String = PendingPhotoEntityKind.PIN,

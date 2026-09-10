@@ -796,6 +796,8 @@ data class AppUiState(
      * from [PendingPhotoRepository]; drives per-pin "photo waiting" indicators.
      */
     val pendingPhotoPinIds: Set<String> = emptySet(),
+    /** Latest unresolved capture revision keyed by every pin/growth presentation alias. */
+    val photoLocalRevisions: Map<String, String> = emptyMap(),
     /** Subset of [pendingPhotoPinIds] whose photo upload is blocked. */
     val blockedPhotoPinIds: Set<String> = emptySet(),
     /**
@@ -1965,11 +1967,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     .map { it.clientPinId }.toSet()
                 val blockedPhotoIds = list.filter { it.status == PendingPhotoStatus.BLOCKED }
                     .map { it.clientPinId }.toSet()
+                val localRevisions = buildMap<String, String> {
+                    list.filter { it.status in PendingPhotoStatus.unresolved }
+                        .sortedBy { it.createdAt }
+                        .forEach { attachment ->
+                            put(attachment.clientPinId, attachment.revision)
+                            attachment.growthRecordId?.let { put(it, attachment.revision) }
+                        }
+                }
                 _ui.update {
                     it.copy(
                         pendingPhotoCount = pending,
                         pendingPhotoBlockedCount = blocked,
                         pendingPhotoPinIds = pendingPhotoIds,
+                        photoLocalRevisions = localRevisions,
                         blockedPhotoPinIds = blockedPhotoIds,
                     )
                 }
@@ -3553,14 +3564,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun syncPendingPinPhotos() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        pinPhotoSync.replayAll { attachment, path ->
+        pinPhotoSync.replayAll { confirmation ->
+            val attachment = confirmation.attachment
             _ui.update { st ->
                 st.copy(
-                    pins = st.pins.map {
-                        if (attachment.entityKind != PendingPhotoEntityKind.GROWTH && it.id == attachment.clientPinId) it.copy(photoPath = path) else it
+                    pins = st.pins.map { pin ->
+                        if (pin.id == attachment.clientPinId && confirmation.pin != null) confirmation.pin else pin
                     },
-                    growthRecords = st.growthRecords.map {
-                        if (it.id == attachment.growthRecordId) it.copy(photoPaths = listOf(path)) else it
+                    growthRecords = st.growthRecords.map { record ->
+                        if (record.id == attachment.growthRecordId && confirmation.growthRecord != null) {
+                            confirmation.growthRecord
+                        } else {
+                            record
+                        }
                     },
                 )
             }
@@ -6835,25 +6851,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         entityId: String,
         remotePath: String?,
         remoteIdentity: String?,
+        localRevision: String?,
         onResult: (PhotoDisplaySource) -> Unit,
     ) {
         val initial = pendingPhotos.displaySource(entityId, remotePath, remoteIdentity)
-        onResult(initial)
+        if (pendingPhotos.currentRevision(entityId) == localRevision) onResult(initial)
         if (initial.isPending || remotePath.isNullOrBlank() || remoteIdentity.isNullOrBlank()) return
         if (initial.localPath != null && !initial.isStaleCompletedCache) return
         viewModelScope.launch {
             val refreshed = runCatching {
                 check(currentPhotoIdentity(entityId, remotePath) == remoteIdentity) { "Attachment metadata changed." }
+                check(pendingPhotos.currentRevision(entityId) == localRevision) { "A newer local capture is pending." }
                 val bytes = pinPhotoRepo.download(remotePath)
                 val current = pendingPhotos.displaySource(entityId, remotePath, remoteIdentity)
                 check(!current.isPending) { "A newer local capture is pending." }
+                check(pendingPhotos.currentRevision(entityId) == localRevision) { "A newer local capture is pending." }
                 check(currentPhotoIdentity(entityId, remotePath) == remoteIdentity) { "Attachment metadata changed." }
                 pendingPhotos.cacheRemoteDisplay(entityId, remotePath, remoteIdentity, bytes)
                 pendingPhotos.displaySource(entityId, remotePath, remoteIdentity)
             }.getOrElse {
                 initial.copy(error = "Photo couldn't be refreshed. Tap retry when online.")
             }
-            if (currentPhotoIdentity(entityId, remotePath) == remoteIdentity || refreshed.isPending) {
+            if (currentPhotoIdentity(entityId, remotePath) == remoteIdentity &&
+                pendingPhotos.currentRevision(entityId) == localRevision
+            ) {
                 onResult(refreshed)
             }
         }

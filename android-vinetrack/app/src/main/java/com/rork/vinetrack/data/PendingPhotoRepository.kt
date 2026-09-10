@@ -75,6 +75,9 @@ class PendingPhotoRepository internal constructor(
         it.id == id && it.revision == revision && it.status in PendingPhotoStatus.unresolved
     }
 
+    /** Observable-display token for rejecting callbacks from an older capture. */
+    fun currentRevision(entityId: String): String? = latestAttachment(entityId)?.revision
+
     private fun fileFor(entityId: String, revision: String): File =
         File(photoDir, "${entityId.lowercase()}-${revision.lowercase()}.jpg")
 
@@ -203,12 +206,18 @@ class PendingPhotoRepository internal constructor(
         latestAttachment(entityId)?.let { pending ->
             val file = File(pending.localPath)
             if (file.exists() && file.canRead() && file.length() > 0L) {
-                return PhotoDisplaySource(file.absolutePath, isPending = true, isStaleCompletedCache = false)
+                return PhotoDisplaySource(
+                    localPath = file.absolutePath,
+                    isPending = true,
+                    isStaleCompletedCache = false,
+                    localRevision = pending.revision,
+                )
             }
             return PhotoDisplaySource(
                 localPath = null,
                 isPending = true,
                 isStaleCompletedCache = false,
+                localRevision = pending.revision,
                 error = pending.lastError ?: "Saved photo is unavailable. Tap retry after checking device storage.",
             )
         }
@@ -219,6 +228,7 @@ class PendingPhotoRepository internal constructor(
             localPath = file?.absolutePath,
             isPending = false,
             isStaleCompletedCache = file != null && !isCurrent,
+            localRevision = null,
         )
     }
 

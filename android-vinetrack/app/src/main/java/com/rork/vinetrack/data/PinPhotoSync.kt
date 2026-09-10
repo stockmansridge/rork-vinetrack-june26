@@ -43,6 +43,15 @@ interface GrowthPhotoReferenceGateway {
     suspend fun updatePhotoPaths(id: String, paths: List<String>?): com.rork.vinetrack.data.model.GrowthStageRecord
 }
 
+/** Server-confirmed attachment metadata reconciled into visible UI state. */
+data class PhotoUploadConfirmation(
+    val attachment: PendingPhotoAttachment,
+    val path: String,
+    val pin: com.rork.vinetrack.data.model.Pin? = null,
+    val growthRecord: com.rork.vinetrack.data.model.GrowthStageRecord? = null,
+    val remoteIdentity: String,
+)
+
 class PinPhotoSync(
     private val pinPhotoRepo: PinPhotoObjectGateway,
     private val pinRepo: PinPhotoReferenceGateway,
@@ -63,7 +72,7 @@ class PinPhotoSync(
      * Caller is responsible for only invoking this when online and a session
      * token exists.
      */
-    suspend fun replayAll(onUploaded: (attachment: PendingPhotoAttachment, path: String) -> Unit) {
+    suspend fun replayAll(onUploaded: (PhotoUploadConfirmation) -> Unit) {
         if (!replayLock.tryLock()) return
         try {
             // Pins still queued for create haven't synced yet — their photos must
@@ -118,10 +127,15 @@ class PinPhotoSync(
                     try {
                         if (!pending.isCurrent(att.id, att.revision)) continue
                         val growthPaths = replacingOwnedPhoto(att.previousPhotoPaths, path)
-                        val remoteIdentity = when (att.entityKind) {
+                        val confirmation = when (att.entityKind) {
                             PendingPhotoEntityKind.GROWTH -> {
                                 val updated = growthRepo.updatePhotoPaths(requireNotNull(att.growthRecordId), growthPaths)
-                                growthRemoteIdentity(updated, path)
+                                PhotoUploadConfirmation(
+                                    attachment = att,
+                                    path = path,
+                                    growthRecord = updated,
+                                    remoteIdentity = growthRemoteIdentity(updated, path),
+                                )
                             }
                             PendingPhotoEntityKind.LINKED_GROWTH -> {
                                 val updatedPin = pinRepo.updatePhotoPath(att.clientPinId, path)
@@ -129,14 +143,28 @@ class PinPhotoSync(
                                     if (!pending.isCurrent(att.id, att.revision)) return@let null
                                     growthRepo.updatePhotoPaths(it, growthPaths)
                                 }
-                                updatedGrowth?.let { growthRemoteIdentity(it, path) }
-                                    ?: pinRemoteIdentity(updatedPin, path)
+                                PhotoUploadConfirmation(
+                                    attachment = att,
+                                    path = path,
+                                    pin = updatedPin,
+                                    growthRecord = updatedGrowth,
+                                    remoteIdentity = updatedGrowth?.let { growthRemoteIdentity(it, path) }
+                                        ?: pinRemoteIdentity(updatedPin, path),
+                                )
                             }
-                            else -> pinRemoteIdentity(pinRepo.updatePhotoPath(att.clientPinId, path), path)
+                            else -> {
+                                val updatedPin = pinRepo.updatePhotoPath(att.clientPinId, path)
+                                PhotoUploadConfirmation(
+                                    attachment = att,
+                                    path = path,
+                                    pin = updatedPin,
+                                    remoteIdentity = pinRemoteIdentity(updatedPin, path),
+                                )
+                            }
                         }
                         if (!pending.isCurrent(att.id, att.revision)) continue
-                        pending.promoteToDisplayCache(att, path, remoteIdentity)
-                        onUploaded(att, path)
+                        pending.promoteToDisplayCache(att, path, confirmation.remoteIdentity)
+                        onUploaded(confirmation)
                         if (pending.isCurrent(att.id, att.revision)) {
                             pending.markUploaded(att.id)
                             pending.remove(att.id)

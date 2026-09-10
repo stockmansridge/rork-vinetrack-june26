@@ -126,7 +126,8 @@ import com.rork.vinetrack.data.PinTapCaptureGate
 import com.rork.vinetrack.data.QualifiedLocationFix
 import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.PinPresentationTarget
-import com.rork.vinetrack.data.PinPhotoSync
+import com.rork.vinetrack.data.PhotoPresentation
+import com.rork.vinetrack.data.resolvePhotoPresentation
 import com.rork.vinetrack.data.RowAttachment
 import com.rork.vinetrack.data.resolvePinPresentationTarget
 import com.rork.vinetrack.data.model.CoordinatePoint
@@ -470,9 +471,12 @@ fun PinsScreen(
             (detailPin.mode == "Repairs" || detailPin.mode == "Growth") &&
             state.growthRecords.none { (it.pinId?.takeIf { id -> id.isNotBlank() } ?: it.id) == detailPin.id } &&
             !detailPin.displayTitle.trim().startsWith("Growth Stage", ignoreCase = true)
+        val detailPhoto = resolvePhotoPresentation(detailPin.id, state.pins, state.growthRecords)
         PinDetailSheet(
             vm = vm,
             pin = detailPin,
+            photoPresentation = detailPhoto,
+            localPhotoRevision = state.photoLocalRevisions[detailPhoto.entityId],
             color = pinColor(detailPin, colorMap),
             paddockName = state.paddocks.firstOrNull { it.id == detailPin.paddockId }?.name,
             sync = state.pinSyncState(detailPin.id),
@@ -639,6 +643,9 @@ internal fun synthesizeGrowthPins(
             longitude = lon,
             photoPath = record.photoPaths?.firstOrNull(),
             createdAt = record.observedAt ?: record.createdAt,
+            clientUpdatedAt = record.clientUpdatedAt,
+            updatedAt = record.updatedAt,
+            syncVersion = record.syncVersion,
         )
     }
 }
@@ -1011,9 +1018,12 @@ private fun PinsListMode(
             }
         } else {
             items(orderedPins, key = { it.id }) { pin ->
+                val photoPresentation = resolvePhotoPresentation(pin.id, state.pins, state.growthRecords)
                 PinRow(
                     vm = vm,
                     pin = pin,
+                    photoPresentation = photoPresentation,
+                    localPhotoRevision = state.photoLocalRevisions[photoPresentation.entityId],
                     color = pinColor(pin, colorMap),
                     paddockName = state.paddocks.firstOrNull { it.id == pin.paddockId }?.name,
                     userLocation = userLocation,
@@ -2276,6 +2286,8 @@ private fun CategoryTile(
 private fun PinRow(
     vm: AppViewModel,
     pin: Pin,
+    photoPresentation: PhotoPresentation,
+    localPhotoRevision: String?,
     color: Color,
     paddockName: String?,
     userLocation: Pair<Double, Double>?,
@@ -2308,12 +2320,11 @@ private fun PinRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (pin.hasPhoto || vm.retainedPhotoPath(pin.id) != null) {
+                if (photoPresentation.remotePath != null || localPhotoRevision != null) {
                     PinRowThumbnail(
                         vm = vm,
-                        entityId = pin.id,
-                        photoPath = pin.photoPath,
-                        remoteIdentity = pin.photoPath?.let { PinPhotoSync.pinRemoteIdentity(pin, it) },
+                        presentation = photoPresentation,
+                        localRevision = localPhotoRevision,
                         tint = onColor,
                     )
                 }
@@ -2401,16 +2412,18 @@ private fun PinRow(
 @Composable
 private fun PinRowThumbnail(
     vm: AppViewModel,
-    entityId: String,
-    photoPath: String?,
-    remoteIdentity: String?,
+    presentation: PhotoPresentation,
+    localRevision: String?,
     tint: Color,
 ) {
-    var display by remember(entityId, photoPath, remoteIdentity) {
+    val entityId = presentation.entityId
+    val photoPath = presentation.remotePath
+    val remoteIdentity = presentation.remoteIdentity
+    var display by remember(entityId, photoPath, remoteIdentity, localRevision) {
         mutableStateOf(vm.photoDisplaySource(entityId, photoPath, remoteIdentity))
     }
-    LaunchedEffect(entityId, photoPath, remoteIdentity) {
-        vm.refreshPhotoDisplay(entityId, photoPath, remoteIdentity) { display = it }
+    LaunchedEffect(entityId, photoPath, remoteIdentity, localRevision) {
+        vm.refreshPhotoDisplay(entityId, photoPath, remoteIdentity, localRevision) { display = it }
     }
     Box(
         modifier = Modifier
@@ -3004,6 +3017,8 @@ private fun PinPhotoSection(
 private fun PinDetailSheet(
     vm: AppViewModel,
     pin: Pin,
+    photoPresentation: PhotoPresentation,
+    localPhotoRevision: String?,
     color: Color,
     paddockName: String?,
     sync: PinSyncState,
@@ -3127,12 +3142,11 @@ private fun PinDetailSheet(
             }
 
             // Photo preview (hidden entirely when the pin has no photo).
-            if (pin.hasPhoto || vm.retainedPhotoPath(pin.id) != null) {
+            if (photoPresentation.remotePath != null || localPhotoRevision != null) {
                 PinDetailPhoto(
                     vm = vm,
-                    entityId = pin.id,
-                    photoPath = pin.photoPath,
-                    remoteIdentity = pin.photoPath?.let { PinPhotoSync.pinRemoteIdentity(pin, it) },
+                    presentation = photoPresentation,
+                    localRevision = localPhotoRevision,
                 )
             }
 
@@ -3324,16 +3338,18 @@ private fun PinDetailRow(label: String, value: String) {
 @Composable
 private fun PinDetailPhoto(
     vm: AppViewModel,
-    entityId: String,
-    photoPath: String?,
-    remoteIdentity: String?,
+    presentation: PhotoPresentation,
+    localRevision: String?,
 ) {
     val vine = LocalVineColors.current
-    var display by remember(entityId, photoPath, remoteIdentity) {
+    val entityId = presentation.entityId
+    val photoPath = presentation.remotePath
+    val remoteIdentity = presentation.remoteIdentity
+    var display by remember(entityId, photoPath, remoteIdentity, localRevision) {
         mutableStateOf(vm.photoDisplaySource(entityId, photoPath, remoteIdentity))
     }
-    fun retry(): Unit = vm.refreshPhotoDisplay(entityId, photoPath, remoteIdentity) { display = it }
-    LaunchedEffect(entityId, photoPath, remoteIdentity) { retry() }
+    fun retry(): Unit = vm.refreshPhotoDisplay(entityId, photoPath, remoteIdentity, localRevision) { display = it }
+    LaunchedEffect(entityId, photoPath, remoteIdentity, localRevision) { retry() }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -3350,13 +3366,19 @@ private fun PinDetailPhoto(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
-            if (display.isStaleCompletedCache) {
-                Text(
-                    "Showing older offline photo",
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    modifier = Modifier.align(Alignment.BottomStart).background(Color.Black.copy(alpha = 0.65f)).padding(8.dp),
-                )
+            if (display.isStaleCompletedCache || display.error != null) {
+                Row(
+                    modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Color.Black.copy(alpha = 0.72f)).padding(start = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        display.error ?: "Showing older offline photo",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { retry() }) { Text("Retry", color = Color.White) }
+                }
             }
         } else if (display.error != null) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {

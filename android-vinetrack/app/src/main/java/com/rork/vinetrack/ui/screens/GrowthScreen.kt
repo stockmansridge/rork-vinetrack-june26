@@ -1236,6 +1236,7 @@ private fun GrowthDetailView(
                     vm = vm,
                     record = record,
                     pendingPhotoUri = pendingPhotoUri,
+                    localRevision = state.photoLocalRevisions[record.id],
                     busy = state.pinPhotoBusy || state.growthPhotoBusy,
                     onTakePhoto = photoCapture.takePhoto,
                     onChooseFromGallery = photoCapture.chooseFromGallery,
@@ -1280,6 +1281,7 @@ private fun GrowthPhotoSection(
     vm: AppViewModel,
     record: GrowthStageRecord,
     pendingPhotoUri: Uri?,
+    localRevision: String?,
     busy: Boolean,
     onTakePhoto: () -> Unit,
     onChooseFromGallery: () -> Unit,
@@ -1289,11 +1291,11 @@ private fun GrowthPhotoSection(
     val photoPath = record.photoPaths?.firstOrNull()
     val entityId = record.id
     val remoteIdentity = photoPath?.let { PinPhotoSync.growthRemoteIdentity(record, it) }
-    var display by remember(entityId, photoPath, remoteIdentity) {
+    var display by remember(entityId, photoPath, remoteIdentity, localRevision) {
         mutableStateOf(vm.photoDisplaySource(entityId, photoPath, remoteIdentity))
     }
-    fun retry(): Unit = vm.refreshPhotoDisplay(entityId, photoPath, remoteIdentity) { display = it }
-    LaunchedEffect(entityId, photoPath, remoteIdentity) { retry() }
+    fun retry(): Unit = vm.refreshPhotoDisplay(entityId, photoPath, remoteIdentity, localRevision) { display = it }
+    LaunchedEffect(entityId, photoPath, remoteIdentity, localRevision) { retry() }
 
     val editable = true
     val hasImage = pendingPhotoUri != null || display.localPath != null || !photoPath.isNullOrBlank()
@@ -1320,13 +1322,19 @@ private fun GrowthPhotoSection(
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxWidth().height(220.dp),
                         )
-                        if (pendingPhotoUri == null && display.isStaleCompletedCache) {
-                            Text(
-                                "Showing older offline photo",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                modifier = Modifier.align(Alignment.BottomStart).background(Color.Black.copy(alpha = 0.65f)).padding(8.dp),
-                            )
+                        if (pendingPhotoUri == null && (display.isStaleCompletedCache || display.error != null)) {
+                            Row(
+                                modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Color.Black.copy(alpha = 0.72f)).padding(start = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    display.error ?: "Showing older offline photo",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                TextButton(onClick = { retry() }) { Text("Retry", color = Color.White) }
+                            }
                         }
                     } else if (display.error != null) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
