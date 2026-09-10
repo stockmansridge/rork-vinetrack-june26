@@ -9,6 +9,9 @@ import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.ui.screens.synthesizeGrowthPins
 import java.io.File
 import java.nio.file.Files
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -51,6 +54,52 @@ class PinPhotoWorkflowTest {
         assertEquals(1, objects.uploadCount)
         assertEquals(listOf("second"), repository.list().map { it.id })
         assertTrue(secondFile.exists())
+    }
+
+    @Test
+    fun `successful suspended delete preserves a photo queued after preservation`() = runTest {
+        assertSuspendedDeletePreservesNewPhoto(alreadyDeleted = false)
+    }
+
+    @Test
+    fun `404 suspended delete preserves a photo queued after preservation`() = runTest {
+        assertSuspendedDeletePreservesNewPhoto(alreadyDeleted = true)
+    }
+
+    @Test
+    fun `successful delete cleanup removes a covered uploaded leftover`() = runTest {
+        assertCoveredUploadedLeftoverIsCleaned(alreadyDeleted = false)
+    }
+
+    @Test
+    fun `404 delete cleanup removes a covered uploaded leftover`() = runTest {
+        assertCoveredUploadedLeftoverIsCleaned(alreadyDeleted = true)
+    }
+
+    private suspend fun assertCoveredUploadedLeftoverIsCleaned(alreadyDeleted: Boolean) {
+        val root = Files.createTempDirectory("pin-delete-covered-photo").toFile()
+        val retainedFile = File(root, "covered.jpg").apply { writeBytes(byteArrayOf(3)) }
+        val retained = attachment(
+            id = "covered",
+            revision = "covered-revision",
+            localPath = retainedFile.absolutePath,
+            status = PendingPhotoStatus.UPLOADED,
+        )
+        val photos = PendingPhotoRepository(root, MemoryPhotoStore(mutableListOf(retained)))
+        val writes = PendingWriteRepository(InMemoryPendingWriteStore())
+        val gateway = PinDeleteGateway {
+            if (alreadyDeleted) throw BackendError.Server(404, "already deleted")
+        }
+        val sync = PinDeleteSync(gateway, writes, photos)
+        val delete = sync.enqueue("pin-1")
+
+        sync.replayAll(
+            permittedWriteIds = setOf(delete.id),
+            permittedRetainedPhotos = setOf(PinDeleteSync.RetainedPhotoPermit(retained.id, retained.revision)),
+        ) { }
+
+        assertTrue(photos.list().isEmpty())
+        assertFalse(retainedFile.exists())
     }
 
     @Test
@@ -240,6 +289,61 @@ class PinPhotoWorkflowTest {
         assertEquals("vineyard-1", payload.vineyardId)
         assertEquals("pin-1", payload.pinId)
         assertEquals("growth-1", payload.growthRecordId)
+    }
+
+    private suspend fun assertSuspendedDeletePreservesNewPhoto(alreadyDeleted: Boolean) {
+        val root = Files.createTempDirectory("pin-delete-suspended").toFile()
+        val coveredFile = File(root, "covered.jpg").apply { writeBytes(byteArrayOf(1)) }
+        val covered = attachment(
+            id = "covered",
+            revision = "covered-revision",
+            localPath = coveredFile.absolutePath,
+            status = PendingPhotoStatus.UPLOADED,
+        )
+        val photos = PendingPhotoRepository(root, MemoryPhotoStore(mutableListOf(covered)))
+        val writes = PendingWriteRepository(InMemoryPendingWriteStore())
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val gateway = PinDeleteGateway {
+            started.complete(Unit)
+            release.await()
+            if (alreadyDeleted) throw BackendError.Server(404, "already deleted")
+        }
+        val sync = PinDeleteSync(gateway, writes, photos)
+        val delete = sync.enqueue("pin-1")
+        val permit = requireNotNull(
+            AffectedPinReplayOrchestration.prepare(writes.list(), photos.list()) { frozenWrites, photoVineyards ->
+                RecoveryPreservation.preserveBeforeReplay(
+                    pendingWrites = frozenWrites,
+                    tripOwners = emptyMap(),
+                    pinOwners = mapOf("pin-1" to "vineyard-1"),
+                    fallbackVineyardId = null,
+                    additionalVineyardIds = photoVineyards,
+                    preserve = { true },
+                    quarantine = { it.isEmpty() },
+                )
+            },
+        )
+
+        coroutineScope {
+            val replay = launch {
+                sync.replayAll(
+                    permittedWriteIds = permit.writeIds,
+                    permittedRetainedPhotos = permit.retainedPhotoPermits,
+                ) { }
+            }
+            started.await()
+            val replacement = photos.enqueue("pin-1", "vineyard-1", byteArrayOf(9, 8, 7))
+            val replacementFile = File(replacement.localPath)
+            release.complete(Unit)
+            replay.join()
+
+            assertTrue(writes.list().none { it.id == delete.id })
+            assertEquals(listOf(replacement.id), photos.list().map { it.id })
+            assertEquals(replacement.revision, photos.list().single().revision)
+            assertTrue(replacementFile.exists())
+            assertEquals(listOf<Byte>(9, 8, 7), replacementFile.readBytes().toList())
+        }
     }
 
     private fun growthRecord(

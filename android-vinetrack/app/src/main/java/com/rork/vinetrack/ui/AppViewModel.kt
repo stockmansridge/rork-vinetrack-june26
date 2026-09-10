@@ -2376,31 +2376,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return result
     }
 
-    private data class AffectedPinReplayPermit(
-        val writeIds: Set<String>,
-        val photoIds: Set<String>,
-    )
-
     /**
      * Freeze the exact pin/custom/photo queue slice this pass may consume, then
      * durably preserve every owning vineyard before any coordinator mutates it.
      * Work queued after this snapshot waits for the next trigger.
      */
-    private fun prepareAffectedPinReplay(): AffectedPinReplayPermit? {
+    private fun prepareAffectedPinReplay(): com.rork.vinetrack.data.AffectedPinReplayOrchestration.Permit? {
         val writes = pendingWrites.list().filter {
             it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
         }
-        val photos = pendingPhotos.list().filter {
-            it.status == PendingPhotoStatus.PENDING || it.status == PendingPhotoStatus.FAILED
-        }
-        val result = preserveAffectedRecoveryEvidence(
+        val photos = pendingPhotos.list()
+        return com.rork.vinetrack.data.AffectedPinReplayOrchestration.prepare(
             writes = writes,
-            additionalVineyardIds = photos.mapTo(mutableSetOf()) { it.vineyardId },
-        )
-        if (!result.didRun) return null
-        return AffectedPinReplayPermit(
-            writeIds = result.permittedWriteIds,
-            photoIds = photos.mapTo(mutableSetOf()) { it.id },
+            photos = photos,
+            preserve = { frozenWrites, photoVineyardIds ->
+                preserveAffectedRecoveryEvidence(
+                    writes = frozenWrites,
+                    additionalVineyardIds = photoVineyardIds,
+                )
+            },
         )
     }
 
@@ -2452,7 +2446,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Pin creates have synced — now flush any retained pin photos whose
             // pin now exists server-side (Stage 7C). Same coroutine so photos
             // upload only after their pin rows are confirmed.
-            syncPendingPinPhotos(permit.photoIds)
+            syncPendingPinPhotos(permit.replayPhotoIds)
         }
     }
 
@@ -2519,7 +2513,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (session.accessToken == null || !_ui.value.isOnline) return
         val permit = prepareAffectedPinReplay() ?: return
         viewModelScope.launch {
-            pinDeleteSync.replayAll(permit.writeIds) { pinId ->
+            pinDeleteSync.replayAll(
+                permittedWriteIds = permit.writeIds,
+                permittedRetainedPhotos = permit.retainedPhotoPermits,
+            ) { pinId ->
                 _ui.update { st -> st.copy(pins = st.pins.filterNot { it.id == pinId }) }
             }
         }
@@ -2831,7 +2828,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun replayPendingPinPhotos() {
         if (session.accessToken == null || !_ui.value.isOnline) return
         val permit = prepareAffectedPinReplay() ?: return
-        viewModelScope.launch { syncPendingPinPhotos(permit.photoIds) }
+        viewModelScope.launch { syncPendingPinPhotos(permit.replayPhotoIds) }
     }
 
     /**
@@ -3742,7 +3739,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun syncPendingPinPhotos(permittedPhotoIds: Set<String>? = null) {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        val photoIds = permittedPhotoIds ?: prepareAffectedPinReplay()?.photoIds ?: return
+        val photoIds = permittedPhotoIds ?: prepareAffectedPinReplay()?.replayPhotoIds ?: return
         pinPhotoSync.replayAll(photoIds) { confirmation ->
             val attachment = confirmation.attachment
             _ui.update { st ->

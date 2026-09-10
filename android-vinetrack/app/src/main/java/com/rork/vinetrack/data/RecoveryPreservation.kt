@@ -1,5 +1,7 @@
 package com.rork.vinetrack.data
 
+import com.rork.vinetrack.data.model.PendingPhotoAttachment
+import com.rork.vinetrack.data.model.PendingPhotoStatus
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 
@@ -11,6 +13,37 @@ import com.rork.vinetrack.data.model.PendingWriteStatus
  * real ownership resolution, real quarantine, real operator messages — is
  * directly executable in tests rather than only through a hand-built scope.
  */
+internal object AffectedPinReplayOrchestration {
+    data class Permit(
+        val writeIds: Set<String>,
+        val replayPhotoIds: Set<String>,
+        val retainedPhotoPermits: Set<PinDeleteSync.RetainedPhotoPermit>,
+    )
+
+    /**
+     * Production queue-freeze boundary shared by lifecycle replay entry points.
+     * All retained-photo identities are frozen for cleanup safety; only pending
+     * and failed photos are eligible for upload replay.
+     */
+    fun prepare(
+        writes: List<PendingWrite>,
+        photos: List<PendingPhotoAttachment>,
+        preserve: (List<PendingWrite>, Set<String>) -> RecoveryPreservation.Result,
+    ): Permit? {
+        val result = preserve(writes, photos.mapTo(mutableSetOf()) { it.vineyardId })
+        if (!result.didRun) return null
+        return Permit(
+            writeIds = result.permittedWriteIds,
+            replayPhotoIds = photos.filter {
+                it.status == PendingPhotoStatus.PENDING || it.status == PendingPhotoStatus.FAILED
+            }.mapTo(mutableSetOf()) { it.id },
+            retainedPhotoPermits = photos.mapTo(mutableSetOf()) {
+                PinDeleteSync.RetainedPhotoPermit(it.id, it.revision)
+            },
+        )
+    }
+}
+
 internal object RecoveryPreservation {
     const val STORAGE_FAILURE_MESSAGE: String =
         "Recovery evidence couldn't be saved to this device, so nothing was synced or refreshed. " +

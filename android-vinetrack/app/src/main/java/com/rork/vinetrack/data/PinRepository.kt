@@ -31,7 +31,7 @@ import kotlinx.serialization.Serializable
  * Display-only — it never mutates records it doesn't own and only sends the
  * fields the Android UI edits, leaving every other column untouched.
  */
-class PinRepository(private val session: SessionStore) : PinPhotoReferenceGateway {
+class PinRepository(private val session: SessionStore) : PinPhotoReferenceGateway, PinDeleteGateway {
 
     /** Mutable fields the Android pin editor exposes. */
     @Serializable
@@ -397,7 +397,7 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
         }
     }
 
-    suspend fun softDeletePin(id: String) = withContext(Dispatchers.IO) {
+    override suspend fun softDeletePin(id: String) = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("soft_delete_pin")) {

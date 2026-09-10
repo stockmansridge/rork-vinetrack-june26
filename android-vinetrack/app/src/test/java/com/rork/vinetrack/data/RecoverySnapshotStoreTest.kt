@@ -2,8 +2,12 @@ package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.model.PendingEntityType
 import com.rork.vinetrack.data.model.PendingOpType
+import com.rork.vinetrack.data.model.PendingPhotoAttachment
+import com.rork.vinetrack.data.model.PendingPhotoStatus
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
+import java.io.File
+import java.nio.file.Files
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -262,18 +266,102 @@ class RecoverySnapshotStoreTest {
     }
 
     @Test
-    fun `reconnect blocks affected replay mutations when durable preservation fails`() {
-        assertReplayTriggerBlocked("reconnect")
+    fun `preservation helper blocks replay mutations when durable preservation fails`() {
+        assertPreservationHelperBlocksReplay()
     }
 
     @Test
-    fun `resume blocks affected replay mutations when durable preservation fails`() {
-        assertReplayTriggerBlocked("resume")
-    }
+    fun `production replay orchestration blocks failed preservation then retries safe work beside quarantine`() {
+        val resolved = pending(
+            id = "resolved-write",
+            entityType = PendingEntityType.PIN,
+            clientId = "known-pin",
+            payload = completionPayload("known-pin", true),
+            opType = PendingOpType.UPDATE,
+        )
+        val unknown = pending(
+            id = "unknown-write",
+            entityType = PendingEntityType.PIN,
+            clientId = "unknown-pin",
+            payload = deletePayload("unknown-pin"),
+            opType = PendingOpType.DELETE,
+        )
+        val queue = mutableListOf(resolved, unknown)
+        val photoFile = File(Files.createTempDirectory("recovery-orchestration").toFile(), "photo.jpg")
+            .apply { writeBytes(byteArrayOf(4, 2)) }
+        val photo = PendingPhotoAttachment(
+            id = "photo-write",
+            clientPinId = "known-pin",
+            revision = "photo-revision",
+            vineyardId = "A",
+            localPath = photoFile.absolutePath,
+            createdAt = 1,
+            updatedAt = 1,
+            status = PendingPhotoStatus.PENDING,
+        )
+        val photos = mutableListOf(photo)
+        var durable = false
+        var backendCalls = 0
 
-    @Test
-    fun `post login blocks affected replay mutations when durable preservation fails`() {
-        assertReplayTriggerBlocked("post-login")
+        fun prepare(): AffectedPinReplayOrchestration.Permit? = AffectedPinReplayOrchestration.prepare(
+            writes = queue.filter { it.status in PendingWriteStatus.unresolved },
+            photos = photos.toList(),
+            preserve = { frozenWrites, photoVineyards ->
+                RecoveryPreservation.preserveBeforeReplay(
+                    pendingWrites = frozenWrites,
+                    tripOwners = emptyMap(),
+                    pinOwners = mapOf("known-pin" to "A"),
+                    fallbackVineyardId = null,
+                    additionalVineyardIds = photoVineyards,
+                    preserve = { durable },
+                    quarantine = { ids ->
+                        RecoveryPreservation.quarantine(
+                            writeIds = ids,
+                            hold = { id, message ->
+                                val index = queue.indexOfFirst { it.id == id }
+                                queue[index] = queue[index].copy(
+                                    status = PendingWriteStatus.BLOCKED,
+                                    lastError = message,
+                                )
+                            },
+                            readBack = { queue.toList() },
+                        )
+                    },
+                )
+            },
+        )
+
+        assertEquals(null, prepare())
+        assertEquals(0, backendCalls)
+        assertEquals(listOf(resolved, unknown), queue)
+        assertTrue(photoFile.exists())
+
+        durable = true
+        val permit = requireNotNull(prepare())
+        queue.removeAll { write ->
+            if (write.id in permit.writeIds) {
+                backendCalls += 1
+                true
+            } else {
+                false
+            }
+        }
+        photos.removeAll { attachment ->
+            if (attachment.id in permit.replayPhotoIds) {
+                backendCalls += 1
+                File(attachment.localPath).delete()
+                true
+            } else {
+                false
+            }
+        }
+
+        assertEquals(2, backendCalls)
+        assertEquals(listOf("unknown-write"), queue.map { it.id })
+        assertEquals(PendingWriteStatus.BLOCKED, queue.single().status)
+        assertTrue(queue.single().lastError!!.contains("held back"))
+        assertTrue(photos.isEmpty())
+        assertFalse(photoFile.exists())
     }
 
     @Test
@@ -504,12 +592,12 @@ class RecoverySnapshotStoreTest {
         assertEquals(setOf("A"), scope.vineyardIds)
     }
 
-    private fun assertReplayTriggerBlocked(trigger: String) {
+    private fun assertPreservationHelperBlocksReplay() {
         val write = pending(
-            id = "$trigger-write",
+            id = "helper-write",
             entityType = PendingEntityType.PIN,
-            clientId = "$trigger-pin",
-            payload = completionPayload("$trigger-pin", true),
+            clientId = "helper-pin",
+            payload = completionPayload("helper-pin", true),
             opType = PendingOpType.UPDATE,
         )
         val queue = mutableListOf(write)
@@ -519,7 +607,7 @@ class RecoverySnapshotStoreTest {
         val result = RecoveryPreservation.preserveBeforeReplay(
             pendingWrites = queue.toList(),
             tripOwners = emptyMap(),
-            pinOwners = mapOf("$trigger-pin" to "affected-vineyard"),
+            pinOwners = mapOf("helper-pin" to "affected-vineyard"),
             fallbackVineyardId = null,
             additionalVineyardIds = setOf("affected-vineyard"),
             preserve = { false },

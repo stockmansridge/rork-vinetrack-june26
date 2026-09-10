@@ -43,8 +43,12 @@ import kotlinx.serialization.json.Json
  * server-side, and an already-deleted / not-found row is treated as success so a
  * delete can never loop forever.
  */
+fun interface PinDeleteGateway {
+    suspend fun softDeletePin(id: String)
+}
+
 class PinDeleteSync(
-    private val pinRepo: PinRepository,
+    private val pinRepo: PinDeleteGateway,
     private val pending: PendingWriteRepository,
     private val pendingPhotos: PendingPhotoRepository,
 ) {
@@ -56,6 +60,9 @@ class PinDeleteSync(
     /** Soft-delete-only replay payload. Just the target pin id — nothing else. */
     @Serializable
     data class Payload(val pinId: String)
+
+    /** Exact retained-photo revision covered by this replay pass's durable snapshot. */
+    data class RetainedPhotoPermit(val id: String, val revision: String)
 
     /**
      * Queue (or replace) a soft-delete for [pinId]. Coalesces by pin: any earlier
@@ -96,7 +103,11 @@ class PinDeleteSync(
      *
      * Caller must only invoke this when online and a session token exists.
      */
-    suspend fun replayAll(permittedWriteIds: Set<String>? = null, onDeleted: (pinId: String) -> Unit) {
+    suspend fun replayAll(
+        permittedWriteIds: Set<String>? = null,
+        permittedRetainedPhotos: Set<RetainedPhotoPermit>? = null,
+        onDeleted: (pinId: String) -> Unit,
+    ) {
         if (!replayLock.tryLock()) return
         try {
             val candidates = pending.list().filter {
@@ -129,7 +140,7 @@ class PinDeleteSync(
                 try {
                     pinRepo.softDeletePin(payload.pinId)
                     pending.remove(write.id)
-                    cleanupRetainedPhoto(payload.pinId)
+                    cleanupRetainedPhoto(payload.pinId, permittedRetainedPhotos)
                     onDeleted(payload.pinId)
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to delete this pin.")
@@ -139,7 +150,7 @@ class PinDeleteSync(
                         // intent is satisfied. Idempotent success.
                         e.code == 404 -> {
                             pending.remove(write.id)
-                            cleanupRetainedPhoto(payload.pinId)
+                            cleanupRetainedPhoto(payload.pinId, permittedRetainedPhotos)
                             onDeleted(payload.pinId)
                         }
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
@@ -181,15 +192,22 @@ class PinDeleteSync(
     }
 
     /**
-     * Drop any retained photo attachment for a now-deleted pin. Only reached once
-     * the dependency gate has confirmed no photo upload is still unresolved, so
-     * this removes at most an already-uploaded leftover row plus its (already
-     * deleted) local file. Never deletes a pending photo before its parent delete
-     * is confirmed.
+     * Remove only uploaded leftovers whose exact row and revision were included
+     * in the successful pre-replay preservation snapshot. A replacement or new
+     * unresolved capture created while the backend delete is suspended is never
+     * covered by the stale permit and therefore survives both success and 404.
      */
-    private fun cleanupRetainedPhoto(pinId: String) {
+    private fun cleanupRetainedPhoto(
+        pinId: String,
+        permittedRetainedPhotos: Set<RetainedPhotoPermit>?,
+    ) {
+        if (permittedRetainedPhotos == null) return
         pendingPhotos.list()
-            .filter { it.clientPinId == pinId }
+            .filter { attachment ->
+                attachment.clientPinId == pinId &&
+                    attachment.status == PendingPhotoStatus.UPLOADED &&
+                    RetainedPhotoPermit(attachment.id, attachment.revision) in permittedRetainedPhotos
+            }
             .forEach { pendingPhotos.remove(it.id) }
     }
 
