@@ -52,10 +52,11 @@ fun MapMyLocationButton(
     onPermissionGranted: () -> Unit = {},
     onRequestStateChanged: (Boolean) -> Unit = {},
     onCentred: () -> Unit = {},
+    locationTracker: LocationTracker? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val tracker = remember { LocationTracker(context) }
+    val tracker = locationTracker ?: remember(context) { LocationTracker(context) }
     var isLocating by remember { mutableStateOf(false) }
 
     fun goToCurrentLocation() {

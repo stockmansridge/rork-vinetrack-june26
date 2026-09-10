@@ -50,6 +50,11 @@ struct OfflineVineyardMapView: View {
     var userHeading: Double? = nil
     /// Increment to perform a one-time maximum-zoom centre on `userCoordinate`.
     var userLocationRequestID: Int = 0
+    /// Keeps fresh user-location updates centred while preserving the current zoom.
+    var isFollowingUser: Bool = false
+    /// Changes whenever the owner accepts a fresh location update for following.
+    var followLocationUpdateID: Int = 0
+    var onManualPan: () -> Void = {}
     /// Show the small "Offline map mode" status banner. Defaults to true.
     var showStatusBanner: Bool = true
     var showPaddockLabels: Bool = true
@@ -109,6 +114,9 @@ struct OfflineVineyardMapView: View {
                         .onEnded { value in
                             committedOffset.width += value.translation.width
                             committedOffset.height += value.translation.height
+                            if abs(value.translation.width) > 4 || abs(value.translation.height) > 4 {
+                                onManualPan()
+                            }
                         }
                         .simultaneously(with:
                             MagnifyGesture()
@@ -123,7 +131,7 @@ struct OfflineVineyardMapView: View {
                 .onAppear {
                     viewportSize = geo.size
                     if userLocationRequestID > 0 {
-                        DispatchQueue.main.async { centreOnUser() }
+                        DispatchQueue.main.async { centreOnUser(maximumZoom: true) }
                     }
                 }
                 .onChange(of: geo.size) { _, newSize in viewportSize = newSize }
@@ -142,7 +150,14 @@ struct OfflineVineyardMapView: View {
         }
         .onChange(of: userLocationRequestID) { oldValue, newValue in
             guard newValue != oldValue else { return }
-            centreOnUser()
+            centreOnUser(maximumZoom: true)
+        }
+        .onChange(of: followLocationUpdateID) { oldValue, newValue in
+            guard isFollowingUser, newValue != oldValue else { return }
+            centreOnUser(maximumZoom: false)
+        }
+        .onChange(of: isFollowingUser) { _, isFollowing in
+            if isFollowing { centreOnUser(maximumZoom: false) }
         }
     }
 
@@ -181,23 +196,26 @@ struct OfflineVineyardMapView: View {
         }
     }
 
-    private func centreOnUser() {
+    private func centreOnUser(maximumZoom: Bool) {
         guard let userCoordinate,
               CLLocationCoordinate2DIsValid(userCoordinate),
+              !(userCoordinate.latitude == 0 && userCoordinate.longitude == 0),
               viewportSize.width > 0,
               viewportSize.height > 0 else { return }
-        guard let frame = projectionFrame(for: allCoordinates) else { return }
+        guard let frame = lockedProjectionFrame ?? projectionFrame(for: allCoordinates) else { return }
         lockedProjectionFrame = frame
         let availableWidth = max(viewportSize.width - 72, 1)
         let availableHeight = max(viewportSize.height - 72, 1)
-        let scale = min(availableWidth / frame.longitudeSpan, availableHeight / frame.latitudeSpan) * Self.maximumScale
+        let targetScale = maximumZoom ? Self.maximumScale : committedScale
+        let baseScale = min(availableWidth / frame.longitudeSpan, availableHeight / frame.latitudeSpan)
+        let projectedScale = baseScale * targetScale
         let offset = CGSize(
-            width: -(userCoordinate.longitude - frame.centerLongitude) * frame.longitudeScale * scale,
-            height: (userCoordinate.latitude - frame.centerLatitude) * scale
+            width: -(userCoordinate.longitude - frame.centerLongitude) * frame.longitudeScale * projectedScale,
+            height: (userCoordinate.latitude - frame.centerLatitude) * projectedScale
         )
 
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-            committedScale = Self.maximumScale
+        withAnimation(.smooth(duration: 0.35)) {
+            committedScale = targetScale
             committedOffset = offset
         }
     }

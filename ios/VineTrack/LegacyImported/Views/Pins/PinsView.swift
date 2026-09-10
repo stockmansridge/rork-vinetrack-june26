@@ -562,12 +562,17 @@ struct PinsMapView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(LocationService.self) private var locationService
     @Environment(NetworkMonitor.self) private var network
+    @Environment(\.scenePhase) private var scenePhase
     @State private var position: MapCameraPosition = .automatic
     @State private var selectedPin: VinePin?
     @State private var hasSetInitialPosition: Bool = false
     @State private var hasFramedBlocks: Bool = false
     @State private var isCurrentLocationRequested: Bool = false
     @State private var offlineLocationRequestID: Int = 0
+    @State private var isFollowingUser: Bool = false
+    @State private var isFollowWaiting: Bool = false
+    @State private var followLocationUpdateID: Int = 0
+    @State private var latestOnlineCamera: MapCamera?
 
     private static let closestOnlineCameraDistance: Double = 10
 
@@ -622,6 +627,7 @@ struct PinsMapView: View {
     /// the camera again after the initial fit.
     private func applyInitialFitIfNeeded(animated: Bool = false) {
         guard !isCurrentLocationRequested,
+              !isFollowingUser,
               !hasSetInitialPosition,
               let region = regionForContent() else { return }
         if animated {
@@ -642,26 +648,72 @@ struct PinsMapView: View {
         centreOnCurrentLocationIfAvailable()
     }
 
-    private func centreOnCurrentLocationIfAvailable() {
-        guard isCurrentLocationRequested else { return }
+    private func freshUserCoordinate() -> CLLocationCoordinate2D? {
         let result = locationService.freshLocation()
         guard case .fresh = result.quality,
-              let coordinate = result.location?.coordinate else { return }
-        guard CLLocationCoordinate2DIsValid(coordinate),
-              !(coordinate.latitude == 0 && coordinate.longitude == 0) else { return }
+              let coordinate = result.location?.coordinate,
+              CLLocationCoordinate2DIsValid(coordinate),
+              !(coordinate.latitude == 0 && coordinate.longitude == 0) else { return nil }
+        return coordinate
+    }
+
+    private func centreOnCurrentLocationIfAvailable() {
+        guard isCurrentLocationRequested,
+              let coordinate = freshUserCoordinate() else { return }
 
         isCurrentLocationRequested = false
         hasSetInitialPosition = true
         hasFramedBlocks = true
         if network.isOnline {
-            withAnimation {
+            withAnimation(.smooth(duration: 0.35)) {
                 position = .camera(MapCamera(
                     centerCoordinate: coordinate,
-                    distance: Self.closestOnlineCameraDistance
+                    distance: Self.closestOnlineCameraDistance,
+                    heading: latestOnlineCamera?.heading ?? 0,
+                    pitch: latestOnlineCamera?.pitch ?? 0
                 ))
             }
         } else {
             offlineLocationRequestID &+= 1
+        }
+    }
+
+    private func toggleFollowMe() {
+        isFollowingUser.toggle()
+        isFollowWaiting = isFollowingUser
+        guard isFollowingUser else { return }
+        isCurrentLocationRequested = false
+        hasSetInitialPosition = true
+        hasFramedBlocks = true
+        if locationService.authorizationStatus == .notDetermined {
+            locationService.requestPermission()
+        }
+        locationService.startUpdating()
+        followFreshLocationIfAvailable()
+    }
+
+    private func followFreshLocationIfAvailable() {
+        guard isFollowingUser,
+              scenePhase == .active,
+              let coordinate = freshUserCoordinate() else {
+            if isFollowingUser { isFollowWaiting = true }
+            return
+        }
+        isFollowWaiting = false
+        hasSetInitialPosition = true
+        hasFramedBlocks = true
+        if network.isOnline {
+            let camera = latestOnlineCamera
+            withAnimation(.smooth(duration: 0.35)) {
+                position = .camera(MapCamera(
+                    centerCoordinate: coordinate,
+                    distance: camera?.distance ?? 500,
+                    heading: camera?.heading ?? 0,
+                    pitch: camera?.pitch ?? 0
+                ))
+            }
+        } else {
+            followLocationUpdateID &+= 1
         }
     }
 
@@ -689,7 +741,13 @@ struct PinsMapView: View {
                 )
             },
             userCoordinate: locationService.location?.coordinate,
-            userLocationRequestID: offlineLocationRequestID
+            userLocationRequestID: offlineLocationRequestID,
+            isFollowingUser: isFollowingUser && scenePhase == .active,
+            followLocationUpdateID: followLocationUpdateID,
+            onManualPan: {
+                isFollowingUser = false
+                isFollowWaiting = false
+            }
         )
     }
 
@@ -746,6 +804,18 @@ struct PinsMapView: View {
             UserAnnotation()
         }
         .mapStyle(.hybrid)
+        .onMapCameraChange(frequency: .continuous) { context in
+            latestOnlineCamera = context.camera
+        }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 8)
+                .onChanged { _ in
+                    if isFollowingUser {
+                        isFollowingUser = false
+                        isFollowWaiting = false
+                    }
+                }
+        )
     }
 
     var body: some View {
@@ -764,6 +834,8 @@ struct PinsMapView: View {
         .overlay(alignment: .topTrailing) {
             VStack(spacing: 8) {
                 Button {
+                    isFollowingUser = false
+                    isFollowWaiting = false
                     if let region = regionForContent() {
                         withAnimation {
                             position = .region(region)
@@ -790,6 +862,27 @@ struct PinsMapView: View {
                     .background(.ultraThinMaterial, in: .rect(cornerRadius: 8))
                 }
                 .accessibilityLabel(isCurrentLocationRequested ? "Acquiring current location" : "My Current Location")
+
+                Button(action: toggleFollowMe) {
+                    HStack(spacing: 6) {
+                        if isFollowingUser && isFollowWaiting {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(.white)
+                        } else {
+                            Image(systemName: isFollowingUser ? "location.north.circle.fill" : "location.north.circle")
+                                .font(.system(size: 15, weight: .semibold))
+                        }
+                        Text("Follow Me")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(isFollowingUser ? .white : .primary)
+                    .padding(.horizontal, 10)
+                    .frame(height: 40)
+                    .background(isFollowingUser ? Color.accentColor : Color.clear)
+                    .background(.ultraThinMaterial, in: .capsule)
+                }
+                .accessibilityValue(isFollowingUser ? (isFollowWaiting ? "On, waiting for GPS" : "On") : "Off")
             }
             .padding(.top, 12)
             .padding(.trailing, 12)
@@ -811,6 +904,7 @@ struct PinsMapView: View {
             // Block geometry newly loaded or edited: frame the block group once,
             // unless a current-location request owns the camera.
             guard !isCurrentLocationRequested,
+                  !isFollowingUser,
                   newCount > 0,
                   !hasFramedBlocks,
                   let region = regionForContent() else { return }
@@ -819,10 +913,29 @@ struct PinsMapView: View {
             hasFramedBlocks = true
         }
         .onChange(of: locationService.locationUpdateCount) { _, _ in
+            let currentLocationWasRequested = isCurrentLocationRequested
             centreOnCurrentLocationIfAvailable()
+            if !currentLocationWasRequested {
+                followFreshLocationIfAvailable()
+            }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                followFreshLocationIfAvailable()
+            }
+        }
+        .task(id: locationService.locationUpdateCount) {
+            guard isFollowingUser else { return }
+            try? await Task.sleep(for: .seconds(5.5))
+            guard !Task.isCancelled, isFollowingUser, scenePhase == .active else { return }
+            if freshUserCoordinate() == nil {
+                isFollowWaiting = true
+            }
         }
         .onDisappear {
             isCurrentLocationRequested = false
+            isFollowingUser = false
+            isFollowWaiting = false
         }
         .task {
             if !hasSetInitialPosition {

@@ -1,5 +1,8 @@
 package com.rork.vinetrack.ui.screens
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -21,8 +24,10 @@ import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Timeline
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -31,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -47,14 +53,20 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.maps.android.compose.CameraMoveStartedReason
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
+import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.MapDefaults
+import com.rork.vinetrack.data.PinLocationResult
 import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.data.MapStyle
 import com.rork.vinetrack.data.model.CoordinatePoint
@@ -191,6 +203,9 @@ fun VineyardMapContent(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val isPinsMap = onLocationMessage != null
+    val locationTracker = remember { LocationTracker(context) }
 
     // Show the user's location dot whenever a location permission is held
     // (iOS UserAnnotation parity). Enabling it without a granted permission
@@ -259,6 +274,12 @@ fun VineyardMapContent(
     var isCurrentLocationRequestActive by remember { mutableStateOf(false) }
     var hasCurrentLocationRequestOccurred by remember { mutableStateOf(false) }
     var hasUserRecentred by remember { mutableStateOf(false) }
+    var isFollowingUser by remember { mutableStateOf(false) }
+    var isFollowWaiting by remember { mutableStateOf(false) }
+    var followCoordinate by remember { mutableStateOf<LatLng?>(null) }
+    var followUpdateSerial by remember { mutableStateOf(0) }
+    var gestureStartCamera by remember { mutableStateOf<CameraPosition?>(null) }
+    var settledCamera by remember { mutableStateOf(cameraPositionState.position) }
     // Measured map size, used to keep a tapped pin visible above the detail sheet.
     var mapSizePx by remember { mutableStateOf(IntSize.Zero) }
 
@@ -271,8 +292,8 @@ fun VineyardMapContent(
     // If the content arrived after first composition (cold start while data is
     // still loading), snap the camera onto the midpoint straight away — without
     // waiting for onMapLoaded — so the interim frame is the vineyard, not (0,0).
-    LaunchedEffect(framePoints, hasCurrentLocationRequestOccurred, isCurrentLocationRequestActive, hasUserRecentred) {
-        if (hasFramed || hasCurrentLocationRequestOccurred || hasUserRecentred || isCurrentLocationRequestActive || framePoints.isEmpty()) {
+    LaunchedEffect(framePoints, hasCurrentLocationRequestOccurred, isCurrentLocationRequestActive, hasUserRecentred, isFollowingUser) {
+        if (hasFramed || hasCurrentLocationRequestOccurred || hasUserRecentred || isCurrentLocationRequestActive || isFollowingUser || framePoints.isEmpty()) {
             return@LaunchedEffect
         }
         estimatedCameraPosition(framePoints)?.let { cameraPositionState.position = it }
@@ -281,8 +302,8 @@ fun VineyardMapContent(
     // Frame the vineyard blocks once the map is laid out. After the initial
     // fit, the camera only re-frames when block geometry itself changes; pin
     // refreshes/filter changes and user pans never move it.
-    LaunchedEffect(mapLoaded, framePoints, hasCurrentLocationRequestOccurred, isCurrentLocationRequestActive, hasUserRecentred) {
-        if (!mapLoaded || hasCurrentLocationRequestOccurred || hasUserRecentred || isCurrentLocationRequestActive || framePoints.isEmpty()) {
+    LaunchedEffect(mapLoaded, framePoints, hasCurrentLocationRequestOccurred, isCurrentLocationRequestActive, hasUserRecentred, isFollowingUser) {
+        if (!mapLoaded || hasCurrentLocationRequestOccurred || hasUserRecentred || isCurrentLocationRequestActive || isFollowingUser || framePoints.isEmpty()) {
             return@LaunchedEffect
         }
         val hasPins = locatedPins.any { it.latLng() != null }
@@ -298,6 +319,97 @@ fun VineyardMapContent(
         hasFramed = true
         framedBlockGeometry = blockFramePoints
         framedHadPins = hasPins
+    }
+
+    DisposableEffect(isPinsMap, isFollowingUser, hasLocationPermission, lifecycleOwner) {
+        if (!isPinsMap || !isFollowingUser || !hasLocationPermission) {
+            onDispose { }
+        } else {
+            fun startFollowingUpdates() {
+                locationTracker.startPinFixUpdates { result ->
+                    if (result is PinLocationResult.Success) {
+                        followCoordinate = LatLng(result.fix.latitude, result.fix.longitude)
+                        followUpdateSerial += 1
+                        isFollowWaiting = false
+                    } else {
+                        isFollowWaiting = true
+                    }
+                }
+            }
+            val observer = LifecycleEventObserver { _, event ->
+                when (event) {
+                    Lifecycle.Event.ON_START, Lifecycle.Event.ON_RESUME -> startFollowingUpdates()
+                    Lifecycle.Event.ON_STOP -> locationTracker.stopPinFixUpdates()
+                    else -> Unit
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                startFollowingUpdates()
+            }
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
+                locationTracker.stopPinFixUpdates()
+            }
+        }
+    }
+
+    LaunchedEffect(isFollowingUser, followUpdateSerial) {
+        if (!isFollowingUser) return@LaunchedEffect
+        delay(5_500L)
+        if (isFollowingUser) isFollowWaiting = true
+    }
+
+    LaunchedEffect(followCoordinate, isFollowingUser) {
+        val coordinate = followCoordinate ?: return@LaunchedEffect
+        if (!isFollowingUser || !lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@LaunchedEffect
+        val current = cameraPositionState.position
+        val target = CameraPosition.Builder()
+            .target(coordinate)
+            .zoom(current.zoom)
+            .bearing(current.bearing)
+            .tilt(current.tilt)
+            .build()
+        runCatching { cameraPositionState.animate(CameraUpdateFactory.newCameraPosition(target), 350) }
+        hasUserRecentred = true
+        hasFramed = true
+    }
+
+    // A one-finger pan disables following. A pinch changes zoom and keeps it active.
+    LaunchedEffect(cameraPositionState.isMoving) {
+        if (cameraPositionState.isMoving) {
+            if (cameraPositionState.cameraMoveStartedReason == CameraMoveStartedReason.GESTURE) {
+                gestureStartCamera = settledCamera
+            }
+        } else {
+            val start = gestureStartCamera
+            val end = cameraPositionState.position
+            if (start != null) {
+                val centreMoved = kotlin.math.abs(start.target.latitude - end.target.latitude) > 0.0000005 ||
+                    kotlin.math.abs(start.target.longitude - end.target.longitude) > 0.0000005
+                val zoomUnchanged = kotlin.math.abs(start.zoom - end.zoom) < 0.05f
+                if (isFollowingUser && centreMoved && zoomUnchanged) {
+                    isFollowingUser = false
+                    isFollowWaiting = false
+                }
+                gestureStartCamera = null
+            }
+            settledCamera = end
+        }
+    }
+
+    val followPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        if (grants.values.any { it }) {
+            hasLocationPermission = true
+            isFollowingUser = true
+            isFollowWaiting = true
+        } else {
+            isFollowingUser = false
+            isFollowWaiting = false
+            onLocationMessage?.invoke("Location permission is needed to follow your current position.")
+        }
     }
 
     // Re-apply tilt whenever the mode changes, preserving centre and zoom.
@@ -459,24 +571,76 @@ fun VineyardMapContent(
             )
 
             if (onLocationMessage != null) {
-                MapMyLocationButton(
-                    camera = cameraPositionState,
-                    onMessage = onLocationMessage,
-                    targetZoom = PINS_MY_LOCATION_ZOOM,
-                    onPermissionGranted = { hasLocationPermission = true },
-                    onRequestStateChanged = { isActive ->
-                        isCurrentLocationRequestActive = isActive
-                        if (isActive) hasCurrentLocationRequestOccurred = true
-                    },
-                    onCentred = {
-                        hasUserRecentred = true
-                        hasFramed = true
-                    },
+                Column(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(end = 12.dp, bottom = 16.dp),
-                    contentDescription = "My Current Location",
-                )
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(22.dp))
+                            .background(if (isFollowingUser) BlockAmber else Color(0xCC1C1C1E))
+                            .clickable {
+                                if (isFollowingUser) {
+                                    isFollowingUser = false
+                                    isFollowWaiting = false
+                                } else if (locationTracker.hasPermission) {
+                                    isFollowingUser = true
+                                    isFollowWaiting = true
+                                } else {
+                                    followPermissionLauncher.launch(
+                                        arrayOf(
+                                            Manifest.permission.ACCESS_FINE_LOCATION,
+                                            Manifest.permission.ACCESS_COARSE_LOCATION,
+                                        ),
+                                    )
+                                }
+                            }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (isFollowingUser && isFollowWaiting) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(17.dp),
+                                strokeWidth = 2.dp,
+                                color = Color.White,
+                            )
+                        } else {
+                            Icon(
+                                Icons.Filled.MyLocation,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                        Text(
+                            text = "Follow Me",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+
+                    MapMyLocationButton(
+                        camera = cameraPositionState,
+                        onMessage = onLocationMessage,
+                        targetZoom = PINS_MY_LOCATION_ZOOM,
+                        onPermissionGranted = { hasLocationPermission = true },
+                        onRequestStateChanged = { isActive ->
+                            isCurrentLocationRequestActive = isActive
+                            if (isActive) hasCurrentLocationRequestOccurred = true
+                        },
+                        onCentred = {
+                            hasUserRecentred = true
+                            hasFramed = true
+                        },
+                        locationTracker = locationTracker,
+                        contentDescription = "My Current Location",
+                    )
+                }
             } else {
                 // Other map screens retain their existing content-refit control.
                 Box(
