@@ -139,6 +139,13 @@ nonisolated struct CoordinatePoint: Codable, Identifiable, Sendable, Hashable {
 
     enum CodingKeys: String, CodingKey { case id, latitude, longitude, lat, lng }
 
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(latitude, forKey: .latitude)
+        try container.encode(longitude, forKey: .longitude)
+    }
+
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         // Tolerate polygon points written by external systems that omit the
@@ -199,7 +206,7 @@ extension Paddock {
 
     /// Nominal row spacing used ONLY as a legacy display/spatial fallback.
     /// Never used by spray, carrier-volume or treated-area arithmetic.
-    static let nominalRowSpacingMetres: Double = 2.5
+    nonisolated static let nominalRowSpacingMetres: Double = 2.5
 
     /// Legacy row spacing accessor. Always returns a number, falling back to
     /// `nominalRowSpacingMetres` when none was ever entered.
