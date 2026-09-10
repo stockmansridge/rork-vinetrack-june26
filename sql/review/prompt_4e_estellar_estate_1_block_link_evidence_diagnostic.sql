@@ -1,0 +1,88 @@
+-- READ ONLY. Diagnose the failed Prompt 4E Estellar Estate evidence guard.
+-- This query does not create, update, or delete anything.
+with expected as (
+  select
+    'eeb37c41-592a-4a1e-a3f7-efb57374cd04'::uuid as pin_id,
+    '00bb9a18-28da-4ba7-9136-b2c5a1b56fb5'::uuid as vineyard_id,
+    'Irrigation'::text as pin_type,
+    'Repairs'::text as pin_mode,
+    false as is_completed,
+    '2026-09-08 02:03:19.512+00'::timestamptz as pin_capture_time,
+    -37.6116082059341::double precision as stored_latitude,
+    145.42076284519::double precision as stored_longitude
+), evidence as (
+  select
+    e.*,
+    p.id as current_pin_id,
+    p.vineyard_id as current_vineyard_id,
+    p.deleted_at as current_deleted_at,
+    p.paddock_id as current_paddock_id,
+    p.sync_version as current_sync_version,
+    p.button_name as current_pin_type,
+    p.mode as current_pin_mode,
+    p.is_completed as current_is_completed,
+    p.created_at as current_created_at,
+    p.latitude as current_latitude,
+    p.longitude as current_longitude,
+    p.snapped_latitude as current_snapped_latitude,
+    p.snapped_longitude as current_snapped_longitude,
+    p.snapped_to_row as current_snapped_to_row,
+    p.location_scope as current_location_scope,
+    (select count(*)::integer from public.pin_row_segments s where s.pin_id = e.pin_id) as current_segment_count
+  from expected e
+  left join public.pins p on p.id = e.pin_id
+)
+select
+  pin_id,
+  current_pin_id is not null as pin_exists,
+  current_vineyard_id,
+  current_deleted_at,
+  current_paddock_id,
+  current_sync_version,
+  current_pin_type,
+  current_pin_mode,
+  current_is_completed,
+  current_created_at,
+  current_latitude,
+  current_longitude,
+  current_snapped_latitude,
+  current_snapped_longitude,
+  current_snapped_to_row,
+  current_location_scope,
+  current_segment_count,
+  current_vineyard_id is not distinct from vineyard_id as vineyard_matches,
+  current_deleted_at is null as is_not_deleted,
+  current_paddock_id is null as is_unassigned,
+  current_sync_version is not null as has_sync_version,
+  current_pin_type is not distinct from pin_type as pin_type_matches,
+  current_pin_mode is not distinct from pin_mode as pin_mode_matches,
+  current_is_completed is not distinct from is_completed as completion_matches,
+  current_created_at is not distinct from pin_capture_time as capture_time_matches,
+  current_latitude is not distinct from stored_latitude as latitude_matches,
+  current_longitude is not distinct from stored_longitude as longitude_matches,
+  current_snapped_latitude is null as snapped_latitude_absent,
+  current_snapped_longitude is null as snapped_longitude_absent,
+  current_snapped_to_row is not distinct from false as literal_false_snap_flag_matches_apply,
+  not coalesce(current_snapped_to_row, false) as unsnapped_under_preview_contract,
+  current_location_scope is null as location_scope_absent,
+  current_segment_count = 0 as row_segments_absent,
+  array_remove(array[
+    case when current_pin_id is null then 'pin_missing' end,
+    case when current_vineyard_id is distinct from vineyard_id then 'vineyard_changed' end,
+    case when current_deleted_at is not null then 'pin_deleted' end,
+    case when current_paddock_id is not null then 'already_assigned' end,
+    case when current_sync_version is null then 'sync_version_missing' end,
+    case when current_pin_type is distinct from pin_type then 'pin_type_changed' end,
+    case when current_pin_mode is distinct from pin_mode then 'pin_mode_changed' end,
+    case when current_is_completed is distinct from is_completed then 'completion_changed' end,
+    case when current_created_at is distinct from pin_capture_time then 'capture_time_changed' end,
+    case when current_latitude is distinct from stored_latitude then 'latitude_changed' end,
+    case when current_longitude is distinct from stored_longitude then 'longitude_changed' end,
+    case when current_snapped_latitude is not null then 'snapped_latitude_present' end,
+    case when current_snapped_longitude is not null then 'snapped_longitude_present' end,
+    case when current_snapped_to_row is distinct from false then 'snap_flag_not_literal_false' end,
+    case when coalesce(current_snapped_to_row, false) then 'snap_flag_indicates_snapped' end,
+    case when current_location_scope is not null then 'location_scope_present' end,
+    case when current_segment_count <> 0 then 'row_segments_present' end
+  ]::text[], null) as failed_apply_checks
+from evidence;
