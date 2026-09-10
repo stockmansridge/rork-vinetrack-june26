@@ -2332,10 +2332,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * and deletions can still be retried. Storage failures and
      * ownership/quarantine failures produce different operator messages.
      */
-    private fun preserveAffectedRecoveryEvidence(fallbackVineyardId: String? = _ui.value.selectedVineyardId): Boolean {
-        val writes = pendingWrites.list().filter {
+    private fun preserveAffectedRecoveryEvidence(
+        fallbackVineyardId: String? = _ui.value.selectedVineyardId,
+        writes: List<com.rork.vinetrack.data.model.PendingWrite> = pendingWrites.list().filter {
             it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
-        }
+        },
+        additionalVineyardIds: Set<String> = emptySet(),
+    ): com.rork.vinetrack.data.RecoveryPreservation.Result {
         val knownVineyardIds = buildSet {
             addAll(_ui.value.vineyards.map { it.id })
             fallbackVineyardId?.let(::add)
@@ -2359,6 +2362,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             tripOwners = tripOwners,
             pinOwners = pinOwners,
             fallbackVineyardId = fallbackVineyardId,
+            additionalVineyardIds = additionalVineyardIds,
             preserve = { vineyardId ->
                 com.rork.vinetrack.data.RecoverySnapshotStore
                     .captureBeforeMutation(getApplication(), vineyardId)
@@ -2369,7 +2373,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         result.message?.let { message ->
             _ui.update { it.copy(pinError = message, tripError = message) }
         }
-        return result.didRun
+        return result
+    }
+
+    private data class AffectedPinReplayPermit(
+        val writeIds: Set<String>,
+        val photoIds: Set<String>,
+    )
+
+    /**
+     * Freeze the exact pin/custom/photo queue slice this pass may consume, then
+     * durably preserve every owning vineyard before any coordinator mutates it.
+     * Work queued after this snapshot waits for the next trigger.
+     */
+    private fun prepareAffectedPinReplay(): AffectedPinReplayPermit? {
+        val writes = pendingWrites.list().filter {
+            it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
+        }
+        val photos = pendingPhotos.list().filter {
+            it.status == PendingPhotoStatus.PENDING || it.status == PendingPhotoStatus.FAILED
+        }
+        val result = preserveAffectedRecoveryEvidence(
+            writes = writes,
+            additionalVineyardIds = photos.mapTo(mutableSetOf()) { it.vineyardId },
+        )
+        if (!result.didRun) return null
+        return AffectedPinReplayPermit(
+            writeIds = result.permittedWriteIds,
+            photoIds = photos.mapTo(mutableSetOf()) { it.id },
+        )
     }
 
     /**
@@ -2398,9 +2430,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingPinCreates() {
         if (session.accessToken == null) return
-        if (!preserveAffectedRecoveryEvidence()) return
+        val permit = prepareAffectedPinReplay() ?: return
         viewModelScope.launch {
-            pinCreateSync.replayAll { pin ->
+            pinCreateSync.replayAll(permit.writeIds) { pin ->
                 _ui.update { st ->
                     if (st.pins.any { it.id == pin.id }) {
                         // A payload queued before the driving-path column
@@ -2420,7 +2452,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Pin creates have synced — now flush any retained pin photos whose
             // pin now exists server-side (Stage 7C). Same coroutine so photos
             // upload only after their pin rows are confirmed.
-            syncPendingPinPhotos()
+            syncPendingPinPhotos(permit.photoIds)
         }
     }
 
@@ -2432,8 +2464,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingCustomPins() {
         if (session.accessToken == null) return
+        val permit = prepareAffectedPinReplay() ?: return
         viewModelScope.launch {
             customPinSync.replayAll(
+                permittedWriteIds = permit.writeIds,
                 onTypeSynced = { type -> reconcileCustomPinType(type) },
                 onPinSynced = { issue -> reconcileManualIssue(issue) },
             )
@@ -2448,8 +2482,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingPinCompletions() {
         if (session.accessToken == null || !_ui.value.isOnline) return
+        val permit = prepareAffectedPinReplay() ?: return
         viewModelScope.launch {
-            pinCompletionSync.replayAll { pin ->
+            pinCompletionSync.replayAll(permit.writeIds) { pin ->
                 _ui.update { st -> st.copy(pins = st.pins.map { if (it.id == pin.id) pin else it }) }
             }
         }
@@ -2464,8 +2499,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingPinEdits() {
         if (session.accessToken == null || !_ui.value.isOnline) return
+        val permit = prepareAffectedPinReplay() ?: return
         viewModelScope.launch {
-            pinEditSync.replayAll { pin ->
+            pinEditSync.replayAll(permit.writeIds) { pin ->
                 _ui.update { st -> st.copy(pins = st.pins.map { if (it.id == pin.id) pin else it }) }
             }
         }
@@ -2481,8 +2517,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingPinDeletes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
+        val permit = prepareAffectedPinReplay() ?: return
         viewModelScope.launch {
-            pinDeleteSync.replayAll { pinId ->
+            pinDeleteSync.replayAll(permit.writeIds) { pinId ->
                 _ui.update { st -> st.copy(pins = st.pins.filterNot { it.id == pinId }) }
             }
         }
@@ -2499,7 +2536,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripMetadata() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        if (!preserveAffectedRecoveryEvidence()) return
+        if (!preserveAffectedRecoveryEvidence().didRun) return
         viewModelScope.launch {
             tripMetadataSync.replayAll { trip ->
                 _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == trip.id) trip else it }) }
@@ -2517,7 +2554,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripSeeding() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        if (!preserveAffectedRecoveryEvidence()) return
+        if (!preserveAffectedRecoveryEvidence().didRun) return
         viewModelScope.launch {
             tripSeedingSync.replayAll { trip ->
                 _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == trip.id) trip else it }) }
@@ -2529,7 +2566,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Runs Phase 5 parent and dependent writes in one awaited, per-process pipeline. */
     private fun replayPhase5Writes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        if (!preserveAffectedRecoveryEvidence()) return
+        if (!preserveAffectedRecoveryEvidence().didRun) return
         if (!phase5ReplayRunning.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
@@ -2618,7 +2655,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripGps() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        if (!preserveAffectedRecoveryEvidence()) return
+        if (!preserveAffectedRecoveryEvidence().didRun) return
         viewModelScope.launch {
             tripGpsSync.replayAll { trip ->
                 _ui.update { st ->
@@ -2660,7 +2697,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripRow() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        if (!preserveAffectedRecoveryEvidence()) return
+        if (!preserveAffectedRecoveryEvidence().didRun) return
         viewModelScope.launch {
             tripRowSync.replayAll { trip ->
                 _ui.update { st ->
@@ -2733,7 +2770,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripDeletes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        if (!preserveAffectedRecoveryEvidence()) return
+        if (!preserveAffectedRecoveryEvidence().didRun) return
         viewModelScope.launch {
             tripDeleteSync.replayAll { tripId ->
                 _ui.update { st -> st.copy(trips = st.trips.filterNot { it.id == tripId }) }
@@ -2793,7 +2830,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingPinPhotos() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch { syncPendingPinPhotos() }
+        val permit = prepareAffectedPinReplay() ?: return
+        viewModelScope.launch { syncPendingPinPhotos(permit.photoIds) }
     }
 
     /**
@@ -3702,9 +3740,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private suspend fun syncPendingPinPhotos() {
+    private suspend fun syncPendingPinPhotos(permittedPhotoIds: Set<String>? = null) {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        pinPhotoSync.replayAll { confirmation ->
+        val photoIds = permittedPhotoIds ?: prepareAffectedPinReplay()?.photoIds ?: return
+        pinPhotoSync.replayAll(photoIds) { confirmation ->
             val attachment = confirmation.attachment
             _ui.update { st ->
                 st.copy(
@@ -3741,7 +3780,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun retryPendingSync() {
         if (_ui.value.isRetryingSync) return
         if (!_ui.value.isOnline || session.accessToken == null) return
-        if (!preserveAffectedRecoveryEvidence()) return
+        if (!preserveAffectedRecoveryEvidence().didRun) return
         val reset = pendingWrites.resetFailedForRetry()
         if (reset == 0) return
         _ui.update { it.copy(isRetryingSync = true) }
@@ -3816,7 +3855,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun retryPendingSyncItem(id: String): Boolean {
         if (_ui.value.isRetryingSync) return false
         if (!_ui.value.isOnline || session.accessToken == null) return false
-        if (!preserveAffectedRecoveryEvidence()) return false
+        if (!preserveAffectedRecoveryEvidence().didRun) return false
         val reset = pendingWrites.resetFailedRowForRetry(id)
         if (!reset) return false
         _ui.update { it.copy(isRetryingSync = true) }

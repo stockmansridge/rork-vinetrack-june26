@@ -78,13 +78,18 @@ class CustomPinSync(
      * the ViewModel can reconcile optimistic state. Stops early on a
      * transient failure (still offline) so the queue isn't hammered.
      */
-    suspend fun replayAll(onTypeSynced: (CustomPinType) -> Unit, onPinSynced: (ManualIssue) -> Unit) {
+    suspend fun replayAll(
+        permittedWriteIds: Set<String>? = null,
+        onTypeSynced: (CustomPinType) -> Unit,
+        onPinSynced: (ManualIssue) -> Unit,
+    ) {
         if (!replayLock.tryLock()) return
         try {
             val candidates = pending.list()
                 .filter {
                     it.entityType == PendingEntityType.CUSTOM_PIN &&
-                        (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
+                        (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED) &&
+                        (permittedWriteIds == null || it.id in permittedWriteIds)
                 }
                 .sortedWith(
                     compareBy(

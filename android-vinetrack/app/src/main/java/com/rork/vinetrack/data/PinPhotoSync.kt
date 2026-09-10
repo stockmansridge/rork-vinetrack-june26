@@ -72,7 +72,7 @@ class PinPhotoSync(
      * Caller is responsible for only invoking this when online and a session
      * token exists.
      */
-    suspend fun replayAll(onUploaded: (PhotoUploadConfirmation) -> Unit) {
+    suspend fun replayAll(permittedAttachmentIds: Set<String>? = null, onUploaded: (PhotoUploadConfirmation) -> Unit) {
         if (!replayLock.tryLock()) return
         try {
             // Pins still queued for create haven't synced yet — their photos must
@@ -91,7 +91,8 @@ class PinPhotoSync(
                 .map { it.clientId }
                 .toSet()
             val candidates = pending.list().filter {
-                it.status == PendingPhotoStatus.PENDING || it.status == PendingPhotoStatus.FAILED
+                (it.status == PendingPhotoStatus.PENDING || it.status == PendingPhotoStatus.FAILED) &&
+                    (permittedAttachmentIds == null || it.id in permittedAttachmentIds)
             }
             for (att in candidates) {
                 // Pin-exists ordering: leave the attachment pending until its pin

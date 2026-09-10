@@ -36,6 +36,24 @@ class PinPhotoWorkflowTest {
     }
 
     @Test
+    fun `photo replay consumes only attachments covered by the durable preservation permit`() = runTest {
+        val root = Files.createTempDirectory("pending-photo-permit").toFile()
+        val firstFile = File(root, "first.jpg").apply { writeBytes(byteArrayOf(1)) }
+        val secondFile = File(root, "second.jpg").apply { writeBytes(byteArrayOf(2)) }
+        val first = attachment(id = "first", revision = "first", localPath = firstFile.absolutePath)
+        val second = attachment(id = "second", revision = "second", localPath = secondFile.absolutePath)
+        val repository = PendingPhotoRepository(root, MemoryPhotoStore(mutableListOf(first, second)))
+        val objects = ObjectGateway()
+
+        PinPhotoSync(objects, PinGateway(), GrowthGateway(), repository) { emptyList() }
+            .replayAll(permittedAttachmentIds = setOf("first")) { }
+
+        assertEquals(1, objects.uploadCount)
+        assertEquals(listOf("second"), repository.list().map { it.id })
+        assertTrue(secondFile.exists())
+    }
+
+    @Test
     fun `interrupted upload recovers after repository recreation and clears only after reference and cache`() = runTest {
         val root = Files.createTempDirectory("pending-photo").toFile()
         val retained = File(root, "retained.jpg").apply { writeBytes(byteArrayOf(1, 2, 3)) }
@@ -242,16 +260,18 @@ class PinPhotoWorkflowTest {
     )
 
     private fun attachment(
+        id: String = "attachment-1",
         kind: String = PendingPhotoEntityKind.PIN,
         localPath: String = "/tmp/photo.jpg",
         status: String = PendingPhotoStatus.PENDING,
         uploadedPath: String? = null,
+        revision: String = "revision-1",
     ): PendingPhotoAttachment = PendingPhotoAttachment(
-        id = "attachment-1",
+        id = id,
         clientPinId = "pin-1",
         entityKind = kind,
         growthRecordId = if (kind == PendingPhotoEntityKind.PIN) null else "growth-1",
-        revision = "revision-1",
+        revision = revision,
         vineyardId = "vineyard-1",
         localPath = localPath,
         createdAt = 1,

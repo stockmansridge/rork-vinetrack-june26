@@ -96,13 +96,14 @@ class PinDeleteSync(
      *
      * Caller must only invoke this when online and a session token exists.
      */
-    suspend fun replayAll(onDeleted: (pinId: String) -> Unit) {
+    suspend fun replayAll(permittedWriteIds: Set<String>? = null, onDeleted: (pinId: String) -> Unit) {
         if (!replayLock.tryLock()) return
         try {
             val candidates = pending.list().filter {
                 it.entityType == PendingEntityType.PIN &&
                     it.opType == PendingOpType.DELETE &&
-                    (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
+                    (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED) &&
+                    (permittedWriteIds == null || it.id in permittedWriteIds)
             }
             for (write in candidates) {
                 pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)

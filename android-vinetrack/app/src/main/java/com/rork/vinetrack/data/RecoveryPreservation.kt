@@ -29,6 +29,8 @@ internal object RecoveryPreservation {
         val message: String?,
         /** Items held back because their vineyard could not be identified. */
         val quarantinedWriteIds: Set<String>,
+        /** Exact queued-write snapshot that may be consumed by this replay pass. */
+        val permittedWriteIds: Set<String>,
     )
 
     /**
@@ -41,15 +43,19 @@ internal object RecoveryPreservation {
         tripOwners: Map<String, String>,
         pinOwners: Map<String, String>,
         fallbackVineyardId: String?,
+        additionalVineyardIds: Set<String> = emptySet(),
         preserve: (String) -> Boolean,
         quarantine: (Set<String>) -> Boolean,
         replay: () -> Unit = {},
     ): Result {
-        val scope = RecoverySnapshotStore.resolveReplayScope(
+        val resolvedScope = RecoverySnapshotStore.resolveReplayScope(
             pendingWrites = pendingWrites,
             tripOwners = tripOwners,
             pinOwners = pinOwners,
             fallbackVineyardId = fallbackVineyardId,
+        )
+        val scope = resolvedScope.copy(
+            vineyardIds = resolvedScope.vineyardIds + additionalVineyardIds,
         )
         return when (
             val outcome = RecoveryReplayGate.run(
@@ -59,11 +65,16 @@ internal object RecoveryPreservation {
                 replay = replay,
             )
         ) {
-            is RecoveryReplayGate.Outcome.Ran -> Result(true, null, outcome.quarantinedWriteIds)
+            is RecoveryReplayGate.Outcome.Ran -> Result(
+                didRun = true,
+                message = null,
+                quarantinedWriteIds = outcome.quarantinedWriteIds,
+                permittedWriteIds = pendingWrites.mapTo(mutableSetOf()) { it.id } - outcome.quarantinedWriteIds,
+            )
             is RecoveryReplayGate.Outcome.PreservationFailed ->
-                Result(false, STORAGE_FAILURE_MESSAGE, emptySet())
+                Result(false, STORAGE_FAILURE_MESSAGE, emptySet(), emptySet())
             is RecoveryReplayGate.Outcome.QuarantineFailed ->
-                Result(false, QUARANTINE_FAILURE_MESSAGE, emptySet())
+                Result(false, QUARANTINE_FAILURE_MESSAGE, emptySet(), emptySet())
         }
     }
 

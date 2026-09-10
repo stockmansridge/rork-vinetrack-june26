@@ -129,13 +129,14 @@ class PinEditSync(
      * Caller is responsible for only invoking this when online and a session
      * token exists.
      */
-    suspend fun replayAll(onSynced: (Pin) -> Unit) {
+    suspend fun replayAll(permittedWriteIds: Set<String>? = null, onSynced: (Pin) -> Unit) {
         if (!replayLock.tryLock()) return
         try {
             val candidates = pending.list().filter {
                 it.entityType == PendingEntityType.PIN_EDIT &&
                     it.opType == PendingOpType.UPDATE &&
-                    (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
+                    (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED) &&
+                    (permittedWriteIds == null || it.id in permittedWriteIds)
             }
             for (write in candidates) {
                 pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)

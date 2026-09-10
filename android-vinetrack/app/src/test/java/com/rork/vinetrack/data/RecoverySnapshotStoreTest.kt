@@ -262,6 +262,98 @@ class RecoverySnapshotStoreTest {
     }
 
     @Test
+    fun `reconnect blocks affected replay mutations when durable preservation fails`() {
+        assertReplayTriggerBlocked("reconnect")
+    }
+
+    @Test
+    fun `resume blocks affected replay mutations when durable preservation fails`() {
+        assertReplayTriggerBlocked("resume")
+    }
+
+    @Test
+    fun `post login blocks affected replay mutations when durable preservation fails`() {
+        assertReplayTriggerBlocked("post-login")
+    }
+
+    @Test
+    fun `successful durable retry permits only the queue snapshot that was preserved`() {
+        val original = pending(
+            id = "preserved-write",
+            entityType = PendingEntityType.PIN,
+            clientId = "pin-1",
+            payload = completionPayload("pin-1", true),
+            opType = PendingOpType.UPDATE,
+        )
+        var durable = false
+        var backendWrites = 0
+        val failed = RecoveryPreservation.preserveBeforeReplay(
+            pendingWrites = listOf(original),
+            tripOwners = emptyMap(),
+            pinOwners = mapOf("pin-1" to "A"),
+            fallbackVineyardId = null,
+            preserve = { durable },
+            quarantine = { it.isEmpty() },
+            replay = { backendWrites += 1 },
+        )
+        assertFalse(failed.didRun)
+        assertEquals(0, backendWrites)
+        assertTrue(failed.permittedWriteIds.isEmpty())
+
+        durable = true
+        val succeeded = RecoveryPreservation.preserveBeforeReplay(
+            pendingWrites = listOf(original),
+            tripOwners = emptyMap(),
+            pinOwners = mapOf("pin-1" to "A"),
+            fallbackVineyardId = null,
+            preserve = { durable },
+            quarantine = { it.isEmpty() },
+            replay = { backendWrites += 1 },
+        )
+        val queuedAfterPreservation = "later-write"
+
+        assertTrue(succeeded.didRun)
+        assertEquals(1, backendWrites)
+        assertEquals(setOf("preserved-write"), succeeded.permittedWriteIds)
+        assertFalse(queuedAfterPreservation in succeeded.permittedWriteIds)
+    }
+
+    @Test
+    fun `photo owning vineyard must be durably preserved before writes queues or files can change`() {
+        val write = pending(
+            id = "pin-delete",
+            entityType = PendingEntityType.PIN,
+            clientId = "pin-1",
+            payload = deletePayload("pin-1"),
+            opType = PendingOpType.DELETE,
+        )
+        var backendWrites = 0
+        var queueRemovals = 0
+        var photoCleanups = 0
+
+        val result = RecoveryPreservation.preserveBeforeReplay(
+            pendingWrites = listOf(write),
+            tripOwners = emptyMap(),
+            pinOwners = mapOf("pin-1" to "A"),
+            fallbackVineyardId = null,
+            additionalVineyardIds = setOf("photo-vineyard"),
+            preserve = { vineyardId -> vineyardId != "photo-vineyard" },
+            quarantine = { it.isEmpty() },
+            replay = {
+                backendWrites += 1
+                queueRemovals += 1
+                photoCleanups += 1
+            },
+        )
+
+        assertFalse(result.didRun)
+        assertEquals(0, backendWrites)
+        assertEquals(0, queueRemovals)
+        assertEquals(0, photoCleanups)
+        assertTrue(result.permittedWriteIds.isEmpty())
+    }
+
+    @Test
     fun `production retry preserves and syncs a queued completion and deletion with no selected vineyard`() {
         val completion = pending(
             id = "completion-write",
@@ -294,6 +386,7 @@ class RecoverySnapshotStoreTest {
         assertTrue(replayed)
         assertEquals(setOf("A", "B"), preserved.toSet())
         assertTrue(result.quarantinedWriteIds.isEmpty())
+        assertEquals(setOf("completion-write", "delete-write"), result.permittedWriteIds)
         assertEquals(null, result.message)
     }
 
@@ -341,6 +434,7 @@ class RecoverySnapshotStoreTest {
         assertTrue(result.didRun)
         assertTrue(replayed)
         assertEquals(setOf("orphan-write"), result.quarantinedWriteIds)
+        assertEquals(setOf("completion-write"), result.permittedWriteIds)
         assertEquals(PendingWriteStatus.PENDING, queue.first { it.id == "completion-write" }.status)
         val held = queue.first { it.id == "orphan-write" }
         assertEquals(PendingWriteStatus.BLOCKED, held.status)
@@ -408,6 +502,39 @@ class RecoverySnapshotStoreTest {
 
         assertEquals(setOf("orphan-write"), scope.unresolvedWriteIds)
         assertEquals(setOf("A"), scope.vineyardIds)
+    }
+
+    private fun assertReplayTriggerBlocked(trigger: String) {
+        val write = pending(
+            id = "$trigger-write",
+            entityType = PendingEntityType.PIN,
+            clientId = "$trigger-pin",
+            payload = completionPayload("$trigger-pin", true),
+            opType = PendingOpType.UPDATE,
+        )
+        val queue = mutableListOf(write)
+        var backendWrites = 0
+        var photoCleanups = 0
+
+        val result = RecoveryPreservation.preserveBeforeReplay(
+            pendingWrites = queue.toList(),
+            tripOwners = emptyMap(),
+            pinOwners = mapOf("$trigger-pin" to "affected-vineyard"),
+            fallbackVineyardId = null,
+            additionalVineyardIds = setOf("affected-vineyard"),
+            preserve = { false },
+            quarantine = { it.isEmpty() },
+            replay = {
+                backendWrites += 1
+                queue.clear()
+                photoCleanups += 1
+            },
+        )
+
+        assertFalse(result.didRun)
+        assertEquals(listOf(write), queue)
+        assertEquals(0, backendWrites)
+        assertEquals(0, photoCleanups)
     }
 
     @Test
