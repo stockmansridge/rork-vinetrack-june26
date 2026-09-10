@@ -2241,6 +2241,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         val raw = lastError.lowercase()
         return when {
+            raw.contains("couldn't be linked to a vineyard") ->
+                "This saved change isn't linked to a vineyard, so it was held back for attention."
             raw.contains("forbidden") || raw.contains("permission") ||
                 raw.contains("not allowed") || raw.contains("unauthor") || raw.contains("403") ->
                 "Permission problem. This needs attention."
@@ -2269,6 +2271,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Preserve the first local evidence for every vineyard whose queued work a
+     * replay could change, before that replay runs.
+     *
+     * Ownership is resolved authoritatively, never guessed: a payload vineyard
+     * if present, otherwise the known trip for trip work, otherwise the EXACT
+     * pin id for legacy pin payloads (completion is `{pinId,isCompleted}`,
+     * delete is `{pinId}`) matched against in-memory pins, the per-vineyard pin
+     * cache and the capture-evidence store. The currently selected vineyard is
+     * only ever added to the preservation set — it is never used as an owner for
+     * an unidentified write.
+     *
+     * A genuinely unidentifiable item is quarantined (held back for attention)
+     * instead of blocking the whole queue, so ordinary offline pin completions
+     * and deletions can still be retried. Storage failures and
+     * ownership/quarantine failures produce different operator messages.
+     */
     private fun preserveAffectedRecoveryEvidence(fallbackVineyardId: String? = _ui.value.selectedVineyardId): Boolean {
         val writes = pendingWrites.list().filter {
             it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
@@ -2279,32 +2298,53 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             activeTripStore.load()?.vineyardId?.let(::add)
         }
         val tripOwners = mutableMapOf<String, String>()
+        val pinOwners = mutableMapOf<String, String>()
         _ui.value.trips.forEach { tripOwners[it.id] = it.vineyardId }
+        _ui.value.pins.forEach { pinOwners[it.id] = it.vineyardId }
         val cache = com.rork.vinetrack.data.DomainCacheStore(getApplication())
         knownVineyardIds.forEach { vineyardId ->
             cache.loadTripsForRecovery(vineyardId).items.forEach { trip -> tripOwners[trip.id] = vineyardId }
+            cache.loadPinsForRecovery(vineyardId).items.forEach { pin -> pinOwners[pin.id] = pin.vineyardId }
+        }
+        com.rork.vinetrack.data.PinCaptureEvidenceStore(getApplication()).load().forEach { evidence ->
+            pinOwners.putIfAbsent(evidence.pinId, evidence.vineyardId)
         }
         activeTripStore.load()?.let { tripOwners[it.trip.id] = it.vineyardId }
-        val scope = com.rork.vinetrack.data.RecoverySnapshotStore.resolveReplayScope(
+        val result = com.rork.vinetrack.data.RecoveryPreservation.preserveBeforeReplay(
             pendingWrites = writes,
             tripOwners = tripOwners,
+            pinOwners = pinOwners,
             fallbackVineyardId = fallbackVineyardId,
-        )
-        val preserved = com.rork.vinetrack.data.RecoveryReplayGate.run(
-            scope = scope,
             preserve = { vineyardId ->
                 com.rork.vinetrack.data.RecoverySnapshotStore
                     .captureBeforeMutation(getApplication(), vineyardId)
                     .isPreserved
             },
-            replay = {},
+            quarantine = { writeIds -> quarantineUnidentifiedWrites(writeIds) },
         )
-        if (!preserved) {
-            val message = "Recovery evidence couldn't be preserved. Nothing was synced or refreshed. Free device storage and retry."
+        result.message?.let { message ->
             _ui.update { it.copy(pinError = message, tripError = message) }
         }
-        return preserved
+        return result.didRun
     }
+
+    /**
+     * Hold back queued items whose vineyard could not be identified so a replay
+     * can never change their evidence, while the safely resolved remainder
+     * proceeds. Returns true when every unidentified item is held back.
+     */
+    private fun quarantineUnidentifiedWrites(writeIds: Set<String>): Boolean =
+        com.rork.vinetrack.data.RecoveryPreservation.quarantine(
+            writeIds = writeIds,
+            hold = { id, message ->
+                pendingWrites.updateStatus(
+                    id,
+                    com.rork.vinetrack.data.model.PendingWriteStatus.BLOCKED,
+                    message,
+                )
+            },
+            readBack = { pendingWrites.list() },
+        )
 
     /**
      * Replay any queued pin creates (Stage 4A-iv). Pin-create only — never any
@@ -13922,7 +13962,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val preservation = com.rork.vinetrack.data.RecoverySnapshotStore
             .captureBeforeMutation(getApplication(), vineyardId)
         if (!preservation.isPreserved) {
-            val message = "Recovery evidence couldn't be preserved. Vineyard refresh was stopped. Free device storage and retry."
+            val message = "Recovery evidence couldn't be saved to this device, so vineyard refresh was stopped. " +
+                "Free up device storage, then retry."
             _ui.update { it.copy(isLoadingVineyardData = false, pinError = message, tripError = message) }
             return
         }
