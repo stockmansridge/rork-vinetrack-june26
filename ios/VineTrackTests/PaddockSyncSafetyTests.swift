@@ -168,6 +168,64 @@ struct PaddockSyncSafetyTests {
         )
     }
 
+    // MARK: - Legacy coordinate compatibility
+
+    @Test("Legacy lat/lng geometry on deleted rows decodes without blocking active blocks")
+    func legacyDeletedGeometryDecodesAlongsideActiveBlocks() throws {
+        let vineyardId = UUID()
+        let activeId = UUID()
+        let deletedId = UUID(uuidString: "a33a5caf-e585-420f-b6b0-7355fa066460")!
+        let json = """
+        [
+          {"id":"\(activeId)","vineyard_id":"\(vineyardId)","name":"Active","polygon_points":[{"latitude":-33.1,"longitude":149.1}]},
+          {"id":"\(deletedId)","vineyard_id":"\(vineyardId)","name":"Deleted","deleted_at":0,"polygon_points":[{"lat":-33.2,"lng":149.2}]}
+        ]
+        """
+        let rows = try JSONDecoder().decode([BackendPaddock].self, from: Data(json.utf8))
+        #expect(rows.count == 2)
+        #expect(rows[0].id == activeId)
+        #expect(rows[1].id == deletedId)
+        #expect(rows[1].polygonPoints?.first?.latitude == -33.2)
+        #expect(rows[1].polygonPoints?.first?.longitude == 149.2)
+    }
+
+    @Test("Malformed active geometry still fails the complete response")
+    func malformedActiveGeometryIsNotSilentlyDiscarded() {
+        let json = """
+        [{"id":"\(UUID())","vineyard_id":"\(UUID())","name":"Malformed active","polygon_points":[{"lat":-33.2}]}]
+        """
+        #expect(throws: (any Error).self) {
+            _ = try JSONDecoder().decode([BackendPaddock].self, from: Data(json.utf8))
+        }
+    }
+
+    @Test("Representative Borenore batch keeps 46 active blocks and reconciles 9 deletions")
+    func representativeBorenoreBatchIsDurableAndSwitchSafe() async {
+        let env = makeEnv()
+        let borenore = UUID()
+        let boomey = UUID()
+        env.store.selectedVineyardId = boomey
+        let boomeyBlock = backendPaddock(vineyardId: boomey, name: "Boomey retained").toPaddock()
+        env.store.applyRemotePaddockUpsert(boomeyBlock)
+        env.store.selectedVineyardId = borenore
+        env.store.reloadCurrentVineyardData()
+
+        let active = (0..<46).map { backendPaddock(vineyardId: borenore, name: "Block \($0)") }
+        let deleted = (0..<9).map { backendPaddock(vineyardId: borenore, name: "Deleted \($0)", deletedAt: Date()) }
+        env.repo.serverRows = active + deleted
+        await env.service.sync(vineyardId: borenore)
+
+        #expect(env.service.syncStatus == .success)
+        #expect(env.store.paddocks.count == 46)
+        #expect(env.store.persistedPaddockIds(for: borenore).count == 46)
+        env.store.selectedVineyardId = boomey
+        env.store.reloadCurrentVineyardData()
+        #expect(env.store.paddocks.map(\.id) == [boomeyBlock.id])
+        env.store.selectedVineyardId = borenore
+        env.store.reloadCurrentVineyardData()
+        #expect(env.store.paddocks.count == 46)
+    }
+
     // MARK: - 1. Multi-vineyard pending protection
 
     @Test("Pending block in vineyard B survives vineyard A's sync, then uploads from B")

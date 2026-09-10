@@ -137,15 +137,25 @@ nonisolated struct CoordinatePoint: Codable, Identifiable, Sendable, Hashable {
         self.longitude = coordinate.longitude
     }
 
-    enum CodingKeys: String, CodingKey { case id, latitude, longitude }
+    enum CodingKeys: String, CodingKey { case id, latitude, longitude, lat, lng }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        // Tolerate polygon points written by external systems (e.g. the
-        // Lovable web portal) that omit the synthetic `id` field.
+        // Tolerate polygon points written by external systems that omit the
+        // synthetic id or use the legacy database `lat`/`lng` field names.
+        // Values remain mandatory: malformed active geometry still fails the
+        // complete response instead of silently dropping a live block.
         self.id = (try? c.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
-        self.latitude = try c.decode(Double.self, forKey: .latitude)
-        self.longitude = try c.decode(Double.self, forKey: .longitude)
+        if let latitude = try c.decodeIfPresent(Double.self, forKey: .latitude) {
+            self.latitude = latitude
+        } else {
+            self.latitude = try c.decode(Double.self, forKey: .lat)
+        }
+        if let longitude = try c.decodeIfPresent(Double.self, forKey: .longitude) {
+            self.longitude = longitude
+        } else {
+            self.longitude = try c.decode(Double.self, forKey: .lng)
+        }
     }
 }
 

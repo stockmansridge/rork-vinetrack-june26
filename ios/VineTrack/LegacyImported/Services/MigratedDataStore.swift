@@ -1007,13 +1007,16 @@ final class MigratedDataStore {
         Set(loadAllPaddocksFromDisk().filter { $0.vineyardId == vineyardId }.map { $0.id })
     }
 
-    /// Apply a batch of remote paddock upserts DURABLY: merge every row into
-    /// the shared multi-vineyard cache, write the file once atomically, and
-    /// throw when encoding or the disk write fails so the block sync can
-    /// refuse to advance its watermark or report success. Does NOT trigger
-    /// `onPaddockChanged` (these rows came from the server).
-    func applyRemotePaddockUpsertsBatch(_ incoming: [Paddock]) throws {
-        guard !incoming.isEmpty else { return }
+    /// Apply remote paddock upserts and deletes DURABLY with one shared-cache
+    /// read and one atomic write. Local relationship cleanup for deleted ids is
+    /// retained, while server-originated changes never re-enter the dirty queue.
+    func applyRemotePaddockChangesBatch(upserts incoming: [Paddock], deleteIds: Set<UUID>) throws {
+        guard !incoming.isEmpty || !deleteIds.isEmpty else { return }
+        for paddockId in deleteIds {
+            clearPaddockLinkOnPins(paddockId: paddockId, propagate: false)
+            clearPaddockLinkOnTrips(paddockId: paddockId, propagate: false)
+            removeWorkTaskPaddockLinks(paddockId: paddockId, propagate: false)
+        }
         var all: [Paddock] = loadAllPaddocksFromDisk()
         if let selected = selectedVineyardId {
             // The in-memory slice for the selected vineyard is authoritative
@@ -1021,21 +1024,31 @@ final class MigratedDataStore {
             all.removeAll { $0.vineyardId == selected }
             all.append(contentsOf: paddocks)
         }
+        all.removeAll { deleteIds.contains($0.id) }
+        paddocks.removeAll { deleteIds.contains($0.id) }
+        var allIndex = Dictionary(uniqueKeysWithValues: all.indices.map { (all[$0].id, $0) })
+        var memoryIndex = Dictionary(uniqueKeysWithValues: paddocks.indices.map { (paddocks[$0].id, $0) })
         for paddock in incoming {
-            if let idx = all.firstIndex(where: { $0.id == paddock.id }) {
+            if let idx = allIndex[paddock.id] {
                 all[idx] = paddock
             } else {
+                allIndex[paddock.id] = all.count
                 all.append(paddock)
             }
             if selectedVineyardId == paddock.vineyardId {
-                if let memIdx = paddocks.firstIndex(where: { $0.id == paddock.id }) {
+                if let memIdx = memoryIndex[paddock.id] {
                     paddocks[memIdx] = paddock
                 } else {
+                    memoryIndex[paddock.id] = paddocks.count
                     paddocks.append(paddock)
                 }
             }
         }
         try persistence.saveOrThrow(all, key: Keys.paddocks)
+    }
+
+    func applyRemotePaddockUpsertsBatch(_ incoming: [Paddock]) throws {
+        try applyRemotePaddockChangesBatch(upserts: incoming, deleteIds: [])
     }
 
     func addPaddock(_ paddock: Paddock) {

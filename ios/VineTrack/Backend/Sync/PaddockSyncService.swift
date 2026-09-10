@@ -266,24 +266,19 @@ final class PaddockSyncService {
             // recovery: one atomic write for every refreshed row, and a
             // persistence failure THROWS so Force Refresh reports failure
             // instead of a refresh that never landed on disk.
-            try store.applyRemotePaddockUpsertsBatch(batchUpserts)
-            metadata.clearDirty(batchUpserts.map { $0.id })
-            let upserts = batchUpserts.count
-            for paddockId in remoteDeletes {
-                store.applyRemotePaddockDelete(paddockId)
-                metadata.clearDirty([paddockId])
-                metadata.clearDeleted([paddockId])
-                deletes += 1
-            }
-            // Sweep hard-deleted local paddocks (no longer present remotely).
+            // Sweep hard-deleted local paddocks (no longer present remotely),
+            // then commit every cache mutation with one atomic write.
+            var deleteIds = Set(remoteDeletes)
             for local in store.paddocks where local.vineyardId == vineyardId {
                 if remoteIds.contains(local.id) { continue }
                 if pendingUpsertIds.contains(local.id) { continue }
-                store.applyRemotePaddockDelete(local.id)
-                metadata.clearDirty([local.id])
-                metadata.clearDeleted([local.id])
-                deletes += 1
+                deleteIds.insert(local.id)
             }
+            try store.applyRemotePaddockChangesBatch(upserts: batchUpserts, deleteIds: deleteIds)
+            metadata.clearDirty(batchUpserts.map { $0.id } + Array(deleteIds))
+            metadata.clearDeleted(Array(deleteIds))
+            let upserts = batchUpserts.count
+            deletes = deleteIds.count
             #if DEBUG
             if preservedPending > 0 {
                 print("[PaddockSync] force refresh preserved \(preservedPending) block(s) with pending local changes")
@@ -535,9 +530,25 @@ final class PaddockSyncService {
             }
         }
 
+        var pulledUpserts: [Paddock] = []
+        var pulledDeletes: Set<UUID> = []
+        var resolvedIds: [UUID] = []
         for backendPaddock in remote {
-            applyRemote(backendPaddock, vineyardId: vineyardId, store: store)
+            if backendPaddock.deletedAt != nil {
+                pulledDeletes.insert(backendPaddock.id)
+                resolvedIds.append(backendPaddock.id)
+                continue
+            }
+            if let pendingDirtyAt = metadata.pendingUpserts[backendPaddock.id] {
+                let remoteAt = backendPaddock.clientUpdatedAt ?? backendPaddock.updatedAt ?? .distantPast
+                if pendingDirtyAt > remoteAt { continue }
+            }
+            pulledUpserts.append(backendPaddock.toPaddock())
+            resolvedIds.append(backendPaddock.id)
         }
+        try store.applyRemotePaddockChangesBatch(upserts: pulledUpserts, deleteIds: pulledDeletes)
+        metadata.clearDirty(resolvedIds)
+        metadata.clearDeleted(Array(pulledDeletes))
 
         // Authoritative consistency pass. `fetchPaddockIds` is the source of
         // truth for which block rows exist (and which are soft-deleted) on
@@ -624,20 +635,23 @@ final class PaddockSyncService {
         // is still in flight.
         let pendingLocalCreates = Set(metadata.pendingUpserts.keys)
         let localForVineyard = store.paddocks.filter { $0.vineyardId == vineyardId }
+        let knownRemoteIds = Set(idRows.map { $0.id })
+        var sweptDeleteIds: Set<UUID> = []
         var sweptHardDeletes = 0
         var sweptSoftDeletes = 0
         for local in localForVineyard {
             if liveRemoteIds.contains(local.id) { continue }
             if pendingLocalCreates.contains(local.id) { continue }
-            store.applyRemotePaddockDelete(local.id)
-            metadata.clearDirty([local.id])
-            metadata.clearDeleted([local.id])
-            if idRows.contains(where: { $0.id == local.id }) {
+            sweptDeleteIds.insert(local.id)
+            if knownRemoteIds.contains(local.id) {
                 sweptSoftDeletes += 1
             } else {
                 sweptHardDeletes += 1
             }
         }
+        try store.applyRemotePaddockChangesBatch(upserts: [], deleteIds: sweptDeleteIds)
+        metadata.clearDirty(Array(sweptDeleteIds))
+        metadata.clearDeleted(Array(sweptDeleteIds))
         #if DEBUG
         if sweptHardDeletes > 0 || sweptSoftDeletes > 0 {
             print("[PaddockSync] reconciliation removed \(sweptHardDeletes) hard-deleted and \(sweptSoftDeletes) soft-deleted local paddock(s)")
@@ -685,25 +699,6 @@ final class PaddockSyncService {
         return nil
     }
 
-    private func applyRemote(_ backendPaddock: BackendPaddock, vineyardId: UUID, store: MigratedDataStore) {
-        // Soft-deleted remotely.
-        if backendPaddock.deletedAt != nil {
-            store.applyRemotePaddockDelete(backendPaddock.id)
-            metadata.clearDirty([backendPaddock.id])
-            metadata.clearDeleted([backendPaddock.id])
-            return
-        }
-
-        // Last-write-wins: only apply remote if it's newer than the local pending change.
-        if let pendingDirtyAt = metadata.pendingUpserts[backendPaddock.id] {
-            let remoteAt = backendPaddock.clientUpdatedAt ?? backendPaddock.updatedAt ?? .distantPast
-            if pendingDirtyAt > remoteAt { return }
-        }
-
-        let mapped = backendPaddock.toPaddock()
-        store.applyRemotePaddockUpsert(mapped)
-        metadata.clearDirty([backendPaddock.id])
-    }
 }
 
 // MARK: - Metadata
