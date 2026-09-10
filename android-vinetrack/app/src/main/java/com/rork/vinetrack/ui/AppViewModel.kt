@@ -2269,6 +2269,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun preserveAffectedRecoveryEvidence(fallbackVineyardId: String? = _ui.value.selectedVineyardId): Boolean {
+        val writes = pendingWrites.list().filter {
+            it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
+        }
+        val knownVineyardIds = buildSet {
+            addAll(_ui.value.vineyards.map { it.id })
+            fallbackVineyardId?.let(::add)
+            activeTripStore.load()?.vineyardId?.let(::add)
+        }
+        val tripOwners = mutableMapOf<String, String>()
+        _ui.value.trips.forEach { tripOwners[it.id] = it.vineyardId }
+        val cache = com.rork.vinetrack.data.DomainCacheStore(getApplication())
+        knownVineyardIds.forEach { vineyardId ->
+            cache.loadTripsForRecovery(vineyardId).items.forEach { trip -> tripOwners[trip.id] = vineyardId }
+        }
+        activeTripStore.load()?.let { tripOwners[it.trip.id] = it.vineyardId }
+        val scope = com.rork.vinetrack.data.RecoverySnapshotStore.resolveReplayScope(
+            pendingWrites = writes,
+            tripOwners = tripOwners,
+            fallbackVineyardId = fallbackVineyardId,
+        )
+        val preserved = com.rork.vinetrack.data.RecoveryReplayGate.run(
+            scope = scope,
+            preserve = { vineyardId ->
+                com.rork.vinetrack.data.RecoverySnapshotStore
+                    .captureBeforeMutation(getApplication(), vineyardId)
+                    .isPreserved
+            },
+            replay = {},
+        )
+        if (!preserved) {
+            val message = "Recovery evidence couldn't be preserved. Nothing was synced or refreshed. Free device storage and retry."
+            _ui.update { it.copy(pinError = message, tripError = message) }
+        }
+        return preserved
+    }
+
     /**
      * Replay any queued pin creates (Stage 4A-iv). Pin-create only — never any
      * other entity. Skipped when there is no session token so replay can't fire
@@ -2277,9 +2314,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingPinCreates() {
         if (session.accessToken == null) return
-        _ui.value.selectedVineyardId?.let { vineyardId ->
-            com.rork.vinetrack.data.RecoverySnapshotStore.captureBeforeMutation(getApplication(), vineyardId)
-        }
+        if (!preserveAffectedRecoveryEvidence()) return
         viewModelScope.launch {
             pinCreateSync.replayAll { pin ->
                 _ui.update { st ->
@@ -2372,6 +2407,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripMetadata() {
         if (session.accessToken == null || !_ui.value.isOnline) return
+        if (!preserveAffectedRecoveryEvidence()) return
         viewModelScope.launch {
             tripMetadataSync.replayAll { trip ->
                 _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == trip.id) trip else it }) }
@@ -2389,6 +2425,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripSeeding() {
         if (session.accessToken == null || !_ui.value.isOnline) return
+        if (!preserveAffectedRecoveryEvidence()) return
         viewModelScope.launch {
             tripSeedingSync.replayAll { trip ->
                 _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == trip.id) trip else it }) }
@@ -2400,6 +2437,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Runs Phase 5 parent and dependent writes in one awaited, per-process pipeline. */
     private fun replayPhase5Writes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
+        if (!preserveAffectedRecoveryEvidence()) return
         if (!phase5ReplayRunning.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
@@ -2485,6 +2523,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripGps() {
         if (session.accessToken == null || !_ui.value.isOnline) return
+        if (!preserveAffectedRecoveryEvidence()) return
         viewModelScope.launch {
             tripGpsSync.replayAll { trip ->
                 _ui.update { st ->
@@ -2526,6 +2565,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripRow() {
         if (session.accessToken == null || !_ui.value.isOnline) return
+        if (!preserveAffectedRecoveryEvidence()) return
         viewModelScope.launch {
             tripRowSync.replayAll { trip ->
                 _ui.update { st ->
@@ -2598,6 +2638,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripDeletes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
+        if (!preserveAffectedRecoveryEvidence()) return
         viewModelScope.launch {
             tripDeleteSync.replayAll { tripId ->
                 _ui.update { st -> st.copy(trips = st.trips.filterNot { it.id == tripId }) }
@@ -3605,6 +3646,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun retryPendingSync() {
         if (_ui.value.isRetryingSync) return
         if (!_ui.value.isOnline || session.accessToken == null) return
+        if (!preserveAffectedRecoveryEvidence()) return
         val reset = pendingWrites.resetFailedForRetry()
         if (reset == 0) return
         _ui.update { it.copy(isRetryingSync = true) }
@@ -3679,6 +3721,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun retryPendingSyncItem(id: String): Boolean {
         if (_ui.value.isRetryingSync) return false
         if (!_ui.value.isOnline || session.accessToken == null) return false
+        if (!preserveAffectedRecoveryEvidence()) return false
         val reset = pendingWrites.resetFailedRowForRetry(id)
         if (!reset) return false
         _ui.update { it.copy(isRetryingSync = true) }
@@ -13876,7 +13919,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun loadVineyardData(vineyardId: String) {
         // Preserve the first local evidence before hydration/server reads can replace
         // caches and before the successful-load reconnect pipeline drains outboxes.
-        com.rork.vinetrack.data.RecoverySnapshotStore.captureBeforeMutation(getApplication(), vineyardId)
+        val preservation = com.rork.vinetrack.data.RecoverySnapshotStore
+            .captureBeforeMutation(getApplication(), vineyardId)
+        if (!preservation.isPreserved) {
+            val message = "Recovery evidence couldn't be preserved. Vineyard refresh was stopped. Free device storage and retry."
+            _ui.update { it.copy(isLoadingVineyardData = false, pinError = message, tripError = message) }
+            return
+        }
         _ui.update { it.copy(isLoadingVineyardData = true) }
         val userId = session.userId
         val cachedPaddocks = domainCache.loadPaddocks(userId, vineyardId)
