@@ -214,6 +214,7 @@ class LocationTracker(context: Context) : PinFixSnapshotSource {
             fixElapsedRealtimeNanos = fix.fixElapsedRealtimeNanos,
             nowElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos(),
             bearingDegrees = fix.bearingDegrees,
+            speedMetresPerSecond = fix.speedMetresPerSecond,
         )
     }
 
@@ -238,6 +239,7 @@ class LocationTracker(context: Context) : PinFixSnapshotSource {
                 fixElapsedRealtimeNanos = fix.fixElapsedRealtimeNanos,
                 nowElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos(),
                 bearingDegrees = fix.bearingDegrees,
+                speedMetresPerSecond = fix.speedMetresPerSecond,
             )
             if (local is PinLocationResult.Success) return local
         }
@@ -285,6 +287,7 @@ class LocationTracker(context: Context) : PinFixSnapshotSource {
         fixElapsedRealtimeNanos = elapsedRealtimeNanos,
         nowElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos(),
         bearingDegrees = if (hasBearing()) bearing.toDouble() else null,
+        speedMetresPerSecond = if (hasSpeed()) speed.toDouble() else null,
     )
 
     private fun pathLength(pts: List<CoordinatePoint>): Double {

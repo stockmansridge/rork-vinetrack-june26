@@ -119,6 +119,7 @@ import com.rork.vinetrack.data.SeasonScope
 import com.rork.vinetrack.data.SeasonSelection
 import com.rork.vinetrack.ui.components.SeasonSelector
 import com.rork.vinetrack.ui.components.ForegroundLocationSubscriptionEffect
+import com.rork.vinetrack.data.PinAisleGeometry
 import com.rork.vinetrack.data.PinPlacement
 import com.rork.vinetrack.data.PinCaptureContext
 import com.rork.vinetrack.data.PinCaptureEvidenceStore
@@ -1634,7 +1635,11 @@ fun PinCategoryLauncherScreen(
                     fixTimeEpochMs = fix.fixTimeEpochMs,
                     accuracyMetres = fix.accuracyMetres,
                     observationTimeIso = capture.observedAtIso,
-                    headingDegrees = capturedHeading ?: fix.bearingDegrees,
+                    headingDegrees = capturedHeading
+                        ?: PinAisleGeometry.qualifiedCourseHeading(
+                            fix.bearingDegrees,
+                            fix.speedMetresPerSecond,
+                        ),
                     paddockId = paddockId,
                     pinRowNumber = placement?.pinRowNumber,
                     pinSide = placement?.pinSide,
@@ -1661,9 +1666,14 @@ fun PinCategoryLauncherScreen(
                 longitude = lng,
                 buttonName = category,
                 buttonColor = colorToken,
-                // Compass-first (converted to true north at the drop location);
-                // fall back to the GPS course when the device has no compass.
-                heading = capturedHeading?.let { compassTrueHeading(it, lat, lng) } ?: fix.bearingDegrees,
+                // Compass-first (converted to true north at the drop location).
+                // A GPS course is used only when the fix proves real travel — a
+                // stationary or reversing course is not confirmed facing.
+                heading = capturedHeading?.let { compassTrueHeading(it, lat, lng) }
+                    ?: PinAisleGeometry.qualifiedCourseHeading(
+                        fix.bearingDegrees,
+                        fix.speedMetresPerSecond,
+                    ),
                 placement = placement,
                 captureContext = capture,
                 photoUri = null,

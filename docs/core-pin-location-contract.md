@@ -11,8 +11,9 @@ Implementations (one shared contract, two platforms):
 | --- | --- | --- |
 | Aisle + heading-aware side geometry | `App/PinAisleGeometry.swift` | `data/PinAisleGeometry.kt` |
 | Automatic capture resolver | `App/PinAttachmentResolver.swift` (`resolveAutomatic`, `resolveLive`) | `data/PinPlacement.kt` (`resolveAutomatic`) |
-| Frozen capture boundary | `App/RepairsGrowthView.swift`, `LegacyImported/Services/TripTrackingService.swift`, `LegacyImported/Views/Buttons/QuickPinSheet.swift`, `LegacyImported/Views/Pins/PinDropView.swift` | `ui/AppViewModel.kt` (`freezePinCapture`, `createPin`) |
-| Persistence | `Backend/Models/BackendPin.swift` | `data/PinRepository.kt` (`PinInput`), `data/PinCreateSync.kt` |
+| Frozen capture boundary | `App/PinCaptureContext.swift`, `App/RepairsGrowthView.swift`, `LegacyImported/Services/TripTrackingService.swift`, `LegacyImported/Views/Buttons/QuickPinSheet.swift`, `LegacyImported/Views/Pins/PinDropView.swift` | `data/QualifiedLocationFix.kt` (`PinCaptureContext`), `ui/AppViewModel.kt` (`freezePinCapture`, `createPin`) |
+| Live-lock validity (block + recency) | `App/PinAttachmentResolver.swift` (`LiveLock`, `lockIsValid`), `LegacyImported/Services/TripTrackingService.swift` (`lockedPaddockId`, `diagLockConfirmedAt`) | aisle never taken from the trip lock (`resolveTripPinAttribution`, `lockedDrivingPath = null`) |
+| Persistence | `LegacyImported/Services/MigratedDataStore+Buttons.swift`, `Backend/Models/BackendPin.swift` | `data/PinRepository.kt` (`PinInput`), `data/PinCreateSync.kt`, `data/PinReplayMerge.kt` |
 | Display | `App/PinAttachmentFormatter.swift`, `LegacyImported/Views/Pins/PinsView.swift` | `ui/screens/PinsScreen.kt` |
 | Regressions | `VineTrackTests/PinAisleAttachmentTests.swift`, `VineTrackTests/PinManualPlacementTests.swift` | `data/PinAisleAttachmentTest.kt`, `data/PinPlacementTest.kt` |
 
@@ -57,12 +58,20 @@ attached row, side, heading and attachment geometry describe one capture event.
 A later photo prompt, duplicate confirmation, retry or movement must not change
 it. The heading saved on the pin is the exact heading used to choose the row.
 
+The capture time written to the record is the instant of the press, not the
+instant of the save, and a capture may only be written into the vineyard and
+trip it was taken in. If either changed during the delay the write is refused
+with a "press again" message rather than saved into the wrong context.
+
 ## 7. Retain evidence separately from the attachment
 
 The accepted raw GPS observation and the selected vine-row snap are stored
-separately. The original coordinate is never overwritten to make a marker look
-correct, and historic base coordinates are never retrospectively relabelled as
-raw.
+separately. The record's own latitude/longitude are ALWAYS the original
+observation; the snap lives only in the attachment fields
+(`snapped_latitude`/`snapped_longitude`). The original coordinate is never
+overwritten to make a marker look correct, and historic base coordinates are
+never retrospectively relabelled as raw. Duplicate checking continues to compare
+the attached point, with the raw point supplied alongside it.
 
 ## 8. Use a coherent navigation target
 
@@ -78,7 +87,12 @@ current structured meaning.
   out-of-range values are rejected.
 - Unknown aisle is **not** attached row plus 0.5. The legacy `row_number`
   column has conflicting historical meanings and is never converted into a
-  driving path.
+  driving path or shown as an attached row. Where it is the only value a record
+  carries it is surfaced as an explicitly labelled "Recorded row X", and an
+  automatic capture that could not confirm a row does not populate it at all.
+- An unconfirmed automatic capture states both missing facts in Details:
+  "On Row — Not confirmed" and "Driving path — Not recorded", while still
+  showing the side and facing that WERE recorded.
 - A nearest row alone is not proof of the intended operator side.
 - When the aisle or facing cannot be established, the capture stays honestly
   point-only: raw coordinates and the operator's own recorded side are kept,
@@ -87,18 +101,39 @@ current structured meaning.
 
 ## 10. Capture qualification is not row confidence
 
-The Android fresh-fix/precise-location gates (5 s, 15 m) and failed-tap
-semantics stay exactly as they are. Passing them does not establish which ~3 m
-aisle the operator occupied; row placement is confirmed from geometry and a
-valid heading.
+The Android fresh-fix/precise-location gates (5 s, 15 m), the iOS
+stale/low-accuracy gates and the failed-tap semantics stay exactly as they are.
+Passing them does not establish which ~3 m aisle the operator occupied. Aisle
+confidence is judged separately, from evidence:
+
+- **Uncertainty.** The fix's own reported accuracy radius must be smaller than
+  the aisle width; an uncertainty that also spans the neighbouring aisles cannot
+  say which aisle the operator was in. An absent or invalid accuracy is no
+  evidence and never counts as accurate enough.
+- **Row ends.** If the nearest point on a row is only its clamped endpoint, the
+  fix lies beyond that row and containment is not proven. Two 100 m rows 3 m
+  apart with the fix halfway across but 1 m past their ends stays unconfirmed.
+- **Freshness of facing.** A compass sample older than five seconds describes an
+  earlier moment and is discarded rather than frozen into the pin.
+- **Travel course.** A GPS course is accepted as operator facing only with real
+  forward-travel evidence. A stationary or crawling machine's course is not
+  confirmed facing.
+- **Live lock scope (iOS).** A trip row lock may supply the aisle only when it is
+  confident AND was earned in the block this fix resolved to AND was confirmed
+  in the corridor recently. Confidence alone never validates stale or
+  wrong-block evidence — row numbers repeat across blocks.
 
 ## 11. Persist and display identically
 
 The capture result survives local optimistic save, insert payload, offline
 queue/replay, server response, app restart and refresh on either platform.
 Queued payloads written before a column existed must not erase valid saved
-attachment metadata, and pending photos/edits are preserved. Saved facing/side
-labels never change because the person viewing the pin turned around.
+attachment metadata, and pending photos/edits are preserved — decoding
+successfully is not enough. Android reconciles a replayed/refreshed pin through
+`PinReplayMerge`: the server wins wherever it states a value, and every
+location field, pending photo and offline note it omits is retained. Saved
+facing/side labels never change because the person viewing the pin turned
+around.
 
 ## 12. Keep every newer pin improvement
 

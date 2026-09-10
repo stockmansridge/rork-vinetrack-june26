@@ -32,7 +32,8 @@ struct QuickPinSheet: View {
     private typealias ResolvedPlacement = (
         paddockId: UUID?,
         attachment: PinAttachmentResolver.Attachment,
-        fallbackRowNumber: Int?
+        fallbackRowNumber: Int?,
+        capture: PinCaptureContext?
     )
 
     private var canCreate: Bool { accessControl.canCreateOperationalRecords }
@@ -218,7 +219,7 @@ struct QuickPinSheet: View {
             return
         }
 
-        let placement = resolvePlacement(coordinate: loc.coordinate, side: side)
+        let placement = resolvePlacement(location: loc, side: side)
         let duplicateCoordinate = placement.attachment.snappedCoordinate ?? loc.coordinate
         let proceed = { createPin(button: button, location: loc, placement: placement) }
         if let dup = checkDuplicate(
@@ -250,7 +251,7 @@ struct QuickPinSheet: View {
             errorMessage = warning
             return
         }
-        let placement = resolvePlacement(coordinate: loc.coordinate, side: side)
+        let placement = resolvePlacement(location: loc, side: side)
         let duplicateCoordinate = placement.attachment.snappedCoordinate ?? loc.coordinate
         let proceed = { createGrowthPin(stage: stage, location: loc, placement: placement) }
         if let dup = checkDuplicate(
@@ -278,20 +279,28 @@ struct QuickPinSheet: View {
         placement: ResolvedPlacement
     ) {
         let rowNumber = Int(rowText.trimmingCharacters(in: .whitespacesAndNewlines))
-        store.createGrowthStagePin(
+        let created = store.createGrowthStagePin(
             stageCode: stage.code,
             stageDescription: stage.description,
+            // The original observation, never the snapped point.
             coordinate: location.coordinate,
             // Frozen capture heading: the exact facing the row choice used.
             heading: placement.attachment.heading,
+            capture: placement.capture,
             side: side,
             paddockId: placement.paddockId,
-            rowNumber: rowNumber ?? placement.attachment.pinRowNumber ?? placement.fallbackRowNumber,
+            // Typed row (manual intent) wins; otherwise only a confirmed
+            // attached row — never the nearest-row guess.
+            rowNumber: rowNumber ?? placement.attachment.pinRowNumber,
             createdBy: auth.userName,
             createdByUserId: auth.userId,
             notes: notes.isEmpty ? nil : notes,
             attachment: placement.attachment
         )
+        guard created != nil else {
+            errorMessage = "Could not create pin \u{2014} the vineyard or trip changed since this sheet was opened. Try again."
+            return
+        }
         dismiss()
     }
 
@@ -301,19 +310,27 @@ struct QuickPinSheet: View {
         placement: ResolvedPlacement
     ) {
         let rowNumber = Int(rowText.trimmingCharacters(in: .whitespacesAndNewlines))
-        store.createPinFromButton(
+        let created = store.createPinFromButton(
             button: button,
+            // The original observation, never the snapped point.
             coordinate: location.coordinate,
             // Frozen capture heading: the exact facing the row choice used.
             heading: placement.attachment.heading,
+            capture: placement.capture,
             side: side,
             paddockId: placement.paddockId,
-            rowNumber: rowNumber ?? placement.attachment.pinRowNumber ?? placement.fallbackRowNumber,
+            // Typed row (manual intent) wins; otherwise only a confirmed
+            // attached row — never the nearest-row guess.
+            rowNumber: rowNumber ?? placement.attachment.pinRowNumber,
             createdBy: auth.userName,
             createdByUserId: auth.userId,
             notes: notes.isEmpty ? nil : notes,
             attachment: placement.attachment
         )
+        guard created != nil else {
+            errorMessage = "Could not create pin \u{2014} the vineyard or trip changed since this sheet was opened. Try again."
+            return
+        }
         dismiss()
     }
 
@@ -324,9 +341,10 @@ struct QuickPinSheet: View {
     /// result is used verbatim by the save so payload and UI can never
     /// disagree, and an unconfirmed capture stays honestly point-only.
     private func resolvePlacement(
-        coordinate: CLLocationCoordinate2D,
+        location: CLLocation,
         side: PinSide
     ) -> ResolvedPlacement {
+        let coordinate = location.coordinate
         let resolved = PinContextResolver.resolve(
             coordinate: coordinate,
             store: store,
@@ -334,13 +352,30 @@ struct QuickPinSheet: View {
         )
         let paddockId = selectedPaddockId ?? resolved.paddockId
         let paddock = paddockId.flatMap { id in store.paddocks.first(where: { $0.id == id }) }
+        let capturedAt = Date()
+        let headingAge: Double? = locationService.heading.map { sample in
+            capturedAt.timeIntervalSince(sample.timestamp)
+        }
         let attachment = PinAttachmentResolver.resolveAutomatic(
             rawCoordinate: coordinate,
             heading: locationService.heading?.trueHeading,
+            headingAgeSeconds: headingAge,
+            horizontalAccuracyMetres: location.horizontalAccuracy,
             operatorSide: side,
             paddock: paddock
         )
-        return (paddockId, attachment, resolved.rowNumber)
+        // Identity and time are frozen here so a duplicate confirmation or a
+        // growth-stage picker cannot save into a different context.
+        let capture: PinCaptureContext? = store.selectedVineyardId.map { vineyardId in
+            PinCaptureContext(
+                capturedAt: capturedAt,
+                vineyardId: vineyardId,
+                tripId: store.currentActiveTripIdProvider?(),
+                rawCoordinate: coordinate,
+                horizontalAccuracyMetres: location.horizontalAccuracy
+            )
+        }
+        return (paddockId, attachment, resolved.rowNumber, capture)
     }
 
     private func staleOrLowAccuracyWarning(for quality: LocationService.LocationQuality) -> String? {

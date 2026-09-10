@@ -8,6 +8,12 @@ data class QualifiedLocationFix(
     val fixTimeEpochMs: Long,
     val fixElapsedRealtimeNanos: Long,
     val bearingDegrees: Double?,
+    /**
+     * Ground speed in m/s when the fix reports one. Needed to decide whether a
+     * travel course is real movement or the noise of a stationary machine — a
+     * course is never labelled as operator facing without it.
+     */
+    val speedMetresPerSecond: Double? = null,
 )
 
 /** Identity and time frozen at the initiating tap, before any delayed UI confirmation. */
@@ -80,6 +86,8 @@ object PinLocationFixValidator {
         fixElapsedRealtimeNanos: Long,
         nowElapsedRealtimeNanos: Long,
         bearingDegrees: Double?,
+        /** Ground speed in m/s when reported; unchanged acceptance rules. */
+        speedMetresPerSecond: Double? = null,
     ): PinLocationResult {
         if (!latitude.isFinite() || !longitude.isFinite() ||
             latitude !in -90.0..90.0 || longitude !in -180.0..180.0
@@ -102,6 +110,7 @@ object PinLocationFixValidator {
                 fixTimeEpochMs = fixTimeEpochMs,
                 fixElapsedRealtimeNanos = fixElapsedRealtimeNanos,
                 bearingDegrees = validBearing,
+                speedMetresPerSecond = speedMetresPerSecond?.takeIf { it.isFinite() && it >= 0.0 },
             ),
         )
     }

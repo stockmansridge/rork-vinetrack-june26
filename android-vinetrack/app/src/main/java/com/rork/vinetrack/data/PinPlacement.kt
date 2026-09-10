@@ -203,6 +203,14 @@ object PinPlacement {
         side: String?,
         headingDegrees: Double?,
         lockedDrivingPath: Double? = null,
+        /**
+         * The fix's own reported accuracy radius, used as separate aisle
+         * evidence. The GPS acceptance thresholds that qualify a fix in the
+         * first place are unchanged; this only decides whether the fix can say
+         * WHICH aisle the operator occupied. Null or invalid keeps the capture
+         * honestly unconfirmed.
+         */
+        accuracyMetres: Double? = null,
     ): PinPlacementResult {
         val cleanSide = side?.trim()?.takeIf { it.isNotBlank() }?.lowercase()
             ?.takeIf { it == "left" || it == "right" }
@@ -274,7 +282,7 @@ object PinPlacement {
             aisleNumber = lockedDrivingPath
             rowPair = lockedRows
         } else {
-            val aisle = PinAisleGeometry.aisleContaining(paddock, latitude, longitude)
+            val aisle = PinAisleGeometry.aisleContaining(paddock, latitude, longitude, accuracyMetres)
                 ?: return unconfirmed(PinSnapState.UNCONFIRMED_ROW)
             aisleNumber = aisle.aisleNumber
             rowPair = aisle.nearRowNumber to aisle.farRowNumber

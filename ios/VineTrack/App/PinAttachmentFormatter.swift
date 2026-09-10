@@ -9,8 +9,10 @@ import Foundation
 ///     on (e.g. 14.5). Display as `Row 14.5 — {Side} hand side facing {Dir}`.
 ///   * `pin_side` is the operator's-POV side. Display as `Left/Right hand side`.
 ///
-/// Legacy fallback: when only the legacy integer `rowNumber` is stored,
-/// it represented the driving path floor and is shown as `Row X.5`.
+/// The legacy integer `rowNumber` is NEVER turned into an attached row or into
+/// a driving path by adding 0.5 — its meaning is ambiguous across historical
+/// records, so it is surfaced only as an explicitly labelled recorded value
+/// (`legacyRecordedRowLine`), never as a confirmed location.
 nonisolated enum PinAttachmentFormatter {
 
     /// Full compass name for a heading in degrees (e.g. 45 → "Northeast").
@@ -33,17 +35,29 @@ nonisolated enum PinAttachmentFormatter {
     /// Preferred attachment line. Side is intentionally NOT included here —
     /// Left/Right belongs with the driving path/operator view, not the
     /// attached vine row.
-    /// Returns "Row 14" when the new model is populated, otherwise the
-    /// legacy "Row 14.5" wording.
+    ///
+    /// Returns "Row 14" ONLY from a confirmed `pin_row_number`. An unconfirmed
+    /// capture returns nil rather than inventing a row from the legacy field.
     static func attachmentLine(_ pin: VinePin) -> String? {
-        if let pinRow = pin.pinRowNumber {
-            return "Row \(pinRow)"
-        }
-        if let legacy = pin.rowNumber {
-            return "Row \(legacy).5"
-        }
-        return nil
+        pin.pinRowNumber.map { "Row \($0)" }
     }
+
+    /// Honest wording for a record that carries only the legacy integer row.
+    /// The stored value is preserved and shown, but it is never presented as a
+    /// confirmed attached row or as an aisle.
+    static func legacyRecordedRowLine(_ pin: VinePin) -> String? {
+        guard pin.pinRowNumber == nil, pin.drivingRowNumber == nil,
+              let legacy = pin.rowNumber
+        else { return nil }
+        return "Recorded row \(legacy)"
+    }
+
+    /// Explicit label for a capture whose attached vine row was never
+    /// established. Used so a pin can never look located when it is not.
+    static let unconfirmedRowLabel = "Not confirmed"
+
+    /// Explicit label for an absent driving path / aisle.
+    static let unrecordedDrivingPathLabel = "Not recorded"
 
     /// Optional second line for the driving path, e.g.
     /// "Row 14.5 — Left hand side facing North".
@@ -109,10 +123,11 @@ nonisolated enum PinAttachmentFormatter {
     }
 
     /// Legacy formatter kept for places that still pass raw rowNumber/side
-    /// (e.g. older export paths). Prefer `attachmentLine(_:)` for new code.
+    /// (e.g. older export paths). The recorded integer is shown as-is; it is
+    /// never promoted to an aisle by appending ".5".
     static func rowAndSide(rowNumber: Int?, side: PinSide?) -> String? {
         guard let rowNumber else { return nil }
-        let row = "Row \(rowNumber).5"
+        let row = "Row \(rowNumber)"
         guard let side else { return row }
         return "\(row) — \(side.rawValue) hand side"
     }

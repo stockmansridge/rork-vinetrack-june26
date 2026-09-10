@@ -54,6 +54,58 @@ nonisolated enum PinAttachmentResolver {
         }
     }
 
+    /// The live row-guidance lock plus the evidence needed to decide whether it
+    /// may speak for THIS capture.
+    ///
+    /// A confidence number alone is not enough: a lock earned in another block,
+    /// or one that has not been confirmed in the corridor recently, describes a
+    /// different place or a different moment.
+    struct LiveLock: Sendable {
+        /// Locked driving path / aisle number, e.g. 14.5.
+        let path: Double
+        /// Dwell-derived lock confidence (the existing 0–1 tracking value).
+        let confidence: Double
+        /// Block the lock was established in.
+        let paddockId: UUID?
+        /// Last moment GPS confirmed the operator inside the locked corridor.
+        let confirmedAt: Date?
+
+        init(path: Double, confidence: Double, paddockId: UUID?, confirmedAt: Date?) {
+            self.path = path
+            self.confidence = confidence
+            self.paddockId = paddockId
+            self.confirmedAt = confirmedAt
+        }
+    }
+
+    /// Existing dwell-confidence threshold for trusting a live lock.
+    static let minimumLockConfidence: Double = 0.6
+
+    /// Oldest in-corridor confirmation still allowed to describe this capture.
+    /// After this the lock is stale evidence, not present evidence.
+    static let maximumLockAgeSeconds: Double = 15.0
+
+    /// True when `lock` genuinely describes this capture: confident, earned in
+    /// the block the fix resolved to, and confirmed recently enough. Row numbers
+    /// are reused across blocks, so a wrong-block lock can never name this row.
+    static func lockIsValid(
+        _ lock: LiveLock?,
+        resolvedPaddockId: UUID?,
+        capturedAt: Date
+    ) -> Bool {
+        guard let lock,
+              lock.path.isFinite,
+              lock.confidence >= minimumLockConfidence
+        else { return false }
+        guard let lockPaddockId = lock.paddockId,
+              let resolvedPaddockId,
+              lockPaddockId == resolvedPaddockId
+        else { return false }
+        guard let confirmedAt = lock.confirmedAt else { return false }
+        let age = capturedAt.timeIntervalSince(confirmedAt)
+        return age >= -1.0 && age <= maximumLockAgeSeconds
+    }
+
     /// Resolve the full attachment for a pin being dropped during an
     /// active trip with a known driving path number.
     ///
@@ -65,9 +117,9 @@ nonisolated enum PinAttachmentResolver {
     ///   - drivingPath: live path number from row guidance, e.g. 14.5.
     ///   - paddock: paddock containing the row geometry. Pass `nil` when
     ///     no paddock is known — only `pinSide` will be populated.
-    ///   - confident: true when the live path lock confidence is high
-    ///     enough to trust geometry (matches the existing 0.6 threshold
-    ///     used by TripTrackingService.dropPinDuringTrip).
+    ///   - confident: true only when the caller has already validated the live
+    ///     lock through `lockIsValid(_:resolvedPaddockId:capturedAt:)` — block
+    ///     scope and recency included, not a confidence number alone.
     ///
     /// The pin snaps onto the SELECTED VINE ROW, not the aisle centreline, and
     /// the raw observation is left untouched for the caller to persist.
@@ -80,7 +132,7 @@ nonisolated enum PinAttachmentResolver {
         confident: Bool
     ) -> Attachment {
         let validHeading = PinAisleGeometry.validHeading(heading)
-        // The aisle is only evidence when the live lock was confident.
+        // The aisle is only evidence when the live lock was validated.
         let drivingNumber = confident ? drivingPath : nil
         guard confident,
               let drivingPath,
@@ -125,16 +177,25 @@ nonisolated enum PinAttachmentResolver {
     /// Resolves the aisle physically containing the fix from mapped adjacent
     /// row geometry, then attaches to whichever of that aisle's two rows lies
     /// on the operator's side for their recorded heading. When the heading is
-    /// missing/invalid or the aisle is ambiguous the capture stays honest: the
-    /// raw observation and the operator's side are kept, and no row, driving
-    /// path or snap is invented.
+    /// missing, invalid or stale, when the fix's own uncertainty spans more than
+    /// the aisle, or when the aisle is otherwise ambiguous, the capture stays
+    /// honest: the raw observation and the operator's side are kept, and no row,
+    /// driving path or snap is invented.
+    ///
+    /// - Parameters:
+    ///   - headingAgeSeconds: age of the compass sample, when known.
+    ///   - horizontalAccuracyMetres: the fix's own reported accuracy radius.
+    ///     Aisle confidence is judged separately here; the GPS acceptance
+    ///     thresholds in `LocationService` are unchanged.
     static func resolveAutomatic(
         rawCoordinate: CLLocationCoordinate2D,
         heading: Double?,
+        headingAgeSeconds: Double? = nil,
+        horizontalAccuracyMetres: Double?,
         operatorSide: PinSide,
         paddock: Paddock?
     ) -> Attachment {
-        let validHeading = PinAisleGeometry.validHeading(heading)
+        let validHeading = PinAisleGeometry.validHeading(heading, ageSeconds: headingAgeSeconds)
         let unconfirmed = Attachment(
             drivingRowNumber: nil,
             pinRowNumber: nil,
@@ -146,7 +207,11 @@ nonisolated enum PinAttachmentResolver {
         )
         guard let paddock,
               validHeading != nil,
-              let aisle = PinAisleGeometry.aisle(containing: rawCoordinate, in: paddock),
+              let aisle = PinAisleGeometry.aisle(
+                containing: rawCoordinate,
+                in: paddock,
+                horizontalAccuracyMetres: horizontalAccuracyMetres
+              ),
               let selection = PinAisleGeometry.rowOnSide(
                 rowNumbers: (aisle.nearRowNumber, aisle.farRowNumber),
                 coordinate: rawCoordinate,

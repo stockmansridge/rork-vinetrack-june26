@@ -375,25 +375,37 @@ struct PinDropView: View {
         )
         let paddockId = selectedPaddockId ?? resolved.paddockId
         let paddock = paddockId.flatMap { id in store.paddocks.first(where: { $0.id == id }) }
+        let capture = freezeCapture(location: location)
         let attachment = PinAttachmentResolver.resolveAutomatic(
             rawCoordinate: location.coordinate,
             heading: locationService.heading?.trueHeading,
+            headingAgeSeconds: headingAge(at: capture?.capturedAt ?? Date()),
+            horizontalAccuracyMetres: location.horizontalAccuracy,
             operatorSide: side,
             paddock: paddock
         )
-        store.createPinFromButton(
+        let created = store.createPinFromButton(
             button: button,
+            // The original observation, never the snapped point.
             coordinate: location.coordinate,
             // Frozen capture heading: the exact facing the row choice used.
             heading: attachment.heading,
+            capture: capture,
             side: side,
             paddockId: paddockId,
-            rowNumber: rowNumber ?? attachment.pinRowNumber ?? resolved.rowNumber,
+            // Typed row (manual intent) wins; otherwise only a confirmed
+            // attached row — never the nearest-row guess, which legacy display
+            // fallbacks would print as a fabricated "Row X.5".
+            rowNumber: rowNumber ?? attachment.pinRowNumber,
             createdBy: auth.userName,
             createdByUserId: auth.userId,
             notes: nil,
             attachment: attachment
         )
+        guard created != nil else {
+            showFeedback("Vineyard or trip changed \u{2014} press again.", kind: .warning)
+            return
+        }
         showFeedback("Pin: \(button.name) (\(side == .left ? "L" : "R"))", kind: .success)
     }
 
@@ -412,27 +424,55 @@ struct PinDropView: View {
         )
         let paddockId = selectedPaddockId ?? resolved.paddockId
         let paddock = paddockId.flatMap { id in store.paddocks.first(where: { $0.id == id }) }
+        let capture = freezeCapture(location: location)
         let attachment = PinAttachmentResolver.resolveAutomatic(
             rawCoordinate: location.coordinate,
             heading: locationService.heading?.trueHeading,
+            headingAgeSeconds: headingAge(at: capture?.capturedAt ?? Date()),
+            horizontalAccuracyMetres: location.horizontalAccuracy,
             operatorSide: pendingSide,
             paddock: paddock
         )
-        store.createGrowthStagePin(
+        let created = store.createGrowthStagePin(
             stageCode: stage.code,
             stageDescription: stage.description,
+            // The original observation, never the snapped point.
             coordinate: location.coordinate,
             // Frozen capture heading: the exact facing the row choice used.
             heading: attachment.heading,
+            capture: capture,
             side: pendingSide,
             paddockId: paddockId,
-            rowNumber: rowNumber ?? attachment.pinRowNumber ?? resolved.rowNumber,
+            rowNumber: rowNumber ?? attachment.pinRowNumber,
             createdBy: auth.userName,
             createdByUserId: auth.userId,
             notes: nil,
             attachment: attachment
         )
+        guard created != nil else {
+            showFeedback("Vineyard changed \u{2014} press again.", kind: .warning)
+            return
+        }
         showFeedback("Growth pin: EL \(stage.code)", kind: .success)
+    }
+
+    /// Freeze identity, time and the original observation at the press so a
+    /// growth-stage picker or any other delay cannot move the capture event.
+    private func freezeCapture(location: CLLocation) -> PinCaptureContext? {
+        store.selectedVineyardId.map { vineyardId in
+            PinCaptureContext(
+                capturedAt: Date(),
+                vineyardId: vineyardId,
+                tripId: store.currentActiveTripIdProvider?(),
+                rawCoordinate: location.coordinate,
+                horizontalAccuracyMetres: location.horizontalAccuracy
+            )
+        }
+    }
+
+    /// Age of the current compass sample at `moment`, when one is available.
+    private func headingAge(at moment: Date) -> Double? {
+        locationService.heading.map { moment.timeIntervalSince($0.timestamp) }
     }
 
     private func showFeedback(_ message: String, kind: VineyardBadgeKind) {

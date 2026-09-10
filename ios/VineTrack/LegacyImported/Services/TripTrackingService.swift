@@ -64,6 +64,12 @@ final class TripTrackingService {
     var diagLockConfidence: Double = 0
     /// Seconds we have been continuously in-corridor on the locked path.
     var diagLockDwellSeconds: Double = 0
+    /// Block the current lock was established in. Row numbers repeat across
+    /// blocks, so a lock may only name a row for its own block.
+    var diagLockedPaddockId: UUID?
+    /// Last moment GPS actually confirmed the operator inside the locked
+    /// corridor. Confidence alone must never validate stale evidence.
+    var diagLockConfirmedAt: Date?
     /// True when the GPS is within `nearRowEndTolerance` metres of
     /// either end of the planned/locked row (used to suppress
     /// wrong-row warnings around row ends).
@@ -198,6 +204,8 @@ final class TripTrackingService {
     /// flip the operator into a wrong-row warning.
     private var lockedPath: Double?
     private var lockedPathSince: Date?
+    /// Block the lock belongs to, captured when the lock is claimed.
+    private var lockedPaddockId: UUID?
     /// Date of the last in-corridor sample on the locked path. Used to
     /// detect sustained departure before unlocking.
     private var lastInCorridorOnLockedAt: Date?
@@ -470,11 +478,14 @@ final class TripTrackingService {
         freeDriveStablePath = nil
         lockedPath = nil
         lockedPathSince = nil
+        lockedPaddockId = nil
         lastInCorridorOnLockedAt = nil
         candidatePath = nil
         candidateInCorridorCount = 0
         candidateSince = nil
         diagLockedPath = nil
+        diagLockedPaddockId = nil
+        diagLockConfirmedAt = nil
         diagLockConfidence = 0
         diagLockDwellSeconds = 0
         diagNearRowEnd = false
@@ -550,6 +561,17 @@ final class TripTrackingService {
             return .staleLocation(msg)
         }
 
+        guard let captureVineyardId = store.selectedVineyardId else {
+            return .failed("Could not create pin \u{2014} no vineyard selected.")
+        }
+        // Everything about this capture is settled here, at the press.
+        let capture = PinCaptureContext(
+            capturedAt: Date(),
+            vineyardId: captureVineyardId,
+            tripId: trip.id,
+            rawCoordinate: location.coordinate,
+            horizontalAccuracyMetres: location.horizontalAccuracy
+        )
         let resolved = PinContextResolver.resolve(coordinate: location.coordinate, store: store, tracking: self)
         // During an active trip, physical containment within the selected trip
         // blocks is authoritative. An explicitly supplied/legacy primary block
@@ -564,19 +586,36 @@ final class TripTrackingService {
         // operationally correct point and gives a stable along-row coordinate
         // for duplicate checking. The raw GPS point is retained unchanged and
         // used when no row could be confirmed.
-        let confident = diagLockConfidence >= 0.6
-        let drivingPath: Double? = lockedPath ?? currentRowNumber
         let paddockForGeometry: Paddock? = resolvedPaddock.flatMap { id in
             store.paddocks.first(where: { $0.id == id })
         }
-        // Never substitute 0°/North for an absent heading.
+        // Never substitute 0°/North for an absent heading, and never freeze a
+        // compass sample that describes an earlier moment than this capture.
         let capturedHeading: Double? = locationService?.heading?.trueHeading
-        let liveAttachment = (confident && drivingPath != nil)
+        let capturedHeadingAge: Double? = locationService?.heading.map { sample in
+            capture.capturedAt.timeIntervalSince(sample.timestamp)
+        }
+        // The lock may only speak for this capture when it is confident AND was
+        // earned in this block AND was confirmed in the corridor recently.
+        let lock: PinAttachmentResolver.LiveLock? = (lockedPath ?? currentRowNumber).map { path in
+            PinAttachmentResolver.LiveLock(
+                path: path,
+                confidence: diagLockConfidence,
+                paddockId: lockedPaddockId,
+                confirmedAt: lastInCorridorOnLockedAt
+            )
+        }
+        let lockUsable = PinAttachmentResolver.lockIsValid(
+            lock,
+            resolvedPaddockId: resolvedPaddock,
+            capturedAt: capture.capturedAt
+        )
+        let liveAttachment = lockUsable
             ? PinAttachmentResolver.resolveLive(
                 rawCoordinate: location.coordinate,
-                heading: capturedHeading,
+                heading: PinAisleGeometry.validHeading(capturedHeading, ageSeconds: capturedHeadingAge),
                 operatorSide: side,
-                drivingPath: drivingPath,
+                drivingPath: lock?.path,
                 paddock: paddockForGeometry,
                 confident: true
               )
@@ -589,12 +628,15 @@ final class TripTrackingService {
             let automatic = PinAttachmentResolver.resolveAutomatic(
                 rawCoordinate: location.coordinate,
                 heading: capturedHeading,
+                headingAgeSeconds: capturedHeadingAge,
+                horizontalAccuracyMetres: capture.horizontalAccuracyMetres,
                 operatorSide: side,
                 paddock: paddockForGeometry
             )
             if automatic.snappedToRow { return automatic }
             return liveAttachment ?? automatic
         }()
+        // Duplicate comparison still uses the attached point (rule unchanged).
         let pinCoordinate = attachment.snappedCoordinate ?? location.coordinate
         let dupRow = attachment.pinRowNumber ?? resolvedRow
         let dupSide = attachment.pinSide ?? side
@@ -627,15 +669,23 @@ final class TripTrackingService {
 
         guard var pin = store.createPinFromButton(
             button: button,
-            coordinate: pinCoordinate,
+            // The original observation is stored verbatim; the selected-row snap
+            // stays in the attachment fields and drives marker/navigation.
+            coordinate: capture.rawCoordinate,
             // Frozen capture heading: the exact facing used to choose the row.
             heading: attachment.heading,
+            capture: capture,
             side: side,
             paddockId: resolvedPaddock,
-            rowNumber: resolvedRow,
+            // Legacy row field: an explicit caller value, else only a confirmed
+            // attached row — never the nearest-row guess, which legacy display
+            // fallbacks would print as a fabricated "Row X.5".
+            rowNumber: rowNumber ?? attachment.pinRowNumber,
             notes: notes,
             attachment: attachment
-        ) else { return .failed("Could not create pin \u{2014} no vineyard selected.") }
+        ) else {
+            return .failed("Could not create pin \u{2014} the vineyard or trip changed since the button was pressed. Press again.")
+        }
         print(PinContextResolver.diagnostic(coordinate: location.coordinate, side: side, mode: button.mode, resolved: resolved, store: store, tracking: self))
 
         pin.tripId = trip.id
@@ -1159,7 +1209,7 @@ final class TripTrackingService {
         // Update the path-lock state for both planned and free-drive
         // modes. Once locked, the tractor is treated as remaining on
         // that row until there is sustained evidence to the contrary.
-        updatePathLock(livePath: livePath, inCorridor: inCorridor)
+        updatePathLock(livePath: livePath, inCorridor: inCorridor, paddockId: paddock.id)
 
         // Near-row-end + completion percentage — used by the UI to
         // suppress wrong-row warnings when we are likely just
@@ -1610,7 +1660,7 @@ final class TripTrackingService {
     /// prevent the tractor from changing rows mid-way, so we hold the
     /// lock through brief out-of-corridor blips and only switch after
     /// sustained evidence that the tractor is genuinely in another row.
-    private func updatePathLock(livePath: Double, inCorridor: Bool) {
+    private func updatePathLock(livePath: Double, inCorridor: Bool, paddockId: UUID?) {
         let now = Date()
 
         if lockedPath == nil {
@@ -1618,12 +1668,13 @@ final class TripTrackingService {
             if inCorridor {
                 lockedPath = livePath
                 lockedPathSince = now
+                lockedPaddockId = paddockId
                 lastInCorridorOnLockedAt = now
                 candidatePath = nil
                 candidateInCorridorCount = 0
                 candidateSince = nil
             }
-        } else if let locked = lockedPath, abs(locked - livePath) < 0.01 {
+        } else if let locked = lockedPath, abs(locked - livePath) < 0.01, lockedPaddockId == paddockId {
             // Still on the locked path. Refresh the in-corridor timestamp
             // when GPS confirms we are inside the corridor.
             if inCorridor { lastInCorridorOnLockedAt = now }
@@ -1646,6 +1697,7 @@ final class TripTrackingService {
             if releasedAgo >= lockReleaseGraceSeconds && dwell >= lockSwitchDwellSeconds {
                 lockedPath = livePath
                 lockedPathSince = now
+                lockedPaddockId = paddockId
                 lastInCorridorOnLockedAt = now
                 candidatePath = nil
                 candidateInCorridorCount = 0
@@ -1655,6 +1707,8 @@ final class TripTrackingService {
         // Else: out of corridor and not on locked row — hold lock.
 
         diagLockedPath = lockedPath
+        diagLockedPaddockId = lockedPaddockId
+        diagLockConfirmedAt = lastInCorridorOnLockedAt
         if let since = lockedPathSince {
             let dwell = now.timeIntervalSince(since)
             diagLockDwellSeconds = dwell
@@ -1748,6 +1802,8 @@ final class TripTrackingService {
         candidateInCorridorCount = 0
         candidateSince = nil
         diagLockedPath = path
+        diagLockedPaddockId = lockedPaddockId
+        diagLockConfirmedAt = lastInCorridorOnLockedAt
         diagLockConfidence = 1.0
         recordCorrection("confirm_locked_path: \(path)")
     }

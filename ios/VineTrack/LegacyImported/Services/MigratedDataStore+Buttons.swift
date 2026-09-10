@@ -117,13 +117,21 @@ extension MigratedDataStore {
 
     // MARK: - Quick pin creation from a button
 
-    /// Create a local VinePin from a button configuration, using the supplied location
-    /// (or the most recent device location if available). Persists the pin via `addPin`.
+    /// Create a local VinePin from a button configuration. Persists via `addPin`.
+    ///
+    /// - Parameters:
+    ///   - coordinate: the ORIGINAL GPS observation. It is stored verbatim as
+    ///     the record's latitude/longitude and is never replaced by a snapped
+    ///     point — the selected-row snap lives only in the attachment fields.
+    ///   - capture: identity and time frozen at the press. When supplied, the
+    ///     pin is timestamped at the press and refused outright if the operator
+    ///     has since changed vineyard or started/ended a trip.
     @discardableResult
     func createPinFromButton(
         button: ButtonConfig,
         coordinate: CLLocationCoordinate2D,
         heading: Double?,
+        capture: PinCaptureContext? = nil,
         // Nil for the unified composer, which has no Left/Right selection;
         // the launcher paths keep passing their explicit side.
         side: PinSide? = .right,
@@ -140,10 +148,15 @@ extension MigratedDataStore {
         rowSegments: [ManualIssueSegment]? = nil
     ) -> VinePin? {
         guard let vineyardId = selectedVineyardId else { return nil }
+        if let capture,
+           !capture.isCurrent(vineyardId: vineyardId, tripId: currentActiveTripIdProvider?()) {
+            return nil
+        }
+        let observed = capture?.rawCoordinate ?? coordinate
         let pin = VinePin(
             vineyardId: vineyardId,
-            latitude: coordinate.latitude,
-            longitude: coordinate.longitude,
+            latitude: observed.latitude,
+            longitude: observed.longitude,
             heading: heading,
             buttonName: button.name,
             buttonColor: button.color,
@@ -151,7 +164,7 @@ extension MigratedDataStore {
             mode: button.mode,
             paddockId: paddockId,
             rowNumber: rowNumber,
-            timestamp: Date(),
+            timestamp: capture?.capturedAt ?? Date(),
             createdBy: createdBy,
             createdByUserId: createdByUserId,
             isCompleted: false,
@@ -172,12 +185,16 @@ extension MigratedDataStore {
     }
 
     /// Create a local growth-stage pin (button mode `.growth` with isGrowthStageButton).
+    ///
+    /// `coordinate` is the ORIGINAL GPS observation and `capture` freezes the
+    /// press identity/time — see `createPinFromButton` above.
     @discardableResult
     func createGrowthStagePin(
         stageCode: String,
         stageDescription: String,
         coordinate: CLLocationCoordinate2D,
         heading: Double?,
+        capture: PinCaptureContext? = nil,
         side: PinSide? = .right,
         paddockId: UUID? = nil,
         rowNumber: Int? = nil,
@@ -189,10 +206,15 @@ extension MigratedDataStore {
         rowSegments: [ManualIssueSegment]? = nil
     ) -> VinePin? {
         guard let vineyardId = selectedVineyardId else { return nil }
+        if let capture,
+           !capture.isCurrent(vineyardId: vineyardId, tripId: currentActiveTripIdProvider?()) {
+            return nil
+        }
+        let observed = capture?.rawCoordinate ?? coordinate
         let pin = VinePin(
             vineyardId: vineyardId,
-            latitude: coordinate.latitude,
-            longitude: coordinate.longitude,
+            latitude: observed.latitude,
+            longitude: observed.longitude,
             heading: heading,
             buttonName: "Growth Stage \(stageCode)",
             buttonColor: "darkgreen",
@@ -200,7 +222,7 @@ extension MigratedDataStore {
             mode: .growth,
             paddockId: paddockId,
             rowNumber: rowNumber,
-            timestamp: Date(),
+            timestamp: capture?.capturedAt ?? Date(),
             createdBy: createdBy,
             createdByUserId: createdByUserId,
             isCompleted: false,

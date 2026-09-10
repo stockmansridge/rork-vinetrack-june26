@@ -39,6 +39,11 @@ nonisolated enum PinAisleGeometry {
     /// Fallback aisle width ceiling when the block records no row spacing.
     static let fallbackMaxAisleWidthMetres: Double = 12.0
 
+    /// Oldest compass sample still accepted as the operator's facing at the
+    /// moment of capture. Heading freshness only — this never changes the GPS
+    /// acceptance thresholds enforced by `LocationService`.
+    static let maximumHeadingAgeSeconds: Double = 5.0
+
     /// True when `heading` is a usable recorded facing. A genuine 0° (North) is
     /// valid; nil, non-finite and out-of-range values are not turned into North.
     static func validHeading(_ heading: Double?) -> Double? {
@@ -48,14 +53,57 @@ nonisolated enum PinAisleGeometry {
         return normalizedDegrees(heading)
     }
 
+    /// Validated facing with temporal evidence. A compass sample older than
+    /// `maximumHeadingAgeSeconds` describes an earlier moment, not this capture,
+    /// so it is discarded instead of frozen into the pin. A nil age means no age
+    /// was reported and is not treated as evidence of staleness.
+    static func validHeading(_ heading: Double?, ageSeconds: Double?) -> Double? {
+        if let ageSeconds {
+            guard ageSeconds.isFinite,
+                  ageSeconds >= -0.5,
+                  ageSeconds <= maximumHeadingAgeSeconds
+            else { return nil }
+        }
+        return validHeading(heading)
+    }
+
+    /// True when a reported horizontal uncertainty is small enough to place the
+    /// operator inside an aisle of `aisleWidthMetres`.
+    ///
+    /// An uncertainty as large as the aisle itself also covers the neighbouring
+    /// aisles, so the fix cannot establish WHICH aisle the operator occupied.
+    /// An absent or invalid accuracy is no evidence at all and is rejected — it
+    /// never counts as "accurate enough".
+    static func uncertaintyFitsAisle(
+        horizontalAccuracyMetres: Double?,
+        aisleWidthMetres: Double
+    ) -> Bool {
+        guard let accuracy = horizontalAccuracyMetres,
+              accuracy.isFinite,
+              accuracy >= 0,
+              aisleWidthMetres.isFinite,
+              aisleWidthMetres > 0
+        else { return false }
+        return accuracy < aisleWidthMetres
+    }
+
     /// Resolve the aisle physically containing `coordinate`: the nearest mapped
     /// row plus the nearest row on the opposite side of the fix, provided they
-    /// are close enough to be a real aisle. Returns nil when the block has no
-    /// mapped rows, the fix sits on a row centreline, the fix is outside the
-    /// mapped rows (headland) or no plausible neighbour exists.
+    /// are close enough to be a real aisle AND the reported GPS uncertainty is
+    /// small enough to tell this aisle apart from its neighbours.
+    ///
+    /// Returns nil when the block has no mapped rows, the fix sits on a row
+    /// centreline, the fix lies beyond the ends of the rows (a clamped endpoint
+    /// projection proves nothing about containment), no plausible neighbour
+    /// exists, or the uncertainty spans more than the aisle. Callers keep an
+    /// honest unconfirmed attachment in every one of those cases.
+    ///
+    /// - Parameter horizontalAccuracyMetres: the fix's own reported accuracy
+    ///   radius. Required evidence — nil or invalid resolves to no aisle.
     static func aisle(
         containing coordinate: CLLocationCoordinate2D,
-        in paddock: Paddock
+        in paddock: Paddock,
+        horizontalAccuracyMetres: Double?
     ) -> Aisle? {
         let rows = paddock.rows
         guard rows.count >= 2 else { return nil }
@@ -64,20 +112,24 @@ nonisolated enum PinAisleGeometry {
         let point = frame.project(coordinate)
 
         // Nearest row and its closest point to the fix.
-        var nearest: (row: PaddockRow, closest: Point, distance: Double)?
+        var nearest: (row: PaddockRow, closest: Projection, distance: Double)?
         for row in rows {
             let a = frame.project(row.startPoint.coordinate)
             let b = frame.project(row.endPoint.coordinate)
             guard let closest = closestPoint(on: a, b, to: point) else { continue }
-            let distance = closest.distance(to: point)
+            let distance = closest.point.distance(to: point)
             if nearest == nil || distance < (nearest?.distance ?? .greatestFiniteMagnitude) {
                 nearest = (row, closest, distance)
             }
         }
         guard let near = nearest, near.distance >= minimumAisleOffsetMetres else { return nil }
+        // Past the end of a row the nearest point is only its endpoint. That
+        // clamped projection is a geometry artefact, never proof the operator
+        // was between the rows, so a headland fix stays unconfirmed.
+        guard !near.closest.clampedToEnd else { return nil }
 
         // Axis: the outward direction from the nearest row towards the fix.
-        let axis = Point(x: point.x - near.closest.x, y: point.y - near.closest.y)
+        let axis = Point(x: point.x - near.closest.point.x, y: point.y - near.closest.point.y)
             .normalized()
         guard let axis else { return nil }
         let fixOffset = near.distance
@@ -85,12 +137,13 @@ nonisolated enum PinAisleGeometry {
         // The aisle's far side is the closest row lying beyond the fix along
         // that same axis. Angled rows are handled because each candidate is
         // measured at its own closest point to the fix.
-        var far: (row: PaddockRow, closest: Point, offset: Double)?
+        var far: (row: PaddockRow, closest: Projection, offset: Double)?
         for row in rows where row.number != near.row.number {
             let a = frame.project(row.startPoint.coordinate)
             let b = frame.project(row.endPoint.coordinate)
-            guard let closest = closestPoint(on: a, b, to: point) else { continue }
-            let offset = (closest.x - near.closest.x) * axis.x + (closest.y - near.closest.y) * axis.y
+            guard let closest = closestPoint(on: a, b, to: point), !closest.clampedToEnd else { continue }
+            let offset = (closest.point.x - near.closest.point.x) * axis.x
+                + (closest.point.y - near.closest.point.y) * axis.y
             guard offset > fixOffset else { continue }
             if far == nil || offset < (far?.offset ?? .greatestFiniteMagnitude) {
                 far = (row, closest, offset)
@@ -102,6 +155,13 @@ nonisolated enum PinAisleGeometry {
         // invented by pairing two rows that don't actually form one aisle.
         let maxWidth = paddock.rowWidth > 0 ? paddock.rowWidth * 2.5 : fallbackMaxAisleWidthMetres
         guard far.offset <= maxWidth else { return nil }
+
+        // Uncertainty evidence: an accuracy radius reaching past this aisle
+        // could equally place the operator in the neighbouring one.
+        guard uncertaintyFitsAisle(
+            horizontalAccuracyMetres: horizontalAccuracyMetres,
+            aisleWidthMetres: far.offset
+        ) else { return nil }
 
         return Aisle(
             aisleNumber: (Double(near.row.number) + Double(far.row.number)) / 2.0,
@@ -134,11 +194,11 @@ nonisolated enum PinAisleGeometry {
             on: frame.project(first.startPoint.coordinate),
             frame.project(first.endPoint.coordinate),
             to: point
-        ), let secondClosest = closestPoint(
+        )?.point, let secondClosest = closestPoint(
             on: frame.project(second.startPoint.coordinate),
             frame.project(second.endPoint.coordinate),
             to: point
-        ) else { return nil }
+        )?.point else { return nil }
 
         let leftBearing = normalizedDegrees(heading - 90)
         let firstBearing = bearing(from: point, to: firstClosest)
@@ -223,14 +283,25 @@ nonisolated enum PinAisleGeometry {
         }
     }
 
-    private static func closestPoint(on a: Point, _ b: Point, to p: Point) -> Point? {
+    /// Closest point on a segment, plus whether the projection had to be
+    /// clamped to an endpoint — i.e. the fix lies beyond that end of the row.
+    private struct Projection {
+        let point: Point
+        let clampedToEnd: Bool
+    }
+
+    private static func closestPoint(on a: Point, _ b: Point, to p: Point) -> Projection? {
         let dx = b.x - a.x
         let dy = b.y - a.y
         let lengthSquared = dx * dx + dy * dy
         guard lengthSquared > 1e-9 else { return nil }
-        var t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared
-        t = max(0, min(1, t))
-        return Point(x: a.x + t * dx, y: a.y + t * dy)
+        let rawT = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared
+        let t = max(0, min(1, rawT))
+        let tolerance = 1e-9
+        return Projection(
+            point: Point(x: a.x + t * dx, y: a.y + t * dy),
+            clampedToEnd: rawT < -tolerance || rawT > 1 + tolerance
+        )
     }
 
     /// True bearing (0–360°) of the vector `from` -> `to` in the local frame.

@@ -109,6 +109,7 @@ import com.rork.vinetrack.data.PinPlacementResult
 import com.rork.vinetrack.data.PinCaptureContext
 import com.rork.vinetrack.data.QualifiedLocationFix
 import com.rork.vinetrack.data.PinLocationResult
+import com.rork.vinetrack.data.PinReplayMerge
 import com.rork.vinetrack.data.PinRepository
 import com.rork.vinetrack.data.ProfileRepository
 import com.rork.vinetrack.data.RegionFormatter
@@ -1000,6 +1001,8 @@ internal fun resolveTripPinAttribution(
     callerPlacement: PinPlacementResult?,
     headingDegrees: Double? = null,
     automatic: Boolean = false,
+    /** The fix's own accuracy radius, used only as aisle-confidence evidence. */
+    accuracyMetres: Double? = null,
 ): TripPinAttribution {
     val tripResolution = if (activeTrip != null && latitude != null && longitude != null) {
         TripBlockResolver.resolve(activeTrip, paddocks, latitude, longitude)
@@ -1026,6 +1029,7 @@ internal fun resolveTripPinAttribution(
                 // contains this fix, never from the trip's planned next path,
                 // so a stale or wrong-block lock cannot create false certainty.
                 lockedDrivingPath = null,
+                accuracyMetres = accuracyMetres,
             )
         } else {
             PinPlacement.resolve(
@@ -2385,7 +2389,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             pinCreateSync.replayAll { pin ->
                 _ui.update { st ->
                     if (st.pins.any { it.id == pin.id }) {
-                        st.copy(pins = st.pins.map { if (it.id == pin.id) pin else it })
+                        // A payload queued before the driving-path column
+                        // existed replays without it. Merging keeps the
+                        // location evidence and in-flight work this device
+                        // already holds instead of blanking them.
+                        st.copy(
+                            pins = st.pins.map { local ->
+                                if (local.id == pin.id) PinReplayMerge.merge(pin, local) else local
+                            },
+                        )
                     } else {
                         st.copy(pins = listOf(pin) + st.pins)
                     }
@@ -7963,15 +7975,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         /**
          * The facing that will be persisted with this pin (device compass
          * corrected to true north where available). Passing it here keeps row
-         * selection and the saved heading the same single value; when absent
-         * the fix's own GPS course is used, and an invalid value stays invalid
-         * rather than becoming North.
+         * selection and the saved heading the same single value; when absent a
+         * GPS course is used ONLY if the fix proves real travel, and an invalid
+         * value stays invalid rather than becoming North.
          */
         headingDegrees: Double? = null,
     ): PinCaptureContext? {
         val state = _ui.value
         val vineyardId = state.selectedVineyardId ?: return null
-        val captureHeading = PinAisleGeometry.validHeading(headingDegrees) ?: fix.bearingDegrees
+        // A GPS course is only the operator's facing when the machine was
+        // genuinely travelling; a stationary or reversing course is not
+        // confirmed facing, so it is dropped rather than recorded as one.
+        val captureHeading = PinAisleGeometry.validHeading(headingDegrees)
+            ?: PinAisleGeometry.qualifiedCourseHeading(fix.bearingDegrees, fix.speedMetresPerSecond)
         val standalonePlacement = PinPlacement.resolveAutomatic(
             paddocks = state.paddocks,
             selectedPaddockId = null,
@@ -7979,6 +7995,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             longitude = fix.longitude,
             side = side,
             headingDegrees = captureHeading,
+            accuracyMetres = fix.accuracyMetres,
         )
         val attribution = resolveTripPinAttribution(
             activeTrip = state.activeTrip,
@@ -7991,6 +8008,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             callerPlacement = standalonePlacement,
             headingDegrees = captureHeading,
             automatic = true,
+            accuracyMetres = fix.accuracyMetres,
         )
         return PinCaptureContext(
             pinId = pinId,

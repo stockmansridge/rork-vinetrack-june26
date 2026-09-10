@@ -116,12 +116,18 @@ class PinAisleAttachmentTest {
     /** Aisle 32.5: midway between rows 32 and 33. */
     private fun aisle32_5Longitude(): Double = 149.0 + rowSpacing / 2.0
 
+    /**
+     * Default 1.2 m accuracy: comfortably inside the ~3.7 m aisle, so these
+     * fixtures exercise geometry rather than the uncertainty gate (which has
+     * its own cases below).
+     */
     private fun automatic(
         block: Paddock,
         latitude: Double,
         longitude: Double,
         side: String?,
         heading: Double?,
+        accuracyMetres: Double? = 1.2,
     ) = PinPlacement.resolveAutomatic(
         paddocks = listOf(block),
         selectedPaddockId = block.id,
@@ -129,6 +135,7 @@ class PinAisleAttachmentTest {
         longitude = longitude,
         side = side,
         headingDegrees = heading,
+        accuracyMetres = accuracyMetres,
     )
 
     // MARK: - Fixture matrix: opposite sides select opposite adjacent rows
@@ -357,6 +364,151 @@ class PinAisleAttachmentTest {
         isActive = true,
     )
 
+    // MARK: - Aisle confidence: uncertainty, row ends, reused numbering
+
+    @Test
+    fun `uncertainty spanning the adjacent aisles cannot claim an aisle`() {
+        val block = eastwardBlock()
+        val lon = aisle32_5Longitude()
+        // 8 m of uncertainty in a 3.7 m aisle also covers 31.5 and 33.5.
+        val vague = automatic(block, -33.0, lon, "left", 0.0, accuracyMetres = 8.0)
+        assertEquals(PinSnapState.UNCONFIRMED_ROW, vague.snapState)
+        assertNull(vague.pinRowNumber)
+        assertNull(vague.drivingRowNumber)
+        // The operator's own side and the raw observation are still kept.
+        assertEquals("left", vague.pinSide)
+        assertEquals(lon, vague.longitude!!, 0.0)
+        // The facing is real evidence and is still recorded.
+        assertEquals(0.0, vague.headingDegrees!!, 1e-9)
+
+        // Tightening the same fix inside one aisle resolves it.
+        val precise = automatic(block, -33.0, lon, "left", 0.0, accuracyMetres = 1.0)
+        assertEquals(PinSnapState.SNAPPED, precise.snapState)
+        assertEquals(32.0, precise.pinRowNumber!!, 1e-9)
+    }
+
+    @Test
+    fun `an unreported or invalid accuracy is never treated as accurate enough`() {
+        val block = eastwardBlock()
+        val lon = aisle32_5Longitude()
+        for (accuracy in listOf(null, -1.0, Double.NaN)) {
+            val result = automatic(block, -33.0, lon, "right", 0.0, accuracyMetres = accuracy)
+            assertEquals(PinSnapState.UNCONFIRMED_ROW, result.snapState)
+            assertNull(result.drivingRowNumber)
+            assertNull(result.pinRowNumber)
+        }
+    }
+
+    @Test
+    fun `a fix one metre past the row ends is not inside the aisle`() {
+        // Two 100 m parallel rows 3 m apart; fix halfway across and 1 m beyond
+        // their ends. Clamping to the endpoints must not prove containment.
+        val metrePerDegLat = 111_320.0
+        val metrePerDegLon = 111_320.0 * kotlin.math.cos(-33.0 * Math.PI / 180.0)
+        val rowLon = 149.0
+        val spacingLon = 3.0 / metrePerDegLon
+        val startLat = -33.0
+        val endLat = -33.0 + 100.0 / metrePerDegLat
+        val block = Paddock(
+            id = "ends",
+            vineyardId = "vineyard-1",
+            name = "Row ends",
+            rowWidth = 3.0,
+            polygonPoints = listOf(
+                CoordinatePoint(startLat - 0.001, rowLon - 0.001),
+                CoordinatePoint(startLat - 0.001, rowLon + 0.001),
+                CoordinatePoint(endLat + 0.001, rowLon + 0.001),
+                CoordinatePoint(endLat + 0.001, rowLon - 0.001),
+            ),
+            rows = listOf(
+                PaddockRow(
+                    number = 32,
+                    startPoint = CoordinatePoint(startLat, rowLon),
+                    endPoint = CoordinatePoint(endLat, rowLon),
+                ),
+                PaddockRow(
+                    number = 33,
+                    startPoint = CoordinatePoint(startLat, rowLon + spacingLon),
+                    endPoint = CoordinatePoint(endLat, rowLon + spacingLon),
+                ),
+            ),
+        )
+        val beyondLat = endLat + 1.0 / metrePerDegLat
+        val midLon = rowLon + spacingLon / 2.0
+
+        val beyond = automatic(block, beyondLat, midLon, "left", 0.0, accuracyMetres = 0.5)
+        assertEquals(PinSnapState.UNCONFIRMED_ROW, beyond.snapState)
+        assertNull(beyond.pinRowNumber)
+        assertNull(beyond.drivingRowNumber)
+        assertNull(beyond.snappedLatitude)
+        assertEquals("left", beyond.pinSide)
+
+        // The same fix moved just inside the rows does resolve, proving the
+        // rejection is about being past the ends and nothing else.
+        val insideLat = endLat - 1.0 / metrePerDegLat
+        val inside = automatic(block, insideLat, midLon, "left", 0.0, accuracyMetres = 0.5)
+        assertEquals(PinSnapState.SNAPPED, inside.snapState)
+        assertEquals(32.0, inside.pinRowNumber!!, 1e-9)
+        assertEquals(32.5, inside.drivingRowNumber!!, 1e-9)
+    }
+
+    @Test
+    fun `row numbers reused in another block never attach across blocks`() {
+        val here = eastwardBlock(id = "here")
+        // A physically separate block a kilometre east, reusing the very same
+        // row numbers 31-34.
+        val elsewhere = eastwardBlock(id = "elsewhere").let { block ->
+            block.copy(
+                polygonPoints = block.polygonPoints?.map { it.copy(longitude = it.longitude + 0.01) },
+                rows = block.rows?.map { row ->
+                    row.copy(
+                        startPoint = row.startPoint?.copy(longitude = row.startPoint!!.longitude + 0.01),
+                        endPoint = row.endPoint?.copy(longitude = row.endPoint!!.longitude + 0.01),
+                    )
+                },
+            )
+        }
+        // Fix inside `here`, but both blocks own rows numbered 32 and 33.
+        val result = PinPlacement.resolveAutomatic(
+            paddocks = listOf(elsewhere, here),
+            selectedPaddockId = null,
+            latitude = -33.0,
+            longitude = aisle32_5Longitude(),
+            side = "left",
+            headingDegrees = 0.0,
+            accuracyMetres = 1.0,
+        )
+        assertEquals("here", result.paddockId)
+        assertEquals(32.0, result.pinRowNumber!!, 1e-9)
+        // The snap belongs to this block's row 32, not the far block's.
+        assertEquals(149.0, result.snappedLongitude!!, 1e-6)
+    }
+
+    // MARK: - Facing evidence
+
+    @Test
+    fun `a stale compass sample is not frozen as the capture facing`() {
+        assertNull(PinAisleGeometry.validHeading(346.0, ageMs = 30_000L))
+        assertEquals(346.0, PinAisleGeometry.validHeading(346.0, ageMs = 1_000L)!!, 1e-9)
+        // No reported age is not evidence of staleness.
+        assertEquals(346.0, PinAisleGeometry.validHeading(346.0, ageMs = null)!!, 1e-9)
+    }
+
+    @Test
+    fun `a stationary or reversing GPS course is never labelled operator facing`() {
+        // Stationary: a course exists but proves no direction of travel.
+        assertNull(PinAisleGeometry.qualifiedCourseHeading(180.0, 0.0))
+        // Crawling below the movement threshold is equally unproven.
+        assertNull(PinAisleGeometry.qualifiedCourseHeading(180.0, 0.2))
+        // No speed reported at all: no evidence, no facing.
+        assertNull(PinAisleGeometry.qualifiedCourseHeading(180.0, null))
+        // Genuine travel qualifies, and a valid 0° stays 0°.
+        assertEquals(180.0, PinAisleGeometry.qualifiedCourseHeading(180.0, 2.5)!!, 1e-9)
+        assertEquals(0.0, PinAisleGeometry.qualifiedCourseHeading(0.0, 2.5)!!, 1e-9)
+        // An invalid course stays invalid even at speed.
+        assertNull(PinAisleGeometry.qualifiedCourseHeading(400.0, 5.0))
+    }
+
     @Test
     fun `inside a trip the automatic answer matches the standalone answer`() {
         val block = eastwardBlock()
@@ -372,6 +524,7 @@ class PinAisleAttachmentTest {
             callerPlacement = null,
             headingDegrees = 0.0,
             automatic = true,
+            accuracyMetres = 1.2,
         )
         val standalone = automatic(block, -33.0, lon, "right", 0.0)
         assertEquals(block.id, inTrip.paddockId)
@@ -515,6 +668,78 @@ class PinAisleAttachmentTest {
     }
 
     // MARK: - Marker / distance / Directions agreement
+
+    @Test
+    fun `an older queued payload cannot erase attachment evidence or pending work`() {
+        // The device already holds a fully attached pin with a photo waiting to
+        // upload and notes typed offline.
+        val placement = automatic(eastwardBlock(), -33.0, aisle32_5Longitude(), "right", 346.0)
+        val local = Pin(
+            id = "pin-1",
+            vineyardId = "vineyard-1",
+            paddockId = "block-1",
+            latitude = placement.latitude,
+            longitude = placement.longitude,
+            heading = 346.0,
+            rowNumber = 33,
+            drivingRowNumber = placement.drivingRowNumber,
+            pinRowNumber = placement.pinRowNumber,
+            pinSide = placement.pinSide,
+            alongRowDistanceM = placement.alongRowDistanceM,
+            snappedLatitude = placement.snappedLatitude,
+            snappedLongitude = placement.snappedLongitude,
+            snappedToRow = true,
+            photoPath = "local/pending.jpg",
+            notes = "Dripper split",
+            createdAt = "2026-09-10T02:03:04Z",
+        )
+        // The replay response comes from a payload queued before the
+        // driving-path column existed, so it carries none of that evidence.
+        val serverFromLegacyPayload = Pin(
+            id = "pin-1",
+            vineyardId = "vineyard-1",
+            latitude = placement.latitude,
+            longitude = placement.longitude,
+            isCompleted = false,
+        )
+
+        val merged = PinReplayMerge.merge(serverFromLegacyPayload, local)
+
+        assertEquals(32.5, merged.drivingRowNumber!!, 1e-9)
+        assertEquals(33.0, merged.pinRowNumber!!, 1e-9)
+        assertEquals("right", merged.pinSide)
+        assertEquals(346.0, merged.heading!!, 1e-9)
+        assertEquals("block-1", merged.paddockId)
+        assertTrue(merged.snappedToRow)
+        assertEquals(placement.snappedLatitude!!, merged.snappedLatitude!!, 1e-12)
+        // Pending photo and offline notes survive too.
+        assertEquals("local/pending.jpg", merged.photoPath)
+        assertEquals("Dripper split", merged.notes)
+        assertEquals("2026-09-10T02:03:04Z", merged.createdAt)
+    }
+
+    @Test
+    fun `a server value always wins over the local copy when it states one`() {
+        val local = Pin(
+            id = "pin-2",
+            vineyardId = "vineyard-1",
+            pinRowNumber = 33.0,
+            drivingRowNumber = 32.5,
+            pinSide = "right",
+            notes = "local",
+        )
+        val server = local.copy(
+            pinRowNumber = 34.0,
+            drivingRowNumber = 34.5,
+            pinSide = "left",
+            notes = "server",
+        )
+        val merged = PinReplayMerge.merge(server, local)
+        assertEquals(34.0, merged.pinRowNumber!!, 1e-9)
+        assertEquals(34.5, merged.drivingRowNumber!!, 1e-9)
+        assertEquals("left", merged.pinSide)
+        assertEquals("server", merged.notes)
+    }
 
     @Test
     fun `marker distance and directions all read the attached row coordinate`() {

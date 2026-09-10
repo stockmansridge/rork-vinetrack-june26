@@ -1676,6 +1676,17 @@ struct PinDetailSheet: View {
         }
     }
 
+    /// True for pins the operator deliberately placed by row, segment or block.
+    /// Those scopes own their location wording and must never be annotated with
+    /// an automatic "row not confirmed" note.
+    private var isManualLocationScope: Bool {
+        if PinPlacementContract.placement(for: pin).rowSummary != nil { return true }
+        switch pin.locationScope {
+        case "row", "block": return true
+        default: return false
+        }
+    }
+
     private var compassDirection: String {
         // No recorded compass direction — show an honest dash, not North.
         guard let h = pin.heading else { return "\u{2014}" }
@@ -1710,6 +1721,12 @@ struct PinDetailSheet: View {
                                 Text("On \(attached)")
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(VineyardTheme.olive)
+                            } else if let legacyRow = PinAttachmentFormatter.legacyRecordedRowLine(pin) {
+                                // Historical value preserved, but never dressed
+                                // up as a confirmed attached row or an aisle.
+                                Text(legacyRow)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.secondary)
                             }
                             if let driving = PinAttachmentFormatter.drivingPathLine(pin) {
                                 Text(driving)
@@ -1824,11 +1841,14 @@ struct PinDetailSheet: View {
                     if let rowSummary = PinPlacementContract.placement(for: pin).rowSummary {
                         LabeledContent("Rows", value: rowSummary)
                     }
-                    // New attachment model: prefer split row info when available.
-                    // Side belongs with the driving path, not the attached vine row.
-                    if pin.pinRowNumber != nil || pin.drivingRowNumber != nil {
+                    // Automatic point captures always state both facts, so an
+                    // unconfirmed pin can never read as a located one. Manual
+                    // row/block scopes keep their own summary above untouched.
+                    if !isManualLocationScope {
                         if let pinRow = pin.pinRowNumber {
                             LabeledContent("On Row", value: "Row \(pinRow)")
+                        } else {
+                            LabeledContent("On Row", value: PinAttachmentFormatter.unconfirmedRowLabel)
                         }
                         if let drivingPath = pin.drivingRowNumber {
                             let sidePhrase = (pin.pinSide ?? pin.side).map { " — \($0.rawValue) hand side" } ?? ""
@@ -1840,12 +1860,16 @@ struct PinDetailSheet: View {
                         } else {
                             // Explicit about the missing metric instead of
                             // implying a complete attachment.
-                            LabeledContent("Driving path", value: "Not recorded")
+                            LabeledContent("Driving path", value: PinAttachmentFormatter.unrecordedDrivingPathLabel)
                         }
-                    } else if let rowNumber = pin.rowNumber {
-                        // Legacy fallback only when neither new field is set.
-                        LabeledContent("Row", value: "\(rowNumber).5")
-                        if let side = pin.side {
+                        // The legacy integer is preserved and shown as what it
+                        // is — a recorded value — never as "Row X.5".
+                        if pin.pinRowNumber == nil, pin.drivingRowNumber == nil, let rowNumber = pin.rowNumber {
+                            LabeledContent("Recorded row", value: "\(rowNumber)")
+                        }
+                        // The operator's own side is real evidence even when the
+                        // row could not be confirmed, so it is always shown.
+                        if pin.drivingRowNumber == nil, let side = pin.pinSide ?? pin.side {
                             LabeledContent("Side", value: "\(side.rawValue) hand side")
                         }
                     }

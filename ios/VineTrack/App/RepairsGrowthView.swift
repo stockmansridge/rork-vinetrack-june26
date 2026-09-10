@@ -369,14 +369,19 @@ struct RepairsGrowthView: View {
             return
         }
         let raw = loc.coordinate
+        guard let capture = freezeCapture(location: loc) else {
+            showError("Could not create pin \u{2014} no vineyard selected.")
+            return
+        }
         let resolved = PinContextResolver.resolve(coordinate: raw, store: store, tracking: tracking)
-        let attachment = liveAttachment(raw: raw, resolved: resolved, side: side)
+        let attachment = liveAttachment(capture: capture, resolved: resolved, side: side)
+        // Duplicate comparison keeps using the attached point (rule unchanged).
         let coord = attachment.snappedCoordinate ?? raw
         let proceed = {
             createRepairPin(
                 button: button,
                 side: side,
-                coord: coord,
+                capture: capture,
                 resolved: resolved,
                 attachment: attachment
             )
@@ -404,7 +409,7 @@ struct RepairsGrowthView: View {
     private func createRepairPin(
         button: ButtonConfig,
         side: PinSide,
-        coord: CLLocationCoordinate2D,
+        capture: PinCaptureContext,
         resolved: PinContextResolver.Resolved,
         attachment: PinAttachmentResolver.Attachment
     ) {
@@ -413,18 +418,23 @@ struct RepairsGrowthView: View {
         let heading = attachment.heading
         let pin = store.createPinFromButton(
             button: button,
-            coordinate: coord,
+            // The original observation is stored verbatim; the selected-row
+            // snap lives only in the attachment fields.
+            coordinate: capture.rawCoordinate,
             heading: heading,
+            capture: capture,
             side: side,
             paddockId: resolved.paddockId,
-            rowNumber: resolved.rowNumber,
+            // Legacy row field: only a confirmed attached row. The nearest-row
+            // guess would print a fabricated "Row X.5" through legacy fallbacks.
+            rowNumber: attachment.pinRowNumber,
             createdBy: auth.userName,
             createdByUserId: auth.userId,
             attachment: attachment
         )
-        print(PinContextResolver.diagnostic(coordinate: coord, side: side, mode: .repairs, resolved: resolved, store: store, tracking: tracking))
+        print(PinContextResolver.diagnostic(coordinate: capture.rawCoordinate, side: side, mode: .repairs, resolved: resolved, store: store, tracking: tracking))
         guard let createdPin = pin else {
-            showError("Could not create pin \u{2014} no vineyard selected.")
+            showError("Could not create pin \u{2014} the vineyard or trip changed since the button was pressed. Press again.")
             return
         }
         let subtitle = PinAttachmentFormatter.toastSubtitle(attachment: attachment, fallbackSide: side, heading: heading)
@@ -447,13 +457,17 @@ struct RepairsGrowthView: View {
             return
         }
         let raw = loc.coordinate
+        guard let capture = freezeCapture(location: loc) else {
+            showError("Could not create pin \u{2014} no vineyard selected.")
+            return
+        }
         let resolved = PinContextResolver.resolve(coordinate: raw, store: store, tracking: tracking)
-        let attachment = liveAttachment(raw: raw, resolved: resolved, side: .right)
+        let attachment = liveAttachment(capture: capture, resolved: resolved, side: .right)
         let coord = attachment.snappedCoordinate ?? raw
         let proceed = {
             createGrowthPin(
                 stage: stage,
-                coord: coord,
+                capture: capture,
                 resolved: resolved,
                 attachment: attachment
             )
@@ -480,7 +494,7 @@ struct RepairsGrowthView: View {
 
     private func createGrowthPin(
         stage: GrowthStage,
-        coord: CLLocationCoordinate2D,
+        capture: PinCaptureContext,
         resolved: PinContextResolver.Resolved,
         attachment: PinAttachmentResolver.Attachment
     ) {
@@ -489,18 +503,19 @@ struct RepairsGrowthView: View {
         let pin = store.createGrowthStagePin(
             stageCode: stage.code,
             stageDescription: stage.description,
-            coordinate: coord,
+            coordinate: capture.rawCoordinate,
             heading: heading,
+            capture: capture,
             side: .right,
             paddockId: resolved.paddockId,
-            rowNumber: resolved.rowNumber,
+            rowNumber: attachment.pinRowNumber,
             createdBy: auth.userName,
             createdByUserId: auth.userId,
             attachment: attachment
         )
-        print(PinContextResolver.diagnostic(coordinate: coord, side: .right, mode: .growth, resolved: resolved, store: store, tracking: tracking))
+        print(PinContextResolver.diagnostic(coordinate: capture.rawCoordinate, side: .right, mode: .growth, resolved: resolved, store: store, tracking: tracking))
         guard let createdPin = pin else {
-            showError("Could not create pin \u{2014} no vineyard selected.")
+            showError("Could not create pin \u{2014} the vineyard or trip changed since the button was pressed. Press again.")
             return
         }
         let attached = PinAttachmentFormatter.attachmentSubtitle(attachment: attachment, heading: heading)
@@ -530,31 +545,64 @@ struct RepairsGrowthView: View {
         }
     }
 
+    /// Freeze the capture event at the press: the original observation, its
+    /// uncertainty, the instant, and the vineyard/trip it belongs to.
+    private func freezeCapture(location: CLLocation) -> PinCaptureContext? {
+        guard let vineyardId = store.selectedVineyardId else { return nil }
+        return PinCaptureContext(
+            capturedAt: Date(),
+            vineyardId: vineyardId,
+            tripId: store.currentActiveTripIdProvider?(),
+            rawCoordinate: location.coordinate,
+            horizontalAccuracyMetres: location.horizontalAccuracy
+        )
+    }
+
     /// Build a full attachment for an automatic Left/Right drop.
     ///
-    /// A confident, correctly scoped live trip lock supplies the aisle; when
-    /// there is no usable lock (outside a trip, or the locked path has no
-    /// mapped neighbours) the same geometry is derived from the fix itself.
-    /// Either way the row on the operator's side is chosen from the recorded
-    /// heading, and an unresolvable capture stays honestly point-only.
+    /// A live trip lock supplies the aisle only when it genuinely describes
+    /// THIS capture — confident, earned in the block the fix resolved to, and
+    /// confirmed in the corridor recently. Otherwise the geometry comes from
+    /// the fix itself, gated by that fix's own uncertainty. Either way the row
+    /// on the operator's side is chosen from the recorded heading, and an
+    /// unresolvable capture stays honestly point-only.
     private func liveAttachment(
-        raw: CLLocationCoordinate2D,
+        capture: PinCaptureContext,
         resolved: PinContextResolver.Resolved,
         side: PinSide
     ) -> PinAttachmentResolver.Attachment {
-        let confident = tracking.isTracking && tracking.diagLockConfidence >= 0.6
-        let drivingPath: Double? = tracking.diagLockedPath ?? tracking.currentRowNumber
+        let raw = capture.rawCoordinate
         let paddock: Paddock? = resolved.paddockId.flatMap { id in
             store.paddocks.first(where: { $0.id == id })
         }
-        // Never substitute 0°/North for an absent heading.
+        // Never substitute 0°/North for an absent heading, and never freeze a
+        // compass sample that describes an earlier moment.
         let heading: Double? = locationService.heading?.trueHeading
-        let live: PinAttachmentResolver.Attachment? = (confident && drivingPath != nil)
+        let headingAge: Double? = locationService.heading.map { sample in
+            capture.capturedAt.timeIntervalSince(sample.timestamp)
+        }
+        let lockedPath: Double? = tracking.isTracking
+            ? (tracking.diagLockedPath ?? tracking.currentRowNumber)
+            : nil
+        let lock: PinAttachmentResolver.LiveLock? = lockedPath.map { path in
+            PinAttachmentResolver.LiveLock(
+                path: path,
+                confidence: tracking.diagLockConfidence,
+                paddockId: tracking.diagLockedPaddockId,
+                confirmedAt: tracking.diagLockConfirmedAt
+            )
+        }
+        let lockUsable = PinAttachmentResolver.lockIsValid(
+            lock,
+            resolvedPaddockId: resolved.paddockId,
+            capturedAt: capture.capturedAt
+        )
+        let live: PinAttachmentResolver.Attachment? = lockUsable
             ? PinAttachmentResolver.resolveLive(
                 rawCoordinate: raw,
-                heading: heading,
+                heading: PinAisleGeometry.validHeading(heading, ageSeconds: headingAge),
                 operatorSide: side,
-                drivingPath: drivingPath,
+                drivingPath: lock?.path,
                 paddock: paddock,
                 confident: true
               )
@@ -563,12 +611,14 @@ struct RepairsGrowthView: View {
         let automatic = PinAttachmentResolver.resolveAutomatic(
             rawCoordinate: raw,
             heading: heading,
+            headingAgeSeconds: headingAge,
+            horizontalAccuracyMetres: capture.horizontalAccuracyMetres,
             operatorSide: side,
             paddock: paddock
         )
         if automatic.snappedToRow { return automatic }
-        // Neither route attached a row: keep the locked aisle when there was
-        // one, otherwise the honest point-only result.
+        // Neither route attached a row: keep the validated locked aisle when
+        // there was one, otherwise the honest point-only result.
         return live ?? automatic
     }
 

@@ -32,6 +32,19 @@ object PinAisleGeometry {
     /** Aisle-width ceiling used when the block records no row spacing. */
     const val FALLBACK_MAX_AISLE_WIDTH_M: Double = 12.0
 
+    /**
+     * Oldest compass sample still accepted as the operator's facing at capture.
+     * Heading freshness only — GPS acceptance thresholds are unchanged.
+     */
+    const val MAX_HEADING_AGE_MS: Long = 5_000L
+
+    /**
+     * Slowest travel that still proves a direction of travel. Below this the
+     * GPS course is noise from a stationary or crawling machine and must never
+     * be labelled as the operator's facing.
+     */
+    const val MIN_COURSE_SPEED_MPS: Double = 1.0
+
     /** The two physically adjacent rows bounding the operator's aisle. */
     data class Aisle(
         /** Driving path identifier: mean of the two adjacent row numbers (32 + 33 -> 32.5). */
@@ -61,15 +74,61 @@ object PinAisleGeometry {
     }
 
     /**
+     * Validated facing with temporal evidence. A compass sample older than
+     * [MAX_HEADING_AGE_MS] describes an earlier moment, not this capture, so it
+     * is discarded instead of frozen into the pin. A null age means no age was
+     * reported and is not treated as evidence of staleness.
+     */
+    fun validHeading(headingDegrees: Double?, ageMs: Long?): Double? {
+        if (ageMs != null && (ageMs < -500L || ageMs > MAX_HEADING_AGE_MS)) return null
+        return validHeading(headingDegrees)
+    }
+
+    /**
+     * A GPS travel course qualified as the operator's facing. Numeric validity
+     * alone is not enough: a stationary or reversing machine reports a course
+     * that is not where the operator is looking, so a course is accepted only
+     * with genuine forward travel evidence.
+     */
+    fun qualifiedCourseHeading(bearingDegrees: Double?, speedMetresPerSecond: Double?): Double? {
+        val speed = speedMetresPerSecond ?: return null
+        if (!speed.isFinite() || speed < MIN_COURSE_SPEED_MPS) return null
+        return validHeading(bearingDegrees)
+    }
+
+    /**
+     * True when a reported horizontal uncertainty is small enough to place the
+     * operator inside an aisle of [aisleWidthMetres]. An uncertainty as large as
+     * the aisle also covers its neighbours, so it cannot establish WHICH aisle
+     * the operator occupied; an absent or invalid accuracy is no evidence at all
+     * and is rejected.
+     */
+    fun uncertaintyFitsAisle(accuracyMetres: Double?, aisleWidthMetres: Double): Boolean {
+        val accuracy = accuracyMetres ?: return false
+        if (!accuracy.isFinite() || accuracy < 0.0) return false
+        if (!aisleWidthMetres.isFinite() || aisleWidthMetres <= 0.0) return false
+        return accuracy < aisleWidthMetres
+    }
+
+    /**
      * Resolve the aisle physically containing the fix: the nearest mapped row
      * plus the nearest row lying beyond the fix on the same axis, provided the
      * pair is close enough to be a real aisle.
      *
      * Returns null when the block has no mapped row geometry, the fix sits on a
-     * row centreline, the fix is outside the mapped rows (headland), or no
-     * plausible neighbour exists — a missing neighbour is never invented.
+     * row centreline, the fix lies beyond the ends of the rows (a clamped
+     * endpoint projection proves nothing about containment), no plausible
+     * neighbour exists, or the reported uncertainty spans more than the aisle.
+     *
+     * [accuracyMetres] is required evidence — null or invalid resolves to no
+     * aisle, and the caller keeps an honest unconfirmed attachment.
      */
-    fun aisleContaining(paddock: Paddock?, latitude: Double, longitude: Double): Aisle? {
+    fun aisleContaining(
+        paddock: Paddock?,
+        latitude: Double,
+        longitude: Double,
+        accuracyMetres: Double?,
+    ): Aisle? {
         val rows = paddock?.rows
             ?.filter { it.startPoint != null && it.endPoint != null }
             ?.takeIf { it.size >= 2 }
@@ -82,15 +141,18 @@ object PinAisleGeometry {
         var nearClosest: Point? = null
         var nearDistance = Double.MAX_VALUE
         for (row in rows) {
-            val closest = closestPointOnRow(frame, row, point) ?: continue
-            val distance = closest.distanceTo(point)
+            val projection = projectOntoRow(frame, row, point) ?: continue
+            val distance = projection.point.distanceTo(point)
             if (distance < nearDistance) {
                 nearDistance = distance
                 nearRow = row.number
-                nearClosest = closest
+                nearClosest = if (projection.clampedToEnd) null else projection.point
             }
         }
         val nearNumber = nearRow ?: return null
+        // Past the end of a row the nearest point is only its endpoint. That
+        // clamped projection is a geometry artefact, never proof the operator
+        // was between the rows, so a headland fix stays unconfirmed.
         val nearPoint = nearClosest ?: return null
         if (nearDistance < MIN_AISLE_OFFSET_M) return null
 
@@ -101,7 +163,9 @@ object PinAisleGeometry {
         var farOffset = Double.MAX_VALUE
         for (row in rows) {
             if (row.number == nearNumber) continue
-            val closest = closestPointOnRow(frame, row, point) ?: continue
+            val projection = projectOntoRow(frame, row, point) ?: continue
+            if (projection.clampedToEnd) continue
+            val closest = projection.point
             val offset = (closest.x - nearPoint.x) * axis.x + (closest.y - nearPoint.y) * axis.y
             // Must lie beyond the fix, i.e. on the opposite side of the aisle.
             if (offset <= nearDistance) continue
@@ -115,6 +179,10 @@ object PinAisleGeometry {
         val rowWidth = paddock.rowWidth?.takeIf { it > 0 }
         val maxWidth = if (rowWidth != null) rowWidth * 2.5 else FALLBACK_MAX_AISLE_WIDTH_M
         if (farOffset > maxWidth) return null
+
+        // Uncertainty evidence: an accuracy radius reaching past this aisle
+        // could equally place the operator in the neighbouring one.
+        if (!uncertaintyFitsAisle(accuracyMetres, farOffset)) return null
 
         return Aisle(
             aisleNumber = (nearNumber.toDouble() + farNumber.toDouble()) / 2.0,
@@ -221,18 +289,29 @@ object PinAisleGeometry {
         )
     }
 
-    private data class Snap(val point: Point, val distanceAlong: Double)
+    private data class Snap(
+        val point: Point,
+        val distanceAlong: Double,
+        /** True when the fix lies beyond an end of the segment. */
+        val clampedToEnd: Boolean,
+    )
 
     private fun closestPointOnRow(
         frame: MetricFrame,
         row: com.rork.vinetrack.data.model.PaddockRow,
         point: Point,
-    ): Point? {
+    ): Point? = projectOntoRow(frame, row, point)?.point
+
+    private fun projectOntoRow(
+        frame: MetricFrame,
+        row: com.rork.vinetrack.data.model.PaddockRow,
+        point: Point,
+    ): Snap? {
         val s = row.startPoint ?: return null
         val e = row.endPoint ?: return null
         val a = frame.project(s.latitude, s.longitude)
         val b = frame.project(e.latitude, e.longitude)
-        return snapOnto(a, b, point)?.point
+        return snapOnto(a, b, point)
     }
 
     private fun snapOnto(a: Point, b: Point, p: Point): Snap? {
@@ -241,9 +320,14 @@ object PinAisleGeometry {
         val lengthSquared = dx * dx + dy * dy
         if (lengthSquared <= 1e-9) return null
         val length = sqrt(lengthSquared)
-        var t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared
-        t = t.coerceIn(0.0, 1.0)
-        return Snap(Point(a.x + t * dx, a.y + t * dy), t * length)
+        val rawT = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared
+        val t = rawT.coerceIn(0.0, 1.0)
+        val tolerance = 1e-9
+        return Snap(
+            point = Point(a.x + t * dx, a.y + t * dy),
+            distanceAlong = t * length,
+            clampedToEnd = rawT < -tolerance || rawT > 1.0 + tolerance,
+        )
     }
 
     /** True bearing (0–360) of the vector from -> to in the local frame. */
