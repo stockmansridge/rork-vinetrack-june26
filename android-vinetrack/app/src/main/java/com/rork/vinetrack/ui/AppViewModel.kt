@@ -10034,6 +10034,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val record = pending.record
         val tank = pending.tank
         val userId = session.userId ?: return false
+        val vineyardId = selectedVineyardId ?: return false
+        val resumedTrip = startTankCommitCoordinator.resume(
+            ownerUserId = userId,
+            vineyardId = vineyardId,
+            sourceTrip = pending.sourceTrip,
+            currentTrip = trip,
+            tankNumber = pending.result.tankNumber,
+        )
+        if (resumedTrip != null) {
+            _ui.update { state -> state.copy(trips = state.trips.map { if (it.id == trip.id) resumedTrip else it }) }
+            syncCommittedTankTrip(resumedTrip)
+            return true
+        }
         val confirmationTimestamp = java.time.Instant.now().toString()
         val confirmationRow = trip.currentRowNumber ?: trip.rowSequence.getOrNull(trip.sequenceIndex)
         val result = TankSessionLifecycle.startResult(
@@ -10068,8 +10081,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             confirmedAt = result.operationTimestamp,
             confirmedBy = userId,
         )
-        val ownerId = session.userId ?: return false
-        val vineyardId = selectedVineyardId ?: return false
+        val ownerId = userId
         val committedTrip = com.rork.vinetrack.data.StartTankOperationMerge.apply(
             current = trip,
             source = trip,
@@ -10078,28 +10090,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             tankNumber = result.tankNumber,
         ) ?: return false
         if (!startTankCommitCoordinator.commit(ownerId, vineyardId, trip, committedTrip, actual)) return false
+        _ui.update { state -> state.copy(trips = state.trips.map { if (it.id == trip.id) committedTrip else it }) }
+        syncCommittedTankTrip(committedTrip)
+        return true
+    }
+
+    private fun syncCommittedTankTrip(committedTrip: Trip) {
         val marker = pendingWrites.list().firstOrNull {
-            it.clientId == trip.id &&
+            it.clientId == committedTrip.id &&
                 it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK &&
                 it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
         }
-        _ui.update { state -> state.copy(trips = state.trips.map { if (it.id == trip.id) committedTrip else it }) }
-        if (_ui.value.isOnline) {
-            viewModelScope.launch {
-                runCatching {
-                    tripRepo.updateTripTankSessions(
-                        trip.id, committedTrip.tankSessions, committedTrip.activeTankNumber,
-                        committedTrip.isFillingTank, committedTrip.fillingTankNumber,
-                    )
-                }.onSuccess {
-                    marker?.let { pendingWrites.remove(it.id) }
-                    replayAllPendingWrites()
-                }.onFailure {
-                    marker?.let { pendingWrites.updateStatus(it.id, com.rork.vinetrack.data.model.PendingWriteStatus.FAILED, "Tank session is waiting to sync.") }
-                }
+        if (!_ui.value.isOnline) return
+        viewModelScope.launch {
+            runCatching {
+                tripRepo.updateTripTankSessions(
+                    committedTrip.id, committedTrip.tankSessions, committedTrip.activeTankNumber,
+                    committedTrip.isFillingTank, committedTrip.fillingTankNumber,
+                )
+            }.onSuccess {
+                marker?.let { pendingWrites.remove(it.id) }
+                replayAllPendingWrites()
+            }.onFailure {
+                marker?.let { pendingWrites.updateStatus(it.id, com.rork.vinetrack.data.model.PendingWriteStatus.FAILED, "Tank session is waiting to sync.") }
             }
         }
-        return true
     }
 
     /** Explicit legacy fallback; no zero actual quantities are fabricated. */

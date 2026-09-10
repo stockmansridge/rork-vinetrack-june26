@@ -762,6 +762,14 @@ final class TripTrackingService {
             return false
         }
         let plannedTank = pending.tank
+        if let store, startTankCommitCoordinator.resume(
+            sourceTrip: pending.sourceTrip,
+            tankNumber: pending.result.tankNumber,
+            store: store
+        ) {
+            errorMessage = nil
+            return true
+        }
         let confirmationTimestamp = Date()
         let confirmationRow = trip.trackingPattern == .freeDrive
             ? currentRowNumber

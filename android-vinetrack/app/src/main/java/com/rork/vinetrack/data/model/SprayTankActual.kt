@@ -53,13 +53,13 @@ fun resolveSprayTankActual(
     vineyardId: String,
     sprayRecordId: String,
     tripId: String,
-    tankSessionIds: Set<String>? = null,
+    tankSessionIds: Set<String> = emptySet(),
 ): SprayTankActual? {
-    if (tankSessionIds != null && tankSessionIds.isEmpty()) return null
+    if (tankSessionIds.isEmpty()) return null
     val scoped = actuals.filter { actual ->
         actual.vineyardId == vineyardId && actual.sprayRecordId == sprayRecordId &&
             actual.tripId == tripId && actual.tankNumber == plannedTank.tankNumber &&
-            (tankSessionIds == null || actual.tankSessionId in tankSessionIds)
+            actual.tankSessionId in tankSessionIds
     }
     val bySession = scoped.groupBy { it.tankSessionId }
     if (bySession.size != 1) return null
@@ -76,16 +76,25 @@ fun areSprayTankActualsComplete(
     vineyardId: String,
     sprayRecordId: String,
     tripId: String,
-    tankSessionIdsByNumber: Map<Int, Set<String>>? = null,
+    tankSessionIdsByNumber: Map<Int, Set<String>> = emptyMap(),
 ): Boolean {
     if (plannedTanks.isEmpty()) return false
+    val plannedNumbers = plannedTanks.mapTo(mutableSetOf()) { it.tankNumber }
+    val scopedActuals = actuals.filter {
+        it.vineyardId == vineyardId && it.sprayRecordId == sprayRecordId && it.tripId == tripId
+    }
+    if (scopedActuals.any { actual ->
+            actual.tankNumber !in plannedNumbers ||
+                actual.tankSessionId !in tankSessionIdsByNumber[actual.tankNumber].orEmpty()
+        }) return false
     return plannedTanks.all { tank ->
         val actual = resolveSprayTankActual(
             tank, actuals, vineyardId, sprayRecordId, tripId,
-            tankSessionIdsByNumber?.get(tank.tankNumber),
+            tankSessionIdsByNumber[tank.tankNumber].orEmpty(),
         ) ?: return@all false
         if (actual.waterVolumeL?.let { it.isFinite() && it >= 0.0 } != true) return@all false
         val plannedIds = tank.chemicals.mapTo(mutableSetOf()) { it.id }
+        if (plannedIds.size != tank.chemicals.size || actual.chemicals.map { it.id }.toSet().size != actual.chemicals.size) return@all false
         val validAssociations = actual.chemicals.all { line ->
             if (!line.actualAmountBase.isFinite() || line.actualAmountBase < 0.0) return@all false
             when (line.usageKind ?: "planned") {
@@ -96,9 +105,13 @@ fun areSprayTankActualsComplete(
             }
         }
         validAssociations && tank.chemicals.all { planned ->
-            val direct = actual.chemicals.count { (it.usageKind ?: "planned") == "planned" && it.plannedChemicalId == planned.id }
-            val substitutes = actual.chemicals.count { it.usageKind == "substitution" && it.replacesPlannedChemicalId == planned.id }
-            direct + substitutes == 1
+            val direct = actual.chemicals.filter { (it.usageKind ?: "planned") == "planned" && it.plannedChemicalId == planned.id }
+            val substitutes = actual.chemicals.filter { it.usageKind == "substitution" && it.replacesPlannedChemicalId == planned.id }
+            when {
+                substitutes.size == 1 -> direct.size <= 1 && direct.all { it.actualAmountBase == 0.0 }
+                substitutes.isEmpty() -> direct.size == 1
+                else -> false
+            }
         }
     }
 }

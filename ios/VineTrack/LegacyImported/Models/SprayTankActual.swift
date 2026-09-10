@@ -91,13 +91,13 @@ nonisolated func resolveSprayTankActual(
     vineyardId: UUID,
     sprayRecordId: UUID,
     tripId: UUID,
-    tankSessionIds: Set<String>? = nil
+    tankSessionIds: Set<String> = []
 ) -> SprayTankActual? {
-    if let tankSessionIds, tankSessionIds.isEmpty { return nil }
+    guard !tankSessionIds.isEmpty else { return nil }
     let scoped = actuals.filter { actual in
         actual.vineyardId == vineyardId && actual.sprayRecordId == sprayRecordId &&
             actual.tripId == tripId && actual.tankNumber == plannedTank.tankNumber &&
-            (tankSessionIds == nil || tankSessionIds!.contains(actual.tankSessionId))
+            tankSessionIds.contains(actual.tankSessionId)
     }
     let bySession = Dictionary(grouping: scoped, by: \.tankSessionId)
     guard bySession.count == 1, let revisions = bySession.values.first,
@@ -113,18 +113,28 @@ nonisolated func areSprayTankActualsComplete(
     vineyardId: UUID,
     sprayRecordId: UUID,
     tripId: UUID,
-    tankSessionIdsByNumber: [Int: Set<String>]? = nil
+    tankSessionIdsByNumber: [Int: Set<String>] = [:]
 ) -> Bool {
     guard !plannedTanks.isEmpty else { return false }
+    let plannedNumbers = Set(plannedTanks.map(\.tankNumber))
+    let scopedActuals = actuals.filter {
+        $0.vineyardId == vineyardId && $0.sprayRecordId == sprayRecordId && $0.tripId == tripId
+    }
+    guard scopedActuals.allSatisfy({ actual in
+        plannedNumbers.contains(actual.tankNumber) &&
+            (tankSessionIdsByNumber[actual.tankNumber] ?? []).contains(actual.tankSessionId)
+    }) else { return false }
     return plannedTanks.allSatisfy { tank in
         guard let actual = resolveSprayTankActual(
             plannedTank: tank, actuals: actuals, vineyardId: vineyardId,
             sprayRecordId: sprayRecordId, tripId: tripId,
-            tankSessionIds: tankSessionIdsByNumber?[tank.tankNumber]
+            tankSessionIds: tankSessionIdsByNumber[tank.tankNumber] ?? []
         ), let water = actual.waterVolumeL, water.isFinite, water >= 0
         else { return false }
         let plannedIds = Set(tank.chemicals.map(\.id))
-        guard actual.chemicals.allSatisfy({ line in
+        guard plannedIds.count == tank.chemicals.count,
+              Set(actual.chemicals.map(\.id)).count == actual.chemicals.count,
+              actual.chemicals.allSatisfy({ line in
             guard line.actualAmountBase.isFinite, line.actualAmountBase >= 0 else { return false }
             switch line.usageKind ?? "planned" {
             case "planned": return line.plannedChemicalId.map(plannedIds.contains) == true && line.replacesPlannedChemicalId == nil
@@ -134,9 +144,11 @@ nonisolated func areSprayTankActualsComplete(
             }
         }) else { return false }
         return tank.chemicals.allSatisfy { planned in
-            let direct = actual.chemicals.filter { ($0.usageKind ?? "planned") == "planned" && $0.plannedChemicalId == planned.id }.count
-            let substitutions = actual.chemicals.filter { $0.usageKind == "substitution" && $0.replacesPlannedChemicalId == planned.id }.count
-            return direct + substitutions == 1
+            let direct = actual.chemicals.filter { ($0.usageKind ?? "planned") == "planned" && $0.plannedChemicalId == planned.id }
+            let substitutions = actual.chemicals.filter { $0.usageKind == "substitution" && $0.replacesPlannedChemicalId == planned.id }
+            if substitutions.count == 1 { return direct.count <= 1 && direct.allSatisfy { $0.actualAmountBase == 0 } }
+            if substitutions.isEmpty { return direct.count == 1 }
+            return false
         }
     }
 }

@@ -406,7 +406,7 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
             let actual = resolveSprayTankActual(
                 plannedTank: planned, actuals: tankActuals, vineyardId: trip.vineyardId,
                 sprayRecordId: record.id, tripId: trip.id,
-                tankSessionIds: sessionIdsByTank[planned.tankNumber]
+                tankSessionIds: sessionIdsByTank[planned.tankNumber] ?? []
             )
             if actual == nil && tankActuals.contains(where: {
                 $0.vineyardId == trip.vineyardId && $0.sprayRecordId == record.id &&

@@ -43,6 +43,14 @@ final class SprayTankActualTests: XCTestCase {
         XCTAssertTrue(areSprayTankActualsComplete(plannedTanks: [tank], actuals: [actual], vineyardId: vineyardId, sprayRecordId: recordId, tripId: tripId, tankSessionIdsByNumber: [1: [sessionId.uuidString]]))
         let missingWater = try SprayTankActual(id: actual.id, vineyardId: vineyardId, sprayRecordId: recordId, tripId: tripId, tankSessionId: sessionId.uuidString, tankNumber: 1, waterVolumeL: nil, chemicals: [substitute, addition], confirmedAt: actual.confirmedAt, confirmedBy: actual.confirmedBy)
         XCTAssertFalse(areSprayTankActualsComplete(plannedTanks: [tank], actuals: [missingWater], vineyardId: vineyardId, sprayRecordId: recordId, tripId: tripId, tankSessionIdsByNumber: [1: [sessionId.uuidString]]))
+        XCTAssertFalse(areSprayTankActualsComplete(plannedTanks: [tank], actuals: [actual], vineyardId: vineyardId, sprayRecordId: recordId, tripId: tripId, tankSessionIdsByNumber: [:]))
+        let extra = try SprayTankActual(vineyardId: vineyardId, sprayRecordId: recordId, tripId: tripId, tankSessionId: UUID().uuidString, tankNumber: 2, waterVolumeL: 1, chemicals: [], confirmedAt: Date(), confirmedBy: UUID())
+        XCTAssertFalse(areSprayTankActualsComplete(plannedTanks: [tank], actuals: [actual, extra], vineyardId: vineyardId, sprayRecordId: recordId, tripId: tripId, tankSessionIdsByNumber: [1: [sessionId.uuidString]]))
+        let duplicatedAddition = try SprayTankActual(id: actual.id, vineyardId: vineyardId, sprayRecordId: recordId, tripId: tripId, tankSessionId: sessionId.uuidString, tankNumber: 1, waterVolumeL: 0, chemicals: [substitute, addition, addition], confirmedAt: actual.confirmedAt, confirmedBy: actual.confirmedBy)
+        XCTAssertFalse(areSprayTankActualsComplete(plannedTanks: [tank], actuals: [duplicatedAddition], vineyardId: vineyardId, sprayRecordId: recordId, tripId: tripId, tankSessionIdsByNumber: [1: [sessionId.uuidString]]))
+        let zeroPlanned = try SprayTankActualChemical(plannedChemicalId: plannedId, savedChemicalId: nil, name: "Product", actualAmountBase: 0, unit: .millilitres)
+        let amended = try SprayTankActual(id: actual.id, vineyardId: vineyardId, sprayRecordId: recordId, tripId: tripId, tankSessionId: sessionId.uuidString, tankNumber: 1, waterVolumeL: 0, chemicals: [zeroPlanned, substitute, addition], confirmedAt: actual.confirmedAt, confirmedBy: actual.confirmedBy)
+        XCTAssertTrue(areSprayTankActualsComplete(plannedTanks: [tank], actuals: [amended], vineyardId: vineyardId, sprayRecordId: recordId, tripId: tripId, tankSessionIdsByNumber: [1: [sessionId.uuidString]]))
     }
 
     func testLifecycleResultReusesFillSessionIdentity() {

@@ -288,7 +288,7 @@ nonisolated enum TripCostService {
                 (tank.tankNumber, resolveSprayTankActual(
                     plannedTank: tank, actuals: relevantActuals, vineyardId: trip.vineyardId,
                     sprayRecordId: record.id, tripId: trip.id,
-                    tankSessionIds: sessionIdsByTank[tank.tankNumber]
+                    tankSessionIds: sessionIdsByTank[tank.tankNumber] ?? []
                 ))
             })
             let actualsComplete = areSprayTankActualsComplete(

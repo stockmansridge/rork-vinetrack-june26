@@ -68,6 +68,13 @@ class SprayTankActualTest {
         assertTrue(areSprayTankActualsComplete(listOf(tank), listOf(actual), "vineyard", "spray", "trip", mapOf(1 to setOf("session"))))
         assertFalse(areSprayTankActualsComplete(listOf(tank), listOf(actual.copy(waterVolumeL = null)), "vineyard", "spray", "trip", mapOf(1 to setOf("session"))))
         assertFalse(areSprayTankActualsComplete(listOf(tank), listOf(actual, actual.copy(id = "other", tankSessionId = "other-session")), "vineyard", "spray", "trip", mapOf(1 to setOf("session", "other-session"))))
+        assertFalse(areSprayTankActualsComplete(listOf(tank), listOf(actual), "vineyard", "spray", "trip", emptyMap()))
+        val unmatchedTank = actual.copy(id = "extra", tankSessionId = "extra-session", tankNumber = 2)
+        assertFalse(areSprayTankActualsComplete(listOf(tank), listOf(actual, unmatchedTank), "vineyard", "spray", "trip", mapOf(1 to setOf("session"))))
+        val duplicateAddition = actual.copy(chemicals = actual.chemicals + addition)
+        assertFalse(areSprayTankActualsComplete(listOf(tank), listOf(duplicateAddition), "vineyard", "spray", "trip", mapOf(1 to setOf("session"))))
+        val zeroPlanned = SprayTankActualChemical("zero", plannedId, null, "Product", 0.0, "mL")
+        assertTrue(areSprayTankActualsComplete(listOf(tank), listOf(actual.copy(chemicals = listOf(zeroPlanned, substitution, addition))), "vineyard", "spray", "trip", mapOf(1 to setOf("session"))))
     }
 
     @Test fun strictLocaleParserAcceptsOnlyTheDeviceDecimalSeparator() {

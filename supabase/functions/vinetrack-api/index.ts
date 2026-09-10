@@ -86,6 +86,14 @@
 //     refresh the per-vineyard forecast cache — never exposed in responses)
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  areSprayTankActualsComplete,
+  resolveSprayTankActualRows,
+  type TankActualIdentity,
+  type TankActualRow,
+  type TankActualChemicalJson,
+  type TankJson,
+} from "./tank-actual-validation.ts";
 
 const API_VERSION = "v1";
 const DEFAULT_LIMIT = 100;
@@ -772,26 +780,10 @@ const SPRAY_COLUMNS =
   "block_ids, application_blocks, " +
   "created_at, updated_at";
 
-interface TankJson {
-  tankNumber?: unknown; waterVolume?: unknown; sprayRatePerHa?: unknown;
-  concentrationFactor?: unknown; chemicals?: unknown;
-}
 interface ChemicalJson {
   id?: unknown; name?: unknown; volumePerTank?: unknown; ratePerHa?: unknown; ratePer100L?: unknown;
   costPerUnit?: unknown; unit?: unknown; savedChemicalId?: unknown;
 }
-interface TankActualChemicalJson {
-  id?: unknown; plannedChemicalId?: unknown; savedChemicalId?: unknown;
-  replacesPlannedChemicalId?: unknown; usageKind?: unknown;
-  name?: unknown; actualAmountBase?: unknown; unit?: unknown;
-}
-interface TankActualRow {
-  id: string; vineyard_id: string; spray_record_id: string; trip_id: string;
-  tank_session_id: string; tank_number: number; water_volume_l: number | null;
-  chemicals: unknown; confirmed_at: string; client_updated_at: string;
-  correction_version: number | null;
-}
-
 function parseTanks(raw: unknown): TankJson[] {
   return Array.isArray(raw) ? (raw as TankJson[]) : [];
 }
@@ -965,6 +957,43 @@ async function loadSprayTankActuals(db: SupabaseClient, sprayRecordId: string): 
   return (data ?? []) as TankActualRow[];
 }
 
+async function loadTankActualIdentity(db: SupabaseClient, spray: SprayRow): Promise<TankActualIdentity> {
+  if (!spray.trip_id) {
+    return {
+      vineyardId: spray.vineyard_id,
+      sprayRecordId: spray.id,
+      tripId: null,
+      sessionIdsByTank: new Map(),
+      isManualEntry: true,
+    };
+  }
+  const { data, error } = await db.from("trips")
+    .select("id,vineyard_id,tank_sessions")
+    .eq("id", spray.trip_id)
+    .eq("vineyard_id", spray.vineyard_id)
+    .maybeSingle();
+  if (error) {
+    console.error("[vinetrack-api] spray tank session lookup failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  const sessionIdsByTank = new Map<number, Set<string>>();
+  for (const raw of Array.isArray(data?.tank_sessions) ? data.tank_sessions : []) {
+    if (!raw || typeof raw !== "object") continue;
+    const session = raw as Record<string, unknown>;
+    const id = typeof session.id === "string" ? session.id : typeof session.tank_session_id === "string" ? session.tank_session_id : null;
+    const tankNumber = num(session.tankNumber ?? session.tank_number);
+    if (!id || tankNumber === null) continue;
+    sessionIdsByTank.set(tankNumber, new Set([...(sessionIdsByTank.get(tankNumber) ?? []), id]));
+  }
+  return {
+    vineyardId: spray.vineyard_id,
+    sprayRecordId: spray.id,
+    tripId: spray.trip_id,
+    sessionIdsByTank,
+    isManualEntry: false,
+  };
+}
+
 function mapActualTanks(rows: TankActualRow[], selectedIds: Set<string>) {
   return rows.map((row) => ({
     actual_id: row.id,
@@ -1014,53 +1043,6 @@ function mapSprayTanks(raw: unknown, includeCosts: boolean) {
         return product;
       }),
     };
-  });
-}
-
-export function resolveSprayTankActualRows(plannedTanks: TankJson[], actualRows: TankActualRow[]): Map<number, TankActualRow> {
-  const resolved = new Map<number, TankActualRow>();
-  for (const tank of plannedTanks) {
-    const tankNumber = num(tank.tankNumber);
-    if (tankNumber === null) continue;
-    const bySession = new Map<string, TankActualRow[]>();
-    for (const row of actualRows.filter((candidate) => candidate.tank_number === tankNumber)) {
-      bySession.set(row.tank_session_id, [...(bySession.get(row.tank_session_id) ?? []), row]);
-    }
-    if (bySession.size !== 1) continue;
-    const revisions = [...bySession.values()][0];
-    const highestVersion = Math.max(...revisions.map((row) => num(row.correction_version) ?? 0));
-    const highest = revisions.filter((row) => (num(row.correction_version) ?? 0) === highestVersion);
-    if (highest.length === 1) resolved.set(tankNumber, highest[0]);
-  }
-  return resolved;
-}
-
-export function areSprayTankActualsComplete(plannedTanks: TankJson[], actualRows: TankActualRow[]): boolean {
-  if (plannedTanks.length === 0) return false;
-  const resolved = resolveSprayTankActualRows(plannedTanks, actualRows);
-  return plannedTanks.every((tank) => {
-    const tankNumber = num(tank.tankNumber);
-    const actual = tankNumber === null ? undefined : resolved.get(tankNumber);
-    const water = actual ? num(actual.water_volume_l) : null;
-    if (!actual || water === null || water < 0) return false;
-    const actualChemicals = Array.isArray(actual.chemicals) ? actual.chemicals as TankActualChemicalJson[] : [];
-    const plannedChemicals = Array.isArray(tank.chemicals) ? tank.chemicals as ChemicalJson[] : [];
-    const plannedIds = new Set(plannedChemicals.map((line) => typeof line.id === "string" ? line.id : null).filter((id): id is string => id !== null));
-    if (plannedIds.size !== plannedChemicals.length) return false;
-    const associationsValid = actualChemicals.every((line) => {
-      const amount = num(line.actualAmountBase);
-      if (amount === null || amount < 0) return false;
-      const kind = typeof line.usageKind === "string" ? line.usageKind : "planned";
-      if (kind === "planned") return typeof line.plannedChemicalId === "string" && plannedIds.has(line.plannedChemicalId) && line.replacesPlannedChemicalId == null;
-      if (kind === "additional") return line.plannedChemicalId == null && line.replacesPlannedChemicalId == null;
-      if (kind === "substitution") return line.plannedChemicalId == null && typeof line.replacesPlannedChemicalId === "string" && plannedIds.has(line.replacesPlannedChemicalId);
-      return false;
-    });
-    return associationsValid && [...plannedIds].every((plannedId) => {
-      const direct = actualChemicals.filter((line) => (line.usageKind ?? "planned") === "planned" && line.plannedChemicalId === plannedId).length;
-      const substitutions = actualChemicals.filter((line) => line.usageKind === "substitution" && line.replacesPlannedChemicalId === plannedId).length;
-      return direct + substitutions === 1;
-    });
   });
 }
 
@@ -1685,10 +1667,11 @@ async function handleSprayGet(
   body.tanks = mapSprayTanks(spray.tanks, includeCosts);
   const plannedTanks = parseTanks(spray.tanks);
   const actualRows = await loadSprayTankActuals(db, spray.id);
-  const resolvedActuals = resolveSprayTankActualRows(plannedTanks, actualRows);
+  const actualIdentity = await loadTankActualIdentity(db, spray);
+  const resolvedActuals = resolveSprayTankActualRows(plannedTanks, actualRows, actualIdentity);
   const resolvedRows = [...resolvedActuals.values()];
   const actualTanks = mapActualTanks(actualRows, new Set(resolvedRows.map((row) => row.id)));
-  const actualsComplete = areSprayTankActualsComplete(plannedTanks, actualRows);
+  const actualsComplete = areSprayTankActualsComplete(plannedTanks, actualRows, actualIdentity);
   body.planned_water_volume_l = sprayTotals(plannedTanks).waterL;
   body.actual_water_volume_l = resolvedRows.length === plannedTanks.length && resolvedRows.every((row) => num(row.water_volume_l) !== null)
     ? round3(resolvedRows.reduce((sum, actual) => sum + (num(actual.water_volume_l) ?? 0), 0))

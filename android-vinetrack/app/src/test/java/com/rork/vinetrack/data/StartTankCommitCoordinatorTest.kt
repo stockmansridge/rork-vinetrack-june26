@@ -162,6 +162,32 @@ class StartTankCommitCoordinatorTest {
         assertEquals(originalJournalId, h.journals.journal?.actualRecordId)
     }
 
+    @Test fun firstCommitMergesLiveRouteAheadOfStoredSnapshotAndRelaunchRetainsIt() {
+        val stored = sourceTrip.copy(pathPoints = listOf(CoordinatePoint(-33.0, 149.0)))
+        val live = sourceTrip.copy(pathPoints = stored.pathPoints + listOf(
+            CoordinatePoint(-33.0001, 149.0001), CoordinatePoint(-33.0002, 149.0002),
+        ), totalDistance = 88.0)
+        val intended = live.copy(tankSessions = trip.tankSessions, activeTankNumber = 1)
+        val h = Harness(trip = stored)
+        assertTrue(h.coordinator().commit("user", "vineyard", live, intended, actual))
+        assertEquals(live.pathPoints, h.trip?.pathPoints)
+        assertEquals(88.0, h.trip?.totalDistance)
+        assertEquals(live.pathPoints, h.coordinator().let { h.trip }?.pathPoints)
+    }
+
+    @Test fun sameScreenRetryResumesFrozenJournalWithoutReplacingValues() {
+        val h = Harness(failMarker = true)
+        assertFalse(h.coordinator().commit("user", "vineyard", sourceTrip, trip, actual))
+        val frozen = h.journals.journal ?: error("journal missing")
+        h.failMarker = false
+        val resumed = h.coordinator().resume("user", "vineyard", sourceTrip, sourceTrip, 1)
+        assertNotNull(resumed)
+        assertEquals(frozen.actualRecordId, h.actual?.id)
+        assertEquals(frozen.confirmationTimestamp, h.actual?.confirmedAt)
+        assertEquals(frozen.tankSessionId, h.actual?.tankSessionId)
+        assertNull(h.journals.journal)
+    }
+
     @Test fun firstCommitRequiresAndVerifiesDurableTripWrite() {
         val h = Harness()
         assertTrue(h.coordinator().commit("user", "vineyard", sourceTrip, trip, actual))

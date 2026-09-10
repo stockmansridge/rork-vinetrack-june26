@@ -29,6 +29,19 @@ final class StartTankCommitCoordinatorTests: XCTestCase {
         return (directory, persistence, store, SprayTankActualStore(persistence: persistence), original, updated, actual)
     }
 
+    func testSameScreenRetryResumesFrozenJournal() throws {
+        let (directory, persistence, store, actualStore, source, updated, actual) = try makeHarness()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let interrupted = StartTankCommitCoordinator(persistence: persistence, actualStore: actualStore, failurePoint: .afterActual)
+        XCTAssertThrowsError(try interrupted.commit(sourceTrip: source, updatedTrip: updated, actual: actual, store: store))
+        let frozen: StartTankCommitCoordinator.Journal? = persistence.load(key: StartTankCommitCoordinator.persistenceKey)
+        let retry = StartTankCommitCoordinator(persistence: persistence, actualStore: actualStore)
+        XCTAssertTrue(retry.resume(sourceTrip: source, tankNumber: 1, store: store))
+        XCTAssertEqual(actualStore.records.first?.id, frozen?.actualRecordId)
+        XCTAssertEqual(actualStore.records.first?.confirmedAt, frozen?.confirmationTimestamp)
+        XCTAssertNil(persistence.load(key: StartTankCommitCoordinator.persistenceKey) as StartTankCommitCoordinator.Journal?)
+    }
+
     func testFirstCommitDurablyWritesTripBeforeClearingJournal() throws {
         let (directory, persistence, store, actualStore, source, updated, actual) = try makeHarness()
         defer { try? FileManager.default.removeItem(at: directory) }

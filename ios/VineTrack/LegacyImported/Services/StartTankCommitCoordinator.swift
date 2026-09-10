@@ -50,6 +50,26 @@ final class StartTankCommitCoordinator {
         try finish(journal, store: store)
     }
 
+    /// Retries only the operation already frozen for this same confirmation screen.
+    @discardableResult
+    func resume(sourceTrip: Trip, tankNumber: Int, store: MigratedDataStore) -> Bool {
+        guard let journal: Journal = persistence.load(key: Self.persistenceKey),
+              journal.updatedTrip.id == sourceTrip.id,
+              journal.updatedTrip.vineyardId == sourceTrip.vineyardId,
+              journal.tankNumber == tankNumber,
+              journal.sourceTrip?.tankSessions == sourceTrip.tankSessions,
+              journal.sourceTrip?.activeTankNumber == sourceTrip.activeTankNumber,
+              journal.sourceTrip?.isFillingTank == sourceTrip.isFillingTank,
+              journal.sourceTrip?.fillingTankNumber == sourceTrip.fillingTankNumber
+        else { return false }
+        do {
+            try finish(journal, store: store)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     /// Completes the exact stable-ID operation saved before process termination.
     @discardableResult
     func recover(store: MigratedDataStore) -> Bool {

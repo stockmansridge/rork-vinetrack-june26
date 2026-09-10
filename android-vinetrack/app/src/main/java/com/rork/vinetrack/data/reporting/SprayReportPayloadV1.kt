@@ -132,7 +132,7 @@ data class SprayReportPayloadV1(
             val trackedTanks = record.tanks.orEmpty().sortedBy { it.tankNumber }.map { plannedTank ->
                 val actual = com.rork.vinetrack.data.model.resolveSprayTankActual(
                     plannedTank, tankActuals, trip.vineyardId, record.id, trip.id,
-                    sessionIdsByTank[plannedTank.tankNumber],
+                    sessionIdsByTank[plannedTank.tankNumber].orEmpty(),
                 )
                 if (actual == null && tankActuals.any {
                         it.vineyardId == trip.vineyardId && it.sprayRecordId == record.id &&

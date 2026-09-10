@@ -84,5 +84,13 @@
       "correction_version": 1,
       "last_corrected_at": null
     }
+  ],
+  "requiredCounterexamples": [
+    "unmatched_extra_tank",
+    "duplicate_additional_chemical_id",
+    "zero_planned_line_with_valid_substitution",
+    "missing_authoritative_session",
+    "unknown_trip_session",
+    "same_screen_retry_preserves_frozen_operation"
   ]
 }

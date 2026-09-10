@@ -173,7 +173,7 @@ object TripCostEstimator {
             val actualByTank = tanks.associate { tank ->
                 tank.tankNumber to resolveSprayTankActual(
                     tank, relevantActuals, trip.vineyardId, record.id, trip.id,
-                    sessionIdsByTank[tank.tankNumber],
+                    sessionIdsByTank[tank.tankNumber].orEmpty(),
                 )
             }
             val actualsComplete = areSprayTankActualsComplete(
@@ -187,7 +187,11 @@ object TripCostEstimator {
                 tank.chemicals.forEach { planned ->
                     val amount = if (actualsComplete) {
                         checkNotNull(actualByTank[tank.tankNumber]?.chemicals
-                            ?.singleOrNull { it.plannedChemicalId == planned.id }).actualAmountBase
+                            ?.firstOrNull {
+                                it.usageKind == "substitution" && it.replacesPlannedChemicalId == planned.id
+                            } ?: actualByTank[tank.tankNumber]?.chemicals
+                                ?.singleOrNull { (it.usageKind ?: "planned") == "planned" && it.plannedChemicalId == planned.id }
+                        ).actualAmountBase
                     } else planned.volumePerTank
                     if (planned.hasCost) {
                         val lineCost = planned.costPerUnit * amount
