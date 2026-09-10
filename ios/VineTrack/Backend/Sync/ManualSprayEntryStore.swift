@@ -64,13 +64,16 @@ final class ManualSprayDraftStore: @unchecked Sendable {
 
 @MainActor
 final class ManualSprayEntryCoordinator {
-    static let shared: ManualSprayEntryCoordinator = ManualSprayEntryCoordinator()
+    static let shared: ManualSprayEntryCoordinator = ManualSprayEntryCoordinator(
+        repository: ManualSprayEntryRepository(),
+        store: ManualSprayEntryStore()
+    )
 
     private let repository: ManualSprayEntryRepositoryProtocol
     private let store: ManualSprayEntryStoring
     private(set) var operations: [PendingManualSprayOperation]
 
-    init(repository: ManualSprayEntryRepositoryProtocol = ManualSprayEntryRepository(), store: ManualSprayEntryStoring = ManualSprayEntryStore()) {
+    init(repository: ManualSprayEntryRepositoryProtocol, store: ManualSprayEntryStoring) {
         self.repository = repository
         self.store = store
         operations = store.load()
@@ -84,22 +87,28 @@ final class ManualSprayEntryCoordinator {
     func save(payload: ManualSprayPayload, expectedVersion: Int?) async throws -> ManualSpraySaveResponse? {
         let valid = try payload.validated()
         let operation: PendingManualSprayOperation
-        if let queued = operations.first(where: { $0.kind == .save && $0.payload == valid && $0.expectedVersion == expectedVersion }) {
+        if let queued = operations.first(where: { $0.kind == .save && $0.payload.vineyardId == valid.vineyardId && $0.payload.manualEntryId == valid.manualEntryId }) {
+            guard queued.payload == valid, queued.expectedVersion == expectedVersion else {
+                throw ManualSprayPersistenceError.exactRetryRequired
+            }
             operation = queued
         } else {
             operation = PendingManualSprayOperation(id: UUID(), kind: .save, payload: valid, expectedVersion: expectedVersion, attemptCount: 0, lastError: nil)
-            replaceSave(with: operation)
-            guard store.save(operations) else { throw ManualSprayPersistenceError.couldNotPersist }
+            try persist(operations + [operation], failure: .couldNotPersist)
         }
         do {
-            let response = try await repository.save(operationId: operation.id, payload: valid, expectedVersion: expectedVersion)
-            operations.removeAll { $0.id == operation.id }
-            guard store.save(operations) else { throw ManualSprayPersistenceError.couldNotPersistConfirmation }
+            let response = try await repository.save(operationId: operation.id, payload: operation.payload, expectedVersion: operation.expectedVersion)
+            guard response.matches(operation) else {
+                markFailed(operation.id, error: ManualSprayPersistenceError.serverDidNotConfirm)
+                return nil
+            }
+            try persist(operations.filter { $0.id != operation.id }, failure: .couldNotPersistConfirmation)
             return response
+        } catch let persistenceError as ManualSprayPersistenceError {
+            throw persistenceError
         } catch {
             if let terminalError = ManualSprayMutationError.classify(error) {
-                operations.removeAll { $0.id == operation.id }
-                guard store.save(operations) else { throw ManualSprayPersistenceError.couldNotPersistConfirmation }
+                try persist(operations.filter { $0.id != operation.id }, failure: .couldNotPersistConfirmation)
                 throw terminalError
             }
             markFailed(operation.id, error: error)
@@ -108,39 +117,45 @@ final class ManualSprayEntryCoordinator {
     }
 
     func delete(payload: ManualSprayPayload) async throws -> Bool {
-        operations.removeAll { $0.kind == .save && $0.payload.manualEntryId == payload.manualEntryId }
-        let operation = PendingManualSprayOperation(id: UUID(), kind: .delete, payload: payload, expectedVersion: nil, attemptCount: 0, lastError: nil)
-        operations.removeAll { $0.kind == .delete && $0.payload.manualEntryId == payload.manualEntryId }
-        operations.append(operation)
-        guard store.save(operations) else { throw ManualSprayPersistenceError.couldNotPersist }
+        let sameIdentity: (PendingManualSprayOperation) -> Bool = {
+            $0.payload.vineyardId == payload.vineyardId && $0.payload.manualEntryId == payload.manualEntryId
+        }
+        let operation = operations.first(where: { $0.kind == .delete && sameIdentity($0) }) ??
+            PendingManualSprayOperation(id: UUID(), kind: .delete, payload: payload, expectedVersion: nil, attemptCount: 0, lastError: nil)
+        if !operations.contains(where: { $0.id == operation.id }) {
+            try persist(operations.filter { !sameIdentity($0) } + [operation], failure: .couldNotPersist)
+        }
         do {
             try await repository.delete(operationId: operation.id, payload: payload)
-            operations.removeAll { $0.id == operation.id }
-            guard store.save(operations) else { throw ManualSprayPersistenceError.couldNotPersistConfirmation }
+            try persist(operations.filter { $0.id != operation.id }, failure: .couldNotPersistConfirmation)
             return true
+        } catch let persistenceError as ManualSprayPersistenceError {
+            throw persistenceError
         } catch {
             markFailed(operation.id, error: error)
             return false
         }
     }
 
-    func replay(currentRole: BackendRole?) async {
-        guard currentRole?.canManageManualSprays == true else { return }
+    func replay(currentVineyardId: UUID?, currentRole: BackendRole?) async {
         for operation in operations {
+            guard operation.payload.vineyardId == currentVineyardId, currentRole?.canManageManualSprays == true else { continue }
             do {
                 switch operation.kind {
                 case .save:
                     if operations.contains(where: { $0.kind == .delete && $0.payload.manualEntryId == operation.payload.manualEntryId }) { continue }
-                    _ = try await repository.save(operationId: operation.id, payload: operation.payload, expectedVersion: operation.expectedVersion)
+                    let response = try await repository.save(operationId: operation.id, payload: operation.payload, expectedVersion: operation.expectedVersion)
+                    guard response.matches(operation) else {
+                        markFailed(operation.id, error: ManualSprayPersistenceError.serverDidNotConfirm)
+                        continue
+                    }
                 case .delete:
                     try await repository.delete(operationId: operation.id, payload: operation.payload)
                 }
-                operations.removeAll { $0.id == operation.id }
-                _ = store.save(operations)
+                try persist(operations.filter { $0.id != operation.id }, failure: .couldNotPersistConfirmation)
             } catch {
                 if ManualSprayMutationError.classify(error) != nil {
-                    operations.removeAll { $0.id == operation.id }
-                    _ = store.save(operations)
+                    try? persist(operations.filter { $0.id != operation.id }, failure: .couldNotPersistConfirmation)
                 } else {
                     markFailed(operation.id, error: error)
                 }
@@ -148,16 +163,20 @@ final class ManualSprayEntryCoordinator {
         }
     }
 
-    private func replaceSave(with operation: PendingManualSprayOperation) {
-        operations.removeAll { $0.kind == .save && $0.payload.manualEntryId == operation.payload.manualEntryId }
-        operations.append(operation)
+    private func persist(_ candidate: [PendingManualSprayOperation], failure: ManualSprayPersistenceError) throws {
+        guard store.save(candidate) else { throw failure }
+        operations = candidate
     }
 
     private func markFailed(_ id: UUID, error: Error) {
-        guard let index = operations.firstIndex(where: { $0.id == id }) else { return }
-        operations[index].attemptCount += 1
-        operations[index].lastError = error.localizedDescription
-        _ = store.save(operations)
+        let candidate = operations.map { operation -> PendingManualSprayOperation in
+            guard operation.id == id else { return operation }
+            var updated = operation
+            updated.attemptCount += 1
+            updated.lastError = error.localizedDescription
+            return updated
+        }
+        if store.save(candidate) { operations = candidate }
     }
 }
 
@@ -182,14 +201,26 @@ nonisolated enum ManualSprayMutationError: LocalizedError, Sendable {
     }
 }
 
+private extension ManualSpraySaveResponse {
+    func matches(_ operation: PendingManualSprayOperation) -> Bool {
+        serverConfirmed && source == "manual" && status == "completed" && operationId == operation.id &&
+            manualEntryId == operation.payload.manualEntryId && sprayRecordId == operation.payload.sprayRecordId &&
+            tripId == operation.payload.tripId
+    }
+}
+
 nonisolated enum ManualSprayPersistenceError: LocalizedError, Sendable {
     case couldNotPersist
     case couldNotPersistConfirmation
+    case exactRetryRequired
+    case serverDidNotConfirm
 
     var errorDescription: String? {
         switch self {
         case .couldNotPersist: "The complete manual spray could not be saved on this device."
         case .couldNotPersistConfirmation: "The server saved the manual spray, but its confirmation could not be retained on this device."
+        case .exactRetryRequired: "This manual spray already has an exact saved retry. Retry it before making further changes."
+        case .serverDidNotConfirm: "The server did not confirm this exact manual spray. Its saved retry was retained."
         }
     }
 }

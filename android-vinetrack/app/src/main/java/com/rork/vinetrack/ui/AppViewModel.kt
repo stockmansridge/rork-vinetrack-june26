@@ -1067,6 +1067,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     )
     private val sprayReportRepository = SprayReportRepository(session)
 
+    suspend fun saveManualSpray(
+        payload: com.rork.vinetrack.data.model.ManualSprayPayload,
+        expectedVersion: Int?,
+    ): com.rork.vinetrack.data.model.ManualSpraySaveResponse? = manualSprayCoordinator.save(payload, expectedVersion)
+
+    suspend fun deleteManualSpray(payload: com.rork.vinetrack.data.model.ManualSprayPayload): Boolean =
+        manualSprayCoordinator.delete(payload)
+
+    fun pendingManualSprays(): List<com.rork.vinetrack.data.model.ManualSprayPayload> =
+        manualSprayCoordinator.pendingPayloads()
+
+    fun pendingManualSprayOperations(): List<com.rork.vinetrack.data.PendingManualSprayOperation> =
+        manualSprayCoordinator.pendingOperations()
+
     fun loadCanonicalSprayReport(tripId: String, onResult: (Result<com.rork.vinetrack.data.reporting.SprayReportPayloadV1>) -> Unit) {
         viewModelScope.launch { onResult(runCatching { sprayReportRepository.fetch(tripId) }) }
     }
@@ -2521,7 +2535,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 // Manual saves/deletes replay with their original operation IDs before
                 // generic trip/spray queues can touch related rows.
-                manualSprayCoordinator.replay(_ui.value.currentRole)
+                manualSprayCoordinator.replay { owningVineyardId ->
+                    val state = _ui.value
+                    if (state.selectedVineyardId == owningVineyardId) state.currentRole else null
+                }
                 tripStartSync.replayAll { trip ->
                     _ui.update { st -> st.copy(trips = st.trips.map { existing ->
                         if (existing.id == trip.id) TripStartReconciliation.reconcile(server = trip, local = existing) else existing

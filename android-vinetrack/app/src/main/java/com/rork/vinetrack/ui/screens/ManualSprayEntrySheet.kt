@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -35,10 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import com.rork.vinetrack.data.ManualSprayEntryCoordinator
-import com.rork.vinetrack.data.ManualSprayEntryRepository
 import com.rork.vinetrack.data.ManualSprayDraftStore
-import com.rork.vinetrack.data.ManualSprayOperationStore
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.ManualSprayBlock
 import com.rork.vinetrack.data.model.ManualSprayChemical
@@ -52,6 +50,7 @@ import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.canManageManualSprays
 import com.rork.vinetrack.data.reporting.SprayReportRepository
 import com.rork.vinetrack.ui.AppUiState
+import com.rork.vinetrack.ui.AppViewModel
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDateTime
@@ -62,6 +61,7 @@ import java.util.UUID
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ManualSprayEntrySheet(
+    vm: AppViewModel,
     state: AppUiState,
     existing: SprayRecord? = null,
     onDismiss: () -> Unit,
@@ -77,11 +77,20 @@ fun ManualSprayEntrySheet(
     val vineyardId = state.selectedVineyardId ?: return
     val zone = state.seasonZone
     val session = remember { SessionStore(context) }
-    val coordinator = remember { ManualSprayEntryCoordinator(ManualSprayEntryRepository(session), ManualSprayOperationStore(context)) }
     val draftStore = remember { ManualSprayDraftStore(context) }
     val existingTrip = existing?.tripId?.let { id -> state.trips.firstOrNull { it.id == id } }
-    val seed = remember(existing?.id, state.sprayTankActuals) { existing?.toManualPayload(existingTrip, state, zone) ?: if (existing == null) draftStore.load(vineyardId) else null }
-    val identities = remember { seed?.let { Triple(it.manualEntryId, it.sprayRecordId, it.tripId) } ?: Triple(UUID.randomUUID().toString(), UUID.randomUUID().toString(), UUID.randomUUID().toString()) }
+    val seed = remember(existing?.id, existingTrip, state.sprayTankActuals) { existing?.toManualPayload(existingTrip, state, zone) ?: if (existing == null) draftStore.load(vineyardId) else null }
+    if (existing != null && seed == null) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            confirmButton = { TextButton(onClick = { vm.refresh() }) { Text("Retry") } },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+            title = { Text("Edit unavailable") },
+            text = { Text("The exact trip, tank and actual identities have not finished loading. Sync and retry; no replacement draft will be created.") },
+        )
+        return
+    }
+    val identities = remember(seed?.manualEntryId) { seed?.let { Triple(it.manualEntryId, it.sprayRecordId, it.tripId) } ?: Triple(UUID.randomUUID().toString(), UUID.randomUUID().toString(), UUID.randomUUID().toString()) }
     var reference by remember { mutableStateOf(seed?.reference.orEmpty()) }
     var startInstant by remember { mutableStateOf(seed?.startUtc?.let(Instant::parse) ?: Instant.now().minusSeconds(3600)) }
     var endInstant by remember { mutableStateOf(seed?.endUtc?.let(Instant::parse) ?: Instant.now()) }
@@ -99,18 +108,22 @@ fun ManualSprayEntrySheet(
     var expectedVersion by remember { mutableStateOf(existing?.syncVersion?.toInt() ?: 0) }
     val blockIds = remember { mutableStateListOf<String>().apply { addAll(seed?.blocks?.map { it.blockId }.orEmpty()) } }
     val tanks = remember { mutableStateListOf<ManualSprayTank>().apply { addAll(seed?.tanks ?: listOf(ManualSprayTank(tankNumber = 1, waterVolumeLitres = 0.0, chemicals = emptyList()))) } }
-    var hasManualWeather by remember { mutableStateOf(false) }
-    var temperature by remember { mutableStateOf("") }
-    var humidity by remember { mutableStateOf("") }
-    var wind by remember { mutableStateOf("") }
-    var gust by remember { mutableStateOf("") }
-    var direction by remember { mutableStateOf("") }
-    var rain by remember { mutableStateOf("") }
+    val waterInputs = remember { mutableStateMapOf<String, String>().apply { seed?.tanks?.forEach { put(it.id, it.waterVolumeLitres.toString()) } } }
+    val chemicalInputs = remember { mutableStateMapOf<String, String>().apply { seed?.tanks?.flatMap { it.chemicals }?.forEach { put(it.id, displayAmount(it).toString()) } } }
+    var hasManualWeather by remember { mutableStateOf(seed?.manualWeather != null) }
+    var temperature by remember { mutableStateOf(seed?.manualWeather?.temperatureC?.toString().orEmpty()) }
+    var humidity by remember { mutableStateOf(seed?.manualWeather?.humidityPct?.toString().orEmpty()) }
+    var wind by remember { mutableStateOf(seed?.manualWeather?.windSpeedKmh?.toString().orEmpty()) }
+    var gust by remember { mutableStateOf(seed?.manualWeather?.windGustKmh?.toString().orEmpty()) }
+    var direction by remember { mutableStateOf(seed?.manualWeather?.windDirectionDeg?.toString().orEmpty()) }
+    var rain by remember { mutableStateOf(seed?.manualWeather?.rainMm?.toString().orEmpty()) }
+    var weatherEdited by remember { mutableStateOf(false) }
 
     LaunchedEffect(existing?.id) {
         val tripId = existing?.tripId ?: return@LaunchedEffect
         runCatching { SprayReportRepository(session).fetch(tripId) }.getOrNull()?.weather
             ?.firstOrNull { it.provider == "manual_entry" && it.sourceKind == "manual" }?.let { weather ->
+                if (weatherEdited) return@let
                 hasManualWeather = true
                 temperature = weather.temperatureC?.toString().orEmpty(); humidity = weather.humidityPct?.toString().orEmpty()
                 wind = weather.windSpeedKmh?.toString().orEmpty(); gust = weather.windGustKmh?.toString().orEmpty()
@@ -123,7 +136,13 @@ fun ManualSprayEntrySheet(
         reference = reference, operationType = existing?.operationType ?: "Foliar Spray", startUtc = startInstant.toString(), endUtc = endInstant.toString(),
         vineyardTimeZone = zone.id, tractorId = tractorId, operatorUserId = operatorId, sprayEquipmentId = unitId,
         startEngineHours = startHours.toDoubleOrNull(), endEngineHours = endHours.toDoubleOrNull(), notes = notes.takeIf { it.isNotBlank() }, clientUpdatedAt = clientUpdatedAt,
-        blocks = state.paddocks.filter { it.id in blockIds }.map { ManualSprayBlock(it.id, it.name) }, tanks = tanks.toList(),
+        blocks = state.paddocks.filter { it.id in blockIds }.map { ManualSprayBlock(it.id, it.name) },
+        tanks = tanks.map { tank -> tank.copy(
+            waterVolumeLitres = waterInputs[tank.id]?.toDoubleOrNull() ?: Double.NaN,
+            chemicals = tank.chemicals.map { chemical -> chemical.copy(
+                actualAmountBase = chemicalInputs[chemical.id]?.toDoubleOrNull()?.let { toBase(it, chemical.unit) } ?: Double.NaN,
+            ) },
+        ) },
         manualWeather = if (hasManualWeather) ManualSprayWeather(startInstant.toString(), temperatureC = temperature.toDoubleOrNull(), humidityPct = humidity.toDoubleOrNull(), windSpeedKmh = wind.toDoubleOrNull(), windGustKmh = gust.toDoubleOrNull(), windDirectionDeg = direction.toDoubleOrNull(), rainMm = rain.toDoubleOrNull()) else null,
     )
 
@@ -149,21 +168,21 @@ fun ManualSprayEntrySheet(
                 state.paddocks.forEach { block -> Row { Checkbox(block.id in blockIds, { checked -> if (checked) blockIds.add(block.id) else blockIds.remove(block.id) }); Text(block.name) } }
                 tanks.toList().forEachIndexed { index, tank ->
                     Text("Tank ${tank.tankNumber}")
-                    OutlinedTextField(tank.waterVolumeLitres.takeIf { it != 0.0 }?.toString().orEmpty(), { value -> tanks[index] = tank.copy(waterVolumeLitres = value.toDoubleOrNull() ?: 0.0) }, label = { Text("Actual water (L)") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(waterInputs[tank.id].orEmpty(), { value -> waterInputs[tank.id] = value }, label = { Text("Actual water (L)") }, modifier = Modifier.fillMaxWidth())
                     tank.chemicals.forEachIndexed { chemicalIndex, chemical ->
                         Text("${chemical.name} · ${chemical.productCategory} · ${chemical.physicalForm.name}")
-                        OutlinedTextField(displayAmount(chemical).toString(), { value -> val updated = chemical.copy(actualAmountBase = toBase(value.toDoubleOrNull() ?: 0.0, chemical.unit)); tanks[index] = tanks[index].copy(chemicals = tanks[index].chemicals.toMutableList().also { it[chemicalIndex] = updated }) }, label = { Text("Actual amount (${chemical.unit})") }, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(chemicalInputs[chemical.id].orEmpty(), { value -> chemicalInputs[chemical.id] = value }, label = { Text("Actual amount (${chemical.unit})") }, modifier = Modifier.fillMaxWidth())
                     }
                     ChemicalChoice(state.savedChemicals) { product -> tanks[index] = tanks[index].copy(chemicals = tanks[index].chemicals + product.toManualChemical()) }
                     if (tanks.size > 1) TextButton(onClick = { tanks.removeAt(index); tanks.indices.forEach { i -> tanks[i] = tanks[i].copy(tankNumber = i + 1) } }) { Text("Remove tank") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = { tanks += ManualSprayTank(tankNumber = tanks.size + 1, waterVolumeLitres = 0.0, chemicals = emptyList()) }) { Text("Add tank") }; Button(onClick = { tanks.lastOrNull()?.let { tanks += it.copied(tanks.size + 1) } }) { Text("Copy previous") } }
                 OutlinedTextField(notes, { notes = it }, label = { Text("Notes (optional)") }, modifier = Modifier.fillMaxWidth())
-                Row { Checkbox(hasManualWeather, { hasManualWeather = it }); Text("Enter weather manually") }
+                Row { Checkbox(hasManualWeather, { weatherEdited = true; hasManualWeather = it }); Text("Enter weather manually") }
                 if (hasManualWeather) {
-                    WeatherField("Temperature °C", temperature) { temperature = it }; WeatherField("Humidity %", humidity) { humidity = it }
-                    WeatherField("Wind km/h", wind) { wind = it }; WeatherField("Gust km/h", gust) { gust = it }
-                    WeatherField("Direction °", direction) { direction = it }; WeatherField("Rain mm", rain) { rain = it }
+                    WeatherField("Temperature °C", temperature) { weatherEdited = true; temperature = it }; WeatherField("Humidity %", humidity) { weatherEdited = true; humidity = it }
+                    WeatherField("Wind km/h", wind) { weatherEdited = true; wind = it }; WeatherField("Gust km/h", gust) { weatherEdited = true; gust = it }
+                    WeatherField("Direction °", direction) { weatherEdited = true; direction = it }; WeatherField("Rain mm", rain) { weatherEdited = true; rain = it }
                 }
                 Text("Manual weather is optional and remains authoritative. Station availability never blocks saving.")
             } else {
@@ -186,7 +205,7 @@ fun ManualSprayEntrySheet(
                     if (error != null) message = error else if (!isReviewing) isReviewing = true else scope.launch {
                         isSaving = true
                         try {
-                            val response = coordinator.save(candidate, expectedVersion)
+                            val response = vm.saveManualSpray(candidate, expectedVersion)
                             if (response?.serverConfirmed == true) { expectedVersion = response.syncVersion; savedTripId = response.tripId; draftStore.clear(vineyardId); message = "Manual spray saved. Historical station weather is optional." }
                             else message = "Saved on this device — awaiting sync"
                         } catch (error: Exception) {

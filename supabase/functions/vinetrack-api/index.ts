@@ -88,8 +88,11 @@
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   areSprayTankActualsComplete,
+  buildTankActualIdentity,
+  mapSprayActualTanks,
   resolveSprayTankActualRows,
   type TankActualIdentity,
+  type TripTankIdentitySource,
   type TankActualRow,
   type TankActualChemicalJson,
   type TankJson,
@@ -724,6 +727,7 @@ async function loadTripCosts(db: SupabaseClient, tripId: string): Promise<TripCo
 interface SprayRow {
   id: string; vineyard_id: string;
   trip_id: string | null; spray_job_id: string | null;
+  entry_source: string | null; manual_entry_id: string | null;
   date: string | null; start_time: string | null; end_time: string | null;
   temperature: number | null; wind_speed: number | null;
   wind_direction: string | null; humidity: number | null;
@@ -768,7 +772,7 @@ interface SprayRow {
 }
 
 const SPRAY_COLUMNS =
-  "id, vineyard_id, trip_id, spray_job_id, date, start_time, end_time, temperature, wind_speed, " +
+  "id, vineyard_id, trip_id, spray_job_id, entry_source, manual_entry_id, date, start_time, end_time, temperature, wind_speed, " +
   "wind_direction, humidity, spray_reference, notes, number_of_fans_jets, average_speed, " +
   "equipment_type, tractor, machine_id, tractor_id, spray_equipment_id, operation_type, tanks, " +
   "gross_area_ha, treated_area_ha, application_mode, treated_area_method, " +
@@ -939,6 +943,8 @@ function mapSpraySummary(row: SprayRow, idx: MachineIndex) {
     fans_jets: row.number_of_fans_jets ?? null,
     trip_id: row.trip_id ?? null,
     spray_job_id: row.spray_job_id ?? null,
+    entry_source: row.entry_source ?? null,
+    manual_entry_id: row.manual_entry_id ?? null,
     notes: row.notes ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -958,61 +964,19 @@ async function loadSprayTankActuals(db: SupabaseClient, sprayRecordId: string): 
 }
 
 async function loadTankActualIdentity(db: SupabaseClient, spray: SprayRow): Promise<TankActualIdentity> {
-  if (!spray.trip_id) {
-    return {
-      vineyardId: spray.vineyard_id,
-      sprayRecordId: spray.id,
-      tripId: null,
-      sessionIdsByTank: new Map(),
-      isManualEntry: true,
-    };
+  let trip: TripTankIdentitySource | null = null;
+  if (spray.trip_id) {
+    const { data, error } = await db.from("trips")
+      .select("id,vineyard_id,entry_source,manual_entry_id,tank_sessions")
+      .eq("id", spray.trip_id)
+      .maybeSingle();
+    if (error) {
+      console.error("[vinetrack-api] spray tank session lookup failed:", error.message);
+      throw new ApiError("internal_error");
+    }
+    trip = data as TripTankIdentitySource | null;
   }
-  const { data, error } = await db.from("trips")
-    .select("id,vineyard_id,tank_sessions")
-    .eq("id", spray.trip_id)
-    .eq("vineyard_id", spray.vineyard_id)
-    .maybeSingle();
-  if (error) {
-    console.error("[vinetrack-api] spray tank session lookup failed:", error.message);
-    throw new ApiError("internal_error");
-  }
-  const sessionIdsByTank = new Map<number, Set<string>>();
-  for (const raw of Array.isArray(data?.tank_sessions) ? data.tank_sessions : []) {
-    if (!raw || typeof raw !== "object") continue;
-    const session = raw as Record<string, unknown>;
-    const id = typeof session.id === "string" ? session.id : typeof session.tank_session_id === "string" ? session.tank_session_id : null;
-    const tankNumber = num(session.tankNumber ?? session.tank_number);
-    if (!id || tankNumber === null) continue;
-    sessionIdsByTank.set(tankNumber, new Set([...(sessionIdsByTank.get(tankNumber) ?? []), id]));
-  }
-  return {
-    vineyardId: spray.vineyard_id,
-    sprayRecordId: spray.id,
-    tripId: spray.trip_id,
-    sessionIdsByTank,
-    isManualEntry: false,
-  };
-}
-
-function mapActualTanks(rows: TankActualRow[], selectedIds: Set<string>) {
-  return rows.map((row) => ({
-    actual_id: row.id,
-    association_status: selectedIds.has(row.id) ? "exact" : "unresolved",
-    tank_number: row.tank_number,
-    tank_session_id: row.tank_session_id,
-    confirmed_at: row.confirmed_at,
-    actual_water_volume_l: num(row.water_volume_l),
-    actual_products: (Array.isArray(row.chemicals) ? row.chemicals as TankActualChemicalJson[] : []).map((chemical) => ({
-      id: typeof chemical.id === "string" ? chemical.id : null,
-      planned_chemical_id: typeof chemical.plannedChemicalId === "string" ? chemical.plannedChemicalId : null,
-      saved_chemical_id: typeof chemical.savedChemicalId === "string" ? chemical.savedChemicalId : null,
-      replaces_planned_chemical_id: typeof chemical.replacesPlannedChemicalId === "string" ? chemical.replacesPlannedChemicalId : null,
-      usage_kind: typeof chemical.usageKind === "string" ? chemical.usageKind : null,
-      name: typeof chemical.name === "string" ? chemical.name : null,
-      quantity_base: num(chemical.actualAmountBase),
-      unit: typeof chemical.unit === "string" ? chemical.unit : null,
-    })),
-  }));
+  return buildTankActualIdentity(spray, trip);
 }
 
 /** Full planned tank/product detail (single-record endpoint only). */
@@ -1670,7 +1634,7 @@ async function handleSprayGet(
   const actualIdentity = await loadTankActualIdentity(db, spray);
   const resolvedActuals = resolveSprayTankActualRows(plannedTanks, actualRows, actualIdentity);
   const resolvedRows = [...resolvedActuals.values()];
-  const actualTanks = mapActualTanks(actualRows, new Set(resolvedRows.map((row) => row.id)));
+  const actualTanks = mapSprayActualTanks(actualRows, new Set(resolvedRows.map((row) => row.id)), actualIdentity);
   const actualsComplete = areSprayTankActualsComplete(plannedTanks, actualRows, actualIdentity);
   body.planned_water_volume_l = sprayTotals(plannedTanks).waterL;
   body.actual_water_volume_l = resolvedRows.length === plannedTanks.length && resolvedRows.every((row) => num(row.water_volume_l) !== null)

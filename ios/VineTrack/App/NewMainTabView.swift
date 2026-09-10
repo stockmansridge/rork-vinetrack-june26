@@ -300,7 +300,10 @@ struct NewMainTabView: View {
         // Manual mutations replay first with their original operation IDs. A queued
         // delete suppresses its save, and the normal pulls below then reconcile the
         // authoritative spray/trip/actual rows.
-        await ManualSprayEntryCoordinator.shared.replay(currentRole: accessControl.currentRole)
+        await ManualSprayEntryCoordinator.shared.replay(
+            currentVineyardId: accessControl.loadedVineyardId,
+            currentRole: accessControl.currentRole
+        )
         await pinSync.syncPinsForSelectedVineyard()
         await paddockSync.syncPaddocksForSelectedVineyard()
         await tripSync.syncTripsForSelectedVineyard()

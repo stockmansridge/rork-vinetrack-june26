@@ -16,6 +16,8 @@ import io.ktor.http.isSuccess
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import java.util.UUID
 
@@ -114,32 +116,45 @@ class ManualSprayEntryCoordinator(
     private val gateway: ManualSprayGateway,
     private val store: ManualSprayOperationStoring,
 ) {
-    private var operations: MutableList<PendingManualSprayOperation> = store.load().toMutableList()
+    private val mutex = Mutex()
+    private var operations: List<PendingManualSprayOperation> = store.load()
+
+    fun pendingOperations(): List<PendingManualSprayOperation> = operations
 
     fun pendingPayloads(): List<ManualSprayPayload> {
-        val deleted = operations.filter { it.kind == PendingManualSprayKind.DELETE }.map { it.payload.manualEntryId }.toSet()
-        return operations.filter { it.kind == PendingManualSprayKind.SAVE && it.payload.manualEntryId !in deleted }.map { it.payload }
+        val deleted = operations.filter { it.kind == PendingManualSprayKind.DELETE }
+            .map { it.payload.vineyardId to it.payload.manualEntryId }.toSet()
+        return operations.filter {
+            it.kind == PendingManualSprayKind.SAVE && (it.payload.vineyardId to it.payload.manualEntryId) !in deleted
+        }.map { it.payload }
     }
 
-    suspend fun save(payload: ManualSprayPayload, expectedVersion: Int?): ManualSpraySaveResponse? {
+    suspend fun save(payload: ManualSprayPayload, expectedVersion: Int?): ManualSpraySaveResponse? = mutex.withLock {
         payload.validationError()?.let { throw IllegalArgumentException(it) }
-        val operation = operations.firstOrNull { it.kind == PendingManualSprayKind.SAVE && it.payload == payload && it.expectedVersion == expectedVersion }
-            ?: PendingManualSprayOperation(UUID.randomUUID().toString(), PendingManualSprayKind.SAVE, payload, expectedVersion).also { created ->
-                operations.removeAll { it.kind == PendingManualSprayKind.SAVE && it.payload.manualEntryId == payload.manualEntryId }
-                operations += created
-                check(store.save(operations)) { "The complete manual spray could not be saved on this device." }
-            }
-        return runCatching { gateway.save(operation.id, payload, expectedVersion) }.fold(
+        val sameIdentity = operations.firstOrNull {
+            it.kind == PendingManualSprayKind.SAVE && it.payload.vineyardId == payload.vineyardId &&
+                it.payload.manualEntryId == payload.manualEntryId
+        }
+        if (sameIdentity != null && (sameIdentity.payload != payload || sameIdentity.expectedVersion != expectedVersion)) {
+            throw IllegalStateException("This manual spray already has an exact saved retry. Retry it before making further changes.")
+        }
+        val operation = sameIdentity ?: PendingManualSprayOperation(
+            UUID.randomUUID().toString(), PendingManualSprayKind.SAVE, payload, expectedVersion,
+        ).also { created -> persist(operations + created, "The complete manual spray could not be saved on this device.") }
+        return@withLock runCatching { gateway.save(operation.id, operation.payload, operation.expectedVersion) }.fold(
             onSuccess = { response ->
-                operations.removeAll { it.id == operation.id }
-                check(store.save(operations)) { "The server saved the spray, but confirmation could not be retained." }
-                response
+                if (!response.matches(operation)) {
+                    markFailed(operation.id, IllegalStateException("The server did not confirm this exact manual spray."))
+                    null
+                } else {
+                    persist(operations.filterNot { it.id == operation.id }, "The server saved the spray, but confirmation could not be retained.")
+                    response
+                }
             },
             onFailure = { error ->
                 val terminal = ManualSprayMutationException.classify(error)
                 if (terminal != null) {
-                    operations.removeAll { it.id == operation.id }
-                    check(store.save(operations)) { "The rejected spray retry could not be cleared from this device." }
+                    persist(operations.filterNot { it.id == operation.id }, "The rejected spray retry could not be cleared from this device.")
                     throw terminal
                 }
                 markFailed(operation.id, error)
@@ -148,39 +163,63 @@ class ManualSprayEntryCoordinator(
         )
     }
 
-    suspend fun delete(payload: ManualSprayPayload): Boolean {
-        operations.removeAll { it.payload.manualEntryId == payload.manualEntryId }
-        val operation = PendingManualSprayOperation(UUID.randomUUID().toString(), PendingManualSprayKind.DELETE, payload)
-        operations += operation
-        check(store.save(operations)) { "The manual spray deletion could not be saved on this device." }
-        return runCatching { gateway.delete(operation.id, payload) }.fold(
-            onSuccess = { operations.removeAll { it.id == operation.id }; store.save(operations); true },
+    suspend fun delete(payload: ManualSprayPayload): Boolean = mutex.withLock {
+        val sameIdentity: (PendingManualSprayOperation) -> Boolean = {
+            it.payload.vineyardId == payload.vineyardId && it.payload.manualEntryId == payload.manualEntryId
+        }
+        val existingDelete = operations.firstOrNull { it.kind == PendingManualSprayKind.DELETE && sameIdentity(it) }
+        val operation = existingDelete ?: PendingManualSprayOperation(
+            UUID.randomUUID().toString(), PendingManualSprayKind.DELETE, payload,
+        ).also { created ->
+            persist(operations.filterNot(sameIdentity) + created, "The manual spray deletion could not be saved on this device.")
+        }
+        return@withLock runCatching { gateway.delete(operation.id, operation.payload) }.fold(
+            onSuccess = {
+                persist(operations.filterNot { it.id == operation.id }, "The server deleted the spray, but confirmation could not be retained.")
+                true
+            },
             onFailure = { error -> markFailed(operation.id, error); false },
         )
     }
 
-    suspend fun replay(currentRole: String?) {
-        if (!canManageManualSprays(currentRole)) return
+    suspend fun replay(roleForVineyard: (String) -> String?) = mutex.withLock {
         operations.toList().forEach { operation ->
-            if (operation.kind == PendingManualSprayKind.SAVE && operations.any { it.kind == PendingManualSprayKind.DELETE && it.payload.manualEntryId == operation.payload.manualEntryId }) return@forEach
-            runCatching {
-                if (operation.kind == PendingManualSprayKind.SAVE) gateway.save(operation.id, operation.payload, operation.expectedVersion)
-                else gateway.delete(operation.id, operation.payload)
-            }.onSuccess { operations.removeAll { it.id == operation.id }; store.save(operations) }
-                .onFailure { error ->
-                    if (ManualSprayMutationException.classify(error) != null) {
-                        operations.removeAll { it.id == operation.id }
-                        store.save(operations)
-                    } else markFailed(operation.id, error)
-                }
+            if (!canManageManualSprays(roleForVineyard(operation.payload.vineyardId))) return@forEach
+            val identity = operation.payload.vineyardId to operation.payload.manualEntryId
+            if (operation.kind == PendingManualSprayKind.SAVE && operations.any {
+                    it.kind == PendingManualSprayKind.DELETE && (it.payload.vineyardId to it.payload.manualEntryId) == identity
+                }) return@forEach
+            try {
+                if (operation.kind == PendingManualSprayKind.SAVE) {
+                    val response = gateway.save(operation.id, operation.payload, operation.expectedVersion)
+                    if (!response.matches(operation)) {
+                        markFailed(operation.id, IllegalStateException("The server did not confirm this exact manual spray."))
+                        return@forEach
+                    }
+                } else gateway.delete(operation.id, operation.payload)
+                persist(operations.filterNot { it.id == operation.id }, "The server confirmed a manual spray operation, but that confirmation could not be retained.")
+            } catch (error: Throwable) {
+                if (ManualSprayMutationException.classify(error) != null) {
+                    persist(operations.filterNot { it.id == operation.id }, "The rejected manual spray retry could not be cleared from this device.")
+                } else markFailed(operation.id, error)
+            }
         }
     }
 
+    private fun ManualSpraySaveResponse.matches(operation: PendingManualSprayOperation): Boolean =
+        serverConfirmed && source == "manual" && status == "completed" && operationId == operation.id &&
+            manualEntryId == operation.payload.manualEntryId && sprayRecordId == operation.payload.sprayRecordId &&
+            tripId == operation.payload.tripId
+
+    private fun persist(candidate: List<PendingManualSprayOperation>, message: String) {
+        check(store.save(candidate)) { message }
+        operations = candidate
+    }
+
     private fun markFailed(id: String, error: Throwable) {
-        val index = operations.indexOfFirst { it.id == id }
-        if (index < 0) return
-        val current = operations[index]
-        operations[index] = current.copy(attemptCount = current.attemptCount + 1, lastError = error.message ?: "No connection")
-        store.save(operations)
+        val candidate = operations.map {
+            if (it.id == id) it.copy(attemptCount = it.attemptCount + 1, lastError = error.message ?: "No connection") else it
+        }
+        if (store.save(candidate)) operations = candidate
     }
 }

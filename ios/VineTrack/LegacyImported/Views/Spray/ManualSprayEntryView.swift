@@ -19,6 +19,7 @@ struct ManualSprayEntryView: View {
     @State private var isReviewing: Bool = false
     @State private var isSaving: Bool = false
     @State private var message: String?
+    @State private var loadError: String?
 
     init(vineyardId: UUID, timeZone: TimeZone, existingRecord: SprayRecord? = nil, existingTrip: Trip? = nil, teamRepository: any TeamRepositoryProtocol = SupabaseTeamRepository()) {
         self.vineyardId = vineyardId
@@ -35,10 +36,15 @@ struct ManualSprayEntryView: View {
 
     var body: some View {
         Group {
-            if accessControl.canManageManualSprays {
+            if accessControl.loadedVineyardId == vineyardId && accessControl.canManageManualSprays {
                 Form {
                     if isLoadingExisting {
                         Section { ProgressView("Reloading saved actual quantities…") }
+                    } else if let loadError {
+                        Section("Edit unavailable") {
+                            Text(loadError)
+                            Button("Retry") { Task { await loadExisting() } }
+                        }
                     } else if isReviewing { reviewSections } else { entrySections }
                     if let message { Text(message).foregroundStyle(.secondary) }
                 }
@@ -54,7 +60,7 @@ struct ManualSprayEntryView: View {
                 Button(isReviewing ? "Save manual spray" : "Review") {
                     if isReviewing { Task { await save() } } else { validateForReview() }
                 }
-                .disabled(isSaving || isLoadingExisting || !accessControl.canManageManualSprays)
+                .disabled(isSaving || isLoadingExisting || loadError != nil || accessControl.loadedVineyardId != vineyardId || !accessControl.canManageManualSprays)
             }
         }
         .onChange(of: draft) { _, updated in
@@ -62,14 +68,7 @@ struct ManualSprayEntryView: View {
         }
         .task {
             members = (try? await teamRepository.listMembers(vineyardId: vineyardId)) ?? []
-            guard let existingRecord, let existingTrip else { return }
-            do {
-                let report = try await SprayReportRepository.shared.fetch(tripId: existingTrip.id)
-                let actuals = SprayTankActualStore.shared.records.filter { $0.tripId == existingTrip.id && $0.sprayRecordId == existingRecord.id }
-                draft = try ManualSprayPayload.existing(record: existingRecord, trip: existingTrip, report: report, actuals: actuals, timeZone: timeZone)
-                expectedVersion = existingRecord.syncVersion
-            } catch { message = error.localizedDescription }
-            isLoadingExisting = false
+            await loadExisting()
         }
     }
 
@@ -188,12 +187,30 @@ struct ManualSprayEntryView: View {
         Binding(get: { draft.manualWeather?[keyPath: keyPath] }, set: { draft.manualWeather?[keyPath: keyPath] = $0 })
     }
 
+    @MainActor
+    private func loadExisting() async {
+        guard let existingRecord, let existingTrip else { return }
+        isLoadingExisting = true
+        loadError = nil
+        await SprayTankActualStore.shared.pull(vineyardId: vineyardId)
+        do {
+            let report = try await SprayReportRepository.shared.fetch(tripId: existingTrip.id)
+            let actuals = SprayTankActualStore.shared.records.filter { $0.vineyardId == vineyardId && $0.tripId == existingTrip.id && $0.sprayRecordId == existingRecord.id }
+            draft = try ManualSprayPayload.existing(record: existingRecord, trip: existingTrip, report: report, actuals: actuals, timeZone: timeZone)
+            expectedVersion = existingRecord.syncVersion
+        } catch {
+            loadError = "The exact saved trip, tank, actual quantities, timezone, or weather could not be loaded. Sync and retry; no replacement draft will be created."
+        }
+        isLoadingExisting = false
+    }
+
     private func validateForReview() {
         do { _ = try draft.validated(); message = nil; isReviewing = true }
         catch { message = error.localizedDescription }
     }
 
     private func save() async {
+        guard loadError == nil, accessControl.loadedVineyardId == vineyardId, accessControl.canManageManualSprays else { return }
         isSaving = true
         defer { isSaving = false }
         if draft.manualWeather != nil { draft.manualWeather?.observedAt = draft.startUtc }

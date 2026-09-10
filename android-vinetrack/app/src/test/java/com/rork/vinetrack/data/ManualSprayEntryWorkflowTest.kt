@@ -39,6 +39,33 @@ class ManualSprayEntryWorkflowTest {
         }
     }
 
+    @Test fun failedPersistenceNeverSendsOrCreatesMemoryShortcut() = runBlocking {
+        val gateway = GatewayDouble()
+        val store = MemoryStore(failSaves = 1)
+        val coordinator = ManualSprayEntryCoordinator(gateway, store)
+        assertTrue(runCatching { coordinator.save(fixture(), 0) }.isFailure)
+        assertTrue(gateway.operationIds.isEmpty())
+        assertTrue(coordinator.pendingPayloads().isEmpty())
+    }
+
+    @Test fun unconfirmedOrMismatchedResponseKeepsExactRetry() = runBlocking {
+        val payload = fixture()
+        val gateway = GatewayDouble(serverConfirmed = false)
+        val coordinator = ManualSprayEntryCoordinator(gateway, MemoryStore())
+        assertNull(coordinator.save(payload, 0))
+        assertEquals(payload, coordinator.pendingPayloads().single())
+    }
+
+    @Test fun replayUsesEachOperationsOwningVineyardRole() = runBlocking {
+        val payload = fixture()
+        val gateway = GatewayDouble(failSave = true)
+        val coordinator = ManualSprayEntryCoordinator(gateway, MemoryStore())
+        coordinator.save(payload, 0)
+        coordinator.replay { vineyardId -> if (vineyardId == payload.vineyardId) "operator" else "owner" }
+        assertEquals(1, gateway.operationIds.size)
+        assertEquals(payload, coordinator.pendingPayloads().single())
+    }
+
     @Test fun lostResponseReplaysSameOperationAndDeleteSuppressesCreate() = runBlocking {
         val gateway = GatewayDouble(failSave = true)
         val store = MemoryStore()
@@ -56,7 +83,7 @@ class ManualSprayEntryWorkflowTest {
         gateway.failDelete = true
         coordinator.delete(second)
         assertTrue(coordinator.pendingPayloads().none { it.manualEntryId == second.manualEntryId })
-        coordinator.replay("operator")
+        coordinator.replay { "operator" }
         assertTrue(store.values.any { it.kind == PendingManualSprayKind.DELETE })
     }
 
@@ -73,10 +100,14 @@ class ManualSprayEntryWorkflowTest {
     )
 }
 
-private class MemoryStore : ManualSprayOperationStoring {
+private class MemoryStore(private var failSaves: Int = 0) : ManualSprayOperationStoring {
     var values: List<PendingManualSprayOperation> = emptyList()
     override fun load(): List<PendingManualSprayOperation> = values
-    override fun save(operations: List<PendingManualSprayOperation>): Boolean { values = operations; return true }
+    override fun save(operations: List<PendingManualSprayOperation>): Boolean {
+        if (failSaves > 0) { failSaves -= 1; return false }
+        values = operations
+        return true
+    }
 }
 
 private class TerminalGateway(private val error: Throwable) : ManualSprayGateway {
@@ -84,12 +115,16 @@ private class TerminalGateway(private val error: Throwable) : ManualSprayGateway
     override suspend fun delete(operationId: String, payload: ManualSprayPayload) = Unit
 }
 
-private class GatewayDouble(var failSave: Boolean = false, var failDelete: Boolean = false) : ManualSprayGateway {
+private class GatewayDouble(
+    var failSave: Boolean = false,
+    var failDelete: Boolean = false,
+    var serverConfirmed: Boolean = true,
+) : ManualSprayGateway {
     val operationIds = mutableListOf<String>()
     override suspend fun save(operationId: String, payload: ManualSprayPayload, expectedVersion: Int?): ManualSpraySaveResponse {
         operationIds += operationId
         if (failSave) { failSave = false; error("lost response") }
-        return ManualSpraySaveResponse(operationId, payload.manualEntryId, payload.sprayRecordId, payload.tripId, "manual", "completed", 1, true)
+        return ManualSpraySaveResponse(operationId, payload.manualEntryId, payload.sprayRecordId, payload.tripId, "manual", "completed", 1, serverConfirmed)
     }
     override suspend fun delete(operationId: String, payload: ManualSprayPayload) { if (failDelete) { failDelete = false; error("offline") } }
 }

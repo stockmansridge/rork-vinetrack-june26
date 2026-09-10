@@ -1,6 +1,8 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   areSprayTankActualsComplete,
+  buildTankActualIdentity,
+  mapSprayActualTanks,
   resolveSprayTankActualRows,
   type TankActualIdentity,
   type TankActualRow,
@@ -36,6 +38,56 @@ Deno.test("duplicate additional id is malformed", () => {
   const addition = (base.chemicals as Record<string, unknown>[])[1];
   const duplicate = { ...base, chemicals: [...base.chemicals as unknown[], { ...addition }] };
   assertEquals(areSprayTankActualsComplete(planned, [duplicate], identity), false);
+});
+
+Deno.test("SQL 232 manual backing trip uses stored tank identity and maps actual-only lines", () => {
+  const manualId = "60000000-0000-4000-8000-000000000001";
+  const tankId = "60000000-0000-4000-8000-000000000002";
+  const chemicalId = "60000000-0000-4000-8000-000000000003";
+  const manualSpray = {
+    id: fixture.sprayRecordId,
+    vineyard_id: fixture.vineyardId,
+    trip_id: fixture.tripId,
+    entry_source: "manual",
+    manual_entry_id: manualId,
+    tanks: [{ id: tankId, tankNumber: 1, chemicals: [{ id: chemicalId, savedChemicalId: "60000000-0000-4000-8000-000000000004", costPerUnit: null, volumePerTank: null }]}],
+  };
+  const backingTrip = { id: fixture.tripId, vineyard_id: fixture.vineyardId, entry_source: "manual", manual_entry_id: manualId, tank_sessions: [] };
+  const manualIdentity = buildTankActualIdentity(manualSpray, backingTrip);
+  const manualActual = {
+    ...base,
+    tank_session_id: tankId,
+    chemicals: [{ id: chemicalId, plannedChemicalId: null, savedChemicalId: "60000000-0000-4000-8000-000000000004", name: "Manual product", actualAmountBase: 1250, unit: "mL" }],
+  };
+  assertEquals(manualIdentity.isManualEntry, true);
+  assertEquals(areSprayTankActualsComplete(manualSpray.tanks, [manualActual], manualIdentity), true);
+  const mapped = mapSprayActualTanks([manualActual], new Set([manualActual.id]), manualIdentity);
+  assertEquals(mapped[0].association_status, "exact");
+  assertEquals(mapped[0].actual_products[0].usage_kind, "additional");
+  assertEquals(mapped[0].actual_products[0].planned_chemical_id, null);
+});
+
+Deno.test("manual identity rejects wrong backing owner, provenance, and stored tank session", () => {
+  const manualId = "70000000-0000-4000-8000-000000000001";
+  const tankId = "70000000-0000-4000-8000-000000000002";
+  const spray = { id: fixture.sprayRecordId, vineyard_id: fixture.vineyardId, trip_id: fixture.tripId, entry_source: "manual", manual_entry_id: manualId, tanks: [{ id: tankId, tankNumber: 1, chemicals: [] }] };
+  const wrongOwner = buildTankActualIdentity(spray, { id: fixture.tripId, vineyard_id: "wrong", entry_source: "manual", manual_entry_id: manualId, tank_sessions: [] });
+  const unknownOrigin = buildTankActualIdentity({ ...spray, entry_source: null, manual_entry_id: null }, null);
+  assertEquals(wrongOwner.sessionIdsByTank.size, 0);
+  assertEquals(unknownOrigin.isManualEntry, false);
+  assertEquals(resolveSprayTankActualRows(spray.tanks, [{ ...base, tank_session_id: "wrong-session" }], wrongOwner).size, 0);
+});
+
+Deno.test("manual response mapping preserves explicit zero and null quantities and rejects wrong owner evidence", () => {
+  const manualIdentity = { ...identity, isManualEntry: true };
+  const rows = [
+    { ...base, chemicals: [{ id: "line-zero", plannedChemicalId: null, savedChemicalId: "saved-zero", actualAmountBase: 0 }] },
+    { ...base, id: "wrong-owner", vineyard_id: "wrong", chemicals: [{ id: "line-null", plannedChemicalId: null, savedChemicalId: "saved-null", actualAmountBase: null }] },
+  ];
+  const mapped = mapSprayActualTanks(rows, new Set([base.id]), manualIdentity);
+  assertEquals(mapped.length, 1);
+  assertEquals(mapped[0].actual_products[0].quantity_base, 0);
+  assertEquals(areSprayTankActualsComplete(planned, rows, manualIdentity), false);
 });
 
 Deno.test("zero direct line with one valid substitution is complete", () => {

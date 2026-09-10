@@ -107,13 +107,17 @@ nonisolated struct ManualSprayPayload: Codable, Sendable, Hashable {
         actuals: [SprayTankActual],
         timeZone: TimeZone
     ) throws -> ManualSprayPayload {
-        guard record.isManualEntry, let manualEntryId = record.manualEntryId else {
-            throw ManualSprayValidationError.invalidIdentity
-        }
+        guard record.isManualEntry, let manualEntryId = record.manualEntryId,
+              record.vineyardId == trip.vineyardId, record.tripId == trip.id,
+              report.identity.vineyardId == record.vineyardId,
+              report.identity.sprayRecordId == record.id, report.identity.tripId == trip.id,
+              report.provenance?.source == "manual", report.provenance?.manualEntryId == manualEntryId
+        else { throw ManualSprayValidationError.invalidIdentity }
         let iso = ISO8601DateFormatter()
         let tanks: [ManualSprayTank] = try report.tanks.sorted { $0.tankNumber < $1.tankNumber }.map { tank in
-            guard let actual = actuals.first(where: { $0.id == tank.actualId }) ?? actuals.first(where: { $0.tankNumber == tank.tankNumber }),
-                  let tankId = UUID(uuidString: actual.tankSessionId), let actualId = tank.actualId else {
+            guard let actualId = tank.actualId,
+                  let actual = actuals.first(where: { $0.id == actualId && $0.vineyardId == record.vineyardId && $0.sprayRecordId == record.id && $0.tripId == trip.id }),
+                  let tankId = UUID(uuidString: actual.tankSessionId), actual.tankNumber == tank.tankNumber else {
                 throw ManualSprayValidationError.missingActuals
             }
             let chemicals: [ManualSprayChemical] = try tank.chemicals.map { chemical in
@@ -133,7 +137,7 @@ nonisolated struct ManualSprayPayload: Codable, Sendable, Hashable {
             vineyardId: record.vineyardId, manualEntryId: manualEntryId, sprayRecordId: record.id, tripId: trip.id,
             reference: record.sprayReference, operationType: report.application?.operationType ?? record.operationType.rawValue,
             startUtc: trip.startTime, endUtc: trip.endTime ?? record.endTime ?? record.startTime,
-            vineyardTimeZone: report.identity.vineyardTimeZone.isEmpty ? timeZone.identifier : report.identity.vineyardTimeZone,
+            vineyardTimeZone: TimeZone(identifier: report.identity.vineyardTimeZone)?.identifier ?? timeZone.identifier,
             tractorId: report.equipment.tractorId ?? trip.tractorId, operatorUserId: report.trip.operatorId ?? trip.operatorUserId,
             sprayEquipmentId: report.equipment.sprayEquipmentId ?? record.sprayEquipmentId,
             startEngineHours: report.equipment.startEngineHours ?? trip.startEngineHours,
@@ -145,6 +149,7 @@ nonisolated struct ManualSprayPayload: Codable, Sendable, Hashable {
 
     func validated() throws -> ManualSprayPayload {
         guard !reference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ManualSprayValidationError.missingReference }
+        guard TimeZone(identifier: vineyardTimeZone) != nil else { throw ManualSprayValidationError.invalidTimeZone }
         guard endUtc > startUtc else { throw ManualSprayValidationError.invalidInterval }
         guard tractorId != nil else { throw ManualSprayValidationError.missingTractor }
         guard operatorUserId != nil else { throw ManualSprayValidationError.missingOperator }
@@ -172,7 +177,7 @@ nonisolated struct ManualSprayPayload: Codable, Sendable, Hashable {
 nonisolated enum ManualSprayValidationError: LocalizedError, Sendable, Equatable {
     case missingReference, invalidInterval, missingTractor, missingOperator, missingSprayUnit
     case missingBlocks, missingTanks, invalidEngineHours, invalidTank, missingChemicals(Int), invalidChemical(Int)
-    case invalidIdentity, missingActuals, emptyWeather
+    case invalidIdentity, missingActuals, emptyWeather, invalidTimeZone
 
     var errorDescription: String? {
         switch self {
@@ -190,6 +195,7 @@ nonisolated enum ManualSprayValidationError: LocalizedError, Sendable, Equatable
         case .invalidIdentity: "This manual application does not have a valid shared identity."
         case .missingActuals: "The saved actual tank quantities could not be reloaded. Sync and try again."
         case .emptyWeather: "Enter at least one weather measurement or turn manual weather off."
+        case .invalidTimeZone: "The vineyard timezone is invalid. Reload this application and try again."
         }
     }
 }

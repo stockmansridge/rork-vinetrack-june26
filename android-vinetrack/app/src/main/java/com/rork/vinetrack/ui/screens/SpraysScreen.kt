@@ -252,7 +252,7 @@ fun SpraysScreen(
     }
 
     if (creating) {
-        ManualSprayEntrySheet(state = state, onDismiss = { creating = false }, onSaved = { creating = false })
+        ManualSprayEntrySheet(vm = vm, state = state, onDismiss = { creating = false }, onSaved = { creating = false })
     }
     if (creatingTemplate) {
         SpraySheet(vm = vm, state = state, existing = null, asTemplate = true, onDismiss = { creatingTemplate = false }, onSaved = { creatingTemplate = false })
@@ -262,7 +262,7 @@ fun SpraysScreen(
     }
     editing?.let { rec ->
         if (rec.isManualEntry) {
-            ManualSprayEntrySheet(state = state, existing = rec, onDismiss = { editing = null }, onSaved = { editing = null })
+            ManualSprayEntrySheet(vm = vm, state = state, existing = rec, onDismiss = { editing = null }, onSaved = { editing = null })
         } else {
             SpraySheet(vm = vm, state = state, existing = rec, asTemplate = rec.isTemplate, onDismiss = { editing = null }, onSaved = { editing = null })
         }
@@ -353,7 +353,11 @@ private fun SprayListView(
     val query = search.trim()
     val hasSearch = query.isNotEmpty()
 
-    val all = remember(state.sprayRecords) { state.sprayRecords }
+    val manualOperations = vm.pendingManualSprayOperations().filter { it.payload.vineyardId == state.selectedVineyardId }
+    val pendingManualSaves = manualOperations.filter { it.kind == com.rork.vinetrack.data.PendingManualSprayKind.SAVE }
+    val pendingManualDeleteIds = manualOperations.filter { it.kind == com.rork.vinetrack.data.PendingManualSprayKind.DELETE }
+        .map { it.payload.sprayRecordId }.toSet()
+    val all = remember(state.sprayRecords, pendingManualDeleteIds) { state.sprayRecords.filterNot { it.id in pendingManualDeleteIds } }
     // Program Steps merge two sources: local steps stored in spray_records and
     // shared portal steps from spray_jobs, deduped by id (local wins).
     val allTemplates = remember(state.sprayRecords, state.sprayJobTemplates) {
@@ -368,9 +372,9 @@ private fun SprayListView(
             programSort,
         )
     }
-    val operational = remember(state.sprayRecords, query, sort, state.trips) {
+    val operational = remember(all, query, sort, state.trips) {
         SprayProgramLanding.sort(
-            SprayProgramLanding.uniqueOperational(state.sprayRecords)
+            SprayProgramLanding.uniqueOperational(all)
                 .filter { query.isEmpty() || SprayProgramLanding.sprayMatches(it, state.trips, query) },
             sort,
         )
@@ -622,7 +626,7 @@ private fun SprayListView(
                     }
                 }
 
-                tab == SprayProgramTabChoice.SPRAYS && filtered.isEmpty() -> {
+                tab == SprayProgramTabChoice.SPRAYS && filtered.isEmpty() && pendingManualSaves.isEmpty() -> {
                     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                         if (hasSearch) {
                             EmptyState(
@@ -660,6 +664,12 @@ private fun SprayListView(
                                 )
                             }
                         } else {
+                            items(pendingManualSaves, key = { "pending-manual-${it.id}" }) { operation ->
+                                VineyardCard {
+                                    Text(operation.payload.reference, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                                    Text("Manual spray saved on this device — awaiting sync", fontSize = 13.sp, color = vine.textSecondary)
+                                }
+                            }
                             items(filtered, key = { it.id }) { record ->
                                 SprayRow(
                                     record = record,
@@ -1537,17 +1547,28 @@ private fun SprayDetailView(
                 TextButton(onClick = {
                     confirmDelete = false
                     if (record.isManualEntry) {
+                        val manualEntryId = record.manualEntryId
                         val trip = record.tripId?.let { id -> state.trips.firstOrNull { it.id == id } }
-                        val payload = record.toManualPayload(trip, state, state.seasonZone)
-                        if (payload != null) exportScope.launch {
-                            val coordinator = com.rork.vinetrack.data.ManualSprayEntryCoordinator(
-                                com.rork.vinetrack.data.ManualSprayEntryRepository(com.rork.vinetrack.data.auth.SessionStore(context)),
-                                com.rork.vinetrack.data.ManualSprayOperationStore(context),
+                        if (manualEntryId == null || trip == null || trip.vineyardId != record.vineyardId ||
+                            !com.rork.vinetrack.data.model.canManageManualSprays(state.currentRole)
+                        ) {
+                            Toast.makeText(context, "The exact manual application identity or permission is unavailable.", Toast.LENGTH_LONG).show()
+                        } else exportScope.launch {
+                            val payload = com.rork.vinetrack.data.model.ManualSprayPayload(
+                                vineyardId = record.vineyardId, manualEntryId = manualEntryId, sprayRecordId = record.id, tripId = trip.id,
+                                reference = record.sprayReference, operationType = record.operationType ?: "Foliar Spray",
+                                startUtc = trip.startTime ?: record.startTime ?: record.date ?: Instant.now().toString(),
+                                endUtc = trip.endTime ?: record.endTime ?: Instant.now().toString(), vineyardTimeZone = state.seasonZone.id,
+                                tractorId = trip.tractorId, operatorUserId = trip.operatorUserId, sprayEquipmentId = record.sprayEquipmentId,
+                                startEngineHours = trip.startEngineHours, endEngineHours = trip.endEngineHours, notes = record.notes,
+                                blocks = emptyList(), tanks = emptyList(),
                             )
-                            runCatching { coordinator.delete(payload) }.onSuccess {
-                                vm.hideManualSprayLocally(record.id, payload.tripId)
-                                onBack()
-                            }
+                            runCatching { vm.deleteManualSpray(payload) }
+                                .onSuccess {
+                                    vm.hideManualSprayLocally(record.id, payload.tripId)
+                                    onBack()
+                                }
+                                .onFailure { Toast.makeText(context, it.message ?: "The manual spray could not be deleted.", Toast.LENGTH_LONG).show() }
                         }
                     } else vm.deleteSprayRecord(record.id) { ok -> if (ok) onBack() }
                 }) { Text("Delete", color = VineColors.Destructive) }

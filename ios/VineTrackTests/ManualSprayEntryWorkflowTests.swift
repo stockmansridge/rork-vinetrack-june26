@@ -17,6 +17,38 @@ final class ManualSprayEntryWorkflowTests: XCTestCase {
         XCTAssertEqual(ChemicalUnit.kilograms.fromBase(750), 0.75)
     }
 
+    func testPersistenceFailureDoesNotSendOrCreateMemoryShortcut() async {
+        let repository = ManualSprayRepositoryDouble()
+        let store = ManualSprayMemoryStore(failSaves: 1)
+        let coordinator = ManualSprayEntryCoordinator(repository: repository, store: store)
+        do {
+            _ = try await coordinator.save(payload: fixture(), expectedVersion: 0)
+            XCTFail("Expected persistence failure")
+        } catch {}
+        XCTAssertTrue(coordinator.pendingPayloads.isEmpty)
+        let saveCount = await repository.saveCalls.count
+        XCTAssertEqual(saveCount, 0)
+    }
+
+    func testUnconfirmedResponseRetainsExactRetry() async throws {
+        let payload = fixture()
+        let repository = ManualSprayRepositoryDouble(serverConfirmed: false)
+        let coordinator = ManualSprayEntryCoordinator(repository: repository, store: ManualSprayMemoryStore())
+        XCTAssertNil(try await coordinator.save(payload: payload, expectedVersion: 0))
+        XCTAssertEqual(coordinator.pendingPayloads, [payload])
+    }
+
+    func testReplayUsesOwningVineyardRole() async throws {
+        let payload = fixture()
+        let repository = ManualSprayRepositoryDouble(failSaves: 1)
+        let coordinator = ManualSprayEntryCoordinator(repository: repository, store: ManualSprayMemoryStore())
+        _ = try await coordinator.save(payload: payload, expectedVersion: 0)
+        await coordinator.replay(currentVineyardId: UUID(), currentRole: .owner)
+        let saveCount = await repository.saveCalls.count
+        XCTAssertEqual(saveCount, 1)
+        XCTAssertEqual(coordinator.pendingPayloads, [payload])
+    }
+
     func testLostResponseRetainsSameIdsForReplay() async throws {
         let repository = ManualSprayRepositoryDouble(failSaves: 1)
         let store = ManualSprayMemoryStore()
@@ -57,7 +89,7 @@ final class ManualSprayEntryWorkflowTests: XCTestCase {
         _ = try await coordinator.save(payload: payload, expectedVersion: 0)
         _ = try await coordinator.delete(payload: payload)
         XCTAssertTrue(coordinator.pendingPayloads.isEmpty)
-        await coordinator.replay(currentRole: .operator)
+        await coordinator.replay(currentVineyardId: payload.vineyardId, currentRole: .operator)
         let saveCount = await repository.saveCalls.count
         XCTAssertEqual(saveCount, 1)
     }
@@ -80,13 +112,18 @@ private actor ManualSprayRepositoryDouble: ManualSprayEntryRepositoryProtocol {
     struct Call: Sendable { let operationId: UUID; let payload: ManualSprayPayload }
     private var remainingSaveFailures: Int
     private var remainingDeleteFailures: Int
+    private let serverConfirmed: Bool
     private(set) var saveCalls: [Call] = []
 
-    init(failSaves: Int = 0, failDeletes: Int = 0) { remainingSaveFailures = failSaves; remainingDeleteFailures = failDeletes }
+    init(failSaves: Int = 0, failDeletes: Int = 0, serverConfirmed: Bool = true) {
+        remainingSaveFailures = failSaves
+        remainingDeleteFailures = failDeletes
+        self.serverConfirmed = serverConfirmed
+    }
     func save(operationId: UUID, payload: ManualSprayPayload, expectedVersion: Int?) async throws -> ManualSpraySaveResponse {
         saveCalls.append(Call(operationId: operationId, payload: payload))
         if remainingSaveFailures > 0 { remainingSaveFailures -= 1; throw URLError(.notConnectedToInternet) }
-        return ManualSpraySaveResponse(operationId: operationId, manualEntryId: payload.manualEntryId, sprayRecordId: payload.sprayRecordId, tripId: payload.tripId, source: "manual", status: "completed", syncVersion: 1, serverConfirmed: true)
+        return ManualSpraySaveResponse(operationId: operationId, manualEntryId: payload.manualEntryId, sprayRecordId: payload.sprayRecordId, tripId: payload.tripId, source: "manual", status: "completed", syncVersion: 1, serverConfirmed: serverConfirmed)
     }
     func delete(operationId: UUID, payload: ManualSprayPayload) async throws {
         if remainingDeleteFailures > 0 { remainingDeleteFailures -= 1; throw URLError(.notConnectedToInternet) }
@@ -102,6 +139,12 @@ private actor ManualSprayTerminalRepositoryDouble: ManualSprayEntryRepositoryPro
 
 private final class ManualSprayMemoryStore: ManualSprayEntryStoring, @unchecked Sendable {
     private var values: [PendingManualSprayOperation] = []
+    private var failSaves: Int
+    init(failSaves: Int = 0) { self.failSaves = failSaves }
     func load() -> [PendingManualSprayOperation] { values }
-    func save(_ operations: [PendingManualSprayOperation]) -> Bool { values = operations; return true }
+    func save(_ operations: [PendingManualSprayOperation]) -> Bool {
+        if failSaves > 0 { failSaves -= 1; return false }
+        values = operations
+        return true
+    }
 }
