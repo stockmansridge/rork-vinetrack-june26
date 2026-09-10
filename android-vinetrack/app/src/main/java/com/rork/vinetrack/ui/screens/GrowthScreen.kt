@@ -1456,7 +1456,11 @@ fun GrowthSheet(
         block != null && block?.budburstDate.isNullOrBlank()
     var setBudburst by remember(budburstEligible) { mutableStateOf(budburstEligible) }
 
-    val canSave = stage != null && !saving
+    // Automatic placement cannot silently become an unlocated observation.
+    // Existing edits and explicit block-entry callers retain their established
+    // meanings; a new automatic capture requires a qualified coordinate.
+    val canSave = stage != null && !saving &&
+        (existing != null || initialBlock != null || (locatedLat != null && locatedLng != null))
 
     fun save() {
         val chosen = stage ?: return
@@ -1705,7 +1709,7 @@ private fun AutoPlacementCard(
                 locating -> "Finding your position\u2026"
                 block != null -> listOfNotNull("Auto-placed like a pin", row?.let { "Row $it" }).joinToString(" \u00B7 ")
                 hasCoordinate -> "Saved at your current position"
-                resolved -> "Enable location to auto-place this observation"
+                resolved -> "No qualified GPS fix — close this sheet and press Growth Stage again"
                 else -> ""
             }
             if (sub.isNotBlank()) Text(sub, color = vine.textSecondary, fontSize = 12.sp)

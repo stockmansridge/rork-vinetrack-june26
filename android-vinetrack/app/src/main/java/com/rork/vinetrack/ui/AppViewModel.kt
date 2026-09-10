@@ -105,6 +105,8 @@ import com.rork.vinetrack.data.model.PendingPhotoStatus
 import com.rork.vinetrack.data.model.PhotoDisplaySource
 import com.rork.vinetrack.data.PinPlacement
 import com.rork.vinetrack.data.PinPlacementResult
+import com.rork.vinetrack.data.PinCaptureContext
+import com.rork.vinetrack.data.PinLocationResult
 import com.rork.vinetrack.data.PinRepository
 import com.rork.vinetrack.data.ProfileRepository
 import com.rork.vinetrack.data.RegionFormatter
@@ -6076,15 +6078,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Exact E-L identifier for growth-stage pins (iOS parity column
         // growth_stage_code). Null for every other pin.
         growthStageCode: String? = null,
+        // Automatic GPS capture freezes identity, vineyard, trip and observation
+        // time at the initiating tap. Null preserves explicit/manual placement.
+        captureContext: PinCaptureContext? = null,
         // Quick-pin parity: fires with the created (or queued optimistic) pin so the
         // launcher's success card and auto-photo prompt have the concrete row to
         // work with. Independent of [onResult], which still reports save success.
         onCreatedPin: (Pin) -> Unit = {},
         onResult: (Boolean) -> Unit,
     ) {
-        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
-        val activeTrip = _ui.value.activeTrip
-        val attribution = resolveTripPinAttribution(
+        val vineyardId = captureContext?.vineyardId
+            ?: _ui.value.selectedVineyardId
+            ?: run { onResult(false); return }
+        val activeTrip = if (captureContext == null) _ui.value.activeTrip else null
+        val attribution = if (captureContext != null) {
+            TripPinAttribution(
+                paddockId = paddockId ?: placement?.paddockId,
+                rowNumber = rowNumber ?: placement?.pinRowNumber?.toInt(),
+                placement = placement,
+            )
+        } else resolveTripPinAttribution(
             activeTrip = activeTrip,
             paddocks = _ui.value.paddocks,
             latitude = latitude,
@@ -6101,11 +6114,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // optimistic pin, the network insert, and (if queued) the outbox
         // payload — keeping replay idempotent.
         val input = PinRepository.PinInput(
-            id = UUID.randomUUID().toString(),
+            id = captureContext?.pinId ?: UUID.randomUUID().toString(),
             vineyardId = vineyardId,
             // Link the pin to the in-progress trip (iOS parity) so it shows up
             // in that trip's detail view and PDF export.
-            tripId = _ui.value.activeTrip?.id,
+            tripId = if (captureContext != null) captureContext.tripId else _ui.value.activeTrip?.id,
             paddockId = resolvedPaddockId,
             title = title.ifBlank { null },
             category = category?.ifBlank { null },
@@ -6131,7 +6144,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Stamp capture time here, at the moment of the drop, so an
             // offline pin keeps the day (and therefore the vintage) it was
             // actually recorded on instead of the day its queue drained.
-            createdAt = java.time.Instant.now().toString(),
+            createdAt = captureContext?.observedAtIso ?: java.time.Instant.now().toString(),
         )
         val canonicalSegments = segments
             ?.takeIf { locationScope == ManualIssueScopes.ROW }
@@ -7786,10 +7799,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Id of the currently active trip, if any (used to navigate after start). */
     fun activeTripIdOrNull(): String? = _ui.value.activeTrip?.id
 
+    /** Reject delayed GPS callbacks after the operator changes vineyard or trip. */
+    fun isPinCaptureContextCurrent(vineyardId: String, tripId: String?): Boolean =
+        _ui.value.selectedVineyardId == vineyardId && _ui.value.activeTrip?.id == tripId
+
     /**
      * One-shot current GPS fix for dropping a pin from the Repairs/Growth
      * launcher. Returns lat/lng when permission is granted and a fix is
-     * available, otherwise null so callers fall back to the paddock centroid.
+     * available, otherwise null. Automatic pin callers must never substitute a centroid.
      */
     fun fetchCurrentLocation(onResult: (Pair<Double, Double>?) -> Unit) {
         viewModelScope.launch {
@@ -7808,14 +7825,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * [fetchCurrentLocation]; kept separate so existing lat/lng callers are
      * untouched.
      */
-    fun fetchCurrentFix(onResult: (CoordinatePoint?) -> Unit) {
+    fun fetchCurrentFix(onResult: (PinLocationResult) -> Unit) {
         viewModelScope.launch {
-            val point = try {
-                LocationTracker(getApplication()).currentLocation()
+            val result = try {
+                LocationTracker(getApplication()).currentPinLocation()
+            } catch (_: kotlinx.coroutines.CancellationException) {
+                PinLocationResult.Cancelled
             } catch (_: Exception) {
-                null
+                PinLocationResult.Invalid
             }
-            onResult(point)
+            onResult(result)
         }
     }
 

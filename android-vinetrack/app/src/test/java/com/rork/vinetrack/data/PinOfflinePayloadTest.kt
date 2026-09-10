@@ -28,6 +28,7 @@ class PinOfflinePayloadTest {
         id = "0f8a3a52-6a1e-4a7e-9a1c-2d3e4f5a6b7c",
         vineyardId = "vineyard-1",
         paddockId = "block-1",
+        tripId = "trip-at-tap",
         title = "Vine Issue",
         category = "Vine Issue",
         buttonName = "Vine Issue",
@@ -46,6 +47,7 @@ class PinOfflinePayloadTest {
         latitude = -34.001239,
         longitude = 138.000470,
         createdBy = "user-1",
+        createdAt = "2026-09-09T02:03:04Z",
     )
 
     @Test
@@ -84,6 +86,35 @@ class PinOfflinePayloadTest {
         assertEquals(null, decoded.snappedLatitude)
         assertEquals(null, decoded.snappedLongitude)
         assertEquals(7.5 - 0.5, decoded.pinRowNumber!!, 1e-12)
+    }
+
+    @Test
+    fun `restart and replay preserve frozen identity context coordinate and time`() {
+        val inputs = listOf(
+            fullPlacementInput(),
+            fullPlacementInput().copy(
+                id = "1f8a3a52-6a1e-4a7e-9a1c-2d3e4f5a6b7d",
+                latitude = -32.991001,
+                longitude = 148.991001,
+                createdAt = "2026-09-09T02:03:09Z",
+            ),
+            fullPlacementInput().copy(
+                id = "2f8a3a52-6a1e-4a7e-9a1c-2d3e4f5a6b7e",
+                latitude = -32.992002,
+                longitude = 148.992002,
+                createdAt = "2026-09-09T02:03:14Z",
+            ),
+        )
+        val restarted = inputs.map { input ->
+            json.decodeFromString(
+                PinRepository.PinInput.serializer(),
+                json.encodeToString(PinRepository.PinInput.serializer(), input),
+            )
+        }
+        assertEquals(inputs, restarted)
+        assertEquals(3, restarted.map { it.id }.toSet().size)
+        assertEquals(3, restarted.map { it.latitude to it.longitude }.toSet().size)
+        assertTrue(restarted.all { it.tripId == "trip-at-tap" })
     }
 
     @Test

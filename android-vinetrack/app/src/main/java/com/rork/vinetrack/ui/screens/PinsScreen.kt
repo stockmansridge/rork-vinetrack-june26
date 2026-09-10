@@ -84,6 +84,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
@@ -113,10 +114,17 @@ import coil3.compose.AsyncImage
 import com.rork.vinetrack.data.PinDuplicateChecker
 import com.rork.vinetrack.data.PinDuplicateCreateAttempt
 import com.rork.vinetrack.data.PinExporter
+import com.rork.vinetrack.data.PinRecoveryDiagnosticExporter
 import com.rork.vinetrack.data.SeasonScope
 import com.rork.vinetrack.data.SeasonSelection
 import com.rork.vinetrack.ui.components.SeasonSelector
 import com.rork.vinetrack.data.PinPlacement
+import com.rork.vinetrack.data.PinCaptureContext
+import com.rork.vinetrack.data.PinCaptureEvidenceStore
+import com.rork.vinetrack.data.PinLocationResult
+import com.rork.vinetrack.data.PinTapCaptureGate
+import com.rork.vinetrack.data.QualifiedLocationFix
+import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.PinPresentationTarget
 import com.rork.vinetrack.data.PinPhotoSync
 import com.rork.vinetrack.data.RowAttachment
@@ -145,6 +153,8 @@ import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import com.rork.vinetrack.data.AppPreferencesStore
 import java.io.File
+import java.time.Instant
+import java.util.UUID
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -582,6 +592,12 @@ fun PinsScreen(
                     TextButton(onClick = { showExportSheet = false; runExport(PinExporter.Format.PDF) }) { Text("Export as PDF") }
                     TextButton(onClick = { showExportSheet = false; runExport(PinExporter.Format.CSV) }) { Text("Export as CSV (Excel)") }
                     TextButton(onClick = { showExportSheet = false; runExport(PinExporter.Format.BOTH) }) { Text("Export Both (PDF + CSV)") }
+                    TextButton(onClick = {
+                        showExportSheet = false
+                        val vineyardId = state.selectedVineyardId
+                        val ok = vineyardId != null && PinRecoveryDiagnosticExporter.exportAndShare(context, vineyardId)
+                        if (!ok) scope.launch { snackbarHostState.showSnackbar("Couldn't create recovery evidence export.") }
+                    }) { Text("Export recovery evidence (JSON)") }
                 }
             },
             dismissButton = {
@@ -1138,14 +1154,11 @@ private fun PinEditSheetHost(
         paddocks = state.paddocks,
         onDismiss = onDismiss,
         onSave = { fields, photoUri, onDone ->
-            // Prefer the GPS fix captured when the category was tapped;
-            // fall back to the paddock centroid / vineyard coordinate.
+            // Automatic GPS coordinates exist only when a qualified fix was
+            // captured. A manual block selection keeps its established block-only
+            // meaning and is never disguised as a centroid GPS observation.
             val hasGps = target.latitude != null && target.longitude != null
-            val loc = if (hasGps) {
-                target.latitude to target.longitude
-            } else {
-                defaultLocation(fields.paddockId, state)
-            }
+            val loc = if (hasGps) target.latitude to target.longitude else null
             // Resolve the immutable placement exactly once at commit time.
             // The same value feeds the duplicate check, the confirmation
             // message, and the save payload (online or queued offline), so
@@ -1529,8 +1542,13 @@ fun PinCategoryLauncherScreen(
     var autoPhotoPinId by rememberSaveable { mutableStateOf<String?>(null) }
     var showAutoPhoto by remember { mutableStateOf(false) }
 
-    // Category pending a GPS fix / permission decision before creation.
-    var pendingSelection by remember { mutableStateOf<Pair<String, String>?>(null) }
+    // Dedicated foreground subscription owned by this launcher. It runs even
+    // without an active trip and is disposed as soon as the launcher leaves.
+    val pinLocationTracker = remember { LocationTracker(context) }
+    DisposableEffect(pinLocationTracker) {
+        pinLocationTracker.startPinFixUpdates()
+        onDispose { pinLocationTracker.stopPinFixUpdates() }
+    }
 
     // Auto-dismiss the success card after a short moment, like the iOS toast.
     LaunchedEffect(successToast) {
@@ -1567,33 +1585,72 @@ fun PinCategoryLauncherScreen(
      * ([PinDuplicateChecker]) and offline-safe create ([AppViewModel.createPin]).
      * No full form is shown for this common path.
      */
-    fun quickCreate(category: String, side: String, loc: CoordinatePoint) {
-        val lat = loc.latitude
-        val lng = loc.longitude
+    fun quickCreate(
+        category: String,
+        side: String,
+        fix: QualifiedLocationFix,
+        capture: PinCaptureContext,
+        capturedMode: String,
+        capturedHeading: Double?,
+        capturedPaddocks: List<Paddock>,
+    ) {
+        val lat = fix.latitude
+        val lng = fix.longitude
         // One-shot immutable placement: block by polygon containment, nearest
         // row snap, side carried verbatim. Reused by the duplicate check, the
         // success toast and the save payload so they always agree.
         val placement = PinPlacement.resolve(
-            paddocks = state.paddocks,
+            paddocks = capturedPaddocks,
             selectedPaddockId = null,
             latitude = lat,
             longitude = lng,
             side = side,
         )
-        val paddock = state.paddocks.firstOrNull { it.id == placement.paddockId }
+        val paddock = capturedPaddocks.firstOrNull { it.id == placement.paddockId }
         val paddockId = placement.paddockId
         val attachment = placement.toAttachment()
         val offline = !state.isOnline
         val autoPhotoEnabled = AppPreferencesStore(context).load().autoPhotoPrompt
         // iOS-parity identity: store the tapped button's name and colour token
         // on the pin so every device renders it identically.
-        val buttons = if (mode == "Growth") state.growthButtons else state.repairButtons
+        val buttons = if (capturedMode == "Growth") state.growthButtons else state.repairButtons
         val colorToken = buttons.firstOrNull { it.name == category }?.color?.ifBlank { null }
 
-        val doCreate: () -> Unit = {
+        val doCreate: () -> Unit = doCreate@{
+            if (!vm.isPinCaptureContextCurrent(capture.vineyardId, capture.tripId)) {
+                scope.launch { snackbarHostState.showSnackbar("Vineyard or trip changed. Press the pin button again.") }
+                return@doCreate
+            }
+            val evidenceSaved = PinCaptureEvidenceStore(context).save(
+                PinCaptureEvidenceStore.Evidence(
+                    pinId = capture.pinId,
+                    vineyardId = capture.vineyardId,
+                    tripId = capture.tripId,
+                    buttonName = category,
+                    mode = capturedMode,
+                    side = side,
+                    latitude = lat,
+                    longitude = lng,
+                    fixTimeEpochMs = fix.fixTimeEpochMs,
+                    accuracyMetres = fix.accuracyMetres,
+                    observationTimeIso = capture.observedAtIso,
+                    headingDegrees = capturedHeading ?: fix.bearingDegrees,
+                    paddockId = paddockId,
+                    pinRowNumber = placement.pinRowNumber,
+                    pinSide = placement.pinSide,
+                    snappedLatitude = placement.snappedLatitude,
+                    snappedLongitude = placement.snappedLongitude,
+                    alongRowDistanceMetres = placement.alongRowDistanceM,
+                    snappedToRow = placement.snappedToRow,
+                ),
+            )
+            if (!evidenceSaved) {
+                scope.launch { snackbarHostState.showSnackbar("Couldn't preserve this GPS observation. Please try again.") }
+                return@doCreate
+            }
             vm.createPin(
                 title = category,
-                mode = mode,
+                mode = capturedMode,
                 category = category,
                 notes = null,
                 side = side,
@@ -1606,8 +1663,9 @@ fun PinCategoryLauncherScreen(
                 buttonColor = colorToken,
                 // Compass-first (converted to true north at the drop location);
                 // fall back to the GPS course when the device has no compass.
-                heading = compassHeadingDegrees?.let { compassTrueHeading(it, lat, lng) } ?: loc.bearing,
+                heading = capturedHeading?.let { compassTrueHeading(it, lat, lng) } ?: fix.bearingDegrees,
                 placement = placement,
+                captureContext = capture,
                 photoUri = null,
                 onCreatedPin = { pin ->
                     successToast = QuickPinToast(
@@ -1629,9 +1687,9 @@ fun PinCategoryLauncherScreen(
             candidate = attachment,
             latitude = lat,
             longitude = lng,
-            vineyardId = state.selectedVineyardId,
+            vineyardId = capture.vineyardId,
             paddockId = paddockId,
-            mode = mode,
+            mode = capturedMode,
             logicalType = category,
             side = side,
             manualRowNumber = null,
@@ -1651,7 +1709,7 @@ fun PinCategoryLauncherScreen(
                 },
                 distanceM = duplicate.distanceM,
                 alongRow = duplicate.alongRow,
-                blockName = state.paddocks.firstOrNull { it.id == duplicate.pin.paddockId }?.name,
+                blockName = capturedPaddocks.firstOrNull { it.id == duplicate.pin.paddockId }?.name,
                 diagnostic = evaluation.diagnostics.description(),
                 attempt = PinDuplicateCreateAttempt(doCreate),
             )
@@ -1667,32 +1725,50 @@ fun PinCategoryLauncherScreen(
         editing = PinEditTarget(mode = mode, bearing = compassHeadingDegrees)
     }
 
-    /** Quick-tap a category: capture a GPS fix, then quick-create or fall back. */
+    /** Quick tap freezes its context and either creates now or requires a new tap. */
     fun launchCategory(category: String, side: String) {
+        val vineyardId = state.selectedVineyardId ?: run {
+            scope.launch { snackbarHostState.showSnackbar("No vineyard selected.") }
+            return
+        }
+        val tripId = state.activeTrip?.id
+        val capture = PinCaptureContext(
+            pinId = UUID.randomUUID().toString(),
+            vineyardId = vineyardId,
+            tripId = tripId,
+            observedAtIso = Instant.now().toString(),
+        )
+        val capturedMode = mode
+        val capturedHeading = compassHeadingDegrees
+        val capturedPaddocks = state.paddocks.toList()
         locating = true
-        vm.fetchCurrentFix { loc ->
+        scope.launch {
+            val result = pinLocationTracker.currentPinLocation()
             locating = false
-            if (loc != null) {
-                quickCreate(category, side, loc)
-            } else {
-                // Parity with iOS: a quick button never forces the full form.
-                // Without a location we can't safely snap row/path, so we show a
-                // calm message. The full New Pin form stays available from the
-                // toolbar for manual block/coordinate entry.
-                scope.launch {
-                    snackbarHostState.showSnackbar("Location unavailable \u2014 enable location services to drop a pin.")
-                }
+            val fix = PinTapCaptureGate.acceptedFix(
+                contextIsCurrent = vm.isPinCaptureContextCurrent(vineyardId, tripId),
+                result = result,
+            )
+            if (fix != null) {
+                quickCreate(category, side, fix, capture, capturedMode, capturedHeading, capturedPaddocks)
+            } else if (vm.isPinCaptureContextCurrent(vineyardId, tripId)) {
+                snackbarHostState.showSnackbar(result.operatorMessage())
             }
         }
     }
 
     val locationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { _ ->
-        // Proceed regardless of the grant decision: with permission we capture a
-        // GPS fix, without it we fall back to the paddock centroid.
-        pendingSelection?.let { (cat, side) -> launchCategory(cat, side) }
-        pendingSelection = null
+    ) { grants ->
+        // Permission completion never resumes the old tap at a later position.
+        // Warm the subscription when precise access was granted; the operator
+        // deliberately presses the category button again to create a pin.
+        if (grants[android.Manifest.permission.ACCESS_FINE_LOCATION] == true) {
+            pinLocationTracker.startPinFixUpdates()
+            scope.launch { snackbarHostState.showSnackbar("Precise location enabled. Press the pin button again.") }
+        } else {
+            scope.launch { snackbarHostState.showSnackbar("Precise location is required. Enable it, then press again.") }
+        }
     }
 
     /** Entry point for a category tap: ensure permission, then launch the sheet. */
@@ -1700,7 +1776,6 @@ fun PinCategoryLauncherScreen(
         if (vm.hasLocationPermission()) {
             launchCategory(category, side)
         } else {
-            pendingSelection = category to side
             locationPermission.launch(
                 arrayOf(
                     android.Manifest.permission.ACCESS_FINE_LOCATION,
@@ -2197,21 +2272,6 @@ private fun CategoryTile(
     }
 }
 
-/** Centroid of the selected paddock, falling back to the vineyard coordinate. */
-private fun defaultLocation(paddockId: String?, state: AppUiState): Pair<Double, Double>? {
-    val paddock = state.paddocks.firstOrNull { it.id == paddockId }
-    val points = paddock?.polygonPoints
-    if (!points.isNullOrEmpty()) {
-        val lat = points.sumOf { it.latitude } / points.size
-        val lon = points.sumOf { it.longitude } / points.size
-        return lat to lon
-    }
-    val v = state.selectedVineyard
-    val lat = v?.latitude
-    val lon = v?.longitude
-    return if (lat != null && lon != null) lat to lon else null
-}
-
 @Composable
 private fun PinRow(
     vm: AppViewModel,
@@ -2618,7 +2678,7 @@ private data class PinEditTarget(
     val category: String? = null,
     val side: String? = null,
     val titleDefault: String? = null,
-    /** GPS fix captured at launch time; null falls back to paddock centroid. */
+    /** Qualified GPS fix captured at launch time; null means no GPS observation. */
     val latitude: Double? = null,
     val longitude: Double? = null,
     /** Device bearing at launch time (degrees 0–360), when the fix had one. */

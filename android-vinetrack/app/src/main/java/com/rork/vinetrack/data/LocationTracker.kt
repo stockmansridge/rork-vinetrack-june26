@@ -4,6 +4,9 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationManager
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
@@ -35,6 +38,8 @@ class LocationTracker(context: Context) {
     private val client = LocationServices.getFusedLocationProviderClient(appContext)
 
     private var callback: LocationCallback? = null
+    private var pinFixCallback: LocationCallback? = null
+    private var latestPinFix: QualifiedLocationFix? = null
 
     /** Points captured this session, in order. */
     val points: MutableList<CoordinatePoint> = mutableListOf()
@@ -65,15 +70,23 @@ class LocationTracker(context: Context) {
     var latestSample: MovementSample? = null
         private set
 
-    val hasPermission: Boolean
+    val hasFinePermission: Boolean
         get() = ContextCompat.checkSelfPermission(
             appContext,
             Manifest.permission.ACCESS_FINE_LOCATION,
-        ) == PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(
-                appContext,
-                Manifest.permission.ACCESS_COARSE_LOCATION,
-            ) == PackageManager.PERMISSION_GRANTED
+        ) == PackageManager.PERMISSION_GRANTED
+
+    val hasCoarsePermission: Boolean
+        get() = ContextCompat.checkSelfPermission(
+            appContext,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+
+    val hasPermission: Boolean get() = hasFinePermission || hasCoarsePermission
+
+    val areLocationServicesEnabled: Boolean
+        get() = (appContext.getSystemService(Context.LOCATION_SERVICE) as? LocationManager)
+            ?.isLocationEnabled == true
 
     /**
      * Begin receiving location updates. [seed] restores points from a resumed
@@ -114,22 +127,28 @@ class LocationTracker(context: Context) {
                     speed = speed,
                     accuracy = accuracy,
                 )
-                val last = points.lastOrNull()
-                if (last != null) {
-                    val step = haversine(last, point)
-                    if (step < 1.0) return // ignore jitter under 1m
-                    distanceMetres += step
-                }
-                points.add(point)
                 val sample = MovementSample(
                     latitude = loc.latitude,
                     longitude = loc.longitude,
                     bearingDegrees = bearing,
                     speedMetresPerSecond = speed,
                     accuracyMetres = accuracy,
-                    timestampMs = System.currentTimeMillis(),
+                    timestampMs = loc.time,
                 )
+                // Freshness is independent of route geometry. Even a stationary
+                // update must replace current-fix state before sub-metre jitter is
+                // excluded from the persisted route.
                 latestSample = sample
+                val last = points.lastOrNull()
+                if (last != null) {
+                    val step = haversine(last, point)
+                    if (step < 1.0) {
+                        onUpdate(points.toList(), distanceMetres, sample)
+                        return
+                    }
+                    distanceMetres += step
+                }
+                points.add(point)
                 onUpdate(points.toList(), distanceMetres, sample)
             }
         }
@@ -144,52 +163,108 @@ class LocationTracker(context: Context) {
     }
 
     /**
-     * One-shot current location for dropping a pin. Tries the cached last-known
-     * fix first (instant), then requests a single fresh high-accuracy fix with a
-     * short timeout. Returns null when permission is missing or no fix arrives.
+     * Keep the fused provider warm while the foreground pin launcher is open.
+     * This subscription is separate from active-trip route ownership and uses
+     * zero minimum displacement so stationary fixes still refresh observation age.
      */
     @SuppressLint("MissingPermission")
-    suspend fun currentLocation(timeoutMs: Long = 8000L): CoordinatePoint? {
-        if (!hasPermission) return null
-        lastKnown()?.let { return it }
-        return withTimeoutOrNull(timeoutMs) { freshFix() }
-    }
-
-    @SuppressLint("MissingPermission")
-    private suspend fun lastKnown(): CoordinatePoint? = suspendCancellableCoroutine { cont ->
-        client.lastLocation
-            .addOnSuccessListener { loc ->
-                cont.resume(
-                    loc?.let {
-                        CoordinatePoint(
-                            latitude = it.latitude,
-                            longitude = it.longitude,
-                            bearing = if (it.hasBearing()) it.bearing.toDouble() else null,
-                        )
-                    },
-                )
+    fun startPinFixUpdates(onUpdate: (PinLocationResult) -> Unit = {}) {
+        stopPinFixUpdates()
+        if (!hasPermission) { onUpdate(PinLocationResult.PermissionDenied); return }
+        if (!hasFinePermission) { onUpdate(PinLocationResult.ApproximatePermission); return }
+        if (!areLocationServicesEnabled) { onUpdate(PinLocationResult.ServicesDisabled); return }
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2_000L)
+            .setMinUpdateIntervalMillis(1_000L)
+            .setMinUpdateDistanceMeters(0f)
+            .build()
+        val cb = object : LocationCallback() {
+            override fun onLocationResult(result: LocationResult) {
+                result.locations.forEach { location ->
+                    val qualified = location.toPinResult()
+                    if (qualified is PinLocationResult.Success) latestPinFix = qualified.fix
+                    onUpdate(qualified)
+                }
             }
-            .addOnFailureListener { cont.resume(null) }
+        }
+        pinFixCallback = cb
+        client.requestLocationUpdates(request, cb, appContext.mainLooper)
+    }
+
+    fun stopPinFixUpdates() {
+        pinFixCallback?.let { client.removeLocationUpdates(it) }
+        pinFixCallback = null
+        latestPinFix = null
+    }
+
+    /**
+     * Qualified one-shot observation for automatic pin placement. A cached fix
+     * is accepted only when it is at most five seconds old and accurate to 15 m;
+     * otherwise a new high-accuracy fix is requested. Age uses Android's
+     * monotonic elapsed-realtime timestamp carried by the Location itself.
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun currentPinLocation(timeoutMs: Long = 8000L): PinLocationResult {
+        if (!hasPermission) return PinLocationResult.PermissionDenied
+        if (!hasFinePermission) return PinLocationResult.ApproximatePermission
+        if (!areLocationServicesEnabled) return PinLocationResult.ServicesDisabled
+        latestPinFix?.let { fix ->
+            val local = PinLocationFixValidator.validate(
+                latitude = fix.latitude,
+                longitude = fix.longitude,
+                hasAccuracy = true,
+                accuracyMetres = fix.accuracyMetres,
+                fixTimeEpochMs = fix.fixTimeEpochMs,
+                fixElapsedRealtimeNanos = fix.fixElapsedRealtimeNanos,
+                nowElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos(),
+                bearingDegrees = fix.bearingDegrees,
+            )
+            if (local is PinLocationResult.Success) return local
+        }
+        val cached = lastKnownResult()
+        if (cached is PinLocationResult.Success) return cached
+        return withTimeoutOrNull(timeoutMs) { freshFixResult() } ?: PinLocationResult.Timeout
+    }
+
+    /** Compatibility path for map centring and non-pin tools; now equally strict. */
+    suspend fun currentLocation(timeoutMs: Long = 8000L): CoordinatePoint? =
+        (currentPinLocation(timeoutMs) as? PinLocationResult.Success)?.fix?.let {
+            CoordinatePoint(it.latitude, it.longitude, it.bearingDegrees, accuracy = it.accuracyMetres)
+        }
+
+    @SuppressLint("MissingPermission")
+    private suspend fun lastKnownResult(): PinLocationResult = suspendCancellableCoroutine { cont ->
+        client.lastLocation
+            .addOnSuccessListener { location ->
+                if (cont.isActive) cont.resume(location?.toPinResult() ?: PinLocationResult.Stale)
+            }
+            .addOnFailureListener {
+                if (cont.isActive) cont.resume(PinLocationResult.Invalid)
+            }
     }
 
     @SuppressLint("MissingPermission")
-    private suspend fun freshFix(): CoordinatePoint? = suspendCancellableCoroutine { cont ->
+    private suspend fun freshFixResult(): PinLocationResult = suspendCancellableCoroutine { cont ->
         val cts = CancellationTokenSource()
         client.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
-            .addOnSuccessListener { loc ->
-                cont.resume(
-                    loc?.let {
-                        CoordinatePoint(
-                            latitude = it.latitude,
-                            longitude = it.longitude,
-                            bearing = if (it.hasBearing()) it.bearing.toDouble() else null,
-                        )
-                    },
-                )
+            .addOnSuccessListener { location ->
+                if (cont.isActive) cont.resume(location?.toPinResult() ?: PinLocationResult.Timeout)
             }
-            .addOnFailureListener { cont.resume(null) }
+            .addOnFailureListener {
+                if (cont.isActive) cont.resume(PinLocationResult.Invalid)
+            }
         cont.invokeOnCancellation { cts.cancel() }
     }
+
+    private fun Location.toPinResult(): PinLocationResult = PinLocationFixValidator.validate(
+        latitude = latitude,
+        longitude = longitude,
+        hasAccuracy = hasAccuracy(),
+        accuracyMetres = if (hasAccuracy()) accuracy.toDouble() else Double.NaN,
+        fixTimeEpochMs = time,
+        fixElapsedRealtimeNanos = elapsedRealtimeNanos,
+        nowElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos(),
+        bearingDegrees = if (hasBearing()) bearing.toDouble() else null,
+    )
 
     private fun pathLength(pts: List<CoordinatePoint>): Double {
         if (pts.size < 2) return 0.0
