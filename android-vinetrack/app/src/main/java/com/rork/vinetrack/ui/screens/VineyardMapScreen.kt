@@ -64,6 +64,7 @@ import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.maps.android.compose.CameraMoveStartedReason
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
+import com.rork.vinetrack.data.FollowCameraSnapshot
 import com.rork.vinetrack.data.FollowSessionGate
 import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.MapDefaults
@@ -346,8 +347,14 @@ fun VineyardMapContent(
             fun startFollowingUpdates() {
                 locationTracker.startPinFixUpdates { result ->
                     if (!followSessionGate.accepts(subscribedSessionId)) return@startPinFixUpdates
-                    if (result is PinLocationResult.Success) {
-                        followCoordinate = subscribedSessionId to LatLng(result.fix.latitude, result.fix.longitude)
+                    val coordinate = if (result is PinLocationResult.Success) {
+                        LatLng(result.fix.latitude, result.fix.longitude)
+                    } else {
+                        null
+                    }
+                    val acceptedCoordinate = followSessionGate.acceptedCoordinate(subscribedSessionId, coordinate)
+                    if (acceptedCoordinate != null) {
+                        followCoordinate = subscribedSessionId to acceptedCoordinate
                         followUpdateSerial += 1
                         isFollowWaiting = false
                     } else {
@@ -384,13 +391,22 @@ fun VineyardMapContent(
         if (!isFollowingUser || update.first != followSessionId || !followSessionGate.accepts(update.first) ||
             !lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
         ) return@LaunchedEffect
-        val coordinate = update.second
         val current = cameraPositionState.position
+        val cameraUpdate = followSessionGate.cameraUpdate(
+            sessionId = update.first,
+            coordinate = update.second,
+            currentCamera = FollowCameraSnapshot(
+                target = current.target,
+                zoom = current.zoom,
+                bearing = current.bearing,
+                tilt = current.tilt,
+            ),
+        ) ?: return@LaunchedEffect
         val target = CameraPosition.Builder()
-            .target(coordinate)
-            .zoom(current.zoom)
-            .bearing(current.bearing)
-            .tilt(current.tilt)
+            .target(cameraUpdate.target)
+            .zoom(cameraUpdate.zoom)
+            .bearing(cameraUpdate.bearing)
+            .tilt(cameraUpdate.tilt)
             .build()
         runCatching { cameraPositionState.animate(CameraUpdateFactory.newCameraPosition(target), 350) }
         hasUserRecentred = true

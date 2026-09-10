@@ -116,6 +116,40 @@ class PinAisleAttachmentTest {
     /** Aisle 32.5: midway between rows 32 and 33. */
     private fun aisle32_5Longitude(): Double = 149.0 + rowSpacing / 2.0
 
+    /** Two 100 m rows with exactly 3 m between their centrelines. */
+    private fun threeMetreAisleBlock(): Paddock {
+        val metresPerDegreeLatitude = 111_320.0
+        val metresPerDegreeLongitude = 111_320.0 * kotlin.math.cos(-33.0 * Math.PI / 180.0)
+        val westLongitude = 149.0
+        val eastLongitude = westLongitude + 3.0 / metresPerDegreeLongitude
+        val startLatitude = -33.0
+        val endLatitude = startLatitude + 100.0 / metresPerDegreeLatitude
+        return Paddock(
+            id = "three-metre-aisle",
+            vineyardId = "vineyard-1",
+            name = "Three metre aisle",
+            rowWidth = 3.0,
+            polygonPoints = listOf(
+                CoordinatePoint(startLatitude - 0.001, westLongitude - 0.001),
+                CoordinatePoint(startLatitude - 0.001, eastLongitude + 0.001),
+                CoordinatePoint(endLatitude + 0.001, eastLongitude + 0.001),
+                CoordinatePoint(endLatitude + 0.001, westLongitude - 0.001),
+            ),
+            rows = listOf(
+                PaddockRow(
+                    number = 32,
+                    startPoint = CoordinatePoint(startLatitude, westLongitude),
+                    endPoint = CoordinatePoint(endLatitude, westLongitude),
+                ),
+                PaddockRow(
+                    number = 33,
+                    startPoint = CoordinatePoint(startLatitude, eastLongitude),
+                    endPoint = CoordinatePoint(endLatitude, eastLongitude),
+                ),
+            ),
+        )
+    }
+
     /**
      * Default 1.2 m accuracy: comfortably inside the ~3.7 m aisle, so these
      * fixtures exercise geometry rather than the uncertainty gate (which has
@@ -389,11 +423,13 @@ class PinAisleAttachmentTest {
 
     @Test
     fun `two metre uncertainty near a row cannot confirm a three metre aisle`() {
+        val block = threeMetreAisleBlock()
         val metresPerDegreeLongitude = 111_320.0 * kotlin.math.cos(-33.0 * Math.PI / 180.0)
         val nearRowLongitude = 149.0 + 0.2 / metresPerDegreeLongitude
+        val latitude = -33.0 + 50.0 / 111_320.0
         val ambiguous = automatic(
-            eastwardBlock(),
-            -33.0,
+            block,
+            latitude,
             nearRowLongitude,
             "left",
             0.0,
@@ -405,6 +441,18 @@ class PinAisleAttachmentTest {
         assertNull(ambiguous.drivingRowNumber)
         assertEquals("left", ambiguous.pinSide)
         assertEquals(0.0, ambiguous.headingDegrees!!, 1e-9)
+
+        val interior = automatic(
+            block,
+            latitude,
+            149.0 + 1.5 / metresPerDegreeLongitude,
+            "left",
+            0.0,
+            accuracyMetres = 1.0,
+        )
+        assertEquals(PinSnapState.SNAPPED, interior.snapState)
+        assertEquals(32.0, interior.pinRowNumber!!, 1e-9)
+        assertEquals(32.5, interior.drivingRowNumber!!, 1e-9)
     }
 
     @Test

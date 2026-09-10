@@ -1,7 +1,9 @@
 package com.rork.vinetrack.data
 
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -18,43 +20,67 @@ class PinsMapFollowMeRegressionTest {
     )
 
     @Test
-    fun `off move unavailable then on rejects the previous follow coordinate`() {
+    fun `old session update arriving after re-enable is rejected`() {
         val gate = FollowSessionGate()
-        val firstSession = gate.enable()
-        var cameraCoordinate = "first-fix"
+        val oldSession = gate.enable()
         gate.disable()
-
-        val secondSession = gate.enable()
-        val unavailableUpdate: String? = null
-        if (unavailableUpdate != null && gate.accepts(firstSession)) cameraCoordinate = unavailableUpdate
-
-        assertFalse(gate.accepts(firstSession))
-        assertTrue(gate.accepts(secondSession))
-        assertTrue(cameraCoordinate == "first-fix")
-    }
-
-    @Test
-    fun `foreground recovery accepts only the current follow session`() {
-        val gate = FollowSessionGate()
         val currentSession = gate.enable()
-        assertTrue(gate.accepts(currentSession))
 
-        gate.disable()
-        val restartedSession = gate.enable()
-        assertFalse(gate.accepts(currentSession))
-        assertTrue(gate.accepts(restartedSession))
+        assertNull(gate.acceptedCoordinate(oldSession, "stale-fix"))
+        assertEquals("fresh-fix", gate.acceptedCoordinate(currentSession, "fresh-fix"))
     }
 
     @Test
-    fun `fresh movement follows while preserving zoom bearing and tilt`() {
+    fun `unavailable GPS produces no camera update and retains current camera`() {
+        val gate = FollowSessionGate()
+        val session = gate.enable()
+        val currentCamera = FollowCameraSnapshot("current", 19f, 73f, 12f)
+        val unavailableCoordinate: String? = null
+
+        val acceptedCoordinate = gate.acceptedCoordinate(session, unavailableCoordinate)
+
+        assertNull(acceptedCoordinate)
+        assertEquals(FollowCameraSnapshot("current", 19f, 73f, 12f), currentCamera)
+    }
+
+    @Test
+    fun `fresh accepted update changes target while preserving zoom bearing and tilt`() {
+        val gate = FollowSessionGate()
+        val session = gate.enable()
+        val currentCamera = FollowCameraSnapshot("current", 19f, 73f, 12f)
+
+        val update = gate.cameraUpdate(session, "fresh-fix", currentCamera)
+
+        assertEquals(FollowCameraSnapshot("fresh-fix", 19f, 73f, 12f), update)
+    }
+
+    @Test
+    fun `foreground restart remains eligible only for the active follow session`() {
+        val gate = FollowSessionGate()
+        val activeSession = gate.enable()
+        assertTrue(gate.accepts(activeSession))
+
+        gate.disable()
+        assertFalse(gate.accepts(activeSession))
+        val restartedSession = gate.enable()
+        assertTrue(gate.accepts(restartedSession))
+        assertFalse(gate.accepts(activeSession))
+    }
+
+    @Test
+    fun `production camera update preserves zoom bearing and tilt`() {
         val source = map()
         val followEffect = source.substringAfter("LaunchedEffect(followCoordinate, isFollowingUser, followSessionId)")
             .substringBefore("// A one-finger pan")
 
-        assertTrue(followEffect.contains(".target(coordinate)"))
-        assertTrue(followEffect.contains(".zoom(current.zoom)"))
-        assertTrue(followEffect.contains(".bearing(current.bearing)"))
-        assertTrue(followEffect.contains(".tilt(current.tilt)"))
+        assertTrue(followEffect.contains("followSessionGate.cameraUpdate("))
+        assertTrue(followEffect.contains("target = current.target"))
+        assertTrue(followEffect.contains("zoom = current.zoom"))
+        assertTrue(followEffect.contains("bearing = current.bearing"))
+        assertTrue(followEffect.contains("tilt = current.tilt"))
+        assertTrue(followEffect.contains(".target(cameraUpdate.target)"))
+        assertTrue(followEffect.contains(".zoom(cameraUpdate.zoom)"))
+        assertTrue(followEffect.contains(".bearing(cameraUpdate.bearing)"))
         assertFalse(followEffect.contains("fitToContent("))
     }
 
@@ -66,24 +92,25 @@ class PinsMapFollowMeRegressionTest {
 
         assertTrue(gestureEffect.contains("CameraMoveStartedReason.GESTURE"))
         assertTrue(gestureEffect.contains("centreMoved && zoomUnchanged"))
-        assertTrue(gestureEffect.contains("isFollowingUser = false"))
+        assertTrue(gestureEffect.contains("stopFollowSession()"))
     }
 
     @Test
-    fun `location loss waits in place and fresh recovery resumes`() {
+    fun `production unavailable GPS waiting path does not own the camera source contract`() {
         val source = map()
         val subscription = source.substringAfter("fun startFollowingUpdates()")
             .substringBefore("val observer")
 
         assertTrue(subscription.contains("result is PinLocationResult.Success"))
         assertTrue(subscription.contains("followSessionGate.accepts(subscribedSessionId)"))
-        assertTrue(subscription.contains("followCoordinate = subscribedSessionId to LatLng"))
+        assertTrue(subscription.contains("followSessionGate.acceptedCoordinate(subscribedSessionId, coordinate)"))
+        assertTrue(subscription.contains("followCoordinate = subscribedSessionId to acceptedCoordinate"))
         assertTrue(subscription.contains("isFollowWaiting = true"))
         assertFalse(subscription.contains("cameraPositionState"))
     }
 
     @Test
-    fun `background suspends updates and foreground resumes only while enabled`() {
+    fun `production foreground recovery lifecycle wiring source contract`() {
         val source = map()
         val lifecycle = source.substringAfter("DisposableEffect(isPinsMap, isFollowingUser")
             .substringBefore("LaunchedEffect(followCoordinate")
