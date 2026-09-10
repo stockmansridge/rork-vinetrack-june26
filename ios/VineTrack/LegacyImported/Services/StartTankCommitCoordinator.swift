@@ -47,7 +47,7 @@ final class StartTankCommitCoordinator {
             state: "prepared"
         )
         try persistence.saveOrThrow(journal, key: Self.persistenceKey)
-        try finish(journal, store: store, currentOverride: updatedTrip)
+        try finish(journal, store: store)
     }
 
     /// Completes the exact stable-ID operation saved before process termination.
@@ -55,17 +55,17 @@ final class StartTankCommitCoordinator {
     func recover(store: MigratedDataStore) -> Bool {
         guard let journal: Journal = persistence.load(key: Self.persistenceKey) else { return false }
         do {
-            try finish(journal, store: store, currentOverride: nil)
+            try finish(journal, store: store)
             return true
         } catch {
             return false
         }
     }
 
-    private func finish(_ initial: Journal, store: MigratedDataStore, currentOverride: Trip?) throws {
+    private func finish(_ initial: Journal, store: MigratedDataStore) throws {
         var journal = initial
         guard store.selectedVineyardId == journal.updatedTrip.vineyardId,
-              let current = currentOverride ?? store.trips.first(where: { $0.id == journal.updatedTrip.id }),
+              let current = store.trips.first(where: { $0.id == journal.updatedTrip.id }),
               let mergedTrip = Self.applyOperation(
                 current: current,
                 source: journal.sourceTrip,
@@ -95,7 +95,7 @@ final class StartTankCommitCoordinator {
 
         guard actualStore.records.contains(where: { $0.id == journal.actualRecordId && $0.tankSessionId == journal.tankSessionId }),
               let durableTrip = store.trips.first(where: { $0.id == journal.updatedTrip.id }),
-              operationIsEstablished(in: durableTrip, tankSessionId: journal.tankSessionId, tankNumber: journal.tankNumber)
+              Self.operationIsEstablished(in: durableTrip, intended: journal.updatedTrip, tankSessionId: journal.tankSessionId, tankNumber: journal.tankNumber)
         else { throw SprayTankActualValidationError.localSaveFailed }
         try failIfRequested(.beforeClear)
         try persistence.removeOrThrow(key: Self.persistenceKey)
@@ -116,8 +116,8 @@ final class StartTankCommitCoordinator {
                 $0.id.uuidString == tankSessionId && $0.tankNumber == tankNumber
               })
         else { return nil }
-        if let existing = current.tankSessions.first(where: { $0.id.uuidString == tankSessionId }) {
-            return existing.tankNumber == intendedSession.tankNumber ? current : nil
+        if operationIsEstablished(in: current, intended: intended, tankSessionId: tankSessionId, tankNumber: tankNumber) {
+            return current
         }
         guard let source,
               current.id == source.id,
@@ -135,8 +135,19 @@ final class StartTankCommitCoordinator {
         return merged
     }
 
-    private func operationIsEstablished(in trip: Trip, tankSessionId: String, tankNumber: Int) -> Bool {
-        trip.tankSessions.contains { $0.id.uuidString == tankSessionId && $0.tankNumber == tankNumber }
+    private static func operationIsEstablished(in trip: Trip, intended: Trip, tankSessionId: String, tankNumber: Int) -> Bool {
+        guard let expected = intended.tankSessions.first(where: { $0.id.uuidString == tankSessionId && $0.tankNumber == tankNumber }),
+              let actual = trip.tankSessions.first(where: { $0.id.uuidString == tankSessionId && $0.tankNumber == tankNumber }),
+              actual.startTime == expected.startTime,
+              actual.startRow == expected.startRow,
+              actual.fillStartTime == expected.fillStartTime,
+              actual.fillEndTime == expected.fillEndTime
+        else { return false }
+        if actual.endTime != nil { return true }
+        return actual.endTime == expected.endTime && actual.endRow == expected.endRow &&
+            trip.activeTankNumber == intended.activeTankNumber &&
+            trip.isFillingTank == intended.isFillingTank &&
+            trip.fillingTankNumber == intended.fillingTankNumber
     }
 
     private func failIfRequested(_ point: FailurePoint) throws {

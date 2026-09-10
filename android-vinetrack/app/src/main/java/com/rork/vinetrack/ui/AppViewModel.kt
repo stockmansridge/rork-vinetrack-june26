@@ -10000,9 +10000,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return PendingTankStart(trip, record, tank, result)
     }
 
-    fun actualTankUse(tripId: String, tankNumber: Int): com.rork.vinetrack.data.model.SprayTankActual? =
-        _ui.value.sprayTankActuals.filter { it.tripId == tripId && it.tankNumber == tankNumber }
-            .maxByOrNull { it.clientUpdatedAt }
+    fun actualTankUse(tripId: String, tankNumber: Int): com.rork.vinetrack.data.model.SprayTankActual? {
+        val trip = _ui.value.trips.firstOrNull { it.id == tripId } ?: return null
+        val record = TankMixPresentation.linkedRecord(tripId, _ui.value.sprayRecords) ?: return null
+        val tank = record.tanks.orEmpty().firstOrNull { it.tankNumber == tankNumber } ?: return null
+        val sessionIds = trip.tankSessions.filter { it.tankNumber == tankNumber }.mapTo(mutableSetOf()) { it.id }
+        return com.rork.vinetrack.data.model.resolveSprayTankActual(
+            tank, _ui.value.sprayTankActuals, trip.vineyardId, record.id, trip.id, sessionIds,
+        )
+    }
 
     /** Durable local confirmation boundary. Double submission cannot create a second active session. */
     fun confirmAndStartTank(
@@ -10026,9 +10032,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return false
         }
         val record = pending.record
-        val result = pending.result
         val tank = pending.tank
         val userId = session.userId ?: return false
+        val confirmationTimestamp = java.time.Instant.now().toString()
+        val confirmationRow = trip.currentRowNumber ?: trip.rowSequence.getOrNull(trip.sequenceIndex)
+        val result = TankSessionLifecycle.startResult(
+            trip = trip,
+            timestamp = confirmationTimestamp,
+            currentRow = confirmationRow,
+            plannedTankNumbers = record.tanks.orEmpty().map { it.tankNumber },
+        ) ?: return false
+        if (result.tankNumber != pending.result.tankNumber) return false
         if (record.tripId != trip.id || !actualWaterLitres.isFinite() || actualWaterLitres < 0.0) return false
         val chemicals = tank.chemicals.map { chemical ->
             val amount = actualChemicalBaseAmounts[chemical.id] ?: chemical.volumePerTank
@@ -10058,12 +10072,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val vineyardId = selectedVineyardId ?: return false
         val committedTrip = com.rork.vinetrack.data.StartTankOperationMerge.apply(
             current = trip,
-            source = pending.sourceTrip,
+            source = trip,
             intended = result.trip,
             tankSessionId = result.tankSessionId,
             tankNumber = result.tankNumber,
         ) ?: return false
-        if (!startTankCommitCoordinator.commit(ownerId, vineyardId, pending.sourceTrip, committedTrip, actual)) return false
+        if (!startTankCommitCoordinator.commit(ownerId, vineyardId, trip, committedTrip, actual)) return false
         val marker = pendingWrites.list().firstOrNull {
             it.clientId == trip.id &&
                 it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK &&

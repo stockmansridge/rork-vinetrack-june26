@@ -10,6 +10,7 @@ import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.VineyardMachine
 import com.rork.vinetrack.data.model.areSprayTankActualsComplete
+import com.rork.vinetrack.data.model.resolveSprayTankActual
 import com.rork.vinetrack.data.model.resolveTripOperatorCategory
 import java.util.Calendar
 import java.util.TimeZone
@@ -167,9 +168,17 @@ object TripCostEstimator {
         val chemical: ChemicalBreakdown? = sprayRecord?.let { record ->
             val tanks = record.tanks.orEmpty()
             val relevantActuals = tankActuals.filter { it.tripId == trip.id && it.sprayRecordId == record.id }
-            val actualByTank = relevantActuals.groupBy { it.tankNumber }
-                .mapValues { (_, rows) -> rows.maxBy { it.clientUpdatedAt } }
-            val actualsComplete = areSprayTankActualsComplete(tanks, relevantActuals)
+            val sessionIdsByTank = trip.tankSessions.groupBy { it.tankNumber }
+                .mapValues { (_, sessions) -> sessions.mapTo(mutableSetOf()) { it.id } }
+            val actualByTank = tanks.associate { tank ->
+                tank.tankNumber to resolveSprayTankActual(
+                    tank, relevantActuals, trip.vineyardId, record.id, trip.id,
+                    sessionIdsByTank[tank.tankNumber],
+                )
+            }
+            val actualsComplete = areSprayTankActualsComplete(
+                tanks, relevantActuals, trip.vineyardId, record.id, trip.id, sessionIdsByTank,
+            )
             var total = 0.0
             var anyPriced = false
             var anyMissing = false

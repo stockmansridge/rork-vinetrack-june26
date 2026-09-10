@@ -782,11 +782,14 @@ interface ChemicalJson {
 }
 interface TankActualChemicalJson {
   id?: unknown; plannedChemicalId?: unknown; savedChemicalId?: unknown;
+  replacesPlannedChemicalId?: unknown; usageKind?: unknown;
   name?: unknown; actualAmountBase?: unknown; unit?: unknown;
 }
 interface TankActualRow {
-  id: string; tank_session_id: string; tank_number: number; water_volume_l: number;
+  id: string; vineyard_id: string; spray_record_id: string; trip_id: string;
+  tank_session_id: string; tank_number: number; water_volume_l: number | null;
   chemicals: unknown; confirmed_at: string; client_updated_at: string;
+  correction_version: number | null;
 }
 
 function parseTanks(raw: unknown): TankJson[] {
@@ -952,7 +955,7 @@ function mapSpraySummary(row: SprayRow, idx: MachineIndex) {
 
 async function loadSprayTankActuals(db: SupabaseClient, sprayRecordId: string): Promise<TankActualRow[]> {
   const { data, error } = await db.from("spray_tank_actuals")
-    .select("id,tank_session_id,tank_number,water_volume_l,chemicals,confirmed_at,client_updated_at")
+    .select("id,vineyard_id,spray_record_id,trip_id,tank_session_id,tank_number,water_volume_l,chemicals,confirmed_at,client_updated_at,correction_version")
     .eq("spray_record_id", sprayRecordId).is("deleted_at", null)
     .order("tank_number", { ascending: true });
   if (error) {
@@ -962,8 +965,10 @@ async function loadSprayTankActuals(db: SupabaseClient, sprayRecordId: string): 
   return (data ?? []) as TankActualRow[];
 }
 
-function mapActualTanks(rows: TankActualRow[]) {
+function mapActualTanks(rows: TankActualRow[], selectedIds: Set<string>) {
   return rows.map((row) => ({
+    actual_id: row.id,
+    association_status: selectedIds.has(row.id) ? "exact" : "unresolved",
     tank_number: row.tank_number,
     tank_session_id: row.tank_session_id,
     confirmed_at: row.confirmed_at,
@@ -972,6 +977,8 @@ function mapActualTanks(rows: TankActualRow[]) {
       id: typeof chemical.id === "string" ? chemical.id : null,
       planned_chemical_id: typeof chemical.plannedChemicalId === "string" ? chemical.plannedChemicalId : null,
       saved_chemical_id: typeof chemical.savedChemicalId === "string" ? chemical.savedChemicalId : null,
+      replaces_planned_chemical_id: typeof chemical.replacesPlannedChemicalId === "string" ? chemical.replacesPlannedChemicalId : null,
+      usage_kind: typeof chemical.usageKind === "string" ? chemical.usageKind : null,
       name: typeof chemical.name === "string" ? chemical.name : null,
       quantity_base: num(chemical.actualAmountBase),
       unit: typeof chemical.unit === "string" ? chemical.unit : null,
@@ -1010,21 +1017,49 @@ function mapSprayTanks(raw: unknown, includeCosts: boolean) {
   });
 }
 
-function areSprayTankActualsComplete(plannedTanks: TankJson[], actualRows: TankActualRow[]): boolean {
+export function resolveSprayTankActualRows(plannedTanks: TankJson[], actualRows: TankActualRow[]): Map<number, TankActualRow> {
+  const resolved = new Map<number, TankActualRow>();
+  for (const tank of plannedTanks) {
+    const tankNumber = num(tank.tankNumber);
+    if (tankNumber === null) continue;
+    const bySession = new Map<string, TankActualRow[]>();
+    for (const row of actualRows.filter((candidate) => candidate.tank_number === tankNumber)) {
+      bySession.set(row.tank_session_id, [...(bySession.get(row.tank_session_id) ?? []), row]);
+    }
+    if (bySession.size !== 1) continue;
+    const revisions = [...bySession.values()][0];
+    const highestVersion = Math.max(...revisions.map((row) => num(row.correction_version) ?? 0));
+    const highest = revisions.filter((row) => (num(row.correction_version) ?? 0) === highestVersion);
+    if (highest.length === 1) resolved.set(tankNumber, highest[0]);
+  }
+  return resolved;
+}
+
+export function areSprayTankActualsComplete(plannedTanks: TankJson[], actualRows: TankActualRow[]): boolean {
   if (plannedTanks.length === 0) return false;
+  const resolved = resolveSprayTankActualRows(plannedTanks, actualRows);
   return plannedTanks.every((tank) => {
     const tankNumber = num(tank.tankNumber);
-    if (tankNumber === null) return false;
-    const matchingRows = actualRows.filter((row) => row.tank_number === tankNumber)
-      .sort((a, b) => b.client_updated_at.localeCompare(a.client_updated_at));
-    const actual = matchingRows[0];
-    if (!actual) return false;
-    const actualChemicals = Array.isArray(actual.chemicals)
-      ? actual.chemicals as TankActualChemicalJson[] : [];
+    const actual = tankNumber === null ? undefined : resolved.get(tankNumber);
+    const water = actual ? num(actual.water_volume_l) : null;
+    if (!actual || water === null || water < 0) return false;
+    const actualChemicals = Array.isArray(actual.chemicals) ? actual.chemicals as TankActualChemicalJson[] : [];
     const plannedChemicals = Array.isArray(tank.chemicals) ? tank.chemicals as ChemicalJson[] : [];
-    return plannedChemicals.every((planned) => {
-      if (typeof planned.id !== "string") return false;
-      return actualChemicals.filter((line) => line.plannedChemicalId === planned.id).length === 1;
+    const plannedIds = new Set(plannedChemicals.map((line) => typeof line.id === "string" ? line.id : null).filter((id): id is string => id !== null));
+    if (plannedIds.size !== plannedChemicals.length) return false;
+    const associationsValid = actualChemicals.every((line) => {
+      const amount = num(line.actualAmountBase);
+      if (amount === null || amount < 0) return false;
+      const kind = typeof line.usageKind === "string" ? line.usageKind : "planned";
+      if (kind === "planned") return typeof line.plannedChemicalId === "string" && plannedIds.has(line.plannedChemicalId) && line.replacesPlannedChemicalId == null;
+      if (kind === "additional") return line.plannedChemicalId == null && line.replacesPlannedChemicalId == null;
+      if (kind === "substitution") return line.plannedChemicalId == null && typeof line.replacesPlannedChemicalId === "string" && plannedIds.has(line.replacesPlannedChemicalId);
+      return false;
+    });
+    return associationsValid && [...plannedIds].every((plannedId) => {
+      const direct = actualChemicals.filter((line) => (line.usageKind ?? "planned") === "planned" && line.plannedChemicalId === plannedId).length;
+      const substitutions = actualChemicals.filter((line) => line.usageKind === "substitution" && line.replacesPlannedChemicalId === plannedId).length;
+      return direct + substitutions === 1;
     });
   });
 }
@@ -1650,17 +1685,19 @@ async function handleSprayGet(
   body.tanks = mapSprayTanks(spray.tanks, includeCosts);
   const plannedTanks = parseTanks(spray.tanks);
   const actualRows = await loadSprayTankActuals(db, spray.id);
-  const actualTanks = mapActualTanks(actualRows);
+  const resolvedActuals = resolveSprayTankActualRows(plannedTanks, actualRows);
+  const resolvedRows = [...resolvedActuals.values()];
+  const actualTanks = mapActualTanks(actualRows, new Set(resolvedRows.map((row) => row.id)));
   const actualsComplete = areSprayTankActualsComplete(plannedTanks, actualRows);
   body.planned_water_volume_l = sprayTotals(plannedTanks).waterL;
-  body.actual_water_volume_l = actualRows.length > 0
-    ? round3(actualRows.reduce((sum, actual) => sum + (num(actual.water_volume_l) ?? 0), 0))
+  body.actual_water_volume_l = resolvedRows.length === plannedTanks.length && resolvedRows.every((row) => num(row.water_volume_l) !== null)
+    ? round3(resolvedRows.reduce((sum, actual) => sum + (num(actual.water_volume_l) ?? 0), 0))
     : null;
   body.actuals_complete = actualsComplete;
   body.actual_tanks = actualTanks;
   if (includeCosts) {
     body.chemical_cost_total = actualsComplete
-      ? actualChemicalCostTotal(spray.tanks, actualRows)
+      ? actualChemicalCostTotal(spray.tanks, resolvedRows)
       : sprayChemicalCostTotal(spray.tanks);
     body.chemical_cost_basis = actualsComplete ? "actual" : "estimated";
   }

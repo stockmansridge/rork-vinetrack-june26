@@ -400,8 +400,18 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         }
         if rows.contains(where: { $0.tank == .multiple }) { warnings.append("One or more rows overlap multiple tank sessions.") }
 
+        let sessionIdsByTank = Dictionary(grouping: trip.tankSessions, by: \.tankNumber)
+            .mapValues { Set($0.map { $0.id.uuidString }) }
         let trackedTanks: [Tank] = record.tanks.sorted(by: { $0.tankNumber < $1.tankNumber }).map { planned in
-            let actual = tankActuals.filter { $0.tankNumber == planned.tankNumber }.max(by: { $0.clientUpdatedAt < $1.clientUpdatedAt })
+            let actual = resolveSprayTankActual(
+                plannedTank: planned, actuals: tankActuals, vineyardId: trip.vineyardId,
+                sprayRecordId: record.id, tripId: trip.id,
+                tankSessionIds: sessionIdsByTank[planned.tankNumber]
+            )
+            if actual == nil && tankActuals.contains(where: {
+                $0.vineyardId == trip.vineyardId && $0.sprayRecordId == record.id &&
+                    $0.tripId == trip.id && $0.tankNumber == planned.tankNumber
+            }) { warnings.append("Tank \(planned.tankNumber) actuals could not be associated with one exact tank session.") }
             let chemicals: [Chemical] = planned.chemicals.map { line in
                 let byPlan = actual?.chemicals.filter { $0.plannedChemicalId == line.id } ?? []
                 let bySaved = line.savedChemicalId.map { id in actual?.chemicals.filter { $0.savedChemicalId == id && ($0.usageKind ?? "planned") == "planned" } ?? [] } ?? []
@@ -428,7 +438,7 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
 
         let tanks: [Tank] = isManual ? tankActuals.sorted(by: { $0.tankNumber < $1.tankNumber }).map { actual in
             Tank(tankNumber: actual.tankNumber, actualId: actual.id, actualVersion: actual.correctionVersion, plannedWaterLitres: nil, actualWaterLitres: actual.waterVolumeL, chemicals: actual.chemicals.map { line in
-                Chemical(actualChemicalId: line.id, plannedChemicalId: nil, savedChemicalId: line.savedChemicalId, replacesPlannedChemicalId: nil, usageKind: "additional", name: line.name, unit: line.unit.rawValue, plannedAmountBase: nil, actualAmountBase: line.actualAmountBase, matchSource: "actualOnly")
+                Chemical(actualChemicalId: line.id, plannedChemicalId: line.plannedChemicalId, savedChemicalId: line.savedChemicalId, replacesPlannedChemicalId: line.replacesPlannedChemicalId, usageKind: line.usageKind ?? "additional", name: line.name, unit: line.unit.rawValue, plannedAmountBase: nil, actualAmountBase: line.actualAmountBase, matchSource: "actualOnly")
             })
         } : trackedTanks
 

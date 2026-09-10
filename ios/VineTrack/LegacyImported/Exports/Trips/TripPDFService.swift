@@ -285,8 +285,13 @@ struct TripPDFService {
                     drawRow(label: "Tank \(session.tankNumber)", value: status)
                     if let planned = sprayRecord?.tanks.first(where: { $0.tankNumber == session.tankNumber }) {
                         drawRow(label: "  Planned water", value: "\(formatNumber(planned.waterVolume)) L", indent: 12)
-                        let actual = tankActuals.filter { $0.tankSessionId == session.id.uuidString }.max(by: { $0.clientUpdatedAt < $1.clientUpdatedAt })
-                            ?? tankActuals.filter { $0.tankNumber == session.tankNumber }.max(by: { $0.clientUpdatedAt < $1.clientUpdatedAt })
+                        let actual = sprayRecord.flatMap { record in
+                            resolveSprayTankActual(
+                                plannedTank: planned, actuals: tankActuals,
+                                vineyardId: trip.vineyardId, sprayRecordId: record.id, tripId: trip.id,
+                                tankSessionIds: [session.id.uuidString]
+                            )
+                        }
                         if let actual {
                             drawRow(label: "  Actual water", value: actual.waterVolumeL.map { "\(formatNumber($0)) L" } ?? "Not recorded", indent: 12)
                             if let actualWater = actual.waterVolumeL {

@@ -79,7 +79,7 @@ class StartTankCommitCoordinator internal constructor(
             sourceTrip = sourceTrip,
         )
         if (!journalStorage.write(journal)) return false
-        return finish(journal, currentOverride = trip)
+        return finish(journal)
     }
 
     /** Completes the exact saved operation; every step is stable-ID idempotent. */
@@ -89,10 +89,9 @@ class StartTankCommitCoordinator internal constructor(
         return if (finish(journal)) journal else null
     }
 
-    private fun finish(initial: Journal, currentOverride: Trip? = null): Boolean {
+    private fun finish(initial: Journal): Boolean {
         var journal = initial
-        val current = currentOverride
-            ?: loadTrip(journal.ownerUserId, journal.vineyardId, journal.updatedTrip.id)
+        val current = loadTrip(journal.ownerUserId, journal.vineyardId, journal.updatedTrip.id)
             ?: return false
         val mergedTrip = StartTankOperationMerge.apply(
             current = current,
@@ -107,10 +106,10 @@ class StartTankCommitCoordinator internal constructor(
         journal = journal.copy(state = State.ACTUAL_DURABLE)
         if (!journalStorage.write(journal)) return false
 
-        if (!StartTankOperationMerge.isEstablished(mergedTrip, journal.tankSessionId, journal.tankNumber)) return false
-        if (mergedTrip != current) {
-            if (!saveTrip(journal.ownerUserId, journal.vineyardId, mergedTrip)) return false
-        }
+        if (!StartTankOperationMerge.isEstablished(mergedTrip, journal.updatedTrip, journal.tankSessionId, journal.tankNumber)) return false
+        if (mergedTrip != current && !saveTrip(journal.ownerUserId, journal.vineyardId, mergedTrip)) return false
+        val persistedTrip = loadTrip(journal.ownerUserId, journal.vineyardId, journal.updatedTrip.id) ?: return false
+        if (!StartTankOperationMerge.isEstablished(persistedTrip, journal.updatedTrip, journal.tankSessionId, journal.tankNumber)) return false
         journal = journal.copy(state = State.TRIP_DURABLE)
         if (!journalStorage.write(journal)) return false
 
@@ -122,7 +121,7 @@ class StartTankCommitCoordinator internal constructor(
 
         val durableTrip = loadTrip(journal.ownerUserId, journal.vineyardId, journal.updatedTrip.id) ?: return false
         if (!hasActual(journal.actual) ||
-            !StartTankOperationMerge.isEstablished(durableTrip, journal.tankSessionId, journal.tankNumber) ||
+            !StartTankOperationMerge.isEstablished(durableTrip, journal.updatedTrip, journal.tankSessionId, journal.tankNumber) ||
             !hasTankMarker(journal.updatedTrip.id)
         ) return false
         return journalStorage.clear()
@@ -137,8 +136,7 @@ object StartTankOperationMerge {
         ) return null
         val intendedSession = intended.tankSessions.firstOrNull { it.id == tankSessionId && it.tankNumber == tankNumber }
             ?: return null
-        val existing = current.tankSessions.firstOrNull { it.id == tankSessionId }
-        if (existing != null) return current.takeIf { existing.tankNumber == intendedSession.tankNumber }
+        if (isEstablished(current, intended, tankSessionId, tankNumber)) return current
         if (source == null || current.id != source.id || current.vineyardId != source.vineyardId ||
             current.tankSessions != source.tankSessions ||
             current.activeTankNumber != source.activeTankNumber ||
@@ -153,8 +151,22 @@ object StartTankOperationMerge {
         )
     }
 
-    fun isEstablished(trip: Trip, tankSessionId: String, tankNumber: Int): Boolean =
-        trip.tankSessions.any { it.id == tankSessionId && it.tankNumber == tankNumber }
+    fun isEstablished(trip: Trip, intended: Trip, tankSessionId: String, tankNumber: Int): Boolean {
+        val expected = intended.tankSessions.firstOrNull { it.id == tankSessionId && it.tankNumber == tankNumber }
+            ?: return false
+        val actual = trip.tankSessions.firstOrNull { it.id == tankSessionId && it.tankNumber == tankNumber }
+            ?: return false
+        val startWasApplied = actual.startTime == expected.startTime &&
+            actual.startRow == expected.startRow &&
+            actual.fillStartTime == expected.fillStartTime &&
+            actual.fillEndTime == expected.fillEndTime
+        if (!startWasApplied) return false
+        val completedLater = actual.endTime != null
+        return completedLater || (actual.endTime == expected.endTime && actual.endRow == expected.endRow &&
+            trip.activeTankNumber == intended.activeTankNumber &&
+            trip.isFillingTank == intended.isFillingTank &&
+            trip.fillingTankNumber == intended.fillingTankNumber)
+    }
 }
 
 internal interface StartTankJournalStorage {

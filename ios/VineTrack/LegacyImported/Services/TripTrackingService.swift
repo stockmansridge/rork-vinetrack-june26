@@ -761,8 +761,17 @@ final class TripTrackingService {
             errorMessage = "The trip changed while this tank was open. Reopen Start Tank and confirm again."
             return false
         }
-        let result = pending.result
         let plannedTank = pending.tank
+        let confirmationTimestamp = Date()
+        let confirmationRow = trip.trackingPattern == .freeDrive
+            ? currentRowNumber
+            : currentRowNumber ?? trip.currentRowNumber
+        guard let result = TankSessionLifecycle.startResult(
+            trip: trip,
+            at: confirmationTimestamp,
+            currentRow: confirmationRow,
+            plannedTankNumbers: pending.record.tanks.map(\.tankNumber)
+        ), result.tankNumber == pending.result.tankNumber else { return false }
         var committedTrip = trip
         committedTrip.tankSessions = result.trip.tankSessions
         committedTrip.activeTankNumber = result.trip.activeTankNumber
@@ -792,7 +801,7 @@ final class TripTrackingService {
             )
             guard let store else { throw SprayTankActualValidationError.localSaveFailed }
             try startTankCommitCoordinator.commit(
-                sourceTrip: pending.sourceTrip,
+                sourceTrip: trip,
                 updatedTrip: committedTrip,
                 actual: actual,
                 store: store

@@ -46,17 +46,59 @@ data class SprayTankActual(
     }
 }
 
-/** True only when each planned tank and planned chemical line has one explicit result. */
+/** Resolves one exact trip/spray/session actual and rejects ambiguous duplicate revisions. */
+fun resolveSprayTankActual(
+    plannedTank: SprayTank,
+    actuals: List<SprayTankActual>,
+    vineyardId: String,
+    sprayRecordId: String,
+    tripId: String,
+    tankSessionIds: Set<String>? = null,
+): SprayTankActual? {
+    if (tankSessionIds != null && tankSessionIds.isEmpty()) return null
+    val scoped = actuals.filter { actual ->
+        actual.vineyardId == vineyardId && actual.sprayRecordId == sprayRecordId &&
+            actual.tripId == tripId && actual.tankNumber == plannedTank.tankNumber &&
+            (tankSessionIds == null || actual.tankSessionId in tankSessionIds)
+    }
+    val bySession = scoped.groupBy { it.tankSessionId }
+    if (bySession.size != 1) return null
+    val revisions = bySession.values.single()
+    val highestVersion = revisions.maxOfOrNull { it.correctionVersion } ?: return null
+    val highest = revisions.filter { it.correctionVersion == highestVersion }
+    return highest.singleOrNull()
+}
+
+/** True only when exact identity, water, and every planned or amended chemical result are unambiguous. */
 fun areSprayTankActualsComplete(
     plannedTanks: List<SprayTank>,
     actuals: List<SprayTankActual>,
+    vineyardId: String,
+    sprayRecordId: String,
+    tripId: String,
+    tankSessionIdsByNumber: Map<Int, Set<String>>? = null,
 ): Boolean {
     if (plannedTanks.isEmpty()) return false
     return plannedTanks.all { tank ->
-        val actual = actuals.filter { it.tankNumber == tank.tankNumber }
-            .maxByOrNull { it.clientUpdatedAt } ?: return@all false
-        tank.chemicals.all { planned ->
-            actual.chemicals.count { it.plannedChemicalId == planned.id } == 1
+        val actual = resolveSprayTankActual(
+            tank, actuals, vineyardId, sprayRecordId, tripId,
+            tankSessionIdsByNumber?.get(tank.tankNumber),
+        ) ?: return@all false
+        if (actual.waterVolumeL?.let { it.isFinite() && it >= 0.0 } != true) return@all false
+        val plannedIds = tank.chemicals.mapTo(mutableSetOf()) { it.id }
+        val validAssociations = actual.chemicals.all { line ->
+            if (!line.actualAmountBase.isFinite() || line.actualAmountBase < 0.0) return@all false
+            when (line.usageKind ?: "planned") {
+                "planned" -> line.plannedChemicalId in plannedIds && line.replacesPlannedChemicalId == null
+                "additional" -> line.plannedChemicalId == null && line.replacesPlannedChemicalId == null
+                "substitution" -> line.plannedChemicalId == null && line.replacesPlannedChemicalId in plannedIds
+                else -> false
+            }
+        }
+        validAssociations && tank.chemicals.all { planned ->
+            val direct = actual.chemicals.count { (it.usageKind ?: "planned") == "planned" && it.plannedChemicalId == planned.id }
+            val substitutes = actual.chemicals.count { it.usageKind == "substitution" && it.replacesPlannedChemicalId == planned.id }
+            direct + substitutes == 1
         }
     }
 }

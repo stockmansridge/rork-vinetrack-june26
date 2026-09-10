@@ -162,6 +162,26 @@ class StartTankCommitCoordinatorTest {
         assertEquals(originalJournalId, h.journals.journal?.actualRecordId)
     }
 
+    @Test fun firstCommitRequiresAndVerifiesDurableTripWrite() {
+        val h = Harness()
+        assertTrue(h.coordinator().commit("user", "vineyard", sourceTrip, trip, actual))
+        assertEquals(1, h.tripSaveCount)
+        assertEquals(trip, h.trip)
+        assertNull(h.journals.journal)
+    }
+
+    @Test fun fillOnlySessionIdentityIsTransitionedRatherThanMistakenForCompletedStart() {
+        val fill = TankSession("session", 1, "2026-09-05T00:30:00Z", fillStartTime = "2026-09-05T00:30:00Z")
+        val source = sourceTrip.copy(tankSessions = listOf(fill), isFillingTank = true, fillingTankNumber = 1)
+        val intendedSession = fill.copy(startTime = actual.confirmedAt, startRow = 4.5, fillEndTime = actual.confirmedAt)
+        val intended = source.copy(tankSessions = listOf(intendedSession), activeTankNumber = 1, isFillingTank = false, fillingTankNumber = null)
+        val h = Harness(trip = source)
+        assertTrue(h.coordinator().commit("user", "vineyard", source, intended, actual))
+        assertEquals(actual.confirmedAt, h.trip?.tankSessions?.single()?.startTime)
+        assertEquals(4.5, h.trip?.tankSessions?.single()?.startRow)
+        assertEquals(actual.confirmedAt, h.trip?.tankSessions?.single()?.fillEndTime)
+    }
+
     @Test fun repeatedRecoveryFromEachIncompleteStoreStateNeverDuplicates() {
         listOf("actual", "trip", "marker").forEach { failed ->
             val h = Harness(

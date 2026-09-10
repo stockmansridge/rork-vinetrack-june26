@@ -29,6 +29,15 @@ final class StartTankCommitCoordinatorTests: XCTestCase {
         return (directory, persistence, store, SprayTankActualStore(persistence: persistence), original, updated, actual)
     }
 
+    func testFirstCommitDurablyWritesTripBeforeClearingJournal() throws {
+        let (directory, persistence, store, actualStore, source, updated, actual) = try makeHarness()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let coordinator = StartTankCommitCoordinator(persistence: persistence, actualStore: actualStore)
+        XCTAssertNoThrow(try coordinator.commit(sourceTrip: source, updatedTrip: updated, actual: actual, store: store))
+        XCTAssertEqual(store.trips.first?.tankSessions, updated.tankSessions)
+        XCTAssertNil(persistence.load(key: StartTankCommitCoordinator.persistenceKey) as StartTankCommitCoordinator.Journal?)
+    }
+
     func testFailureBeforeEitherSaveMutatesNeitherStore() throws {
         let (directory, persistence, store, actualStore, source, updated, actual) = try makeHarness()
         defer { try? FileManager.default.removeItem(at: directory) }

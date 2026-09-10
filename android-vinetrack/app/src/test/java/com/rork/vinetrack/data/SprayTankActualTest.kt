@@ -1,11 +1,18 @@
 package com.rork.vinetrack.data
 
+import com.rork.vinetrack.data.model.SprayChemical
+import com.rork.vinetrack.data.model.SprayTank
+import com.rork.vinetrack.data.model.SprayTankActual
 import com.rork.vinetrack.data.model.SprayTankActualChemical
+import com.rork.vinetrack.data.model.areSprayTankActualsComplete
 import com.rork.vinetrack.data.model.chemicalUnitFromBase
 import com.rork.vinetrack.data.model.chemicalUnitToBase
+import com.rork.vinetrack.ui.screens.actualPlannedDifference
 import com.rork.vinetrack.ui.screens.parseLocalizedNonNegativeDecimal
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.text.NumberFormat
@@ -44,6 +51,23 @@ class SprayTankActualTest {
         listOf("", " 1", "1 ", "1x", "x1", "1.2.3", "-1", "NaN", "Infinity").forEach {
             assertNull(it, parseLocalizedNonNegativeDecimal(it, formatter))
         }
+    }
+
+    @Test fun signedDifferenceKeepsMissingDistinctFromExplicitZero() {
+        assertNull(actualPlannedDifference(null, 500.0))
+        assertEquals(-500.0, actualPlannedDifference(0.0, 500.0)!!, 0.0)
+        assertEquals(25.0, actualPlannedDifference(525.0, 500.0)!!, 0.0)
+    }
+
+    @Test fun completenessRequiresWaterAndExactIdentityButAcceptsAdditionalAndSubstitutionLines() {
+        val plannedId = "planned"
+        val tank = SprayTank("tank", 1, 500.0, chemicals = listOf(SprayChemical(plannedId, "Product", 1000.0, unit = "mL")))
+        val substitution = SprayTankActualChemical("sub", null, null, "Replacement", 900.0, "mL", plannedId, "substitution")
+        val addition = SprayTankActualChemical("add", null, null, "Addition", 250.0, "mL", usageKind = "additional")
+        val actual = SprayTankActual("actual", "vineyard", "spray", "trip", "session", 1, 0.0, listOf(substitution, addition), "2026-09-10T00:00:00Z", "user")
+        assertTrue(areSprayTankActualsComplete(listOf(tank), listOf(actual), "vineyard", "spray", "trip", mapOf(1 to setOf("session"))))
+        assertFalse(areSprayTankActualsComplete(listOf(tank), listOf(actual.copy(waterVolumeL = null)), "vineyard", "spray", "trip", mapOf(1 to setOf("session"))))
+        assertFalse(areSprayTankActualsComplete(listOf(tank), listOf(actual, actual.copy(id = "other", tankSessionId = "other-session")), "vineyard", "spray", "trip", mapOf(1 to setOf("session", "other-session"))))
     }
 
     @Test fun strictLocaleParserAcceptsOnlyTheDeviceDecimalSeparator() {

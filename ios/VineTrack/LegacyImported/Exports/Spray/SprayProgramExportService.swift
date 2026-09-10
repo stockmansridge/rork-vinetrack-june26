@@ -248,19 +248,29 @@ struct SprayProgramExportService {
             y += 16
 
             let allActualsComplete = !records.isEmpty && records.allSatisfy { record in
-                areSprayTankActualsComplete(
+                guard let tripId = record.tripId else { return false }
+                return areSprayTankActualsComplete(
                     plannedTanks: record.tanks,
-                    actuals: tankActuals.filter { $0.sprayRecordId == record.id }
+                    actuals: tankActuals.filter { $0.sprayRecordId == record.id },
+                    vineyardId: record.vineyardId,
+                    sprayRecordId: record.id,
+                    tripId: tripId
                 )
             }
             let costItems: [(String, Double)] = records.flatMap { record in
                 record.tanks.flatMap { tank in
                     tank.chemicals.compactMap { chemical -> (String, Double)? in
-                        let actual = tankActuals
-                            .filter { $0.sprayRecordId == record.id && $0.tankNumber == tank.tankNumber }
-                            .max(by: { $0.clientUpdatedAt < $1.clientUpdatedAt })
+                        let actual = record.tripId.flatMap { tripId in
+                            resolveSprayTankActual(
+                                plannedTank: tank, actuals: tankActuals,
+                                vineyardId: record.vineyardId, sprayRecordId: record.id, tripId: tripId
+                            )
+                        }
                         let amount = allActualsComplete
-                            ? actual!.chemicals.first(where: { $0.plannedChemicalId == chemical.id })!.actualAmountBase
+                            ? actual!.chemicals.first(where: {
+                                $0.plannedChemicalId == chemical.id ||
+                                    ($0.usageKind == "substitution" && $0.replacesPlannedChemicalId == chemical.id)
+                            })!.actualAmountBase
                             : chemical.volumePerTank
                         let cost = chemical.costPerUnit * amount
                         guard cost > 0 else { return nil }

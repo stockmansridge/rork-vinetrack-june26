@@ -282,9 +282,19 @@ nonisolated enum TripCostService {
         // records (created before snapshotting) costable.
         let chemical: ChemicalBreakdown? = sprayRecord.map { record in
             let relevantActuals = tankActuals.filter { $0.tripId == trip.id && $0.sprayRecordId == record.id }
-            let actualByTank = Dictionary(grouping: relevantActuals, by: \.tankNumber)
-                .compactMapValues { $0.max(by: { $0.clientUpdatedAt < $1.clientUpdatedAt }) }
-            let actualsComplete = areSprayTankActualsComplete(plannedTanks: record.tanks, actuals: relevantActuals)
+            let sessionIdsByTank = Dictionary(grouping: trip.tankSessions, by: \.tankNumber)
+                .mapValues { Set($0.map { $0.id.uuidString }) }
+            let actualByTank = Dictionary(uniqueKeysWithValues: record.tanks.map { tank in
+                (tank.tankNumber, resolveSprayTankActual(
+                    plannedTank: tank, actuals: relevantActuals, vineyardId: trip.vineyardId,
+                    sprayRecordId: record.id, tripId: trip.id,
+                    tankSessionIds: sessionIdsByTank[tank.tankNumber]
+                ))
+            })
+            let actualsComplete = areSprayTankActualsComplete(
+                plannedTanks: record.tanks, actuals: relevantActuals, vineyardId: trip.vineyardId,
+                sprayRecordId: record.id, tripId: trip.id, tankSessionIdsByNumber: sessionIdsByTank
+            )
             var total: Double = 0
             var anyMissing = false
             var anyPriced = false
@@ -292,7 +302,9 @@ nonisolated enum TripCostService {
                 for chem in tank.chemicals {
                     let amount: Double
                     if actualsComplete,
-                       let actual = actualByTank[tank.tankNumber]?.chemicals.first(where: { $0.plannedChemicalId == chem.id }) {
+                       let actual = actualByTank[tank.tankNumber]??.chemicals.first(where: {
+                           $0.plannedChemicalId == chem.id || ($0.usageKind == "substitution" && $0.replacesPlannedChemicalId == chem.id)
+                       }) {
                         amount = actual.actualAmountBase
                     } else {
                         amount = chem.volumePerTank

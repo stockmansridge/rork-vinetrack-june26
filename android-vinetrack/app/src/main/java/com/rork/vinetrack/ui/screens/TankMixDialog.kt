@@ -169,6 +169,9 @@ internal fun ConfirmActualTankMixDialog(
                             onValueChange = { waterText = it },
                             unit = "L",
                         )
+                        actualPlannedDifference(parse(waterText), tank.waterVolume)?.let { difference ->
+                            LiveDifferenceRow(difference, "L")
+                        }
                     }
                 }
 
@@ -190,6 +193,10 @@ internal fun ConfirmActualTankMixDialog(
                                 onValueChange = { chemicalTexts[chemical.id] = it },
                                 unit = chemical.unit,
                             )
+                            actualPlannedDifference(
+                                parse(chemicalTexts[chemical.id].orEmpty()),
+                                chemicalUnitFromBase(chemical.unit, chemical.volumePerTank),
+                            )?.let { difference -> LiveDifferenceRow(difference, chemical.unit) }
                             if (parse(chemicalTexts[chemical.id].orEmpty()) == 0.0) {
                                 Text("This product will be recorded as not added.", color = VineColors.Orange, fontSize = 12.sp)
                             }
@@ -214,6 +221,19 @@ internal fun ConfirmActualTankMixDialog(
         },
         dismissButton = { TextButton(enabled = !saving, onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+internal fun actualPlannedDifference(actual: Double?, planned: Double): Double? =
+    actual?.takeIf { it.isFinite() && it >= 0.0 && planned.isFinite() }?.minus(planned)
+
+@Composable
+private fun LiveDifferenceRow(difference: Double, unit: String) {
+    val vine = LocalVineColors.current
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("Actual − Planned", fontSize = 12.sp, color = vine.textSecondary)
+        Spacer(Modifier.weight(1f))
+        Text("${signedTankMixNumber(difference)} $unit", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
+    }
 }
 
 @Composable
@@ -283,7 +303,13 @@ internal fun TankMixDialog(
                     selectedTank = selectedTank,
                     selectedTankNumber = selectedTankNumber,
                     onSelectTank = { selectedTankNumber = it },
-                    actual = actuals.firstOrNull { it.tankNumber == selectedTank.tankNumber },
+                    actual = record?.let {
+                        com.rork.vinetrack.data.model.resolveSprayTankActual(
+                            selectedTank, actuals, trip.vineyardId, it.id, trip.id,
+                            trip.tankSessions.filter { session -> session.tankNumber == selectedTank.tankNumber }
+                                .mapTo(mutableSetOf()) { session -> session.id },
+                        )
+                    },
                 )
             }
         },

@@ -193,8 +193,17 @@ struct TankMixDetailsView: View {
         }
     }
 
+    private func resolvedActual(for tank: SprayTank) -> SprayTankActual? {
+        guard let record else { return nil }
+        let sessionIds = Set(trip.tankSessions.filter { $0.tankNumber == tank.tankNumber }.map { $0.id.uuidString })
+        return resolveSprayTankActual(
+            plannedTank: tank, actuals: actualStore.records, vineyardId: trip.vineyardId,
+            sprayRecordId: record.id, tripId: trip.id, tankSessionIds: sessionIds
+        )
+    }
+
     private func plannedSummary(_ tank: SprayTank) -> some View {
-        let actual = actualStore.actual(tripId: trip.id, tankNumber: tank.tankNumber)
+        let actual = resolvedActual(for: tank)
         return VStack(spacing: 0) {
             detailRow("Planned water", value: "\(Self.number(tank.waterVolume)) L")
             Divider()
@@ -238,8 +247,10 @@ struct TankMixDetailsView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(tank.chemicals) { chemical in
-                    let actual = actualStore.actual(tripId: trip.id, tankNumber: tank.tankNumber)?
-                        .chemicals.first { $0.plannedChemicalId == chemical.id }
+                    let actual = resolvedActual(for: tank)?.chemicals.first {
+                        $0.plannedChemicalId == chemical.id ||
+                            ($0.usageKind == "substitution" && $0.replacesPlannedChemicalId == chemical.id)
+                    }
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(alignment: .firstTextBaseline) {
                             Text(chemical.name.isEmpty ? "Unnamed chemical" : chemical.name)

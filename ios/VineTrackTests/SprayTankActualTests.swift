@@ -34,6 +34,17 @@ final class SprayTankActualTests: XCTestCase {
         XCTAssertThrowsError(try SprayTankActualChemical(plannedChemicalId: nil, savedChemicalId: nil, name: "Infinity", actualAmountBase: .infinity, unit: .millilitres))
     }
 
+    func testCompletenessRequiresWaterAndExactSessionButAcceptsValidAmendmentLines() throws {
+        let vineyardId = UUID(), recordId = UUID(), tripId = UUID(), sessionId = UUID(), plannedId = UUID()
+        let tank = SprayTank(tankNumber: 1, waterVolume: 500, chemicals: [SprayChemical(id: plannedId, name: "Product", volumePerTank: 1_000, unit: .millilitres)])
+        let substitute = try SprayTankActualChemical(plannedChemicalId: nil, savedChemicalId: nil, replacesPlannedChemicalId: plannedId, usageKind: "substitution", name: "Replacement", actualAmountBase: 900, unit: .millilitres)
+        let addition = try SprayTankActualChemical(plannedChemicalId: nil, savedChemicalId: nil, usageKind: "additional", name: "Addition", actualAmountBase: 250, unit: .millilitres)
+        let actual = try SprayTankActual(vineyardId: vineyardId, sprayRecordId: recordId, tripId: tripId, tankSessionId: sessionId.uuidString, tankNumber: 1, waterVolumeL: 0, chemicals: [substitute, addition], confirmedAt: Date(), confirmedBy: UUID())
+        XCTAssertTrue(areSprayTankActualsComplete(plannedTanks: [tank], actuals: [actual], vineyardId: vineyardId, sprayRecordId: recordId, tripId: tripId, tankSessionIdsByNumber: [1: [sessionId.uuidString]]))
+        let missingWater = try SprayTankActual(id: actual.id, vineyardId: vineyardId, sprayRecordId: recordId, tripId: tripId, tankSessionId: sessionId.uuidString, tankNumber: 1, waterVolumeL: nil, chemicals: [substitute, addition], confirmedAt: actual.confirmedAt, confirmedBy: actual.confirmedBy)
+        XCTAssertFalse(areSprayTankActualsComplete(plannedTanks: [tank], actuals: [missingWater], vineyardId: vineyardId, sprayRecordId: recordId, tripId: tripId, tankSessionIdsByNumber: [1: [sessionId.uuidString]]))
+    }
+
     func testLifecycleResultReusesFillSessionIdentity() {
         let id = UUID(uuidString: "10000000-0000-4000-8000-000000000002")!
         var trip = Trip(vineyardId: UUID(), paddockName: "Block", startTime: Date(), isActive: true)

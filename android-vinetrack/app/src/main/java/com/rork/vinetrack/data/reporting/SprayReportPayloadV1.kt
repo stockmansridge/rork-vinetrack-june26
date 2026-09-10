@@ -127,8 +127,17 @@ data class SprayReportPayloadV1(
                 Row(rowNumber, singleBlockName, status, source, tank)
             }
             if (rows.any { it.tank is JsonPrimitive && it.tank.content == "Multiple" }) warnings += "One or more rows overlap multiple tank sessions."
+            val sessionIdsByTank = trip.tankSessions.groupBy { it.tankNumber }
+                .mapValues { (_, sessions) -> sessions.mapTo(mutableSetOf()) { it.id } }
             val trackedTanks = record.tanks.orEmpty().sortedBy { it.tankNumber }.map { plannedTank ->
-                val actual = tankActuals.filter { it.tankNumber == plannedTank.tankNumber }.maxByOrNull { it.clientUpdatedAt }
+                val actual = com.rork.vinetrack.data.model.resolveSprayTankActual(
+                    plannedTank, tankActuals, trip.vineyardId, record.id, trip.id,
+                    sessionIdsByTank[plannedTank.tankNumber],
+                )
+                if (actual == null && tankActuals.any {
+                        it.vineyardId == trip.vineyardId && it.sprayRecordId == record.id &&
+                            it.tripId == trip.id && it.tankNumber == plannedTank.tankNumber
+                    }) warnings += "Tank ${plannedTank.tankNumber} actuals could not be associated with one exact tank session."
                 val chemicals = plannedTank.chemicals.map { planned ->
                     val byPlan = actual?.chemicals.orEmpty().filter { it.plannedChemicalId == planned.id }
                     val bySaved = planned.savedChemicalId?.let { saved -> actual?.chemicals.orEmpty().filter { it.savedChemicalId == saved && (it.usageKind ?: "planned") == "planned" } }.orEmpty()
@@ -154,7 +163,7 @@ data class SprayReportPayloadV1(
             }
             val tanks = if (isManual) tankActuals.sortedBy { it.tankNumber }.map { actual ->
                 Tank(actual.tankNumber, actual.id, actual.correctionVersion, null, actual.waterVolumeL, actual.chemicals.map { line ->
-                    Chemical(line.id, null, line.savedChemicalId, null, "additional", line.name, line.unit, null, line.actualAmountBase, "actualOnly", line.productCategory, line.physicalForm, line.snapshotAt)
+                    Chemical(line.id, line.plannedChemicalId, line.savedChemicalId, line.replacesPlannedChemicalId, line.usageKind ?: "additional", line.name, line.unit, null, line.actualAmountBase, "actualOnly", line.productCategory, line.physicalForm, line.snapshotAt)
                 })
             } else trackedTanks
             val actualChemicalTotals = tanks.flatMap { it.chemicals }.filter { it.actualAmountBase != null }

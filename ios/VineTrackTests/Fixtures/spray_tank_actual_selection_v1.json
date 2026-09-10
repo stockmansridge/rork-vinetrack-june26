@@ -1,0 +1,88 @@
+{
+  "vineyardId": "30000000-0000-4000-8000-000000000001",
+  "sprayRecordId": "30000000-0000-4000-8000-000000000002",
+  "tripId": "30000000-0000-4000-8000-000000000003",
+  "confirmedBy": "30000000-0000-4000-8000-000000000004",
+  "plannedTank": {
+    "id": "30000000-0000-4000-8000-000000000010",
+    "tankNumber": 1,
+    "waterVolume": 500.0,
+    "chemicals": [
+      {
+        "id": "30000000-0000-4000-8000-000000000011",
+        "savedChemicalId": "30000000-0000-4000-8000-000000000012",
+        "name": "Planned Product",
+        "volumePerTank": 1250.0,
+        "unit": "mL"
+      }
+    ]
+  },
+  "sessions": [
+    { "id": "30000000-0000-4000-8000-000000000020", "tankNumber": 1 },
+    { "id": "30000000-0000-4000-8000-000000000021", "tankNumber": 1 }
+  ],
+  "actuals": [
+    {
+      "id": "30000000-0000-4000-8000-000000000030",
+      "vineyard_id": "30000000-0000-4000-8000-000000000001",
+      "spray_record_id": "30000000-0000-4000-8000-000000000002",
+      "trip_id": "30000000-0000-4000-8000-000000000003",
+      "tank_session_id": "30000000-0000-4000-8000-000000000020",
+      "tank_number": 1,
+      "water_volume_l": 490.0,
+      "chemicals": [
+        {
+          "id": "30000000-0000-4000-8000-000000000040",
+          "plannedChemicalId": "30000000-0000-4000-8000-000000000011",
+          "savedChemicalId": "30000000-0000-4000-8000-000000000012",
+          "replacesPlannedChemicalId": null,
+          "usageKind": "planned",
+          "name": "Planned Product",
+          "actualAmountBase": 0.0,
+          "unit": "mL"
+        },
+        {
+          "id": "30000000-0000-4000-8000-000000000041",
+          "plannedChemicalId": null,
+          "savedChemicalId": "30000000-0000-4000-8000-000000000042",
+          "replacesPlannedChemicalId": null,
+          "usageKind": "additional",
+          "name": "Legitimate Addition",
+          "actualAmountBase": 250.0,
+          "unit": "mL"
+        }
+      ],
+      "confirmed_at": "2026-09-10T01:02:03Z",
+      "confirmed_by": "30000000-0000-4000-8000-000000000004",
+      "client_updated_at": "2026-09-10T01:02:03Z",
+      "correction_version": 2,
+      "last_corrected_at": "2026-09-10T01:02:03Z"
+    },
+    {
+      "id": "30000000-0000-4000-8000-000000000031",
+      "vineyard_id": "30000000-0000-4000-8000-000000000001",
+      "spray_record_id": "30000000-0000-4000-8000-000000000002",
+      "trip_id": "30000000-0000-4000-8000-000000000003",
+      "tank_session_id": "30000000-0000-4000-8000-000000000021",
+      "tank_number": 1,
+      "water_volume_l": 475.0,
+      "chemicals": [
+        {
+          "id": "30000000-0000-4000-8000-000000000043",
+          "plannedChemicalId": null,
+          "savedChemicalId": "30000000-0000-4000-8000-000000000044",
+          "replacesPlannedChemicalId": "30000000-0000-4000-8000-000000000011",
+          "usageKind": "substitution",
+          "name": "Valid Substitute",
+          "actualAmountBase": 900.0,
+          "unit": "mL"
+        }
+      ],
+      "confirmed_at": "2026-09-10T02:02:03Z",
+      "confirmed_by": "30000000-0000-4000-8000-000000000004",
+      "client_updated_at": "2026-09-10T02:02:03Z",
+      "correction_version": 1,
+      "last_corrected_at": null
+    }
+  ]
+}
