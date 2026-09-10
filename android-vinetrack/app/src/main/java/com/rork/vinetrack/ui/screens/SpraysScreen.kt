@@ -1556,7 +1556,7 @@ private fun SprayDetailView(
                         } else exportScope.launch {
                             val payload = com.rork.vinetrack.data.model.ManualSprayPayload(
                                 vineyardId = record.vineyardId, manualEntryId = manualEntryId, sprayRecordId = record.id, tripId = trip.id,
-                                reference = record.sprayReference, operationType = record.operationType ?: "Foliar Spray",
+                                reference = record.sprayReference.orEmpty(), operationType = record.operationType ?: "Foliar Spray",
                                 startUtc = trip.startTime ?: record.startTime ?: record.date ?: Instant.now().toString(),
                                 endUtc = trip.endTime ?: record.endTime ?: Instant.now().toString(), vineyardTimeZone = state.seasonZone.id,
                                 tractorId = trip.tractorId, operatorUserId = trip.operatorUserId, sprayEquipmentId = record.sprayEquipmentId,

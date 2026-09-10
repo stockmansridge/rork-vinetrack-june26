@@ -1,6 +1,7 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   areSprayTankActualsComplete,
+  buildSprayActualResponse,
   buildTankActualIdentity,
   mapSprayActualTanks,
   resolveSprayTankActualRows,
@@ -88,6 +89,25 @@ Deno.test("manual response mapping preserves explicit zero and null quantities a
   assertEquals(mapped.length, 1);
   assertEquals(mapped[0].actual_products[0].quantity_base, 0);
   assertEquals(areSprayTankActualsComplete(planned, rows, manualIdentity), false);
+});
+
+Deno.test("full spray response keeps absent manual plan null and genuine actual zero", () => {
+  const tankId = "80000000-0000-4000-8000-000000000001";
+  const manualIdentity: TankActualIdentity = {
+    ...identity,
+    isManualEntry: true,
+    sessionIdsByTank: new Map([[1, new Set([tankId])]]),
+  };
+  const plannedManual = [{ id: tankId, tankNumber: 1, chemicals: [] }];
+  const actualZero = { ...base, tank_session_id: tankId, water_volume_l: 0, chemicals: [] };
+  const response = buildSprayActualResponse(plannedManual, [actualZero], manualIdentity).fields;
+  assertEquals(response.planned_water_volume_l, null);
+  assertEquals(response.actual_water_volume_l, 0);
+  assertEquals(response.actuals_complete, true);
+  assertEquals((response.actual_tanks as Array<Record<string, unknown>>)[0].actual_water_volume_l, 0);
+
+  const explicitPlan = buildSprayActualResponse([{ ...plannedManual[0], waterVolume: 0 }], [actualZero], manualIdentity).fields;
+  assertEquals(explicitPlan.planned_water_volume_l, 0);
 });
 
 Deno.test("zero direct line with one valid substitution is complete", () => {

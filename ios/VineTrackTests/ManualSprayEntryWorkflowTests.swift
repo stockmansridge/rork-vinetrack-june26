@@ -17,6 +17,19 @@ final class ManualSprayEntryWorkflowTests: XCTestCase {
         XCTAssertEqual(ChemicalUnit.kilograms.fromBase(750), 0.75)
     }
 
+    func testNotesOnlyEditPreservesRecordedWeatherProvenance() throws {
+        var payload = fixture()
+        let observedAt = Date(timeIntervalSince1970: 1_788_999_100)
+        payload.manualWeather = ManualSprayWeather(
+            observedAt: observedAt, source: "Recorded station override", temperatureC: 12,
+            humidityPct: nil, windSpeedKmh: nil, windGustKmh: nil, windDirectionDeg: nil, rainMm: nil
+        )
+        payload.notes = "Changed note"
+        let validated = try payload.validated()
+        XCTAssertEqual(validated.manualWeather?.observedAt, observedAt)
+        XCTAssertEqual(validated.manualWeather?.source, "Recorded station override")
+    }
+
     func testPersistenceFailureDoesNotSendOrCreateMemoryShortcut() async {
         let repository = ManualSprayRepositoryDouble()
         let store = ManualSprayMemoryStore(failSaves: 1)

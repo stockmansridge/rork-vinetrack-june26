@@ -213,7 +213,6 @@ struct ManualSprayEntryView: View {
         guard loadError == nil, accessControl.loadedVineyardId == vineyardId, accessControl.canManageManualSprays else { return }
         isSaving = true
         defer { isSaving = false }
-        if draft.manualWeather != nil { draft.manualWeather?.observedAt = draft.startUtc }
         do {
             let response = try await coordinator.save(payload: draft, expectedVersion: expectedVersion)
             if let response, response.serverConfirmed {

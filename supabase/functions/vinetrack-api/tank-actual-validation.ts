@@ -216,3 +216,25 @@ export function mapSprayActualTanks(
     })),
   }));
 }
+
+/** Builds the complete actual/planned quantity segment used by the spray detail response. */
+export function buildSprayActualResponse(
+  plannedTanks: TankJson[], actualRows: TankActualRow[], identity: TankActualIdentity,
+): { fields: Record<string, unknown>; resolvedRows: TankActualRow[] } {
+  const resolvedRows = [...resolveSprayTankActualRows(plannedTanks, actualRows, identity).values()];
+  const plannedValues = plannedTanks.map((tank) => finiteNumber(tank.waterVolume)).filter((value): value is number => value !== null);
+  const round3 = (value: number): number => Math.round(value * 1000) / 1000;
+  return {
+    fields: {
+      planned_water_volume_l: identity.isManualEntry && plannedValues.length === 0
+        ? null
+        : round3(plannedValues.reduce((sum, value) => sum + value, 0)),
+      actual_water_volume_l: resolvedRows.length === plannedTanks.length && resolvedRows.every((row) => finiteNumber(row.water_volume_l) !== null)
+        ? round3(resolvedRows.reduce((sum, row) => sum + (finiteNumber(row.water_volume_l) ?? 0), 0))
+        : null,
+      actuals_complete: areSprayTankActualsComplete(plannedTanks, actualRows, identity),
+      actual_tanks: mapSprayActualTanks(actualRows, new Set(resolvedRows.map((row) => row.id)), identity),
+    },
+    resolvedRows,
+  };
+}

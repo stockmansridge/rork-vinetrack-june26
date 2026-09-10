@@ -8,6 +8,7 @@ import com.rork.vinetrack.data.model.ManualSpraySaveResponse
 import com.rork.vinetrack.data.model.ManualSprayTank
 import com.rork.vinetrack.data.model.canManageManualSprays
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -26,6 +27,44 @@ class ManualSprayEntryWorkflowTest {
         assertNull(payload.validationError())
         assertEquals(2_500.0, payload.tanks.first().chemicals.first().actualAmountBase, 0.0)
         assertEquals(750.0, payload.tanks.last().chemicals.first().actualAmountBase, 0.0)
+    }
+
+    @Test fun incompleteDraftTextSerializesWithoutNaNAndOnlyValidatedValuesReachPayload() {
+        val payload = fixture()
+        val tank = payload.tanks.first()
+        val chemical = tank.chemicals.first()
+        val incomplete = ManualSprayFormDraft(
+            base = payload,
+            waterInputs = mapOf(tank.id to ""),
+            chemicalInputs = mapOf(chemical.id to "not-a-number"),
+        )
+        val encoded = Json.encodeToString(ManualSprayFormDraft.serializer(), incomplete)
+        assertFalse(encoded.contains("NaN"))
+        assertEquals("", Json.decodeFromString(ManualSprayFormDraft.serializer(), encoded).waterInputs[tank.id])
+        assertTrue(runCatching { incomplete.validatedPayload() }.isFailure)
+
+        val valid = incomplete.copy(waterInputs = mapOf(tank.id to "0"), chemicalInputs = mapOf(chemical.id to "2.5"))
+        val validated = valid.validatedPayload()
+        assertEquals(0.0, validated.tanks.first().waterVolumeLitres, 0.0)
+        assertEquals(2_500.0, validated.tanks.first().chemicals.first().actualAmountBase, 0.0)
+    }
+
+    @Test fun copyPreviousPreservesEnteredTextForNewStableIdentities() {
+        val previous = fixture().tanks.first()
+        val copy = previous.copied(2)
+        val copied = copyManualTankInputs(previous, copy, mapOf(previous.id to "123.5"), mapOf(previous.chemicals.first().id to "0"))
+        assertTrue(copy.id != previous.id)
+        assertTrue(copy.chemicals.first().id != previous.chemicals.first().id)
+        assertEquals("123.5", copied.waterInputs[copy.id])
+        assertEquals("0", copied.chemicalInputs[copy.chemicals.first().id])
+    }
+
+    @Test fun notesOnlyDraftPreservesWeatherSourceAndObservationTime() {
+        val payload = fixture().copy(manualWeather = com.rork.vinetrack.data.model.ManualSprayWeather("2026-09-08T23:45:00Z", "Recorded station override", temperatureC = 12.0))
+        val draft = ManualSprayFormDraft(payload.copy(notes = "Changed note"))
+        val validated = draft.validatedPayload()
+        assertEquals("2026-09-08T23:45:00Z", validated.manualWeather?.observedAt)
+        assertEquals("Recorded station override", validated.manualWeather?.source)
     }
 
     @Test fun terminalConflictAndDeletedErrorsAreNotQueuedForReplay() = runBlocking {

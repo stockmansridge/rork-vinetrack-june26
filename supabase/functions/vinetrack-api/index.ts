@@ -88,8 +88,8 @@
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   areSprayTankActualsComplete,
+  buildSprayActualResponse,
   buildTankActualIdentity,
-  mapSprayActualTanks,
   resolveSprayTankActualRows,
   type TankActualIdentity,
   type TripTankIdentitySource,
@@ -1632,16 +1632,10 @@ async function handleSprayGet(
   const plannedTanks = parseTanks(spray.tanks);
   const actualRows = await loadSprayTankActuals(db, spray.id);
   const actualIdentity = await loadTankActualIdentity(db, spray);
-  const resolvedActuals = resolveSprayTankActualRows(plannedTanks, actualRows, actualIdentity);
-  const resolvedRows = [...resolvedActuals.values()];
-  const actualTanks = mapSprayActualTanks(actualRows, new Set(resolvedRows.map((row) => row.id)), actualIdentity);
-  const actualsComplete = areSprayTankActualsComplete(plannedTanks, actualRows, actualIdentity);
-  body.planned_water_volume_l = sprayTotals(plannedTanks).waterL;
-  body.actual_water_volume_l = resolvedRows.length === plannedTanks.length && resolvedRows.every((row) => num(row.water_volume_l) !== null)
-    ? round3(resolvedRows.reduce((sum, actual) => sum + (num(actual.water_volume_l) ?? 0), 0))
-    : null;
-  body.actuals_complete = actualsComplete;
-  body.actual_tanks = actualTanks;
+  const actualResponse = buildSprayActualResponse(plannedTanks, actualRows, actualIdentity);
+  const resolvedRows = actualResponse.resolvedRows;
+  const actualsComplete = actualResponse.fields.actuals_complete === true;
+  Object.assign(body, actualResponse.fields);
   if (includeCosts) {
     body.chemical_cost_total = actualsComplete
       ? actualChemicalCostTotal(spray.tanks, resolvedRows)

@@ -248,24 +248,21 @@ struct SprayProgramExportService {
             y += 16
 
             let allActualsComplete = !records.isEmpty && records.allSatisfy { record in
-                guard let tripId = record.tripId else { return false }
-                return areSprayTankActualsComplete(
+                areSprayTankActualsComplete(
                     plannedTanks: record.tanks,
                     actuals: tankActuals.filter { $0.sprayRecordId == record.id },
                     vineyardId: record.vineyardId,
                     sprayRecordId: record.id,
-                    tripId: tripId
+                    tripId: record.tripId
                 )
             }
             let costItems: [(String, Double)] = records.flatMap { record in
                 record.tanks.flatMap { tank in
                     tank.chemicals.compactMap { chemical -> (String, Double)? in
-                        let actual = record.tripId.flatMap { tripId in
-                            resolveSprayTankActual(
-                                plannedTank: tank, actuals: tankActuals,
-                                vineyardId: record.vineyardId, sprayRecordId: record.id, tripId: tripId
-                            )
-                        }
+                        let actual = resolveSprayTankActual(
+                            plannedTank: tank, actuals: tankActuals,
+                            vineyardId: record.vineyardId, sprayRecordId: record.id, tripId: record.tripId
+                        )
                         let amount = allActualsComplete
                             ? actual!.chemicals.first(where: {
                                 $0.plannedChemicalId == chemical.id ||
