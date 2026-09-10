@@ -566,6 +566,10 @@ struct PinsMapView: View {
     @State private var selectedPin: VinePin?
     @State private var hasSetInitialPosition: Bool = false
     @State private var hasFramedBlocks: Bool = false
+    @State private var isCurrentLocationRequested: Bool = false
+    @State private var offlineLocationRequestID: Int = 0
+
+    private static let closestOnlineCameraDistance: Double = 10
 
     private var pinIDs: [UUID] {
         pins.map { $0.id }
@@ -617,7 +621,9 @@ struct PinsMapView: View {
     /// Frames the map once when content first becomes available. Never moves
     /// the camera again after the initial fit.
     private func applyInitialFitIfNeeded(animated: Bool = false) {
-        guard !hasSetInitialPosition, let region = regionForContent() else { return }
+        guard !isCurrentLocationRequested,
+              !hasSetInitialPosition,
+              let region = regionForContent() else { return }
         if animated {
             withAnimation { position = .region(region) }
         } else {
@@ -625,6 +631,38 @@ struct PinsMapView: View {
         }
         hasSetInitialPosition = true
         hasFramedBlocks = !blockCoordinates.isEmpty
+    }
+
+    private func requestCurrentLocation() {
+        isCurrentLocationRequested = true
+        if locationService.authorizationStatus == .notDetermined {
+            locationService.requestPermission()
+        }
+        locationService.startUpdating()
+        centreOnCurrentLocationIfAvailable()
+    }
+
+    private func centreOnCurrentLocationIfAvailable() {
+        guard isCurrentLocationRequested else { return }
+        let result = locationService.freshLocation()
+        guard case .fresh = result.quality,
+              let coordinate = result.location?.coordinate else { return }
+        guard CLLocationCoordinate2DIsValid(coordinate),
+              !(coordinate.latitude == 0 && coordinate.longitude == 0) else { return }
+
+        isCurrentLocationRequested = false
+        hasSetInitialPosition = true
+        hasFramedBlocks = true
+        if network.isOnline {
+            withAnimation {
+                position = .camera(MapCamera(
+                    centerCoordinate: coordinate,
+                    distance: Self.closestOnlineCameraDistance
+                ))
+            }
+        } else {
+            offlineLocationRequestID &+= 1
+        }
     }
 
     private var offlineMap: some View {
@@ -650,12 +688,16 @@ struct PinsMapView: View {
                     name: $0.buttonName
                 )
             },
-            userCoordinate: locationService.location?.coordinate
+            userCoordinate: locationService.location?.coordinate,
+            userLocationRequestID: offlineLocationRequestID
         )
     }
 
     private var hybridMap: some View {
-        Map(position: $position) {
+        Map(
+            position: $position,
+            bounds: MapCameraBounds(minimumDistance: Self.closestOnlineCameraDistance)
+        ) {
             ForEach(allPaddocks) { paddock in
                 MapPolygon(coordinates: paddock.polygonPoints.map { $0.coordinate })
                     .foregroundStyle(.orange.opacity(0.08))
@@ -734,29 +776,20 @@ struct PinsMapView: View {
                         .background(.ultraThinMaterial, in: .rect(cornerRadius: 8))
                 }
 
-                Button {
-                    if locationService.authorizationStatus == .notDetermined {
-                        locationService.requestPermission()
-                    }
-                    locationService.startUpdating()
-                    if let coordinate = locationService.location?.coordinate {
-                        withAnimation {
-                            position = .region(MKCoordinateRegion(
-                                center: coordinate,
-                                span: MKCoordinateSpan(latitudeDelta: 0.005, longitudeDelta: 0.005)
-                            ))
-                        }
-                    } else {
-                        withAnimation {
-                            position = .userLocation(fallback: .automatic)
+                Button(action: requestCurrentLocation) {
+                    Group {
+                        if isCurrentLocationRequested {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "location.fill")
+                                .font(.system(size: 15, weight: .semibold))
                         }
                     }
-                } label: {
-                    Image(systemName: "location.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 40, height: 40)
-                        .background(.ultraThinMaterial, in: .rect(cornerRadius: 8))
+                    .frame(width: 40, height: 40)
+                    .background(.ultraThinMaterial, in: .rect(cornerRadius: 8))
                 }
+                .accessibilityLabel(isCurrentLocationRequested ? "Acquiring current location" : "My Current Location")
             }
             .padding(.top, 12)
             .padding(.trailing, 12)
@@ -775,11 +808,21 @@ struct PinsMapView: View {
             applyInitialFitIfNeeded(animated: true)
         }
         .onChange(of: blockGeometrySignature) { _, newCount in
-            // Block geometry newly loaded or edited: frame the block group once.
-            guard newCount > 0, !hasFramedBlocks, let region = regionForContent() else { return }
+            // Block geometry newly loaded or edited: frame the block group once,
+            // unless a current-location request owns the camera.
+            guard !isCurrentLocationRequested,
+                  newCount > 0,
+                  !hasFramedBlocks,
+                  let region = regionForContent() else { return }
             withAnimation { position = .region(region) }
             hasSetInitialPosition = true
             hasFramedBlocks = true
+        }
+        .onChange(of: locationService.locationUpdateCount) { _, _ in
+            centreOnCurrentLocationIfAvailable()
+        }
+        .onDisappear {
+            isCurrentLocationRequested = false
         }
         .task {
             if !hasSetInitialPosition {

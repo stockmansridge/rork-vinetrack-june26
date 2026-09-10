@@ -67,6 +67,7 @@ import com.rork.vinetrack.ui.components.estimatedCameraPosition
 import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.components.hasDeviceLocationPermission
 import com.rork.vinetrack.ui.components.isValidMapCoordinate
+import com.rork.vinetrack.ui.components.MapMyLocationButton
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import com.google.maps.android.compose.GoogleMap
@@ -93,6 +94,9 @@ private const val OVERVIEW_TILT = 50f
  * and avoid rendering many label composables when zoomed out across a region.
  */
 private const val LABEL_MIN_ZOOM = 13.5f
+
+/** Maximum zoom supported by the Google Maps renderer used by the Pins map. */
+private const val PINS_MY_LOCATION_ZOOM = 21f
 
 /** iOS-style amber used for block boundaries and name chips over satellite imagery. */
 private val BlockAmber = Color(0xFFFF9500)
@@ -183,6 +187,7 @@ fun VineyardMapContent(
     modifier: Modifier = Modifier,
     defaults: MapDefaults = MapDefaults.factory,
     onPinClick: ((Pin) -> Unit)? = null,
+    onLocationMessage: ((String) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -251,6 +256,9 @@ fun VineyardMapContent(
     // never routine pin refreshes or user pans.
     var framedBlockGeometry by remember { mutableStateOf<List<LatLng>?>(null) }
     var framedHadPins by remember { mutableStateOf(false) }
+    var isCurrentLocationRequestActive by remember { mutableStateOf(false) }
+    var hasCurrentLocationRequestOccurred by remember { mutableStateOf(false) }
+    var hasUserRecentred by remember { mutableStateOf(false) }
     // Measured map size, used to keep a tapped pin visible above the detail sheet.
     var mapSizePx by remember { mutableStateOf(IntSize.Zero) }
 
@@ -263,16 +271,20 @@ fun VineyardMapContent(
     // If the content arrived after first composition (cold start while data is
     // still loading), snap the camera onto the midpoint straight away — without
     // waiting for onMapLoaded — so the interim frame is the vineyard, not (0,0).
-    LaunchedEffect(framePoints) {
-        if (hasFramed || framePoints.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(framePoints, hasCurrentLocationRequestOccurred, isCurrentLocationRequestActive, hasUserRecentred) {
+        if (hasFramed || hasCurrentLocationRequestOccurred || hasUserRecentred || isCurrentLocationRequestActive || framePoints.isEmpty()) {
+            return@LaunchedEffect
+        }
         estimatedCameraPosition(framePoints)?.let { cameraPositionState.position = it }
     }
 
     // Frame the vineyard blocks once the map is laid out. After the initial
     // fit, the camera only re-frames when block geometry itself changes; pin
     // refreshes/filter changes and user pans never move it.
-    LaunchedEffect(mapLoaded, framePoints) {
-        if (!mapLoaded || framePoints.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(mapLoaded, framePoints, hasCurrentLocationRequestOccurred, isCurrentLocationRequestActive, hasUserRecentred) {
+        if (!mapLoaded || hasCurrentLocationRequestOccurred || hasUserRecentred || isCurrentLocationRequestActive || framePoints.isEmpty()) {
+            return@LaunchedEffect
+        }
         val hasPins = locatedPins.any { it.latLng() != null }
         if (hasFramed && blockFramePoints == framedBlockGeometry && (framedHadPins || !hasPins)) {
             return@LaunchedEffect
@@ -446,32 +458,53 @@ fun VineyardMapContent(
                     .padding(start = 12.dp, bottom = 16.dp),
             )
 
-            // Re-centre on the mapped content after a manual pan/zoom.
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 12.dp, bottom = 16.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.55f))
-                    .clickable {
-                        scope.launch {
-                            cameraPositionState.fitToContent(
-                                points = framePoints,
-                                paddingPx = 120,
-                                singlePointZoom = 17f,
-                                animate = true,
-                            )
-                        }
-                    }
-                    .padding(11.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Filled.GpsFixed,
-                    contentDescription = "Re-centre map",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp),
+            if (onLocationMessage != null) {
+                MapMyLocationButton(
+                    camera = cameraPositionState,
+                    onMessage = onLocationMessage,
+                    targetZoom = PINS_MY_LOCATION_ZOOM,
+                    onPermissionGranted = { hasLocationPermission = true },
+                    onRequestStateChanged = { isActive ->
+                        isCurrentLocationRequestActive = isActive
+                        if (isActive) hasCurrentLocationRequestOccurred = true
+                    },
+                    onCentred = {
+                        hasUserRecentred = true
+                        hasFramed = true
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 12.dp, bottom = 16.dp),
+                    contentDescription = "My Current Location",
                 )
+            } else {
+                // Other map screens retain their existing content-refit control.
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 12.dp, bottom = 16.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .clickable {
+                            scope.launch {
+                                cameraPositionState.fitToContent(
+                                    points = framePoints,
+                                    paddingPx = 120,
+                                    singlePointZoom = 17f,
+                                    animate = true,
+                                )
+                            }
+                        }
+                        .padding(11.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Filled.GpsFixed,
+                        contentDescription = "Re-centre map",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
 
             // Helpful note if no Maps key is configured for this build.

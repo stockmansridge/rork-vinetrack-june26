@@ -35,9 +35,9 @@ import kotlinx.coroutines.launch
  * Handles the full flow: requests location permission when missing, fetches a
  * one-shot fix via [LocationTracker.currentLocation] (cached fix first, then a
  * fresh high-accuracy fix with timeout), and animates the camera to the user's
- * position. The current zoom is preserved when it is already at a sensible
- * vineyard working level (16–21); otherwise it snaps to a default setup zoom
- * of 18. Failure states are surfaced through [onMessage] instead of failing
+ * position. Callers can provide [targetZoom] when their renderer requires a
+ * specific one-time zoom; otherwise the current sensible vineyard zoom is
+ * preserved. Failure states are surfaced through [onMessage] instead of failing
  * silently, and a spinner replaces the icon while a fix is being acquired.
  */
 @Composable
@@ -48,7 +48,10 @@ fun MapMyLocationButton(
     containerColor: Color = Color(0xCC1C1C1E),
     contentColor: Color = Color.White,
     contentDescription: String = "Go to current location",
+    targetZoom: Float? = null,
     onPermissionGranted: () -> Unit = {},
+    onRequestStateChanged: (Boolean) -> Unit = {},
+    onCentred: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -59,18 +62,25 @@ fun MapMyLocationButton(
         if (isLocating) return
         scope.launch {
             isLocating = true
-            val fix = tracker.currentLocation()
-            isLocating = false
-            if (fix == null) {
-                onMessage("Current location unavailable. Try again when GPS has a fix.")
-                return@launch
-            }
-            val currentZoom = camera.position.zoom
-            val targetZoom = if (currentZoom in 16f..21f) currentZoom else 18f
-            runCatching {
-                camera.animate(
-                    CameraUpdateFactory.newLatLngZoom(LatLng(fix.latitude, fix.longitude), targetZoom),
-                )
+            onRequestStateChanged(true)
+            try {
+                val fix = tracker.currentLocation()
+                if (fix == null) {
+                    onMessage("Current location unavailable. Try again when GPS has a fix.")
+                    return@launch
+                }
+                val currentZoom = camera.position.zoom
+                val requestedZoom = targetZoom ?: if (currentZoom in 16f..21f) currentZoom else 18f
+                runCatching {
+                    camera.animate(
+                        CameraUpdateFactory.newLatLngZoom(LatLng(fix.latitude, fix.longitude), requestedZoom),
+                    )
+                }.onSuccess {
+                    onCentred()
+                }
+            } finally {
+                isLocating = false
+                onRequestStateChanged(false)
             }
         }
     }
@@ -78,10 +88,12 @@ fun MapMyLocationButton(
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { grants ->
+        isLocating = false
         if (grants.values.any { it }) {
             onPermissionGranted()
             goToCurrentLocation()
         } else {
+            onRequestStateChanged(false)
             onMessage("Location permission is needed to centre the map on your current position.")
         }
     }
@@ -95,6 +107,8 @@ fun MapMyLocationButton(
                 if (tracker.hasPermission) {
                     goToCurrentLocation()
                 } else {
+                    isLocating = true
+                    onRequestStateChanged(true)
                     permissionLauncher.launch(
                         arrayOf(
                             android.Manifest.permission.ACCESS_FINE_LOCATION,

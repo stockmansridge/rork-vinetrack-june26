@@ -16,6 +16,7 @@ import CoreLocation
 /// simple equirectangular projection fitted to the supplied geometry. Pan and
 /// pinch-to-zoom are supported; a recentre button refits the content.
 struct OfflineVineyardMapView: View {
+    static let maximumScale: CGFloat = 40
     struct Paddock: Identifiable {
         let id: UUID
         let polygon: [CLLocationCoordinate2D]
@@ -47,6 +48,8 @@ struct OfflineVineyardMapView: View {
     var pins: [Pin] = []
     var userCoordinate: CLLocationCoordinate2D? = nil
     var userHeading: Double? = nil
+    /// Increment to perform a one-time maximum-zoom centre on `userCoordinate`.
+    var userLocationRequestID: Int = 0
     /// Show the small "Offline map mode" status banner. Defaults to true.
     var showStatusBanner: Bool = true
     var showPaddockLabels: Bool = true
@@ -55,8 +58,18 @@ struct OfflineVineyardMapView: View {
     @GestureState private var gestureScale: CGFloat = 1
     @State private var committedOffset: CGSize = .zero
     @GestureState private var gestureOffset: CGSize = .zero
+    @State private var viewportSize: CGSize = .zero
+    @State private var lockedProjectionFrame: ProjectionFrame?
 
-    private var liveScale: CGFloat { max(0.3, min(committedScale * gestureScale, 40)) }
+    private struct ProjectionFrame {
+        let centerLatitude: Double
+        let centerLongitude: Double
+        let longitudeScale: Double
+        let latitudeSpan: Double
+        let longitudeSpan: Double
+    }
+
+    private var liveScale: CGFloat { max(0.3, min(committedScale * gestureScale, Self.maximumScale)) }
     private var liveOffset: CGSize {
         CGSize(width: committedOffset.width + gestureOffset.width,
                height: committedOffset.height + gestureOffset.height)
@@ -103,10 +116,17 @@ struct OfflineVineyardMapView: View {
                                     state = value.magnification
                                 }
                                 .onEnded { value in
-                                    committedScale = max(0.3, min(committedScale * value.magnification, 40))
+                                    committedScale = max(0.3, min(committedScale * value.magnification, Self.maximumScale))
                                 }
                         )
                 )
+                .onAppear {
+                    viewportSize = geo.size
+                    if userLocationRequestID > 0 {
+                        DispatchQueue.main.async { centreOnUser() }
+                    }
+                }
+                .onChange(of: geo.size) { _, newSize in viewportSize = newSize }
             }
 
             if showStatusBanner {
@@ -119,6 +139,10 @@ struct OfflineVineyardMapView: View {
             recentreButton
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .padding(12)
+        }
+        .onChange(of: userLocationRequestID) { oldValue, newValue in
+            guard newValue != oldValue else { return }
+            centreOnUser()
         }
     }
 
@@ -146,6 +170,7 @@ struct OfflineVineyardMapView: View {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                 committedScale = 1
                 committedOffset = .zero
+                lockedProjectionFrame = nil
             }
         } label: {
             Image(systemName: "scope")
@@ -153,6 +178,27 @@ struct OfflineVineyardMapView: View {
                 .foregroundStyle(.white)
                 .padding(9)
                 .background(.ultraThinMaterial, in: .circle)
+        }
+    }
+
+    private func centreOnUser() {
+        guard let userCoordinate,
+              CLLocationCoordinate2DIsValid(userCoordinate),
+              viewportSize.width > 0,
+              viewportSize.height > 0 else { return }
+        guard let frame = projectionFrame(for: allCoordinates) else { return }
+        lockedProjectionFrame = frame
+        let availableWidth = max(viewportSize.width - 72, 1)
+        let availableHeight = max(viewportSize.height - 72, 1)
+        let scale = min(availableWidth / frame.longitudeSpan, availableHeight / frame.latitudeSpan) * Self.maximumScale
+        let offset = CGSize(
+            width: -(userCoordinate.longitude - frame.centerLongitude) * frame.longitudeScale * scale,
+            height: (userCoordinate.latitude - frame.centerLatitude) * scale
+        )
+
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            committedScale = Self.maximumScale
+            committedOffset = offset
         }
     }
 
@@ -170,32 +216,39 @@ struct OfflineVineyardMapView: View {
         return coords
     }
 
+    private func projectionFrame(for coordinates: [CLLocationCoordinate2D]) -> ProjectionFrame? {
+        guard let minLat = coordinates.map(\.latitude).min(),
+              let maxLat = coordinates.map(\.latitude).max(),
+              let minLon = coordinates.map(\.longitude).min(),
+              let maxLon = coordinates.map(\.longitude).max() else { return nil }
+        let centerLatitude = (minLat + maxLat) / 2
+        let longitudeScale = max(cos(centerLatitude * .pi / 180), 0.01)
+        return ProjectionFrame(
+            centerLatitude: centerLatitude,
+            centerLongitude: (minLon + maxLon) / 2,
+            longitudeScale: longitudeScale,
+            latitudeSpan: max(maxLat - minLat, 0.0003),
+            longitudeSpan: max((maxLon - minLon) * longitudeScale, 0.0003)
+        )
+    }
+
     /// Build a coordinate -> screen-point projector fitted to the geometry.
     private func makeProjector(size: CGSize) -> (CLLocationCoordinate2D) -> CGPoint {
-        let coords = allCoordinates
-        let lats = coords.map(\.latitude)
-        let lons = coords.map(\.longitude)
-        guard let minLat = lats.min(), let maxLat = lats.max(),
-              let minLon = lons.min(), let maxLon = lons.max() else {
+        guard let frame = lockedProjectionFrame ?? projectionFrame(for: allCoordinates) else {
             return { _ in CGPoint(x: size.width / 2, y: size.height / 2) }
         }
-        let centerLat = (minLat + maxLat) / 2
-        let centerLon = (minLon + maxLon) / 2
-        let lonScale = max(cos(centerLat * .pi / 180), 0.01)
-        let spanLat = max(maxLat - minLat, 0.0003)
-        let spanLon = max((maxLon - minLon) * lonScale, 0.0003)
 
         let padding: CGFloat = 36
         let availW = max(size.width - padding * 2, 1)
         let availH = max(size.height - padding * 2, 1)
         // Points per degree of latitude (uniform for both axes after lonScale).
-        let baseScale = min(availW / spanLon, availH / spanLat)
+        let baseScale = min(availW / frame.longitudeSpan, availH / frame.latitudeSpan)
         let scale = baseScale * liveScale
         let offset = liveOffset
 
         return { coord in
-            let x = (coord.longitude - centerLon) * lonScale * scale + size.width / 2 + offset.width
-            let y = -(coord.latitude - centerLat) * scale + size.height / 2 + offset.height
+            let x = (coord.longitude - frame.centerLongitude) * frame.longitudeScale * scale + size.width / 2 + offset.width
+            let y = -(coord.latitude - frame.centerLatitude) * scale + size.height / 2 + offset.height
             return CGPoint(x: x, y: y)
         }
     }

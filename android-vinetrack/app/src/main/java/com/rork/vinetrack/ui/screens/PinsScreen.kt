@@ -428,6 +428,9 @@ fun PinsScreen(
                     pins = visiblePins,
                     modifier = Modifier.fillMaxSize(),
                     onPinClick = { detailPinId = it.id },
+                    onLocationMessage = { message ->
+                        scope.launch { snackbarHostState.showSnackbar(message) }
+                    },
                 )
                 PinsViewMode.List -> PinsListMode(
                     vm = vm,
