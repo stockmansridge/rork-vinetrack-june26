@@ -90,6 +90,7 @@ import {
   areSprayTankActualsComplete,
   buildSprayActualResponse,
   buildTankActualIdentity,
+  mapSprayPlannedTanks,
   resolveSprayTankActualRows,
   type TankActualIdentity,
   type TripTankIdentitySource,
@@ -979,37 +980,6 @@ async function loadTankActualIdentity(db: SupabaseClient, spray: SprayRow): Prom
   return buildTankActualIdentity(spray, trip);
 }
 
-/** Full planned tank/product detail (single-record endpoint only). */
-function mapSprayTanks(raw: unknown, includeCosts: boolean) {
-  return parseTanks(raw).map((t) => {
-    const chems = Array.isArray(t.chemicals) ? (t.chemicals as ChemicalJson[]) : [];
-    return {
-      tank_number: num(t.tankNumber),
-      water_volume_l: num(t.waterVolume),
-      spray_rate_l_per_ha: num(t.sprayRatePerHa),
-      concentration_factor: num(t.concentrationFactor),
-      // GROSS hectares this tank covers, not a banded treated area.
-      area_ha: round3(tankAreaHa(t)) || null,
-      products: chems.map((c) => {
-        const product: Record<string, unknown> = {
-          product_id: typeof c.savedChemicalId === "string" ? c.savedChemicalId : null,
-          name: typeof c.name === "string" ? c.name : null,
-          // Quantities/rates are returned in the product's recorded unit
-          // ('Litres', 'mL', 'Kg', 'g') — never converted.
-          quantity_per_tank: num(c.volumePerTank),
-          rate_per_ha: num(c.ratePerHa),
-          rate_per_100l: num(c.ratePer100L),
-          unit: typeof c.unit === "string" ? c.unit : null,
-        };
-        if (includeCosts) {
-          product.cost_per_unit = num(c.costPerUnit);
-        }
-        return product;
-      }),
-    };
-  });
-}
-
 function actualChemicalCostTotal(plannedRaw: unknown, actualRows: TankActualRow[]): number | null {
   const costs = new Map<string, number>();
   for (const tank of parseTanks(plannedRaw)) {
@@ -1628,10 +1598,10 @@ async function handleSprayGet(
   const body = mapSpraySummary(spray, idx) as Record<string, unknown>;
 
   body.blocks = await loadSprayBlocks(db, spray);
-  body.tanks = mapSprayTanks(spray.tanks, includeCosts);
   const plannedTanks = parseTanks(spray.tanks);
   const actualRows = await loadSprayTankActuals(db, spray.id);
   const actualIdentity = await loadTankActualIdentity(db, spray);
+  body.tanks = mapSprayPlannedTanks(plannedTanks, actualIdentity, includeCosts);
   const actualResponse = buildSprayActualResponse(plannedTanks, actualRows, actualIdentity);
   const resolvedRows = actualResponse.resolvedRows;
   const actualsComplete = actualResponse.fields.actuals_complete === true;

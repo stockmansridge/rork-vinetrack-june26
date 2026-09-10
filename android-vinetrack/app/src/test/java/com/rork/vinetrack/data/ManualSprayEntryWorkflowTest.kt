@@ -7,6 +7,9 @@ import com.rork.vinetrack.data.model.ManualSprayPhysicalForm
 import com.rork.vinetrack.data.model.ManualSpraySaveResponse
 import com.rork.vinetrack.data.model.ManualSprayTank
 import com.rork.vinetrack.data.model.canManageManualSprays
+import com.rork.vinetrack.ui.screens.initializeBlankManualInput
+import com.rork.vinetrack.ui.screens.manualSprayVineyardZone
+import com.rork.vinetrack.ui.screens.shouldLoadManualEditEvidence
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -30,8 +33,9 @@ class ManualSprayEntryWorkflowTest {
     }
 
     @Test fun incompleteDraftTextSerializesWithoutNaNAndOnlyValidatedValuesReachPayload() {
-        val payload = fixture()
-        val tank = payload.tanks.first()
+        val fullPayload = fixture()
+        val tank = fullPayload.tanks.first()
+        val payload = fullPayload.copy(tanks = listOf(tank))
         val chemical = tank.chemicals.first()
         val incomplete = ManualSprayFormDraft(
             base = payload,
@@ -47,6 +51,31 @@ class ManualSprayEntryWorkflowTest {
         val validated = valid.validatedPayload()
         assertEquals(0.0, validated.tanks.first().waterVolumeLitres, 0.0)
         assertEquals(2_500.0, validated.tanks.first().chemicals.first().actualAmountBase, 0.0)
+    }
+
+    @Test fun newInputsAreBlankWhileRestoredAndCopiedZerosRemainExplicit() {
+        val inputs = mutableMapOf("restored" to "0")
+        initializeBlankManualInput(inputs, "new")
+        assertEquals("", inputs["new"])
+        assertEquals("0", inputs["restored"])
+        assertTrue(runCatching {
+            val fullPayload = fixture()
+            val payload = fullPayload.copy(tanks = listOf(fullPayload.tanks.first()))
+            ManualSprayFormDraft(
+                base = payload,
+                waterInputs = mapOf(payload.tanks.first().id to ""),
+                chemicalInputs = mapOf(payload.tanks.first().chemicals.first().id to ""),
+            ).validatedPayload()
+        }.isFailure)
+    }
+
+    @Test fun loadedEditEvidenceSurvivesRefreshAndRetainsSavedVineyardTimeZone() {
+        val loaded = fixture().copy(vineyardTimeZone = "Australia/Adelaide", notes = "Unsaved edit")
+        assertFalse(shouldLoadManualEditEvidence(loaded, loadedRetry = 0, editRetry = 0))
+        assertTrue(shouldLoadManualEditEvidence(null, loadedRetry = null, editRetry = 0))
+        assertTrue(shouldLoadManualEditEvidence(loaded, loadedRetry = 0, editRetry = 1))
+        assertEquals("Australia/Adelaide", manualSprayVineyardZone(loaded, java.time.ZoneId.of("UTC")).id)
+        assertEquals("Australia/Adelaide", loaded.copy(notes = "Changed note").vineyardTimeZone)
     }
 
     @Test fun copyPreviousPreservesEnteredTextForNewStableIdentities() {

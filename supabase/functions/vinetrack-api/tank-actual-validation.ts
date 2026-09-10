@@ -8,6 +8,17 @@ export interface TankJson {
   [key: string]: unknown;
 }
 
+export interface PlannedChemicalJson {
+  id?: unknown;
+  name?: unknown;
+  volumePerTank?: unknown;
+  ratePerHa?: unknown;
+  ratePer100L?: unknown;
+  costPerUnit?: unknown;
+  unit?: unknown;
+  savedChemicalId?: unknown;
+}
+
 export interface TankActualChemicalJson {
   id?: unknown;
   plannedChemicalId?: unknown;
@@ -217,16 +228,52 @@ export function mapSprayActualTanks(
   }));
 }
 
+/** Maps planned tank detail without exposing SQL 233 compatibility zeros as manual plans. */
+export function mapSprayPlannedTanks(
+  plannedTanks: TankJson[], identity: TankActualIdentity, includeCosts: boolean,
+): Record<string, unknown>[] {
+  const round3 = (value: number): number => Math.round(value * 1000) / 1000;
+  const plannedQuantity = (value: unknown): number | null => identity.isManualEntry ? null : finiteNumber(value);
+  return plannedTanks.map((tank) => {
+    const water = plannedQuantity(tank.waterVolume);
+    const rate = plannedQuantity(tank.sprayRatePerHa);
+    const concentration = plannedQuantity(tank.concentrationFactor);
+    const factor = concentration !== null && concentration > 0 ? concentration : 1;
+    const products = (Array.isArray(tank.chemicals) ? tank.chemicals as PlannedChemicalJson[] : []).map((chemical) => {
+      const product: Record<string, unknown> = {
+        product_id: typeof chemical.savedChemicalId === "string" ? chemical.savedChemicalId : null,
+        name: typeof chemical.name === "string" ? chemical.name : null,
+        quantity_per_tank: plannedQuantity(chemical.volumePerTank),
+        rate_per_ha: plannedQuantity(chemical.ratePerHa),
+        rate_per_100l: plannedQuantity(chemical.ratePer100L),
+        unit: typeof chemical.unit === "string" ? chemical.unit : null,
+      };
+      if (includeCosts) product.cost_per_unit = finiteNumber(chemical.costPerUnit);
+      return product;
+    });
+    return {
+      tank_number: finiteNumber(tank.tankNumber),
+      water_volume_l: water,
+      spray_rate_l_per_ha: rate,
+      concentration_factor: concentration,
+      area_ha: water !== null && rate !== null && rate > 0 ? round3((water * factor) / rate) || null : null,
+      products,
+    };
+  });
+}
+
 /** Builds the complete actual/planned quantity segment used by the spray detail response. */
 export function buildSprayActualResponse(
   plannedTanks: TankJson[], actualRows: TankActualRow[], identity: TankActualIdentity,
 ): { fields: Record<string, unknown>; resolvedRows: TankActualRow[] } {
   const resolvedRows = [...resolveSprayTankActualRows(plannedTanks, actualRows, identity).values()];
-  const plannedValues = plannedTanks.map((tank) => finiteNumber(tank.waterVolume)).filter((value): value is number => value !== null);
+  const plannedValues = identity.isManualEntry
+    ? []
+    : plannedTanks.map((tank) => finiteNumber(tank.waterVolume)).filter((value): value is number => value !== null);
   const round3 = (value: number): number => Math.round(value * 1000) / 1000;
   return {
     fields: {
-      planned_water_volume_l: identity.isManualEntry && plannedValues.length === 0
+      planned_water_volume_l: identity.isManualEntry
         ? null
         : round3(plannedValues.reduce((sum, value) => sum + value, 0)),
       actual_water_volume_l: resolvedRows.length === plannedTanks.length && resolvedRows.every((row) => finiteNumber(row.water_volume_l) !== null)

@@ -79,7 +79,6 @@ fun ManualSprayEntrySheet(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val vineyardId = state.selectedVineyardId ?: return
-    val zone = state.seasonZone
     val session = remember { SessionStore(context) }
     val draftStore = remember { ManualSprayDraftStore(context) }
     val existingTrip = existing?.tripId?.let { id -> state.trips.firstOrNull { it.id == id } }
@@ -87,21 +86,25 @@ fun ManualSprayEntrySheet(
     var loadedEditSeed by remember(existing?.id) { mutableStateOf<ManualSprayPayload?>(null) }
     var editLoadFailure by remember(existing?.id) { mutableStateOf<String?>(null) }
     var editRetry by remember(existing?.id) { mutableStateOf(0) }
-    LaunchedEffect(existing?.id, existingTrip, state.sprayTankActuals, editRetry) {
+    var loadedEditRetry by remember(existing?.id) { mutableStateOf<Int?>(null) }
+    val pendingActualEvidence = if (loadedEditSeed == null) state.sprayTankActuals else null
+    LaunchedEffect(existing?.id, existingTrip, pendingActualEvidence, editRetry) {
         val record = existing ?: return@LaunchedEffect
+        if (!shouldLoadManualEditEvidence(loadedEditSeed, loadedEditRetry, editRetry)) return@LaunchedEffect
         val trip = existingTrip
         if (trip == null) {
             editLoadFailure = "The exact backing trip has not finished loading."
             return@LaunchedEffect
         }
         editLoadFailure = null
-        loadedEditSeed = null
         runCatching {
             val report = SprayReportRepository(session).fetch(trip.id)
             record.toManualPayload(trip, state, report)
                 ?: error("The exact tank, actual, timezone, provenance, or weather evidence is incomplete.")
-        }.onSuccess { loadedEditSeed = it }
-            .onFailure { editLoadFailure = it.message ?: "The saved evidence could not be loaded." }
+        }.onSuccess {
+            loadedEditSeed = it
+            loadedEditRetry = editRetry
+        }.onFailure { editLoadFailure = it.message ?: "The saved evidence could not be loaded." }
     }
     val seed = loadedEditSeed ?: storedDraft?.base
     if (existing != null && loadedEditSeed == null) {
@@ -114,6 +117,7 @@ fun ManualSprayEntrySheet(
         )
         return
     }
+    val zone = manualSprayVineyardZone(seed, state.seasonZone)
     val identities = remember(seed?.manualEntryId) { seed?.let { Triple(it.manualEntryId, it.sprayRecordId, it.tripId) } ?: Triple(UUID.randomUUID().toString(), UUID.randomUUID().toString(), UUID.randomUUID().toString()) }
     var reference by remember { mutableStateOf(seed?.reference.orEmpty()) }
     var startInstant by remember { mutableStateOf(seed?.startUtc?.let(Instant::parse) ?: Instant.now().minusSeconds(3600)) }
@@ -148,7 +152,7 @@ fun ManualSprayEntrySheet(
     fun basePayload(): ManualSprayPayload = ManualSprayPayload(
         vineyardId = vineyardId, manualEntryId = identities.first, sprayRecordId = identities.second, tripId = identities.third,
         reference = reference, operationType = existing?.operationType ?: "Foliar Spray", startUtc = startInstant.toString(), endUtc = endInstant.toString(),
-        vineyardTimeZone = zone.id, tractorId = tractorId, operatorUserId = operatorId, sprayEquipmentId = unitId,
+        vineyardTimeZone = seed?.vineyardTimeZone ?: zone.id, tractorId = tractorId, operatorUserId = operatorId, sprayEquipmentId = unitId,
         startEngineHours = seed?.startEngineHours, endEngineHours = seed?.endEngineHours, notes = notes.takeIf { it.isNotBlank() }, clientUpdatedAt = clientUpdatedAt,
         blocks = state.paddocks.filter { it.id in blockIds }.map { ManualSprayBlock(it.id, it.name) },
         tanks = tanks.toList(),
@@ -193,7 +197,7 @@ fun ManualSprayEntrySheet(
                     ChemicalChoice(state.savedChemicals) { product ->
                         val chemical = product.toManualChemical()
                         tanks[index] = tanks[index].copy(chemicals = tanks[index].chemicals + chemical)
-                        chemicalInputs[chemical.id] = "0"
+                        initializeBlankManualInput(chemicalInputs, chemical.id)
                     }
                     if (tanks.size > 1) TextButton(onClick = { tanks.removeAt(index); tanks.indices.forEach { i -> tanks[i] = tanks[i].copy(tankNumber = i + 1) } }) { Text("Remove tank") }
                 }
@@ -201,7 +205,7 @@ fun ManualSprayEntrySheet(
                     Button(onClick = {
                         val tank = ManualSprayTank(tankNumber = tanks.size + 1, waterVolumeLitres = 0.0, chemicals = emptyList())
                         tanks += tank
-                        waterInputs[tank.id] = "0"
+                        initializeBlankManualInput(waterInputs, tank.id)
                     }) { Text("Add tank") }
                     Button(onClick = {
                         tanks.lastOrNull()?.let { previous ->
@@ -292,6 +296,16 @@ internal fun SprayRecord.toManualPayload(trip: Trip?, state: AppUiState, report:
         tanks = exactActuals.map { actual -> ManualSprayTank(actual.tankSessionId, actual.id, actual.tankNumber, actual.waterVolumeL ?: return null, actual.chemicals.map { line -> ManualSprayChemical(line.id, line.savedChemicalId ?: return null, line.name, line.actualAmountBase, line.unit, line.productCategory ?: return null, ManualSprayPhysicalForm.entries.firstOrNull { it.name == line.physicalForm } ?: return null, line.snapshotAt ?: return null) }) },
         manualWeather = weather,
     )
+}
+
+internal fun shouldLoadManualEditEvidence(seed: ManualSprayPayload?, loadedRetry: Int?, editRetry: Int): Boolean =
+    seed == null || loadedRetry != editRetry
+
+internal fun manualSprayVineyardZone(seed: ManualSprayPayload?, seasonZone: ZoneId): ZoneId =
+    seed?.vineyardTimeZone?.let(ZoneId::of) ?: seasonZone
+
+internal fun initializeBlankManualInput(inputs: MutableMap<String, String>, id: String) {
+    inputs[id] = ""
 }
 
 @Composable private fun DateTimeField(label: String, instant: Instant, zone: ZoneId, onChange: (Instant) -> Unit) {
