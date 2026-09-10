@@ -5,6 +5,8 @@
 -- the existing pins_set_updated_at trigger set a new server updated_at.
 -- A missing audit table means APPLY did not commit; never create it manually.
 
+begin transaction isolation level serializable;
+
 do $preflight$
 begin
   if to_regclass('public.pin_block_link_repair_audit') is null then
@@ -14,8 +16,6 @@ begin
   end if;
 end;
 $preflight$;
-
-begin transaction isolation level serializable;
 
 do $rollback$
 declare

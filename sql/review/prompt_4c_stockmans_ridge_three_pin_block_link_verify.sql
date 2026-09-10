@@ -5,6 +5,8 @@
 -- If this prerequisite fails, APPLY did not commit in this database. Do not
 -- create the audit table manually and do not interpret the pin repair as applied.
 
+begin transaction isolation level repeatable read read only;
+
 do $preflight$
 begin
   if to_regclass('public.pin_block_link_repair_audit') is null then
@@ -14,8 +16,6 @@ begin
   end if;
 end;
 $preflight$;
-
-begin transaction isolation level repeatable read read only;
 
 with params as (
   select
