@@ -121,8 +121,12 @@ begin
        or v_pin.mode is distinct from v_candidate.pin_mode
        or v_pin.is_completed is distinct from (v_candidate.completion_state = 'completed')
        or v_pin.created_at is distinct from v_candidate.pin_capture_time
-       or v_pin.latitude is distinct from v_candidate.stored_latitude
-       or v_pin.longitude is distinct from v_candidate.stored_longitude
+       -- JSON/float8 round-tripping can move a coordinate by a few machine ULPs.
+       -- 1e-12 degrees is sub-micrometre and rejects any material coordinate edit.
+       or v_pin.latitude is null
+       or abs(v_pin.latitude - v_candidate.stored_latitude) > 1e-12
+       or v_pin.longitude is null
+       or abs(v_pin.longitude - v_candidate.stored_longitude) > 1e-12
        or v_pin.snapped_latitude is not null or v_pin.snapped_longitude is not null
        or v_pin.snapped_to_row is distinct from false or v_pin.location_scope is not null
        or exists (select 1 from public.pin_row_segments s where s.pin_id = v_pin.id) then
