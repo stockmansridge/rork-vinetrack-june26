@@ -1385,6 +1385,27 @@ data class Pin(
             if (driving == block) return null
             return "Block row ${formatRowNumber(block)}"
         }
+
+    /**
+     * The pin's validated attached location (iOS `attachedCoordinate` parity):
+     * the snapped vine-row point when the pin is genuinely row-attached,
+     * otherwise the raw drop point. Markers, distance and Directions all read
+     * this one value so they can never point at different places. The raw
+     * [latitude]/[longitude] observation is never modified.
+     */
+    val attachedLatitude: Double?
+        get() = if (snappedToRow && snappedLatitude != null && snappedLongitude != null) {
+            snappedLatitude
+        } else {
+            latitude
+        }
+
+    val attachedLongitude: Double?
+        get() = if (snappedToRow && snappedLatitude != null && snappedLongitude != null) {
+            snappedLongitude
+        } else {
+            longitude
+        }
 }
 
 /** Formats a row number, preserving fractional values (19.5) and trimming whole ones (15). */

@@ -115,9 +115,14 @@ private fun Paddock.centroid(): LatLng? {
     return LatLng(lat, lng)
 }
 
+/**
+ * Marker position: the pin's validated attached location (snapped vine row when
+ * it has one, raw drop point otherwise), so the marker agrees with the list
+ * distance and the Directions destination. The raw observation is untouched.
+ */
 private fun Pin.latLng(): LatLng? {
-    val lat = latitude ?: return null
-    val lng = longitude ?: return null
+    val lat = attachedLatitude ?: return null
+    val lng = attachedLongitude ?: return null
     if (!isValidMapCoordinate(lat, lng)) return null
     return LatLng(lat, lng)
 }

@@ -85,9 +85,12 @@ internal fun PinDirectionsDialog(
     val context = LocalContext.current
     val hasLocationPermission = remember { hasDeviceLocationPermission(context) }
 
-    val pinLatLng = remember(pin.latitude, pin.longitude) {
-        val lat = pin.latitude
-        val lon = pin.longitude
+    // Destination is the pin's validated attached location — the snapped vine
+    // row when it has one — so the marker, the line, the distance and the
+    // bearing all agree with the row the operator must drive to.
+    val pinLatLng = remember(pin.attachedLatitude, pin.attachedLongitude) {
+        val lat = pin.attachedLatitude
+        val lon = pin.attachedLongitude
         if (isValidMapCoordinate(lat, lon)) LatLng(lat ?: 0.0, lon ?: 0.0) else null
     }
     val userLatLng = userLocation

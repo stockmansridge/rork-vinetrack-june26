@@ -47,3 +47,18 @@ Print this or keep it open on your phone. Use real **Airplane Mode** (Wi-Fi off 
 ---
 
 **Pass criteria:** every box ticked, app shows 0 waiting / 0 needing retry, portal matches the device.
+
+---
+
+## 6. Pin Location (four field checks)
+
+Contract: `docs/core-pin-location-contract.md`
+
+- [ ] **Attached row** — "On Row X" is the row physically holding the issue
+- [ ] **Driving path** — "Row X.5" is the aisle actually driven
+- [ ] **Side** — Left/Right matches the operator's own view at capture
+- [ ] **Facing** — the shown direction matches the recorded heading
+
+Check opposite-side drops at roughly the same along-row position, then repeat
+facing the opposite way. Confirm the values again after reopening the pin and
+after it syncs to the other platform.

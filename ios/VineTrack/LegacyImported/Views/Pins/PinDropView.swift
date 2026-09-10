@@ -365,8 +365,9 @@ struct PinDropView: View {
 
         let rowNumber = Int(rowText.trimmingCharacters(in: .whitespacesAndNewlines))
         // Resolve the immutable placement exactly once at commit time: the
-        // explicit block selection wins, else polygon containment; then snap
-        // to the nearest mapped vine row (Android PinPlacement parity).
+        // explicit block selection wins, else polygon containment; then the
+        // automatic aisle/side geometry attaches the pin to the vine row on
+        // the operator's side for their recorded heading.
         let resolved = PinContextResolver.resolve(
             coordinate: location.coordinate,
             store: store,
@@ -374,15 +375,17 @@ struct PinDropView: View {
         )
         let paddockId = selectedPaddockId ?? resolved.paddockId
         let paddock = paddockId.flatMap { id in store.paddocks.first(where: { $0.id == id }) }
-        let attachment = PinAttachmentResolver.resolveManual(
-            coordinate: location.coordinate,
+        let attachment = PinAttachmentResolver.resolveAutomatic(
+            rawCoordinate: location.coordinate,
+            heading: locationService.heading?.trueHeading,
             operatorSide: side,
             paddock: paddock
         )
         store.createPinFromButton(
             button: button,
             coordinate: location.coordinate,
-            heading: locationService.heading?.trueHeading,
+            // Frozen capture heading: the exact facing the row choice used.
+            heading: attachment.heading,
             side: side,
             paddockId: paddockId,
             rowNumber: rowNumber ?? attachment.pinRowNumber ?? resolved.rowNumber,
@@ -401,7 +404,7 @@ struct PinDropView: View {
         }
         lastGrowthStage = stage
         let rowNumber = Int(rowText.trimmingCharacters(in: .whitespacesAndNewlines))
-        // Same one-shot placement resolution as repair pins (Android parity).
+        // Same one-shot automatic placement resolution as repair pins.
         let resolved = PinContextResolver.resolve(
             coordinate: location.coordinate,
             store: store,
@@ -409,8 +412,9 @@ struct PinDropView: View {
         )
         let paddockId = selectedPaddockId ?? resolved.paddockId
         let paddock = paddockId.flatMap { id in store.paddocks.first(where: { $0.id == id }) }
-        let attachment = PinAttachmentResolver.resolveManual(
-            coordinate: location.coordinate,
+        let attachment = PinAttachmentResolver.resolveAutomatic(
+            rawCoordinate: location.coordinate,
+            heading: locationService.heading?.trueHeading,
             operatorSide: pendingSide,
             paddock: paddock
         )
@@ -418,7 +422,8 @@ struct PinDropView: View {
             stageCode: stage.code,
             stageDescription: stage.description,
             coordinate: location.coordinate,
-            heading: locationService.heading?.trueHeading,
+            // Frozen capture heading: the exact facing the row choice used.
+            heading: attachment.heading,
             side: pendingSide,
             paddockId: paddockId,
             rowNumber: rowNumber ?? attachment.pinRowNumber ?? resolved.rowNumber,

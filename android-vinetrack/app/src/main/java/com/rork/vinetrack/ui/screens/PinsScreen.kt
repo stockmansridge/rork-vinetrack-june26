@@ -866,11 +866,8 @@ private enum class PinSort(val label: String) {
  * (iOS `attachedCoordinate` parity). Null when the pin has no location.
  */
 private fun pinSortCoordinate(pin: Pin): Pair<Double, Double>? {
-    val snappedLat = pin.snappedLatitude
-    val snappedLon = pin.snappedLongitude
-    if (pin.snappedToRow && snappedLat != null && snappedLon != null) return snappedLat to snappedLon
-    val lat = pin.latitude ?: return null
-    val lon = pin.longitude ?: return null
+    val lat = pin.attachedLatitude ?: return null
+    val lon = pin.attachedLongitude ?: return null
     return lat to lon
 }
 
@@ -1738,7 +1735,15 @@ fun PinCategoryLauncherScreen(
         // the foreground subscription may warm a later tap but has no callback here.
         val result = PinTapCaptureCoordinator(pinLocationTracker).captureNow()
         val fix = (result as? PinLocationResult.Success)?.fix
-        val capture = fix?.let { vm.freezePinCapture(it, side) }
+        // Freeze with the exact facing that will be saved (compass corrected to
+        // true north at this fix), so the heading used to choose the vine row
+        // and the heading stored on the pin are one value.
+        val capture = fix?.let { accepted ->
+            val trueHeading = compassHeadingDegrees?.let {
+                compassTrueHeading(it, accepted.latitude, accepted.longitude)
+            }
+            vm.freezePinCapture(accepted, side, headingDegrees = trueHeading)
+        }
         if (fix == null || capture == null) {
             scope.launch { snackbarHostState.showSnackbar(result.operatorMessage()) }
             return
@@ -1830,7 +1835,12 @@ fun PinCategoryLauncherScreen(
                 GrowthStageButton {
                     val result = PinTapCaptureCoordinator(pinLocationTracker).captureNow()
                     growthLocationResult = result
-                    growthCapture = (result as? PinLocationResult.Success)?.fix?.let { vm.freezePinCapture(it, null) }
+                    growthCapture = (result as? PinLocationResult.Success)?.fix?.let { accepted ->
+                        val trueHeading = compassHeadingDegrees?.let {
+                            compassTrueHeading(it, accepted.latitude, accepted.longitude)
+                        }
+                        vm.freezePinCapture(accepted, null, headingDegrees = trueHeading)
+                    }
                     showGrowthStageSheet = true
                 }
             }
@@ -2340,10 +2350,16 @@ private fun PinRow(
             }
 
             // Structured detail lines mirroring iOS PinRowView:
-            //  1. "Row 14.5 — Right hand side facing North"
-            //  2. "<Block> row 14.5"
+            //  1. "On Row 26"                                  (attached vine row)
+            //  2. "Row 26.5 — Right hand side facing North"     (driving path)
+            //  3. "<Block> row 26"
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(pinFacingLine(pin), fontSize = 14.sp, color = vine.textPrimary)
+                pinAttachedRowLine(pin)?.let {
+                    Text(it, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                }
+                pinFacingLine(pin)?.let {
+                    Text(it, fontSize = 14.sp, color = vine.textPrimary)
+                }
                 Text(pinBlockRowLine(pin, paddockName), fontSize = 12.sp, color = vine.textSecondary)
                 if (!pin.notes.isNullOrBlank()) {
                     Text(pin.notes, fontSize = 13.sp, color = vine.textSecondary, maxLines = 3)
@@ -2568,21 +2584,36 @@ private fun rowText(row: Double): String =
     if (row % 1.0 == 0.0) row.toInt().toString() else row.toString()
 
 /**
- * Primary detail line, e.g. "Row 14.5 — Right hand side facing North".
- * Falls back gracefully when the driving path or heading aren't recorded.
+ * The attached vine row line, e.g. "On Row 26" — the row that actually holds
+ * the issue. Null when no vine row was confirmed, so a point-only capture is
+ * never dressed up as a row attachment.
  */
-private fun pinFacingLine(pin: Pin): String {
+private fun pinAttachedRowLine(pin: Pin): String? =
+    pin.pinRowNumber?.let { "On Row ${rowText(it)}" }
+
+/**
+ * Driving-path line, e.g. "Row 26.5 — Right hand side facing North" — the aisle
+ * the operator occupied, which is a different fact from the attached row.
+ *
+ * Only a recorded `driving_row_number` produces a path: the legacy `row_number`
+ * column has conflicting historical meanings and is never turned into a path by
+ * adding 0.5. Null when there is nothing recorded to show.
+ */
+private fun pinFacingLine(pin: Pin): String? {
     val side = (pin.pinSide ?: pin.side)?.lowercase()?.let {
         when (it) { "left" -> "Left"; "right" -> "Right"; else -> null }
     }
     val sidePart = side?.let { "$it hand side" }
     val facingPart = pin.heading?.let { "facing ${compassFullName(it)}" }
-    val drivingRow = pin.drivingRowNumber ?: pin.rowNumber?.let { it + 0.5 }
+    val drivingRow = pin.drivingRowNumber
     val tail = listOfNotNull(sidePart, facingPart).joinToString(" ")
     return when {
         drivingRow != null && tail.isNotBlank() -> "Row ${rowText(drivingRow)} — $tail"
         drivingRow != null -> "Row ${rowText(drivingRow)}"
         tail.isNotBlank() -> tail
+        // A confirmed vine row is already shown above; only a record with no
+        // location metric at all says so explicitly.
+        pin.pinRowNumber != null -> null
         else -> "Location not snapped to a row"
     }
 }
@@ -2615,8 +2646,10 @@ private fun pinBlockRowLine(pin: Pin, paddockName: String?): String {
  * when there's no fix or the pin has no coordinates.
  */
 private fun pinDistanceText(pin: Pin, userLocation: Pair<Double, Double>?): String {
-    val lat = pin.latitude
-    val lon = pin.longitude
+    // Distance to the same validated attached location the marker, sorting and
+    // Directions use.
+    val lat = pin.attachedLatitude
+    val lon = pin.attachedLongitude
     if (userLocation == null || lat == null || lon == null) return "—"
     val metres = haversineMetres(userLocation.first, userLocation.second, lat, lon)
     return formatShortDistance(metres)
@@ -3191,8 +3224,12 @@ private fun PinDetailSheet(
                     PinDetailRow("Rows", it)
                 }
                 pin.pinRowNumber?.let { PinDetailRow("On row", "Row ${rowText(it)}") }
-                if (pin.drivingRowNumber != null || pin.heading != null || pin.pinSide != null || pin.side != null) {
-                    PinDetailRow("Driving path", pinFacingLine(pin))
+                if (pin.drivingRowNumber != null) {
+                    pinFacingLine(pin)?.let { PinDetailRow("Driving path", it) }
+                } else if (pin.pinRowNumber != null || pin.pinSide != null || pin.side != null) {
+                    // Explicit about the missing metric rather than implying a
+                    // complete attachment.
+                    PinDetailRow("Driving path", "Not recorded")
                 }
                 pin.heading?.let { PinDetailRow("Facing", "${compassAbbrev(it)} (${it.roundToInt()}\u00b0)") }
                 PinDetailRow("Created by", createdByLabel)

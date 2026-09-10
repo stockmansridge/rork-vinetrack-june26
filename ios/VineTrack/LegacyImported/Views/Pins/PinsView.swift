@@ -642,7 +642,9 @@ struct PinsMapView: View {
             pins: pins.map {
                 OfflineVineyardMapView.Pin(
                     id: $0.id,
-                    coordinate: $0.coordinate,
+                    // Marker sits on the validated attached location (snapped
+                    // vine row when the pin has one, raw drop point otherwise).
+                    coordinate: $0.attachedCoordinate,
                     color: Color.fromString($0.displayColorToken),
                     isCompleted: $0.isCompleted,
                     name: $0.buttonName
@@ -674,7 +676,9 @@ struct PinsMapView: View {
             }
 
             ForEach(pins) { pin in
-                Annotation(pin.buttonName, coordinate: pin.coordinate) {
+                // Same validated attached location the list distance and
+                // Directions use, so they can never disagree.
+                Annotation(pin.buttonName, coordinate: pin.attachedCoordinate) {
                     Button {
                         selectedPin = pin
                     } label: {
@@ -1161,13 +1165,19 @@ struct PinRowView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                let drivingPathText: String? = {
-                    if let path = pin.drivingRowNumber {
-                        return path == path.rounded() ? String(format: "%.1f", path) : String(format: "%.1f", path)
-                    }
-                    if let legacy = pin.rowNumber { return "\(legacy).5" }
-                    return nil
-                }()
+                // The attached vine row holding the issue — the first fact an
+                // operator needs, shown only from a real stored value.
+                if let attachedRow = pin.pinRowNumber {
+                    Text("On Row \(attachedRow)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                }
+
+                // The driving path (aisle) is a separate fact, rendered only
+                // from a recorded driving_row_number. Legacy row_number has
+                // conflicting meanings and is never turned into a path by
+                // adding 0.5.
+                let drivingPathText: String? = pin.drivingRowNumber.map { String(format: "%.1f", $0) }
                 // Honest optional side: composer-created pins have no
                 // Left/Right, so the phrase is omitted rather than invented.
                 let sideLabel = (pin.pinSide ?? pin.side).map { "\($0.rawValue) hand side" }
@@ -1178,7 +1188,7 @@ struct PinRowView: View {
                     Text("Row \(drivingPathText)\(sideLabel.map { " — \($0)" } ?? "")\(facingSuffix)")
                         .font(.subheadline)
                         .foregroundStyle(.primary)
-                } else {
+                } else if pin.pinRowNumber == nil || sideLabel != nil || !facingSuffix.isEmpty {
                     Text("\(sideLabel ?? "Pin location")\(facingSuffix)")
                         .font(.subheadline)
                         .foregroundStyle(.primary)
@@ -1389,7 +1399,7 @@ struct PinLocationMapSheet: View {
     init(pin: VinePin) {
         self.pin = pin
         _position = State(initialValue: .region(MKCoordinateRegion(
-            center: pin.coordinate,
+            center: pin.attachedCoordinate,
             span: MKCoordinateSpan(latitudeDelta: 0.005, longitudeDelta: 0.005)
         )))
     }
@@ -1397,7 +1407,7 @@ struct PinLocationMapSheet: View {
     var body: some View {
         NavigationStack {
             Map(position: $position) {
-                Annotation(pin.buttonName, coordinate: pin.coordinate) {
+                Annotation(pin.buttonName, coordinate: pin.attachedCoordinate) {
                     ZStack {
                         Circle()
                             .fill(Color.fromString(pin.displayColorToken).gradient)
@@ -1436,9 +1446,12 @@ struct PinDirectionsSheet: View {
         locationService.location?.coordinate
     }
 
+    /// Distance to the pin's validated attached location — the same point the
+    /// marker, the route line and the list distance use.
     private var distanceText: String {
         guard let userLocation = locationService.location else { return "—" }
-        let pinLocation = CLLocation(latitude: pin.latitude, longitude: pin.longitude)
+        let destination = pin.attachedCoordinate
+        let pinLocation = CLLocation(latitude: destination.latitude, longitude: destination.longitude)
         let distance = userLocation.distance(from: pinLocation)
         return "\(fmt.formatShortDistance(metres: distance)) away"
     }
@@ -1447,7 +1460,7 @@ struct PinDirectionsSheet: View {
         NavigationStack {
             VStack(spacing: 0) {
                 Map(position: $position) {
-                    Annotation(pin.buttonName, coordinate: pin.coordinate) {
+                    Annotation(pin.buttonName, coordinate: pin.attachedCoordinate) {
                         ZStack {
                             Circle()
                                 .fill(Color.fromString(pin.displayColorToken).gradient)
@@ -1459,7 +1472,7 @@ struct PinDirectionsSheet: View {
                     }
 
                     if let userCoord = userCoordinate {
-                        MapPolyline(coordinates: [userCoord, pin.coordinate])
+                        MapPolyline(coordinates: [userCoord, pin.attachedCoordinate])
                             .stroke(.blue, style: StrokeStyle(lineWidth: 3, dash: [8, 6]))
                     }
 
@@ -1496,9 +1509,10 @@ struct PinDirectionsSheet: View {
 
     private func bearingToPin() -> Double {
         guard let userCoord = userCoordinate else { return 0 }
+        let destination = pin.attachedCoordinate
         let lat1 = userCoord.latitude * .pi / 180
-        let lat2 = pin.latitude * .pi / 180
-        let dLon = (pin.longitude - userCoord.longitude) * .pi / 180
+        let lat2 = destination.latitude * .pi / 180
+        let dLon = (destination.longitude - userCoord.longitude) * .pi / 180
         let y = sin(dLon) * cos(lat2)
         let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
         let bearing = atan2(y, x) * 180 / .pi
@@ -1823,6 +1837,10 @@ struct PinDetailSheet: View {
                                 "Driving path",
                                 value: "Row \(String(format: "%.1f", drivingPath))\(sidePhrase)\(facingSuffix)"
                             )
+                        } else {
+                            // Explicit about the missing metric instead of
+                            // implying a complete attachment.
+                            LabeledContent("Driving path", value: "Not recorded")
                         }
                     } else if let rowNumber = pin.rowNumber {
                         // Legacy fallback only when neither new field is set.

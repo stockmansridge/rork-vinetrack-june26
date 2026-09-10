@@ -103,6 +103,7 @@ import com.rork.vinetrack.data.PinPresentationTarget
 import com.rork.vinetrack.data.model.PendingPhotoEntityKind
 import com.rork.vinetrack.data.model.PendingPhotoStatus
 import com.rork.vinetrack.data.model.PhotoDisplaySource
+import com.rork.vinetrack.data.PinAisleGeometry
 import com.rork.vinetrack.data.PinPlacement
 import com.rork.vinetrack.data.PinPlacementResult
 import com.rork.vinetrack.data.PinCaptureContext
@@ -979,7 +980,15 @@ internal data class TripPinAttribution(
     val placement: PinPlacementResult?,
 )
 
-/** Exact attribution boundary used by [AppViewModel.createPin]. */
+/**
+ * Exact attribution boundary used by [AppViewModel.createPin].
+ *
+ * [automatic] selects the core pin-location contract for AUTOMATIC Left/Right
+ * captures: the aisle plus the heading-selected adjacent vine row
+ * ([PinPlacement.resolveAutomatic]). Explicit manual placement (map point, row,
+ * segment, block composer) keeps its established nearest-row contract and never
+ * manufactures a driving path, side or heading.
+ */
 internal fun resolveTripPinAttribution(
     activeTrip: Trip?,
     paddocks: List<Paddock>,
@@ -989,6 +998,8 @@ internal fun resolveTripPinAttribution(
     callerPaddockId: String?,
     callerRowNumber: Int?,
     callerPlacement: PinPlacementResult?,
+    headingDegrees: Double? = null,
+    automatic: Boolean = false,
 ): TripPinAttribution {
     val tripResolution = if (activeTrip != null && latitude != null && longitude != null) {
         TripBlockResolver.resolve(activeTrip, paddocks, latitude, longitude)
@@ -1003,13 +1014,28 @@ internal fun resolveTripPinAttribution(
         )
     }
     val placement = if (tripResolution != null && latitude != null && longitude != null) {
-        PinPlacement.resolve(
-            paddocks = listOf(tripResolution.paddock),
-            selectedPaddockId = tripResolution.paddock.id,
-            latitude = latitude,
-            longitude = longitude,
-            side = side,
-        )
+        if (automatic) {
+            PinPlacement.resolveAutomatic(
+                paddocks = listOf(tripResolution.paddock),
+                selectedPaddockId = tripResolution.paddock.id,
+                latitude = latitude,
+                longitude = longitude,
+                side = side,
+                headingDegrees = headingDegrees,
+                // The aisle is taken from the block geometry that physically
+                // contains this fix, never from the trip's planned next path,
+                // so a stale or wrong-block lock cannot create false certainty.
+                lockedDrivingPath = null,
+            )
+        } else {
+            PinPlacement.resolve(
+                paddocks = listOf(tripResolution.paddock),
+                selectedPaddockId = tripResolution.paddock.id,
+                latitude = latitude,
+                longitude = longitude,
+                side = side,
+            )
+        }
     } else {
         callerPlacement
     }
@@ -6231,8 +6257,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             mode = mode.ifBlank { null },
             notes = notes?.ifBlank { null },
             side = side?.ifBlank { null },
-            heading = heading,
+            // An automatic capture's heading is frozen inside the placement it
+            // was resolved with, so a delayed confirmation can never save a
+            // facing that differs from the one used to choose the row. Caller
+            // headings (manual/composer routes) are otherwise unchanged.
+            heading = effectivePlacement?.headingDegrees ?: heading,
             rowNumber = resolvedRowNumber,
+            // The aisle the operator occupied — carried verbatim from the frozen
+            // placement so it survives the online insert AND the offline outbox.
+            drivingRowNumber = effectivePlacement?.drivingRowNumber,
             pinRowNumber = effectivePlacement?.pinRowNumber,
             pinSide = effectivePlacement?.pinSide,
             alongRowDistanceM = effectivePlacement?.alongRowDistanceM,
@@ -6503,6 +6536,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             isCompleted = input.isCompleted,
             latitude = input.latitude,
             longitude = input.longitude,
+            drivingRowNumber = input.drivingRowNumber,
             pinRowNumber = input.pinRowNumber,
             pinSide = input.pinSide,
             alongRowDistanceM = input.alongRowDistanceM,
@@ -7909,24 +7943,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun activeTripIdOrNull(): String? = _ui.value.activeTrip?.id
 
     /**
-     * Freeze identity, time and the established trip-aware placement answer for one
-     * already-qualified observation. Raw coordinates remain unchanged even when an
-     * active trip's selected-block boundary clears its block/row assignment.
+     * Freeze identity, time, heading and the established trip-aware placement
+     * answer for one already-qualified observation. Raw coordinates remain
+     * unchanged even when an active trip's selected-block boundary clears its
+     * block/row assignment.
+     *
+     * This is the AUTOMATIC Left/Right capture boundary, so placement follows
+     * the core pin-location contract: the aisle from adjacent row geometry and
+     * the attached vine row on the operator's side for the fix's own recorded
+     * bearing. The whole answer — including the heading it used — is frozen
+     * here, so a later photo/duplicate confirmation or any movement cannot
+     * change what gets saved.
      */
     fun freezePinCapture(
         fix: QualifiedLocationFix,
         side: String?,
         observedAtIso: String = java.time.Instant.now().toString(),
         pinId: String = java.util.UUID.randomUUID().toString(),
+        /**
+         * The facing that will be persisted with this pin (device compass
+         * corrected to true north where available). Passing it here keeps row
+         * selection and the saved heading the same single value; when absent
+         * the fix's own GPS course is used, and an invalid value stays invalid
+         * rather than becoming North.
+         */
+        headingDegrees: Double? = null,
     ): PinCaptureContext? {
         val state = _ui.value
         val vineyardId = state.selectedVineyardId ?: return null
-        val standalonePlacement = PinPlacement.resolve(
+        val captureHeading = PinAisleGeometry.validHeading(headingDegrees) ?: fix.bearingDegrees
+        val standalonePlacement = PinPlacement.resolveAutomatic(
             paddocks = state.paddocks,
             selectedPaddockId = null,
             latitude = fix.latitude,
             longitude = fix.longitude,
             side = side,
+            headingDegrees = captureHeading,
         )
         val attribution = resolveTripPinAttribution(
             activeTrip = state.activeTrip,
@@ -7937,6 +7989,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             callerPaddockId = standalonePlacement.paddockId,
             callerRowNumber = standalonePlacement.pinRowNumber?.toInt(),
             callerPlacement = standalonePlacement,
+            headingDegrees = captureHeading,
+            automatic = true,
         )
         return PinCaptureContext(
             pinId = pinId,

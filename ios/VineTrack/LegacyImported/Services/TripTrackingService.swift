@@ -557,26 +557,44 @@ final class TripTrackingService {
         let resolvedPaddock = resolved.paddockId ?? paddockId ?? trip.paddockId
         let resolvedRow = rowNumber ?? resolved.rowNumber
 
-        // Snap the pin coordinate onto the live locked row line when we
-        // have a confident lock. Pins are almost always for issues on the
-        // vine row itself (broken post, irrigation, growth, repair) so
-        // placing them on the row centreline is operationally correct
-        // and gives us a stable along-row coordinate for duplicate
-        // checking. Falls back to the raw GPS point when no lock or
-        // geometry is available.
+        // Snap the pin coordinate onto the SELECTED VINE ROW when the live
+        // lock and the recorded heading identify one. Pins are almost always
+        // for issues on the vine row itself (broken post, irrigation, growth,
+        // repair), so the attached row — not the aisle centreline — is the
+        // operationally correct point and gives a stable along-row coordinate
+        // for duplicate checking. The raw GPS point is retained unchanged and
+        // used when no row could be confirmed.
         let confident = diagLockConfidence >= 0.6
         let drivingPath: Double? = lockedPath ?? currentRowNumber
         let paddockForGeometry: Paddock? = resolvedPaddock.flatMap { id in
             store.paddocks.first(where: { $0.id == id })
         }
-        let attachment = PinAttachmentResolver.resolveLive(
-            rawCoordinate: location.coordinate,
-            heading: locationService?.heading?.trueHeading ?? 0,
-            operatorSide: side,
-            drivingPath: drivingPath,
-            paddock: paddockForGeometry,
-            confident: confident
-        )
+        // Never substitute 0°/North for an absent heading.
+        let capturedHeading: Double? = locationService?.heading?.trueHeading
+        let liveAttachment = (confident && drivingPath != nil)
+            ? PinAttachmentResolver.resolveLive(
+                rawCoordinate: location.coordinate,
+                heading: capturedHeading,
+                operatorSide: side,
+                drivingPath: drivingPath,
+                paddock: paddockForGeometry,
+                confident: true
+              )
+            : nil
+        let attachment: PinAttachmentResolver.Attachment = {
+            if let liveAttachment, liveAttachment.snappedToRow { return liveAttachment }
+            // The lock couldn't attach a row (no mapped neighbours or no valid
+            // heading): fall back to the same automatic aisle geometry used
+            // outside a trip rather than snapping to a path centreline.
+            let automatic = PinAttachmentResolver.resolveAutomatic(
+                rawCoordinate: location.coordinate,
+                heading: capturedHeading,
+                operatorSide: side,
+                paddock: paddockForGeometry
+            )
+            if automatic.snappedToRow { return automatic }
+            return liveAttachment ?? automatic
+        }()
         let pinCoordinate = attachment.snappedCoordinate ?? location.coordinate
         let dupRow = attachment.pinRowNumber ?? resolvedRow
         let dupSide = attachment.pinSide ?? side
@@ -610,7 +628,8 @@ final class TripTrackingService {
         guard var pin = store.createPinFromButton(
             button: button,
             coordinate: pinCoordinate,
-            heading: locationService?.heading?.trueHeading,
+            // Frozen capture heading: the exact facing used to choose the row.
+            heading: attachment.heading,
             side: side,
             paddockId: resolvedPaddock,
             rowNumber: resolvedRow,

@@ -184,7 +184,11 @@ fun GrowthScreen(
                 onCreate = {
                     val result = PinTapCaptureCoordinator(locationTracker).captureNow()
                     automaticLocationResult = result
-                    automaticCapture = (result as? PinLocationResult.Success)?.fix?.let { vm.freezePinCapture(it, null) }
+                    // Growth observations have no Left/Right choice; the fix's
+                    // own recorded course is frozen as the facing evidence.
+                    automaticCapture = (result as? PinLocationResult.Success)?.fix?.let {
+                        vm.freezePinCapture(it, null)
+                    }
                     creating = true
                 },
                 canExport = canExport,

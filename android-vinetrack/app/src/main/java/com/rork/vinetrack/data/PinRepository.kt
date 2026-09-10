@@ -59,6 +59,12 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
         @SerialName("row_number") val rowNumber: Int? = null,
         // Row-attachment columns, populated when a GPS launcher pin snaps to a
         // mapped vine row. Left null (and untouched) for non-snapped pins.
+        //
+        // `driving_row_number` is the AISLE the operator occupied at capture
+        // (e.g. 32.5) — a different fact from `pin_row_number`, the vine row the
+        // issue is on. Nullable with a default so queued payloads written before
+        // the column was carried still decode and replay unchanged.
+        @SerialName("driving_row_number") val drivingRowNumber: Double? = null,
         @SerialName("pin_row_number") val pinRowNumber: Double? = null,
         @SerialName("pin_side") val pinSide: String? = null,
         @SerialName("along_row_distance_m") val alongRowDistanceM: Double? = null,

@@ -164,3 +164,14 @@ coordinates resolve to `location_scope = 'point'`,
 `is_location_assigned = true`, `location_warning_code = null`. Only pins
 with no coordinates, no block and no segments keep
 `location_warning_code = 'unassigned_location'`.
+
+---
+
+## Related: core pin-location contract (mobile capture)
+
+`docs/core-pin-location-contract.md` records the permanent mobile capture and
+display rules for automatic Left/Right pins — attached vine row vs driving
+path, heading-aware side selection, frozen captures, honest missing evidence,
+and the marker/Directions coordinate. That contract does not change anything in
+this portal handoff; read it before touching any pin capture, GPS, row, trip,
+sync, map or pin-presentation code.

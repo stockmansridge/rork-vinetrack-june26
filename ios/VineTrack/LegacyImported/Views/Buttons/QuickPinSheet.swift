@@ -282,7 +282,8 @@ struct QuickPinSheet: View {
             stageCode: stage.code,
             stageDescription: stage.description,
             coordinate: location.coordinate,
-            heading: locationService.heading?.trueHeading,
+            // Frozen capture heading: the exact facing the row choice used.
+            heading: placement.attachment.heading,
             side: side,
             paddockId: placement.paddockId,
             rowNumber: rowNumber ?? placement.attachment.pinRowNumber ?? placement.fallbackRowNumber,
@@ -303,7 +304,8 @@ struct QuickPinSheet: View {
         store.createPinFromButton(
             button: button,
             coordinate: location.coordinate,
-            heading: locationService.heading?.trueHeading,
+            // Frozen capture heading: the exact facing the row choice used.
+            heading: placement.attachment.heading,
             side: side,
             paddockId: placement.paddockId,
             rowNumber: rowNumber ?? placement.attachment.pinRowNumber ?? placement.fallbackRowNumber,
@@ -317,8 +319,10 @@ struct QuickPinSheet: View {
 
     /// One-shot immutable placement resolution at commit time (Android
     /// `PinPlacement` parity): explicit block selection wins, else polygon
-    /// containment; then snap to the nearest mapped vine row. The result is
-    /// used verbatim by the save so payload and UI can never disagree.
+    /// containment; then the automatic aisle/side geometry attaches the pin to
+    /// the vine row on the operator's side for their recorded heading. The
+    /// result is used verbatim by the save so payload and UI can never
+    /// disagree, and an unconfirmed capture stays honestly point-only.
     private func resolvePlacement(
         coordinate: CLLocationCoordinate2D,
         side: PinSide
@@ -330,8 +334,9 @@ struct QuickPinSheet: View {
         )
         let paddockId = selectedPaddockId ?? resolved.paddockId
         let paddock = paddockId.flatMap { id in store.paddocks.first(where: { $0.id == id }) }
-        let attachment = PinAttachmentResolver.resolveManual(
-            coordinate: coordinate,
+        let attachment = PinAttachmentResolver.resolveAutomatic(
+            rawCoordinate: coordinate,
+            heading: locationService.heading?.trueHeading,
             operatorSide: side,
             paddock: paddock
         )

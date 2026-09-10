@@ -408,7 +408,9 @@ struct RepairsGrowthView: View {
         resolved: PinContextResolver.Resolved,
         attachment: PinAttachmentResolver.Attachment
     ) {
-        let heading = locationService.heading?.trueHeading
+        // The frozen capture's heading — re-reading the compass here would let a
+        // photo/duplicate confirmation delay save a facing the row choice never used.
+        let heading = attachment.heading
         let pin = store.createPinFromButton(
             button: button,
             coordinate: coord,
@@ -482,7 +484,8 @@ struct RepairsGrowthView: View {
         resolved: PinContextResolver.Resolved,
         attachment: PinAttachmentResolver.Attachment
     ) {
-        let heading = locationService.heading?.trueHeading
+        // Frozen capture heading (see createRepairPin).
+        let heading = attachment.heading
         let pin = store.createGrowthStagePin(
             stageCode: stage.code,
             stageDescription: stage.description,
@@ -527,9 +530,13 @@ struct RepairsGrowthView: View {
         }
     }
 
-    /// Build a full attachment using the live trip lock + row geometry.
-    /// Falls back to a side-only manual attachment when no confident
-    /// lock or paddock geometry is available.
+    /// Build a full attachment for an automatic Left/Right drop.
+    ///
+    /// A confident, correctly scoped live trip lock supplies the aisle; when
+    /// there is no usable lock (outside a trip, or the locked path has no
+    /// mapped neighbours) the same geometry is derived from the fix itself.
+    /// Either way the row on the operator's side is chosen from the recorded
+    /// heading, and an unresolvable capture stays honestly point-only.
     private func liveAttachment(
         raw: CLLocationCoordinate2D,
         resolved: PinContextResolver.Resolved,
@@ -540,15 +547,29 @@ struct RepairsGrowthView: View {
         let paddock: Paddock? = resolved.paddockId.flatMap { id in
             store.paddocks.first(where: { $0.id == id })
         }
-        let heading = locationService.heading?.trueHeading ?? 0
-        return PinAttachmentResolver.resolveLive(
+        // Never substitute 0°/North for an absent heading.
+        let heading: Double? = locationService.heading?.trueHeading
+        let live: PinAttachmentResolver.Attachment? = (confident && drivingPath != nil)
+            ? PinAttachmentResolver.resolveLive(
+                rawCoordinate: raw,
+                heading: heading,
+                operatorSide: side,
+                drivingPath: drivingPath,
+                paddock: paddock,
+                confident: true
+              )
+            : nil
+        if let live, live.snappedToRow { return live }
+        let automatic = PinAttachmentResolver.resolveAutomatic(
             rawCoordinate: raw,
             heading: heading,
             operatorSide: side,
-            drivingPath: drivingPath,
-            paddock: paddock,
-            confident: confident
+            paddock: paddock
         )
+        if automatic.snappedToRow { return automatic }
+        // Neither route attached a row: keep the locked aisle when there was
+        // one, otherwise the honest point-only result.
+        return live ?? automatic
     }
 
     private func checkDuplicate(
