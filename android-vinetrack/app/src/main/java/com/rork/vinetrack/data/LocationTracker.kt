@@ -204,27 +204,28 @@ class LocationTracker(context: Context) : PinFixSnapshotSource {
     /** Bounded distinct observations delivered by this existing foreground subscription. */
     fun pinAisleObservationHistory(): List<QualifiedLocationFix> = recentDistinctPinFixes.toList()
 
-    /** Current observation-backed aisle identity, scoped to its containing block. */
-    fun lockedAisleFor(fix: QualifiedLocationFix, paddocks: List<com.rork.vinetrack.data.model.Paddock>): Double? {
+    /** Current observation-backed aisle evidence, including block and confirmation time. */
+    fun lockedAisleFor(
+        fix: QualifiedLocationFix,
+        paddocks: List<com.rork.vinetrack.data.model.Paddock>,
+    ): PinAisleObservationLock.Lock? {
         val paddock = paddocks.firstOrNull {
             RowAttachment.containsPoint(it, fix.latitude, fix.longitude)
         } ?: return null
-        return PinAisleObservationLock.resolve(recentDistinctPinFixes, fix, paddock)?.aisleNumber
+        return PinAisleObservationLock.resolve(recentDistinctPinFixes, fix, paddock)
     }
 
     private fun recordDistinctPinFix(fix: QualifiedLocationFix) {
+        val receivedAt = SystemClock.elapsedRealtimeNanos()
         recentDistinctPinFixes.removeAll { previous ->
-            (fix.fixElapsedRealtimeNanos - previous.fixElapsedRealtimeNanos) / 1_000_000L > PinAisleObservationLock.MAX_AGE_MS
+            (receivedAt - previous.fixElapsedRealtimeNanos) / 1_000_000L > PinAisleObservationLock.MAX_AGE_MS
         }
-        val previous = recentDistinctPinFixes.lastOrNull()
-        if (previous != null) {
-            if (fix.fixElapsedRealtimeNanos <= previous.fixElapsedRealtimeNanos) return
-            val distance = haversine(
-                CoordinatePoint(previous.latitude, previous.longitude),
-                CoordinatePoint(fix.latitude, fix.longitude),
+        if (!PinAisleObservationLock.acceptsObservation(
+                observedAtElapsedRealtimeNanos = fix.fixElapsedRealtimeNanos,
+                previousObservedAtElapsedRealtimeNanos = recentDistinctPinFixes.lastOrNull()?.fixElapsedRealtimeNanos,
+                receivedAtElapsedRealtimeNanos = receivedAt,
             )
-            if (distance < 0.25) return
-        }
+        ) return
         recentDistinctPinFixes += fix
         while (recentDistinctPinFixes.size > PinAisleObservationLock.MAX_OBSERVATIONS) {
             recentDistinctPinFixes.removeAt(0)

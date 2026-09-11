@@ -20,6 +20,7 @@ struct QuickPinSheet: View {
     @State private var errorMessage: String?
     @State private var duplicateWarning: DuplicateWarning?
     @State private var pinForDetailSheet: VinePin?
+    @State private var pendingAisleConfirmation: PendingMappedAisleConfirmation?
 
     private struct DuplicateWarning: Identifiable {
         let id = UUID()
@@ -193,6 +194,22 @@ struct QuickPinSheet: View {
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
             }
+            .confirmationDialog(
+                "Confirm mapped aisle and row",
+                isPresented: Binding(
+                    get: { pendingAisleConfirmation != nil },
+                    set: { if !$0 { pendingAisleConfirmation = nil } }
+                ),
+                presenting: pendingAisleConfirmation
+            ) { request in
+                Button(request.choiceLabel) {
+                    pendingAisleConfirmation = nil
+                    request.confirm()
+                }
+                Button("Cancel", role: .cancel) { pendingAisleConfirmation = nil }
+            } message: { request in
+                Text("Frozen GPS observation in \(request.paddockName). Confirm this mapped result to continue.")
+            }
         }
     }
 
@@ -220,29 +237,57 @@ struct QuickPinSheet: View {
         }
 
         let placement = resolvePlacement(location: loc, side: side)
-        guard placement.attachment.snappedToRow else {
-            errorMessage = "Pin not saved — row guidance could not confirm the mapped aisle, heading and selected side."
+        let continueWith: @MainActor (ResolvedPlacement) -> Void = { frozenPlacement in
+            let duplicateCoordinate = frozenPlacement.attachment.snappedCoordinate ?? loc.coordinate
+            let proceed = { createPin(button: button, location: loc, placement: frozenPlacement) }
+            if let dup = checkDuplicate(
+                at: duplicateCoordinate,
+                rawCoordinate: loc.coordinate,
+                placement: frozenPlacement,
+                side: side,
+                mode: button.mode,
+                logicalType: button.name
+            ) {
+                duplicateWarning = DuplicateWarning(
+                    existing: dup.pin,
+                    distance: dup.distance,
+                    radius: dup.radius,
+                    attempt: PinDuplicateCreateAttempt(create: proceed)
+                )
+            } else {
+                proceed()
+            }
+        }
+        if placement.attachment.snappedToRow {
+            continueWith(placement)
             return
         }
-        let duplicateCoordinate = placement.attachment.snappedCoordinate ?? loc.coordinate
-        let proceed = { createPin(button: button, location: loc, placement: placement) }
-        if let dup = checkDuplicate(
-            at: duplicateCoordinate,
+        guard let paddockId = placement.paddockId,
+              let paddock = store.paddocks.first(where: { $0.id == paddockId }),
+              let aisle = PinAisleGeometry.approximateAisle(containing: loc.coordinate, in: paddock) else {
+            errorMessage = "Pin not saved — mapped aisle confirmation is unavailable at this frozen position."
+            return
+        }
+        let confirmed = PinAttachmentResolver.resolveConfirmedAisle(
             rawCoordinate: loc.coordinate,
-            placement: placement,
-            side: side,
-            mode: button.mode,
-            logicalType: button.name
-        ) {
-            duplicateWarning = DuplicateWarning(
-                existing: dup.pin,
-                distance: dup.distance,
-                radius: dup.radius,
-                attempt: PinDuplicateCreateAttempt(create: proceed)
-            )
+            heading: placement.attachment.heading,
+            operatorSide: side,
+            aisleNumber: aisle.aisleNumber,
+            paddock: paddock
+        )
+        guard confirmed.snappedToRow, let confirmedRow = confirmed.pinRowNumber else {
+            errorMessage = "Pin not saved — mapped aisle, heading and selected side could not be confirmed."
             return
         }
-        proceed()
+        let confirmedPlacement: ResolvedPlacement = (
+            placement.paddockId, confirmed, placement.fallbackRowNumber, placement.capture
+        )
+        pendingAisleConfirmation = PendingMappedAisleConfirmation(
+            paddockName: paddock.name,
+            aisleNumber: aisle.aisleNumber,
+            rowNumber: confirmedRow,
+            confirm: { continueWith(confirmedPlacement) }
+        )
     }
 
     private func handleGrowthStageSelected(_ stage: GrowthStage) {
@@ -376,7 +421,8 @@ struct QuickPinSheet: View {
             horizontalAccuracyMetres: location.horizontalAccuracy,
             operatorSide: side,
             paddock: paddock,
-            lockedDrivingPath: historyLock?.aisleNumber
+            capturedAt: capturedAt,
+            aisleLock: historyLock
         )
         // Identity and time are frozen here so a duplicate confirmation or a
         // growth-stage picker cannot save into a different context.

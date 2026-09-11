@@ -19,10 +19,23 @@ class PinAisleObservationLockTest {
         isQualified = qualified,
     )
 
+    @Test fun `stationary fresh samples remain distinct while replay and stale samples are rejected`() {
+        val first = now - 2_000_000_000L
+        val second = now - 1_000_000_000L
+        assertEquals(true, PinAisleObservationLock.acceptsObservation(first, null, now))
+        assertEquals(true, PinAisleObservationLock.acceptsObservation(second, first, now))
+        assertEquals(false, PinAisleObservationLock.acceptsObservation(second, second, now))
+        assertEquals(false, PinAisleObservationLock.acceptsObservation(first, second, now))
+        assertEquals(false, PinAisleObservationLock.acceptsObservation(now - 6_000_000_000L, null, now))
+    }
+
     @Test fun requiresSupportingObservationsNotElapsedTime() {
         val two = listOf(item(2_000, "a", 12.5), item(1_000, "a", 12.5))
         assertNull(PinAisleObservationLock.resolve(two, now))
-        assertEquals(12.5, PinAisleObservationLock.resolve(two + item(0, "a", 12.5), now)?.aisleNumber)
+        val lock = PinAisleObservationLock.resolve(two + item(0, "a", 12.5), now)
+        assertEquals(12.5, lock?.aisleNumber)
+        assertEquals("a", lock?.paddockId)
+        assertEquals(now, lock?.confirmedAtElapsedRealtimeNanos)
     }
 
     @Test fun holdsBriefOutlierAndSwitchesOnSustainedContradiction() {

@@ -196,6 +196,50 @@ struct PinAisleAttachmentTests {
         #expect(left.drivingRowNumber == 32.5)
     }
 
+    @Test func wrongBlockAndExpiredObservationLocksCannotDrivePlacement() {
+        let block = eastwardBlock()
+        let capturedAt = Date(timeIntervalSince1970: 1_000)
+        for lock in [
+            PinAisleObservationLock.Lock(paddockId: UUID(), aisleNumber: 32.5, supportingObservations: 3, confirmedAt: capturedAt),
+            PinAisleObservationLock.Lock(paddockId: block.id, aisleNumber: 32.5, supportingObservations: 3, confirmedAt: capturedAt.addingTimeInterval(-21))
+        ] {
+            let result = PinAttachmentResolver.resolveAutomatic(
+                rawCoordinate: CLLocationCoordinate2D(latitude: -33.0, longitude: aisle32_5Longitude),
+                heading: 0,
+                horizontalAccuracyMetres: 8,
+                operatorSide: .left,
+                paddock: block,
+                capturedAt: capturedAt,
+                aisleLock: lock
+            )
+            #expect(!result.snappedToRow)
+            #expect(result.drivingRowNumber == nil)
+        }
+    }
+
+    @Test func ambiguousFrozenObservationCanBeConfirmedWithoutChangingRawInput() {
+        let block = eastwardBlock()
+        let raw = CLLocationCoordinate2D(latitude: -33.0, longitude: aisle32_5Longitude)
+        let ambiguous = PinAttachmentResolver.resolveAutomatic(
+            rawCoordinate: raw,
+            heading: 0,
+            horizontalAccuracyMetres: 8,
+            operatorSide: .left,
+            paddock: block
+        )
+        #expect(!ambiguous.snappedToRow)
+        let confirmed = PinAttachmentResolver.resolveConfirmedAisle(
+            rawCoordinate: raw,
+            heading: 0,
+            operatorSide: .left,
+            aisleNumber: 32.5,
+            paddock: block
+        )
+        #expect(confirmed.snappedToRow)
+        #expect(confirmed.drivingRowNumber == 32.5)
+        #expect(confirmed.pinRowNumber == 32)
+    }
+
     @Test func nonContiguousRowNumbersReportTheRealAdjacentPair() {
         let block = eastwardBlock(numbers: [32, 34])
         let left = automatic(block, longitude: 149.0 + rowSpacing, side: .left, heading: 0)

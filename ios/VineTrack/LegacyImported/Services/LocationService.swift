@@ -12,7 +12,8 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
     private var recentDistinctLocations: [CLLocation] = []
 
     /// Bounded observations already delivered by the existing location stream.
-    /// Repeated cached coordinates do not create aisle confidence.
+    /// Provider sample identity, not coordinate movement, determines freshness so
+    /// stationary operators still accumulate separately delivered observations.
     var pinAisleObservationHistory: [CLLocation] { recentDistinctLocations }
 
     private(set) var isBackgroundUpdatingEnabled: Bool = false
@@ -195,14 +196,15 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
     }
 
     private func recordDistinctObservation(_ location: CLLocation) {
+        let receivedAt = Date()
         recentDistinctLocations.removeAll {
-            location.timestamp.timeIntervalSince($0.timestamp) > PinAisleObservationLock.maximumObservationAge
+            receivedAt.timeIntervalSince($0.timestamp) > PinAisleObservationLock.maximumObservationAge
         }
-        if let previous = recentDistinctLocations.last {
-            guard location.timestamp > previous.timestamp,
-                  location.distance(from: previous) >= 0.25
-            else { return }
-        }
+        guard PinAisleObservationLock.acceptsObservation(
+            observedAt: location.timestamp,
+            previousObservedAt: recentDistinctLocations.last?.timestamp,
+            receivedAt: receivedAt
+        ) else { return }
         recentDistinctLocations.append(location)
         if recentDistinctLocations.count > PinAisleObservationLock.maximumObservationCount {
             recentDistinctLocations.removeFirst(recentDistinctLocations.count - PinAisleObservationLock.maximumObservationCount)

@@ -564,6 +564,43 @@ class PinAisleAttachmentTest {
         assertEquals(149.0, result.snappedLongitude!!, 1e-6)
     }
 
+    @Test
+    fun `wrong block and expired observation locks cannot drive automatic placement`() {
+        val block = eastwardBlock(id = "here")
+        val captureNanos = 100_000_000_000L
+        val wrongBlock = PinAisleObservationLock.Lock("elsewhere", 32.5, 3, captureNanos)
+        val expired = PinAisleObservationLock.Lock(block.id, 32.5, 3, captureNanos - 21_000_000_000L)
+        for (lock in listOf(wrongBlock, expired)) {
+            val result = PinPlacement.resolveAutomatic(
+                paddocks = listOf(block),
+                selectedPaddockId = block.id,
+                latitude = -33.0,
+                longitude = aisle32_5Longitude(),
+                side = "left",
+                headingDegrees = 0.0,
+                aisleLock = lock,
+                captureElapsedRealtimeNanos = captureNanos,
+                accuracyMetres = 8.0,
+            )
+            assertEquals(PinSnapState.UNCONFIRMED_ROW, result.snapState)
+            assertNull(result.drivingRowNumber)
+        }
+    }
+
+    @Test
+    fun `ambiguous frozen observation can be confirmed and retains raw coordinates`() {
+        val block = eastwardBlock()
+        val longitude = aisle32_5Longitude()
+        val ambiguous = automatic(block, -33.0, longitude, "left", 0.0, accuracyMetres = 8.0)
+        assertEquals(PinSnapState.UNCONFIRMED_ROW, ambiguous.snapState)
+        val confirmed = PinPlacement.resolveConfirmedAisle(block, -33.0, longitude, "left", 0.0, 32.5)
+        assertEquals(PinSnapState.SNAPPED, confirmed.snapState)
+        assertEquals(-33.0, confirmed.latitude!!, 0.0)
+        assertEquals(longitude, confirmed.longitude!!, 0.0)
+        assertEquals(32.5, confirmed.drivingRowNumber!!, 0.0)
+        assertEquals(32.0, confirmed.pinRowNumber!!, 0.0)
+    }
+
     // MARK: - Facing evidence
 
     @Test
@@ -703,8 +740,11 @@ class PinAisleAttachmentTest {
 
     @Test
     fun `the frozen aisle survives the offline queue, restart and production replay`() = runBlocking {
-        val placement = automatic(eastwardBlock(), -33.0, aisle32_5Longitude(), "right", 346.0)
+        val block = eastwardBlock()
+        val rawLongitude = aisle32_5Longitude()
+        val placement = PinPlacement.resolveConfirmedAisle(block, -33.0, rawLongitude, "right", 346.0, 32.5)
         assertEquals(33.0, placement.pinRowNumber!!, 1e-9)
+        assertEquals(rawLongitude, placement.longitude!!, 0.0)
         val input = frozenInput(placement)
 
         val storage = InMemoryPendingWriteStore()
@@ -716,6 +756,8 @@ class PinAisleAttachmentTest {
         val decoded = json.decodeFromString(PinRepository.PinInput.serializer(), durable.payloadJson)
         assertEquals(input, decoded)
         assertEquals(32.5, decoded.drivingRowNumber!!, 1e-9)
+        assertEquals(rawLongitude, decoded.longitude!!, 0.0)
+        assertEquals(33.0, decoded.pinRowNumber!!, 1e-9)
 
         var outgoing: PinRepository.PinInput? = null
         PinCreateSync(restarted) { sent ->

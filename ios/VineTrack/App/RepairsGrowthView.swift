@@ -26,6 +26,7 @@ struct RepairsGrowthView: View {
     // Pin-duplicate warning state
     @State private var duplicateWarning: DuplicateWarning?
     @State private var pinForDetailSheet: VinePin?
+    @State private var pendingAisleConfirmation: PendingMappedAisleConfirmation?
 
     private struct DuplicateWarning: Identifiable {
         let id = UUID()
@@ -89,6 +90,22 @@ struct RepairsGrowthView: View {
         }
         .background(VineyardTheme.appBackground)
         .pinDroppedToast($pinToast)
+        .confirmationDialog(
+            "Confirm mapped aisle and row",
+            isPresented: Binding(
+                get: { pendingAisleConfirmation != nil },
+                set: { if !$0 { pendingAisleConfirmation = nil } }
+            ),
+            presenting: pendingAisleConfirmation
+        ) { request in
+            Button(request.choiceLabel) {
+                pendingAisleConfirmation = nil
+                request.confirm()
+            }
+            Button("Cancel", role: .cancel) { pendingAisleConfirmation = nil }
+        } message: { request in
+            Text("Frozen GPS observation in \(request.paddockName). Confirm this mapped result to continue.")
+        }
         .navigationTitle(store.selectedVineyard?.name ?? "Vineyard")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -375,39 +392,62 @@ struct RepairsGrowthView: View {
         }
         let resolved = PinContextResolver.resolve(coordinate: raw, store: store, tracking: tracking)
         let attachment = liveAttachment(capture: capture, resolved: resolved, side: side)
-        guard attachment.snappedToRow else {
+        let continueWith: @MainActor (PinAttachmentResolver.Attachment) -> Void = { frozenAttachment in
+            let coord = frozenAttachment.snappedCoordinate ?? raw
+            let proceed = {
+                createRepairPin(
+                    button: button,
+                    side: side,
+                    capture: capture,
+                    resolved: resolved,
+                    attachment: frozenAttachment
+                )
+            }
+            if let dup = checkDuplicate(
+                at: coord,
+                rawCoordinate: raw,
+                resolved: resolved,
+                attachment: frozenAttachment,
+                side: side,
+                mode: button.mode,
+                logicalType: button.name
+            ) {
+                duplicateWarning = DuplicateWarning(
+                    existing: dup.pin,
+                    distance: dup.distance,
+                    radius: dup.radius,
+                    attempt: PinDuplicateCreateAttempt(create: proceed)
+                )
+            } else {
+                proceed()
+            }
+        }
+        if attachment.snappedToRow {
+            continueWith(attachment)
+            return
+        }
+        guard let paddock = resolved.paddockId.flatMap({ id in store.paddocks.first(where: { $0.id == id }) }),
+              let aisle = PinAisleGeometry.approximateAisle(containing: raw, in: paddock) else {
             showError(attachmentFailureMessage(capture: capture, resolved: resolved, attachment: attachment))
             return
         }
-        // Duplicate comparison keeps using the attached point (rule unchanged).
-        let coord = attachment.snappedCoordinate ?? raw
-        let proceed = {
-            createRepairPin(
-                button: button,
-                side: side,
-                capture: capture,
-                resolved: resolved,
-                attachment: attachment
-            )
-        }
-        if let dup = checkDuplicate(
-            at: coord,
+        let confirmed = PinAttachmentResolver.resolveConfirmedAisle(
             rawCoordinate: raw,
-            resolved: resolved,
-            attachment: attachment,
-            side: side,
-            mode: button.mode,
-            logicalType: button.name
-        ) {
-            duplicateWarning = DuplicateWarning(
-                existing: dup.pin,
-                distance: dup.distance,
-                radius: dup.radius,
-                attempt: PinDuplicateCreateAttempt(create: proceed)
-            )
+            heading: attachment.heading,
+            operatorSide: side,
+            aisleNumber: aisle.aisleNumber,
+            paddock: paddock
+        )
+        guard confirmed.snappedToRow, let confirmedRow = confirmed.pinRowNumber else {
+            showError(attachmentFailureMessage(capture: capture, resolved: resolved, attachment: attachment))
             return
         }
-        proceed()
+        pendingAisleConfirmation = PendingMappedAisleConfirmation(
+            paddockName: paddock.name,
+            aisleNumber: aisle.aisleNumber,
+            rowNumber: confirmedRow,
+            confirm: { continueWith(confirmed) }
+        )
     }
 
     private func createRepairPin(
@@ -634,7 +674,8 @@ struct RepairsGrowthView: View {
             horizontalAccuracyMetres: capture.horizontalAccuracyMetres,
             operatorSide: side,
             paddock: paddock,
-            lockedDrivingPath: historyLock?.aisleNumber
+            capturedAt: capture.capturedAt,
+            aisleLock: historyLock
         )
         if automatic.snappedToRow { return automatic }
         // Neither route attached a row: keep the validated locked aisle when

@@ -25,7 +25,25 @@ object PinAisleObservationLock {
         val paddockId: String,
         val aisleNumber: Double,
         val supportingObservations: Int,
+        /** Latest separately delivered observation that confirmed this aisle. */
+        val confirmedAtElapsedRealtimeNanos: Long,
     )
+
+    /**
+     * Monotonic provider time is sample identity. Fresh stationary fixes remain
+     * distinct; replayed, out-of-order, stale, and future samples are rejected.
+     */
+    fun acceptsObservation(
+        observedAtElapsedRealtimeNanos: Long,
+        previousObservedAtElapsedRealtimeNanos: Long?,
+        receivedAtElapsedRealtimeNanos: Long,
+    ): Boolean {
+        if (observedAtElapsedRealtimeNanos <= 0L || receivedAtElapsedRealtimeNanos < observedAtElapsedRealtimeNanos) return false
+        val ageMs = (receivedAtElapsedRealtimeNanos - observedAtElapsedRealtimeNanos) / 1_000_000L
+        if (ageMs > PinLocationFixValidator.MAX_AGE_MS) return false
+        return previousObservedAtElapsedRealtimeNanos == null ||
+            observedAtElapsedRealtimeNanos > previousObservedAtElapsedRealtimeNanos
+    }
 
     fun resolve(evidence: List<Evidence>, captureElapsedRealtimeNanos: Long): Lock? {
         val recent = evidence
@@ -39,6 +57,7 @@ object PinAisleObservationLock {
         var supportCount = 0
         var contradiction: Double? = null
         var contradictionCount = 0
+        var confirmedAt: Long? = null
 
         recent.forEach { item ->
             val itemBlock = item.paddockId
@@ -51,6 +70,7 @@ object PinAisleObservationLock {
                 supportCount = 0
                 contradiction = null
                 contradictionCount = 0
+                confirmedAt = null
                 return@forEach
             }
             if (block != itemBlock) {
@@ -61,12 +81,16 @@ object PinAisleObservationLock {
                 supportCount = 0
                 contradiction = null
                 contradictionCount = 0
+                confirmedAt = null
             }
 
             val currentLock = locked
             if (currentLock != null) {
                 if (sameAisle(currentLock, aisle)) {
-                    if (item.isQualified) supportCount = (supportCount + 1).coerceAtMost(MAX_OBSERVATIONS)
+                    if (item.isQualified) {
+                        supportCount = (supportCount + 1).coerceAtMost(MAX_OBSERVATIONS)
+                        confirmedAt = item.observedAtElapsedRealtimeNanos
+                    }
                     contradiction = null
                     contradictionCount = 0
                 } else if (item.isQualified) {
@@ -80,6 +104,7 @@ object PinAisleObservationLock {
                         candidate = aisle
                         candidateCount = contradictionCount
                         supportCount = contradictionCount
+                        confirmedAt = item.observedAtElapsedRealtimeNanos
                         contradiction = null
                         contradictionCount = 0
                     }
@@ -93,14 +118,16 @@ object PinAisleObservationLock {
                 if (candidateCount >= SUPPORT_REQUIRED) {
                     locked = aisle
                     supportCount = candidateCount
+                    confirmedAt = item.observedAtElapsedRealtimeNanos
                 }
             }
         }
 
         val finalBlock = block ?: return null
         val finalAisle = locked ?: return null
+        val finalConfirmedAt = confirmedAt ?: return null
         if (supportCount < SUPPORT_REQUIRED) return null
-        return Lock(finalBlock, finalAisle, supportCount)
+        return Lock(finalBlock, finalAisle, supportCount, finalConfirmedAt)
     }
 
     fun resolve(fixes: List<QualifiedLocationFix>, current: QualifiedLocationFix, paddock: Paddock?): Lock? {
@@ -122,8 +149,22 @@ object PinAisleObservationLock {
                 )
             }
         val lock = resolve(evidence, current.fixElapsedRealtimeNanos) ?: return null
-        val currentApproximate = PinAisleGeometry.approximateAisle(paddock, current.latitude, current.longitude)
-        return lock.takeIf { it.paddockId == paddock.id && currentApproximate != null }
+        return lock.takeIf { isValid(it, current, paddock) }
+    }
+
+    /**
+     * Validate complete lock scope at the frozen press. One or two lateral
+     * contradictions may be tolerated only while the current accepted fix stays
+     * inside the same block and within mapped row longitudinal extent.
+     */
+    fun isValid(lock: Lock?, current: QualifiedLocationFix, paddock: Paddock?): Boolean {
+        lock ?: return false
+        paddock ?: return false
+        if (lock.paddockId != paddock.id) return false
+        if (ageMs(lock.confirmedAtElapsedRealtimeNanos, current.fixElapsedRealtimeNanos) > MAX_AGE_MS) return false
+        if (!RowAttachment.containsPoint(paddock, current.latitude, current.longitude)) return false
+        if (PinAisleGeometry.rowsBoundingPath(paddock, lock.aisleNumber) == null) return false
+        return PinAisleGeometry.approximateAisle(paddock, current.latitude, current.longitude) != null
     }
 
     private fun ageMs(observed: Long, capture: Long): Long {

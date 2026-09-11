@@ -21,6 +21,7 @@ struct PinDropView: View {
     @State private var feedbackMessage: String?
     @State private var feedbackKind: VineyardBadgeKind = .success
     @State private var showLocationOptions: Bool = false
+    @State private var pendingAisleConfirmation: PendingMappedAisleConfirmation?
 
     init(mode: PinMode) {
         self.mode = mode
@@ -100,6 +101,22 @@ struct PinDropView: View {
             GrowthStagePickerSheet { stage in
                 handleGrowthStageSelected(stage)
             }
+        }
+        .confirmationDialog(
+            "Confirm mapped aisle and row",
+            isPresented: Binding(
+                get: { pendingAisleConfirmation != nil },
+                set: { if !$0 { pendingAisleConfirmation = nil } }
+            ),
+            presenting: pendingAisleConfirmation
+        ) { request in
+            Button(request.choiceLabel) {
+                pendingAisleConfirmation = nil
+                request.confirm()
+            }
+            Button("Cancel", role: .cancel) { pendingAisleConfirmation = nil }
+        } message: { request in
+            Text("Frozen GPS observation in \(request.paddockName). Select the mapped result to save; your current location will not replace it.")
         }
     }
 
@@ -388,31 +405,56 @@ struct PinDropView: View {
             horizontalAccuracyMetres: location.horizontalAccuracy,
             operatorSide: side,
             paddock: paddock,
-            lockedDrivingPath: historyLock?.aisleNumber
+            capturedAt: capture?.capturedAt ?? location.timestamp,
+            aisleLock: historyLock
         )
-        let created = store.createPinFromButton(
-            button: button,
-            // The original observation, never the snapped point.
-            coordinate: location.coordinate,
-            // Frozen capture heading: the exact facing the row choice used.
-            heading: attachment.heading,
-            capture: capture,
-            side: side,
-            paddockId: paddockId,
-            // Typed row (manual intent) wins; otherwise only a confirmed
-            // attached row — never the nearest-row guess, which legacy display
-            // fallbacks would print as a fabricated "Row X.5".
-            rowNumber: rowNumber ?? attachment.pinRowNumber,
-            createdBy: auth.userName,
-            createdByUserId: auth.userId,
-            notes: nil,
-            attachment: attachment
-        )
-        guard created != nil else {
-            showFeedback("Vineyard or trip changed \u{2014} press again.", kind: .warning)
+        let save: @MainActor (PinAttachmentResolver.Attachment) -> Void = { confirmedAttachment in
+            let created = store.createPinFromButton(
+                button: button,
+                coordinate: location.coordinate,
+                heading: confirmedAttachment.heading,
+                capture: capture,
+                side: side,
+                paddockId: paddockId,
+                rowNumber: rowNumber ?? confirmedAttachment.pinRowNumber,
+                createdBy: auth.userName,
+                createdByUserId: auth.userId,
+                notes: nil,
+                attachment: confirmedAttachment
+            )
+            guard created != nil else {
+                showFeedback("Vineyard or trip changed \u{2014} press again.", kind: .warning)
+                return
+            }
+            showFeedback("Pin: \(button.name) (\(side == .left ? "L" : "R"))", kind: .success)
+        }
+        if rowNumber == nil, !attachment.snappedToRow,
+           let paddock,
+           let aisle = PinAisleGeometry.approximateAisle(containing: location.coordinate, in: paddock) {
+            let confirmed = PinAttachmentResolver.resolveConfirmedAisle(
+                rawCoordinate: location.coordinate,
+                heading: attachment.heading,
+                operatorSide: side,
+                aisleNumber: aisle.aisleNumber,
+                paddock: paddock
+            )
+            guard confirmed.snappedToRow, let confirmedRow = confirmed.pinRowNumber else {
+                showFeedback("Mapped row confirmation is unavailable at this frozen position.", kind: .warning)
+                return
+            }
+            pendingAisleConfirmation = PendingMappedAisleConfirmation(
+                paddockName: paddock.name,
+                aisleNumber: aisle.aisleNumber,
+                rowNumber: confirmedRow,
+                confirm: { save(confirmed) }
+            )
             return
         }
-        showFeedback("Pin: \(button.name) (\(side == .left ? "L" : "R"))", kind: .success)
+        guard rowNumber != nil || attachment.snappedToRow else {
+            showFeedback("Pin not saved — confirm a mapped aisle and row.", kind: .warning)
+            return
+        }
+        save(attachment)
     }
 
     private func handleGrowthStageSelected(_ stage: GrowthStage) {
@@ -443,7 +485,8 @@ struct PinDropView: View {
             horizontalAccuracyMetres: location.horizontalAccuracy,
             operatorSide: pendingSide,
             paddock: paddock,
-            lockedDrivingPath: historyLock?.aisleNumber
+            capturedAt: capture?.capturedAt ?? location.timestamp,
+            aisleLock: historyLock
         )
         let created = store.createGrowthStagePin(
             stageCode: stage.code,

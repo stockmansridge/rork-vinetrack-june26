@@ -178,8 +178,8 @@ object PinPlacement {
      * Block resolution is unchanged. The row attachment, however, follows the
      * core pin-location contract instead of nearest-row copying:
      *  1. identify the aisle physically containing the fix from mapped adjacent
-     *     row geometry ([lockedDrivingPath] supplies it when a validated live
-     *     trip lock exists for this block),
+     *     row geometry ([aisleLock] supplies it only while its block scope and
+     *     confirmation time remain valid for this frozen fix),
      *  2. attach to whichever of that aisle's two rows lies on the operator's
      *     [side] for their recorded [headingDegrees],
      *  3. snap onto that selected vine row's own centreline, never the aisle
@@ -202,7 +202,8 @@ object PinPlacement {
         longitude: Double?,
         side: String?,
         headingDegrees: Double?,
-        lockedDrivingPath: Double? = null,
+        aisleLock: PinAisleObservationLock.Lock? = null,
+        captureElapsedRealtimeNanos: Long? = null,
         /**
          * The fix's own reported accuracy radius, used as separate aisle
          * evidence. The GPS acceptance thresholds that qualify a fix in the
@@ -275,11 +276,24 @@ object PinPlacement {
 
         // A live trip lock may supply the aisle directly; otherwise derive it
         // from the physically adjacent rows around the fix.
-        val lockedRows = lockedDrivingPath?.let { PinAisleGeometry.rowsBoundingPath(paddock, it) }
+        val lockCurrent = captureElapsedRealtimeNanos?.let { capturedAt ->
+            QualifiedLocationFix(
+                latitude = latitude,
+                longitude = longitude,
+                accuracyMetres = accuracyMetres ?: Double.NaN,
+                fixTimeEpochMs = 0L,
+                fixElapsedRealtimeNanos = capturedAt,
+                bearingDegrees = heading,
+            )
+        }
+        val usableLock = aisleLock?.takeIf { lock ->
+            lockCurrent != null && PinAisleObservationLock.isValid(lock, lockCurrent, paddock)
+        }
+        val lockedRows = usableLock?.let { PinAisleGeometry.rowsBoundingPath(paddock, it.aisleNumber) }
         val aisleNumber: Double
         val rowPair: Pair<Int, Int>
-        if (lockedRows != null && lockedDrivingPath != null) {
-            aisleNumber = lockedDrivingPath
+        if (lockedRows != null && usableLock != null) {
+            aisleNumber = usableLock.aisleNumber
             rowPair = lockedRows
         } else {
             val aisle = PinAisleGeometry.aisleContaining(paddock, latitude, longitude, accuracyMetres)
@@ -295,9 +309,54 @@ object PinPlacement {
             longitude = longitude,
             headingDegrees = heading,
             side = cleanSide,
-            useAisleMidpointReference = lockedDrivingPath != null,
+            useAisleMidpointReference = usableLock != null,
         ) ?: return unconfirmed(PinSnapState.UNCONFIRMED_ROW)
 
+        return PinPlacementResult(
+            latitude = latitude,
+            longitude = longitude,
+            paddockId = paddock.id,
+            pinRowNumber = selection.rowNumber.toDouble(),
+            pinSide = cleanSide,
+            alongRowDistanceM = selection.alongRowDistanceM,
+            snappedLatitude = selection.snappedLatitude,
+            snappedLongitude = selection.snappedLongitude,
+            snapState = PinSnapState.SNAPPED,
+            drivingRowNumber = aisleNumber,
+            headingDegrees = heading,
+        )
+    }
+
+    /** Resolve an operator-confirmed mapped aisle against the frozen observation. */
+    fun resolveConfirmedAisle(
+        paddock: Paddock,
+        latitude: Double,
+        longitude: Double,
+        side: String,
+        headingDegrees: Double?,
+        aisleNumber: Double,
+    ): PinPlacementResult {
+        val cleanSide = side.trim().lowercase().takeIf { it == "left" || it == "right" }
+        val heading = PinAisleGeometry.validHeading(headingDegrees)
+        val rows = PinAisleGeometry.rowsBoundingPath(paddock, aisleNumber)
+        val insideMappedExtent = PinAisleGeometry.approximateAisle(paddock, latitude, longitude) != null
+        val selection = if (cleanSide != null && rows != null && insideMappedExtent) {
+            PinAisleGeometry.rowOnSide(
+                paddock = paddock,
+                rowNumbers = rows,
+                latitude = latitude,
+                longitude = longitude,
+                headingDegrees = heading,
+                side = cleanSide,
+                useAisleMidpointReference = true,
+            )
+        } else null
+        if (selection == null) {
+            return PinPlacementResult(
+                latitude, longitude, paddock.id, null, cleanSide, null, null, null,
+                PinSnapState.UNCONFIRMED_ROW, headingDegrees = heading,
+            )
+        }
         return PinPlacementResult(
             latitude = latitude,
             longitude = longitude,

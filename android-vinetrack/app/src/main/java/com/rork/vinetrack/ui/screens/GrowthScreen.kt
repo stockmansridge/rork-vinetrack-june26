@@ -190,7 +190,7 @@ fun GrowthScreen(
                         vm.freezePinCapture(
                             it,
                             null,
-                            lockedDrivingPath = locationTracker.lockedAisleFor(it, state.paddocks),
+                            aisleLock = locationTracker.lockedAisleFor(it, state.paddocks),
                         )
                     }
                     creating = true

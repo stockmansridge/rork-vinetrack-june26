@@ -194,7 +194,8 @@ nonisolated enum PinAttachmentResolver {
         horizontalAccuracyMetres: Double?,
         operatorSide: PinSide,
         paddock: Paddock?,
-        lockedDrivingPath: Double? = nil
+        capturedAt: Date = Date(),
+        aisleLock: PinAisleObservationLock.Lock? = nil
     ) -> Attachment {
         let validHeading = PinAisleGeometry.validHeading(heading, ageSeconds: headingAgeSeconds)
         let unconfirmed = Attachment(
@@ -208,9 +209,14 @@ nonisolated enum PinAttachmentResolver {
         )
         guard let paddock, validHeading != nil else { return unconfirmed }
         let resolvedAisle: (number: Double, rows: (Int, Int))? = {
-            if let lockedDrivingPath,
-               let rows = PinAisleGeometry.rowsBounding(path: lockedDrivingPath, in: paddock) {
-                return (lockedDrivingPath, rows)
+            if PinAisleObservationLock.isValid(
+                aisleLock,
+                capturedAt: capturedAt,
+                currentCoordinate: rawCoordinate,
+                paddock: paddock
+            ), let aisleLock,
+               let rows = PinAisleGeometry.rowsBounding(path: aisleLock.aisleNumber, in: paddock) {
+                return (aisleLock.aisleNumber, rows)
             }
             guard let aisle = PinAisleGeometry.aisle(
                 containing: rawCoordinate,
@@ -226,12 +232,56 @@ nonisolated enum PinAttachmentResolver {
                 heading: validHeading,
                 operatorSide: operatorSide,
                 in: paddock,
-                useAisleMidpointReference: lockedDrivingPath != nil
+                useAisleMidpointReference: aisleLock != nil
               )
         else { return unconfirmed }
 
         return Attachment(
             drivingRowNumber: resolvedAisle.number,
+            pinRowNumber: selection.rowNumber,
+            pinSide: operatorSide,
+            snappedCoordinate: selection.snapped,
+            alongRowDistanceM: selection.distanceAlongMetres,
+            snappedToRow: true,
+            heading: validHeading
+        )
+    }
+
+    /// Operator-confirmed mapped aisle for an otherwise ambiguous frozen
+    /// automatic capture. The raw coordinate and heading remain those frozen at
+    /// the initiating press; only the mapped aisle identity is supplied by UI.
+    static func resolveConfirmedAisle(
+        rawCoordinate: CLLocationCoordinate2D,
+        heading: Double?,
+        operatorSide: PinSide,
+        aisleNumber: Double,
+        paddock: Paddock?
+    ) -> Attachment {
+        let validHeading = PinAisleGeometry.validHeading(heading)
+        guard let paddock,
+              let rows = PinAisleGeometry.rowsBounding(path: aisleNumber, in: paddock),
+              PinAisleGeometry.approximateAisle(containing: rawCoordinate, in: paddock) != nil,
+              let selection = PinAisleGeometry.rowOnSide(
+                rowNumbers: rows,
+                coordinate: rawCoordinate,
+                heading: validHeading,
+                operatorSide: operatorSide,
+                in: paddock,
+                useAisleMidpointReference: true
+              )
+        else {
+            return Attachment(
+                drivingRowNumber: nil,
+                pinRowNumber: nil,
+                pinSide: operatorSide,
+                snappedCoordinate: nil,
+                alongRowDistanceM: nil,
+                snappedToRow: false,
+                heading: validHeading
+            )
+        }
+        return Attachment(
+            drivingRowNumber: aisleNumber,
             pinRowNumber: selection.rowNumber,
             pinSide: operatorSide,
             snappedCoordinate: selection.snapped,

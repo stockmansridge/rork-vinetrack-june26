@@ -104,6 +104,7 @@ import com.rork.vinetrack.data.model.PendingPhotoEntityKind
 import com.rork.vinetrack.data.model.PendingPhotoStatus
 import com.rork.vinetrack.data.model.PhotoDisplaySource
 import com.rork.vinetrack.data.PinAisleGeometry
+import com.rork.vinetrack.data.PinAisleObservationLock
 import com.rork.vinetrack.data.PinPlacement
 import com.rork.vinetrack.data.PinPlacementResult
 import com.rork.vinetrack.data.PinCaptureContext
@@ -1005,8 +1006,9 @@ internal fun resolveTripPinAttribution(
     automatic: Boolean = false,
     /** The fix's own accuracy radius, used only as aisle-confidence evidence. */
     accuracyMetres: Double? = null,
-    /** Observation-backed aisle lock established in this same mapped block. */
-    lockedDrivingPath: Double? = null,
+    /** Observation-backed aisle lock with its block scope and confirmation time. */
+    aisleLock: PinAisleObservationLock.Lock? = null,
+    captureElapsedRealtimeNanos: Long? = null,
 ): TripPinAttribution {
     val tripResolution = if (activeTrip != null && latitude != null && longitude != null) {
         TripBlockResolver.resolve(activeTrip, paddocks, latitude, longitude)
@@ -1031,7 +1033,8 @@ internal fun resolveTripPinAttribution(
                 headingDegrees = headingDegrees,
                 // Only the bounded observation-backed lock for this containing
                 // block may supply the aisle; the trip's planned path never does.
-                lockedDrivingPath = lockedDrivingPath,
+                aisleLock = aisleLock,
+                captureElapsedRealtimeNanos = captureElapsedRealtimeNanos,
                 accuracyMetres = accuracyMetres,
             )
         } else {
@@ -8038,7 +8041,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         headingDegrees: Double? = null,
         headingObservedAtElapsedRealtimeNanos: Long? = null,
         captureElapsedRealtimeNanos: Long = android.os.SystemClock.elapsedRealtimeNanos(),
-        lockedDrivingPath: Double? = null,
+        aisleLock: PinAisleObservationLock.Lock? = null,
     ): PinCaptureContext? {
         val state = _ui.value
         val vineyardId = state.selectedVineyardId ?: return null
@@ -8061,7 +8064,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             side = side,
             headingDegrees = captureHeading,
             accuracyMetres = fix.accuracyMetres,
-            lockedDrivingPath = lockedDrivingPath,
+            aisleLock = aisleLock,
+            captureElapsedRealtimeNanos = captureElapsedRealtimeNanos,
         )
         val attribution = resolveTripPinAttribution(
             activeTrip = state.activeTrip,
@@ -8075,7 +8079,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             headingDegrees = captureHeading,
             automatic = true,
             accuracyMetres = fix.accuracyMetres,
-            lockedDrivingPath = lockedDrivingPath,
+            aisleLock = aisleLock,
+            captureElapsedRealtimeNanos = captureElapsedRealtimeNanos,
         )
         return PinCaptureContext(
             pinId = pinId,

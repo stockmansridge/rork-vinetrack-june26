@@ -21,6 +21,22 @@ nonisolated enum PinAisleObservationLock {
         let paddockId: UUID
         let aisleNumber: Double
         let supportingObservations: Int
+        /// Most recent separately delivered observation that confirmed this aisle.
+        let confirmedAt: Date
+    }
+
+    /// Sample identity is its provider timestamp. Fresh stationary observations
+    /// remain distinct; replayed, out-of-order, stale, or implausibly future
+    /// samples do not create confidence.
+    static func acceptsObservation(
+        observedAt: Date,
+        previousObservedAt: Date?,
+        receivedAt: Date
+    ) -> Bool {
+        let age = receivedAt.timeIntervalSince(observedAt)
+        guard age >= -1, age <= LocationService.staleLocationThreshold else { return false }
+        guard let previousObservedAt else { return true }
+        return observedAt > previousObservedAt
     }
 
     static func resolve(evidence: [Evidence], capturedAt: Date) -> Lock? {
@@ -35,6 +51,7 @@ nonisolated enum PinAisleObservationLock {
         var supportCount = 0
         var contradictionAisle: Double?
         var contradictionCount = 0
+        var confirmedAt: Date?
 
         for item in recent {
             guard let itemBlock = item.paddockId, let aisle = item.aisleNumber else {
@@ -45,6 +62,7 @@ nonisolated enum PinAisleObservationLock {
                 supportCount = 0
                 contradictionAisle = nil
                 contradictionCount = 0
+                confirmedAt = nil
                 continue
             }
             if block != itemBlock {
@@ -55,11 +73,15 @@ nonisolated enum PinAisleObservationLock {
                 supportCount = 0
                 contradictionAisle = nil
                 contradictionCount = 0
+                confirmedAt = nil
             }
 
             if let currentLock = lockedAisle {
                 if sameAisle(currentLock, aisle) {
-                    if item.isQualified { supportCount = min(maximumObservationCount, supportCount + 1) }
+                    if item.isQualified {
+                        supportCount = min(maximumObservationCount, supportCount + 1)
+                        confirmedAt = item.observedAt
+                    }
                     contradictionAisle = nil
                     contradictionCount = 0
                 } else if item.isQualified {
@@ -74,6 +96,7 @@ nonisolated enum PinAisleObservationLock {
                         candidateCount = contradictionCount
                         supportCount = contradictionCount
                         lockedAisle = aisle
+                        confirmedAt = item.observedAt
                         contradictionAisle = nil
                         contradictionCount = 0
                     }
@@ -88,12 +111,19 @@ nonisolated enum PinAisleObservationLock {
                 if candidateCount >= supportingObservationCount {
                     lockedAisle = aisle
                     supportCount = candidateCount
+                    confirmedAt = item.observedAt
                 }
             }
         }
 
-        guard let block, let lockedAisle, supportCount >= supportingObservationCount else { return nil }
-        return Lock(paddockId: block, aisleNumber: lockedAisle, supportingObservations: supportCount)
+        guard let block, let lockedAisle, let confirmedAt,
+              supportCount >= supportingObservationCount else { return nil }
+        return Lock(
+            paddockId: block,
+            aisleNumber: lockedAisle,
+            supportingObservations: supportCount,
+            confirmedAt: confirmedAt
+        )
     }
 
     static func resolve(locations: [CLLocation], current: CLLocation, paddock: Paddock?) -> Lock? {
@@ -120,10 +150,29 @@ nonisolated enum PinAisleObservationLock {
             )
         }
         guard let lock = resolve(evidence: evidence, capturedAt: current.timestamp),
-              lock.paddockId == paddock.id,
-              PinAisleGeometry.approximateAisle(containing: current.coordinate, in: paddock) != nil
+              isValid(lock, capturedAt: current.timestamp, currentCoordinate: current.coordinate, paddock: paddock)
         else { return nil }
         return lock
+    }
+
+    /// Validate the complete scoped lock at the frozen press. A brief lateral
+    /// contradiction may keep the lock, but only while the current fix remains
+    /// inside the same block and within mapped row longitudinal extent.
+    static func isValid(
+        _ lock: Lock?,
+        capturedAt: Date,
+        currentCoordinate: CLLocationCoordinate2D,
+        paddock: Paddock?
+    ) -> Bool {
+        guard let lock, let paddock,
+              lock.paddockId == paddock.id,
+              capturedAt.timeIntervalSince(lock.confirmedAt) >= -1,
+              capturedAt.timeIntervalSince(lock.confirmedAt) <= maximumObservationAge,
+              RowGuidance.paddock(for: currentCoordinate, in: [paddock])?.id == paddock.id,
+              PinAisleGeometry.rowsBounding(path: lock.aisleNumber, in: paddock) != nil,
+              PinAisleGeometry.approximateAisle(containing: currentCoordinate, in: paddock) != nil
+        else { return false }
+        return true
     }
 
     private static func age(of date: Date, at reference: Date) -> TimeInterval {

@@ -1592,6 +1592,19 @@ private data class PendingPinDuplicate(
     val attempt: PinDuplicateCreateAttempt,
 )
 
+/** Frozen ambiguous automatic capture awaiting mapped aisle/row confirmation. */
+private data class PendingAisleConfirmation(
+    val category: String,
+    val side: String,
+    val fix: QualifiedLocationFix,
+    val capture: PinCaptureContext,
+    val mode: String,
+    val paddocks: List<Paddock>,
+    val paddockName: String,
+    val aisleNumber: Double,
+    val rowNumber: Int,
+)
+
 /** Floating success card payload shown after a quick pin is dropped. */
 private data class QuickPinToast(
     val title: String,
@@ -1808,6 +1821,7 @@ fun PinCategoryLauncherScreen(
     // Quick-pin workflow state (iOS RepairsGrowthView parity).
     // Pending duplicate confirmation sheet for a quick-tapped pin.
     var duplicatePrompt by remember { mutableStateOf<PendingPinDuplicate?>(null) }
+    var aisleConfirmation by remember { mutableStateOf<PendingAisleConfirmation?>(null) }
     // Floating success card shown after a quick pin is dropped (auto-dismisses).
     var successToast by remember { mutableStateOf<QuickPinToast?>(null) }
     // The freshly-created pin awaiting the optional "Add a photo?" prompt.
@@ -2008,7 +2022,7 @@ fun PinCategoryLauncherScreen(
                 side,
                 headingDegrees = trueHeading,
                 headingObservedAtElapsedRealtimeNanos = observation?.observedAtElapsedRealtimeNanos,
-                lockedDrivingPath = pinLocationTracker.lockedAisleFor(accepted, state.paddocks),
+                aisleLock = pinLocationTracker.lockedAisleFor(accepted, state.paddocks),
             )
         }
         if (fix == null || capture == null) {
@@ -2017,11 +2031,43 @@ fun PinCategoryLauncherScreen(
         }
         val placement = capture.resolvedPlacement
         if (placement?.snappedToRow != true) {
+            val paddock = placement?.paddockId?.let { id -> state.paddocks.firstOrNull { it.id == id } }
+            val aisle = paddock?.let {
+                PinAisleGeometry.approximateAisle(it, fix.latitude, fix.longitude)
+            }
+            val confirmed = if (paddock != null && aisle != null && capture.headingDegrees != null) {
+                PinPlacement.resolveConfirmedAisle(
+                    paddock = paddock,
+                    latitude = fix.latitude,
+                    longitude = fix.longitude,
+                    side = side,
+                    headingDegrees = capture.headingDegrees,
+                    aisleNumber = aisle.aisleNumber,
+                )
+            } else null
+            if (confirmed?.snappedToRow == true && aisle != null) {
+                aisleConfirmation = PendingAisleConfirmation(
+                    category = category,
+                    side = side,
+                    fix = fix,
+                    capture = capture.copy(
+                        resolvedPaddockId = confirmed.paddockId,
+                        resolvedRowNumber = confirmed.pinRowNumber?.toInt(),
+                        resolvedPlacement = confirmed,
+                    ),
+                    mode = mode,
+                    paddocks = state.paddocks.toList(),
+                    paddockName = paddock.name,
+                    aisleNumber = aisle.aisleNumber,
+                    rowNumber = confirmed.pinRowNumber!!.toInt(),
+                )
+                return
+            }
             val message = when {
                 placement?.paddockId == null -> "Pin not saved — this position is outside a mapped block."
                 capture.headingDegrees == null -> "Pin not saved — direction is unavailable. Hold the phone facing forward and press again."
-                placement?.snapState == PinSnapState.NO_ROW_GEOMETRY -> "Pin not saved — mapped row geometry is unavailable for this block."
-                else -> "Pin not saved — GPS cannot distinguish the adjacent rows or this is a headland. Confirm your aisle position and press again."
+                placement.snapState == PinSnapState.NO_ROW_GEOMETRY -> "Pin not saved — mapped row geometry is unavailable for this block."
+                else -> "Pin not saved — mapped aisle confirmation is unavailable at this frozen position."
             }
             scope.launch { snackbarHostState.showSnackbar(message) }
             return
@@ -2223,6 +2269,30 @@ fun PinCategoryLauncherScreen(
             state = state,
             mode = mode,
             onDismiss = { showTemplates = false },
+        )
+    }
+
+    aisleConfirmation?.let { request ->
+        AlertDialog(
+            onDismissRequest = { aisleConfirmation = null },
+            title = { Text("Confirm mapped aisle and row") },
+            text = { Text("Frozen GPS observation in ${request.paddockName}. Select the mapped result to save; current GPS will not replace it.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    aisleConfirmation = null
+                    quickCreate(
+                        request.category,
+                        request.side,
+                        request.fix,
+                        request.capture,
+                        request.mode,
+                        request.paddocks,
+                    )
+                }) { Text("Aisle ${request.aisleNumber} · Row ${request.rowNumber}") }
+            },
+            dismissButton = {
+                TextButton(onClick = { aisleConfirmation = null }) { Text("Cancel") }
+            },
         )
     }
 

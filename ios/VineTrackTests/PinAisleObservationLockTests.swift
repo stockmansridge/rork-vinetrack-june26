@@ -16,12 +16,28 @@ struct PinAisleObservationLockTests {
         )
     }
 
+    @Test func stationaryFreshSamplesRemainDistinctWhileReplayAndStaleSamplesAreRejected() {
+        let receivedAt = now
+        let first = now.addingTimeInterval(-2)
+        let second = now.addingTimeInterval(-1)
+        #expect(PinAisleObservationLock.acceptsObservation(observedAt: first, previousObservedAt: nil, receivedAt: receivedAt))
+        // Coordinate movement is intentionally absent from identity: a newer
+        // provider timestamp remains usable while the operator is stationary.
+        #expect(PinAisleObservationLock.acceptsObservation(observedAt: second, previousObservedAt: first, receivedAt: receivedAt))
+        #expect(!PinAisleObservationLock.acceptsObservation(observedAt: second, previousObservedAt: second, receivedAt: receivedAt))
+        #expect(!PinAisleObservationLock.acceptsObservation(observedAt: first, previousObservedAt: second, receivedAt: receivedAt))
+        #expect(!PinAisleObservationLock.acceptsObservation(observedAt: now.addingTimeInterval(-6), previousObservedAt: nil, receivedAt: receivedAt))
+    }
+
     @Test func requiresDistinctSupportingObservationsRatherThanElapsedTime() {
         let two = [item(2, block: blockA, aisle: 12.5), item(1, block: blockA, aisle: 12.5)]
         #expect(PinAisleObservationLock.resolve(evidence: two, capturedAt: now) == nil)
 
         let three = two + [item(0, block: blockA, aisle: 12.5)]
-        #expect(PinAisleObservationLock.resolve(evidence: three, capturedAt: now)?.aisleNumber == 12.5)
+        let lock = PinAisleObservationLock.resolve(evidence: three, capturedAt: now)
+        #expect(lock?.aisleNumber == 12.5)
+        #expect(lock?.paddockId == blockA)
+        #expect(lock?.confirmedAt == now)
     }
 
     @Test func holdsBriefContradictionAndSwitchesAfterSustainedEvidence() {
