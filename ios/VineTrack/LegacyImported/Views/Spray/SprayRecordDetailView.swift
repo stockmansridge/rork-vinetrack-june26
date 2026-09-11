@@ -15,6 +15,7 @@ struct SprayRecordDetailView: View {
     @State private var isMapExpanded: Bool = true
     @State private var isRowsExpanded: Bool = false
     @State private var mapPosition: MapCameraPosition = .automatic
+    @State private var displayTrailSegments: [TrailSegment] = []
     @State private var includeCostingsInExport: Bool = true
     @State private var canonicalReport: SprayReportPayloadV1?
     @State private var showCorrectionEditor: Bool = false
@@ -138,6 +139,10 @@ struct SprayRecordDetailView: View {
         } message: { Text(manualDeleteError ?? "") }
         .onAppear {
             includeCostingsInExport = canViewFinancials
+            refreshDisplayTrail()
+        }
+        .onChange(of: tripForRecord?.pathPoints) { _, _ in
+            refreshDisplayTrail()
         }
     }
 
@@ -711,14 +716,9 @@ struct SprayRecordDetailView: View {
         cardContainer {
             DisclosureGroup(isExpanded: $isMapExpanded) {
                 Map(position: $mapPosition) {
-                    if trip.pathPoints.count > 1 {
-                        let coords = trip.pathPoints.map { $0.coordinate }
-                        let segmentCount = max(coords.count - 1, 1)
-                        ForEach(0..<(coords.count - 1), id: \.self) { i in
-                            let progress = Double(i) / Double(segmentCount)
-                            MapPolyline(coordinates: [coords[i], coords[i + 1]])
-                                .stroke(mapGradientColor(for: progress), lineWidth: 4)
-                        }
+                    ForEach(displayTrailSegments) { segment in
+                        MapPolyline(coordinates: segment.coordinates)
+                            .stroke(segment.color, lineWidth: 4)
                     }
                 }
                 .mapStyle(.hybrid)
@@ -731,6 +731,11 @@ struct SprayRecordDetailView: View {
                     .foregroundStyle(.primary)
             }
         }
+    }
+
+    private func refreshDisplayTrail() {
+        let points = tripForRecord?.pathPoints ?? []
+        displayTrailSegments = SprayDetailTrailDisplayPreparation.makeSegments(points: points)
     }
 
     private func rowsSprayedCard(_ trip: Trip) -> some View {
@@ -794,12 +799,6 @@ struct SprayRecordDetailView: View {
             return String(format: "%.0f", value)
         }
         return String(format: "%.1f", value)
-    }
-
-    private func mapGradientColor(for progress: Double) -> Color {
-        let r = 1.0 - progress
-        let g = progress
-        return Color(red: r, green: g, blue: 0)
     }
 
     // MARK: - Export

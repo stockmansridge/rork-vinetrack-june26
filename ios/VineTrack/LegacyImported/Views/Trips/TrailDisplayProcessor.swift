@@ -18,6 +18,22 @@ struct TrailRenderStats {
     var lastUpdatedAt: Date?
 }
 
+/// Spray-detail-specific display preparation. Keeping this boundary separate
+/// makes the exact map path testable while sharing the established trip trail
+/// simplification and colour progression.
+enum SprayDetailTrailDisplayPreparation {
+    static let maxDisplayPoints: Int = 500
+    static let maxColourBuckets: Int = 5
+
+    static func makeSegments(points: [CoordinatePoint]) -> [TrailSegment] {
+        TrailDisplayProcessor.makeDisplayTrailSegments(
+            points: points,
+            maxDisplayPoints: maxDisplayPoints,
+            maxColourBuckets: maxColourBuckets
+        )
+    }
+}
+
 /// Pure display processing for complete recorded trip routes. Source points are
 /// never mutated and no recent-only window is used.
 enum TrailDisplayProcessor {
