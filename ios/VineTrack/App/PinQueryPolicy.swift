@@ -55,6 +55,33 @@ nonisolated enum PinQueryPolicy {
         return pin.rowSegments?.map(\.row).min().map(Double.init)
     }
 
+    static func nearestRowOrdered(_ pins: [VinePin], currentRow: Double) -> [VinePin] {
+        pins.enumerated().sorted { lhs, rhs in
+            switch (usableRow(lhs.element), usableRow(rhs.element)) {
+            case let (left?, right?):
+                let leftDistance = abs(left - currentRow)
+                let rightDistance = abs(right - currentRow)
+                return leftDistance == rightDistance ? lhs.offset < rhs.offset : leftDistance < rightDistance
+            case (_?, nil): return true
+            case (nil, _?): return false
+            case (nil, nil): return lhs.offset < rhs.offset
+            }
+        }.map(\.element)
+    }
+
+    static func qualifiedTravelContext(
+        row: Double?,
+        isRowQualified: Bool,
+        heading: Double?,
+        isHeadingQualified: Bool
+    ) -> (row: Double, heading: Double?)? {
+        guard isRowQualified, let row, row.isFinite else { return nil }
+        let validHeading = heading.flatMap { value in
+            isHeadingQualified && value.isFinite && value >= 0 && value < 360 ? value : nil
+        }
+        return (row, validHeading)
+    }
+
     static func rowOrdered(_ pins: [VinePin], blockNames: [UUID: String]) -> [VinePin] {
         pins.enumerated().sorted { lhs, rhs in
             let leftBlock = lhs.element.paddockId.flatMap { blockNames[$0] }?.localizedStandardCompare(

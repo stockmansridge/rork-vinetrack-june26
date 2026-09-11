@@ -320,6 +320,30 @@ fun PinsScreen(
     // Canonical launcher-type catalogue offered by Change Pin Type.
     val typeOptions = remember(state.repairButtons, state.growthButtons) { pinTypeOptions(state) }
 
+    val qualifiedTravelContext = remember(
+        state.isTracking,
+        state.currentDrivingPathNumber,
+        state.rowLockIsConfident,
+        state.latestBearingDegrees,
+        state.latestSpeedMetresPerSecond,
+    ) {
+        PinQueryPolicy.qualifiedTravelContext(
+            row = state.currentDrivingPathNumber,
+            isRowQualified = state.isTracking && state.rowLockIsConfident,
+            heading = state.latestBearingDegrees,
+            isHeadingQualified = (state.latestSpeedMetresPerSecond ?: -1.0) >= 0.5,
+        )
+    }
+    val pinsTitle = if (viewMode == PinsViewMode.Stats || qualifiedTravelContext == null) {
+        "Pins"
+    } else {
+        buildString {
+            append("Pins • Row ")
+            append(rowText(qualifiedTravelContext.row))
+            qualifiedTravelContext.heading?.let { append(" • Facing ${compassAbbrev(it)}") }
+        }
+    }
+
     // Delete visibility mirrors iOS canDeleteOperationalRecords (owner/manager/
     // supervisor may delete; operators may not). An unknown role — the members
     // list still loading or unavailable offline — keeps the button visible so
@@ -413,7 +437,7 @@ fun PinsScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("Pins") },
+                title = { Text(pinsTitle) },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 actions = {
                     IconButton(
@@ -461,6 +485,7 @@ fun PinsScreen(
                     state = state,
                     colorMap = colorMap,
                     userLocation = userLocation,
+                    qualifiedCurrentRow = qualifiedTravelContext?.row,
                     sort = pinSort,
                     onSort = { pinSort = it },
                     modeFilter = modeFilter,
@@ -607,7 +632,13 @@ fun PinsScreen(
             colorMap = colorMap,
             paddocks = uniquePaddocks,
             season = season,
+            includesElStages = includesElStages,
+            selectedElStageCodes = selectedElStageCodes,
             onSeason = { seasonSelection = it },
+            onElStages = { includes, stages ->
+                includesElStages = includes
+                selectedElStageCodes = stages
+            },
             onNames = { selectedNames = it },
             onPaddocks = { onSelectedBlockIdsChange(it) },
             onDismiss = { showFilterSheet = false },
@@ -795,7 +826,10 @@ private fun PinFilterSheet(
     paddocks: kotlin.collections.List<Paddock>,
     /** Resolved season filter shared by the list, map, stats and exports. */
     season: SeasonScope,
+    includesElStages: Boolean,
+    selectedElStageCodes: Set<String>,
     onSeason: (SeasonSelection) -> Unit,
+    onElStages: (Boolean, Set<String>) -> Unit,
     onNames: (Set<String>) -> Unit,
     onPaddocks: (Set<String>) -> Unit,
     onDismiss: () -> Unit,
@@ -863,6 +897,23 @@ private fun PinFilterSheet(
                 }
             }
 
+            Text("E-L STAGES", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = vine.textSecondary)
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                PinModeFilterChip("All E-L Stages", includesElStages && selectedElStageCodes.isEmpty()) {
+                    onElStages(!includesElStages || selectedElStageCodes.isNotEmpty(), emptySet())
+                }
+                com.rork.vinetrack.data.model.GrowthStage.allStages.forEach { stage ->
+                    val selected = stage.code in selectedElStageCodes
+                    PinModeFilterChip("${stage.code} ${stage.description}", selected) {
+                        val updated = if (selected) selectedElStageCodes - stage.code else selectedElStageCodes + stage.code
+                        onElStages(updated.isNotEmpty(), updated)
+                    }
+                }
+            }
+
             Text("BLOCK", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = vine.textSecondary)
             if (paddocks.isEmpty()) {
                 Text("No blocks recorded on these pins yet.", fontSize = 13.sp, color = vine.textSecondary)
@@ -888,6 +939,7 @@ private fun PinFilterSheet(
 /** Sort options for the pins List view; Closest needs a live GPS fix (iOS parity). */
 private enum class PinSort(val label: String) {
     CLOSEST("Closest"),
+    NEAREST_MY_ROW("Nearest my row"),
     NEWEST("Newest"),
     OLDEST("Oldest"),
     ROW("Row"),
@@ -925,7 +977,12 @@ private fun pinTypeOptions(state: AppUiState): kotlin.collections.List<PinTypeOp
 
 /** Compact sort control shown above the pins list. */
 @Composable
-private fun PinsSortRow(sort: PinSort, closestEnabled: Boolean, onSort: (PinSort) -> Unit) {
+private fun PinsSortRow(
+    sort: PinSort,
+    closestEnabled: Boolean,
+    nearestRowEnabled: Boolean,
+    onSort: (PinSort) -> Unit,
+) {
     var menu by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -934,7 +991,11 @@ private fun PinsSortRow(sort: PinSort, closestEnabled: Boolean, onSort: (PinSort
     ) {
         // Closest silently falls back to Newest while no fix is available —
         // the list keeps working with location off or permission denied.
-        val effective = if (sort == PinSort.CLOSEST && !closestEnabled) PinSort.NEWEST.label else sort.label
+        val effective = when {
+            sort == PinSort.CLOSEST && !closestEnabled -> PinSort.NEWEST.label
+            sort == PinSort.NEAREST_MY_ROW && !nearestRowEnabled -> PinSort.NEWEST.label
+            else -> sort.label
+        }
         Box {
             TextButton(onClick = { menu = true }) {
                 Icon(Icons.Filled.SwapVert, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -942,14 +1003,18 @@ private fun PinsSortRow(sort: PinSort, closestEnabled: Boolean, onSort: (PinSort
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 PinSort.entries.forEach { option ->
-                    val enabled = option != PinSort.CLOSEST || closestEnabled
+                    val enabled = when (option) {
+                        PinSort.CLOSEST -> closestEnabled
+                        PinSort.NEAREST_MY_ROW -> nearestRowEnabled
+                        else -> true
+                    }
                     DropdownMenuItem(
                         text = {
                             Text(
-                                if (option == PinSort.CLOSEST && !closestEnabled) {
-                                    "Closest (location unavailable)"
-                                } else {
-                                    option.label
+                                when {
+                                    option == PinSort.CLOSEST && !closestEnabled -> "Closest (location unavailable)"
+                                    option == PinSort.NEAREST_MY_ROW && !nearestRowEnabled -> "Nearest my row (qualified row unavailable)"
+                                    else -> option.label
                                 },
                             )
                         },
@@ -978,6 +1043,7 @@ private fun PinsListMode(
     state: AppUiState,
     colorMap: Map<String, String>,
     userLocation: Pair<Double, Double>?,
+    qualifiedCurrentRow: Double?,
     sort: PinSort,
     onSort: (PinSort) -> Unit,
     modeFilter: String?,
@@ -994,7 +1060,7 @@ private fun PinsListMode(
     // Ordering: Newest is the parent-supplied default; Oldest reverses by
     // creation time; Closest ranks by straight-line distance to the pin's
     // canonical placement point, pins without a location last.
-    val orderedPins = remember(visiblePins, sort, userLocation) {
+    val orderedPins = remember(visiblePins, sort, userLocation, qualifiedCurrentRow) {
         when {
             sort == PinSort.CLOSEST && userLocation != null -> visiblePins.sortedBy { pin ->
                 pinSortCoordinate(pin)?.let { (lat, lon) ->
@@ -1002,12 +1068,19 @@ private fun PinsListMode(
                 } ?: Double.MAX_VALUE
             }
             sort == PinSort.OLDEST -> visiblePins.sortedBy { parseIsoMillis(it.createdAt) ?: Long.MAX_VALUE }
+            sort == PinSort.NEAREST_MY_ROW && qualifiedCurrentRow != null ->
+                PinQueryPolicy.nearestRowOrdered(visiblePins, qualifiedCurrentRow)
             sort == PinSort.ROW -> PinQueryPolicy.rowOrdered(visiblePins, state.paddocks.associate { it.id to it.name })
             else -> visiblePins
         }
     }
     Column(Modifier.fillMaxSize()) {
-        PinsSortRow(sort = sort, closestEnabled = userLocation != null, onSort = onSort)
+        PinsSortRow(
+            sort = sort,
+            closestEnabled = userLocation != null,
+            nearestRowEnabled = qualifiedCurrentRow != null,
+            onSort = onSort,
+        )
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(16.dp),

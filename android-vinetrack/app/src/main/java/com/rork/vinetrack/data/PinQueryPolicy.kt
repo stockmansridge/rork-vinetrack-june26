@@ -24,9 +24,9 @@ object PinQueryPolicy {
             if (!filter.includesElStages) return false
             if (filter.selectedElStageCodes.isNotEmpty() && stageCode !in filter.selectedElStageCodes) return false
         } else {
-            val category = when (pin.mode) {
-                "Repairs" -> PinCategoryFilter.REPAIRS
-                "Growth" -> PinCategoryFilter.GROWTH
+            val category = when (pin.mode?.trim()?.lowercase()) {
+                "repairs" -> PinCategoryFilter.REPAIRS
+                "growth" -> PinCategoryFilter.GROWTH
                 else -> PinCategoryFilter.MANUAL_ISSUES
             }
             if (category !in filter.categories) return false
@@ -40,6 +40,28 @@ object PinQueryPolicy {
 
     fun usableRow(pin: Pin): Double? = pin.pinRowNumber
         ?: pin.rowSegments?.minOfOrNull { it.rowNumber }?.toDouble()
+
+    data class TravelContext(val row: Double, val heading: Double?)
+
+    fun qualifiedTravelContext(
+        row: Double?,
+        isRowQualified: Boolean,
+        heading: Double?,
+        isHeadingQualified: Boolean,
+    ): TravelContext? {
+        if (!isRowQualified || row == null || !row.isFinite()) return null
+        val validHeading = heading?.takeIf { isHeadingQualified && it.isFinite() && it >= 0.0 && it < 360.0 }
+        return TravelContext(row, validHeading)
+    }
+
+    fun nearestRowOrdered(pins: List<Pin>, currentRow: Double): List<Pin> =
+        pins.withIndex().sortedWith(
+            compareBy<IndexedValue<Pin>>(
+                { usableRow(it.value) == null },
+                { usableRow(it.value)?.let { row -> kotlin.math.abs(row - currentRow) } ?: Double.MAX_VALUE },
+                { it.index },
+            ),
+        ).map { it.value }
 
     fun rowOrdered(pins: List<Pin>, blockNames: Map<String, String>): List<Pin> =
         pins.withIndex().sortedWith(

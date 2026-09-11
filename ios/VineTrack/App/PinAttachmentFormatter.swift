@@ -32,6 +32,22 @@ nonisolated enum PinAttachmentFormatter {
         }
     }
 
+    /// Eight-point compass abbreviation for compact live context labels.
+    static func compassAbbreviation(degrees: Double) -> String {
+        let fullName = fullCompassName(degrees: degrees)
+        switch fullName {
+        case "North": return "N"
+        case "Northeast": return "NE"
+        case "East": return "E"
+        case "Southeast": return "SE"
+        case "South": return "S"
+        case "Southwest": return "SW"
+        case "West": return "W"
+        case "Northwest": return "NW"
+        default: return "—"
+        }
+    }
+
     /// Preferred attachment line. Side is intentionally NOT included here —
     /// Left/Right belongs with the driving path/operator view, not the
     /// attached vine row.

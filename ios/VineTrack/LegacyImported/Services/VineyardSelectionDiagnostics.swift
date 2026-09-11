@@ -32,6 +32,9 @@ enum VineyardSelectionDiagnostics {
 
     private static let key = "vinetrack_vineyard_selection_diagnostic_v2"
     private static let legacyKey = "vinetrack_vineyard_selection_diagnostic_v1"
+    /// Traceability aid only; it identifies the reviewed source snapshot and
+    /// expected batch path, not archive integrity or successful execution.
+    static let sourceBuildFingerprint = "VT-IOS-BATCH-54184BA-PINSYNC-131D9D217C38-FILTERS-R2"
     /// Deliberately not reconstructed from disk: relaunch hydration must never
     /// continue an attempt which was interrupted in a previous process.
     private static var activeAttemptId: UUID?
@@ -92,7 +95,7 @@ enum VineyardSelectionDiagnostics {
         if let previous = history.previous {
             sections.append(format(previous, label: "Previous attempt"))
         }
-        return "Vineyard selection diagnostic\n\n" + sections.joined(separator: "\n\n")
+        return "Vineyard selection diagnostic\nSource build fingerprint (traceability only): \(sourceBuildFingerprint)\nExpected pin merge: staged durable batch / pin-merge-cache-r1-w1-p…\n\n" + sections.joined(separator: "\n\n")
     }
 
     private static func beginAttempt(vineyardId: UUID, stage: String) {

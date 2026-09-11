@@ -7,6 +7,8 @@ struct PinsView: View {
     @Environment(PinSyncService.self) private var pinSync
     @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
     @Environment(BackendAccessControl.self) private var accessControl
+    @Environment(TripTrackingService.self) private var tripTracking
+    @Environment(LocationService.self) private var locationService
     private var canDelete: Bool { accessControl.canDeleteOperationalRecords }
     private var canExport: Bool { accessControl.canExport }
     @State private var viewMode: PinsViewMode
@@ -120,6 +122,26 @@ struct PinsView: View {
             + (season.isAll ? 0 : 1)
     }
 
+    private var qualifiedTravelContext: (row: Double, heading: Double?)? {
+        let lockIsFresh = tripTracking.diagLockConfirmedAt.map { Date().timeIntervalSince($0) <= 10 } ?? false
+        let location = locationService.location
+        let locationIsFresh = location.map { abs($0.timestamp.timeIntervalSinceNow) <= 10 } ?? false
+        return PinQueryPolicy.qualifiedTravelContext(
+            row: tripTracking.currentRowNumber,
+            isRowQualified: tripTracking.isTracking && tripTracking.rowGuidanceAvailable
+                && tripTracking.diagLockConfidence >= 0.6 && lockIsFresh,
+            heading: location?.course,
+            isHeadingQualified: locationIsFresh && (location?.speed ?? -1) >= 0.5 && (location?.course ?? -1) >= 0
+        )
+    }
+
+    private var pinsTitle: String {
+        guard viewMode != .summary, let context = qualifiedTravelContext else { return "Pins" }
+        let row = String(format: "%.1f", context.row)
+        guard let heading = context.heading else { return "Pins • Row \(row)" }
+        return "Pins • Row \(row) • Facing \(PinAttachmentFormatter.compassAbbreviation(degrees: heading))"
+    }
+
     private var nameColorMap: [String: String] {
         var map: [String: String] = [:]
         for config in store.repairButtons + store.growthButtons {
@@ -170,7 +192,7 @@ struct PinsView: View {
                     await growthStageRecordSync.syncForSelectedVineyard()
                 }
             }
-            .navigationTitle("Pins")
+            .navigationTitle(pinsTitle)
         .onChange(of: store.selectedVineyardId) { _, _ in
             seasonSelection = .all
         }
@@ -366,6 +388,7 @@ nonisolated enum PinsViewMode: String, Hashable {
 
 nonisolated enum PinsListSortOption: String, CaseIterable, Hashable {
     case closest
+    case nearestMyRow
     case row
     case newest
     case oldest
@@ -373,6 +396,7 @@ nonisolated enum PinsListSortOption: String, CaseIterable, Hashable {
     var label: String {
         switch self {
         case .closest: return "Closest"
+        case .nearestMyRow: return "Nearest my row"
         case .row: return "Row"
         case .newest: return "Newest"
         case .oldest: return "Oldest"
@@ -952,6 +976,7 @@ struct PinsListView: View {
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
     @Environment(PinSyncService.self) private var pinSync
+    @Environment(TripTrackingService.self) private var tripTracking
     private var canDelete: Bool { accessControl.canDeleteOperationalRecords }
     @State private var selectedPinForMap: VinePin?
     @State private var selectedPinForDirections: VinePin?
@@ -975,6 +1000,9 @@ struct PinsListView: View {
         case .closest:
             guard let user = locationFix else { return pins }
             return pins.sorted { distanceMetres($0, from: user) < distanceMetres($1, from: user) }
+        case .nearestMyRow:
+            guard let row = qualifiedCurrentRow else { return pins }
+            return PinQueryPolicy.nearestRowOrdered(pins, currentRow: row)
         case .row:
             return PinQueryPolicy.rowOrdered(
                 pins,
@@ -990,8 +1018,20 @@ struct PinsListView: View {
         return user.distance(from: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude))
     }
 
+    private var qualifiedCurrentRow: Double? {
+        let lockIsFresh = tripTracking.diagLockConfirmedAt.map { Date().timeIntervalSince($0) <= 10 } ?? false
+        return PinQueryPolicy.qualifiedTravelContext(
+            row: tripTracking.currentRowNumber,
+            isRowQualified: tripTracking.isTracking && tripTracking.rowGuidanceAvailable
+                && tripTracking.diagLockConfidence >= 0.6 && lockIsFresh,
+            heading: nil,
+            isHeadingQualified: false
+        )?.row
+    }
+
     private var effectiveSortLabel: String {
         if sort == .closest && locationFix == nil { return PinsListSortOption.newest.label }
+        if sort == .nearestMyRow && qualifiedCurrentRow == nil { return PinsListSortOption.newest.label }
         return sort.label
     }
 
@@ -1022,11 +1062,15 @@ struct PinsListView: View {
                             Text(option.label)
                         }
                     }
-                    .disabled(option == .closest && locationFix == nil)
+                    .disabled(
+                        (option == .closest && locationFix == nil)
+                            || (option == .nearestMyRow && qualifiedCurrentRow == nil)
+                    )
                 }
-                if locationFix == nil {
+                if locationFix == nil || qualifiedCurrentRow == nil {
                     Section {
-                        Text("Closest needs your location")
+                        if locationFix == nil { Text("Closest needs your location") }
+                        if qualifiedCurrentRow == nil { Text("Nearest my row needs a current qualified row lock") }
                     }
                 }
             } label: {
@@ -1688,6 +1732,7 @@ struct PinDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     private var canDelete: Bool { accessControl.canDeleteOperationalRecords }
     @State private var notesDraft: String = ""
+    @State private var hasLoadedNotes: Bool = false
     @State private var showDirections: Bool = false
     @State private var showPhotoPicker: Bool = false
     @State private var showFullPhoto: Bool = false
@@ -1985,9 +2030,6 @@ struct PinDetailSheet: View {
                 Section("Notes") {
                     TextField("Add notes…", text: $notesDraft, axis: .vertical)
                         .lineLimit(3...8)
-                        .onChange(of: notesDraft) { _, newValue in
-                            saveNotes(newValue)
-                        }
                 }
 
                 Section("Details") {
@@ -2060,10 +2102,21 @@ struct PinDetailSheet: View {
             }
             .onAppear {
                 notesDraft = currentPin.notes ?? ""
+                hasLoadedNotes = true
                 Task {
                     await loadMemberDirectory()
                     await loadPhotoIfNeeded(force: false)
                 }
+            }
+            .task(id: notesDraft) {
+                guard hasLoadedNotes, notesDraft != (currentPin.notes ?? "") else { return }
+                try? await Task.sleep(for: .milliseconds(450))
+                guard !Task.isCancelled else { return }
+                saveNotes(notesDraft)
+            }
+            .onDisappear {
+                guard hasLoadedNotes, notesDraft != (currentPin.notes ?? "") else { return }
+                saveNotes(notesDraft)
             }
             .task(id: currentPhotoToken) {
                 loadedPhotoData = nil
@@ -2270,11 +2323,12 @@ struct PinFilterSheet: View {
                     ))
                     ForEach(GrowthStage.allStages) { stage in
                         Button {
-                            showsELGrowthPins = true
                             if selectedELStageCodes.contains(stage.code) {
                                 selectedELStageCodes.remove(stage.code)
+                                if selectedELStageCodes.isEmpty { showsELGrowthPins = false }
                             } else {
                                 selectedELStageCodes.insert(stage.code)
+                                showsELGrowthPins = true
                             }
                         } label: {
                             HStack {
