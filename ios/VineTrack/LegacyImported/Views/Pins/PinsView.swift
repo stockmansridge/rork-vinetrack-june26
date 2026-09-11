@@ -126,18 +126,47 @@ struct PinsView: View {
     }
 
     private var qualifiedTravelContext: PinQueryPolicy.TravelContext? {
-        let location = locationService.location
+        guard let selectedVineyardId = store.selectedVineyardId,
+              let location = locationService.location else { return nil }
+        let heading = locationService.heading.flatMap { sample in
+            PinAisleGeometry.validHeading(
+                sample.trueHeading,
+                ageSeconds: contextNow.timeIntervalSince(sample.timestamp)
+            )
+        }
+        if let trip = tripTracking.activeTrip {
+            return PinQueryPolicy.qualifiedTravelContext(
+                selectedVineyardId: selectedVineyardId,
+                contextVineyardId: trip.vineyardId,
+                blockId: tripTracking.currentPaddockId,
+                row: tripTracking.currentRowNumber,
+                isRowQualified: tripTracking.isTracking && tripTracking.rowGuidanceAvailable
+                    && tripTracking.diagLockConfidence >= 0.6
+                    && tripTracking.diagLockedPaddockId == tripTracking.currentPaddockId,
+                rowConfirmedAt: tripTracking.diagLockConfirmedAt,
+                locationObservedAt: location.timestamp,
+                heading: heading,
+                isHeadingQualified: heading != nil,
+                now: contextNow
+            )
+        }
+
+        guard let paddock = RowGuidance.paddock(for: location.coordinate, in: store.paddocks, fallbackRadius: 0),
+              let aisle = PinAisleGeometry.aisle(
+                containing: location.coordinate,
+                in: paddock,
+                horizontalAccuracyMetres: location.horizontalAccuracy
+              ) else { return nil }
         return PinQueryPolicy.qualifiedTravelContext(
-            selectedVineyardId: store.selectedVineyardId,
-            contextVineyardId: tripTracking.activeTrip?.vineyardId,
-            blockId: tripTracking.currentPaddockId,
-            row: tripTracking.currentRowNumber,
-            isRowQualified: tripTracking.isTracking && tripTracking.rowGuidanceAvailable
-                && tripTracking.diagLockConfidence >= 0.6,
-            rowConfirmedAt: tripTracking.diagLockConfirmedAt,
-            locationObservedAt: location?.timestamp,
-            heading: location?.course,
-            isHeadingQualified: (location?.speed ?? -1) >= 0.5 && (location?.course ?? -1) >= 0,
+            selectedVineyardId: selectedVineyardId,
+            contextVineyardId: selectedVineyardId,
+            blockId: paddock.id,
+            row: aisle.aisleNumber,
+            isRowQualified: true,
+            rowConfirmedAt: location.timestamp,
+            locationObservedAt: location.timestamp,
+            heading: heading,
+            isHeadingQualified: heading != nil,
             now: contextNow
         )
     }
@@ -1757,6 +1786,9 @@ struct PinDetailSheet: View {
     @State private var memberDirectory: [UUID: String] = [:]
     private let teamRepository: any TeamRepositoryProtocol = SupabaseTeamRepository()
     private var fmt: RegionFormatter { store.settings.regionFormatter }
+    private var hasUnsavedNotes: Bool {
+        hasLoadedNotes && (notesDraft != lastSavedNotes || notesSaveError != nil)
+    }
 
     private func resolveDisplayName(userId: UUID?, fallbackText: String?) -> String? {
         let trimmed = fallbackText?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2113,8 +2145,14 @@ struct PinDetailSheet: View {
                 }
             }
             .onAppear {
-                notesDraft = currentPin.notes ?? ""
-                lastSavedNotes = notesDraft
+                let savedNotes = currentPin.notes ?? ""
+                lastSavedNotes = savedNotes
+                if let retained = store.pendingPinNotesDraft(pinId: pin.id, vineyardId: pin.vineyardId) {
+                    notesDraft = retained.notes
+                    notesSaveError = "Your previously unsaved notes are still here. Retry when device storage is available."
+                } else {
+                    notesDraft = savedNotes
+                }
                 hasLoadedNotes = true
                 Task {
                     await loadMemberDirectory()
@@ -2136,6 +2174,7 @@ struct PinDetailSheet: View {
             .onDisappear {
                 _ = flushPendingNotes()
             }
+            .interactiveDismissDisabled(hasUnsavedNotes)
             .task(id: currentPhotoToken) {
                 loadedPhotoData = nil
                 loadedPhotoToken = nil

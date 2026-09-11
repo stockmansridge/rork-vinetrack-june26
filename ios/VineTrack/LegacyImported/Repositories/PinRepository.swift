@@ -1,5 +1,41 @@
 import Foundation
 
+nonisolated struct PendingPinNotesDraft: Codable, Equatable, Sendable {
+    let pinId: UUID
+    let vineyardId: UUID
+    let notes: String
+}
+
+/// Durable holding area for notes that have not yet merged into the pin cache.
+@MainActor
+final class PinNotesDraftStore {
+    static let storageKey = "vinetrack_pending_pin_notes"
+
+    private let persistence: PersistenceStore
+
+    init(persistence: PersistenceStore = .shared) {
+        self.persistence = persistence
+    }
+
+    func draft(pinId: UUID, vineyardId: UUID) -> PendingPinNotesDraft? {
+        let drafts: [PendingPinNotesDraft] = persistence.load(key: Self.storageKey) ?? []
+        return drafts.first { $0.pinId == pinId && $0.vineyardId == vineyardId }
+    }
+
+    func retain(pinId: UUID, vineyardId: UUID, notes: String) throws {
+        var drafts: [PendingPinNotesDraft] = persistence.load(key: Self.storageKey) ?? []
+        drafts.removeAll { $0.pinId == pinId && $0.vineyardId == vineyardId }
+        drafts.append(PendingPinNotesDraft(pinId: pinId, vineyardId: vineyardId, notes: notes))
+        try persistence.saveOrThrow(drafts, key: Self.storageKey)
+    }
+
+    func clear(pinId: UUID, vineyardId: UUID) throws {
+        var drafts: [PendingPinNotesDraft] = persistence.load(key: Self.storageKey) ?? []
+        drafts.removeAll { $0.pinId == pinId && $0.vineyardId == vineyardId }
+        try persistence.saveOrThrow(drafts, key: Self.storageKey)
+    }
+}
+
 /// Owns persistence and merge/replace logic for VinePin.
 @MainActor
 final class PinRepository {

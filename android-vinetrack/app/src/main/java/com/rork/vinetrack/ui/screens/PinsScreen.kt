@@ -2,6 +2,7 @@ package com.rork.vinetrack.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import android.os.SystemClock
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -227,6 +228,10 @@ fun PinsScreen(
     var isExporting by remember { mutableStateOf(false) }
     // Current GPS fix, used to show each pin's distance (iOS PinRowView parity).
     var userLocation by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var browsingFix by remember { mutableStateOf<QualifiedLocationFix?>(null) }
+    var locationPermissionEpoch by remember { mutableLongStateOf(0L) }
+    val browsingLocationTracker = remember { LocationTracker(context) }
+    val browsingCompassObservation by rememberCompassHeading()
     var contextNowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     // Ask for location permission on entry when missing (the one-shot fetch
     // previously skipped silently, leaving every distance as "—"), then keep
@@ -234,9 +239,18 @@ fun PinsScreen(
     val distancePermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) {
+        locationPermissionEpoch += 1L
         if (vm.hasLocationPermission()) {
             vm.fetchCurrentLocation { fix -> if (fix != null) userLocation = fix }
         }
+    }
+    DisposableEffect(browsingLocationTracker, locationPermissionEpoch) {
+        browsingLocationTracker.startPinFixUpdates { result ->
+            val fix = (result as? PinLocationResult.Success)?.fix ?: return@startPinFixUpdates
+            browsingFix = fix
+            userLocation = fix.latitude to fix.longitude
+        }
+        onDispose { browsingLocationTracker.stopPinFixUpdates() }
     }
     LaunchedEffect(Unit) {
         if (!vm.hasLocationPermission()) {
@@ -339,26 +353,74 @@ fun PinsScreen(
         state.isTracking,
         state.currentDrivingPathNumber,
         state.rowLockIsConfident,
-        state.latestBearingDegrees,
-        state.latestSpeedMetresPerSecond,
         state.latestMovementObservedAtMs,
         state.currentTripPaddockId,
         state.selectedVineyardId,
         state.activeTrip?.vineyardId,
+        state.paddocks,
+        browsingFix,
+        browsingCompassObservation,
         contextNowMs,
     ) {
-        PinQueryPolicy.qualifiedTravelContext(
-            selectedVineyardId = state.selectedVineyardId,
-            contextVineyardId = state.activeTrip?.vineyardId,
-            blockId = state.currentTripPaddockId,
-            row = state.currentDrivingPathNumber,
-            isRowQualified = state.isTracking && state.rowLockIsConfident,
-            observedAtMs = state.latestMovementObservedAtMs,
-            heading = state.latestBearingDegrees,
-            isHeadingQualified = state.latestBearingDegrees != null &&
-                (state.latestSpeedMetresPerSecond ?: -1.0) >= 0.5,
-            nowMs = contextNowMs,
-        )
+        val fix = browsingFix
+        val compassAgeNanos = browsingCompassObservation?.let {
+            SystemClock.elapsedRealtimeNanos() - it.observedAtElapsedRealtimeNanos
+        }
+        val compassIsFresh = compassAgeNanos != null && compassAgeNanos in 0L..5_000_000_000L
+        val heading = if (fix != null && compassIsFresh) {
+            browsingCompassObservation?.let {
+                compassTrueHeading(it.magneticDegrees, fix.latitude, fix.longitude)
+            }
+        } else {
+            null
+        }
+        val trip = state.activeTrip
+        if (trip != null) {
+            PinQueryPolicy.qualifiedTravelContext(
+                selectedVineyardId = state.selectedVineyardId,
+                contextVineyardId = trip.vineyardId,
+                blockId = state.currentTripPaddockId,
+                row = state.currentDrivingPathNumber,
+                isRowQualified = state.isTracking && state.rowLockIsConfident,
+                observedAtMs = state.latestMovementObservedAtMs,
+                heading = heading,
+                isHeadingQualified = heading != null,
+                nowMs = contextNowMs,
+            )
+        } else if (fix != null) {
+            val containing = state.paddocks.filter {
+                RowAttachment.containsPoint(it, fix.latitude, fix.longitude)
+            }
+            val paddock = when {
+                containing.size == 1 -> containing.single()
+                containing.size > 1 -> containing.minByOrNull {
+                    RowAttachment.nearestRow(it, fix.latitude, fix.longitude)?.perpendicularDistanceM
+                        ?: Double.MAX_VALUE
+                }
+                else -> null
+            }
+            val aisle = paddock?.let {
+                PinAisleGeometry.aisleContaining(
+                    it,
+                    fix.latitude,
+                    fix.longitude,
+                    fix.accuracyMetres,
+                )
+            }
+            PinQueryPolicy.qualifiedTravelContext(
+                selectedVineyardId = state.selectedVineyardId,
+                contextVineyardId = state.selectedVineyardId,
+                blockId = paddock?.id,
+                row = aisle?.aisleNumber,
+                isRowQualified = aisle != null,
+                observedAtMs = fix.fixTimeEpochMs,
+                heading = heading,
+                isHeadingQualified = heading != null,
+                nowMs = contextNowMs,
+            )
+        } else {
+            null
+        }
     }
     val pinsTitle = if (viewMode == PinsViewMode.Stats || qualifiedTravelContext == null) {
         "Pins"

@@ -56,7 +56,7 @@ struct PinQueryPolicyTests {
         #expect(filter.matches(pin(mode: .growth, stage: "EL12"), isELRecord: true))
         #expect(!filter.matches(pin(mode: .growth, stage: "EL13"), isELRecord: true))
         #expect(!filter.matches(pin(mode: .growth, stage: "unknown"), isELRecord: true))
-        #expect(!filter.matches(pin(mode: .growth, stage: "unknown"), isELRecord: false))
+        #expect(filter.matches(pin(mode: .growth, stage: nil), isELRecord: false))
     }
 
     @Test func unknownELIdentityNeverBecomesOrdinaryGrowth() {
@@ -67,6 +67,20 @@ struct PinQueryPolicyTests {
         #expect(allEL.matches(unknown, isELRecord: true))
         let exactEL = PinQueryFilter(categories: [.growth], includesELStages: true, selectedELStageCodes: ["EL12"])
         #expect(!exactEL.matches(unknown, isELRecord: true))
+    }
+
+    @Test func unknownELIdentityStillHonoursEveryCompletionSelection() {
+        let open = pin(mode: .growth, stage: "unknown")
+        let done = pin(mode: .growth, stage: "unknown", completed: true)
+        let notDone = PinQueryFilter(includesELStages: true, completion: .notDone)
+        let completed = PinQueryFilter(includesELStages: true, completion: .done)
+        let both = PinQueryFilter(includesELStages: true, completion: .both)
+        #expect(notDone.matches(open, isELRecord: true))
+        #expect(!notDone.matches(done, isELRecord: true))
+        #expect(!completed.matches(open, isELRecord: true))
+        #expect(completed.matches(done, isELRecord: true))
+        #expect(both.matches(open, isELRecord: true))
+        #expect(both.matches(done, isELRecord: true))
     }
 
     @Test func usableRowUsesAttachedOrRecordedSegmentsButNeverLegacyRow() {
@@ -137,6 +151,33 @@ struct PinQueryPolicyTests {
         #expect(saved?.notes == "background draft")
         #expect(saved?.isCompleted == true)
         #expect(saved?.photoPath == "newer/photo.jpg")
+    }
+
+    @Test @MainActor func failedNotesFlushRetainsDraftAcrossStoreRecreationUntilRetry() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = PersistenceStore(directory: directory)
+        let original = pin()
+        try persistence.saveOrThrow([original], key: PinRepository.storageKey)
+        let store = MigratedDataStore(persistence: persistence)
+        persistence.durableSaveFailureForTesting = { key in
+            key == PinRepository.storageKey
+                ? NSError(domain: "PinNotesDraftTests", code: 1)
+                : nil
+        }
+
+        #expect(throws: (any Error).self) {
+            try store.updatePinNotesDurably(pinId: original.id, vineyardId: original.vineyardId, notes: "retained failure")
+        }
+        let recreated = MigratedDataStore(persistence: persistence)
+        #expect(recreated.pendingPinNotesDraft(pinId: original.id, vineyardId: original.vineyardId)?.notes == "retained failure")
+        #expect(PinRepository(persistence: persistence).loadAll().first?.notes == nil)
+
+        persistence.durableSaveFailureForTesting = nil
+        try recreated.updatePinNotesDurably(pinId: original.id, vineyardId: original.vineyardId, notes: "retained failure")
+        #expect(recreated.pendingPinNotesDraft(pinId: original.id, vineyardId: original.vineyardId) == nil)
+        #expect(PinRepository(persistence: persistence).loadAll().first?.notes == "retained failure")
     }
 
     @Test @MainActor func vineyardSwitchNotesFlushUsesOriginalIdentityAndReportsFailure() throws {

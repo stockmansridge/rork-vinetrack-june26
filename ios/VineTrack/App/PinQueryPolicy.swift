@@ -25,7 +25,8 @@ nonisolated struct PinQueryFilter: Sendable {
         if hasAuthoritativeELIdentity {
             guard includesELStages else { return false }
             guard let stageCode = PinQueryPolicy.normalizedELCode(pin.growthStageCode) else {
-                return selectedELStageCodes.isEmpty
+                guard selectedELStageCodes.isEmpty else { return false }
+                return completionMatches(pin)
             }
             if !selectedELStageCodes.isEmpty, !selectedELStageCodes.contains(stageCode) { return false }
         } else {
@@ -37,6 +38,10 @@ nonisolated struct PinQueryFilter: Sendable {
             }
             guard categories.contains(category) else { return false }
         }
+        return completionMatches(pin)
+    }
+
+    private func completionMatches(_ pin: VinePin) -> Bool {
         switch completion {
         case .notDone: return !pin.isCompleted
         case .done: return pin.isCompleted

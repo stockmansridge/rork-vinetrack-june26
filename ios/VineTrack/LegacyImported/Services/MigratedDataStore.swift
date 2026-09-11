@@ -211,6 +211,7 @@ final class MigratedDataStore {
     let yieldRepo: YieldRepository
 
     private let persistence: PersistenceStore
+    private let pinNotesDraftStore: PinNotesDraftStore
 
     // MARK: - Storage keys for collections without a dedicated repository
 
@@ -238,6 +239,7 @@ final class MigratedDataStore {
         self.persistence = persistence
         self.vineyardRepo = VineyardRepository(persistence: persistence)
         self.pinRepo = PinRepository(persistence: persistence)
+        self.pinNotesDraftStore = PinNotesDraftStore(persistence: persistence)
         self.tripRepo = TripRepository(persistence: persistence)
         self.workTaskRepo = WorkTaskRepository(persistence: persistence)
         self.workTaskLabourLineRepo = WorkTaskLabourLineRepository(persistence: persistence)
@@ -854,11 +856,18 @@ final class MigratedDataStore {
         onPinChanged?(item.id)
     }
 
-    /// Durably updates only notes for the original pin/vineyard identity. The
-    /// repository merges onto the latest cached row, so unrelated newer fields
-    /// cannot be replaced by an older detail-sheet snapshot.
+    func pendingPinNotesDraft(pinId: UUID, vineyardId: UUID) -> PendingPinNotesDraft? {
+        pinNotesDraftStore.draft(pinId: pinId, vineyardId: vineyardId)
+    }
+
+    /// Retains the draft first, then durably merges only notes onto the original
+    /// pin identity. A failed pin-cache write leaves the separate draft intact
+    /// for sheet recreation and vineyard switching; success removes it.
     func updatePinNotesDurably(pinId: UUID, vineyardId: UUID, notes: String?) throws {
+        let draftText = notes ?? ""
+        try pinNotesDraftStore.retain(pinId: pinId, vineyardId: vineyardId, notes: draftText)
         let updated = try pinRepo.updateNotesDurably(pinId: pinId, vineyardId: vineyardId, notes: notes)
+        try pinNotesDraftStore.clear(pinId: pinId, vineyardId: vineyardId)
         if selectedVineyardId == vineyardId,
            let index = pins.firstIndex(where: { $0.id == pinId && $0.vineyardId == vineyardId }) {
             pins[index] = updated
