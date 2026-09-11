@@ -1005,6 +1005,8 @@ internal fun resolveTripPinAttribution(
     automatic: Boolean = false,
     /** The fix's own accuracy radius, used only as aisle-confidence evidence. */
     accuracyMetres: Double? = null,
+    /** Observation-backed aisle lock established in this same mapped block. */
+    lockedDrivingPath: Double? = null,
 ): TripPinAttribution {
     val tripResolution = if (activeTrip != null && latitude != null && longitude != null) {
         TripBlockResolver.resolve(activeTrip, paddocks, latitude, longitude)
@@ -1027,10 +1029,9 @@ internal fun resolveTripPinAttribution(
                 longitude = longitude,
                 side = side,
                 headingDegrees = headingDegrees,
-                // The aisle is taken from the block geometry that physically
-                // contains this fix, never from the trip's planned next path,
-                // so a stale or wrong-block lock cannot create false certainty.
-                lockedDrivingPath = null,
+                // Only the bounded observation-backed lock for this containing
+                // block may supply the aisle; the trip's planned path never does.
+                lockedDrivingPath = lockedDrivingPath,
                 accuracyMetres = accuracyMetres,
             )
         } else {
@@ -8037,6 +8038,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         headingDegrees: Double? = null,
         headingObservedAtElapsedRealtimeNanos: Long? = null,
         captureElapsedRealtimeNanos: Long = android.os.SystemClock.elapsedRealtimeNanos(),
+        lockedDrivingPath: Double? = null,
     ): PinCaptureContext? {
         val state = _ui.value
         val vineyardId = state.selectedVineyardId ?: return null
@@ -8059,6 +8061,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             side = side,
             headingDegrees = captureHeading,
             accuracyMetres = fix.accuracyMetres,
+            lockedDrivingPath = lockedDrivingPath,
         )
         val attribution = resolveTripPinAttribution(
             activeTrip = state.activeTrip,
@@ -8072,6 +8075,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             headingDegrees = captureHeading,
             automatic = true,
             accuracyMetres = fix.accuracyMetres,
+            lockedDrivingPath = lockedDrivingPath,
         )
         return PinCaptureContext(
             pinId = pinId,

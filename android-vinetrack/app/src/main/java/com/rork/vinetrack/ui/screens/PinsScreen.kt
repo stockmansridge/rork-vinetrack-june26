@@ -2008,6 +2008,7 @@ fun PinCategoryLauncherScreen(
                 side,
                 headingDegrees = trueHeading,
                 headingObservedAtElapsedRealtimeNanos = observation?.observedAtElapsedRealtimeNanos,
+                lockedDrivingPath = pinLocationTracker.lockedAisleFor(accepted, state.paddocks),
             )
         }
         if (fix == null || capture == null) {

@@ -278,6 +278,7 @@ object PinAisleGeometry {
         longitude: Double,
         headingDegrees: Double?,
         side: String?,
+        useAisleMidpointReference: Boolean = false,
     ): RowSelection? {
         val heading = validHeading(headingDegrees) ?: return null
         val cleanSide = side?.trim()?.lowercase()?.takeIf { it == "left" || it == "right" } ?: return null
@@ -291,9 +292,15 @@ object PinAisleGeometry {
         val firstClosest = closestPointOnRow(frame, first, point) ?: return null
         val secondClosest = closestPointOnRow(frame, second, point) ?: return null
 
+        // A locked aisle survives a brief lateral GPS outlier. The mapped
+        // midpoint determines only Left/Right; snapping still projects the
+        // unchanged current fix onto the selected row.
+        val sideReference = if (useAisleMidpointReference) {
+            Point((firstClosest.x + secondClosest.x) / 2.0, (firstClosest.y + secondClosest.y) / 2.0)
+        } else point
         val leftBearing = normalizedDegrees(heading - 90.0)
-        val firstBearing = bearing(point, firstClosest) ?: return null
-        val secondBearing = bearing(point, secondClosest) ?: return null
+        val firstBearing = bearing(sideReference, firstClosest) ?: return null
+        val secondBearing = bearing(sideReference, secondClosest) ?: return null
         val firstIsLeft = abs(signedAngularDifference(firstBearing, leftBearing)) < 90.0
         val secondIsLeft = abs(signedAngularDifference(secondBearing, leftBearing)) < 90.0
         // The two rows must genuinely lie on opposite sides of the operator.

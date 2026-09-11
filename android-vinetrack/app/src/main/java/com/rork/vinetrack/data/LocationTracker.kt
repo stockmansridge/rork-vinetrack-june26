@@ -40,6 +40,7 @@ class LocationTracker(context: Context) : PinFixSnapshotSource {
     private var callback: LocationCallback? = null
     private var pinFixCallback: LocationCallback? = null
     private var latestPinFix: QualifiedLocationFix? = null
+    private val recentDistinctPinFixes: MutableList<QualifiedLocationFix> = mutableListOf()
 
     /** Points captured this session, in order. */
     val points: MutableList<CoordinatePoint> = mutableListOf()
@@ -181,7 +182,10 @@ class LocationTracker(context: Context) : PinFixSnapshotSource {
             override fun onLocationResult(result: LocationResult) {
                 result.locations.forEach { location ->
                     val qualified = location.toPinResult()
-                    if (qualified is PinLocationResult.Success) latestPinFix = qualified.fix
+                    if (qualified is PinLocationResult.Success) {
+                        latestPinFix = qualified.fix
+                        recordDistinctPinFix(qualified.fix)
+                    }
                     onUpdate(qualified)
                 }
             }
@@ -194,6 +198,37 @@ class LocationTracker(context: Context) : PinFixSnapshotSource {
         pinFixCallback?.let { client.removeLocationUpdates(it) }
         pinFixCallback = null
         latestPinFix = null
+        recentDistinctPinFixes.clear()
+    }
+
+    /** Bounded distinct observations delivered by this existing foreground subscription. */
+    fun pinAisleObservationHistory(): List<QualifiedLocationFix> = recentDistinctPinFixes.toList()
+
+    /** Current observation-backed aisle identity, scoped to its containing block. */
+    fun lockedAisleFor(fix: QualifiedLocationFix, paddocks: List<com.rork.vinetrack.data.model.Paddock>): Double? {
+        val paddock = paddocks.firstOrNull {
+            RowAttachment.containsPoint(it, fix.latitude, fix.longitude)
+        } ?: return null
+        return PinAisleObservationLock.resolve(recentDistinctPinFixes, fix, paddock)?.aisleNumber
+    }
+
+    private fun recordDistinctPinFix(fix: QualifiedLocationFix) {
+        recentDistinctPinFixes.removeAll { previous ->
+            (fix.fixElapsedRealtimeNanos - previous.fixElapsedRealtimeNanos) / 1_000_000L > PinAisleObservationLock.MAX_AGE_MS
+        }
+        val previous = recentDistinctPinFixes.lastOrNull()
+        if (previous != null) {
+            if (fix.fixElapsedRealtimeNanos <= previous.fixElapsedRealtimeNanos) return
+            val distance = haversine(
+                CoordinatePoint(previous.latitude, previous.longitude),
+                CoordinatePoint(fix.latitude, fix.longitude),
+            )
+            if (distance < 0.25) return
+        }
+        recentDistinctPinFixes += fix
+        while (recentDistinctPinFixes.size > PinAisleObservationLock.MAX_OBSERVATIONS) {
+            recentDistinctPinFixes.removeAt(0)
+        }
     }
 
     /**

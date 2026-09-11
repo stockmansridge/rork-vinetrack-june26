@@ -187,7 +187,11 @@ fun GrowthScreen(
                     // Growth observations have no Left/Right choice; the fix's
                     // own recorded course is frozen as the facing evidence.
                     automaticCapture = (result as? PinLocationResult.Success)?.fix?.let {
-                        vm.freezePinCapture(it, null)
+                        vm.freezePinCapture(
+                            it,
+                            null,
+                            lockedDrivingPath = locationTracker.lockedAisleFor(it, state.paddocks),
+                        )
                     }
                     creating = true
                 },

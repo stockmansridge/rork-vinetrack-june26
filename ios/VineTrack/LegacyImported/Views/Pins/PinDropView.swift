@@ -376,13 +376,19 @@ struct PinDropView: View {
         let paddockId = selectedPaddockId ?? resolved.paddockId
         let paddock = paddockId.flatMap { id in store.paddocks.first(where: { $0.id == id }) }
         let capture = freezeCapture(location: location)
+        let historyLock = PinAisleObservationLock.resolve(
+            locations: locationService.pinAisleObservationHistory,
+            current: location,
+            paddock: paddock
+        )
         let attachment = PinAttachmentResolver.resolveAutomatic(
             rawCoordinate: location.coordinate,
             heading: locationService.heading?.trueHeading,
             headingAgeSeconds: headingAge(at: capture?.capturedAt ?? Date()),
             horizontalAccuracyMetres: location.horizontalAccuracy,
             operatorSide: side,
-            paddock: paddock
+            paddock: paddock,
+            lockedDrivingPath: historyLock?.aisleNumber
         )
         let created = store.createPinFromButton(
             button: button,
@@ -425,13 +431,19 @@ struct PinDropView: View {
         let paddockId = selectedPaddockId ?? resolved.paddockId
         let paddock = paddockId.flatMap { id in store.paddocks.first(where: { $0.id == id }) }
         let capture = freezeCapture(location: location)
+        let historyLock = PinAisleObservationLock.resolve(
+            locations: locationService.pinAisleObservationHistory,
+            current: location,
+            paddock: paddock
+        )
         let attachment = PinAttachmentResolver.resolveAutomatic(
             rawCoordinate: location.coordinate,
             heading: locationService.heading?.trueHeading,
             headingAgeSeconds: headingAge(at: capture?.capturedAt ?? Date()),
             horizontalAccuracyMetres: location.horizontalAccuracy,
             operatorSide: pendingSide,
-            paddock: paddock
+            paddock: paddock,
+            lockedDrivingPath: historyLock?.aisleNumber
         )
         let created = store.createGrowthStagePin(
             stageCode: stage.code,

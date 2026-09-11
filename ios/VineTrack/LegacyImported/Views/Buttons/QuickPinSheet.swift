@@ -364,13 +364,19 @@ struct QuickPinSheet: View {
         let headingAge: Double? = locationService.heading.map { sample in
             capturedAt.timeIntervalSince(sample.timestamp)
         }
+        let historyLock = PinAisleObservationLock.resolve(
+            locations: locationService.pinAisleObservationHistory,
+            current: location,
+            paddock: paddock
+        )
         let attachment = PinAttachmentResolver.resolveAutomatic(
             rawCoordinate: coordinate,
             heading: locationService.heading?.trueHeading,
             headingAgeSeconds: headingAge,
             horizontalAccuracyMetres: location.horizontalAccuracy,
             operatorSide: side,
-            paddock: paddock
+            paddock: paddock,
+            lockedDrivingPath: historyLock?.aisleNumber
         )
         // Identity and time are frozen here so a duplicate confirmation or a
         // growth-stage picker cannot save into a different context.

@@ -193,7 +193,8 @@ nonisolated enum PinAttachmentResolver {
         headingAgeSeconds: Double? = nil,
         horizontalAccuracyMetres: Double?,
         operatorSide: PinSide,
-        paddock: Paddock?
+        paddock: Paddock?,
+        lockedDrivingPath: Double? = nil
     ) -> Attachment {
         let validHeading = PinAisleGeometry.validHeading(heading, ageSeconds: headingAgeSeconds)
         let unconfirmed = Attachment(
@@ -205,24 +206,32 @@ nonisolated enum PinAttachmentResolver {
             snappedToRow: false,
             heading: validHeading
         )
-        guard let paddock,
-              validHeading != nil,
-              let aisle = PinAisleGeometry.aisle(
+        guard let paddock, validHeading != nil else { return unconfirmed }
+        let resolvedAisle: (number: Double, rows: (Int, Int))? = {
+            if let lockedDrivingPath,
+               let rows = PinAisleGeometry.rowsBounding(path: lockedDrivingPath, in: paddock) {
+                return (lockedDrivingPath, rows)
+            }
+            guard let aisle = PinAisleGeometry.aisle(
                 containing: rawCoordinate,
                 in: paddock,
                 horizontalAccuracyMetres: horizontalAccuracyMetres
-              ),
+            ) else { return nil }
+            return (aisle.aisleNumber, (aisle.nearRowNumber, aisle.farRowNumber))
+        }()
+        guard let resolvedAisle,
               let selection = PinAisleGeometry.rowOnSide(
-                rowNumbers: (aisle.nearRowNumber, aisle.farRowNumber),
+                rowNumbers: resolvedAisle.rows,
                 coordinate: rawCoordinate,
                 heading: validHeading,
                 operatorSide: operatorSide,
-                in: paddock
+                in: paddock,
+                useAisleMidpointReference: lockedDrivingPath != nil
               )
         else { return unconfirmed }
 
         return Attachment(
-            drivingRowNumber: aisle.aisleNumber,
+            drivingRowNumber: resolvedAisle.number,
             pinRowNumber: selection.rowNumber,
             pinSide: operatorSide,
             snappedCoordinate: selection.snapped,

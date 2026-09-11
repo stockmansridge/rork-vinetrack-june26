@@ -9,6 +9,11 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
     var authorizationStatus: CLAuthorizationStatus = .notDetermined
     var isUsingMockLocation: Bool = false
     private var mockFallbackTask: Task<Void, Never>?
+    private var recentDistinctLocations: [CLLocation] = []
+
+    /// Bounded observations already delivered by the existing location stream.
+    /// Repeated cached coordinates do not create aisle confidence.
+    var pinAisleObservationHistory: [CLLocation] { recentDistinctLocations }
 
     private(set) var isBackgroundUpdatingEnabled: Bool = false
     private(set) var isHighAccuracyEnabled: Bool = false
@@ -184,7 +189,23 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
             self.lastUpdateTimestamp = now
             self.locationUpdateCount &+= 1
             self.location = last
+            self.recordDistinctObservation(last)
             self.isUsingMockLocation = false
+        }
+    }
+
+    private func recordDistinctObservation(_ location: CLLocation) {
+        recentDistinctLocations.removeAll {
+            location.timestamp.timeIntervalSince($0.timestamp) > PinAisleObservationLock.maximumObservationAge
+        }
+        if let previous = recentDistinctLocations.last {
+            guard location.timestamp > previous.timestamp,
+                  location.distance(from: previous) >= 0.25
+            else { return }
+        }
+        recentDistinctLocations.append(location)
+        if recentDistinctLocations.count > PinAisleObservationLock.maximumObservationCount {
+            recentDistinctLocations.removeFirst(recentDistinctLocations.count - PinAisleObservationLock.maximumObservationCount)
         }
     }
 

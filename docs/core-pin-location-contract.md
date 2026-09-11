@@ -14,6 +14,7 @@ Implementations (one shared contract, two platforms):
 | --- | --- | --- |
 | Aisle + heading-aware side geometry | `App/PinAisleGeometry.swift` | `data/PinAisleGeometry.kt` |
 | Automatic capture resolver | `App/PinAttachmentResolver.swift` (`resolveAutomatic`, `resolveLive`) | `data/PinPlacement.kt` (`resolveAutomatic`) |
+| Observation-backed aisle lock | `App/PinAisleObservationLock.swift`, `LegacyImported/Services/LocationService.swift` | `data/PinAisleObservationLock.kt`, `data/LocationTracker.kt` |
 | Frozen capture boundary | `App/PinCaptureContext.swift`, `App/RepairsGrowthView.swift`, `LegacyImported/Services/TripTrackingService.swift`, `LegacyImported/Views/Buttons/QuickPinSheet.swift`, `LegacyImported/Views/Pins/PinDropView.swift` | `data/QualifiedLocationFix.kt` (`PinCaptureContext`), `ui/AppViewModel.kt` (`freezePinCapture`, `createPin`) |
 | Live-lock validity (block + recency) | `App/PinAttachmentResolver.swift` (`LiveLock`, `lockIsValid`), `LegacyImported/Services/TripTrackingService.swift` (`lockedPaddockId`, `diagLockConfirmedAt`) | aisle never taken from the trip lock (`resolveTripPinAttribution`, `lockedDrivingPath = null`) |
 | Persistence | `LegacyImported/Services/MigratedDataStore+Buttons.swift`, `Backend/Models/BackendPin.swift` | `data/PinRepository.kt` (`PinInput`), `data/PinCreateSync.kt`, `data/PinReplayMerge.kt` |
@@ -109,6 +110,15 @@ stale/low-accuracy gates and the failed-tap semantics stay exactly as they are.
 Passing them does not establish which ~3 m aisle the operator occupied. Aisle
 confidence is judged separately, from evidence:
 
+- **Bounded observation-backed lock.** Outside trips, the existing foreground
+  location stream retains at most 16 distinct observations for 20 seconds. Three
+  fresh, separately delivered observations matching the same mapped aisle establish
+  its identity; elapsed time and repeated cached coordinates do not add confidence.
+  One or two contradictory fixes are held as brief outliers, while three sustained
+  qualified contradictions switch the lock. Entering a headland, leaving/changing
+  blocks or GPS expiry clears the applicable evidence. Reversing direction does not
+  change aisle identity. The history is never coordinate-averaged and row numbers
+  are never averaged.
 - **Uncertainty plus map matching.** The accepted fix is matched to the actual
   adjacent mapped rows, with polygon, corridor-width and row-end/headland checks.
   Its reported accuracy radius must be smaller than that full mapped aisle width.
@@ -116,6 +126,10 @@ confidence is judged separately, from evidence:
   single-fix rule made ordinary 2.8–3 m field GPS incapable of attaching in a
   ~3 m aisle even when the mapped corridor was otherwise unique. Missing or
   invalid accuracy, or uncertainty spanning the full aisle, remains ambiguous.
+- **Freeze at the press.** The qualified aisle identity, current accepted raw fix,
+  fresh heading and selected side are frozen together. The current raw fix—not an
+  averaged or earlier coordinate—is projected onto the selected vine row. If the
+  bounded evidence remains ambiguous, the frozen confirmation fallback applies.
 - **No rowless success.** An automatic Left/Right press that cannot establish
   block, heading, aisle and side-selected vine row is not reported as a
   successful row attachment. The app states whether heading, mapped geometry,

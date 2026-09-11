@@ -616,13 +616,25 @@ struct RepairsGrowthView: View {
               )
             : nil
         if let live, live.snappedToRow { return live }
+        let historyLock = PinAisleObservationLock.resolve(
+            locations: locationService.pinAisleObservationHistory,
+            current: CLLocation(
+                coordinate: raw,
+                altitude: 0,
+                horizontalAccuracy: capture.horizontalAccuracyMetres ?? -1,
+                verticalAccuracy: -1,
+                timestamp: capture.capturedAt
+            ),
+            paddock: paddock
+        )
         let automatic = PinAttachmentResolver.resolveAutomatic(
             rawCoordinate: raw,
             heading: heading,
             headingAgeSeconds: headingAge,
             horizontalAccuracyMetres: capture.horizontalAccuracyMetres,
             operatorSide: side,
-            paddock: paddock
+            paddock: paddock,
+            lockedDrivingPath: historyLock?.aisleNumber
         )
         if automatic.snappedToRow { return automatic }
         // Neither route attached a row: keep the validated locked aisle when

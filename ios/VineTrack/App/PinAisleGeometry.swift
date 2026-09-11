@@ -218,7 +218,8 @@ nonisolated enum PinAisleGeometry {
         coordinate: CLLocationCoordinate2D,
         heading: Double?,
         operatorSide: PinSide,
-        in paddock: Paddock
+        in paddock: Paddock,
+        useAisleMidpointReference: Bool = false
     ) -> RowSelection? {
         guard let heading = validHeading(heading) else { return nil }
         guard let first = paddock.rows.first(where: { $0.number == rowNumbers.0 }),
@@ -238,9 +239,15 @@ nonisolated enum PinAisleGeometry {
             to: point
         )?.point else { return nil }
 
+        // A locked aisle survives a brief lateral GPS outlier. Use the mapped
+        // aisle midpoint only to determine physical Left/Right; the raw current
+        // fix remains unchanged and is still projected onto the selected row.
+        let sideReference = useAisleMidpointReference
+            ? Point(x: (firstClosest.x + secondClosest.x) / 2, y: (firstClosest.y + secondClosest.y) / 2)
+            : point
         let leftBearing = normalizedDegrees(heading - 90)
-        let firstBearing = bearing(from: point, to: firstClosest)
-        let secondBearing = bearing(from: point, to: secondClosest)
+        let firstBearing = bearing(from: sideReference, to: firstClosest)
+        let secondBearing = bearing(from: sideReference, to: secondClosest)
         guard let firstBearing, let secondBearing else { return nil }
 
         let firstIsLeft = abs(signedAngularDifference(firstBearing, leftBearing)) < 90

@@ -295,6 +295,7 @@ object PinPlacement {
             longitude = longitude,
             headingDegrees = heading,
             side = cleanSide,
+            useAisleMidpointReference = lockedDrivingPath != null,
         ) ?: return unconfirmed(PinSnapState.UNCONFIRMED_ROW)
 
         return PinPlacementResult(
