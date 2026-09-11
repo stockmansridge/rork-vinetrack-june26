@@ -170,10 +170,10 @@ struct PinPlacementContractTests {
     }
 
     @Test func noSideIsInventedAndExactPathRowsArePreserved() {
-        // 19.5 stays 19.5, whole rows trim, legacy backfills ".5".
-        #expect(PinPlacementContract.attachedRowText(pinRowNumber: nil, drivingRowNumber: 19.5, legacyRowNumber: nil) == "19.5")
+        // Only an established vine row is an attachment; aisle and legacy values stay separate.
+        #expect(PinPlacementContract.attachedRowText(pinRowNumber: nil, drivingRowNumber: 19.5, legacyRowNumber: nil) == nil)
         #expect(PinPlacementContract.attachedRowText(pinRowNumber: 15, drivingRowNumber: nil, legacyRowNumber: nil) == "15")
-        #expect(PinPlacementContract.attachedRowText(pinRowNumber: nil, drivingRowNumber: nil, legacyRowNumber: 14) == "14.5")
+        #expect(PinPlacementContract.attachedRowText(pinRowNumber: nil, drivingRowNumber: nil, legacyRowNumber: 14) == nil)
         #expect(PinPlacementContract.attachedRowText(pinRowNumber: nil, drivingRowNumber: nil, legacyRowNumber: nil) == nil)
         // The snapped line never includes a side — sides are rendered only by
         // the facing line, and only from a genuinely stored value.

@@ -187,16 +187,9 @@ nonisolated enum PinPlacementContract {
         }
     }
 
-    /// Formats an attached row for display, trimming whole values (15) and
-    /// preserving exact fractional path rows (19.5) — never rounding.
+    /// Formats only an established attached vine row. Driving aisles and legacy
+    /// row values are separate facts and must never be substituted here.
     static func attachedRowText(pinRowNumber: Int?, drivingRowNumber: Double?, legacyRowNumber: Int?) -> String? {
-        if let pinRowNumber { return "\(pinRowNumber)" }
-        if let drivingRowNumber {
-            return drivingRowNumber == drivingRowNumber.rounded()
-                ? "\(Int(drivingRowNumber))"
-                : "\(drivingRowNumber)"
-        }
-        if let legacyRowNumber { return "\(legacyRowNumber).5" }
-        return nil
+        pinRowNumber.map(String.init)
     }
 }

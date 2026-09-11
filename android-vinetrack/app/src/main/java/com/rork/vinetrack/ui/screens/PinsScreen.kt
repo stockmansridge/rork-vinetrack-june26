@@ -124,6 +124,7 @@ import com.rork.vinetrack.ui.components.SeasonSelector
 import com.rork.vinetrack.ui.components.ForegroundLocationSubscriptionEffect
 import com.rork.vinetrack.data.PinAisleGeometry
 import com.rork.vinetrack.data.PinPlacement
+import com.rork.vinetrack.data.PinSnapState
 import com.rork.vinetrack.data.PinCaptureContext
 import com.rork.vinetrack.data.PinCaptureEvidenceStore
 import com.rork.vinetrack.data.PinLocationResult
@@ -461,14 +462,12 @@ fun PinsScreen(
     }
     val qualifiedTravelContext = travelResolution.first
     val rowUnavailableReason = travelResolution.second
-    val pinsTitle = if (viewMode == PinsViewMode.Stats) {
-        "Pins"
-    } else {
-        val headingText = browsingHeading?.let { "facing ${compassAbbrev(it)}" }
-        qualifiedTravelContext?.let { context ->
-            val prefix = if (context.isEstimated) "Approx. row" else "Row"
-            listOfNotNull("Pins • $prefix ${rowText(context.row)}", headingText).joinToString(" ")
-        } ?: headingText?.let { "Pins • $it" } ?: "Pins"
+    val liveContextTitle = if (viewMode == PinsViewMode.Stats) null else {
+        qualifiedTravelContext?.let { travel ->
+            val prefix = if (travel.isEstimated) "Approx. row" else "Row"
+            listOfNotNull("$prefix ${rowText(travel.row)}", travel.heading?.let { "facing ${compassAbbrev(it)}" })
+                .joinToString(" ")
+        }
     }
 
     // Delete visibility mirrors iOS canDeleteOperationalRecords (owner/manager/
@@ -564,7 +563,7 @@ fun PinsScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text(pinsTitle, maxLines = 2) },
+                title = { Text("") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 actions = {
                     IconButton(
@@ -584,6 +583,22 @@ fun PinsScreen(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text("Pins", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                liveContextTitle?.let {
+                    Text(
+                        it,
+                        modifier = Modifier.weight(1f).padding(top = 9.dp),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textSecondary,
+                    )
+                }
+            }
             PinsFilterBar(
                 modeFilter = modeFilter,
                 includesElStages = includesElStages,
@@ -1999,6 +2014,17 @@ fun PinCategoryLauncherScreen(
             scope.launch { snackbarHostState.showSnackbar(result.operatorMessage()) }
             return
         }
+        val placement = capture.resolvedPlacement
+        if (placement?.snappedToRow != true) {
+            val message = when {
+                placement?.paddockId == null -> "Pin not saved — this position is outside a mapped block."
+                capture.headingDegrees == null -> "Pin not saved — direction is unavailable. Hold the phone facing forward and press again."
+                placement?.snapState == PinSnapState.NO_ROW_GEOMETRY -> "Pin not saved — mapped row geometry is unavailable for this block."
+                else -> "Pin not saved — GPS cannot distinguish the adjacent rows or this is a headland. Confirm your aisle position and press again."
+            }
+            scope.launch { snackbarHostState.showSnackbar(message) }
+            return
+        }
         quickCreate(
             category,
             side,
@@ -2609,11 +2635,8 @@ private fun PinRow(
             //  2. "Row 26.5 — Right hand side facing North"     (driving path)
             //  3. "<Block> row 26"
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                pinAttachedRowLine(pin)?.let {
+                pinListLocationLine(pin)?.let {
                     Text(it, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                }
-                pinFacingLine(pin)?.let {
-                    Text(it, fontSize = 14.sp, color = vine.textPrimary)
                 }
                 Text(pinBlockRowLine(pin, paddockName), fontSize = 12.sp, color = vine.textSecondary)
                 if (!pin.notes.isNullOrBlank()) {
@@ -2841,7 +2864,15 @@ private fun rowText(row: Double): String =
  * never dressed up as a row attachment.
  */
 private fun pinAttachedRowLine(pin: Pin): String? =
-    pin.pinRowNumber?.let { "On Row ${rowText(it)}" }
+    pin.pinRowNumber?.let { "Recorded on row ${rowText(it)}" }
+        ?: pin.rowNumber?.takeIf { pin.drivingRowNumber == null }?.let { "Recorded row $it" }
+
+/** Compact list location using the same stored facts as detail. */
+private fun pinListLocationLine(pin: Pin): String? {
+    val row = pin.pinRowNumber ?: return pin.rowNumber?.takeIf { pin.drivingRowNumber == null }?.let { "Recorded row $it" }
+    val capture = pinFacingLine(pin)?.substringAfter(" — ", pinFacingLine(pin).orEmpty())?.takeIf { it.isNotBlank() }
+    return "Row ${rowText(row)}${capture?.let { " — ${it.lowercase()}" }.orEmpty()}"
+}
 
 /**
  * Driving-path line, e.g. "Row 26.5 — Right hand side facing North" — the aisle
@@ -3370,14 +3401,11 @@ private fun PinDetailSheet(
                         )
                         PinHeaderSyncIcon(sync = sync, tint = vine.textSecondary)
                     }
-                    pin.rowAttachmentLabel?.let {
+                    pinAttachedRowLine(pin)?.let {
                         Text(it, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = VineColors.LeafGreen)
                     }
                     pin.rowAttachmentDetail?.let {
                         Text(it, fontSize = 12.sp, color = vine.textSecondary)
-                    }
-                    pin.heading?.let {
-                        Text("Facing ${compassAbbrev(it)}", fontSize = 12.sp, color = vine.textSecondary)
                     }
                 }
             }

@@ -205,14 +205,11 @@ struct PinsView: View {
     private var qualifiedTravelContext: PinQueryPolicy.TravelContext? { travelResolution.context }
     private var rowUnavailableReason: String { travelResolution.reason }
 
-    private var pinsTitle: String {
-        guard viewMode != .summary else { return "Pins" }
-        let headingText = qualifiedHeading.map { "facing \(PinAttachmentFormatter.compassAbbreviation(degrees: $0))" }
-        guard let context = qualifiedTravelContext else {
-            return headingText.map { "Pins • \($0)" } ?? "Pins"
-        }
+    private var liveContextTitle: String? {
+        guard viewMode != .summary, let context = qualifiedTravelContext else { return nil }
         let prefix = context.isEstimated ? "Approx. row" : "Row"
-        return (["Pins • \(prefix) \(String(format: "%.1f", context.row))", headingText]
+        let headingText = context.heading.map { "facing \(PinAttachmentFormatter.compassAbbreviation(degrees: $0))" }
+        return (["\(prefix) \(String(format: "%.1f", context.row))", headingText]
             .compactMap { $0 }).joined(separator: " ")
     }
 
@@ -242,6 +239,20 @@ struct PinsView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text("Pins")
+                        .font(.largeTitle.weight(.bold))
+                    if let liveContextTitle {
+                        Text(liveContextTitle)
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal)
+                .padding(.top, 8)
+
                 filterBar
                     .padding(.horizontal)
                     .padding(.vertical, 8)
@@ -281,13 +292,6 @@ struct PinsView: View {
             selectedNames = PinQueryPolicy.cleanedNameSelection(selectedNames, availableNames: availableNames)
         }
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Text(pinsTitle)
-                        .font(.headline)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-                }
                 ToolbarItem(placement: .topBarLeading) {
                     if canExport {
                         Button {
@@ -1479,29 +1483,17 @@ struct PinRowView: View {
             VStack(alignment: .leading, spacing: 4) {
                 // The attached vine row holding the issue — the first fact an
                 // operator needs, shown only from a real stored value.
-                if let attachedRow = pin.pinRowNumber {
-                    Text("On Row \(attachedRow)")
+                if let row = pin.pinRowNumber {
+                    let capture = PinAttachmentFormatter.captureLine(pin, includesDrivingAisle: false)
+                    Text("Row \(row)\(capture.map { " — \($0.lowercased())" } ?? "")")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
-                }
-
-                // The driving path (aisle) is a separate fact, rendered only
-                // from a recorded driving_row_number. Legacy row_number has
-                // conflicting meanings and is never turned into a path by
-                // adding 0.5.
-                let drivingPathText: String? = pin.drivingRowNumber.map { String(format: "%.1f", $0) }
-                // Honest optional side: composer-created pins have no
-                // Left/Right, so the phrase is omitted rather than invented.
-                let sideLabel = (pin.pinSide ?? pin.side).map { "\($0.rawValue) hand side" }
-
-                // Only claim a facing direction when one was actually recorded.
-                let facingSuffix = pin.heading.map { " facing \(PinAttachmentFormatter.fullCompassName(degrees: $0))" } ?? ""
-                if let drivingPathText {
-                    Text("Row \(drivingPathText)\(sideLabel.map { " — \($0)" } ?? "")\(facingSuffix)")
-                        .font(.subheadline)
-                        .foregroundStyle(.primary)
-                } else if pin.pinRowNumber == nil || sideLabel != nil || !facingSuffix.isEmpty {
-                    Text("\(sideLabel ?? "Pin location")\(facingSuffix)")
+                } else if let legacy = PinAttachmentFormatter.legacyRecordedRowLine(pin) {
+                    Text(legacy)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                } else if let capture = PinAttachmentFormatter.captureLine(pin, includesDrivingAisle: false) {
+                    Text(capture)
                         .font(.subheadline)
                         .foregroundStyle(.primary)
                 }
@@ -2053,25 +2045,16 @@ struct PinDetailSheet: View {
                                     .font(.title3.weight(.semibold))
                                 RecordSyncBadge(state: RecordSyncState.forPin(pin.id, pinSync: pinSync))
                             }
-                            if let attached = PinAttachmentFormatter.attachmentLine(pin) {
-                                Text("On \(attached)")
+                            if let recordedRow = PinAttachmentFormatter.recordedRowLine(pin) {
+                                Text(recordedRow)
                                     .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(VineyardTheme.olive)
-                            } else if let legacyRow = PinAttachmentFormatter.legacyRecordedRowLine(pin) {
-                                // Historical value preserved, but never dressed
-                                // up as a confirmed attached row or an aisle.
-                                Text(legacyRow)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(pin.pinRowNumber == nil ? Color.secondary : VineyardTheme.olive)
                             }
-                            if let driving = PinAttachmentFormatter.drivingPathLine(pin) {
-                                Text(driving)
+                            if let capture = PinAttachmentFormatter.captureLine(pin, includesDrivingAisle: true) {
+                                Text(capture)
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(.secondary)
                             }
-                            Text("Facing \(compassDirection)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
                         }
                     }
                 }

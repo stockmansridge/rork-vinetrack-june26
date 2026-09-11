@@ -48,6 +48,26 @@ nonisolated enum PinAttachmentFormatter {
         }
     }
 
+    /// One shared capture phrase for list and detail. It uses only facts frozen
+    /// on the pin and never manufactures a driving aisle.
+    static func captureLine(_ pin: VinePin, includesDrivingAisle: Bool) -> String? {
+        let side = (pin.pinSide ?? pin.side).map { "\($0.rawValue) hand side" }
+        let facing = pin.heading.map { "facing \(fullCompassName(degrees: $0))" }
+        let capture = [side, facing].compactMap { $0 }.joined(separator: " ")
+        let aisle = pin.drivingRowNumber.map { "driving aisle \(formatPath($0))" }
+        let result = includesDrivingAisle
+            ? [capture.isEmpty ? nil : capture, aisle].compactMap { $0 }.joined(separator: " — ")
+            : capture
+        return result.isEmpty ? nil : result
+    }
+
+    /// One shared saved-row phrase. A legacy row remains explicitly recorded,
+    /// never promoted to a confirmed attachment or inferred aisle.
+    static func recordedRowLine(_ pin: VinePin) -> String? {
+        if let row = pin.pinRowNumber { return "Recorded on row \(row)" }
+        return legacyRecordedRowLine(pin)
+    }
+
     /// Preferred attachment line. Side is intentionally NOT included here —
     /// Left/Right belongs with the driving path/operator view, not the
     /// attached vine row.

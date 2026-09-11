@@ -212,10 +212,10 @@ class PinPlacementContractTest {
 
     @Test
     fun `no side is invented and exact path rows are preserved`() {
-        // 19.5 stays 19.5, whole rows trim, legacy backfills ".5".
-        assertEquals("19.5", PinPlacementContract.attachedRowText(null, 19.5, null))
+        // Only an established vine row is an attachment; aisle and legacy values stay separate.
+        assertNull(PinPlacementContract.attachedRowText(null, 19.5, null))
         assertEquals("15", PinPlacementContract.attachedRowText(15.0, null, null))
-        assertEquals("14.5", PinPlacementContract.attachedRowText(null, null, 14))
+        assertNull(PinPlacementContract.attachedRowText(null, null, 14))
         assertNull(PinPlacementContract.attachedRowText(null, null, null))
         // The snapped line never includes a side — sides are rendered only by
         // the facing line, and only from a genuinely stored value.

@@ -220,6 +220,10 @@ struct QuickPinSheet: View {
         }
 
         let placement = resolvePlacement(location: loc, side: side)
+        guard placement.attachment.snappedToRow else {
+            errorMessage = "Pin not saved — row guidance could not confirm the mapped aisle, heading and selected side."
+            return
+        }
         let duplicateCoordinate = placement.attachment.snappedCoordinate ?? loc.coordinate
         let proceed = { createPin(button: button, location: loc, placement: placement) }
         if let dup = checkDuplicate(
@@ -252,6 +256,10 @@ struct QuickPinSheet: View {
             return
         }
         let placement = resolvePlacement(location: loc, side: side)
+        guard placement.attachment.snappedToRow else {
+            errorMessage = "Pin not saved — row guidance could not confirm the mapped aisle, heading and selected side."
+            return
+        }
         let duplicateCoordinate = placement.attachment.snappedCoordinate ?? loc.coordinate
         let proceed = { createGrowthPin(stage: stage, location: loc, placement: placement) }
         if let dup = checkDuplicate(

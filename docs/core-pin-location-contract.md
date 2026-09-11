@@ -2,8 +2,11 @@
 
 Permanent contract for how VineTrack decides, stores, and shows where a pin is.
 Any change touching pin capture, GPS, rows, trips, sync, maps or pin
-presentation must reference this document and run the relevant regression cases.
-A green build alone does not demonstrate these behaviours.
+presentation must reference this document and run the focused production-path
+pin suites on both changed platforms. Those suites are a required check for pin
+changes and cover outside-trip Left/Right, opposite facing, delayed confirmation,
+restart/replay, raw-coordinate survival and list/detail agreement. A green build
+or successful compilation alone does not demonstrate these behaviours.
 
 Implementations (one shared contract, two platforms):
 
@@ -106,10 +109,18 @@ stale/low-accuracy gates and the failed-tap semantics stay exactly as they are.
 Passing them does not establish which ~3 m aisle the operator occupied. Aisle
 confidence is judged separately, from evidence:
 
-- **Uncertainty.** The fix's own reported accuracy radius must be smaller than
-  the aisle width; an uncertainty that also spans the neighbouring aisles cannot
-  say which aisle the operator was in. An absent or invalid accuracy is no
-  evidence and never counts as accurate enough.
+- **Uncertainty plus map matching.** The accepted fix is matched to the actual
+  adjacent mapped rows, with polygon, corridor-width and row-end/headland checks.
+  Its reported accuracy radius must be smaller than that full mapped aisle width.
+  It does not have to fit separately between the point and each row: that
+  single-fix rule made ordinary 2.8–3 m field GPS incapable of attaching in a
+  ~3 m aisle even when the mapped corridor was otherwise unique. Missing or
+  invalid accuracy, or uncertainty spanning the full aisle, remains ambiguous.
+- **No rowless success.** An automatic Left/Right press that cannot establish
+  block, heading, aisle and side-selected vine row is not reported as a
+  successful row attachment. The app states whether heading, mapped geometry,
+  headland position or aisle ambiguity blocked it; any eventual confirmation
+  must continue using the frozen observation rather than a later GPS fix.
 - **Row ends.** If the nearest point on a row is only its clamped endpoint, the
   fix lies beyond that row and containment is not proven. Two 100 m rows 3 m
   apart with the fix halfway across but 1 m past their ends stays unconfirmed.
@@ -124,6 +135,12 @@ confidence is judged separately, from evidence:
   wrong-block evidence — row numbers repeat across blocks.
 
 ## 11. Persist and display identically
+
+List and detail use one formatter. An established vine row is presented as the
+recorded row; capture side and facing describe the operator at capture; the
+driving aisle is shown separately. `row_number` by itself is only “Recorded row
+X”. It never becomes X.5 and never establishes an aisle.
+
 
 The capture result survives local optimistic save, insert payload, offline
 queue/replay, server response, app restart and refresh on either platform.

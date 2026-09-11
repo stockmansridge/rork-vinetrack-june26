@@ -185,19 +185,14 @@ object PinPlacementContract {
     }
 
     /**
-     * Formats an attached row for display, trimming whole values (15) and
-     * preserving exact fractional path rows (19.5) — never rounding.
+     * Formats only an established attached vine row. Driving aisles and legacy
+     * row values are separate facts and must never be substituted here.
      */
     fun attachedRowText(
         pinRowNumber: Double?,
         drivingRowNumber: Double?,
         legacyRowNumber: Int?,
-    ): String? {
-        val row = pinRowNumber ?: drivingRowNumber
-        if (row != null) {
-            return if (row % 1.0 == 0.0) row.toInt().toString() else row.toString()
-        }
-        if (legacyRowNumber != null) return "$legacyRowNumber.5"
-        return null
+    ): String? = pinRowNumber?.let { row ->
+        if (row % 1.0 == 0.0) row.toInt().toString() else row.toString()
     }
 }

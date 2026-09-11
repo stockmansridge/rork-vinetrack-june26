@@ -67,13 +67,14 @@ nonisolated enum PinAisleGeometry {
         return validHeading(heading)
     }
 
-    /// True when a reported horizontal uncertainty is small enough to place the
-    /// operator inside an aisle of `aisleWidthMetres`.
+    /// True when the accepted fix is precise enough for mapped-aisle matching.
     ///
-    /// An uncertainty as large as the aisle itself also covers the neighbouring
-    /// aisles, so the fix cannot establish WHICH aisle the operator occupied.
-    /// An absent or invalid accuracy is no evidence at all and is rejected — it
-    /// never counts as "accurate enough".
+    /// Requiring the entire accuracy circle to fit on both sides of a ~3 m aisle
+    /// made ordinary field GPS incapable of attaching almost every standalone
+    /// pin. The mapped adjacent rows, containment and headland checks already
+    /// constrain the candidate corridor, so accuracy is compared with the full
+    /// mapped aisle width. An uncertainty spanning the aisle (or no valid
+    /// accuracy at all) remains ambiguous and requires operator confirmation.
     static func uncertaintyFitsBetweenRows(
         horizontalAccuracyMetres: Double?,
         distanceToNearRowMetres: Double,
@@ -87,7 +88,7 @@ nonisolated enum PinAisleGeometry {
               distanceToFarRowMetres.isFinite,
               distanceToFarRowMetres > 0
         else { return false }
-        return accuracy < distanceToNearRowMetres && accuracy < distanceToFarRowMetres
+        return accuracy < distanceToNearRowMetres + distanceToFarRowMetres
     }
 
     /// Resolve the aisle physically containing `coordinate`: the nearest mapped
@@ -188,8 +189,9 @@ nonisolated enum PinAisleGeometry {
         let maxWidth = paddock.rowWidth > 0 ? paddock.rowWidth * 2.5 : fallbackMaxAisleWidthMetres
         guard far.offset <= maxWidth else { return nil }
 
-        // The full uncertainty circle must remain between both bounding rows.
-        // Merely being narrower than the whole aisle is insufficient near a row.
+        // Map matching has already established the containing adjacent-row
+        // corridor. Reject only when reported uncertainty spans that full aisle;
+        // tighter single-fix evidence may attach without requiring trip state.
         let farDistance = far.closest.point.distance(to: point)
         if requiresQualifiedAccuracy {
             guard uncertaintyFitsBetweenRows(

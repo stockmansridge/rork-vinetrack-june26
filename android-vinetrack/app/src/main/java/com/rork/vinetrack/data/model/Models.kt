@@ -1357,34 +1357,20 @@ data class Pin(
             ?: mode?.takeIf { it.isNotBlank() }
             ?: "Pin"
 
-    /**
-     * Customer-facing "attached to row" summary, e.g. "Attached to row 19.5 · left".
-     *
-     * Prefers the fractional driving/path row (`drivingRowNumber`, e.g. 19.5) so the
-     * wording matches what the operator drives, falling back to the snapped block
-     * `pinRowNumber` (e.g. 15) when no driving row was recorded. Fractional rows are
-     * preserved without rounding. Null when the pin isn't row-attached.
-     */
+    /** Established vine row only; the driving aisle is never substituted. */
     val rowAttachmentLabel: String?
-        get() {
-            val row = drivingRowNumber ?: pinRowNumber ?: return null
-            val rowLabel = formatRowNumber(row)
-            val sideLabel = (pinSide ?: side)?.lowercase()?.takeIf { it == "left" || it == "right" }
-            return if (sideLabel != null) "Attached to row $rowLabel · $sideLabel side" else "Attached to row $rowLabel"
-        }
+        get() = pinRowNumber?.let { "Recorded on row ${formatRowNumber(it)}" }
 
-    /**
-     * Optional secondary context line, e.g. "Block row 15". Shown only when the pin
-     * has both a driving/path row and a distinct block row, so the primary label's
-     * driving row can be cross-referenced to the block row without clutter. Null
-     * when there's nothing extra to disambiguate.
-     */
+    /** Capture side/facing and driving aisle, kept separate from the vine row. */
     val rowAttachmentDetail: String?
         get() {
-            val driving = drivingRowNumber ?: return null
-            val block = pinRowNumber ?: return null
-            if (driving == block) return null
-            return "Block row ${formatRowNumber(block)}"
+            val sideLabel = (pinSide ?: side)?.lowercase()?.let {
+                when (it) { "left" -> "Left hand side"; "right" -> "Right hand side"; else -> null }
+            }
+            val facing = heading?.let { "facing ${pinCompassName(it)}" }
+            val aisle = drivingRowNumber?.let { "driving aisle ${formatRowNumber(it)}" }
+            val capture = listOfNotNull(sideLabel, facing).joinToString(" ")
+            return listOf(capture.takeIf { it.isNotBlank() }, aisle).joinToString(" — ").ifBlank { null }
         }
 
     /**
@@ -1412,6 +1398,20 @@ data class Pin(
 /** Formats a row number, preserving fractional values (19.5) and trimming whole ones (15). */
 private fun formatRowNumber(row: Double): String =
     if (row % 1.0 == 0.0) row.toInt().toString() else row.toString()
+
+private fun pinCompassName(heading: Double): String {
+    val normalized = ((heading % 360.0) + 360.0) % 360.0
+    return when {
+        normalized >= 337.5 || normalized < 22.5 -> "North"
+        normalized < 67.5 -> "Northeast"
+        normalized < 112.5 -> "East"
+        normalized < 157.5 -> "Southeast"
+        normalized < 202.5 -> "South"
+        normalized < 247.5 -> "Southwest"
+        normalized < 292.5 -> "West"
+        else -> "Northwest"
+    }
+}
 
 private val userIdRegex =
     Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\$")

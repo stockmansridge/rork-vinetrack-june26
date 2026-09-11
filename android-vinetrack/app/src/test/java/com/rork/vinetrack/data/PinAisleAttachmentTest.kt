@@ -434,7 +434,7 @@ class PinAisleAttachmentTest {
     }
 
     @Test
-    fun `two metre uncertainty near a row cannot confirm a three metre aisle`() {
+    fun `realistic field accuracy uses validated mapped corridor outside trips`() {
         val block = threeMetreAisleBlock()
         val metresPerDegreeLongitude = 111_320.0 * kotlin.math.cos(-33.0 * Math.PI / 180.0)
         val nearRowLongitude = 149.0 + 0.2 / metresPerDegreeLongitude
@@ -445,12 +445,12 @@ class PinAisleAttachmentTest {
             nearRowLongitude,
             "left",
             0.0,
-            accuracyMetres = 2.0,
+            accuracyMetres = 2.8,
         )
 
-        assertEquals(PinSnapState.UNCONFIRMED_ROW, ambiguous.snapState)
-        assertNull(ambiguous.pinRowNumber)
-        assertNull(ambiguous.drivingRowNumber)
+        assertEquals(PinSnapState.SNAPPED, ambiguous.snapState)
+        assertEquals(32.0, ambiguous.pinRowNumber!!, 1e-9)
+        assertEquals(32.5, ambiguous.drivingRowNumber!!, 1e-9)
         assertEquals("left", ambiguous.pinSide)
         assertEquals(0.0, ambiguous.headingDegrees!!, 1e-9)
 

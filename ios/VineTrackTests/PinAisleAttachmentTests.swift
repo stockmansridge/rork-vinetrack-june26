@@ -343,7 +343,7 @@ struct PinAisleAttachmentTests {
         #expect(outside == nil)
     }
 
-    @Test func twoMetreUncertaintyNearARowCannotConfirmAThreeMetreAisle() {
+    @Test func realisticFieldAccuracyUsesValidatedMappedCorridorOutsideTrips() {
         let metresPerDegreeLongitude = 111_320.0 * cos(-33.0 * .pi / 180.0)
         let nearRowLongitude = 149.0 + 0.2 / metresPerDegreeLongitude
         let ambiguous = automatic(
@@ -352,12 +352,12 @@ struct PinAisleAttachmentTests {
             longitude: nearRowLongitude,
             side: .left,
             heading: 0,
-            accuracyMetres: 2
+            accuracyMetres: 2.8
         )
 
-        #expect(!ambiguous.snappedToRow)
-        #expect(ambiguous.pinRowNumber == nil)
-        #expect(ambiguous.drivingRowNumber == nil)
+        #expect(ambiguous.snappedToRow)
+        #expect(ambiguous.pinRowNumber == 32)
+        #expect(ambiguous.drivingRowNumber == 32.5)
         #expect(ambiguous.pinSide == .left)
         #expect(ambiguous.heading == 0)
     }

@@ -375,6 +375,10 @@ struct RepairsGrowthView: View {
         }
         let resolved = PinContextResolver.resolve(coordinate: raw, store: store, tracking: tracking)
         let attachment = liveAttachment(capture: capture, resolved: resolved, side: side)
+        guard attachment.snappedToRow else {
+            showError(attachmentFailureMessage(capture: capture, resolved: resolved, attachment: attachment))
+            return
+        }
         // Duplicate comparison keeps using the attached point (rule unchanged).
         let coord = attachment.snappedCoordinate ?? raw
         let proceed = {
@@ -463,6 +467,10 @@ struct RepairsGrowthView: View {
         }
         let resolved = PinContextResolver.resolve(coordinate: raw, store: store, tracking: tracking)
         let attachment = liveAttachment(capture: capture, resolved: resolved, side: .right)
+        guard attachment.snappedToRow else {
+            showError(attachmentFailureMessage(capture: capture, resolved: resolved, attachment: attachment))
+            return
+        }
         let coord = attachment.snappedCoordinate ?? raw
         let proceed = {
             createGrowthPin(
@@ -620,6 +628,22 @@ struct RepairsGrowthView: View {
         // Neither route attached a row: keep the validated locked aisle when
         // there was one, otherwise the honest point-only result.
         return live ?? automatic
+    }
+
+    private func attachmentFailureMessage(
+        capture: PinCaptureContext,
+        resolved: PinContextResolver.Resolved,
+        attachment: PinAttachmentResolver.Attachment
+    ) -> String {
+        guard resolved.paddockId != nil else { return "Pin not saved — this position is outside a mapped block." }
+        guard attachment.heading != nil else { return "Pin not saved — direction is unavailable. Hold the phone facing forward and press again." }
+        guard let paddock = resolved.paddockId.flatMap({ id in store.paddocks.first(where: { $0.id == id }) }) else {
+            return "Pin not saved — mapped row geometry is unavailable for this block."
+        }
+        if PinAisleGeometry.approximateAisle(containing: capture.rawCoordinate, in: paddock) != nil {
+            return "Pin not saved — GPS cannot distinguish the adjacent rows yet. Confirm your aisle position and press again."
+        }
+        return "Pin not saved — this position is in a headland or outside mapped row guidance."
     }
 
     private func checkDuplicate(

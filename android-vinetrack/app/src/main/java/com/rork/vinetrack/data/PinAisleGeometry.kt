@@ -130,11 +130,12 @@ object PinAisleGeometry {
     }
 
     /**
-     * True when a reported horizontal uncertainty is small enough to place the
-     * operator inside an aisle of [aisleWidthMetres]. An uncertainty as large as
-     * the aisle also covers its neighbours, so it cannot establish WHICH aisle
-     * the operator occupied; an absent or invalid accuracy is no evidence at all
-     * and is rejected.
+     * True when an accepted fix is precise enough for mapped-aisle matching.
+     * Requiring the whole accuracy circle to fit on both sides of a ~3 m aisle
+     * rejected ordinary field GPS. Adjacent-row containment and headland checks
+     * already constrain the corridor, so accuracy is compared with its full
+     * mapped width. Missing accuracy or uncertainty spanning the aisle remains
+     * ambiguous and requires confirmation.
      */
     fun uncertaintyFitsBetweenRows(
         accuracyMetres: Double?,
@@ -145,7 +146,7 @@ object PinAisleGeometry {
         if (!accuracy.isFinite() || accuracy < 0.0) return false
         if (!distanceToNearRowMetres.isFinite() || distanceToNearRowMetres <= 0.0) return false
         if (!distanceToFarRowMetres.isFinite() || distanceToFarRowMetres <= 0.0) return false
-        return accuracy < distanceToNearRowMetres && accuracy < distanceToFarRowMetres
+        return accuracy < distanceToNearRowMetres + distanceToFarRowMetres
     }
 
     /**
@@ -250,8 +251,8 @@ object PinAisleGeometry {
         val maxWidth = if (rowWidth != null) rowWidth * 2.5 else FALLBACK_MAX_AISLE_WIDTH_M
         if (farOffset > maxWidth) return null
 
-        // The full uncertainty circle must remain between both bounding rows.
-        // Merely being narrower than the whole aisle is insufficient near a row.
+        // Map matching already established the containing adjacent-row corridor.
+        // Reject only when uncertainty spans that full mapped aisle.
         if (requiresQualifiedAccuracy && !uncertaintyFitsBetweenRows(accuracyMetres, nearDistance, farDistance)) return null
 
         return Aisle(
