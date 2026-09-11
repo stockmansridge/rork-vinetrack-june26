@@ -1,6 +1,21 @@
 import Observation
+import Synchronization
 import XCTest
 @testable import VineTrack
+
+private final class ObservationCounter: Sendable {
+    private let value = Mutex(0)
+
+    func increment() {
+        value.withLock { count in
+            count += 1
+        }
+    }
+
+    var count: Int {
+        value.withLock { $0 }
+    }
+}
 
 @MainActor
 final class PinRemoteMergeBatchTests: XCTestCase {
@@ -13,11 +28,11 @@ final class PinRemoteMergeBatchTests: XCTestCase {
 
         let incoming = (0..<215).map { pin(vineyardId: fixture.vineyardId, name: "Remote \($0)") }
         let deletedIds = Set(incoming.prefix(15).map(\.id))
-        var publicationCount = 0
+        let publicationCount = ObservationCounter()
         withObservationTracking {
             _ = fixture.store.pins
         } onChange: {
-            publicationCount += 1
+            publicationCount.increment()
         }
 
         try fixture.store.applyRemotePinBatch(
@@ -30,7 +45,7 @@ final class PinRemoteMergeBatchTests: XCTestCase {
         let persisted = try fixture.store.pinRepo.loadAllForDurableUpdate()
         XCTAssertEqual(persisted.filter { $0.vineyardId == fixture.vineyardId }.count, 201)
         XCTAssertTrue(persisted.contains { $0.id == other.id })
-        XCTAssertEqual(publicationCount, 1)
+        XCTAssertEqual(publicationCount.count, 1)
     }
 
     func testFailedWriteDoesNotPublishAndRetryCommits() throws {
