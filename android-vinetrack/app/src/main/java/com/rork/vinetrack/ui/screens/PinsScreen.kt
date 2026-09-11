@@ -16,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -324,21 +325,28 @@ fun PinsScreen(
             },
         )
         sourcePins.filter { pin ->
+            val isElRecord = pin.growthStageCode != null || pin.id in authoritativeElPinIds
             season.contains(parseIsoMillis(pin.createdAt)) &&
                 PinQueryPolicy.matches(
                     pin,
                     query,
-                    isElRecord = pin.growthStageCode != null || pin.id in authoritativeElPinIds,
+                    isElRecord = isElRecord,
                 ) &&
-                (selectedNames.isEmpty() || pin.displayTitle in selectedNames) &&
+                (isElRecord || selectedNames.isEmpty() || pin.displayTitle in selectedNames) &&
                 (selectedBlockIds.isEmpty() || (pin.paddockId != null && pin.paddockId in selectedBlockIds))
         }
             // Newest first, mirroring the iOS pin list ordering.
             .sortedByDescending { parseIsoMillis(it.createdAt) ?: Long.MIN_VALUE }
     }
     // Options offered by the Filters sheet (iOS uniqueNames/uniquePaddocks parity).
-    val uniqueNames = remember(sourcePins) {
-        sourcePins.map { it.displayTitle }.filter { it.isNotBlank() }.distinct().sorted()
+    val authoritativeElPinIds = remember(state.growthRecords) {
+        state.growthRecords.mapTo(HashSet()) { it.pinId?.takeIf(String::isNotBlank) ?: it.id }
+    }
+    val uniqueNames = remember(sourcePins, authoritativeElPinIds) {
+        PinQueryPolicy.ordinaryFilterNames(sourcePins, authoritativeElPinIds)
+    }
+    LaunchedEffect(uniqueNames) {
+        selectedNames = PinQueryPolicy.cleanedNameSelection(selectedNames, uniqueNames)
     }
     val uniquePaddocks = remember(sourcePins, state.paddocks) {
         val ids = sourcePins.mapNotNullTo(HashSet()) { it.paddockId }
@@ -349,7 +357,21 @@ fun PinsScreen(
     // Canonical launcher-type catalogue offered by Change Pin Type.
     val typeOptions = remember(state.repairButtons, state.growthButtons) { pinTypeOptions(state) }
 
-    val qualifiedTravelContext = remember(
+    val browsingHeading = remember(browsingFix, browsingCompassObservation, contextNowMs) {
+        val fix = browsingFix
+        val ageNanos = browsingCompassObservation?.let {
+            SystemClock.elapsedRealtimeNanos() - it.observedAtElapsedRealtimeNanos
+        }
+        if (fix != null && ageNanos != null && ageNanos in 0L..5_000_000_000L) {
+            browsingCompassObservation?.let {
+                compassTrueHeading(it.magneticDegrees, fix.latitude, fix.longitude)
+            }
+        } else {
+            null
+        }
+    }
+
+    val travelResolution = remember(
         state.isTracking,
         state.currentDrivingPathNumber,
         state.rowLockIsConfident,
@@ -363,73 +385,90 @@ fun PinsScreen(
         contextNowMs,
     ) {
         val fix = browsingFix
-        val compassAgeNanos = browsingCompassObservation?.let {
-            SystemClock.elapsedRealtimeNanos() - it.observedAtElapsedRealtimeNanos
-        }
-        val compassIsFresh = compassAgeNanos != null && compassAgeNanos in 0L..5_000_000_000L
-        val heading = if (fix != null && compassIsFresh) {
-            browsingCompassObservation?.let {
-                compassTrueHeading(it.magneticDegrees, fix.latitude, fix.longitude)
-            }
-        } else {
-            null
-        }
-        val trip = state.activeTrip
-        if (trip != null) {
-            PinQueryPolicy.qualifiedTravelContext(
-                selectedVineyardId = state.selectedVineyardId,
-                contextVineyardId = trip.vineyardId,
-                blockId = state.currentTripPaddockId,
-                row = state.currentDrivingPathNumber,
-                isRowQualified = state.isTracking && state.rowLockIsConfident,
-                observedAtMs = state.latestMovementObservedAtMs,
-                heading = heading,
-                isHeadingQualified = heading != null,
-                nowMs = contextNowMs,
-            )
-        } else if (fix != null) {
-            val containing = state.paddocks.filter {
-                RowAttachment.containsPoint(it, fix.latitude, fix.longitude)
-            }
-            val paddock = when {
-                containing.size == 1 -> containing.single()
-                containing.size > 1 -> containing.minByOrNull {
-                    RowAttachment.nearestRow(it, fix.latitude, fix.longitude)?.perpendicularDistanceM
-                        ?: Double.MAX_VALUE
+        val heading = browsingHeading
+        val selectedVineyardId = state.selectedVineyardId
+        val fixAge = fix?.let { contextNowMs - it.fixTimeEpochMs }
+        when {
+            selectedVineyardId == null -> null to "Select a vineyard"
+            fix == null -> null to "Waiting for a current GPS fix"
+            fixAge == null || fixAge !in 0L..5_000L || !fix.accuracyMetres.isFinite() || fix.accuracyMetres < 0.0 || fix.accuracyMetres > 15.0 ->
+                null to "Current GPS fix is stale or not accurate enough"
+            state.isTracking && state.activeTrip != null -> {
+                val trip = requireNotNull(state.activeTrip)
+                if (trip.vineyardId != selectedVineyardId) {
+                    null to "Active trip belongs to another vineyard"
+                } else {
+                    val context = PinQueryPolicy.qualifiedTravelContext(
+                        selectedVineyardId = selectedVineyardId,
+                        contextVineyardId = trip.vineyardId,
+                        blockId = state.currentTripPaddockId,
+                        row = state.currentDrivingPathNumber,
+                        isRowQualified = state.rowLockIsConfident,
+                        observedAtMs = state.latestMovementObservedAtMs,
+                        heading = heading,
+                        isHeadingQualified = heading != null,
+                        nowMs = contextNowMs,
+                    )
+                    context to if (context == null) "Current trip row lock is not qualified" else ""
                 }
-                else -> null
             }
-            val aisle = paddock?.let {
-                PinAisleGeometry.aisleContaining(
-                    it,
-                    fix.latitude,
-                    fix.longitude,
-                    fix.accuracyMetres,
-                )
+            else -> {
+                // A retained but inactive trip does not own Pins browsing context.
+                val containing = state.paddocks.filter {
+                    it.vineyardId == selectedVineyardId && RowAttachment.containsPoint(it, fix.latitude, fix.longitude)
+                }
+                val paddock = when {
+                    containing.size == 1 -> containing.single()
+                    containing.size > 1 -> containing.minByOrNull {
+                        RowAttachment.nearestRow(it, fix.latitude, fix.longitude)?.perpendicularDistanceM
+                            ?: Double.MAX_VALUE
+                    }
+                    else -> null
+                }
+                if (paddock == null) {
+                    null to "Current position is outside a supported block"
+                } else {
+                    val qualified = PinAisleGeometry.aisleContaining(
+                        paddock,
+                        fix.latitude,
+                        fix.longitude,
+                        fix.accuracyMetres,
+                    )
+                    val approximate = if (qualified == null) {
+                        PinAisleGeometry.approximateAisle(paddock, fix.latitude, fix.longitude)
+                    } else {
+                        null
+                    }
+                    when {
+                        qualified != null -> PinQueryPolicy.TravelContext(
+                            selectedVineyardId,
+                            paddock.id,
+                            qualified.aisleNumber,
+                            heading,
+                        ) to ""
+                        approximate != null -> PinQueryPolicy.TravelContext(
+                            selectedVineyardId,
+                            paddock.id,
+                            approximate.aisleNumber,
+                            heading,
+                            isEstimated = true,
+                        ) to ""
+                        else -> null to "Mapped aisle geometry does not support this position"
+                    }
+                }
             }
-            PinQueryPolicy.qualifiedTravelContext(
-                selectedVineyardId = state.selectedVineyardId,
-                contextVineyardId = state.selectedVineyardId,
-                blockId = paddock?.id,
-                row = aisle?.aisleNumber,
-                isRowQualified = aisle != null,
-                observedAtMs = fix.fixTimeEpochMs,
-                heading = heading,
-                isHeadingQualified = heading != null,
-                nowMs = contextNowMs,
-            )
-        } else {
-            null
         }
     }
-    val pinsTitle = if (viewMode == PinsViewMode.Stats || qualifiedTravelContext == null) {
+    val qualifiedTravelContext = travelResolution.first
+    val rowUnavailableReason = travelResolution.second
+    val pinsTitle = if (viewMode == PinsViewMode.Stats) {
         "Pins"
     } else {
-        buildString {
-            append("Pins • Row ")
-            append(rowText(qualifiedTravelContext.row))
-            qualifiedTravelContext.heading?.let { append(" • Facing ${compassAbbrev(it)}") }
-        }
+        val headingText = browsingHeading?.let { "facing ${compassAbbrev(it)}" }
+        qualifiedTravelContext?.let { context ->
+            val prefix = if (context.isEstimated) "Approx. row" else "Row"
+            listOfNotNull("Pins • $prefix ${rowText(context.row)}", headingText).joinToString(" ")
+        } ?: headingText?.let { "Pins • $it" } ?: "Pins"
     }
 
     // Delete visibility mirrors iOS canDeleteOperationalRecords (owner/manager/
@@ -525,7 +564,7 @@ fun PinsScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text(pinsTitle) },
+                title = { Text(pinsTitle, maxLines = 2) },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 actions = {
                     IconButton(
@@ -574,6 +613,7 @@ fun PinsScreen(
                     colorMap = colorMap,
                     userLocation = userLocation,
                     travelContext = qualifiedTravelContext,
+                    rowUnavailableReason = rowUnavailableReason,
                     sort = pinSort,
                     onSort = { pinSort = it },
                     modeFilter = modeFilter,
@@ -1069,6 +1109,8 @@ private fun PinsSortRow(
     sort: PinSort,
     closestEnabled: Boolean,
     nearestRowEnabled: Boolean,
+    nearestRowIsEstimated: Boolean,
+    rowUnavailableReason: String,
     onSort: (PinSort) -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
@@ -1082,6 +1124,7 @@ private fun PinsSortRow(
         val effective = when {
             sort == PinSort.CLOSEST && !closestEnabled -> PinSort.NEWEST.label
             sort == PinSort.NEAREST_MY_ROW && !nearestRowEnabled -> "Nearest my row — unavailable"
+            sort == PinSort.NEAREST_MY_ROW && nearestRowIsEstimated -> "Nearest my row — using estimate"
             else -> sort.label
         }
         Box {
@@ -1101,7 +1144,7 @@ private fun PinsSortRow(
                             Text(
                                 when {
                                     option == PinSort.CLOSEST && !closestEnabled -> "Closest (location unavailable)"
-                                    option == PinSort.NEAREST_MY_ROW && !nearestRowEnabled -> "Nearest my row (qualified row unavailable)"
+                                    option == PinSort.NEAREST_MY_ROW && !nearestRowEnabled -> "Nearest my row ($rowUnavailableReason)"
                                     else -> option.label
                                 },
                             )
@@ -1132,6 +1175,7 @@ private fun PinsListMode(
     colorMap: Map<String, String>,
     userLocation: Pair<Double, Double>?,
     travelContext: PinQueryPolicy.TravelContext?,
+    rowUnavailableReason: String,
     sort: PinSort,
     onSort: (PinSort) -> Unit,
     modeFilter: String?,
@@ -1173,6 +1217,8 @@ private fun PinsListMode(
             sort = sort,
             closestEnabled = userLocation != null,
             nearestRowEnabled = travelContext != null,
+            nearestRowIsEstimated = travelContext?.isEstimated == true,
+            rowUnavailableReason = rowUnavailableReason,
             onSort = onSort,
         )
         LazyColumn(
@@ -2520,7 +2566,6 @@ private fun PinRow(
     val onColor = if (color.luminance() > 0.6f) Color.Black else Color.White
     VineyardCard {
         Column(
-            modifier = Modifier.alpha(if (pin.isCompleted) 0.7f else 1f),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             // Coloured header bar in the pin's actual colour (iOS PinRowView parity).
@@ -2697,10 +2742,8 @@ private fun PinHeaderSyncIcon(sync: PinSyncState, tint: Color) {
 
 /**
  * Compact icon+label quick-action button used in the Pins list rows (iOS
- * ActionButton parity). In dark mode the raw palette colours (especially leaf
- * green) are too dim against a near-black background, so the tint is
- * brightened and the background/border strengthened so the tiles read as
- * buttons.
+ * ActionButton parity). Enabled Pins actions use fully opaque saturated
+ * backgrounds and high-contrast content in both colour schemes.
  */
 @Composable
 private fun PinActionButton(
@@ -2711,26 +2754,25 @@ private fun PinActionButton(
     busy: Boolean = false,
     onClick: () -> Unit,
 ) {
-    val isDark = LocalVineColors.current.isDark
-    val tint = if (isDark) lerp(color, Color.White, 0.35f) else color
-    val shape = RoundedCornerShape(8.dp)
+    val contentColor = if (color.luminance() > 0.55f) Color.Black else Color.White
+    val shape = RoundedCornerShape(9.dp)
     Column(
         modifier = modifier
             .padding(horizontal = 3.dp)
             .clip(shape)
-            .background(color.copy(alpha = if (isDark) 0.28f else 0.1f))
-            .then(if (isDark) Modifier.border(1.dp, tint.copy(alpha = 0.4f), shape) else Modifier)
+            .background(color)
             .clickable(enabled = !busy, onClick = onClick)
-            .padding(vertical = 8.dp),
+            .defaultMinSize(minHeight = 48.dp)
+            .padding(vertical = 7.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         if (busy) {
-            CircularProgressIndicator(modifier = Modifier.size(18.dp), color = tint, strokeWidth = 2.dp)
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), color = contentColor, strokeWidth = 2.dp)
         } else {
-            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(18.dp))
+            Icon(icon, contentDescription = label, tint = contentColor, modifier = Modifier.size(18.dp))
         }
-        Text(label, fontSize = 9.sp, fontWeight = FontWeight.Medium, color = tint)
+        Text(label, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = contentColor)
     }
 }
 

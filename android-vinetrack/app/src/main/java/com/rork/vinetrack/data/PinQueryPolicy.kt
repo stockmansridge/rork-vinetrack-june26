@@ -47,12 +47,30 @@ object PinQueryPolicy {
     fun usableRow(pin: Pin): Double? = pin.pinRowNumber
         ?: pin.rowSegments?.minOfOrNull { it.rowNumber }?.toDouble()
 
+    /** Issue/Growth names backed by ordinary records; E-L is excluded by identity. */
+    fun ordinaryFilterNames(pins: List<Pin>, authoritativeElPinIds: Set<String>): List<String> =
+        pins.asSequence()
+            .filter { it.growthStageCode == null && it.id !in authoritativeElPinIds }
+            .map { it.displayTitle.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .sorted()
+            .toList()
+
+    fun cleanedNameSelection(selection: Set<String>, availableNames: List<String>): Set<String> =
+        selection.intersect(availableNames.toSet())
+
     data class TravelContext(
         val vineyardId: String,
         val blockId: String,
         val row: Double,
         val heading: Double?,
+        val isEstimated: Boolean = false,
     )
+
+    /** Fresh heading remains usable even when no mapped aisle can be qualified. */
+    fun qualifiedHeading(heading: Double?, isQualified: Boolean): Double? =
+        heading?.takeIf { isQualified && it.isFinite() && it >= 0.0 && it < 360.0 }
 
     fun qualifiedTravelContext(
         selectedVineyardId: String?,
@@ -70,7 +88,7 @@ object PinQueryPolicy {
         if (!isRowQualified || row == null || !row.isFinite()) return null
         val age = observedAtMs?.let { nowMs - it } ?: return null
         if (age !in 0..freshnessMs) return null
-        val validHeading = heading?.takeIf { isHeadingQualified && it.isFinite() && it >= 0.0 && it < 360.0 }
+        val validHeading = qualifiedHeading(heading, isHeadingQualified)
         return TravelContext(selectedVineyardId, blockId, row, validHeading)
     }
 

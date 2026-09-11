@@ -108,6 +108,35 @@ nonisolated enum PinAisleGeometry {
         in paddock: Paddock,
         horizontalAccuracyMetres: Double?
     ) -> Aisle? {
+        resolveAisle(
+            containing: coordinate,
+            in: paddock,
+            horizontalAccuracyMetres: horizontalAccuracyMetres,
+            requiresQualifiedAccuracy: true
+        )
+    }
+
+    /// Browsing-only aisle estimate. It uses the same mapped-row containment,
+    /// headland and width checks as capture, but does not claim capture-grade GPS
+    /// certainty. Callers must label the result as approximate and never persist it.
+    static func approximateAisle(
+        containing coordinate: CLLocationCoordinate2D,
+        in paddock: Paddock
+    ) -> Aisle? {
+        resolveAisle(
+            containing: coordinate,
+            in: paddock,
+            horizontalAccuracyMetres: nil,
+            requiresQualifiedAccuracy: false
+        )
+    }
+
+    private static func resolveAisle(
+        containing coordinate: CLLocationCoordinate2D,
+        in paddock: Paddock,
+        horizontalAccuracyMetres: Double?,
+        requiresQualifiedAccuracy: Bool
+    ) -> Aisle? {
         let rows = paddock.rows
         guard rows.count >= 2 else { return nil }
 
@@ -162,11 +191,13 @@ nonisolated enum PinAisleGeometry {
         // The full uncertainty circle must remain between both bounding rows.
         // Merely being narrower than the whole aisle is insufficient near a row.
         let farDistance = far.closest.point.distance(to: point)
-        guard uncertaintyFitsBetweenRows(
-            horizontalAccuracyMetres: horizontalAccuracyMetres,
-            distanceToNearRowMetres: near.distance,
-            distanceToFarRowMetres: farDistance
-        ) else { return nil }
+        if requiresQualifiedAccuracy {
+            guard uncertaintyFitsBetweenRows(
+                horizontalAccuracyMetres: horizontalAccuracyMetres,
+                distanceToNearRowMetres: near.distance,
+                distanceToFarRowMetres: farDistance
+            ) else { return nil }
+        }
 
         return Aisle(
             aisleNumber: (Double(near.row.number) + Double(far.row.number)) / 2.0,

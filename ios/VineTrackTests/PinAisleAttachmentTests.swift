@@ -323,6 +323,26 @@ struct PinAisleAttachmentTests {
         #expect(precise.pinRowNumber == 32)
     }
 
+    @Test func browsingEstimateUsesMappedInteriorButStillRejectsHeadlands() {
+        let block = eastwardBlock()
+        let strict = PinAisleGeometry.aisle(
+            containing: CLLocationCoordinate2D(latitude: -33.0, longitude: aisle32_5Longitude),
+            in: block,
+            horizontalAccuracyMetres: 8
+        )
+        let estimate = PinAisleGeometry.approximateAisle(
+            containing: CLLocationCoordinate2D(latitude: -33.0, longitude: aisle32_5Longitude),
+            in: block
+        )
+        let outside = PinAisleGeometry.approximateAisle(
+            containing: CLLocationCoordinate2D(latitude: northLat + 0.00001, longitude: aisle32_5Longitude),
+            in: block
+        )
+        #expect(strict == nil)
+        #expect(estimate?.aisleNumber == 32.5)
+        #expect(outside == nil)
+    }
+
     @Test func twoMetreUncertaintyNearARowCannotConfirmAThreeMetreAisle() {
         let metresPerDegreeLongitude = 111_320.0 * cos(-33.0 * .pi / 180.0)
         let nearRowLongitude = 149.0 + 0.2 / metresPerDegreeLongitude

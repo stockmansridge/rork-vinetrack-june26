@@ -166,6 +166,36 @@ object PinAisleGeometry {
         latitude: Double,
         longitude: Double,
         accuracyMetres: Double?,
+    ): Aisle? = resolveAisle(
+        paddock = paddock,
+        latitude = latitude,
+        longitude = longitude,
+        accuracyMetres = accuracyMetres,
+        requiresQualifiedAccuracy = true,
+    )
+
+    /**
+     * Browsing-only aisle estimate. It retains mapped-row containment, headland
+     * and width checks but is never capture evidence and must never be persisted.
+     */
+    fun approximateAisle(
+        paddock: Paddock?,
+        latitude: Double,
+        longitude: Double,
+    ): Aisle? = resolveAisle(
+        paddock = paddock,
+        latitude = latitude,
+        longitude = longitude,
+        accuracyMetres = null,
+        requiresQualifiedAccuracy = false,
+    )
+
+    private fun resolveAisle(
+        paddock: Paddock?,
+        latitude: Double,
+        longitude: Double,
+        accuracyMetres: Double?,
+        requiresQualifiedAccuracy: Boolean,
     ): Aisle? {
         val rows = paddock?.rows
             ?.filter { it.startPoint != null && it.endPoint != null }
@@ -222,7 +252,7 @@ object PinAisleGeometry {
 
         // The full uncertainty circle must remain between both bounding rows.
         // Merely being narrower than the whole aisle is insufficient near a row.
-        if (!uncertaintyFitsBetweenRows(accuracyMetres, nearDistance, farDistance)) return null
+        if (requiresQualifiedAccuracy && !uncertaintyFitsBetweenRows(accuracyMetres, nearDistance, farDistance)) return null
 
         return Aisle(
             aisleNumber = (nearNumber.toDouble() + farNumber.toDouble()) / 2.0,

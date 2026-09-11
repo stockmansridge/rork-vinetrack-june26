@@ -5,6 +5,8 @@ import Testing
 
 struct PinQueryPolicyTests {
     private func pin(
+        id: UUID = UUID(),
+        name: String = "Test",
         mode: PinMode = .repairs,
         stage: String? = nil,
         completed: Bool = false,
@@ -14,11 +16,12 @@ struct PinQueryPolicyTests {
         blockId: UUID? = UUID(uuidString: "00000000-0000-0000-0000-000000000010")!
     ) -> VinePin {
         VinePin(
+            id: id,
             vineyardId: vineyardId,
             latitude: -33.0,
             longitude: 149.0,
             heading: nil,
-            buttonName: "Test",
+            buttonName: name,
             buttonColor: "blue",
             side: nil,
             mode: mode,
@@ -81,6 +84,33 @@ struct PinQueryPolicyTests {
         #expect(completed.matches(done, isELRecord: true))
         #expect(both.matches(open, isELRecord: true))
         #expect(both.matches(done, isELRecord: true))
+    }
+
+    @Test func authoritativeELNamesStayOutOfIssueGrowthOptionsAndSelectionsAreCleaned() {
+        let elId = UUID(uuidString: "00000000-0000-0000-0000-000000000099")!
+        let pins = [
+            pin(name: "Broken post", mode: .repairs),
+            pin(name: "Canopy check", mode: .growth),
+            pin(id: elId, name: "E-L 12", mode: .growth)
+        ]
+        let names = PinQueryPolicy.ordinaryFilterNames(pins, authoritativeELPinIds: [elId])
+        #expect(names == ["Broken post", "Canopy check"])
+        #expect(PinQueryPolicy.cleanedNameSelection(["Broken post", "E-L 12"], availableNames: names) == ["Broken post"])
+    }
+
+    @Test func headingQualificationDoesNotDependOnRowAvailability() {
+        #expect(PinQueryPolicy.qualifiedHeading(45, isQualified: true) == 45)
+        #expect(PinQueryPolicy.qualifiedHeading(45, isQualified: false) == nil)
+        #expect(PinQueryPolicy.qualifiedHeading(.nan, isQualified: true) == nil)
+        let estimated = PinQueryPolicy.TravelContext(
+            vineyardId: UUID(),
+            blockId: UUID(),
+            row: 13.5,
+            heading: 45,
+            isEstimated: true
+        )
+        #expect(estimated.isEstimated)
+        #expect(estimated.heading == 45)
     }
 
     @Test func usableRowUsesAttachedOrRecordedSegmentsButNeverLegacyRow() {

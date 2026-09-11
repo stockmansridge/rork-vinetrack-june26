@@ -67,6 +67,24 @@ nonisolated enum PinQueryPolicy {
         return pin.rowSegments?.map(\.row).min().map(Double.init)
     }
 
+    /// Issue/Growth names backed by ordinary pin records. Authoritative E-L
+    /// records are excluded by identity, never by customer-editable title text.
+    static func ordinaryFilterNames(
+        _ pins: [VinePin],
+        authoritativeELPinIds: Set<UUID>
+    ) -> [String] {
+        Array(Set(pins.compactMap { pin in
+            guard pin.growthStageCode == nil,
+                  !authoritativeELPinIds.contains(pin.id) else { return nil }
+            let name = pin.buttonName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return name.isEmpty ? nil : name
+        })).sorted()
+    }
+
+    static func cleanedNameSelection(_ selection: Set<String>, availableNames: [String]) -> Set<String> {
+        selection.intersection(Set(availableNames))
+    }
+
     static func nearestRowOrdered(
         _ pins: [VinePin],
         currentRow: Double,
@@ -113,6 +131,23 @@ nonisolated enum PinQueryPolicy {
         let blockId: UUID
         let row: Double
         let heading: Double?
+        let isEstimated: Bool
+
+        init(vineyardId: UUID, blockId: UUID, row: Double, heading: Double?, isEstimated: Bool = false) {
+            self.vineyardId = vineyardId
+            self.blockId = blockId
+            self.row = row
+            self.heading = heading
+            self.isEstimated = isEstimated
+        }
+    }
+
+    /// Heading qualification is intentionally independent from row resolution:
+    /// losing mapped aisle evidence must not erase a fresh valid compass sample.
+    static func qualifiedHeading(_ heading: Double?, isQualified: Bool) -> Double? {
+        heading.flatMap { value in
+            isQualified && value.isFinite && value >= 0 && value < 360 ? value : nil
+        }
     }
 
     static func qualifiedTravelContext(
@@ -140,9 +175,7 @@ nonisolated enum PinQueryPolicy {
               let locationObservedAt,
               now.timeIntervalSince(locationObservedAt) >= 0,
               now.timeIntervalSince(locationObservedAt) <= freshness else { return nil }
-        let validHeading = heading.flatMap { value in
-            isHeadingQualified && value.isFinite && value >= 0 && value < 360 ? value : nil
-        }
+        let validHeading = qualifiedHeading(heading, isQualified: isHeadingQualified)
         return TravelContext(vineyardId: selectedVineyardId, blockId: blockId, row: row, heading: validHeading)
     }
 

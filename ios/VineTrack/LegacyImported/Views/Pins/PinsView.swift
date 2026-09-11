@@ -1,5 +1,6 @@
 import SwiftUI
 import MapKit
+import ImageIO
 
 struct PinsView: View {
     @Environment(MigratedDataStore.self) private var store
@@ -110,7 +111,7 @@ struct PinsView: View {
         return sourcePins.filter { pin in
             let isELRecord = pin.growthStageCode != nil || authoritativeELPinIds.contains(pin.id)
             if !season.contains(pin.timestamp) || !query.matches(pin, isELRecord: isELRecord) { return false }
-            if !selectedNames.isEmpty && !selectedNames.contains(pin.buttonName) { return false }
+            if !isELRecord && !selectedNames.isEmpty && !selectedNames.contains(pin.buttonName) { return false }
             if !selectedPaddockIds.isEmpty, let paddockId = pin.paddockId, !selectedPaddockIds.contains(paddockId) { return false }
             if !selectedPaddockIds.isEmpty && pin.paddockId == nil { return false }
             return true
@@ -125,57 +126,94 @@ struct PinsView: View {
             + (season.isAll ? 0 : 1)
     }
 
-    private var qualifiedTravelContext: PinQueryPolicy.TravelContext? {
-        guard let selectedVineyardId = store.selectedVineyardId,
-              let location = locationService.location else { return nil }
-        let heading = locationService.heading.flatMap { sample in
-            PinAisleGeometry.validHeading(
-                sample.trueHeading,
-                ageSeconds: contextNow.timeIntervalSince(sample.timestamp)
-            )
+    private var qualifiedHeading: Double? {
+        guard let sample = locationService.heading else { return nil }
+        return PinAisleGeometry.validHeading(
+            sample.trueHeading,
+            ageSeconds: contextNow.timeIntervalSince(sample.timestamp)
+        )
+    }
+
+    private var travelResolution: (context: PinQueryPolicy.TravelContext?, reason: String) {
+        guard let selectedVineyardId = store.selectedVineyardId else {
+            return (nil, "Select a vineyard")
         }
-        if let trip = tripTracking.activeTrip {
-            return PinQueryPolicy.qualifiedTravelContext(
+        guard let location = locationService.location else {
+            return (nil, "Waiting for a current GPS fix")
+        }
+        let locationAge = contextNow.timeIntervalSince(location.timestamp)
+        guard locationAge >= 0, locationAge <= LocationService.staleLocationThreshold,
+              location.horizontalAccuracy >= 0,
+              location.horizontalAccuracy <= LocationService.lowAccuracyThreshold else {
+            return (nil, "Current GPS fix is stale or not accurate enough")
+        }
+
+        // A retained but inactive trip must not suppress ordinary vineyard browsing.
+        if tripTracking.isTracking, let trip = tripTracking.activeTrip {
+            guard trip.vineyardId == selectedVineyardId else {
+                return (nil, "Active trip belongs to another vineyard")
+            }
+            let context = PinQueryPolicy.qualifiedTravelContext(
                 selectedVineyardId: selectedVineyardId,
                 contextVineyardId: trip.vineyardId,
                 blockId: tripTracking.currentPaddockId,
                 row: tripTracking.currentRowNumber,
-                isRowQualified: tripTracking.isTracking && tripTracking.rowGuidanceAvailable
+                isRowQualified: tripTracking.rowGuidanceAvailable
                     && tripTracking.diagLockConfidence >= 0.6
                     && tripTracking.diagLockedPaddockId == tripTracking.currentPaddockId,
                 rowConfirmedAt: tripTracking.diagLockConfirmedAt,
                 locationObservedAt: location.timestamp,
-                heading: heading,
-                isHeadingQualified: heading != nil,
+                heading: qualifiedHeading,
+                isHeadingQualified: qualifiedHeading != nil,
                 now: contextNow
             )
+            return (context, context == nil ? "Current trip row lock is not qualified" : "")
         }
 
-        guard let paddock = RowGuidance.paddock(for: location.coordinate, in: store.paddocks, fallbackRadius: 0),
-              let aisle = PinAisleGeometry.aisle(
-                containing: location.coordinate,
-                in: paddock,
-                horizontalAccuracyMetres: location.horizontalAccuracy
-              ) else { return nil }
-        return PinQueryPolicy.qualifiedTravelContext(
-            selectedVineyardId: selectedVineyardId,
-            contextVineyardId: selectedVineyardId,
-            blockId: paddock.id,
-            row: aisle.aisleNumber,
-            isRowQualified: true,
-            rowConfirmedAt: location.timestamp,
-            locationObservedAt: location.timestamp,
-            heading: heading,
-            isHeadingQualified: heading != nil,
-            now: contextNow
-        )
+        let vineyardPaddocks = store.paddocks.filter { $0.vineyardId == selectedVineyardId }
+        guard let paddock = RowGuidance.paddock(
+            for: location.coordinate,
+            in: vineyardPaddocks,
+            fallbackRadius: 0
+        ) else {
+            return (nil, "Current position is outside a supported block")
+        }
+        if let aisle = PinAisleGeometry.aisle(
+            containing: location.coordinate,
+            in: paddock,
+            horizontalAccuracyMetres: location.horizontalAccuracy
+        ) {
+            return (PinQueryPolicy.TravelContext(
+                vineyardId: selectedVineyardId,
+                blockId: paddock.id,
+                row: aisle.aisleNumber,
+                heading: qualifiedHeading
+            ), "")
+        }
+        if let aisle = PinAisleGeometry.approximateAisle(containing: location.coordinate, in: paddock) {
+            return (PinQueryPolicy.TravelContext(
+                vineyardId: selectedVineyardId,
+                blockId: paddock.id,
+                row: aisle.aisleNumber,
+                heading: qualifiedHeading,
+                isEstimated: true
+            ), "")
+        }
+        return (nil, "Mapped aisle geometry does not support this position")
     }
 
+    private var qualifiedTravelContext: PinQueryPolicy.TravelContext? { travelResolution.context }
+    private var rowUnavailableReason: String { travelResolution.reason }
+
     private var pinsTitle: String {
-        guard viewMode != .summary, let context = qualifiedTravelContext else { return "Pins" }
-        let row = String(format: "%.1f", context.row)
-        guard let heading = context.heading else { return "Pins • Row \(row)" }
-        return "Pins • Row \(row) • Facing \(PinAttachmentFormatter.compassAbbreviation(degrees: heading))"
+        guard viewMode != .summary else { return "Pins" }
+        let headingText = qualifiedHeading.map { "facing \(PinAttachmentFormatter.compassAbbreviation(degrees: $0))" }
+        guard let context = qualifiedTravelContext else {
+            return headingText.map { "Pins • \($0)" } ?? "Pins"
+        }
+        let prefix = context.isEstimated ? "Approx. row" : "Row"
+        return (["Pins • \(prefix) \(String(format: "%.1f", context.row))", headingText]
+            .compactMap { $0 }).joined(separator: " ")
     }
 
     private var nameColorMap: [String: String] {
@@ -189,7 +227,8 @@ struct PinsView: View {
     }
 
     private var uniqueNames: [String] {
-        Array(Set(sourcePins.map { $0.buttonName })).sorted()
+        let authoritativeELPinIds = Set(growthStageRecordSync.records.map { $0.pinId ?? $0.id })
+        return PinQueryPolicy.ordinaryFilterNames(sourcePins, authoritativeELPinIds: authoritativeELPinIds)
     }
 
     private var uniquePaddocks: [(id: UUID, name: String)] {
@@ -218,7 +257,12 @@ struct PinsView: View {
                     case .map:
                         PinsMapView(pins: filteredPins)
                     case .list:
-                        PinsListView(pins: filteredPins, sort: $listSort, travelContext: qualifiedTravelContext)
+                        PinsListView(
+                            pins: filteredPins,
+                            sort: $listSort,
+                            travelContext: qualifiedTravelContext,
+                            rowUnavailableReason: rowUnavailableReason
+                        )
                     case .summary:
                         PinsSummaryView(pins: filteredPins)
                     }
@@ -228,11 +272,22 @@ struct PinsView: View {
                     await growthStageRecordSync.syncForSelectedVineyard()
                 }
             }
-            .navigationTitle(pinsTitle)
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
         .onChange(of: store.selectedVineyardId) { _, _ in
             seasonSelection = .all
         }
+        .onChange(of: uniqueNames) { _, availableNames in
+            selectedNames = PinQueryPolicy.cleanedNameSelection(selectedNames, availableNames: availableNames)
+        }
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(pinsTitle)
+                        .font(.headline)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                }
                 ToolbarItem(placement: .topBarLeading) {
                     if canExport {
                         Button {
@@ -267,6 +322,7 @@ struct PinsView: View {
             }
             .background(Color(.systemGroupedBackground))
             .task {
+                locationService.startUpdating()
                 // Force a fresh pull on entry so growth-stage pins created
                 // on other devices appear without requiring a manual Sync.
                 await pinSync.syncPinsForSelectedVineyard()
@@ -1009,6 +1065,7 @@ struct PinsListView: View {
     let pins: [VinePin]
     @Binding var sort: PinsListSortOption
     let travelContext: PinQueryPolicy.TravelContext?
+    let rowUnavailableReason: String
     @Environment(MigratedDataStore.self) private var store
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(LocationService.self) private var locationService
@@ -1068,6 +1125,7 @@ struct PinsListView: View {
     private var effectiveSortLabel: String {
         if sort == .closest && locationFix == nil { return PinsListSortOption.newest.label }
         if sort == .nearestMyRow && qualifiedCurrentRow == nil { return "Nearest my row — unavailable" }
+        if sort == .nearestMyRow && travelContext?.isEstimated == true { return "Nearest my row — using estimate" }
         return sort.label
     }
 
@@ -1106,7 +1164,7 @@ struct PinsListView: View {
                 if locationFix == nil || qualifiedCurrentRow == nil {
                     Section {
                         if locationFix == nil { Text("Closest needs your location") }
-                        if qualifiedCurrentRow == nil { Text("Nearest my row needs a current qualified row lock") }
+                        if qualifiedCurrentRow == nil { Text("Nearest my row unavailable: \(rowUnavailableReason)") }
                     }
                 }
             } label: {
@@ -1298,6 +1356,7 @@ struct PinRowView: View {
     private var fmt: RegionFormatter { store.settings.regionFormatter }
     @State private var showFullPhoto: Bool = false
     @State private var loadedPhotoData: Data?
+    @State private var thumbnailImage: UIImage?
     @State private var isPhotoLoading: Bool = false
     @State private var photoLoadFailed: Bool = false
     @State private var loadedPhotoToken: String?
@@ -1316,14 +1375,26 @@ struct PinRowView: View {
         guard let pinId = photoTarget?.pinId else { return nil }
         return pinSync.attachmentRevision(pinId: pinId)
     }
-    private var photoToken: String { "\(photoPath ?? "none")|\(photoRevision?.uuidString ?? "remote")" }
+    private var photoToken: String {
+        "\(photoTarget?.pinId?.uuidString ?? "no-pin")|\(photoTarget?.growthRecordId?.uuidString ?? "no-growth")|\(photoPath ?? "none")|\(photoRevision?.uuidString ?? "remote")"
+    }
+    private var cachedPhotoData: Data? {
+        guard let target = photoTarget else { return nil }
+        if let pinId = target.pinId {
+            return SharedImageCache.shared.cachedImageData(for: .pinPhoto(vineyardId: target.vineyardId, pinId: pinId))
+        }
+        if let growthId = target.growthRecordId {
+            return SharedImageCache.shared.cachedImageData(for: .growthRecordPhoto(vineyardId: target.vineyardId, recordId: growthId))
+        }
+        return nil
+    }
     private var displayPhotoData: Data? {
         if let growthId = photoTarget?.growthRecordId,
            let data = growthStageRecordSync.localPhotoData(recordId: growthId) { return data }
         if let pinId = photoTarget?.pinId,
            let data = pinSync.localPhotoData(pinId: pinId) { return data }
         if loadedPhotoToken == photoToken, let loadedPhotoData { return loadedPhotoData }
-        return pin.photoData
+        return pin.photoData ?? cachedPhotoData
     }
 
     private var headingText: String {
@@ -1338,7 +1409,7 @@ struct PinRowView: View {
         case 202.5..<247.5: return "SW"
         case 247.5..<292.5: return "W"
         case 292.5..<337.5: return "NW"
-        default: return "N"
+        default: return "—"
         }
     }
 
@@ -1377,23 +1448,28 @@ struct PinRowView: View {
                 }
                 .buttonStyle(.plain)
 
-                if let photoData = displayPhotoData, let uiImage = UIImage(data: photoData) {
+                if let thumbnailImage {
                     Button { showFullPhoto = true } label: {
-                        Image(uiImage: uiImage)
+                        Image(uiImage: thumbnailImage)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
-                            .frame(width: 44, height: 44)
-                            .clipShape(.rect(cornerRadius: 6))
+                            .frame(width: 52, height: 52)
+                            .clipShape(.rect(cornerRadius: 8))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(.white.opacity(0.75), lineWidth: 1.5)
+                            }
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Open pin photo")
                     .padding(.leading, 10)
-                } else if photoPath != nil {
+                } else if photoPath != nil || photoRevision != nil {
                     Button { Task { await loadPhoto(force: true) } } label: {
                         Group {
                             if isPhotoLoading { ProgressView() }
                             else { Image(systemName: photoLoadFailed ? "arrow.clockwise" : "photo") }
                         }
-                        .frame(width: 44, height: 44)
+                        .frame(width: 52, height: 52)
                     }
                     .accessibilityLabel(photoLoadFailed ? "Retry photo" : "Load photo")
                     .padding(.leading, 10)
@@ -1489,6 +1565,7 @@ struct PinRowView: View {
                     icon: pin.isCompleted ? "arrow.uturn.backward" : "checkmark.circle",
                     label: pin.isCompleted ? "Undo" : "Complete",
                     color: pin.isCompleted ? .orange : VineyardTheme.leafGreen,
+                    foreground: pin.isCompleted ? .black : .white,
                     action: onComplete
                 )
                 if canDelete {
@@ -1499,10 +1576,10 @@ struct PinRowView: View {
             .padding(.top, 2)
         }
         .padding(.vertical, 6)
-        .opacity(pin.isCompleted ? 0.7 : 1)
         .task(id: photoToken) {
             loadedPhotoData = nil
             loadedPhotoToken = nil
+            thumbnailImage = nil
             await loadPhoto(force: false)
         }
         .fullScreenCover(isPresented: $showFullPhoto) {
@@ -1513,10 +1590,14 @@ struct PinRowView: View {
     }
 
     private func loadPhoto(force: Bool) async {
-        guard let path = photoPath, let target = photoTarget else { return }
-        if photoRevision != nil { return }
-        if !force, loadedPhotoToken == photoToken, loadedPhotoData != nil { return }
+        guard let target = photoTarget else { return }
         let requestedToken = photoToken
+        if !force, let localData = displayPhotoData {
+            thumbnailImage = await Self.downsampledThumbnail(from: localData)
+            loadedPhotoToken = requestedToken
+            return
+        }
+        guard photoRevision == nil, let path = photoPath else { return }
         isPhotoLoading = true
         photoLoadFailed = false
         do {
@@ -1529,14 +1610,35 @@ struct PinRowView: View {
             } else {
                 data = nil
             }
+            let thumbnail: UIImage?
+            if let data {
+                thumbnail = await Self.downsampledThumbnail(from: data)
+            } else {
+                thumbnail = nil
+            }
             if requestedToken == photoToken {
                 loadedPhotoData = data
                 loadedPhotoToken = requestedToken
+                thumbnailImage = thumbnail
             }
         } catch {
             if requestedToken == photoToken { photoLoadFailed = true }
         }
         if requestedToken == photoToken { isPhotoLoading = false }
+    }
+
+    nonisolated private static func downsampledThumbnail(from data: Data) async -> UIImage? {
+        await Task.detached(priority: .utility) {
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 160,
+                kCGImageSourceShouldCacheImmediately: true
+            ]
+            guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+            return UIImage(cgImage: image)
+        }.value
     }
 }
 
@@ -1596,14 +1698,8 @@ struct ActionButton: View {
     let icon: String
     let label: String
     let color: Color
+    var foreground: Color = .white
     let action: () -> Void
-    @Environment(\.colorScheme) private var colorScheme
-
-    /// In dark mode the raw palette colours (especially leaf green) are too dim
-    /// against a near-black background, so brighten the icon/label tint.
-    private var tint: Color {
-        colorScheme == .dark ? color.mix(with: .white, by: 0.35) : color
-    }
 
     var body: some View {
         Button(action: action) {
@@ -1611,15 +1707,11 @@ struct ActionButton: View {
                 Image(systemName: icon)
                     .font(.system(size: 16))
                 Text(label)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: 9, weight: .bold))
             }
-            .foregroundStyle(tint)
-            .frame(width: 64, height: 40)
-            .background(color.opacity(colorScheme == .dark ? 0.28 : 0.1), in: .rect(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(tint.opacity(colorScheme == .dark ? 0.4 : 0), lineWidth: 1)
-            )
+            .foregroundStyle(foreground)
+            .frame(width: 64, height: 46)
+            .background(color, in: .rect(cornerRadius: 9))
         }
         .buttonStyle(.plain)
     }
@@ -1943,7 +2035,7 @@ struct PinDetailSheet: View {
         case 202.5..<247.5: return "SW"
         case 247.5..<292.5: return "W"
         case 292.5..<337.5: return "NW"
-        default: return "N"
+        default: return "—"
         }
     }
 
@@ -1997,7 +2089,8 @@ struct PinDetailSheet: View {
                         ActionButton(
                             icon: pin.isCompleted ? "arrow.uturn.backward" : "checkmark.circle",
                             label: pin.isCompleted ? "Undo" : "Complete",
-                            color: pin.isCompleted ? .orange : VineyardTheme.leafGreen
+                            color: pin.isCompleted ? .orange : VineyardTheme.leafGreen,
+                            foreground: pin.isCompleted ? .black : .white
                         ) {
                             toggleCompletion()
                             dismiss()

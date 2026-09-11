@@ -422,6 +422,18 @@ class PinAisleAttachmentTest {
     }
 
     @Test
+    fun `browsing estimate uses mapped interior but still rejects headlands`() {
+        val block = eastwardBlock()
+        val longitude = aisle32_5Longitude()
+        val strict = PinAisleGeometry.aisleContaining(block, -33.0, longitude, 8.0)
+        val estimate = PinAisleGeometry.approximateAisle(block, -33.0, longitude)
+        val outside = PinAisleGeometry.approximateAisle(block, northLat + 0.00001, longitude)
+        assertNull(strict)
+        assertEquals(32.5, estimate?.aisleNumber ?: -1.0, 1e-9)
+        assertNull(outside)
+    }
+
+    @Test
     fun `two metre uncertainty near a row cannot confirm a three metre aisle`() {
         val block = threeMetreAisleBlock()
         val metresPerDegreeLongitude = 111_320.0 * kotlin.math.cos(-33.0 * Math.PI / 180.0)

@@ -11,6 +11,7 @@ import org.junit.Test
 class PinQueryPolicyTest {
     private fun pin(
         id: String,
+        name: String = id,
         mode: String? = "Repairs",
         stage: String? = null,
         completed: Boolean = false,
@@ -21,6 +22,7 @@ class PinQueryPolicyTest {
     ): Pin = Pin(
         id = id,
         vineyardId = vineyardId,
+        buttonName = name,
         mode = mode,
         growthStageCode = stage,
         paddockId = blockId,
@@ -62,6 +64,26 @@ class PinQueryPolicyTest {
         assertFalse(PinQueryPolicy.matches(unknown, PinQueryFilter(categories = setOf(PinCategoryFilter.GROWTH)), isElRecord = true))
         assertTrue(PinQueryPolicy.matches(unknown, PinQueryFilter(categories = setOf(PinCategoryFilter.GROWTH), includesElStages = true), isElRecord = true))
         assertFalse(PinQueryPolicy.matches(unknown, PinQueryFilter(categories = setOf(PinCategoryFilter.GROWTH), includesElStages = true, selectedElStageCodes = setOf("EL12")), isElRecord = true))
+    }
+
+    @Test fun `authoritative EL names stay out of issue growth options and stale selections are cleaned`() {
+        val pins = listOf(
+            pin("repair", name = "Broken post"),
+            pin("growth", name = "Canopy check", mode = "Growth"),
+            pin("el-id", name = "E-L 12", mode = "Growth"),
+        )
+        val names = PinQueryPolicy.ordinaryFilterNames(pins, setOf("el-id"))
+        assertEquals(listOf("Broken post", "Canopy check"), names)
+        assertEquals(setOf("Broken post"), PinQueryPolicy.cleanedNameSelection(setOf("Broken post", "E-L 12"), names))
+    }
+
+    @Test fun `heading qualification remains independent from row availability`() {
+        assertEquals(45.0, PinQueryPolicy.qualifiedHeading(45.0, true)!!, 0.0)
+        assertNull(PinQueryPolicy.qualifiedHeading(45.0, false))
+        assertNull(PinQueryPolicy.qualifiedHeading(Double.NaN, true))
+        val estimated = PinQueryPolicy.TravelContext("vineyard", "block", 13.5, 45.0, isEstimated = true)
+        assertTrue(estimated.isEstimated)
+        assertEquals(45.0, estimated.heading!!, 0.0)
     }
 
     @Test fun `usable row uses attached or segments but never legacy row`() {
