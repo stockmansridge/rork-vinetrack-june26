@@ -453,6 +453,70 @@ struct PaddockSyncSafetyTests {
         #expect(Set(onDisk.map { $0.id }) == Set([blockA.id, blockB.id]))
     }
 
+    @Test("Mixed block batch publishes memory and relationship cleanup only after its cache write succeeds")
+    func mixedBatchWriteFailureIsAtomicAndRetryable() throws {
+        let env = makeEnv()
+        defer { try? FileManager.default.removeItem(at: env.directory) }
+        let vineyard = UUID()
+        env.store.selectedVineyardId = vineyard
+
+        let deleted = backendPaddock(vineyardId: vineyard, name: "Deleted block").toPaddock()
+        let retained = backendPaddock(vineyardId: vineyard, name: "Retained block").toPaddock()
+        env.store.applyRemotePaddockUpsert(deleted)
+        env.store.applyRemotePaddockUpsert(retained)
+
+        let pin = VinePin(
+            vineyardId: vineyard,
+            latitude: -33.1,
+            longitude: 149.1,
+            heading: nil,
+            buttonName: "Broken Post",
+            buttonColor: "brown",
+            side: nil,
+            mode: .repairs,
+            paddockId: deleted.id
+        )
+        env.store.addPin(pin)
+        let trip = Trip(vineyardId: vineyard, paddockId: deleted.id, paddockIds: [deleted.id, retained.id])
+        env.store.startTrip(trip)
+        let workTaskLink = WorkTaskPaddock(
+            workTaskId: UUID(),
+            vineyardId: vineyard,
+            paddockId: deleted.id
+        )
+        env.store.addWorkTaskPaddock(workTaskLink)
+
+        let upserted = backendPaddock(vineyardId: vineyard, name: "New remote block").toPaddock()
+        let preservedDirectory = env.directory.deletingLastPathComponent()
+            .appendingPathComponent("\(env.directory.lastPathComponent)-preserved")
+        try FileManager.default.moveItem(at: env.directory, to: preservedDirectory)
+        FileManager.default.createFile(atPath: env.directory.path, contents: Data())
+
+        #expect(throws: (any Error).self) {
+            try env.store.applyRemotePaddockChangesBatch(upserts: [upserted], deleteIds: [deleted.id])
+        }
+
+        #expect(Set(env.store.paddocks.map(\.id)) == Set([deleted.id, retained.id]))
+        #expect(env.store.pins.first { $0.id == pin.id }?.paddockId == deleted.id)
+        #expect(env.store.trips.first { $0.id == trip.id }?.paddockId == deleted.id)
+        #expect(env.store.trips.first { $0.id == trip.id }?.paddockIds == [deleted.id, retained.id])
+        #expect(env.store.workTaskPaddocks.contains { $0.id == workTaskLink.id })
+        let preservedPersistence = PersistenceStore(directory: preservedDirectory)
+        let preservedBlocks: [Paddock] = preservedPersistence.load(key: "vinetrack_paddocks") ?? []
+        #expect(Set(preservedBlocks.map(\.id)) == Set([deleted.id, retained.id]))
+
+        try FileManager.default.removeItem(at: env.directory)
+        try FileManager.default.moveItem(at: preservedDirectory, to: env.directory)
+        try env.store.applyRemotePaddockChangesBatch(upserts: [upserted], deleteIds: [deleted.id])
+
+        #expect(Set(env.store.paddocks.map(\.id)) == Set([retained.id, upserted.id]))
+        #expect(env.store.persistedPaddockIds(for: vineyard) == Set([retained.id, upserted.id]))
+        #expect(env.store.pins.first { $0.id == pin.id }?.paddockId == nil)
+        #expect(env.store.trips.first { $0.id == trip.id }?.paddockId == nil)
+        #expect(env.store.trips.first { $0.id == trip.id }?.paddockIds == [retained.id])
+        #expect(!env.store.workTaskPaddocks.contains { $0.id == workTaskLink.id })
+    }
+
     @Test("A persistence failure during recovery fails the sync and keeps the watermark")
     func persistenceFailureDuringRecoveryFailsTheSync() async throws {
         let env = makeEnv()

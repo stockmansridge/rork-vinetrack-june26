@@ -1012,11 +1012,6 @@ final class MigratedDataStore {
     /// retained, while server-originated changes never re-enter the dirty queue.
     func applyRemotePaddockChangesBatch(upserts incoming: [Paddock], deleteIds: Set<UUID>) throws {
         guard !incoming.isEmpty || !deleteIds.isEmpty else { return }
-        for paddockId in deleteIds {
-            clearPaddockLinkOnPins(paddockId: paddockId, propagate: false)
-            clearPaddockLinkOnTrips(paddockId: paddockId, propagate: false)
-            removeWorkTaskPaddockLinks(paddockId: paddockId, propagate: false)
-        }
         var all: [Paddock] = loadAllPaddocksFromDisk()
         if let selected = selectedVineyardId {
             // The in-memory slice for the selected vineyard is authoritative
@@ -1025,9 +1020,10 @@ final class MigratedDataStore {
             all.append(contentsOf: paddocks)
         }
         all.removeAll { deleteIds.contains($0.id) }
-        paddocks.removeAll { deleteIds.contains($0.id) }
+        var stagedPaddocks = paddocks
+        stagedPaddocks.removeAll { deleteIds.contains($0.id) }
         var allIndex = Dictionary(uniqueKeysWithValues: all.indices.map { (all[$0].id, $0) })
-        var memoryIndex = Dictionary(uniqueKeysWithValues: paddocks.indices.map { (paddocks[$0].id, $0) })
+        var memoryIndex = Dictionary(uniqueKeysWithValues: stagedPaddocks.indices.map { (stagedPaddocks[$0].id, $0) })
         for paddock in incoming {
             if let idx = allIndex[paddock.id] {
                 all[idx] = paddock
@@ -1037,14 +1033,21 @@ final class MigratedDataStore {
             }
             if selectedVineyardId == paddock.vineyardId {
                 if let memIdx = memoryIndex[paddock.id] {
-                    paddocks[memIdx] = paddock
+                    stagedPaddocks[memIdx] = paddock
                 } else {
-                    memoryIndex[paddock.id] = paddocks.count
-                    paddocks.append(paddock)
+                    memoryIndex[paddock.id] = stagedPaddocks.count
+                    stagedPaddocks.append(paddock)
                 }
             }
         }
         try persistence.saveOrThrow(all, key: Keys.paddocks)
+
+        paddocks = stagedPaddocks
+        for paddockId in deleteIds {
+            clearPaddockLinkOnPins(paddockId: paddockId, propagate: false)
+            clearPaddockLinkOnTrips(paddockId: paddockId, propagate: false)
+            removeWorkTaskPaddockLinks(paddockId: paddockId, propagate: false)
+        }
     }
 
     func applyRemotePaddockUpsertsBatch(_ incoming: [Paddock]) throws {
