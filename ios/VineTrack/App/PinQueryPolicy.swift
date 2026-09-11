@@ -20,10 +20,13 @@ nonisolated struct PinQueryFilter: Sendable {
     var selectedELStageCodes: Set<String> = []
     var completion: PinCompletionFilter = .notDone
 
-    func matches(_ pin: VinePin) -> Bool {
-        let stageCode = PinQueryPolicy.normalizedELCode(pin.growthStageCode)
-        if let stageCode {
+    func matches(_ pin: VinePin, isELRecord: Bool? = nil) -> Bool {
+        let hasAuthoritativeELIdentity = isELRecord ?? (pin.growthStageCode != nil)
+        if hasAuthoritativeELIdentity {
             guard includesELStages else { return false }
+            guard let stageCode = PinQueryPolicy.normalizedELCode(pin.growthStageCode) else {
+                return selectedELStageCodes.isEmpty
+            }
             if !selectedELStageCodes.isEmpty, !selectedELStageCodes.contains(stageCode) { return false }
         } else {
             let category: PinCategoryFilter
@@ -43,6 +46,10 @@ nonisolated struct PinQueryFilter: Sendable {
 }
 
 nonisolated enum PinQueryPolicy {
+    static func categories(for selection: PinCategoryFilter?) -> Set<PinCategoryFilter> {
+        selection.map { [$0] } ?? Set(PinCategoryFilter.allCases)
+    }
+
     static func normalizedELCode(_ value: String?) -> String? {
         guard let code = value?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
               !code.isEmpty,
@@ -55,8 +62,17 @@ nonisolated enum PinQueryPolicy {
         return pin.rowSegments?.map(\.row).min().map(Double.init)
     }
 
-    static func nearestRowOrdered(_ pins: [VinePin], currentRow: Double) -> [VinePin] {
-        pins.enumerated().sorted { lhs, rhs in
+    static func nearestRowOrdered(
+        _ pins: [VinePin],
+        currentRow: Double,
+        currentVineyardId: UUID,
+        currentBlockId: UUID,
+        blockNames: [UUID: String]
+    ) -> [VinePin] {
+        let indexed = pins.enumerated()
+        let currentBlock = indexed.filter {
+            $0.element.vineyardId == currentVineyardId && $0.element.paddockId == currentBlockId
+        }.sorted { lhs, rhs in
             switch (usableRow(lhs.element), usableRow(rhs.element)) {
             case let (left?, right?):
                 let leftDistance = abs(left - currentRow)
@@ -66,20 +82,63 @@ nonisolated enum PinQueryPolicy {
             case (nil, _?): return false
             case (nil, nil): return lhs.offset < rhs.offset
             }
-        }.map(\.element)
+        }
+        let otherBlocks = indexed.filter {
+            !($0.element.vineyardId == currentVineyardId && $0.element.paddockId == currentBlockId)
+        }.sorted { lhs, rhs in
+            if lhs.element.vineyardId != rhs.element.vineyardId {
+                return lhs.element.vineyardId.uuidString < rhs.element.vineyardId.uuidString
+            }
+            let leftName = lhs.element.paddockId.flatMap { blockNames[$0] } ?? "\u{10FFFF}"
+            let rightName = rhs.element.paddockId.flatMap { blockNames[$0] } ?? "\u{10FFFF}"
+            let blockComparison = leftName.localizedStandardCompare(rightName)
+            if blockComparison != .orderedSame { return blockComparison == .orderedAscending }
+            switch (usableRow(lhs.element), usableRow(rhs.element)) {
+            case let (left?, right?) where left != right: return left < right
+            case (_?, nil): return true
+            case (nil, _?): return false
+            default: return lhs.offset < rhs.offset
+            }
+        }
+        return (currentBlock + otherBlocks).map(\.element)
+    }
+
+    struct TravelContext: Equatable, Sendable {
+        let vineyardId: UUID
+        let blockId: UUID
+        let row: Double
+        let heading: Double?
     }
 
     static func qualifiedTravelContext(
+        selectedVineyardId: UUID?,
+        contextVineyardId: UUID?,
+        blockId: UUID?,
         row: Double?,
         isRowQualified: Bool,
+        rowConfirmedAt: Date?,
+        locationObservedAt: Date?,
         heading: Double?,
-        isHeadingQualified: Bool
-    ) -> (row: Double, heading: Double?)? {
-        guard isRowQualified, let row, row.isFinite else { return nil }
+        isHeadingQualified: Bool,
+        now: Date = Date(),
+        freshness: TimeInterval = 10
+    ) -> TravelContext? {
+        guard let selectedVineyardId,
+              contextVineyardId == selectedVineyardId,
+              let blockId,
+              isRowQualified,
+              let row,
+              row.isFinite,
+              let rowConfirmedAt,
+              now.timeIntervalSince(rowConfirmedAt) >= 0,
+              now.timeIntervalSince(rowConfirmedAt) <= freshness,
+              let locationObservedAt,
+              now.timeIntervalSince(locationObservedAt) >= 0,
+              now.timeIntervalSince(locationObservedAt) <= freshness else { return nil }
         let validHeading = heading.flatMap { value in
             isHeadingQualified && value.isFinite && value >= 0 && value < 360 ? value : nil
         }
-        return (row, validHeading)
+        return TravelContext(vineyardId: selectedVineyardId, blockId: blockId, row: row, heading: validHeading)
     }
 
     static func rowOrdered(_ pins: [VinePin], blockNames: [UUID: String]) -> [VinePin] {

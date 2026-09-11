@@ -634,6 +634,8 @@ data class AppUiState(
     val latestSpeedMetresPerSecond: Double? = null,
     /** Latest horizontal accuracy (m) during the active trip. */
     val latestAccuracyMetres: Double? = null,
+    /** Wall-clock timestamp of the GPS sample backing the live Pins context. */
+    val latestMovementObservedAtMs: Long? = null,
     /** Selected trip block that currently contains the live GPS fix. */
     val currentTripPaddockId: String? = null,
     /** Live driving path (X.5) the operator is locked onto, if confident geometry exists. */
@@ -8145,6 +8147,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 latestBearingDegrees = null,
                 latestSpeedMetresPerSecond = null,
                 latestAccuracyMetres = null,
+                latestMovementObservedAtMs = null,
                 currentTripPaddockId = null,
                 currentDrivingPathNumber = null,
                 rowLockConfidence = 0.0,
@@ -8198,9 +8201,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         _ui.update {
             it.copy(
-                latestBearingDegrees = sample.bearingDegrees ?: it.latestBearingDegrees,
-                latestSpeedMetresPerSecond = sample.speedMetresPerSecond ?: it.latestSpeedMetresPerSecond,
-                latestAccuracyMetres = sample.accuracyMetres ?: it.latestAccuracyMetres,
+                latestBearingDegrees = sample.bearingDegrees,
+                latestSpeedMetresPerSecond = sample.speedMetresPerSecond,
+                latestAccuracyMetres = sample.accuracyMetres,
+                latestMovementObservedAtMs = sample.timestampMs,
                 currentTripPaddockId = resolution?.paddock?.id,
                 currentDrivingPathNumber = rowLockTracker.drivingPathNumber,
                 rowLockConfidence = rowLockTracker.confidence,
@@ -8217,6 +8221,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 latestBearingDegrees = null,
                 latestSpeedMetresPerSecond = null,
                 latestAccuracyMetres = null,
+                latestMovementObservedAtMs = null,
                 currentTripPaddockId = null,
                 currentDrivingPathNumber = null,
                 rowLockConfidence = 0.0,

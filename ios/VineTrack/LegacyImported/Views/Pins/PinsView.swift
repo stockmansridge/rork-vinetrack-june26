@@ -20,7 +20,8 @@ struct PinsView: View {
         _viewMode = State(initialValue: initialViewMode)
     }
 
-    @State private var selectedCategories: Set<PinCategoryFilter> = Set(PinCategoryFilter.allCases)
+    @State private var selectedCategory: PinCategoryFilter?
+    @State private var contextNow: Date = Date()
     /// E-L records remain explicitly excluded until enabled, even while All is selected.
     @State private var showsELGrowthPins: Bool = false
     @State private var selectedELStageCodes: Set<String> = []
@@ -99,14 +100,16 @@ struct PinsView: View {
 
     private var filteredPins: [VinePin] {
         let season = season
+        let authoritativeELPinIds = Set(growthStageRecordSync.records.map { $0.pinId ?? $0.id })
         let query = PinQueryFilter(
-            categories: selectedCategories,
+            categories: PinQueryPolicy.categories(for: selectedCategory),
             includesELStages: showsELGrowthPins,
             selectedELStageCodes: selectedELStageCodes,
             completion: completionFilter
         )
         return sourcePins.filter { pin in
-            if !season.contains(pin.timestamp) || !query.matches(pin) { return false }
+            let isELRecord = pin.growthStageCode != nil || authoritativeELPinIds.contains(pin.id)
+            if !season.contains(pin.timestamp) || !query.matches(pin, isELRecord: isELRecord) { return false }
             if !selectedNames.isEmpty && !selectedNames.contains(pin.buttonName) { return false }
             if !selectedPaddockIds.isEmpty, let paddockId = pin.paddockId, !selectedPaddockIds.contains(paddockId) { return false }
             if !selectedPaddockIds.isEmpty && pin.paddockId == nil { return false }
@@ -122,16 +125,20 @@ struct PinsView: View {
             + (season.isAll ? 0 : 1)
     }
 
-    private var qualifiedTravelContext: (row: Double, heading: Double?)? {
-        let lockIsFresh = tripTracking.diagLockConfirmedAt.map { Date().timeIntervalSince($0) <= 10 } ?? false
+    private var qualifiedTravelContext: PinQueryPolicy.TravelContext? {
         let location = locationService.location
-        let locationIsFresh = location.map { abs($0.timestamp.timeIntervalSinceNow) <= 10 } ?? false
         return PinQueryPolicy.qualifiedTravelContext(
+            selectedVineyardId: store.selectedVineyardId,
+            contextVineyardId: tripTracking.activeTrip?.vineyardId,
+            blockId: tripTracking.currentPaddockId,
             row: tripTracking.currentRowNumber,
             isRowQualified: tripTracking.isTracking && tripTracking.rowGuidanceAvailable
-                && tripTracking.diagLockConfidence >= 0.6 && lockIsFresh,
+                && tripTracking.diagLockConfidence >= 0.6,
+            rowConfirmedAt: tripTracking.diagLockConfirmedAt,
+            locationObservedAt: location?.timestamp,
             heading: location?.course,
-            isHeadingQualified: locationIsFresh && (location?.speed ?? -1) >= 0.5 && (location?.course ?? -1) >= 0
+            isHeadingQualified: (location?.speed ?? -1) >= 0.5 && (location?.course ?? -1) >= 0,
+            now: contextNow
         )
     }
 
@@ -182,7 +189,7 @@ struct PinsView: View {
                     case .map:
                         PinsMapView(pins: filteredPins)
                     case .list:
-                        PinsListView(pins: filteredPins, sort: $listSort)
+                        PinsListView(pins: filteredPins, sort: $listSort, travelContext: qualifiedTravelContext)
                     case .summary:
                         PinsSummaryView(pins: filteredPins)
                     }
@@ -236,6 +243,12 @@ struct PinsView: View {
                 await pinSync.syncPinsForSelectedVineyard()
                 await growthStageRecordSync.syncForSelectedVineyard()
             }
+            .task {
+                while !Task.isCancelled {
+                    contextNow = Date()
+                    try? await Task.sleep(for: .seconds(1))
+                }
+            }
             .sheet(isPresented: $showFilterSheet) {
                 PinFilterSheet(
                     selectedNames: $selectedNames,
@@ -258,16 +271,12 @@ struct PinsView: View {
     private var filterBar: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
-                FilterChip(title: "All", isSelected: selectedCategories == Set(PinCategoryFilter.allCases)) {
-                    selectedCategories = Set(PinCategoryFilter.allCases)
+                FilterChip(title: "All", isSelected: selectedCategory == nil) {
+                    selectedCategory = nil
                 }
                 ForEach(PinCategoryFilter.allCases, id: \.self) { category in
-                    FilterChip(title: category.label, isSelected: selectedCategories.contains(category)) {
-                        if selectedCategories.contains(category) {
-                            selectedCategories.remove(category)
-                        } else {
-                            selectedCategories.insert(category)
-                        }
+                    FilterChip(title: category.label, isSelected: selectedCategory == category) {
+                        selectedCategory = category
                     }
                 }
                 FilterChip(title: "EL Stages", isSelected: showsELGrowthPins) {
@@ -970,6 +979,7 @@ struct PinsMapView: View {
 struct PinsListView: View {
     let pins: [VinePin]
     @Binding var sort: PinsListSortOption
+    let travelContext: PinQueryPolicy.TravelContext?
     @Environment(MigratedDataStore.self) private var store
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(LocationService.self) private var locationService
@@ -1001,8 +1011,14 @@ struct PinsListView: View {
             guard let user = locationFix else { return pins }
             return pins.sorted { distanceMetres($0, from: user) < distanceMetres($1, from: user) }
         case .nearestMyRow:
-            guard let row = qualifiedCurrentRow else { return pins }
-            return PinQueryPolicy.nearestRowOrdered(pins, currentRow: row)
+            guard let travelContext else { return pins }
+            return PinQueryPolicy.nearestRowOrdered(
+                pins,
+                currentRow: travelContext.row,
+                currentVineyardId: travelContext.vineyardId,
+                currentBlockId: travelContext.blockId,
+                blockNames: Dictionary(uniqueKeysWithValues: store.paddocks.map { ($0.id, $0.name) })
+            )
         case .row:
             return PinQueryPolicy.rowOrdered(
                 pins,
@@ -1018,20 +1034,11 @@ struct PinsListView: View {
         return user.distance(from: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude))
     }
 
-    private var qualifiedCurrentRow: Double? {
-        let lockIsFresh = tripTracking.diagLockConfirmedAt.map { Date().timeIntervalSince($0) <= 10 } ?? false
-        return PinQueryPolicy.qualifiedTravelContext(
-            row: tripTracking.currentRowNumber,
-            isRowQualified: tripTracking.isTracking && tripTracking.rowGuidanceAvailable
-                && tripTracking.diagLockConfidence >= 0.6 && lockIsFresh,
-            heading: nil,
-            isHeadingQualified: false
-        )?.row
-    }
+    private var qualifiedCurrentRow: Double? { travelContext?.row }
 
     private var effectiveSortLabel: String {
         if sort == .closest && locationFix == nil { return PinsListSortOption.newest.label }
-        if sort == .nearestMyRow && qualifiedCurrentRow == nil { return PinsListSortOption.newest.label }
+        if sort == .nearestMyRow && qualifiedCurrentRow == nil { return "Nearest my row — unavailable" }
         return sort.label
     }
 
@@ -1730,9 +1737,12 @@ struct PinDetailSheet: View {
     @Environment(PinSyncService.self) private var pinSync
     @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     private var canDelete: Bool { accessControl.canDeleteOperationalRecords }
     @State private var notesDraft: String = ""
     @State private var hasLoadedNotes: Bool = false
+    @State private var lastSavedNotes: String = ""
+    @State private var notesSaveError: String?
     @State private var showDirections: Bool = false
     @State private var showPhotoPicker: Bool = false
     @State private var showFullPhoto: Bool = false
@@ -2097,11 +2107,14 @@ struct PinDetailSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button("Done") {
+                        if flushPendingNotes() { dismiss() }
+                    }
                 }
             }
             .onAppear {
                 notesDraft = currentPin.notes ?? ""
+                lastSavedNotes = notesDraft
                 hasLoadedNotes = true
                 Task {
                     await loadMemberDirectory()
@@ -2109,19 +2122,33 @@ struct PinDetailSheet: View {
                 }
             }
             .task(id: notesDraft) {
-                guard hasLoadedNotes, notesDraft != (currentPin.notes ?? "") else { return }
+                guard hasLoadedNotes, notesDraft != lastSavedNotes else { return }
                 try? await Task.sleep(for: .milliseconds(450))
                 guard !Task.isCancelled else { return }
-                saveNotes(notesDraft)
+                _ = flushPendingNotes()
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase != .active { _ = flushPendingNotes() }
+            }
+            .onChange(of: store.selectedVineyardId) { _, _ in
+                _ = flushPendingNotes()
             }
             .onDisappear {
-                guard hasLoadedNotes, notesDraft != (currentPin.notes ?? "") else { return }
-                saveNotes(notesDraft)
+                _ = flushPendingNotes()
             }
             .task(id: currentPhotoToken) {
                 loadedPhotoData = nil
                 loadedPhotoToken = nil
                 await loadPhotoIfNeeded(force: false)
+            }
+            .alert("Notes not saved", isPresented: Binding(
+                get: { notesSaveError != nil },
+                set: { if !$0 { notesSaveError = nil } }
+            )) {
+                Button("Retry") { _ = flushPendingNotes() }
+                Button("Keep Editing", role: .cancel) { notesSaveError = nil }
+            } message: {
+                Text(notesSaveError ?? "Your text is still here. Retry when device storage is available.")
             }
             .alert("Photo not saved", isPresented: Binding(
                 get: { photoSaveError != nil },
@@ -2192,10 +2219,22 @@ struct PinDetailSheet: View {
         }
     }
 
-    private func saveNotes(_ text: String) {
-        var updated = currentPin
-        updated.notes = text.isEmpty ? nil : text
-        store.updatePin(updated)
+    @discardableResult
+    private func flushPendingNotes() -> Bool {
+        guard hasLoadedNotes, notesDraft != lastSavedNotes else { return true }
+        do {
+            try store.updatePinNotesDurably(
+                pinId: pin.id,
+                vineyardId: pin.vineyardId,
+                notes: notesDraft.isEmpty ? nil : notesDraft
+            )
+            lastSavedNotes = notesDraft
+            notesSaveError = nil
+            return true
+        } catch {
+            notesSaveError = "Your notes could not be saved to this device. Your text has been retained; retry before closing."
+            return false
+        }
     }
 
     private func toggleCompletion() {

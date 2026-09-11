@@ -854,6 +854,18 @@ final class MigratedDataStore {
         onPinChanged?(item.id)
     }
 
+    /// Durably updates only notes for the original pin/vineyard identity. The
+    /// repository merges onto the latest cached row, so unrelated newer fields
+    /// cannot be replaced by an older detail-sheet snapshot.
+    func updatePinNotesDurably(pinId: UUID, vineyardId: UUID, notes: String?) throws {
+        let updated = try pinRepo.updateNotesDurably(pinId: pinId, vineyardId: vineyardId, notes: notes)
+        if selectedVineyardId == vineyardId,
+           let index = pins.firstIndex(where: { $0.id == pinId && $0.vineyardId == vineyardId }) {
+            pins[index] = updated
+        }
+        onPinChanged?(pinId)
+    }
+
     func deletePin(_ pinId: UUID) {
         guard let vineyardId = selectedVineyardId,
               let pin = pins.first(where: { $0.id == pinId }) else { return }

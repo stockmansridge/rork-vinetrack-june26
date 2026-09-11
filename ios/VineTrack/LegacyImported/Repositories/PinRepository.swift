@@ -16,6 +16,7 @@ final class PinRepository {
 
     enum CacheReadError: Error {
         case unreadable(Error)
+        case pinNotFound
     }
 
     func loadAll() -> [VinePin] {
@@ -45,6 +46,18 @@ final class PinRepository {
         all.removeAll { $0.vineyardId == vineyardId }
         all.append(contentsOf: items)
         persistence.save(all, key: Self.storageKey)
+    }
+
+    /// Updates only notes on the originally-bound pin and vineyard, preserving
+    /// every newer field from the durable cache and reporting write failures.
+    func updateNotesDurably(pinId: UUID, vineyardId: UUID, notes: String?) throws -> VinePin {
+        var all = try loadAllForDurableUpdate()
+        guard let index = all.firstIndex(where: { $0.id == pinId && $0.vineyardId == vineyardId }) else {
+            throw CacheReadError.pinNotFound
+        }
+        all[index].notes = notes
+        try persistence.saveOrThrow(all, key: Self.storageKey)
+        return all[index]
     }
 
     // MARK: - Sync

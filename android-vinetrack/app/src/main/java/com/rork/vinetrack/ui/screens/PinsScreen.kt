@@ -88,6 +88,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -226,6 +227,7 @@ fun PinsScreen(
     var isExporting by remember { mutableStateOf(false) }
     // Current GPS fix, used to show each pin's distance (iOS PinRowView parity).
     var userLocation by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var contextNowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     // Ask for location permission on entry when missing (the one-shot fetch
     // previously skipped silently, leaving every distance as "—"), then keep
     // the fix fresh with a light poll. A failed fetch never clears a good fix.
@@ -250,6 +252,12 @@ fun PinsScreen(
                 vm.fetchCurrentLocation { fix -> if (fix != null) userLocation = fix }
             }
             delay(10_000L)
+        }
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            contextNowMs = System.currentTimeMillis()
+            delay(1_000L)
         }
     }
 
@@ -281,15 +289,18 @@ fun PinsScreen(
     val season = remember(sourcePins, seasonSelection, state.seasonStartMonth, state.seasonStartDay, state.seasonZone) {
         state.seasonScope(sourcePins.map { parseIsoMillis(it.createdAt) }, seasonSelection)
     }
-    val visiblePins = remember(sourcePins, modeFilter, includesElStages, selectedElStageCodes, statusFilter, selectedNames, selectedBlockIds, season) {
-        val categories = when (modeFilter) {
-            "Repairs" -> setOf(PinCategoryFilter.REPAIRS)
-            "Growth" -> setOf(PinCategoryFilter.GROWTH)
-            "ManualIssue" -> setOf(PinCategoryFilter.MANUAL_ISSUES)
-            else -> PinCategoryFilter.entries.toSet()
+    val visiblePins = remember(sourcePins, state.growthRecords, modeFilter, includesElStages, selectedElStageCodes, statusFilter, selectedNames, selectedBlockIds, season) {
+        val category = when (modeFilter) {
+            "Repairs" -> PinCategoryFilter.REPAIRS
+            "Growth" -> PinCategoryFilter.GROWTH
+            "ManualIssue" -> PinCategoryFilter.MANUAL_ISSUES
+            else -> null
+        }
+        val authoritativeElPinIds = state.growthRecords.mapTo(HashSet()) {
+            it.pinId?.takeIf(String::isNotBlank) ?: it.id
         }
         val query = PinQueryFilter(
-            categories = categories,
+            categories = PinQueryPolicy.categoriesFor(category),
             includesElStages = includesElStages,
             selectedElStageCodes = selectedElStageCodes,
             completion = when (statusFilter) {
@@ -300,7 +311,11 @@ fun PinsScreen(
         )
         sourcePins.filter { pin ->
             season.contains(parseIsoMillis(pin.createdAt)) &&
-                PinQueryPolicy.matches(pin, query) &&
+                PinQueryPolicy.matches(
+                    pin,
+                    query,
+                    isElRecord = pin.growthStageCode != null || pin.id in authoritativeElPinIds,
+                ) &&
                 (selectedNames.isEmpty() || pin.displayTitle in selectedNames) &&
                 (selectedBlockIds.isEmpty() || (pin.paddockId != null && pin.paddockId in selectedBlockIds))
         }
@@ -326,12 +341,23 @@ fun PinsScreen(
         state.rowLockIsConfident,
         state.latestBearingDegrees,
         state.latestSpeedMetresPerSecond,
+        state.latestMovementObservedAtMs,
+        state.currentTripPaddockId,
+        state.selectedVineyardId,
+        state.activeTrip?.vineyardId,
+        contextNowMs,
     ) {
         PinQueryPolicy.qualifiedTravelContext(
+            selectedVineyardId = state.selectedVineyardId,
+            contextVineyardId = state.activeTrip?.vineyardId,
+            blockId = state.currentTripPaddockId,
             row = state.currentDrivingPathNumber,
             isRowQualified = state.isTracking && state.rowLockIsConfident,
+            observedAtMs = state.latestMovementObservedAtMs,
             heading = state.latestBearingDegrees,
-            isHeadingQualified = (state.latestSpeedMetresPerSecond ?: -1.0) >= 0.5,
+            isHeadingQualified = state.latestBearingDegrees != null &&
+                (state.latestSpeedMetresPerSecond ?: -1.0) >= 0.5,
+            nowMs = contextNowMs,
         )
     }
     val pinsTitle = if (viewMode == PinsViewMode.Stats || qualifiedTravelContext == null) {
@@ -485,7 +511,7 @@ fun PinsScreen(
                     state = state,
                     colorMap = colorMap,
                     userLocation = userLocation,
-                    qualifiedCurrentRow = qualifiedTravelContext?.row,
+                    travelContext = qualifiedTravelContext,
                     sort = pinSort,
                     onSort = { pinSort = it },
                     modeFilter = modeFilter,
@@ -993,7 +1019,7 @@ private fun PinsSortRow(
         // the list keeps working with location off or permission denied.
         val effective = when {
             sort == PinSort.CLOSEST && !closestEnabled -> PinSort.NEWEST.label
-            sort == PinSort.NEAREST_MY_ROW && !nearestRowEnabled -> PinSort.NEWEST.label
+            sort == PinSort.NEAREST_MY_ROW && !nearestRowEnabled -> "Nearest my row — unavailable"
             else -> sort.label
         }
         Box {
@@ -1043,7 +1069,7 @@ private fun PinsListMode(
     state: AppUiState,
     colorMap: Map<String, String>,
     userLocation: Pair<Double, Double>?,
-    qualifiedCurrentRow: Double?,
+    travelContext: PinQueryPolicy.TravelContext?,
     sort: PinSort,
     onSort: (PinSort) -> Unit,
     modeFilter: String?,
@@ -1060,7 +1086,7 @@ private fun PinsListMode(
     // Ordering: Newest is the parent-supplied default; Oldest reverses by
     // creation time; Closest ranks by straight-line distance to the pin's
     // canonical placement point, pins without a location last.
-    val orderedPins = remember(visiblePins, sort, userLocation, qualifiedCurrentRow) {
+    val orderedPins = remember(visiblePins, sort, userLocation, travelContext, state.paddocks) {
         when {
             sort == PinSort.CLOSEST && userLocation != null -> visiblePins.sortedBy { pin ->
                 pinSortCoordinate(pin)?.let { (lat, lon) ->
@@ -1068,8 +1094,14 @@ private fun PinsListMode(
                 } ?: Double.MAX_VALUE
             }
             sort == PinSort.OLDEST -> visiblePins.sortedBy { parseIsoMillis(it.createdAt) ?: Long.MAX_VALUE }
-            sort == PinSort.NEAREST_MY_ROW && qualifiedCurrentRow != null ->
-                PinQueryPolicy.nearestRowOrdered(visiblePins, qualifiedCurrentRow)
+            sort == PinSort.NEAREST_MY_ROW && travelContext != null ->
+                PinQueryPolicy.nearestRowOrdered(
+                    pins = visiblePins,
+                    currentRow = travelContext.row,
+                    currentVineyardId = travelContext.vineyardId,
+                    currentBlockId = travelContext.blockId,
+                    blockNames = state.paddocks.associate { it.id to it.name },
+                )
             sort == PinSort.ROW -> PinQueryPolicy.rowOrdered(visiblePins, state.paddocks.associate { it.id to it.name })
             else -> visiblePins
         }
@@ -1078,7 +1110,7 @@ private fun PinsListMode(
         PinsSortRow(
             sort = sort,
             closestEnabled = userLocation != null,
-            nearestRowEnabled = qualifiedCurrentRow != null,
+            nearestRowEnabled = travelContext != null,
             onSort = onSort,
         )
         LazyColumn(
