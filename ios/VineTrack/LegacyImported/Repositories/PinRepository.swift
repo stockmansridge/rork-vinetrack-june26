@@ -14,8 +14,24 @@ final class PinRepository {
 
     // MARK: - Load
 
+    enum CacheReadError: Error {
+        case unreadable(Error)
+    }
+
     func loadAll() -> [VinePin] {
         persistence.load(key: Self.storageKey) ?? []
+    }
+
+    func loadAllForDurableUpdate() throws -> [VinePin] {
+        let outcome: PersistenceStore.LoadOutcome<[VinePin]> = persistence.loadOutcome(key: Self.storageKey)
+        switch outcome {
+        case .missing:
+            return []
+        case .decoded(let pins):
+            return pins
+        case .failed(let error):
+            throw CacheReadError.unreadable(error)
+        }
     }
 
     func load(for vineyardId: UUID) -> [VinePin] {
@@ -38,6 +54,42 @@ final class PinRepository {
         all.removeAll { $0.vineyardId == vineyardId }
         all.append(contentsOf: remote)
         persistence.save(all, key: Self.storageKey)
+    }
+
+    /// Replaces one vineyard slice with one checked cache read and one durable write.
+    /// An unreadable shared cache is never interpreted as an empty cache.
+    func replaceDurably(_ slice: [VinePin], for vineyardId: UUID) throws {
+        var all = try loadAllForDurableUpdate()
+        all.removeAll { $0.vineyardId == vineyardId }
+        all.append(contentsOf: slice)
+        try persistence.saveOrThrow(all, key: Self.storageKey)
+    }
+
+    /// Applies a complete remote batch with exactly one shared-cache read and
+    /// one durable write, retaining every other vineyard unchanged.
+    func applyRemoteBatchDurably(
+        vineyardId: UUID,
+        selectedSlice: [VinePin]?,
+        cacheSnapshot: [VinePin],
+        upserts: [VinePin],
+        deleting ids: Set<UUID>
+    ) throws -> [VinePin] {
+        var all = cacheSnapshot
+        var slice = selectedSlice ?? all.filter { $0.vineyardId == vineyardId }
+        if !ids.isEmpty { slice.removeAll { ids.contains($0.id) } }
+        var indexById = Dictionary(uniqueKeysWithValues: slice.indices.map { (slice[$0].id, $0) })
+        for pin in upserts where pin.vineyardId == vineyardId {
+            if let index = indexById[pin.id] {
+                slice[index] = pin
+            } else {
+                indexById[pin.id] = slice.count
+                slice.append(pin)
+            }
+        }
+        all.removeAll { $0.vineyardId == vineyardId }
+        all.append(contentsOf: slice)
+        try persistence.saveOrThrow(all, key: Self.storageKey)
+        return slice
     }
 
     /// Add-if-not-exists merge (does not overwrite existing items).

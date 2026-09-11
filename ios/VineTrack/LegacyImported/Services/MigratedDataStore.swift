@@ -899,6 +899,27 @@ final class MigratedDataStore {
         pinRepo.saveSlice(pins, for: vineyardId)
     }
 
+    /// Applies one remote-sync slice with one checked cache read, one durable
+    /// write, and at most one selected-vineyard publication.
+    func applyRemotePinBatch(
+        vineyardId: UUID,
+        cacheSnapshot: [VinePin],
+        upserts: [VinePin],
+        deleting ids: Set<UUID>
+    ) throws {
+        let isSelected = selectedVineyardId == vineyardId
+        let latestSlice = try pinRepo.applyRemoteBatchDurably(
+            vineyardId: vineyardId,
+            selectedSlice: isSelected ? pins : nil,
+            cacheSnapshot: cacheSnapshot,
+            upserts: upserts,
+            deleting: ids
+        )
+        if selectedVineyardId == vineyardId {
+            pins = latestSlice
+        }
+    }
+
     /// Apply a pin deletion that originated from a remote sync pull.
     func applyRemotePinDelete(_ pinId: UUID) {
         guard let vineyardId = selectedVineyardId else { return }

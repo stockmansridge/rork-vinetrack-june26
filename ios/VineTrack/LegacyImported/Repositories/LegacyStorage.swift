@@ -26,6 +26,9 @@ final class PersistenceStore {
     /// Diagnostics hook fired whenever a stored payload exists but fails to
     /// read or decode: (persistence key, underlying error).
     var onDecodeFailure: ((String, Error) -> Void)?
+    #if DEBUG
+    var durableSaveFailureForTesting: ((String) -> Error?)?
+    #endif
 
     private let directory: URL
     private let encoder: JSONEncoder
@@ -89,6 +92,9 @@ final class PersistenceStore {
     /// cache) whose sync must not report success — or advance a watermark —
     /// until the data is verifiably on disk.
     func saveOrThrow<T: Encodable>(_ value: T, key: String) throws {
+        #if DEBUG
+        if let error = durableSaveFailureForTesting?(key) { throw error }
+        #endif
         let data = try encoder.encode(value)
         try data.write(to: fileURL(for: key), options: [.atomic])
     }

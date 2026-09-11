@@ -632,19 +632,68 @@ final class PinSyncService {
             return
         }
 
-        let mergeStartedAt = Date()
+        let nameColorMap = Self.buttonNameColorMap(for: vineyardId)
+        var downloadedPhotos: [UUID: DownloadedRemotePhoto] = [:]
+        let photoCandidates = remote.compactMap { backendPin -> (BackendPin, String)? in
+            guard backendPin.deletedAt == nil,
+                  metadata.pendingDeletes[backendPin.id] == nil,
+                  !deletionStore.pinIds.contains(backendPin.id),
+                  pendingPhotos[backendPin.id] == nil,
+                  let path = backendPin.photoPath else { return nil }
+            let existing = store.pins.first { $0.id == backendPin.id }
+            guard existing?.photoPath != path || existing?.photoData == nil else { return nil }
+            return (backendPin, path)
+        }
+        let photoStartedAt = Date()
         VineyardSelectionDiagnostics.intervalStage(
-            "pin-merge-cache",
+            "pin-photo-download",
+            phase: "started",
+            vineyardId: vineyardId,
+            count: photoCandidates.count
+        )
+        for (backendPin, path) in photoCandidates {
+            let cacheKey = SharedImageCacheKey.pinPhoto(vineyardId: vineyardId, pinId: backendPin.id)
+            do {
+                let data = try await photoStorage.downloadPhoto(
+                    path: path,
+                    vineyardId: vineyardId,
+                    pinId: backendPin.id
+                )
+                downloadedPhotos[backendPin.id] = DownloadedRemotePhoto(path: path, data: data)
+            } catch {
+                #if DEBUG
+                print("[PinSync] photo download failed for \(backendPin.id) at \(path): \(error.localizedDescription)")
+                #endif
+                if let cached = SharedImageCache.shared.cachedImageData(for: cacheKey) {
+                    downloadedPhotos[backendPin.id] = DownloadedRemotePhoto(path: path, data: cached)
+                }
+            }
+        }
+        VineyardSelectionDiagnostics.intervalStage(
+            "pin-photo-download",
+            phase: "finished",
+            vineyardId: vineyardId,
+            count: photoCandidates.count,
+            elapsedSince: photoStartedAt
+        )
+
+        let mergeStartedAt = Date()
+        let publicationCount = store.selectedVineyardId == vineyardId ? 1 : 0
+        VineyardSelectionDiagnostics.intervalStage(
+            "pin-merge-cache-r1-w1-p\(publicationCount)",
             phase: "started",
             vineyardId: vineyardId,
             count: remote.count
         )
-        let nameColorMap = Self.buttonNameColorMap(for: vineyardId)
-        for backendPin in remote {
-            await applyRemote(backendPin, vineyardId: vineyardId, store: store, nameColorMap: nameColorMap)
-        }
+        try applyRemoteBatch(
+            remote,
+            vineyardId: vineyardId,
+            store: store,
+            nameColorMap: nameColorMap,
+            downloadedPhotos: downloadedPhotos
+        )
         VineyardSelectionDiagnostics.intervalStage(
-            "pin-merge-cache",
+            "pin-merge-cache-r1-w1-p\(publicationCount)",
             phase: "finished",
             vineyardId: vineyardId,
             count: remote.count,
@@ -668,80 +717,79 @@ final class PinSyncService {
         return map
     }
 
-    private func applyRemote(_ backendPin: BackendPin, vineyardId: UUID, store: MigratedDataStore, nameColorMap: [String: String]) async {
-        let existingIndex = store.pins.firstIndex { $0.id == backendPin.id }
+    private struct DownloadedRemotePhoto {
+        let path: String
+        let data: Data
+    }
 
-        // Never resurrect a row while its durable local delete is unresolved.
-        if metadata.pendingDeletes[backendPin.id] != nil || deletionStore.pinIds.contains(backendPin.id) { return }
-        if pendingPhotos[backendPin.id] != nil { return }
+    /// Re-evaluates every conflict against current state after photo awaits,
+    /// then durably commits one vineyard slice before acknowledging metadata.
+    private func applyRemoteBatch(
+        _ remote: [BackendPin],
+        vineyardId: UUID,
+        store: MigratedDataStore,
+        nameColorMap: [String: String],
+        downloadedPhotos: [UUID: DownloadedRemotePhoto]
+    ) throws {
+        let cacheSnapshot = try store.pinRepo.loadAllForDurableUpdate()
+        let latestPins = store.selectedVineyardId == vineyardId
+            ? store.pins
+            : cacheSnapshot.filter { $0.vineyardId == vineyardId }
+        let existingById = Dictionary(latestPins.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        var upserts: [VinePin] = []
+        var deletions = Set<UUID>()
+        var acknowledgedUpserts: [UUID] = []
+        var acknowledgedDeletes: [UUID] = []
 
-        // Soft-deleted remotely.
-        if backendPin.deletedAt != nil {
-            if existingIndex != nil {
-                store.applyRemotePinDelete(backendPin.id)
-            }
-            metadata.clearDirty([backendPin.id])
-            metadata.clearDeleted([backendPin.id])
-            return
-        }
+        for backendPin in remote {
+            // Revalidate all mutable protection state after awaited photo work.
+            guard metadata.pendingDeletes[backendPin.id] == nil,
+                  !deletionStore.pinIds.contains(backendPin.id),
+                  pendingPhotos[backendPin.id] == nil else { continue }
 
-        // Last-write-wins: only apply remote if it's newer than the local pending change.
-        if let pendingDirtyAt = metadata.pendingUpserts[backendPin.id] {
-            let remoteAt = backendPin.clientUpdatedAt ?? backendPin.updatedAt ?? .distantPast
-            if pendingDirtyAt > remoteAt {
-                return
-            }
-        }
-
-        let existingPin: VinePin? = existingIndex.map { store.pins[$0] }
-        let existingPhotoData: Data? = existingPin?.photoData
-        let existingPhotoPath: String? = existingPin?.photoPath
-        let existingCreatedByText: String? = existingPin?.createdBy
-
-        guard var mapped = backendPin.toVinePin(
-            preservingPhoto: existingPhotoData,
-            preservingCreatedByText: existingCreatedByText,
-            nameColorMap: nameColorMap
-        ) else { return }
-
-        // If the remote has a photoPath, try the disk cache first, then
-        // fall back to a network download. Failures are non-fatal — we keep
-        // whatever cached/local bytes we already have.
-        if let remotePath = mapped.photoPath {
-            let cacheKey = SharedImageCacheKey.pinPhoto(vineyardId: vineyardId, pinId: backendPin.id)
-            let pathChanged = existingPhotoPath != remotePath
-
-            if mapped.photoData == nil || pathChanged {
-                if !pathChanged,
-                   let cached = SharedImageCache.shared.cachedImageData(for: cacheKey) {
-                    mapped.photoData = cached
-                }
+            if backendPin.deletedAt != nil {
+                if existingById[backendPin.id] != nil { deletions.insert(backendPin.id) }
+                acknowledgedUpserts.append(backendPin.id)
+                acknowledgedDeletes.append(backendPin.id)
+                continue
             }
 
-            let needsDownload = mapped.photoData == nil || pathChanged
-            if needsDownload {
-                do {
-                    let data = try await photoStorage.downloadPhoto(
-                        path: remotePath,
-                        vineyardId: vineyardId,
-                        pinId: backendPin.id
+            if let pendingDirtyAt = metadata.pendingUpserts[backendPin.id] {
+                let remoteAt = backendPin.clientUpdatedAt ?? backendPin.updatedAt ?? .distantPast
+                if pendingDirtyAt > remoteAt { continue }
+            }
+
+            let existing = existingById[backendPin.id]
+            guard var mapped = backendPin.toVinePin(
+                preservingPhoto: existing?.photoData,
+                preservingCreatedByText: existing?.createdBy,
+                nameColorMap: nameColorMap
+            ) else { continue }
+
+            if let remotePath = mapped.photoPath {
+                let pathChanged = existing?.photoPath != remotePath
+                if let downloaded = downloadedPhotos[backendPin.id], downloaded.path == remotePath {
+                    mapped.photoData = downloaded.data
+                } else if !pathChanged, mapped.photoData == nil {
+                    mapped.photoData = SharedImageCache.shared.cachedImageData(
+                        for: .pinPhoto(vineyardId: vineyardId, pinId: backendPin.id)
                     )
-                    mapped.photoData = data
-                } catch {
-                    #if DEBUG
-                    print("[PinSync] photo download failed for \(backendPin.id) at \(remotePath): \(error.localizedDescription)")
-                    #endif
-                    // Keep existing cached bytes if any.
-                    if mapped.photoData == nil,
-                       let cached = SharedImageCache.shared.cachedImageData(for: cacheKey) {
-                        mapped.photoData = cached
-                    }
                 }
             }
+            upserts.append(mapped)
+            acknowledgedUpserts.append(backendPin.id)
         }
 
-        store.applyRemotePinUpsert(mapped)
-        metadata.clearDirty([backendPin.id])
+        try store.applyRemotePinBatch(
+            vineyardId: vineyardId,
+            cacheSnapshot: cacheSnapshot,
+            upserts: upserts,
+            deleting: deletions
+        )
+        metadata.clearRemoteAcknowledged(
+            upsertIds: acknowledgedUpserts,
+            deleteIds: acknowledgedDeletes
+        )
     }
 }
 
@@ -850,6 +898,19 @@ final class PinSyncMetadata {
     func clearDeleted(_ ids: [UUID]) {
         guard !ids.isEmpty else { return }
         for id in ids { state.pendingDeletes.removeValue(forKey: id); state.failedDeletes.remove(id) }
+        save()
+    }
+
+    func clearRemoteAcknowledged(upsertIds: [UUID], deleteIds: [UUID]) {
+        guard !upsertIds.isEmpty || !deleteIds.isEmpty else { return }
+        for id in upsertIds {
+            state.pendingUpserts.removeValue(forKey: id)
+            state.failedUpserts.remove(id)
+        }
+        for id in deleteIds {
+            state.pendingDeletes.removeValue(forKey: id)
+            state.failedDeletes.remove(id)
+        }
         save()
     }
 
