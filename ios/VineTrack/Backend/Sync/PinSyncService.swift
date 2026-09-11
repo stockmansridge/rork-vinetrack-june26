@@ -353,6 +353,14 @@ final class PinSyncService {
 
     func pushLocalPins(vineyardId: UUID) async throws {
         guard let store else { return }
+        let pinPushCount = metadata.pendingUpserts.count
+        let pinPushStartedAt = Date()
+        VineyardSelectionDiagnostics.intervalStage(
+            "pin-push",
+            phase: "started",
+            vineyardId: vineyardId,
+            count: pinPushCount
+        )
         for target in deletionStore.targets.values where target.isConfirmed {
             if let pinId = target.pinId { metadata.clearDeleted([pinId]) }
             try deletionStore.remove(target.id)
@@ -432,12 +440,41 @@ final class PinSyncService {
             SyncIssueCenter.shared.clearIssues(orphans)
             SyncIssueCenter.shared.notePending(entity: "Pins", count: metadata.pendingUpserts.count)
         }
+        VineyardSelectionDiagnostics.intervalStage(
+            "pin-push",
+            phase: "finished",
+            vineyardId: vineyardId,
+            count: pinPushCount,
+            elapsedSince: pinPushStartedAt
+        )
 
+        let photoCount = pendingPhotos.values.count { $0.vineyardId == vineyardId }
+        let photoUploadStartedAt = Date()
+        VineyardSelectionDiagnostics.intervalStage(
+            "pin-photo-upload",
+            phase: "started",
+            vineyardId: vineyardId,
+            count: photoCount
+        )
         var independentPhotoError: Error?
         do { try await pushPendingPhotos(vineyardId: vineyardId) }
         catch { independentPhotoError = error }
+        VineyardSelectionDiagnostics.intervalStage(
+            "pin-photo-upload",
+            phase: "finished",
+            vineyardId: vineyardId,
+            count: photoCount,
+            elapsedSince: photoUploadStartedAt
+        )
 
         let deletes = metadata.pendingDeletes
+        let deleteStartedAt = Date()
+        VineyardSelectionDiagnostics.intervalStage(
+            "pin-deletion",
+            phase: "started",
+            vineyardId: vineyardId,
+            count: deletes.count
+        )
         var deleteFailures: [String] = []
         for (pinId, _) in deletes {
             if deletionStore.pinIds.contains(pinId) { continue }
@@ -465,6 +502,13 @@ final class PinSyncService {
         if !deleteFailures.isEmpty {
             errorMessage = "Some pin deletes failed: \(deleteFailures.first ?? "unknown")"
         }
+        VineyardSelectionDiagnostics.intervalStage(
+            "pin-deletion",
+            phase: "finished",
+            vineyardId: vineyardId,
+            count: deletes.count,
+            elapsedSince: deleteStartedAt
+        )
         if let independentPhotoError { throw independentPhotoError }
     }
 
@@ -545,7 +589,21 @@ final class PinSyncService {
     func pullRemotePins(vineyardId: UUID) async throws {
         guard let store else { return }
         let lastSync = metadata.lastSync(for: vineyardId)
+        let fetchStartedAt = Date()
+        VineyardSelectionDiagnostics.intervalStage(
+            "pin-fetch-decode",
+            phase: "started",
+            vineyardId: vineyardId,
+            count: 0
+        )
         let remote = try await repository.fetchPins(vineyardId: vineyardId, since: lastSync)
+        VineyardSelectionDiagnostics.intervalStage(
+            "pin-fetch-decode",
+            phase: "finished",
+            vineyardId: vineyardId,
+            count: remote.count,
+            elapsedSince: fetchStartedAt
+        )
 
         // Initial sync: if both local and remote slices are empty, nothing to do.
         // If remote is empty AND we have local pins AND we have never synced before,
@@ -574,10 +632,24 @@ final class PinSyncService {
             return
         }
 
+        let mergeStartedAt = Date()
+        VineyardSelectionDiagnostics.intervalStage(
+            "pin-merge-cache",
+            phase: "started",
+            vineyardId: vineyardId,
+            count: remote.count
+        )
         let nameColorMap = Self.buttonNameColorMap(for: vineyardId)
         for backendPin in remote {
             await applyRemote(backendPin, vineyardId: vineyardId, store: store, nameColorMap: nameColorMap)
         }
+        VineyardSelectionDiagnostics.intervalStage(
+            "pin-merge-cache",
+            phase: "finished",
+            vineyardId: vineyardId,
+            count: remote.count,
+            elapsedSince: mergeStartedAt
+        )
     }
 
     /// Button-name → colour-token map for a vineyard, loaded straight from the

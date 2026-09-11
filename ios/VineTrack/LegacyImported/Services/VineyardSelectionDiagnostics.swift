@@ -50,6 +50,20 @@ enum VineyardSelectionDiagnostics {
         updateActive(vineyardId: vineyardId, stage: stage, completedAt: nil)
     }
 
+    /// Records one bounded full-sweep interval marker without record contents.
+    static func intervalStage(
+        _ operation: String,
+        phase: String,
+        vineyardId: UUID,
+        count: Int,
+        elapsedSince startedAt: Date? = nil
+    ) {
+        let elapsed = startedAt.map { max(0, Date().timeIntervalSince($0)) }
+        let formattedElapsed = elapsed.map { String(format: "%.3f", $0) }
+        let timing = formattedElapsed.map { " elapsed=\($0)s" } ?? ""
+        stage("\(operation)-\(phase) count=\(max(0, count))\(timing)", vineyardId: vineyardId)
+    }
+
     static func hydrationCompleted(vineyardId: UUID) {
         stage("hydration-completed", vineyardId: vineyardId)
     }

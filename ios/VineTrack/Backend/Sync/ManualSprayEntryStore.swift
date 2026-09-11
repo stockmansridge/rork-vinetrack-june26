@@ -137,6 +137,11 @@ final class ManualSprayEntryCoordinator {
         }
     }
 
+    func replayCandidateCount(currentVineyardId: UUID?, currentRole: BackendRole?) -> Int {
+        guard currentRole?.canManageManualSprays == true else { return 0 }
+        return operations.count { $0.payload.vineyardId == currentVineyardId }
+    }
+
     func replay(currentVineyardId: UUID?, currentRole: BackendRole?) async {
         for operation in operations {
             guard operation.payload.vineyardId == currentVineyardId, currentRole?.canManageManualSprays == true else { continue }

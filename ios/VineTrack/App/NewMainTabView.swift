@@ -324,6 +324,15 @@ struct NewMainTabView: View {
         }
 
         // Always keep the glanceable backlog count current.
+        let statusUpdateStartedAt = Date()
+        if let sweepVineyardId {
+            VineyardSelectionDiagnostics.intervalStage(
+                "status-update",
+                phase: "started",
+                vineyardId: sweepVineyardId,
+                count: aggregatePendingUpserts + aggregatePendingDeletes
+            )
+        }
         syncStatusCenter.refreshPending(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes, failedUpserts: aggregateFailedUpserts, failedDeletes: aggregateFailedDeletes)
 
         // Offline: everything stays queued locally and retries on reconnect.
@@ -337,13 +346,44 @@ struct NewMainTabView: View {
         }
 
         syncStatusCenter.syncDidStart()
+        if let sweepVineyardId {
+            VineyardSelectionDiagnostics.intervalStage(
+                "status-update",
+                phase: "finished",
+                vineyardId: sweepVineyardId,
+                count: aggregatePendingUpserts + aggregatePendingDeletes,
+                elapsedSince: statusUpdateStartedAt
+            )
+        }
         // Manual mutations replay first with their original operation IDs. A queued
         // delete suppresses its save, and the normal pulls below then reconcile the
         // authoritative spray/trip/actual rows.
+        let manualReplayCount = ManualSprayEntryCoordinator.shared.replayCandidateCount(
+            currentVineyardId: accessControl.loadedVineyardId,
+            currentRole: accessControl.currentRole
+        )
+        let manualReplayStartedAt = Date()
+        if let sweepVineyardId {
+            VineyardSelectionDiagnostics.intervalStage(
+                "manual-spray-replay",
+                phase: "started",
+                vineyardId: sweepVineyardId,
+                count: manualReplayCount
+            )
+        }
         await ManualSprayEntryCoordinator.shared.replay(
             currentVineyardId: accessControl.loadedVineyardId,
             currentRole: accessControl.currentRole
         )
+        if let sweepVineyardId {
+            VineyardSelectionDiagnostics.intervalStage(
+                "manual-spray-replay",
+                phase: "finished",
+                vineyardId: sweepVineyardId,
+                count: manualReplayCount,
+                elapsedSince: manualReplayStartedAt
+            )
+        }
         await pinSync.syncPinsForSelectedVineyard()
         if let sweepVineyardId {
             VineyardSelectionDiagnostics.stage("sync-blocks", vineyardId: sweepVineyardId)
