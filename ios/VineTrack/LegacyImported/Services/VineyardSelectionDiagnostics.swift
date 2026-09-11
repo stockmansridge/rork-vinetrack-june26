@@ -101,17 +101,19 @@ enum VineyardSelectionDiagnostics {
     }
 
     private static func finish(vineyardId: UUID, stage: String) {
-        updateActive(vineyardId: vineyardId, stage: stage, completedAt: Date())
-        activeAttemptId = nil
+        if updateActive(vineyardId: vineyardId, stage: stage, completedAt: Date()) {
+            activeAttemptId = nil
+        }
     }
 
-    private static func updateActive(vineyardId: UUID, stage: String, completedAt: Date?) {
-        guard let activeAttemptId else { return }
+    @discardableResult
+    private static func updateActive(vineyardId: UUID, stage: String, completedAt: Date?) -> Bool {
+        guard let activeAttemptId else { return false }
         var history = loadHistory()
         guard let snapshot = history.current,
               snapshot.attemptId == activeAttemptId,
               snapshot.vineyardId == vineyardId,
-              snapshot.completedAt == nil else { return }
+              snapshot.completedAt == nil else { return false }
         history.current = Snapshot(
             attemptId: snapshot.attemptId,
             appVersion: snapshot.appVersion,
@@ -123,6 +125,7 @@ enum VineyardSelectionDiagnostics {
             completedAt: completedAt
         )
         persist(history)
+        return true
     }
 
     private static func loadHistory() -> History {

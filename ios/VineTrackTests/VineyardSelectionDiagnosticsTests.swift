@@ -38,6 +38,22 @@ struct VineyardSelectionDiagnosticsTests {
         #expect(report.contains("Last stage: block-cache"))
     }
 
+    @Test func staleCancellationDoesNotDisableNewVineyardAttempt() {
+        let bellview = UUID()
+        let boomey = UUID()
+        VineyardSelectionDiagnostics.started(vineyardId: bellview)
+        VineyardSelectionDiagnostics.started(vineyardId: boomey)
+
+        VineyardSelectionDiagnostics.syncCancelled(vineyardId: bellview)
+        VineyardSelectionDiagnostics.stage("block-cache", vineyardId: boomey)
+
+        let report = VineyardSelectionDiagnostics.report
+        #expect(report.contains("Vineyard ID: \(boomey.uuidString)"))
+        #expect(report.contains("Last stage: block-cache"))
+        #expect(!report.contains("Last stage: sync-cancelled"))
+        #expect(report.contains("Time since attempt started"))
+    }
+
     @Test func manualSyncAfterCompletionCreatesFreshAttemptAndKeepsResult() {
         let vineyard = UUID()
         VineyardSelectionDiagnostics.started(vineyardId: vineyard)
