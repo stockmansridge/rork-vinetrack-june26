@@ -208,22 +208,23 @@ nonisolated enum PinAttachmentResolver {
             heading: validHeading
         )
         guard let paddock, validHeading != nil else { return unconfirmed }
-        let resolvedAisle: (number: Double, rows: (Int, Int))? = {
-            if PinAisleObservationLock.isValid(
+        let validatedLock = PinAisleObservationLock.isValid(
                 aisleLock,
                 capturedAt: capturedAt,
                 currentCoordinate: rawCoordinate,
                 paddock: paddock
-            ), let aisleLock,
+            )
+        let resolvedAisle: (number: Double, rows: (Int, Int), usesLockedMidpoint: Bool)? = {
+            if validatedLock, let aisleLock,
                let rows = PinAisleGeometry.rowsBounding(path: aisleLock.aisleNumber, in: paddock) {
-                return (aisleLock.aisleNumber, rows)
+                return (aisleLock.aisleNumber, rows, true)
             }
             guard let aisle = PinAisleGeometry.aisle(
                 containing: rawCoordinate,
                 in: paddock,
                 horizontalAccuracyMetres: horizontalAccuracyMetres
             ) else { return nil }
-            return (aisle.aisleNumber, (aisle.nearRowNumber, aisle.farRowNumber))
+            return (aisle.aisleNumber, (aisle.nearRowNumber, aisle.farRowNumber), false)
         }()
         guard let resolvedAisle,
               let selection = PinAisleGeometry.rowOnSide(
@@ -232,7 +233,7 @@ nonisolated enum PinAttachmentResolver {
                 heading: validHeading,
                 operatorSide: operatorSide,
                 in: paddock,
-                useAisleMidpointReference: aisleLock != nil
+                useAisleMidpointReference: resolvedAisle.usesLockedMidpoint
               )
         else { return unconfirmed }
 
@@ -255,12 +256,17 @@ nonisolated enum PinAttachmentResolver {
         heading: Double?,
         operatorSide: PinSide,
         aisleNumber: Double,
+        horizontalAccuracyMetres: Double?,
         paddock: Paddock?
     ) -> Attachment {
         let validHeading = PinAisleGeometry.validHeading(heading)
         guard let paddock,
               let rows = PinAisleGeometry.rowsBounding(path: aisleNumber, in: paddock),
-              PinAisleGeometry.approximateAisle(containing: rawCoordinate, in: paddock) != nil,
+              PinAisleGeometry.confirmationCandidates(
+                coordinate: rawCoordinate,
+                horizontalAccuracyMetres: horizontalAccuracyMetres,
+                in: paddock
+              ).contains(where: { abs($0.aisleNumber - aisleNumber) < 0.01 }),
               let selection = PinAisleGeometry.rowOnSide(
                 rowNumbers: rows,
                 coordinate: rawCoordinate,

@@ -98,9 +98,11 @@ struct RepairsGrowthView: View {
             ),
             presenting: pendingAisleConfirmation
         ) { request in
-            Button(request.choiceLabel) {
-                pendingAisleConfirmation = nil
-                request.confirm()
+            ForEach(request.choices) { choice in
+                Button(choice.label) {
+                    pendingAisleConfirmation = nil
+                    choice.confirm()
+                }
             }
             Button("Cancel", role: .cancel) { pendingAisleConfirmation = nil }
         } message: { request in
@@ -426,27 +428,38 @@ struct RepairsGrowthView: View {
             continueWith(attachment)
             return
         }
-        guard let paddock = resolved.paddockId.flatMap({ id in store.paddocks.first(where: { $0.id == id }) }),
-              let aisle = PinAisleGeometry.approximateAisle(containing: raw, in: paddock) else {
+        guard let paddock = resolved.paddockId.flatMap({ id in store.paddocks.first(where: { $0.id == id }) }) else {
             showError(attachmentFailureMessage(capture: capture, resolved: resolved, attachment: attachment))
             return
         }
-        let confirmed = PinAttachmentResolver.resolveConfirmedAisle(
-            rawCoordinate: raw,
-            heading: attachment.heading,
-            operatorSide: side,
-            aisleNumber: aisle.aisleNumber,
-            paddock: paddock
-        )
-        guard confirmed.snappedToRow, let confirmedRow = confirmed.pinRowNumber else {
+        let choices = PinAisleGeometry.confirmationCandidates(
+            coordinate: raw,
+            horizontalAccuracyMetres: capture.horizontalAccuracyMetres,
+            in: paddock
+        ).compactMap { aisle -> PendingMappedAisleConfirmation.Choice? in
+            let confirmed = PinAttachmentResolver.resolveConfirmedAisle(
+                rawCoordinate: raw,
+                heading: attachment.heading,
+                operatorSide: side,
+                aisleNumber: aisle.aisleNumber,
+                horizontalAccuracyMetres: capture.horizontalAccuracyMetres,
+                paddock: paddock
+            )
+            guard confirmed.snappedToRow, let row = confirmed.pinRowNumber else { return nil }
+            return PendingMappedAisleConfirmation.Choice(
+                aisleNumber: aisle.aisleNumber,
+                rowNumber: row,
+                side: side,
+                confirm: { continueWith(confirmed) }
+            )
+        }
+        guard !choices.isEmpty else {
             showError(attachmentFailureMessage(capture: capture, resolved: resolved, attachment: attachment))
             return
         }
         pendingAisleConfirmation = PendingMappedAisleConfirmation(
             paddockName: paddock.name,
-            aisleNumber: aisle.aisleNumber,
-            rowNumber: confirmedRow,
-            confirm: { continueWith(confirmed) }
+            choices: choices
         )
     }
 

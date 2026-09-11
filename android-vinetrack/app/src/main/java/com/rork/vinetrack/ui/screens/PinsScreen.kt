@@ -1593,16 +1593,20 @@ private data class PendingPinDuplicate(
 )
 
 /** Frozen ambiguous automatic capture awaiting mapped aisle/row confirmation. */
+private data class PendingAisleChoice(
+    val aisleNumber: Double,
+    val rowNumber: Int,
+    val capture: PinCaptureContext,
+)
+
 private data class PendingAisleConfirmation(
     val category: String,
     val side: String,
     val fix: QualifiedLocationFix,
-    val capture: PinCaptureContext,
     val mode: String,
     val paddocks: List<Paddock>,
     val paddockName: String,
-    val aisleNumber: Double,
-    val rowNumber: Int,
+    val choices: List<PendingAisleChoice>,
 )
 
 /** Floating success card payload shown after a quick pin is dropped. */
@@ -2032,34 +2036,42 @@ fun PinCategoryLauncherScreen(
         val placement = capture.resolvedPlacement
         if (placement?.snappedToRow != true) {
             val paddock = placement?.paddockId?.let { id -> state.paddocks.firstOrNull { it.id == id } }
-            val aisle = paddock?.let {
-                PinAisleGeometry.approximateAisle(it, fix.latitude, fix.longitude)
-            }
-            val confirmed = if (paddock != null && aisle != null && capture.headingDegrees != null) {
-                PinPlacement.resolveConfirmedAisle(
-                    paddock = paddock,
-                    latitude = fix.latitude,
-                    longitude = fix.longitude,
-                    side = side,
-                    headingDegrees = capture.headingDegrees,
-                    aisleNumber = aisle.aisleNumber,
-                )
-            } else null
-            if (confirmed?.snappedToRow == true && aisle != null) {
+            val choices = if (paddock != null && capture.headingDegrees != null) {
+                PinAisleGeometry.confirmationCandidates(
+                    paddock,
+                    fix.latitude,
+                    fix.longitude,
+                    fix.accuracyMetres,
+                ).mapNotNull { aisle ->
+                    val confirmed = PinPlacement.resolveConfirmedAisle(
+                        paddock = paddock,
+                        latitude = fix.latitude,
+                        longitude = fix.longitude,
+                        side = side,
+                        headingDegrees = capture.headingDegrees,
+                        aisleNumber = aisle.aisleNumber,
+                        accuracyMetres = fix.accuracyMetres,
+                    )
+                    if (!confirmed.snappedToRow) null else PendingAisleChoice(
+                        aisleNumber = aisle.aisleNumber,
+                        rowNumber = confirmed.pinRowNumber!!.toInt(),
+                        capture = capture.copy(
+                            resolvedPaddockId = confirmed.paddockId,
+                            resolvedRowNumber = confirmed.pinRowNumber!!.toInt(),
+                            resolvedPlacement = confirmed,
+                        ),
+                    )
+                }
+            } else emptyList()
+            if (paddock != null && choices.isNotEmpty()) {
                 aisleConfirmation = PendingAisleConfirmation(
                     category = category,
                     side = side,
                     fix = fix,
-                    capture = capture.copy(
-                        resolvedPaddockId = confirmed.paddockId,
-                        resolvedRowNumber = confirmed.pinRowNumber?.toInt(),
-                        resolvedPlacement = confirmed,
-                    ),
                     mode = mode,
                     paddocks = state.paddocks.toList(),
                     paddockName = paddock.name,
-                    aisleNumber = aisle.aisleNumber,
-                    rowNumber = confirmed.pinRowNumber!!.toInt(),
+                    choices = choices,
                 )
                 return
             }
@@ -2278,17 +2290,23 @@ fun PinCategoryLauncherScreen(
             title = { Text("Confirm mapped aisle and row") },
             text = { Text("Frozen GPS observation in ${request.paddockName}. Select the mapped result to save; current GPS will not replace it.") },
             confirmButton = {
-                TextButton(onClick = {
-                    aisleConfirmation = null
-                    quickCreate(
-                        request.category,
-                        request.side,
-                        request.fix,
-                        request.capture,
-                        request.mode,
-                        request.paddocks,
-                    )
-                }) { Text("Aisle ${request.aisleNumber} · Row ${request.rowNumber}") }
+                Column {
+                    request.choices.forEach { choice ->
+                        TextButton(onClick = {
+                            aisleConfirmation = null
+                            quickCreate(
+                                request.category,
+                                request.side,
+                                request.fix,
+                                choice.capture,
+                                request.mode,
+                                request.paddocks,
+                            )
+                        }) {
+                            Text("Aisle ${choice.aisleNumber} · Row ${choice.rowNumber} · ${request.side}")
+                        }
+                    }
+                }
             },
             dismissButton = {
                 TextButton(onClick = { aisleConfirmation = null }) { Text("Cancel") }

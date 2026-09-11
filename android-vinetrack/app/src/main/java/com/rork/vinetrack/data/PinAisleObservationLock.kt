@@ -162,9 +162,14 @@ object PinAisleObservationLock {
         paddock ?: return false
         if (lock.paddockId != paddock.id) return false
         if (ageMs(lock.confirmedAtElapsedRealtimeNanos, current.fixElapsedRealtimeNanos) > MAX_AGE_MS) return false
-        if (!RowAttachment.containsPoint(paddock, current.latitude, current.longitude)) return false
-        if (PinAisleGeometry.rowsBoundingPath(paddock, lock.aisleNumber) == null) return false
-        return PinAisleGeometry.approximateAisle(paddock, current.latitude, current.longitude) != null
+        if (!PinAisleGeometry.polygonContains(paddock, current.latitude, current.longitude)) return false
+        val rows = PinAisleGeometry.rowsBoundingPath(paddock, lock.aisleNumber) ?: return false
+        return PinAisleGeometry.isWithinLongitudinalExtent(
+            paddock,
+            rows,
+            current.latitude,
+            current.longitude,
+        )
     }
 
     private fun ageMs(observed: Long, capture: Long): Long {

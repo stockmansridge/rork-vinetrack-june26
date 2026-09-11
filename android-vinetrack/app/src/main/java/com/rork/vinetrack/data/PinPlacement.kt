@@ -335,12 +335,18 @@ object PinPlacement {
         side: String,
         headingDegrees: Double?,
         aisleNumber: Double,
+        accuracyMetres: Double?,
     ): PinPlacementResult {
         val cleanSide = side.trim().lowercase().takeIf { it == "left" || it == "right" }
         val heading = PinAisleGeometry.validHeading(headingDegrees)
         val rows = PinAisleGeometry.rowsBoundingPath(paddock, aisleNumber)
-        val insideMappedExtent = PinAisleGeometry.approximateAisle(paddock, latitude, longitude) != null
-        val selection = if (cleanSide != null && rows != null && insideMappedExtent) {
+        val isValidCandidate = PinAisleGeometry.confirmationCandidates(
+            paddock,
+            latitude,
+            longitude,
+            accuracyMetres,
+        ).any { kotlin.math.abs(it.aisleNumber - aisleNumber) < 0.01 }
+        val selection = if (cleanSide != null && rows != null && isValidCandidate) {
             PinAisleGeometry.rowOnSide(
                 paddock = paddock,
                 rowNumbers = rows,

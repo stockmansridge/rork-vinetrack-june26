@@ -593,12 +593,101 @@ class PinAisleAttachmentTest {
         val longitude = aisle32_5Longitude()
         val ambiguous = automatic(block, -33.0, longitude, "left", 0.0, accuracyMetres = 8.0)
         assertEquals(PinSnapState.UNCONFIRMED_ROW, ambiguous.snapState)
-        val confirmed = PinPlacement.resolveConfirmedAisle(block, -33.0, longitude, "left", 0.0, 32.5)
+        val confirmed = PinPlacement.resolveConfirmedAisle(block, -33.0, longitude, "left", 0.0, 32.5, 8.0)
         assertEquals(PinSnapState.SNAPPED, confirmed.snapState)
         assertEquals(-33.0, confirmed.latitude!!, 0.0)
         assertEquals(longitude, confirmed.longitude!!, 0.0)
         assertEquals(32.5, confirmed.drivingRowNumber!!, 0.0)
         assertEquals(32.0, confirmed.pinRowNumber!!, 0.0)
+    }
+
+    @Test
+    fun `outside polygon near mapped rows cannot create evidence or validate a lock`() {
+        val source = eastwardBlock()
+        val block = source.copy(
+            id = "nearby-polygon",
+            polygonPoints = listOf(
+                CoordinatePoint(southLat, 149.00008),
+                CoordinatePoint(southLat, 149.00060),
+                CoordinatePoint(northLat, 149.00060),
+                CoordinatePoint(northLat, 149.00008),
+            ),
+        )
+        val longitude = aisle32_5Longitude()
+        assertFalse(PinAisleGeometry.polygonContains(block, -33.0, longitude))
+        val result = automatic(block, -33.0, longitude, "left", 0.0)
+        assertFalse(result.snappedToRow)
+        val now = 100_000_000_000L
+        val current = QualifiedLocationFix(-33.0, longitude, 1.0, 0L, now)
+        val lock = PinAisleObservationLock.Lock(block.id, 32.5, 3, now)
+        assertFalse(PinAisleObservationLock.isValid(lock, current, block))
+    }
+
+    @Test
+    fun `selected row pair must overlap frozen position longitudinally`() {
+        val source = eastwardBlock()
+        val rows = source.rows!!.map { row ->
+            if (row.number == 32) row.copy(endPoint = CoordinatePoint(-33.0, row.endPoint!!.longitude)) else row
+        }
+        val block = source.copy(id = "unequal-ends", rows = rows)
+        val latitude = -32.9995
+        val longitude = 149.0 + rowSpacing * 1.5
+        val invalid = PinPlacement.resolveConfirmedAisle(block, latitude, longitude, "left", 0.0, 32.5, 8.0)
+        val valid = PinPlacement.resolveConfirmedAisle(block, latitude, longitude, "left", 0.0, 33.5, 8.0)
+        assertFalse(invalid.snappedToRow)
+        assertTrue(valid.snappedToRow)
+    }
+
+    @Test
+    fun `ambiguity candidates allow selecting an alternative mapped aisle`() {
+        val block = eastwardBlock()
+        val longitude = aisle32_5Longitude()
+        val candidates = PinAisleGeometry.confirmationCandidates(block, -33.0, longitude, 8.0)
+        assertTrue(candidates.any { abs(it.aisleNumber - 31.5) < 0.01 })
+        assertTrue(candidates.any { abs(it.aisleNumber - 32.5) < 0.01 })
+        val alternative = PinPlacement.resolveConfirmedAisle(block, -33.0, longitude, "left", 0.0, 31.5, 8.0)
+        assertTrue(alternative.snappedToRow)
+        assertEquals(31.5, alternative.drivingRowNumber!!, 0.0)
+        assertEquals("left", alternative.pinSide)
+    }
+
+    @Test
+    fun `confirmed attachment still runs existing duplicate rules`() {
+        val block = eastwardBlock()
+        val longitude = aisle32_5Longitude()
+        val confirmed = PinPlacement.resolveConfirmedAisle(block, -33.0, longitude, "left", 0.0, 32.5, 8.0)
+        val existing = Pin(
+            id = "existing",
+            vineyardId = "vineyard-1",
+            paddockId = block.id,
+            buttonName = "Irrigation",
+            mode = "Repairs",
+            side = "left",
+            rowNumber = confirmed.pinRowNumber!!.toInt(),
+            pinRowNumber = confirmed.pinRowNumber,
+            pinSide = confirmed.pinSide,
+            alongRowDistanceM = confirmed.alongRowDistanceM,
+            snappedLatitude = confirmed.snappedLatitude,
+            snappedLongitude = confirmed.snappedLongitude,
+            snappedToRow = true,
+            latitude = confirmed.latitude,
+            longitude = confirmed.longitude,
+        )
+        val evaluation = PinDuplicateChecker.evaluate(
+            candidate = confirmed.toAttachment(),
+            latitude = confirmed.latitude!!,
+            longitude = confirmed.longitude!!,
+            vineyardId = "vineyard-1",
+            paddockId = block.id,
+            mode = "Repairs",
+            logicalType = "Irrigation",
+            side = "left",
+            manualRowNumber = null,
+            paddock = block,
+            pins = listOf(existing),
+        )
+        assertTrue(evaluation.match?.alongRow == true)
+        assertEquals(2.5, evaluation.match!!.radiusM, 0.0)
     }
 
     // MARK: - Facing evidence
@@ -742,7 +831,7 @@ class PinAisleAttachmentTest {
     fun `the frozen aisle survives the offline queue, restart and production replay`() = runBlocking {
         val block = eastwardBlock()
         val rawLongitude = aisle32_5Longitude()
-        val placement = PinPlacement.resolveConfirmedAisle(block, -33.0, rawLongitude, "right", 346.0, 32.5)
+        val placement = PinPlacement.resolveConfirmedAisle(block, -33.0, rawLongitude, "right", 346.0, 32.5, 8.0)
         assertEquals(33.0, placement.pinRowNumber!!, 1e-9)
         assertEquals(rawLongitude, placement.longitude!!, 0.0)
         val input = frozenInput(placement)

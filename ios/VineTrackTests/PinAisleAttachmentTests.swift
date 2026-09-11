@@ -233,11 +233,149 @@ struct PinAisleAttachmentTests {
             heading: 0,
             operatorSide: .left,
             aisleNumber: 32.5,
+            horizontalAccuracyMetres: 8,
             paddock: block
         )
         #expect(confirmed.snappedToRow)
         #expect(confirmed.drivingRowNumber == 32.5)
         #expect(confirmed.pinRowNumber == 32)
+    }
+
+    @Test func outsidePolygonNearBlockGeometryCannotCreateEvidenceOrValidateALock() {
+        let source = eastwardBlock()
+        let block = Paddock(
+            name: "Nearby polygon",
+            polygonPoints: [
+                CoordinatePoint(latitude: southLat, longitude: 149.00008),
+                CoordinatePoint(latitude: southLat, longitude: 149.00060),
+                CoordinatePoint(latitude: northLat, longitude: 149.00060),
+                CoordinatePoint(latitude: northLat, longitude: 149.00008)
+            ],
+            rows: source.rows,
+            rowDirection: 0,
+            rowWidth: 3.7
+        )
+        let raw = CLLocationCoordinate2D(latitude: -33.0, longitude: aisle32_5Longitude)
+        #expect(!PinAisleGeometry.polygonContains(raw, in: block))
+        let result = automatic(block, longitude: raw.longitude, side: .left, heading: 0)
+        #expect(!result.snappedToRow)
+        let now = Date()
+        let lock = PinAisleObservationLock.Lock(
+            paddockId: block.id,
+            aisleNumber: 32.5,
+            supportingObservations: 3,
+            confirmedAt: now
+        )
+        #expect(!PinAisleObservationLock.isValid(lock, capturedAt: now, currentCoordinate: raw, paddock: block))
+    }
+
+    @Test func selectedRowPairMustOverlapTheFrozenPositionLongitudinally() {
+        let source = eastwardBlock()
+        let rows = source.rows.map { row in
+            row.number == 32
+                ? PaddockRow(
+                    number: row.number,
+                    startPoint: row.startPoint,
+                    endPoint: CoordinatePoint(latitude: -33.0, longitude: row.endPoint.longitude)
+                  )
+                : row
+        }
+        let block = Paddock(
+            name: "Unequal ends",
+            polygonPoints: source.polygonPoints,
+            rows: rows,
+            rowDirection: 0,
+            rowWidth: 3.7
+        )
+        let raw = CLLocationCoordinate2D(latitude: -32.9995, longitude: 149.0 + rowSpacing * 1.5)
+        let invalid = PinAttachmentResolver.resolveConfirmedAisle(
+            rawCoordinate: raw,
+            heading: 0,
+            operatorSide: .left,
+            aisleNumber: 32.5,
+            horizontalAccuracyMetres: 8,
+            paddock: block
+        )
+        let valid = PinAttachmentResolver.resolveConfirmedAisle(
+            rawCoordinate: raw,
+            heading: 0,
+            operatorSide: .left,
+            aisleNumber: 33.5,
+            horizontalAccuracyMetres: 8,
+            paddock: block
+        )
+        #expect(!invalid.snappedToRow)
+        #expect(valid.snappedToRow)
+    }
+
+    @Test func ambiguityCandidatesAllowSelectingAnAlternativeMappedAisle() {
+        let block = eastwardBlock()
+        let raw = CLLocationCoordinate2D(latitude: -33.0, longitude: aisle32_5Longitude)
+        let candidates = PinAisleGeometry.confirmationCandidates(
+            coordinate: raw,
+            horizontalAccuracyMetres: 8,
+            in: block
+        )
+        #expect(candidates.contains(where: { abs($0.aisleNumber - 31.5) < 0.01 }))
+        #expect(candidates.contains(where: { abs($0.aisleNumber - 32.5) < 0.01 }))
+        let alternative = PinAttachmentResolver.resolveConfirmedAisle(
+            rawCoordinate: raw,
+            heading: 0,
+            operatorSide: .left,
+            aisleNumber: 31.5,
+            horizontalAccuracyMetres: 8,
+            paddock: block
+        )
+        #expect(alternative.snappedToRow)
+        #expect(alternative.drivingRowNumber == 31.5)
+        #expect(alternative.pinSide == .left)
+    }
+
+    @Test @MainActor func confirmedAttachmentStillRunsTheExistingDuplicateRules() {
+        let block = eastwardBlock()
+        let vineyardId = UUID()
+        let raw = CLLocationCoordinate2D(latitude: -33.0, longitude: aisle32_5Longitude)
+        let confirmed = PinAttachmentResolver.resolveConfirmedAisle(
+            rawCoordinate: raw,
+            heading: 0,
+            operatorSide: .left,
+            aisleNumber: 32.5,
+            horizontalAccuracyMetres: 8,
+            paddock: block
+        )
+        let snapped = try! #require(confirmed.snappedCoordinate)
+        let existing = VinePin(
+            vineyardId: vineyardId,
+            latitude: raw.latitude,
+            longitude: raw.longitude,
+            heading: 0,
+            buttonName: "Irrigation",
+            buttonColor: "blue",
+            side: .left,
+            mode: .repairs,
+            paddockId: block.id,
+            rowNumber: confirmed.pinRowNumber,
+            pinRowNumber: confirmed.pinRowNumber,
+            pinSide: .left,
+            alongRowDistanceM: confirmed.alongRowDistanceM,
+            snappedLatitude: snapped.latitude,
+            snappedLongitude: snapped.longitude,
+            snappedToRow: true
+        )
+        let evaluation = PinDuplicateChecker.evaluate(
+            coordinate: snapped,
+            rawCoordinate: raw,
+            vineyardId: vineyardId,
+            paddockId: block.id,
+            rowNumber: confirmed.pinRowNumber,
+            side: .left,
+            mode: .repairs,
+            logicalType: "Irrigation",
+            in: [existing],
+            paddocks: [block]
+        )
+        #expect(evaluation.match?.method == .alongRow)
+        #expect(evaluation.match?.radius == 2.5)
     }
 
     @Test func nonContiguousRowNumbersReportTheRealAdjacentPair() {

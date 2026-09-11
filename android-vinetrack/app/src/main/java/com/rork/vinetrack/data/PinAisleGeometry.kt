@@ -149,6 +149,64 @@ object PinAisleGeometry {
         return accuracy < distanceToNearRowMetres + distanceToFarRowMetres
     }
 
+    /** True only when the coordinate is inside the mapped block polygon. */
+    fun polygonContains(paddock: Paddock?, latitude: Double, longitude: Double): Boolean =
+        paddock != null && RowAttachment.containsPoint(paddock, latitude, longitude)
+
+    /** True only while the fix projects within both specific row segments. */
+    fun isWithinLongitudinalExtent(
+        paddock: Paddock?,
+        rowNumbers: Pair<Int, Int>,
+        latitude: Double,
+        longitude: Double,
+    ): Boolean {
+        val rows = paddock?.rows?.filter { it.startPoint != null && it.endPoint != null } ?: return false
+        val first = rows.firstOrNull { it.number == rowNumbers.first } ?: return false
+        val second = rows.firstOrNull { it.number == rowNumbers.second } ?: return false
+        val frame = MetricFrame(latitude, longitude)
+        val point = frame.project(latitude, longitude)
+        val firstProjection = projectOntoRow(frame, first, point) ?: return false
+        val secondProjection = projectOntoRow(frame, second, point) ?: return false
+        return !firstProjection.clampedToEnd && !secondProjection.clampedToEnd
+    }
+
+    /** Valid mapped choices intersecting the frozen fix's uncertainty circle. */
+    fun confirmationCandidates(
+        paddock: Paddock?,
+        latitude: Double,
+        longitude: Double,
+        accuracyMetres: Double?,
+    ): List<Aisle> {
+        val block = paddock ?: return emptyList()
+        val accuracy = accuracyMetres?.takeIf { it.isFinite() && it >= 0.0 } ?: return emptyList()
+        if (!polygonContains(block, latitude, longitude)) return emptyList()
+        val rows = block.rows
+            ?.filter { it.startPoint != null && it.endPoint != null }
+            ?.sortedBy { it.number }
+            ?: return emptyList()
+        val frame = MetricFrame(latitude, longitude)
+        val point = frame.project(latitude, longitude)
+        return rows.zipWithNext().mapNotNull { (first, second) ->
+            val pair = first.number to second.number
+            if (!isWithinLongitudinalExtent(block, pair, latitude, longitude)) return@mapNotNull null
+            val firstProjection = projectOntoRow(frame, first, point) ?: return@mapNotNull null
+            val secondProjection = projectOntoRow(frame, second, point) ?: return@mapNotNull null
+            val firstDistance = firstProjection.point.distanceTo(point)
+            val secondDistance = secondProjection.point.distanceTo(point)
+            val width = firstProjection.point.distanceTo(secondProjection.point)
+            val maxWidth = block.rowWidth?.takeIf { it > 0.0 }?.times(2.5) ?: FALLBACK_MAX_AISLE_WIDTH_M
+            if (width > maxWidth ||
+                minOf(firstDistance, secondDistance) > width + accuracy ||
+                firstDistance + secondDistance > width + accuracy * 2.0 + 0.25
+            ) return@mapNotNull null
+            Aisle(
+                aisleNumber = (first.number.toDouble() + second.number.toDouble()) / 2.0,
+                nearRowNumber = if (firstDistance <= secondDistance) first.number else second.number,
+                farRowNumber = if (firstDistance <= secondDistance) second.number else first.number,
+            )
+        }
+    }
+
     /**
      * Resolve the aisle physically containing the fix: the nearest mapped row
      * plus the nearest row lying beyond the fix on the same axis, provided the
@@ -198,6 +256,7 @@ object PinAisleGeometry {
         accuracyMetres: Double?,
         requiresQualifiedAccuracy: Boolean,
     ): Aisle? {
+        if (!polygonContains(paddock, latitude, longitude)) return null
         val rows = paddock?.rows
             ?.filter { it.startPoint != null && it.endPoint != null }
             ?.takeIf { it.size >= 2 }
@@ -282,6 +341,9 @@ object PinAisleGeometry {
     ): RowSelection? {
         val heading = validHeading(headingDegrees) ?: return null
         val cleanSide = side?.trim()?.lowercase()?.takeIf { it == "left" || it == "right" } ?: return null
+        if (!polygonContains(paddock, latitude, longitude) ||
+            !isWithinLongitudinalExtent(paddock, rowNumbers, latitude, longitude)
+        ) return null
         if (rowNumbers.first == rowNumbers.second) return null
         val rows = paddock?.rows?.filter { it.startPoint != null && it.endPoint != null } ?: return null
         val first = rows.firstOrNull { it.number == rowNumbers.first } ?: return null
@@ -329,12 +391,15 @@ object PinAisleGeometry {
      * Null unless both rows exist in the block's mapped geometry.
      */
     fun rowsBoundingPath(paddock: Paddock?, path: Double): Pair<Int, Int>? {
-        val lower = kotlin.math.floor(path).toInt()
-        val upper = kotlin.math.ceil(path).toInt()
-        if (lower == upper) return null
-        val rows = paddock?.rows?.filter { it.startPoint != null && it.endPoint != null } ?: return null
-        if (rows.none { it.number == lower } || rows.none { it.number == upper }) return null
-        return lower to upper
+        val rows = paddock?.rows
+            ?.filter { it.startPoint != null && it.endPoint != null }
+            ?.sortedBy { it.number }
+            ?: return null
+        return rows.zipWithNext().firstNotNullOfOrNull { (first, second) ->
+            (first.number to second.number).takeIf {
+                abs((first.number.toDouble() + second.number.toDouble()) / 2.0 - path) < 0.01
+            }
+        }
     }
 
     // MARK: - Local metric frame

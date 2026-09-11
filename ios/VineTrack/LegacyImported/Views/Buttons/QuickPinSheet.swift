@@ -202,9 +202,11 @@ struct QuickPinSheet: View {
                 ),
                 presenting: pendingAisleConfirmation
             ) { request in
-                Button(request.choiceLabel) {
-                    pendingAisleConfirmation = nil
-                    request.confirm()
+                ForEach(request.choices) { choice in
+                    Button(choice.label) {
+                        pendingAisleConfirmation = nil
+                        choice.confirm()
+                    }
                 }
                 Button("Cancel", role: .cancel) { pendingAisleConfirmation = nil }
             } message: { request in
@@ -263,30 +265,41 @@ struct QuickPinSheet: View {
             return
         }
         guard let paddockId = placement.paddockId,
-              let paddock = store.paddocks.first(where: { $0.id == paddockId }),
-              let aisle = PinAisleGeometry.approximateAisle(containing: loc.coordinate, in: paddock) else {
+              let paddock = store.paddocks.first(where: { $0.id == paddockId }) else {
             errorMessage = "Pin not saved — mapped aisle confirmation is unavailable at this frozen position."
             return
         }
-        let confirmed = PinAttachmentResolver.resolveConfirmedAisle(
-            rawCoordinate: loc.coordinate,
-            heading: placement.attachment.heading,
-            operatorSide: side,
-            aisleNumber: aisle.aisleNumber,
-            paddock: paddock
-        )
-        guard confirmed.snappedToRow, let confirmedRow = confirmed.pinRowNumber else {
+        let choices = PinAisleGeometry.confirmationCandidates(
+            coordinate: loc.coordinate,
+            horizontalAccuracyMetres: placement.capture?.horizontalAccuracyMetres,
+            in: paddock
+        ).compactMap { aisle -> PendingMappedAisleConfirmation.Choice? in
+            let confirmed = PinAttachmentResolver.resolveConfirmedAisle(
+                rawCoordinate: loc.coordinate,
+                heading: placement.attachment.heading,
+                operatorSide: side,
+                aisleNumber: aisle.aisleNumber,
+                horizontalAccuracyMetres: placement.capture?.horizontalAccuracyMetres,
+                paddock: paddock
+            )
+            guard confirmed.snappedToRow, let row = confirmed.pinRowNumber else { return nil }
+            let confirmedPlacement: ResolvedPlacement = (
+                placement.paddockId, confirmed, placement.fallbackRowNumber, placement.capture
+            )
+            return PendingMappedAisleConfirmation.Choice(
+                aisleNumber: aisle.aisleNumber,
+                rowNumber: row,
+                side: side,
+                confirm: { continueWith(confirmedPlacement) }
+            )
+        }
+        guard !choices.isEmpty else {
             errorMessage = "Pin not saved — mapped aisle, heading and selected side could not be confirmed."
             return
         }
-        let confirmedPlacement: ResolvedPlacement = (
-            placement.paddockId, confirmed, placement.fallbackRowNumber, placement.capture
-        )
         pendingAisleConfirmation = PendingMappedAisleConfirmation(
             paddockName: paddock.name,
-            aisleNumber: aisle.aisleNumber,
-            rowNumber: confirmedRow,
-            confirm: { continueWith(confirmedPlacement) }
+            choices: choices
         )
     }
 

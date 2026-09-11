@@ -133,7 +133,7 @@ nonisolated enum PinAisleObservationLock {
             .suffix(maximumObservationCount)
         let evidence = ordered.map { location -> Evidence in
             let coordinate = location.coordinate
-            guard RowGuidance.paddock(for: coordinate, in: [paddock])?.id == paddock.id else {
+            guard PinAisleGeometry.polygonContains(coordinate, in: paddock) else {
                 return Evidence(observedAt: location.timestamp, paddockId: nil, aisleNumber: nil, isQualified: false)
             }
             let approximate = PinAisleGeometry.approximateAisle(containing: coordinate, in: paddock)
@@ -168,9 +168,13 @@ nonisolated enum PinAisleObservationLock {
               lock.paddockId == paddock.id,
               capturedAt.timeIntervalSince(lock.confirmedAt) >= -1,
               capturedAt.timeIntervalSince(lock.confirmedAt) <= maximumObservationAge,
-              RowGuidance.paddock(for: currentCoordinate, in: [paddock])?.id == paddock.id,
-              PinAisleGeometry.rowsBounding(path: lock.aisleNumber, in: paddock) != nil,
-              PinAisleGeometry.approximateAisle(containing: currentCoordinate, in: paddock) != nil
+              PinAisleGeometry.polygonContains(currentCoordinate, in: paddock),
+              let rows = PinAisleGeometry.rowsBounding(path: lock.aisleNumber, in: paddock),
+              PinAisleGeometry.isWithinLongitudinalExtent(
+                of: rows,
+                coordinate: currentCoordinate,
+                in: paddock
+              )
         else { return false }
         return true
     }

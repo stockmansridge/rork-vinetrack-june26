@@ -22,10 +22,20 @@ struct PinDropView: View {
     @State private var feedbackKind: VineyardBadgeKind = .success
     @State private var showLocationOptions: Bool = false
     @State private var pendingAisleConfirmation: PendingMappedAisleConfirmation?
+    @State private var duplicateWarning: DuplicateWarning?
+    @State private var pinForDetailSheet: VinePin?
 
     init(mode: PinMode) {
         self.mode = mode
         _currentMode = State(initialValue: mode)
+    }
+
+    private struct DuplicateWarning: Identifiable {
+        let id: UUID = UUID()
+        let existing: VinePin
+        let distance: Double
+        let radius: Double
+        let attempt: PinDuplicateCreateAttempt
     }
 
     private var canCreate: Bool { accessControl.canCreateOperationalRecords }
@@ -110,13 +120,34 @@ struct PinDropView: View {
             ),
             presenting: pendingAisleConfirmation
         ) { request in
-            Button(request.choiceLabel) {
-                pendingAisleConfirmation = nil
-                request.confirm()
+            ForEach(request.choices) { choice in
+                Button(choice.label) {
+                    pendingAisleConfirmation = nil
+                    choice.confirm()
+                }
             }
             Button("Cancel", role: .cancel) { pendingAisleConfirmation = nil }
         } message: { request in
             Text("Frozen GPS observation in \(request.paddockName). Select the mapped result to save; your current location will not replace it.")
+        }
+        .sheet(item: $duplicateWarning) { warning in
+            PinDuplicateWarningSheet(
+                existingPin: warning.existing,
+                distance: warning.distance,
+                radius: warning.radius,
+                onCreateAnyway: { _ = warning.attempt.createAnyway() },
+                onViewExisting: {
+                    if warning.attempt.cancel() { pinForDetailSheet = warning.existing }
+                },
+                onCancel: { _ = warning.attempt.cancel() }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $pinForDetailSheet) { pin in
+            PinDetailSheet(pin: pin)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -409,7 +440,8 @@ struct PinDropView: View {
             aisleLock: historyLock
         )
         let save: @MainActor (PinAttachmentResolver.Attachment) -> Void = { confirmedAttachment in
-            let created = store.createPinFromButton(
+            let proceed = {
+                let created = store.createPinFromButton(
                 button: button,
                 coordinate: location.coordinate,
                 heading: confirmedAttachment.heading,
@@ -422,31 +454,65 @@ struct PinDropView: View {
                 notes: nil,
                 attachment: confirmedAttachment
             )
-            guard created != nil else {
-                showFeedback("Vineyard or trip changed \u{2014} press again.", kind: .warning)
-                return
+                guard created != nil else {
+                    showFeedback("Vineyard or trip changed \u{2014} press again.", kind: .warning)
+                    return
+                }
+                showFeedback("Pin: \(button.name) (\(side == .left ? "L" : "R"))", kind: .success)
             }
-            showFeedback("Pin: \(button.name) (\(side == .left ? "L" : "R"))", kind: .success)
-        }
-        if rowNumber == nil, !attachment.snappedToRow,
-           let paddock,
-           let aisle = PinAisleGeometry.approximateAisle(containing: location.coordinate, in: paddock) {
-            let confirmed = PinAttachmentResolver.resolveConfirmedAisle(
+            let duplicateCoordinate = confirmedAttachment.snappedCoordinate ?? location.coordinate
+            let evaluation = PinDuplicateChecker.evaluate(
+                coordinate: duplicateCoordinate,
                 rawCoordinate: location.coordinate,
-                heading: attachment.heading,
-                operatorSide: side,
-                aisleNumber: aisle.aisleNumber,
-                paddock: paddock
+                vineyardId: store.selectedVineyardId,
+                paddockId: paddockId,
+                rowNumber: rowNumber ?? confirmedAttachment.pinRowNumber,
+                side: confirmedAttachment.pinSide ?? side,
+                mode: button.mode,
+                logicalType: button.name,
+                in: store.pins,
+                paddocks: store.paddocks
             )
-            guard confirmed.snappedToRow, let confirmedRow = confirmed.pinRowNumber else {
+            if let match = evaluation.match {
+                duplicateWarning = DuplicateWarning(
+                    existing: match.pin,
+                    distance: match.distance,
+                    radius: match.radius,
+                    attempt: PinDuplicateCreateAttempt(create: proceed)
+                )
+            } else {
+                proceed()
+            }
+        }
+        if rowNumber == nil, !attachment.snappedToRow, let paddock {
+            let choices = PinAisleGeometry.confirmationCandidates(
+                coordinate: location.coordinate,
+                horizontalAccuracyMetres: capture?.horizontalAccuracyMetres,
+                in: paddock
+            ).compactMap { aisle -> PendingMappedAisleConfirmation.Choice? in
+                let confirmed = PinAttachmentResolver.resolveConfirmedAisle(
+                    rawCoordinate: location.coordinate,
+                    heading: attachment.heading,
+                    operatorSide: side,
+                    aisleNumber: aisle.aisleNumber,
+                    horizontalAccuracyMetres: capture?.horizontalAccuracyMetres,
+                    paddock: paddock
+                )
+                guard confirmed.snappedToRow, let row = confirmed.pinRowNumber else { return nil }
+                return PendingMappedAisleConfirmation.Choice(
+                    aisleNumber: aisle.aisleNumber,
+                    rowNumber: row,
+                    side: side,
+                    confirm: { save(confirmed) }
+                )
+            }
+            guard !choices.isEmpty else {
                 showFeedback("Mapped row confirmation is unavailable at this frozen position.", kind: .warning)
                 return
             }
             pendingAisleConfirmation = PendingMappedAisleConfirmation(
                 paddockName: paddock.name,
-                aisleNumber: aisle.aisleNumber,
-                rowNumber: confirmedRow,
-                confirm: { save(confirmed) }
+                choices: choices
             )
             return
         }

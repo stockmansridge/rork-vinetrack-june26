@@ -91,6 +91,100 @@ nonisolated enum PinAisleGeometry {
         return accuracy < distanceToNearRowMetres + distanceToFarRowMetres
     }
 
+    /// True only when the coordinate is inside the mapped block polygon. This
+    /// intentionally has no nearest-block fallback.
+    static func polygonContains(_ coordinate: CLLocationCoordinate2D, in paddock: Paddock) -> Bool {
+        let polygon = paddock.polygonPoints
+        guard polygon.count >= 3,
+              coordinate.latitude.isFinite,
+              coordinate.longitude.isFinite
+        else { return false }
+        var inside = false
+        var previous = polygon.count - 1
+        for index in polygon.indices {
+            let currentPoint = polygon[index]
+            let previousPoint = polygon[previous]
+            let crossesLatitude = (currentPoint.latitude > coordinate.latitude) != (previousPoint.latitude > coordinate.latitude)
+            if crossesLatitude {
+                let longitudeAtLatitude = (previousPoint.longitude - currentPoint.longitude)
+                    * (coordinate.latitude - currentPoint.latitude)
+                    / (previousPoint.latitude - currentPoint.latitude)
+                    + currentPoint.longitude
+                if coordinate.longitude < longitudeAtLatitude { inside.toggle() }
+            }
+            previous = index
+        }
+        return inside
+    }
+
+    /// True only while the fix projects within both specific row segments.
+    static func isWithinLongitudinalExtent(
+        of rowNumbers: (Int, Int),
+        coordinate: CLLocationCoordinate2D,
+        in paddock: Paddock
+    ) -> Bool {
+        guard let first = paddock.rows.first(where: { $0.number == rowNumbers.0 }),
+              let second = paddock.rows.first(where: { $0.number == rowNumbers.1 })
+        else { return false }
+        let frame = MetricFrame(around: coordinate)
+        let point = frame.project(coordinate)
+        guard let firstProjection = closestPoint(
+            on: frame.project(first.startPoint.coordinate),
+            frame.project(first.endPoint.coordinate),
+            to: point
+        ), let secondProjection = closestPoint(
+            on: frame.project(second.startPoint.coordinate),
+            frame.project(second.endPoint.coordinate),
+            to: point
+        ) else { return false }
+        return !firstProjection.clampedToEnd && !secondProjection.clampedToEnd
+    }
+
+    /// Mapped aisle choices whose specific row pair overlaps the frozen fix
+    /// longitudinally and whose corridor intersects its reported uncertainty.
+    static func confirmationCandidates(
+        coordinate: CLLocationCoordinate2D,
+        horizontalAccuracyMetres: Double?,
+        in paddock: Paddock
+    ) -> [Aisle] {
+        guard polygonContains(coordinate, in: paddock),
+              let accuracy = horizontalAccuracyMetres,
+              accuracy.isFinite,
+              accuracy >= 0
+        else { return [] }
+        let rows = paddock.rows.sorted { $0.number < $1.number }
+        let frame = MetricFrame(around: coordinate)
+        let point = frame.project(coordinate)
+        return zip(rows, rows.dropFirst()).compactMap { rowPair in
+            let first = rowPair.0
+            let second = rowPair.1
+            let pair = (first.number, second.number)
+            guard isWithinLongitudinalExtent(of: pair, coordinate: coordinate, in: paddock),
+                  let firstProjection = closestPoint(
+                    on: frame.project(first.startPoint.coordinate),
+                    frame.project(first.endPoint.coordinate),
+                    to: point
+                  ), let secondProjection = closestPoint(
+                    on: frame.project(second.startPoint.coordinate),
+                    frame.project(second.endPoint.coordinate),
+                    to: point
+                  ) else { return nil }
+            let firstDistance = firstProjection.point.distance(to: point)
+            let secondDistance = secondProjection.point.distance(to: point)
+            let width = firstProjection.point.distance(to: secondProjection.point)
+            let maxWidth = paddock.rowWidth > 0 ? paddock.rowWidth * 2.5 : fallbackMaxAisleWidthMetres
+            guard width <= maxWidth,
+                  min(firstDistance, secondDistance) <= width + accuracy,
+                  firstDistance + secondDistance <= width + accuracy * 2 + 0.25
+            else { return nil }
+            return Aisle(
+                aisleNumber: (Double(first.number) + Double(second.number)) / 2,
+                nearRowNumber: firstDistance <= secondDistance ? first.number : second.number,
+                farRowNumber: firstDistance <= secondDistance ? second.number : first.number
+            )
+        }
+    }
+
     /// Resolve the aisle physically containing `coordinate`: the nearest mapped
     /// row plus the nearest row on the opposite side of the fix, provided they
     /// are close enough to be a real aisle AND the reported GPS uncertainty is
@@ -139,7 +233,7 @@ nonisolated enum PinAisleGeometry {
         requiresQualifiedAccuracy: Bool
     ) -> Aisle? {
         let rows = paddock.rows
-        guard rows.count >= 2 else { return nil }
+        guard polygonContains(coordinate, in: paddock), rows.count >= 2 else { return nil }
 
         let frame = MetricFrame(around: coordinate)
         let point = frame.project(coordinate)
@@ -221,7 +315,10 @@ nonisolated enum PinAisleGeometry {
         in paddock: Paddock,
         useAisleMidpointReference: Bool = false
     ) -> RowSelection? {
-        guard let heading = validHeading(heading) else { return nil }
+        guard let heading = validHeading(heading),
+              polygonContains(coordinate, in: paddock),
+              isWithinLongitudinalExtent(of: rowNumbers, coordinate: coordinate, in: paddock)
+        else { return nil }
         guard let first = paddock.rows.first(where: { $0.number == rowNumbers.0 }),
               let second = paddock.rows.first(where: { $0.number == rowNumbers.1 }),
               first.number != second.number
@@ -278,13 +375,15 @@ nonisolated enum PinAisleGeometry {
     /// The two vine rows bounding an explicit driving path (e.g. 32.5 -> 32 and
     /// 33). Returns nil unless both rows exist in the block's mapped geometry.
     static func rowsBounding(path: Double, in paddock: Paddock) -> (Int, Int)? {
-        let lower = Int(floor(path))
-        let upper = Int(ceil(path))
-        guard lower != upper else { return nil }
-        guard paddock.rows.contains(where: { $0.number == lower }),
-              paddock.rows.contains(where: { $0.number == upper })
-        else { return nil }
-        return (lower, upper)
+        let rows = paddock.rows.sorted { $0.number < $1.number }
+        for pair in zip(rows, rows.dropFirst()) {
+            let first = pair.0.number
+            let second = pair.1.number
+            if abs((Double(first) + Double(second)) / 2 - path) < 0.01 {
+                return (first, second)
+            }
+        }
+        return nil
     }
 
     // MARK: - Local metric frame
