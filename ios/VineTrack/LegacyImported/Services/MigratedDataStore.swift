@@ -861,18 +861,27 @@ final class MigratedDataStore {
     }
 
     /// Retains the draft first, then durably merges only notes onto the original
-    /// pin identity. A failed pin-cache write leaves the separate draft intact
-    /// for sheet recreation and vineyard switching; success removes it.
-    func updatePinNotesDurably(pinId: UUID, vineyardId: UUID, notes: String?) throws {
+    /// pin identity. Once the pin cache write succeeds, its value is published
+    /// and marked for sync before recoverable draft cleanup is attempted.
+    func updatePinNotesDurably(
+        pinId: UUID,
+        vineyardId: UUID,
+        notes: String?
+    ) throws -> PinNotesUpdateOutcome {
         let draftText = notes ?? ""
         try pinNotesDraftStore.retain(pinId: pinId, vineyardId: vineyardId, notes: draftText)
         let updated = try pinRepo.updateNotesDurably(pinId: pinId, vineyardId: vineyardId, notes: notes)
-        try pinNotesDraftStore.clear(pinId: pinId, vineyardId: vineyardId)
         if selectedVineyardId == vineyardId,
            let index = pins.firstIndex(where: { $0.id == pinId && $0.vineyardId == vineyardId }) {
             pins[index] = updated
         }
         onPinChanged?(pinId)
+        do {
+            try pinNotesDraftStore.clear(pinId: pinId, vineyardId: vineyardId)
+            return .saved
+        } catch {
+            return .savedCleanupPending
+        }
     }
 
     func deletePin(_ pinId: UUID) {

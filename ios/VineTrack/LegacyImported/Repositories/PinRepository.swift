@@ -6,6 +6,11 @@ nonisolated struct PendingPinNotesDraft: Codable, Equatable, Sendable {
     let notes: String
 }
 
+nonisolated enum PinNotesUpdateOutcome: Equatable, Sendable {
+    case saved
+    case savedCleanupPending
+}
+
 /// Durable holding area for notes that have not yet merged into the pin cache.
 @MainActor
 final class PinNotesDraftStore {

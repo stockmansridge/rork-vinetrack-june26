@@ -175,9 +175,58 @@ struct PinQueryPolicyTests {
         #expect(PinRepository(persistence: persistence).loadAll().first?.notes == nil)
 
         persistence.durableSaveFailureForTesting = nil
-        try recreated.updatePinNotesDurably(pinId: original.id, vineyardId: original.vineyardId, notes: "retained failure")
+        _ = try recreated.updatePinNotesDurably(pinId: original.id, vineyardId: original.vineyardId, notes: "retained failure")
         #expect(recreated.pendingPinNotesDraft(pinId: original.id, vineyardId: original.vineyardId) == nil)
         #expect(PinRepository(persistence: persistence).loadAll().first?.notes == "retained failure")
+    }
+
+    @Test @MainActor func successfulNotesWritePublishesSyncBeforeFailedCleanupAndRetryClearsRecovery() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = PersistenceStore(directory: directory)
+        var original = pin(completed: true, row: 27)
+        original.photoPath = "preserved/photo.jpg"
+        try persistence.saveOrThrow([original], key: PinRepository.storageKey)
+
+        let store = MigratedDataStore(persistence: persistence)
+        store.selectedVineyardId = original.vineyardId
+        store.pins = [original]
+        var syncNotifications: [UUID] = []
+        store.onPinChanged = { syncNotifications.append($0) }
+        var draftWrites = 0
+        persistence.durableSaveFailureForTesting = { key in
+            guard key == PinNotesDraftStore.storageKey else { return nil }
+            draftWrites += 1
+            return draftWrites == 2
+                ? NSError(domain: "PinNotesCleanupTests", code: 1)
+                : nil
+        }
+
+        let firstOutcome = try store.updatePinNotesDurably(
+            pinId: original.id,
+            vineyardId: original.vineyardId,
+            notes: "saved before cleanup"
+        )
+        #expect(firstOutcome == .savedCleanupPending)
+        #expect(syncNotifications == [original.id])
+        #expect(store.pins.first?.notes == "saved before cleanup")
+        #expect(store.pendingPinNotesDraft(pinId: original.id, vineyardId: original.vineyardId)?.notes == "saved before cleanup")
+        let savedBeforeRetry = try #require(PinRepository(persistence: persistence).loadAll().first)
+        #expect(savedBeforeRetry.notes == "saved before cleanup")
+
+        persistence.durableSaveFailureForTesting = nil
+        let reopened = MigratedDataStore(persistence: persistence)
+        reopened.selectedVineyardId = original.vineyardId
+        reopened.pins = [savedBeforeRetry]
+        let retryOutcome = try reopened.updatePinNotesDurably(
+            pinId: original.id,
+            vineyardId: original.vineyardId,
+            notes: "saved before cleanup"
+        )
+        #expect(retryOutcome == .saved)
+        #expect(reopened.pendingPinNotesDraft(pinId: original.id, vineyardId: original.vineyardId) == nil)
+        #expect(PinRepository(persistence: persistence).loadAll().first == savedBeforeRetry)
     }
 
     @Test @MainActor func vineyardSwitchNotesFlushUsesOriginalIdentityAndReportsFailure() throws {

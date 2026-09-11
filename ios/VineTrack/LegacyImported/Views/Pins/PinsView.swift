@@ -1772,6 +1772,7 @@ struct PinDetailSheet: View {
     @State private var hasLoadedNotes: Bool = false
     @State private var lastSavedNotes: String = ""
     @State private var notesSaveError: String?
+    @State private var notesCleanupIsPending: Bool = false
     @State private var showDirections: Bool = false
     @State private var showPhotoPicker: Bool = false
     @State private var showFullPhoto: Bool = false
@@ -2149,7 +2150,10 @@ struct PinDetailSheet: View {
                 lastSavedNotes = savedNotes
                 if let retained = store.pendingPinNotesDraft(pinId: pin.id, vineyardId: pin.vineyardId) {
                     notesDraft = retained.notes
-                    notesSaveError = "Your previously unsaved notes are still here. Retry when device storage is available."
+                    notesCleanupIsPending = retained.notes == savedNotes
+                    notesSaveError = notesCleanupIsPending
+                        ? "Your notes were saved and marked for sync, but recovery cleanup is still pending. Retry to finish cleanup."
+                        : "Your previously unsaved notes are still here. Retry when device storage is available."
                 } else {
                     notesDraft = savedNotes
                 }
@@ -2180,7 +2184,7 @@ struct PinDetailSheet: View {
                 loadedPhotoToken = nil
                 await loadPhotoIfNeeded(force: false)
             }
-            .alert("Notes not saved", isPresented: Binding(
+            .alert(notesCleanupIsPending ? "Notes saved; cleanup pending" : "Notes not saved", isPresented: Binding(
                 get: { notesSaveError != nil },
                 set: { if !$0 { notesSaveError = nil } }
             )) {
@@ -2260,17 +2264,28 @@ struct PinDetailSheet: View {
 
     @discardableResult
     private func flushPendingNotes() -> Bool {
-        guard hasLoadedNotes, notesDraft != lastSavedNotes else { return true }
+        guard hasLoadedNotes else { return true }
+        let hasRetainedRecovery = store.pendingPinNotesDraft(pinId: pin.id, vineyardId: pin.vineyardId) != nil
+        guard notesDraft != lastSavedNotes || hasRetainedRecovery || notesSaveError != nil else { return true }
         do {
-            try store.updatePinNotesDurably(
+            let outcome = try store.updatePinNotesDurably(
                 pinId: pin.id,
                 vineyardId: pin.vineyardId,
                 notes: notesDraft.isEmpty ? nil : notesDraft
             )
             lastSavedNotes = notesDraft
-            notesSaveError = nil
-            return true
+            switch outcome {
+            case .saved:
+                notesCleanupIsPending = false
+                notesSaveError = nil
+                return true
+            case .savedCleanupPending:
+                notesCleanupIsPending = true
+                notesSaveError = "Your notes were saved and marked for sync, but recovery cleanup is still pending. Retry to finish cleanup."
+                return false
+            }
         } catch {
+            notesCleanupIsPending = false
             notesSaveError = "Your notes could not be saved to this device. Your text has been retained; retry before closing."
             return false
         }
