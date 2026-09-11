@@ -613,7 +613,7 @@ final class MigratedDataStore {
         // hydration stalls, relaunch returns to the previous working vineyard so
         // the bounded diagnostic can be retrieved without re-entering the stall.
         persistence.save(SelectedVineyardWrapper(id: vineyard.id), key: Keys.selectedVineyardId)
-        VineyardSelectionDiagnostics.completed(vineyardId: vineyard.id)
+        VineyardSelectionDiagnostics.hydrationCompleted(vineyardId: vineyard.id)
         // Pull the vineyard's shared Davis WeatherLink integration so all
         // weather call sites (resolver, rainfall history, hourly service,
         // alerts) see the configured station immediately on switch —

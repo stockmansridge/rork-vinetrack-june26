@@ -57,6 +57,7 @@ struct NewMainTabView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: Int = 0
     @State private var isSweeping: Bool = false
+    @State private var isSweepRequested: Bool = false
     @State private var portalPromptTrigger: PortalPromptTrigger?
     @State private var seasonMigrationPrompt: SeasonMigrationPrompt?
     @State private var seasonMigrationError: String?
@@ -163,6 +164,9 @@ struct NewMainTabView: View {
             Task { await appNoticeService.refresh() }
         }
         .task(id: store.selectedVineyardId) {
+            if let vineyardId = store.selectedVineyardId {
+                VineyardSelectionDiagnostics.stage("rendering-completed", vineyardId: vineyardId)
+            }
             // Hydrate portal spray templates from the offline cache immediately
             // (network-independent) so the template picker works offline.
             sprayJobTemplateService.loadCached(for: store.selectedVineyardId)
@@ -282,12 +286,27 @@ struct NewMainTabView: View {
     private enum AlertRefreshMode { case generate, refresh, none }
 
     /// Runs a full sync sweep across every wired service. Overlapping calls
-    /// are coalesced — a second invocation while a sweep is in flight is
-    /// dropped so we never run two sweeps in parallel.
+    /// are coalesced into one follow-up sweep. A vineyard switch during a sweep
+    /// therefore cannot be lost or run in parallel with the previous vineyard.
     private func runFullSweep(alertRefresh: AlertRefreshMode) async {
-        guard !isSweeping else { return }
+        guard !isSweeping else {
+            isSweepRequested = true
+            return
+        }
         isSweeping = true
-        defer { isSweeping = false }
+        let sweepVineyardId = store.selectedVineyardId
+        defer {
+            let shouldRepeat = isSweepRequested || store.selectedVineyardId != sweepVineyardId
+            isSweepRequested = false
+            isSweeping = false
+            if shouldRepeat {
+                Task { await runFullSweep(alertRefresh: .refresh) }
+            }
+        }
+
+        if let sweepVineyardId {
+            VineyardSelectionDiagnostics.stage("sync-started", vineyardId: sweepVineyardId)
+        }
 
         // Always keep the glanceable backlog count current.
         syncStatusCenter.refreshPending(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes, failedUpserts: aggregateFailedUpserts, failedDeletes: aggregateFailedDeletes)
@@ -295,7 +314,12 @@ struct NewMainTabView: View {
         // Offline: everything stays queued locally and retries on reconnect.
         // We skip the network round-trips so we don't generate false errors
         // or drain the battery while out of range.
-        guard network.isOnline else { return }
+        guard network.isOnline else {
+            if let sweepVineyardId {
+                VineyardSelectionDiagnostics.stage("sync-waiting-offline", vineyardId: sweepVineyardId)
+            }
+            return
+        }
 
         syncStatusCenter.syncDidStart()
         // Manual mutations replay first with their original operation IDs. A queued
@@ -306,7 +330,13 @@ struct NewMainTabView: View {
             currentRole: accessControl.currentRole
         )
         await pinSync.syncPinsForSelectedVineyard()
+        if let sweepVineyardId {
+            VineyardSelectionDiagnostics.stage("sync-blocks", vineyardId: sweepVineyardId)
+        }
         await paddockSync.syncPaddocksForSelectedVineyard()
+        if let sweepVineyardId {
+            VineyardSelectionDiagnostics.stage("sync-remaining-records", vineyardId: sweepVineyardId)
+        }
         await tripSync.syncTripsForSelectedVineyard()
         await sprayRecordSync.syncSprayRecordsForSelectedVineyard()
         if let vineyardId = store.selectedVineyardId {
@@ -375,6 +405,9 @@ struct NewMainTabView: View {
             pullSucceeded: sweepError == nil,
             error: sweepError
         )
+        if let sweepVineyardId, store.selectedVineyardId == sweepVineyardId {
+            VineyardSelectionDiagnostics.syncCompleted(vineyardId: sweepVineyardId)
+        }
     }
 
     // MARK: - Vineyard region settings

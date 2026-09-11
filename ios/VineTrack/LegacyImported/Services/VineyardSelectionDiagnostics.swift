@@ -24,17 +24,28 @@ enum VineyardSelectionDiagnostics {
     }
 
     static func stage(_ stage: String, vineyardId: UUID) {
+        guard let snapshot = loadSnapshot(),
+              snapshot.vineyardId == vineyardId,
+              snapshot.completedAt == nil else { return }
+        startedAt = snapshot.startedAt
         persist(vineyardId: vineyardId, stage: stage, stageStartedAt: Date(), completedAt: nil)
     }
 
-    static func completed(vineyardId: UUID) {
+    static func hydrationCompleted(vineyardId: UUID) {
+        stage("hydration-completed", vineyardId: vineyardId)
+    }
+
+    static func syncCompleted(vineyardId: UUID) {
+        guard let snapshot = loadSnapshot(),
+              snapshot.vineyardId == vineyardId,
+              snapshot.completedAt == nil else { return }
         let now = Date()
-        persist(vineyardId: vineyardId, stage: "completed", stageStartedAt: now, completedAt: now)
+        startedAt = snapshot.startedAt
+        persist(vineyardId: vineyardId, stage: "sync-completed", stageStartedAt: now, completedAt: now)
     }
 
     static var report: String {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else {
+        guard let snapshot = loadSnapshot() else {
             return "Vineyard selection diagnostic: no selection recorded"
         }
         let elapsed = (snapshot.completedAt ?? Date()).timeIntervalSince(snapshot.startedAt)
@@ -48,6 +59,11 @@ enum VineyardSelectionDiagnostics {
         Completed: \(snapshot.completedAt?.formatted(.iso8601) ?? "no")
         Elapsed: \(String(format: "%.3f", elapsed)) seconds
         """
+    }
+
+    private static func loadSnapshot() -> Snapshot? {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(Snapshot.self, from: data)
     }
 
     private static func persist(

@@ -22,9 +22,9 @@ struct SyncDiagnosticsView: View {
     @Environment(PaddockSyncService.self) private var paddockSync
     @Environment(PruningSyncService.self) private var pruningSync
     @Environment(FertiliserSyncService.self) private var fertiliserSync
+    @Environment(SyncStatusCenter.self) private var syncStatusCenter
 
     @State private var copyConfirmation: String?
-    @State private var isSyncingAll: Bool = false
     @State private var isForceRepullingPaddocks: Bool = false
     @State private var lastPaddockForceRefresh: PaddockSyncService.ForceRefreshResult?
     @State private var lastPaddockForceRefreshAt: Date?
@@ -154,15 +154,15 @@ struct SyncDiagnosticsView: View {
     private var actionsSection: some View {
         Section {
             Button {
-                Task { await syncAll() }
+                syncStatusCenter.requestManualSync()
             } label: {
                 HStack {
-                    Label(isSyncingAll ? "Syncing…" : "Sync now", systemImage: "arrow.triangle.2.circlepath")
+                    Label(syncStatusCenter.isSyncing ? "Syncing…" : "Sync now", systemImage: "arrow.triangle.2.circlepath")
                     Spacer()
-                    if isSyncingAll { ProgressView() }
+                    if syncStatusCenter.isSyncing { ProgressView() }
                 }
             }
-            .disabled(isSyncingAll || !auth.isSignedIn || store.selectedVineyardId == nil)
+            .disabled(syncStatusCenter.isSyncing || !auth.isSignedIn || store.selectedVineyardId == nil)
 
             Button {
                 copyDiagnostics()
@@ -1094,24 +1094,6 @@ struct SyncDiagnosticsView: View {
 
     // MARK: - Actions
 
-    private func syncAll() async {
-        guard !isSyncingAll else { return }
-        isSyncingAll = true
-        defer { isSyncingAll = false }
-        await pinSync.syncPinsForSelectedVineyard()
-        await tripSync.syncTripsForSelectedVineyard()
-        await sprayRecordSync.syncSprayRecordsForSelectedVineyard()
-        await savedSprayPresetSync.syncForSelectedVineyard()
-        await savedChemicalSync.syncForSelectedVineyard()
-        await savedInputSync.syncForSelectedVineyard()
-        await workTaskSync.syncForSelectedVineyard()
-        await workTaskLabourLineSync.syncForSelectedVineyard()
-        await workTaskPaddockSync.syncForSelectedVineyard()
-        await growthStageRecordSync.syncForSelectedVineyard()
-        await pruningSync.syncForSelectedVineyard()
-        await fertiliserSync.syncForSelectedVineyard()
-    }
-
     private func copyDiagnostics() {
         let text = diagnosticsText()
         UIPasteboard.general.string = text
@@ -1166,7 +1148,9 @@ struct SyncDiagnosticsView: View {
             lines.append("  - \(row.blockName): season_year=\(row.seasonYear) season_id=\(row.id.uuidString.lowercased())")
         }
         lines.append("")
-        lines.append("Sync running: \(isSyncingAll ? "yes" : "no")")
+        lines.append("Sync running: \(syncStatusCenter.isSyncing ? "yes" : "no")")
+        lines.append("")
+        lines.append(VineyardSelectionDiagnostics.report)
         if let result = lastRepairResult {
             lines.append("")
             lines.append("Trip Vineyard ID Repair")
