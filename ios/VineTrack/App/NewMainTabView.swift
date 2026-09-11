@@ -58,6 +58,7 @@ struct NewMainTabView: View {
     @State private var selectedTab: Int = 0
     @State private var isSweeping: Bool = false
     @State private var isSweepRequested: Bool = false
+    @State private var isManualDiagnosticRequested: Bool = false
     @State private var portalPromptTrigger: PortalPromptTrigger?
     @State private var seasonMigrationPrompt: SeasonMigrationPrompt?
     @State private var seasonMigrationError: String?
@@ -165,7 +166,7 @@ struct NewMainTabView: View {
         }
         .task(id: store.selectedVineyardId) {
             if let vineyardId = store.selectedVineyardId {
-                VineyardSelectionDiagnostics.stage("rendering-completed", vineyardId: vineyardId)
+                VineyardSelectionDiagnostics.stage("view task started", vineyardId: vineyardId)
             }
             // Hydrate portal spray templates from the offline cache immediately
             // (network-independent) so the template picker works offline.
@@ -221,7 +222,7 @@ struct NewMainTabView: View {
         }
         // Manual "Sync now" requested from Sync settings or the status bar.
         .onChange(of: syncStatusCenter.manualSyncToken) { _, _ in
-            Task { await runFullSweep(alertRefresh: .refresh) }
+            Task { await runFullSweep(alertRefresh: .refresh, startsManualDiagnostic: true) }
         }
         .sheet(item: $portalPromptTrigger) { trigger in
             VineTrackPortalPromptSheet(trigger: trigger, role: accessControl.currentRole)
@@ -288,23 +289,37 @@ struct NewMainTabView: View {
     /// Runs a full sync sweep across every wired service. Overlapping calls
     /// are coalesced into one follow-up sweep. A vineyard switch during a sweep
     /// therefore cannot be lost or run in parallel with the previous vineyard.
-    private func runFullSweep(alertRefresh: AlertRefreshMode) async {
+    private func runFullSweep(
+        alertRefresh: AlertRefreshMode,
+        startsManualDiagnostic: Bool = false
+    ) async {
         guard !isSweeping else {
             isSweepRequested = true
+            isManualDiagnosticRequested = isManualDiagnosticRequested || startsManualDiagnostic
             return
         }
         isSweeping = true
         let sweepVineyardId = store.selectedVineyardId
         defer {
             let shouldRepeat = isSweepRequested || store.selectedVineyardId != sweepVineyardId
+            let shouldStartManualDiagnostic = isManualDiagnosticRequested
             isSweepRequested = false
+            isManualDiagnosticRequested = false
             isSweeping = false
             if shouldRepeat {
-                Task { await runFullSweep(alertRefresh: .refresh) }
+                Task {
+                    await runFullSweep(
+                        alertRefresh: .refresh,
+                        startsManualDiagnostic: shouldStartManualDiagnostic
+                    )
+                }
             }
         }
 
         if let sweepVineyardId {
+            if startsManualDiagnostic {
+                VineyardSelectionDiagnostics.manualSyncStarted(vineyardId: sweepVineyardId)
+            }
             VineyardSelectionDiagnostics.stage("sync-started", vineyardId: sweepVineyardId)
         }
 
@@ -405,8 +420,14 @@ struct NewMainTabView: View {
             pullSucceeded: sweepError == nil,
             error: sweepError
         )
-        if let sweepVineyardId, store.selectedVineyardId == sweepVineyardId {
-            VineyardSelectionDiagnostics.syncCompleted(vineyardId: sweepVineyardId)
+        if let sweepVineyardId {
+            if Task.isCancelled || store.selectedVineyardId != sweepVineyardId {
+                VineyardSelectionDiagnostics.syncCancelled(vineyardId: sweepVineyardId)
+            } else if sweepError != nil {
+                VineyardSelectionDiagnostics.syncFailed(vineyardId: sweepVineyardId)
+            } else {
+                VineyardSelectionDiagnostics.syncSucceeded(vineyardId: sweepVineyardId)
+            }
         }
     }
 
