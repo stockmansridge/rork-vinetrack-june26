@@ -112,17 +112,15 @@ struct BackendSettingsView: View {
                             color: .green
                         )
                     }
-                    if systemAdmin.isEnabled(SystemFeatureFlagKey.showSyncDiagnostics) {
-                        NavigationLink {
-                            SyncDiagnosticsView()
-                        } label: {
-                            SettingsRow(
-                                title: "Sync Diagnostics",
-                                subtitle: "Pending uploads, last sync & status",
-                                symbol: "stethoscope",
-                                color: .teal
-                            )
-                        }
+                    NavigationLink {
+                        SyncDiagnosticsView()
+                    } label: {
+                        SettingsRow(
+                            title: "Sync Diagnostics",
+                            subtitle: "Pending uploads, last sync & status",
+                            symbol: "stethoscope",
+                            color: .teal
+                        )
                     }
                     if let portalURL = VineTrackPortal.url {
                         Link(destination: portalURL) {
@@ -278,6 +276,14 @@ struct BackendSettingsView: View {
                 symbol: "icloud.and.arrow.up",
                 color: .blue,
                 destination: AnyView(SyncSettingsView())
+            ),
+            SettingsSearchItem(
+                title: "Sync Diagnostics",
+                subtitle: "Pending uploads, last sync & status",
+                keywords: ["sync", "diagnostics", "pending", "uploads", "errors"],
+                symbol: "stethoscope",
+                color: .teal,
+                destination: AnyView(SyncDiagnosticsView())
             ),
             SettingsSearchItem(
                 title: "Offline Readiness",

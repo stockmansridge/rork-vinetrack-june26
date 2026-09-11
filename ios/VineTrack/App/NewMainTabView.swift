@@ -1,6 +1,7 @@
 import SwiftUI
 import CoreLocation
 import Combine
+import UIKit
 
 extension Notification.Name {
     /// Posted from the live trip's overflow menu ("Go to Home") so the
@@ -840,6 +841,12 @@ private struct NewHomeTabView: View {
                                 Text(vineyard.name)
                             }
                         }
+                    }
+                    Divider()
+                    Button {
+                        UIPasteboard.general.string = VineyardSelectionDiagnostics.report
+                    } label: {
+                        Label("Copy switch diagnostic", systemImage: "doc.on.doc")
                     }
                 } label: {
                     HStack(spacing: 5) {

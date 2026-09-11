@@ -446,6 +446,7 @@ final class MigratedDataStore {
             return
         }
 
+        VineyardSelectionDiagnostics.stage("core-records", vineyardId: vineyardId)
         pins = pinRepo.load(for: vineyardId)
         trips = tripRepo.load(for: vineyardId)
         workTasks = workTaskRepo.load(for: vineyardId)
@@ -458,6 +459,7 @@ final class MigratedDataStore {
         equipmentItems = equipmentItemRepo.load(for: vineyardId)
         maintenanceLogs = maintenanceLogRepo.load(for: vineyardId)
 
+        VineyardSelectionDiagnostics.stage("spray-records", vineyardId: vineyardId)
         sprayRecords = sprayRepo.loadRecords(for: vineyardId)
         savedChemicals = sprayRepo.loadChemicals(for: vineyardId)
         savedSprayPresets = sprayRepo.loadPresets(for: vineyardId)
@@ -466,6 +468,7 @@ final class MigratedDataStore {
         savedInputs = savedInputRepo.load(for: vineyardId)
         tripCostAllocations = tripCostAllocationRepo.load(for: vineyardId)
 
+        VineyardSelectionDiagnostics.stage("yield-records", vineyardId: vineyardId)
         yieldSessions = yieldRepo.loadSessions(for: vineyardId)
         damageRecords = yieldRepo.loadDamage(for: vineyardId)
         historicalYieldRecords = yieldRepo.loadHistorical(for: vineyardId)
@@ -475,6 +478,7 @@ final class MigratedDataStore {
 
         settings = settingsRepo.load(for: vineyardId)
 
+        VineyardSelectionDiagnostics.stage("block-cache", vineyardId: vineyardId)
         let allPaddocks: [Paddock] = loadAllPaddocksFromDisk()
         paddocks = allPaddocks.filter { $0.vineyardId == vineyardId }
 
@@ -485,6 +489,7 @@ final class MigratedDataStore {
         // already in memory — is what makes a vineyard switch symmetric:
         // switching away drops the old slice, switching back restores it, with
         // no logout, reinstall or manual cache wipe.
+        VineyardSelectionDiagnostics.stage("equipment-cache", vineyardId: vineyardId)
         let allTractors: [Tractor] = persistence.load(key: Keys.tractors) ?? []
         tractors = allTractors.filter { $0.vineyardId == vineyardId }
         let allMachines: [VineyardMachine] = persistence.load(key: Keys.vineyardMachines) ?? []
@@ -494,8 +499,10 @@ final class MigratedDataStore {
         let allFuelLogs: [TractorFuelLog] = persistence.load(key: Keys.tractorFuelLogs) ?? []
         tractorFuelLogs = allFuelLogs.filter { $0.vineyardId == vineyardId }
 
+        VineyardSelectionDiagnostics.stage("button-cache", vineyardId: vineyardId)
         loadButtonsForCurrentVineyard()
 
+        VineyardSelectionDiagnostics.stage("variety-canonicalization", vineyardId: vineyardId)
         // After paddocks + varieties are loaded for this vineyard, repair
         // any drift between built-in variety ids and existing block
         // allocations (e.g. duplicate seedings from earlier app versions).
@@ -599,9 +606,14 @@ final class MigratedDataStore {
     }
 
     func selectVineyard(_ vineyard: Vineyard) {
+        VineyardSelectionDiagnostics.started(vineyardId: vineyard.id)
         selectedVineyardId = vineyard.id
-        persistence.save(SelectedVineyardWrapper(id: vineyard.id), key: Keys.selectedVineyardId)
         reloadCurrentVineyardData()
+        // Commit the durable selection only after local hydration completes. If
+        // hydration stalls, relaunch returns to the previous working vineyard so
+        // the bounded diagnostic can be retrieved without re-entering the stall.
+        persistence.save(SelectedVineyardWrapper(id: vineyard.id), key: Keys.selectedVineyardId)
+        VineyardSelectionDiagnostics.completed(vineyardId: vineyard.id)
         // Pull the vineyard's shared Davis WeatherLink integration so all
         // weather call sites (resolver, rainfall history, hourly service,
         // alerts) see the configured station immediately on switch —
