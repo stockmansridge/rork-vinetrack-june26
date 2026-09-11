@@ -18,10 +18,10 @@ struct PinsView: View {
         _viewMode = State(initialValue: initialViewMode)
     }
 
-    @State private var filterModes: Set<PinMode> = []
-    /// Growth-stage observations are intentionally hidden from Pins until the
-    /// operator explicitly enables them for this visit to the screen.
+    @State private var selectedCategories: Set<PinCategoryFilter> = Set(PinCategoryFilter.allCases)
+    /// E-L records remain explicitly excluded until enabled, even while All is selected.
     @State private var showsELGrowthPins: Bool = false
+    @State private var selectedELStageCodes: Set<String> = []
     @State private var completionFilter: PinCompletionFilter = .notDone
     @State private var selectedNames: Set<String> = []
     @State private var selectedPaddockIds: Set<UUID> = []
@@ -97,19 +97,14 @@ struct PinsView: View {
 
     private var filteredPins: [VinePin] {
         let season = season
+        let query = PinQueryFilter(
+            categories: selectedCategories,
+            includesELStages: showsELGrowthPins,
+            selectedELStageCodes: selectedELStageCodes,
+            completion: completionFilter
+        )
         return sourcePins.filter { pin in
-            if !season.contains(pin.timestamp) { return false }
-            let isELGrowthPin = pin.mode == .growth || pin.growthStageCode?.isEmpty == false
-            if isELGrowthPin && !showsELGrowthPins { return false }
-            switch completionFilter {
-            case .done:
-                if !pin.isCompleted { return false }
-            case .notDone:
-                if pin.isCompleted { return false }
-            case .both:
-                break
-            }
-            if !filterModes.isEmpty && !filterModes.contains(pin.mode) { return false }
+            if !season.contains(pin.timestamp) || !query.matches(pin) { return false }
             if !selectedNames.isEmpty && !selectedNames.contains(pin.buttonName) { return false }
             if !selectedPaddockIds.isEmpty, let paddockId = pin.paddockId, !selectedPaddockIds.contains(paddockId) { return false }
             if !selectedPaddockIds.isEmpty && pin.paddockId == nil { return false }
@@ -222,6 +217,8 @@ struct PinsView: View {
             .sheet(isPresented: $showFilterSheet) {
                 PinFilterSheet(
                     selectedNames: $selectedNames,
+                    showsELGrowthPins: $showsELGrowthPins,
+                    selectedELStageCodes: $selectedELStageCodes,
                     selectedPaddockIds: $selectedPaddockIds,
                     seasonSelection: $seasonSelection,
                     season: season,
@@ -239,25 +236,20 @@ struct PinsView: View {
     private var filterBar: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
-                FilterChip(title: "All", isSelected: filterModes.isEmpty) {
-                    filterModes = []
+                FilterChip(title: "All", isSelected: selectedCategories == Set(PinCategoryFilter.allCases)) {
+                    selectedCategories = Set(PinCategoryFilter.allCases)
                 }
-                FilterChip(title: "Repairs", isSelected: filterModes.contains(.repairs)) {
-                    if filterModes.contains(.repairs) {
-                        filterModes.remove(.repairs)
-                    } else {
-                        filterModes.insert(.repairs)
+                ForEach(PinCategoryFilter.allCases, id: \.self) { category in
+                    FilterChip(title: category.label, isSelected: selectedCategories.contains(category)) {
+                        if selectedCategories.contains(category) {
+                            selectedCategories.remove(category)
+                        } else {
+                            selectedCategories.insert(category)
+                        }
                     }
                 }
-                FilterChip(title: "EL Growth", isSelected: showsELGrowthPins) {
+                FilterChip(title: "EL Stages", isSelected: showsELGrowthPins) {
                     showsELGrowthPins.toggle()
-                }
-                FilterChip(title: "Manual Issues", isSelected: filterModes.contains(.manualIssue)) {
-                    if filterModes.contains(.manualIssue) {
-                        filterModes.remove(.manualIssue)
-                    } else {
-                        filterModes.insert(.manualIssue)
-                    }
                 }
 
                 Divider()
@@ -374,12 +366,14 @@ nonisolated enum PinsViewMode: String, Hashable {
 
 nonisolated enum PinsListSortOption: String, CaseIterable, Hashable {
     case closest
+    case row
     case newest
     case oldest
 
     var label: String {
         switch self {
         case .closest: return "Closest"
+        case .row: return "Row"
         case .newest: return "Newest"
         case .oldest: return "Oldest"
         }
@@ -981,6 +975,11 @@ struct PinsListView: View {
         case .closest:
             guard let user = locationFix else { return pins }
             return pins.sorted { distanceMetres($0, from: user) < distanceMetres($1, from: user) }
+        case .row:
+            return PinQueryPolicy.rowOrdered(
+                pins,
+                blockNames: Dictionary(uniqueKeysWithValues: store.paddocks.map { ($0.id, $0.name) })
+            )
         }
     }
 
@@ -2196,6 +2195,8 @@ struct PinDetailSheet: View {
 
 struct PinFilterSheet: View {
     @Binding var selectedNames: Set<String>
+    @Binding var showsELGrowthPins: Bool
+    @Binding var selectedELStageCodes: Set<String>
     @Binding var selectedPaddockIds: Set<UUID>
     /// The operator's season choice, shared with the list, map, summary and export.
     @Binding var seasonSelection: SeasonSelection
@@ -2257,6 +2258,35 @@ struct PinFilterSheet: View {
                     }
                     .scrollIndicators(.hidden)
                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                }
+
+                Section("E-L Stages") {
+                    Toggle("All E-L Stages", isOn: Binding(
+                        get: { showsELGrowthPins && selectedELStageCodes.isEmpty },
+                        set: { enabled in
+                            showsELGrowthPins = enabled
+                            if enabled { selectedELStageCodes = [] }
+                        }
+                    ))
+                    ForEach(GrowthStage.allStages) { stage in
+                        Button {
+                            showsELGrowthPins = true
+                            if selectedELStageCodes.contains(stage.code) {
+                                selectedELStageCodes.remove(stage.code)
+                            } else {
+                                selectedELStageCodes.insert(stage.code)
+                            }
+                        } label: {
+                            HStack {
+                                Text(stage.code).monospacedDigit()
+                                Text(stage.description).foregroundStyle(.secondary)
+                                Spacer()
+                                if selectedELStageCodes.contains(stage.code) {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Section(fmt.blockTermCapitalised) {

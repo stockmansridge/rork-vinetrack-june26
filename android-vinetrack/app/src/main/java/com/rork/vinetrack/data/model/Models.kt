@@ -1283,6 +1283,7 @@ data class Pin(
     /** Colour token stored at drop time (iOS `buttonColor` parity, e.g. "blue"). */
     @SerialName("button_color") val buttonColor: String? = null,
     val mode: String? = null,
+    @SerialName("growth_stage_code") val growthStageCode: String? = null,
     val notes: String? = null,
     /** Left/Right side selected from the Repairs/Growth launcher column. */
     val side: String? = null,

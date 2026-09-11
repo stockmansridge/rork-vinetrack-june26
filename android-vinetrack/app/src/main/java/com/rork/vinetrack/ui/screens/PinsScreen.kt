@@ -126,6 +126,10 @@ import com.rork.vinetrack.data.PinCaptureEvidenceStore
 import com.rork.vinetrack.data.PinLocationResult
 import com.rork.vinetrack.data.PinTapCaptureCoordinator
 import com.rork.vinetrack.data.QualifiedLocationFix
+import com.rork.vinetrack.data.PinCategoryFilter
+import com.rork.vinetrack.data.PinCompletionFilter
+import com.rork.vinetrack.data.PinQueryFilter
+import com.rork.vinetrack.data.PinQueryPolicy
 import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.PinPresentationTarget
 import com.rork.vinetrack.data.PhotoPresentation
@@ -197,6 +201,8 @@ fun PinsScreen(
     var pinSort by rememberSaveable { mutableStateOf(PinSort.NEWEST) }
     // null = All; otherwise a PinMode raw value ("Repairs" / "Growth").
     var modeFilter by remember { mutableStateOf<String?>(initialMode) }
+    var includesElStages by rememberSaveable { mutableStateOf(false) }
+    var selectedElStageCodes by rememberSaveable { mutableStateOf<Set<String>>(emptySet()) }
     // null = All statuses; true = Completed; false = Open. Defaults to Open
     // ("Not done"), mirroring the iOS shared completion filter.
     var statusFilter by remember { mutableStateOf<Boolean?>(false) }
@@ -275,11 +281,26 @@ fun PinsScreen(
     val season = remember(sourcePins, seasonSelection, state.seasonStartMonth, state.seasonStartDay, state.seasonZone) {
         state.seasonScope(sourcePins.map { parseIsoMillis(it.createdAt) }, seasonSelection)
     }
-    val visiblePins = remember(sourcePins, modeFilter, statusFilter, selectedNames, selectedBlockIds, season) {
+    val visiblePins = remember(sourcePins, modeFilter, includesElStages, selectedElStageCodes, statusFilter, selectedNames, selectedBlockIds, season) {
+        val categories = when (modeFilter) {
+            "Repairs" -> setOf(PinCategoryFilter.REPAIRS)
+            "Growth" -> setOf(PinCategoryFilter.GROWTH)
+            "ManualIssue" -> setOf(PinCategoryFilter.MANUAL_ISSUES)
+            else -> PinCategoryFilter.entries.toSet()
+        }
+        val query = PinQueryFilter(
+            categories = categories,
+            includesElStages = includesElStages,
+            selectedElStageCodes = selectedElStageCodes,
+            completion = when (statusFilter) {
+                true -> PinCompletionFilter.DONE
+                false -> PinCompletionFilter.NOT_DONE
+                null -> PinCompletionFilter.BOTH
+            },
+        )
         sourcePins.filter { pin ->
             season.contains(parseIsoMillis(pin.createdAt)) &&
-                (modeFilter == null || pin.mode == modeFilter) &&
-                (statusFilter == null || pin.isCompleted == statusFilter) &&
+                PinQueryPolicy.matches(pin, query) &&
                 (selectedNames.isEmpty() || pin.displayTitle in selectedNames) &&
                 (selectedBlockIds.isEmpty() || (pin.paddockId != null && pin.paddockId in selectedBlockIds))
         }
@@ -414,11 +435,13 @@ fun PinsScreen(
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             PinsFilterBar(
                 modeFilter = modeFilter,
+                includesElStages = includesElStages,
                 statusFilter = statusFilter,
                 activeFilterCount = (if (selectedNames.isEmpty()) 0 else 1) +
                     (if (selectedBlockIds.isEmpty()) 0 else 1) +
                     (if (season.isAll) 0 else 1),
                 onModeFilter = { modeFilter = it },
+                onElStages = { includesElStages = !includesElStages },
                 onStatusFilter = { statusFilter = it },
                 onOpenFilters = { showFilterSheet = true },
             )
@@ -640,6 +663,7 @@ internal fun synthesizeGrowthPins(
             buttonName = "Growth Stage ${record.stageCode}",
             buttonColor = "darkgreen",
             mode = "Growth",
+            growthStageCode = record.stageCode,
             notes = record.notes,
             side = record.side,
             rowNumber = record.rowNumber,
@@ -695,9 +719,11 @@ private fun PinsViewModeButton(icon: ImageVector, desc: String, selected: Boolea
 @Composable
 private fun PinsFilterBar(
     modeFilter: String?,
+    includesElStages: Boolean,
     statusFilter: Boolean?,
     activeFilterCount: Int,
     onModeFilter: (String?) -> Unit,
+    onElStages: () -> Unit,
     onStatusFilter: (Boolean?) -> Unit,
     onOpenFilters: () -> Unit,
 ) {
@@ -713,6 +739,8 @@ private fun PinsFilterBar(
         PinModeFilterChip("All", modeFilter == null) { onModeFilter(null) }
         PinModeFilterChip("Repairs", modeFilter == "Repairs") { onModeFilter("Repairs") }
         PinModeFilterChip("Growth", modeFilter == "Growth") { onModeFilter("Growth") }
+        PinModeFilterChip("EL Stages", includesElStages) { onElStages() }
+        PinModeFilterChip("Manual Issues", modeFilter == "ManualIssue") { onModeFilter("ManualIssue") }
         Box(Modifier.size(width = 1.dp, height = 22.dp).background(vine.textSecondary.copy(alpha = 0.3f)))
         PinsFilterButton(activeFilterCount, onOpenFilters)
         Box(Modifier.size(width = 1.dp, height = 22.dp).background(vine.textSecondary.copy(alpha = 0.3f)))
@@ -862,6 +890,7 @@ private enum class PinSort(val label: String) {
     CLOSEST("Closest"),
     NEWEST("Newest"),
     OLDEST("Oldest"),
+    ROW("Row"),
 }
 
 /**
@@ -973,6 +1002,7 @@ private fun PinsListMode(
                 } ?: Double.MAX_VALUE
             }
             sort == PinSort.OLDEST -> visiblePins.sortedBy { parseIsoMillis(it.createdAt) ?: Long.MAX_VALUE }
+            sort == PinSort.ROW -> PinQueryPolicy.rowOrdered(visiblePins, state.paddocks.associate { it.id to it.name })
             else -> visiblePins
         }
     }
