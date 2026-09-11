@@ -19,6 +19,9 @@ struct PinsView: View {
     }
 
     @State private var filterModes: Set<PinMode> = []
+    /// Growth-stage observations are intentionally hidden from Pins until the
+    /// operator explicitly enables them for this visit to the screen.
+    @State private var showsELGrowthPins: Bool = false
     @State private var completionFilter: PinCompletionFilter = .notDone
     @State private var selectedNames: Set<String> = []
     @State private var selectedPaddockIds: Set<UUID> = []
@@ -96,6 +99,8 @@ struct PinsView: View {
         let season = season
         return sourcePins.filter { pin in
             if !season.contains(pin.timestamp) { return false }
+            let isELGrowthPin = pin.mode == .growth || pin.growthStageCode?.isEmpty == false
+            if isELGrowthPin && !showsELGrowthPins { return false }
             switch completionFilter {
             case .done:
                 if !pin.isCompleted { return false }
@@ -244,12 +249,8 @@ struct PinsView: View {
                         filterModes.insert(.repairs)
                     }
                 }
-                FilterChip(title: "Growth", isSelected: filterModes.contains(.growth)) {
-                    if filterModes.contains(.growth) {
-                        filterModes.remove(.growth)
-                    } else {
-                        filterModes.insert(.growth)
-                    }
+                FilterChip(title: "EL Growth", isSelected: showsELGrowthPins) {
+                    showsELGrowthPins.toggle()
                 }
                 FilterChip(title: "Manual Issues", isSelected: filterModes.contains(.manualIssue)) {
                     if filterModes.contains(.manualIssue) {
