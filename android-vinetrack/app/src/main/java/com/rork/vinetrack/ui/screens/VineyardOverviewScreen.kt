@@ -145,6 +145,11 @@ fun VineyardOverviewScreen(
     val hasMappable = remember(paddocks, pins) {
         paddocks.any { it.hasGeometry } || pins.any { it.latitude != null && it.longitude != null }
     }
+    // Overview map inputs only (iOS parity): pins start hidden on every open
+    // regardless of the shared map preference, and completed pins never render
+    // or steer the camera. Totals/activity above keep using the full pin list.
+    val overviewMapPins = remember(pins) { pins.filter { !it.isCompleted } }
+    val overviewMapDefaults = remember(defaults) { defaults.copy(showPins = false) }
 
     Scaffold(
         modifier = modifier,
@@ -178,8 +183,9 @@ fun VineyardOverviewScreen(
                     ) {
                         VineyardMapContent(
                             state = state,
-                            pins = pins,
-                            defaults = defaults,
+                            pins = overviewMapPins,
+                            defaults = overviewMapDefaults,
+                            includeHiddenPinsInBounds = false,
                             modifier = Modifier.fillMaxSize(),
                         )
                         if (hasMappable) {
@@ -401,7 +407,12 @@ private fun BlockInfoCard(
     }
     VineyardCard(modifier = Modifier.clickable { onClick() }) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Grass, contentDescription = null, tint = VineColors.Olive, modifier = Modifier.size(16.dp))
+            Icon(
+                painter = painterResource(R.drawable.grape_vine_leaf),
+                contentDescription = null,
+                tint = VineColors.Olive,
+                modifier = Modifier.size(16.dp),
+            )
             Spacer(Modifier.size(6.dp))
             Text(block.name, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary, modifier = Modifier.weight(1f))
             Text(fmt.formatArea(block.areaHectares), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = VineColors.LeafGreen)
@@ -483,7 +494,12 @@ private fun PinsSummaryCard(block: Paddock, pins: List<Pin>) {
     val resolved = pins.count { it.isRepair() && it.isCompleted }
     VineyardCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Grass, contentDescription = null, tint = VineColors.Olive, modifier = Modifier.size(14.dp))
+            Icon(
+                painter = painterResource(R.drawable.grape_vine_leaf),
+                contentDescription = null,
+                tint = VineColors.Olive,
+                modifier = Modifier.size(14.dp),
+            )
             Spacer(Modifier.size(6.dp))
             Text(block.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, modifier = Modifier.weight(1f))
             Text("${pins.size} pin${if (pins.size == 1) "" else "s"}", fontSize = 12.sp, color = vine.textSecondary)

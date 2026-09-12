@@ -73,6 +73,7 @@ import android.widget.Toast
 import com.rork.vinetrack.data.GddSettingsStore
 import com.rork.vinetrack.data.OperationPrefsStore
 import com.rork.vinetrack.data.PaddockTransferService
+import com.rork.vinetrack.data.SharedGrapeVarietyCatalogRepository
 import com.rork.vinetrack.data.SoilProfileRepository
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.BuiltInGrapeVarietyGDD
@@ -87,6 +88,7 @@ import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.main.ToolRoute
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
+import com.google.android.gms.maps.model.CameraPosition
 import java.util.Locale
 
 private sealed interface BlockNav {
@@ -98,7 +100,12 @@ private sealed interface BlockNav {
     data object Weather : BlockNav
     data object RegionUnits : BlockNav
     data class Detail(val id: String) : BlockNav
-    data class Edit(val id: String?) : BlockNav
+    /**
+     * Block editor. [fromSetupMap] marks an edit opened by tapping a block on
+     * the Vineyard Setup map (iOS `selectedPaddockOnMap` parity): save/cancel
+     * returns straight to the setup list rather than the read-only detail.
+     */
+    data class Edit(val id: String?, val fromSetupMap: Boolean = false) : BlockNav
 }
 
 /** Roles allowed to create/edit blocks (iOS canCreateOperationalRecords). */
@@ -135,6 +142,9 @@ fun BlocksScreen(
     onOpenTool: ((ToolRoute) -> Unit)? = null,
 ) {
     var nav by remember { mutableStateOf<BlockNav>(BlockNav.List) }
+    // Last settled Vineyard Setup map camera, kept for this screen instance so
+    // returning from the editor restores the operator's view (never persisted).
+    var setupMapCamera by remember(state.selectedVineyardId) { mutableStateOf<CameraPosition?>(null) }
     val canCreate = canCreateBlocks(state.currentRole)
     val canDelete = canDeleteBlocks(state.currentRole)
     val canExport = canExportBlocks(state.currentRole)
@@ -157,6 +167,10 @@ fun BlocksScreen(
                 canImport = canImport,
                 onSelect = { nav = BlockNav.Detail(it.id) },
                 onCreate = { nav = BlockNav.Edit(null) },
+                onSelectOnMap = { block -> if (canCreate) nav = BlockNav.Edit(block.id, fromSetupMap = true) },
+                canEditFromMap = canCreate,
+                setupMapCamera = setupMapCamera,
+                onSetupMapCameraSettled = { setupMapCamera = it },
                 onBack = onBack,
                 onOpenLocation = { nav = BlockNav.VineyardLocation },
                 onOpenVarieties = { nav = BlockNav.GrapeVarieties },
@@ -209,11 +223,13 @@ fun BlocksScreen(
             }
             is BlockNav.Edit -> {
                 val existing = target.id?.let { id -> state.paddocks.firstOrNull { it.id == id } }
+                val returnTo: BlockNav = if (existing != null && !target.fromSetupMap) BlockNav.Detail(existing.id) else BlockNav.List
+                if (target.fromSetupMap) BackHandler { vm.clearBlockEditError(); nav = returnTo }
                 EditBlockScreen(
                     vm = vm,
                     state = state,
                     existing = existing,
-                    onDone = { nav = if (existing != null) BlockNav.Detail(existing.id) else BlockNav.List },
+                    onDone = { nav = returnTo },
                 )
             }
         }
@@ -230,6 +246,10 @@ private fun VineyardSetupHub(
     canImport: Boolean,
     onSelect: (Paddock) -> Unit,
     onCreate: () -> Unit,
+    onSelectOnMap: (Paddock) -> Unit,
+    canEditFromMap: Boolean,
+    setupMapCamera: CameraPosition?,
+    onSetupMapCameraSettled: (CameraPosition) -> Unit,
     onBack: (() -> Unit)?,
     onOpenLocation: () -> Unit,
     onOpenVarieties: () -> Unit,
@@ -246,6 +266,21 @@ private fun VineyardSetupHub(
     var importError by remember { mutableStateOf<String?>(null) }
     var editButtonMode by remember { mutableStateOf<String?>(null) }
     var templateMode by remember { mutableStateOf<String?>(null) }
+    // True while a finger is down on the setup map; page scrolling is released
+    // for exactly that window so map pan/pinch are never intercepted.
+    var isMapInteracting by remember { mutableStateOf(false) }
+
+    // Shared catalogue size (iOS masterVarietyCount parity): cached value first,
+    // then the authoritative `get_grape_variety_catalog` read; built-in fallback
+    // only while neither is available.
+    val catalogRepo = remember { SharedGrapeVarietyCatalogRepository(context, SessionStore(context)) }
+    var sharedCatalogCount by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        val cached = catalogRepo.loadCached().count { it.isActive }
+        if (cached > 0) sharedCatalogCount = cached
+        val fresh = runCatching { catalogRepo.refresh() }.getOrNull()?.count { it.isActive } ?: 0
+        if (fresh > 0) sharedCatalogCount = fresh
+    }
     val gddSettings = remember(state.selectedVineyardId) { GddSettingsStore(context).load() }
     val operationSettings = remember(state.selectedVineyardId) { OperationPrefsStore(context).load() }
 
@@ -322,7 +357,7 @@ private fun VineyardSetupHub(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(padding)
-                        .verticalScroll(rememberScrollState())
+                        .verticalScroll(rememberScrollState(), enabled = !isMapInteracting)
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(24.dp),
                 ) {
@@ -337,11 +372,22 @@ private fun VineyardSetupHub(
                                 .background(vine.cardBackground),
                         ) {
                             key(state.selectedVineyardId) {
-                                SetupVineyardMapContent(state = state, modifier = Modifier.fillMaxSize())
+                                SetupVineyardMapContent(
+                                    state = state,
+                                    modifier = Modifier.fillMaxSize(),
+                                    savedCamera = setupMapCamera,
+                                    onCameraSettled = onSetupMapCameraSettled,
+                                    onBlockSelected = if (canEditFromMap) onSelectOnMap else null,
+                                    onInteractionChanged = { isMapInteracting = it },
+                                )
                             }
                         }
                         Text(
-                            "Review the vineyard layout here. Select a block below to view its setup details.",
+                            if (canEditFromMap) {
+                                "Tap a block on the map to edit its boundary and rows. Select a block below to view its setup details."
+                            } else {
+                                "Review the vineyard layout here. Select a block below to view its setup details."
+                            },
                             fontSize = 12.sp,
                             color = vine.textSecondary,
                         )
@@ -426,7 +472,7 @@ private fun VineyardSetupHub(
                                     icon = Icons.Filled.Spa,
                                     tint = VineColors.LeafGreen,
                                     title = "Grape Varieties",
-                                    value = varietyCatalogSummary(state),
+                                    value = varietyCatalogSummary(state, sharedCatalogCount),
                                     onClick = onOpenVarieties,
                                 )
                             }
@@ -643,9 +689,17 @@ private fun sortPaddocks(
     )
 }
 
-private fun varietyCatalogSummary(state: AppUiState): String {
-    val customCount = state.grapeVarieties.count { it.isCustom && it.isActive }
-    val base = BuiltInGrapeVarietyGDD.catalogSize.toString()
+/**
+ * Grape Varieties card value (iOS `masterVarietyCount` + `customVarietyCount`
+ * parity): the shared catalogue's active built-in count when known, otherwise
+ * the bundled built-in size; custom entries for this vineyard are appended.
+ */
+private fun varietyCatalogSummary(state: AppUiState, sharedCatalogCount: Int): String {
+    val vineyardId = state.selectedVineyardId
+    val customCount = state.grapeVarieties.count {
+        it.isCustom && it.isActive && (vineyardId == null || it.vineyardId.equals(vineyardId, ignoreCase = true))
+    }
+    val base = (if (sharedCatalogCount > 0) sharedCatalogCount else BuiltInGrapeVarietyGDD.catalogSize).toString()
     return if (customCount > 0) "$base · +$customCount custom" else base
 }
 

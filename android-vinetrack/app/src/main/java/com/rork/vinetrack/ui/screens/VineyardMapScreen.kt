@@ -55,7 +55,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.lifecycle.Lifecycle
@@ -192,15 +191,29 @@ fun VineyardMapScreen(
 /**
  * Setup-only vineyard layout map. It deliberately excludes pins, pin camera
  * points and global overlay preferences, while keeping rows, boundaries and
- * block labels visible. Touches inside the bounded map stay with Google Maps;
- * touches outside continue to scroll the setup page.
+ * block labels visible.
+ *
+ * Gesture coordination with the scrolling setup page: the map is an embedded
+ * Android view, so the Compose `verticalScroll` on the page would otherwise
+ * claim any vertical movement (breaking one-finger pan and two-finger pinch).
+ * [onInteractionChanged] reports `true` while a pointer is down inside the map
+ * and `false` when every pointer lifts or the gesture is cancelled; the parent
+ * disables page scrolling for exactly that window. Only the map's own touch
+ * stream is observed, so it never swallows block polygon or label taps.
+ *
+ * [savedCamera] restores the last settled camera (e.g. after returning from the
+ * block editor) instead of re-fitting; [onCameraSettled] reports each settled
+ * position. [onBlockSelected] fires when a block polygon or its label is tapped.
  */
 @Composable
 fun SetupVineyardMapContent(
     state: AppUiState,
     modifier: Modifier = Modifier,
+    savedCamera: CameraPosition? = null,
+    onCameraSettled: ((CameraPosition) -> Unit)? = null,
+    onBlockSelected: ((Paddock) -> Unit)? = null,
+    onInteractionChanged: ((Boolean) -> Unit)? = null,
 ) {
-    val hostView = LocalView.current
     val blocks = remember(state.paddocks) { state.paddocks.filter { it.hasGeometry || it.hasRows } }
     val framePoints = remember(state.paddocks, state.selectedVineyard) {
         val boundaries = state.paddocks.flatMap { block ->
@@ -222,15 +235,21 @@ fun SetupVineyardMapContent(
         }.orEmpty()
     }
     val cameraState = rememberCameraPositionState {
-        estimatedCameraPosition(framePoints)?.let { position = it }
+        (savedCamera ?: estimatedCameraPosition(framePoints))?.let { position = it }
     }
     var mapLoaded by remember(state.selectedVineyardId) { mutableStateOf(false) }
-    var hasFramed by remember(state.selectedVineyardId) { mutableStateOf(false) }
+    // A restored camera counts as framed so recomposition/return never re-fits.
+    var hasFramed by remember(state.selectedVineyardId) { mutableStateOf(savedCamera != null) }
 
     LaunchedEffect(mapLoaded, framePoints, state.selectedVineyardId) {
         if (!mapLoaded || hasFramed || framePoints.isEmpty()) return@LaunchedEffect
         cameraState.fitToContent(framePoints, paddingPx = 96, singlePointZoom = 17f, animate = false)
         hasFramed = true
+    }
+
+    // Report each settled camera so the parent can restore it later.
+    LaunchedEffect(cameraState.isMoving) {
+        if (!cameraState.isMoving && hasFramed) onCameraSettled?.invoke(cameraState.position)
     }
 
     if (framePoints.isEmpty()) {
@@ -245,16 +264,19 @@ fun SetupVineyardMapContent(
     }
 
     GoogleMap(
-        modifier = modifier.pointerInput(hostView) {
+        modifier = modifier.pointerInput(onInteractionChanged) {
+            // Observe (never consume) the map's touch stream on the Initial pass
+            // so the parent page can release scrolling before the scroll
+            // container reaches its touch-slop decision on the Main pass.
             awaitEachGesture {
-                awaitFirstDown(pass = PointerEventPass.Initial)
-                hostView.parent?.requestDisallowInterceptTouchEvent(true)
+                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                onInteractionChanged?.invoke(true)
                 try {
                     do {
-                        val event = awaitPointerEvent(pass = PointerEventPass.Final)
+                        val event = awaitPointerEvent(pass = PointerEventPass.Initial)
                     } while (event.changes.any { it.pressed })
                 } finally {
-                    hostView.parent?.requestDisallowInterceptTouchEvent(false)
+                    onInteractionChanged?.invoke(false)
                 }
             }
         },
@@ -276,10 +298,12 @@ fun SetupVineyardMapContent(
             if (polygon.size >= 3) {
                 Polygon(
                     points = polygon,
+                    clickable = onBlockSelected != null,
                     fillColor = BlockAmber.copy(alpha = 0.10f),
                     strokeColor = BlockAmber,
                     strokeWidth = 3f,
                     zIndex = 0f,
+                    onClick = { onBlockSelected?.invoke(block) },
                 )
             }
             block.rows.orEmpty().forEach { row ->
@@ -294,7 +318,13 @@ fun SetupVineyardMapContent(
                     )
                 }
             }
-            block.centroid()?.let { BlockLabelMarker(block, it) }
+            block.centroid()?.let {
+                BlockLabelMarker(
+                    block = block,
+                    position = it,
+                    onClick = onBlockSelected?.let { select -> { select(block); true } },
+                )
+            }
         }
     }
 }
@@ -317,6 +347,7 @@ fun VineyardMapContent(
     defaults: MapDefaults = MapDefaults.factory,
     onPinClick: ((Pin) -> Unit)? = null,
     onLocationMessage: ((String) -> Unit)? = null,
+    includeHiddenPinsInBounds: Boolean = true,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -361,8 +392,17 @@ fun VineyardMapContent(
             }
         }
     }
-    val framePoints = remember(blockFramePoints, locatedPins, state.selectedVineyard) {
-        val pinPoints = locatedPins.mapNotNull { it.latLng() }
+    // Session-only overlay visibility, seeded from persisted Settings defaults.
+    // Toggling here affects only the current map session (no writes to MapPrefsStore).
+    var showPins by remember(defaults.showPins) { mutableStateOf(defaults.showPins) }
+    var showRowLines by remember(defaults.showRowLines) { mutableStateOf(defaults.showRowLines) }
+    var showBlockLabels by remember(defaults.showBlockLabels) { mutableStateOf(defaults.showBlockLabels) }
+
+    // Pins that may contribute to camera-fit bounds. Callers that opt out of
+    // [includeHiddenPinsInBounds] never let hidden pins steer the camera.
+    val boundsPins = if (includeHiddenPinsInBounds || showPins) locatedPins else emptyList()
+    val framePoints = remember(blockFramePoints, boundsPins, state.selectedVineyard) {
+        val pinPoints = boundsPins.mapNotNull { it.latLng() }
         val combined = blockFramePoints + pinPoints
         if (combined.isNotEmpty()) return@remember combined
         val v = state.selectedVineyard
@@ -416,12 +456,6 @@ fun VineyardMapContent(
     // Measured map size, used to keep a tapped pin visible above the detail sheet.
     var mapSizePx by remember { mutableStateOf(IntSize.Zero) }
 
-    // Session-only overlay visibility, seeded from persisted Settings defaults.
-    // Toggling here affects only the current map session (no writes to MapPrefsStore).
-    var showPins by remember(defaults.showPins) { mutableStateOf(defaults.showPins) }
-    var showRowLines by remember(defaults.showRowLines) { mutableStateOf(defaults.showRowLines) }
-    var showBlockLabels by remember(defaults.showBlockLabels) { mutableStateOf(defaults.showBlockLabels) }
-
     // If the content arrived after first composition (cold start while data is
     // still loading), snap the camera onto the midpoint straight away — without
     // waiting for onMapLoaded — so the interim frame is the vineyard, not (0,0).
@@ -439,7 +473,7 @@ fun VineyardMapContent(
         if (!mapLoaded || hasCurrentLocationRequestOccurred || hasUserRecentred || isCurrentLocationRequestActive || isFollowingUser || framePoints.isEmpty()) {
             return@LaunchedEffect
         }
-        val hasPins = locatedPins.any { it.latLng() != null }
+        val hasPins = boundsPins.any { it.latLng() != null }
         if (hasFramed && blockFramePoints == framedBlockGeometry && (framedHadPins || !hasPins)) {
             return@LaunchedEffect
         }
@@ -856,7 +890,11 @@ private fun blockSubtitle(block: Paddock, fmt: RegionFormatter): String? {
  */
 @OptIn(MapsComposeExperimentalApi::class)
 @Composable
-private fun BlockLabelMarker(block: Paddock, position: LatLng) {
+private fun BlockLabelMarker(
+    block: Paddock,
+    position: LatLng,
+    onClick: (() -> Boolean)? = null,
+) {
     val markerState = remember(position) { MarkerState(position = position) }
     MarkerComposable(
         keys = arrayOf(block.id, block.name, block.rowCount.toString()),
@@ -865,6 +903,7 @@ private fun BlockLabelMarker(block: Paddock, position: LatLng) {
         snippet = blockSubtitle(block, LocalRegionFormatter.current),
         anchor = Offset(0.5f, 0.5f),
         zIndex = 1f,
+        onClick = { onClick?.invoke() ?: false },
     ) {
         // Two-line chip (name over "N rows"), matching the iOS map annotation.
         Column(
