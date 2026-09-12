@@ -61,7 +61,6 @@ struct OptimalRipenessHubView: View {
         let resetDefault = store.settings.resetMode
         let modeDefault = store.settings.calculationMode
         let latitude = store.settings.vineyardLatitude ?? store.paddockCentroidLatitude
-        let sourceHasData = degreeDayService.hasUsableData(forKey: source.sourceKey)
         var rows: [BlockRow] = []
         for block in store.orderedPaddocks {
             let resetMode = block.effectiveResetMode(defaultMode: resetDefault)
@@ -70,7 +69,12 @@ struct OptimalRipenessHubView: View {
             var series: [(date: Date, daily: Double, cumulative: Double, interpolated: Bool)] = []
             var total: Double = 0
             var hasData = false
-            if let r = resetDate, r <= now, r >= oneYearAgo, sourceHasData {
+            // Coverage is checked against this block's own reset-date window,
+            // not merely "is the source cache non-empty" — an unrelated
+            // window fetched for a different block must never be presented
+            // as this block's coverage.
+            if let r = resetDate, r <= now, r >= oneYearAgo,
+               degreeDayService.hasUsableData(forKey: source.sourceKey, coveringFrom: r, to: now) {
                 series = degreeDayService.dailyGDDSeries(
                     stationId: source.sourceKey,
                     from: cal.startOfDay(for: r),
@@ -165,7 +169,7 @@ struct OptimalRipenessHubView: View {
                                 Text(source.displayName)
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(.primary)
-                                if degreeDayService.isLoading {
+                                if isFetching {
                                     ProgressView().controlSize(.mini)
                                 }
                             }
@@ -202,7 +206,13 @@ struct OptimalRipenessHubView: View {
         .navigationTitle("Optimal Ripeness")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: candidatesKey) {
-            await loadGDDIfNeeded()
+            await degreeDayService.ensureSeasonLoaded(
+                candidates: candidates,
+                vineyardId: store.selectedVineyardId,
+                latitude: store.settings.vineyardLatitude ?? store.paddockCentroidLatitude,
+                seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+                useBEDD: store.settings.calculationMode.useBEDD
+            )
         }
         .sheet(item: $activeDestination) { destination in
             NavigationStack {
@@ -243,41 +253,14 @@ struct OptimalRipenessHubView: View {
         candidates.map(\.source.sourceKey).joined(separator: "|")
     }
 
-    private func loadGDDIfNeeded() async {
-        let cands = candidates
-        guard !cands.isEmpty else { return }
-        let seasonStart = RipenessMath.fetchRangeStart(settings: store.settings)
-        let useBEDD = store.settings.calculationMode.useBEDD
-        // If the current `lastSource` is one of the configured candidates
-        // and we don't need a daily refresh yet, skip refetching.
-        if let last = degreeDayService.lastSource,
-           cands.contains(where: { $0.source == last }),
-           !degreeDayService.needsDailyRefresh(for: last.sourceKey) {
-            return
-        }
-        for candidate in cands {
-            switch candidate.source {
-            case .davisWeatherLink(let stationId):
-                await degreeDayService.fetchSeasonDavis(
-                    stationId: stationId,
-                    vineyardId: store.selectedVineyardId,
-                    useProxy: candidate.usesProxy,
-                    latitude: store.settings.vineyardLatitude ?? store.paddockCentroidLatitude,
-                    seasonStart: seasonStart,
-                    useBEDD: useBEDD
-                )
-            case .weatherUnderground, .openMeteoArchive:
-                await degreeDayService.fetchSeason(
-                    source: candidate.source,
-                    seasonStart: seasonStart,
-                    useBEDD: useBEDD
-                )
-            }
-            if degreeDayService.lastSource == candidate.source,
-               degreeDayService.hasUsableData(for: candidate.source) {
-                return // success, stop cascading
-            }
-        }
+    /// True while the shared season-load request for this hub's active
+    /// candidate chain is genuinely in flight.
+    private var isFetching: Bool {
+        degreeDayService.isLoading(
+            candidates: candidates,
+            seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+            useBEDD: store.settings.calculationMode.useBEDD
+        )
     }
 }
 

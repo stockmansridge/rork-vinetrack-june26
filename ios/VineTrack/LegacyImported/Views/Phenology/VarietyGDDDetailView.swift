@@ -68,7 +68,6 @@ struct VarietyGDDDetailView: View {
         // shows a fetch is in progress — rather than rendering every block
         // at a fabricated 0 GDD (`dailyGDDSeries` can't distinguish an empty
         // cache from a genuine zero-day accumulation).
-        guard degreeDayService.hasUsableData(forKey: stationId) else { return [] }
         let cal = Calendar.current
         let now = Date()
         let oneYearAgo = cal.date(byAdding: .year, value: -1, to: now) ?? now
@@ -79,7 +78,8 @@ struct VarietyGDDDetailView: View {
         for block in allocatedBlocks {
             let resetMode = block.effectiveResetMode(defaultMode: resetDefault)
             guard let resetDate = block.resetDate(for: resetMode, seasonStart: seasonStart),
-                  resetDate <= now, resetDate >= oneYearAgo else { continue }
+                  resetDate <= now, resetDate >= oneYearAgo,
+                  degreeDayService.hasUsableData(forKey: stationId, coveringFrom: resetDate, to: now) else { continue }
             let calcMode = block.effectiveCalculationMode(defaultMode: modeDefault)
             let series = degreeDayService.dailyGDDSeries(
                 stationId: stationId,
@@ -181,53 +181,85 @@ struct VarietyGDDDetailView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle(variety?.name ?? "Variety")
         .navigationBarTitleDisplayMode(.large)
-        .task(id: weatherSource?.sourceKey ?? "none") {
-            await loadGDDIfNeeded()
+        .task(id: candidatesKey) {
+            await degreeDayService.ensureSeasonLoaded(
+                candidates: RipenessMath.candidates(store: store),
+                vineyardId: store.selectedVineyardId,
+                latitude: effectiveLatitude,
+                seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+                useBEDD: store.settings.calculationMode.useBEDD
+            )
         }
     }
 
-    private func loadGDDIfNeeded() async {
-        let cands = RipenessMath.candidates(store: store)
-        guard !cands.isEmpty else { return }
-        if let last = degreeDayService.lastSource,
-           cands.contains(where: { $0.source == last }),
-           !degreeDayService.needsDailyRefresh(for: last.sourceKey) {
-            return
-        }
-        let start = RipenessMath.fetchRangeStart(settings: store.settings)
-        let useBEDD = store.settings.calculationMode.useBEDD
-        for c in cands {
-            switch c.source {
-            case .davisWeatherLink(let sid):
-                await degreeDayService.fetchSeasonDavis(
-                    stationId: sid,
-                    vineyardId: store.selectedVineyardId,
-                    useProxy: c.usesProxy,
-                    latitude: effectiveLatitude,
-                    seasonStart: start,
-                    useBEDD: useBEDD
-                )
-            case .weatherUnderground, .openMeteoArchive:
-                await degreeDayService.fetchSeason(source: c.source, seasonStart: start, useBEDD: useBEDD)
-            }
-            if degreeDayService.lastSource == c.source,
-               degreeDayService.hasUsableData(for: c.source) {
-                return
-            }
-        }
+    private var candidates: [RipenessSourceCandidate] {
+        RipenessMath.candidates(store: store)
+    }
+
+    private var candidatesKey: String {
+        candidates.map(\.source.sourceKey).joined(separator: "|")
+    }
+
+    /// True while the shared season-load request for this variety's active
+    /// candidate chain is genuinely in flight.
+    private var isFetching: Bool {
+        degreeDayService.isLoading(
+            candidates: candidates,
+            seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+            useBEDD: store.settings.calculationMode.useBEDD
+        )
+    }
+
+    /// True when the last completed fetch for the active source ended in an
+    /// error rather than simply lacking coverage for these blocks' windows.
+    private var fetchFailed: Bool {
+        guard let src = weatherSource,
+              degreeDayService.lastSource == src,
+              degreeDayService.errorMessage != nil else { return false }
+        return !degreeDayService.hasUsableData(for: src)
     }
 
     private var emptyState: some View {
         VStack(spacing: 10) {
-            Image(systemName: "thermometer.sun")
-                .font(.title2)
-                .foregroundStyle(.tertiary)
-            Text("No degree-day data yet")
-                .font(.subheadline.weight(.semibold))
-            Text("Set block budburst dates and a weather station to see the season graph.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+            if isFetching {
+                ProgressView()
+                Text("Fetching season weather\u{2026}")
+                    .font(.subheadline.weight(.semibold))
+            } else if fetchFailed {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.title2)
+                    .foregroundStyle(.orange)
+                Text("Couldn\u{2019}t fetch weather data")
+                    .font(.subheadline.weight(.semibold))
+                Text(degreeDayService.errorMessage ?? "Check your connection and try again.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Retry") {
+                    Task {
+                        await degreeDayService.ensureSeasonLoaded(
+                            candidates: candidates,
+                            vineyardId: store.selectedVineyardId,
+                            latitude: effectiveLatitude,
+                            seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+                            useBEDD: store.settings.calculationMode.useBEDD,
+                            forceRefresh: true
+                        )
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            } else {
+                Image(systemName: "thermometer.sun")
+                    .font(.title2)
+                    .foregroundStyle(.tertiary)
+                Text("No degree-day data yet")
+                    .font(.subheadline.weight(.semibold))
+                Text("Set block budburst dates and a weather station to see the season graph.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(24)
@@ -245,7 +277,7 @@ struct VarietyGDDDetailView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    if degreeDayService.isLoading {
+                    if isFetching {
                         ProgressView().controlSize(.mini)
                     }
                 }

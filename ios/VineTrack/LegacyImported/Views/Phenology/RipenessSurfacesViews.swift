@@ -144,14 +144,17 @@ enum RipenessMath {
         let resetMode = block.effectiveResetMode(defaultMode: resetDefault)
         guard let resetDate = block.resetDate(for: resetMode, seasonStart: seasonStart),
               resetDate <= now, resetDate >= oneYearAgo else { return nil }
-        // No station/location temperatures have ever been cached for this
-        // source yet (no season fetch has completed this session, and
-        // nothing persisted from a prior one). `dailyGDDSeries` can't tell
-        // that apart from "zero days accumulated" — it just returns an
-        // empty array either way — so callers would otherwise render a
-        // real-looking "0 / target GDD" chip before any data has ever been
-        // fetched. Report unavailable instead of a fabricated zero.
-        guard degreeDayService.hasUsableData(forKey: stationId) else { return nil }
+        // No cached day falls inside this block's actual accumulation
+        // window (its reset date through today) yet — either no season
+        // fetch has ever completed for this source, or the cache only
+        // holds days from an unrelated request (a different block's
+        // window, or a stale prior season). `dailyGDDSeries` can't tell
+        // any of that apart from "zero days accumulated" — it just returns
+        // an empty array either way — so callers would otherwise render a
+        // real-looking "0 / target GDD" chip before this block's own
+        // period has ever been fetched. Report unavailable instead of a
+        // fabricated zero.
+        guard degreeDayService.hasUsableData(forKey: stationId, coveringFrom: resetDate, to: now) else { return nil }
         let calcMode = block.effectiveCalculationMode(defaultMode: modeDefault)
         let latitude = store.settings.vineyardLatitude ?? store.paddockCentroidLatitude
         let series = degreeDayService.dailyGDDSeries(
@@ -215,6 +218,41 @@ struct BlockRipenessChip: View {
         }
     }
 
+    private var candidates: [RipenessSourceCandidate] {
+        RipenessMath.candidates(store: store)
+    }
+
+    private var seasonStart: Date {
+        RipenessMath.seasonStartDate(settings: store.settings)
+    }
+
+    private var useBEDD: Bool {
+        store.settings.calculationMode.useBEDD
+    }
+
+    private var candidatesKey: String {
+        let chain = candidates.map(\.source.sourceKey).joined(separator: "|")
+        return "\(chain)#\(Int(seasonStart.timeIntervalSince1970 / 86_400))#\(useBEDD)"
+    }
+
+    /// True while a request matching this chip's exact candidate chain,
+    /// season start and calc mode is genuinely in flight — never a stale
+    /// flag left over from a different vineyard/season/source signature.
+    private var isFetching: Bool {
+        degreeDayService.isLoading(candidates: candidates, seasonStart: seasonStart, useBEDD: useBEDD)
+    }
+
+    /// True when the most recent completed fetch for this chip's active
+    /// source ended in a network/data error rather than simply lacking
+    /// coverage for this block's window. Scoped to `candidates` so an
+    /// error from an unrelated vineyard/source can never surface here.
+    private var fetchFailed: Bool {
+        guard let src = degreeDayService.lastSource,
+              candidates.contains(where: { $0.source == src }),
+              degreeDayService.errorMessage != nil else { return false }
+        return !degreeDayService.hasUsableData(for: src)
+    }
+
     private var blockTotal: RipenessMath.BlockTotal? {
         guard let paddock,
               let source = RipenessMath.weatherState(store: store).source else { return nil }
@@ -255,6 +293,16 @@ struct BlockRipenessChip: View {
             content
         }
         .buttonStyle(.plain)
+        .task(id: candidatesKey) {
+            guard !candidates.isEmpty else { return }
+            await degreeDayService.ensureSeasonLoaded(
+                candidates: candidates,
+                vineyardId: store.selectedVineyardId,
+                latitude: store.settings.vineyardLatitude ?? store.paddockCentroidLatitude,
+                seasonStart: seasonStart,
+                useBEDD: useBEDD
+            )
+        }
     }
 
     @ViewBuilder
@@ -271,6 +319,42 @@ struct BlockRipenessChip: View {
                 Image(systemName: "chevron.right")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.tertiary)
+            }
+        } else if blockTotal == nil, isFetching {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.mini)
+                Text("Fetching season weather\u{2026}")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+        } else if blockTotal == nil, fetchFailed {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                Text("Ripeness: couldn\u{2019}t fetch weather data")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Button("Retry") {
+                    Task {
+                        await degreeDayService.ensureSeasonLoaded(
+                            candidates: candidates,
+                            vineyardId: store.selectedVineyardId,
+                            latitude: store.settings.vineyardLatitude ?? store.paddockCentroidLatitude,
+                            seasonStart: seasonStart,
+                            useBEDD: useBEDD,
+                            forceRefresh: true
+                        )
+                    }
+                }
+                .font(.caption2.weight(.semibold))
+                .buttonStyle(.plain)
+                .foregroundStyle(VineyardTheme.info)
             }
         } else if let total = blockTotal?.total, let target = variety?.optimalGDD, target > 0 {
             let color = RipenessMath.progressColor(progress: progress)
@@ -383,6 +467,27 @@ struct RipenessWatchTile: View {
         }
     }
 
+    private var candidates: [RipenessSourceCandidate] {
+        RipenessMath.candidates(store: store)
+    }
+
+    private var seasonStart: Date {
+        RipenessMath.fetchRangeStart(settings: store.settings)
+    }
+
+    private var useBEDD: Bool {
+        store.settings.calculationMode.useBEDD
+    }
+
+    private var candidatesKey: String {
+        let chain = candidates.map(\.source.sourceKey).joined(separator: "|")
+        return "\(chain)#\(Int(seasonStart.timeIntervalSince1970 / 86_400))#\(useBEDD)"
+    }
+
+    private var isFetching: Bool {
+        degreeDayService.isLoading(candidates: candidates, seasonStart: seasonStart, useBEDD: useBEDD)
+    }
+
     private var topVariety: VarietyStatus? {
         guard case .ready(let source) = weatherState else { return nil }
         var results: [VarietyStatus] = []
@@ -425,6 +530,16 @@ struct RipenessWatchTile: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal)
+        .task(id: candidatesKey) {
+            guard !candidates.isEmpty else { return }
+            await degreeDayService.ensureSeasonLoaded(
+                candidates: candidates,
+                vineyardId: store.selectedVineyardId,
+                latitude: store.settings.vineyardLatitude ?? store.paddockCentroidLatitude,
+                seasonStart: seasonStart,
+                useBEDD: useBEDD
+            )
+        }
     }
 
     @ViewBuilder
@@ -516,6 +631,7 @@ struct RipenessWatchTile: View {
         case .notConfigured: return "Weather source required"
         case .ready:
             if allocatedVarieties.isEmpty { return "No tracked varieties yet" }
+            if isFetching { return "Fetching season weather\u{2026}" }
             return "Awaiting season data"
         }
     }
