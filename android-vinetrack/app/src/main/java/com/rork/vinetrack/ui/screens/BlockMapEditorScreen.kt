@@ -144,6 +144,12 @@ private val PanelSurface = Color(0xF21C1C1E)
 enum class BlockEditorMode { Boundary, Rows }
 
 /**
+ * Screen-space lift for row-number labels on the Boundary tab: clears the
+ * 40dp (20dp-radius) vertex handle plus a visible gap, regardless of zoom.
+ */
+private val BOUNDARY_LABEL_LIFT = 34.dp
+
+/**
  * The ONE place a block's boundary and row layout can be edited.
  *
  * The block form's map is a read-only preview; every mutation happens here, on
@@ -439,7 +445,13 @@ fun BlockMapEditorScreen(
 
                 // Live rows — always drawn, in BOTH modes, above the boundary fill.
                 BlockRowLinesOverlay(layout)
-                BlockRowLabelsOverlay(layout)
+                // Boundary tab: the 40dp vertex handles sit on the row ends, so
+                // the two labels are lifted clear of them in screen space (with
+                // a leader back to the row). Rows tab is unchanged.
+                BlockRowLabelsOverlay(
+                    layout,
+                    liftDp = if (mode == BlockEditorMode.Boundary) BOUNDARY_LABEL_LIFT else 0.dp,
+                )
 
                 if (mode == BlockEditorMode.Boundary) {
                     // Draggable numbered vertices — always above the midpoints.

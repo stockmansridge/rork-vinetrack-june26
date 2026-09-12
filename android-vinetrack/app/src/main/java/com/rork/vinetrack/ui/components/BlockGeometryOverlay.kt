@@ -3,7 +3,10 @@ package com.rork.vinetrack.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -13,6 +16,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.android.gms.maps.model.LatLng
@@ -103,35 +107,57 @@ fun BlockRowLinesOverlay(layout: BlockRowLayout) {
  * First and last row labels only — a label on every row is unreadable at block
  * zoom. Both sit at the same headland because every row is clipped in the same
  * direction, so they read as the two ends of the numbering range.
+ *
+ * [liftDp] is a SCREEN-SPACE lift: when greater than zero the chip is drawn
+ * that many dp above its anchor with a short leader line back down to the row
+ * end, so it can never sit on top of a boundary handle occupying the anchor.
+ * Being screen-space, the separation is identical at every zoom level. The
+ * anchor itself — and therefore the row geometry — is never moved.
  */
 @Composable
 @GoogleMapComposable
-fun BlockRowLabelsOverlay(layout: BlockRowLayout) {
+fun BlockRowLabelsOverlay(layout: BlockRowLayout, liftDp: Dp = 0.dp) {
     val first = layout.firstRow ?: return
     val last = layout.lastRow
-    RowNumberMarker(first.labelAnchor, first.number)
+    RowNumberMarker(first.labelAnchor, first.number, liftDp)
     if (last != null && last.index != first.index) {
-        RowNumberMarker(last.labelAnchor, last.number)
+        RowNumberMarker(last.labelAnchor, last.number, liftDp)
     }
 }
 
 @Composable
 @GoogleMapComposable
-private fun RowNumberMarker(point: CoordinatePoint, number: Int) {
+private fun RowNumberMarker(point: CoordinatePoint, number: Int, liftDp: Dp) {
     val position = point.toMapLatLng()
     val state: MarkerState = rememberMarkerState(position = position)
     state.position = position
+    val lifted = liftDp > 0.dp
     MarkerComposable(
         number,
         position,
+        lifted,
         state = state,
-        anchor = Offset(0.5f, 0.5f),
+        // Lifted: the bitmap's bottom-centre (the leader's foot) sits on the
+        // anchor, so the chip floats [liftDp] above it. Otherwise centred.
+        anchor = if (lifted) Offset(0.5f, 1f) else Offset(0.5f, 0.5f),
         zIndex = 5f,
         title = "Row $number",
         // Informational only — a tap must never start an edit.
         onClick = { true },
     ) {
-        RowNumberChip(number)
+        if (lifted) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                RowNumberChip(number)
+                Box(
+                    Modifier
+                        .width(2.dp)
+                        .height(liftDp)
+                        .background(Color.White.copy(alpha = 0.85f)),
+                )
+            }
+        } else {
+            RowNumberChip(number)
+        }
     }
 }
 

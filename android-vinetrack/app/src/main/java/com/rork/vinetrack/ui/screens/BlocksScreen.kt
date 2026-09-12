@@ -229,6 +229,10 @@ fun BlocksScreen(
                     vm = vm,
                     state = state,
                     existing = existing,
+                    canDelete = canDelete,
+                    // Archive/delete from the Danger Zone also land here; the
+                    // Detail branch already falls back to the list when the
+                    // block no longer exists.
                     onDone = { nav = returnTo },
                 )
             }

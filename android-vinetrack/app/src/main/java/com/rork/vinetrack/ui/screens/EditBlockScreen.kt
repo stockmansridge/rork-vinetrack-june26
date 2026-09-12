@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -22,16 +23,26 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.RemoveCircle
 import androidx.compose.material.icons.filled.Undo
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -53,8 +64,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.android.gms.maps.model.CameraPosition
@@ -66,19 +81,29 @@ import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.rork.vinetrack.data.BlockRowLayout
+import com.rork.vinetrack.data.GddCalculationMode
+import com.rork.vinetrack.data.GddResetMode
+import com.rork.vinetrack.data.GddSettingsStore
 import com.rork.vinetrack.data.LocationTracker
+import com.rork.vinetrack.data.PaddockReferenceCounts
 import com.rork.vinetrack.data.RowInput
 import com.rork.vinetrack.data.RowNumbering
+import com.rork.vinetrack.data.SoilProfileRepository
+import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.blockRowLayout
+import com.rork.vinetrack.data.model.BackendSoilProfile
+import com.rork.vinetrack.data.model.BuiltInGrapeVarietyGDD
 import com.rork.vinetrack.data.model.CloneRootstockOptions
 import com.rork.vinetrack.data.model.CloneRootstockSentinels
 import com.rork.vinetrack.data.model.CoordinatePoint
+import com.rork.vinetrack.data.model.GrapeVarietyRow
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PaddockRowRegeneration
 import com.rork.vinetrack.data.model.PaddockRowVineCount
 import com.rork.vinetrack.data.model.PaddockVarietyAllocation
 import com.rork.vinetrack.data.model.VineyardCloneRow
 import com.rork.vinetrack.data.model.VineyardRootstockRow
+import com.rork.vinetrack.data.model.canonicalVarietyName
 import com.rork.vinetrack.data.normaliseRowDirection
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
@@ -91,7 +116,6 @@ import com.rork.vinetrack.ui.components.SATELLITE_IMAGERY_ATTRIBUTION
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.components.VineyardCard
-import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.time.Instant
@@ -113,9 +137,12 @@ fun EditBlockScreen(
     state: AppUiState,
     existing: Paddock?,
     modifier: Modifier = Modifier,
+    /** iOS `accessControl.canDeleteOperationalRecords` — gates the Danger Zone. */
+    canDelete: Boolean = false,
     onDone: () -> Unit,
 ) {
     val vine = LocalVineColors.current
+    val context = LocalContext.current
 
     var name by remember { mutableStateOf(existing?.name ?: "") }
     val boundary = remember {
@@ -175,6 +202,46 @@ fun EditBlockScreen(
     var editorMode by remember { mutableStateOf<BlockEditorMode?>(null) }
     var showSoilEditor by remember { mutableStateOf(false) }
     val canEditSoil = state.currentRole in setOf("owner", "manager", "supervisor", "operator")
+
+    // Soil profile summary (iOS `soilSection`): read through the same repository
+    // the soil editor uses; the editor remains the only write path.
+    val soilRepo = remember { SoilProfileRepository(SessionStore(context)) }
+    var soilProfile by remember(existing?.id) { mutableStateOf<BackendSoilProfile?>(null) }
+    var soilLoading by remember(existing?.id) { mutableStateOf(existing != null) }
+    var soilReloadTick by remember { mutableStateOf(0) }
+    LaunchedEffect(existing?.id, soilReloadTick) {
+        val pid = existing?.id ?: return@LaunchedEffect
+        soilLoading = true
+        soilProfile = runCatching { soilRepo.fetchPaddockSoilProfile(pid) }.getOrNull()
+        soilLoading = false
+    }
+
+    // Danger Zone (iOS `dangerZoneSection`): linked-record check gates permanent delete.
+    val showDangerZone = existing != null && canDelete
+    var refCounts by remember(existing?.id) { mutableStateOf<PaddockReferenceCounts?>(null) }
+    var refCountsLoading by remember(existing?.id) { mutableStateOf(false) }
+    var refCountsFailed by remember(existing?.id) { mutableStateOf(false) }
+    var showArchiveConfirm by remember { mutableStateOf(false) }
+    var showPermanentDeleteConfirm by remember { mutableStateOf(false) }
+    var performingDestructive by remember { mutableStateOf(false) }
+    LaunchedEffect(existing?.id, showDangerZone) {
+        val pid = existing?.id ?: return@LaunchedEffect
+        if (!showDangerZone) return@LaunchedEffect
+        refCountsLoading = true
+        vm.loadPaddockReferenceCounts(pid) { counts ->
+            refCounts = counts
+            refCountsFailed = counts == null
+            refCountsLoading = false
+        }
+    }
+
+    // Clone / rootstock pickers opened from an allocation row (iOS
+    // `clonePickerTarget` / `rootstockPickerTarget`). Selections are applied
+    // with copy() so the allocation id and every other field are preserved.
+    var clonePickerIndex by remember { mutableStateOf<Int?>(null) }
+    var rootstockPickerIndex by remember { mutableStateOf<Int?>(null) }
+
+    val gddDefaults = remember { GddSettingsStore(context).load() }
 
     /** The one canonical layout — the preview and the editor share it exactly. */
     val previewLayout: BlockRowLayout = run {
@@ -285,7 +352,12 @@ fun EditBlockScreen(
                 }
             }
 
-            // Name
+            // Section order mirrors iOS `EditPaddockSheet.body`:
+            // Name → Boundary → Row Configuration (+ Numbering) → Vine & Trellis
+            // Spacing → Phenology → Degree Days Override → Grape Varieties →
+            // Irrigation → Soil → [Block Summary, Vines Per Row] → [Danger Zone].
+
+            // 1. Block Name
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SectionHeader("Block Name", onLight = true)
                 OutlinedTextField(
@@ -297,14 +369,12 @@ fun EditBlockScreen(
                 )
             }
 
-            // Immersive full-screen boundary + row editor — the ONE place the
-            // boundary and rows can be changed.
+            // 2. Boundary — the full-screen editor is the ONE place the boundary
+            // and rows can be changed; the preview below is read-only.
             FullMapEditorButton(
                 hasBoundary = boundary.size >= 3,
                 onClick = { editorMode = BlockEditorMode.Boundary },
             )
-
-            // Read-only preview of the current draft geometry.
             BlockPreviewSection(
                 boundary = boundary,
                 layout = previewLayout,
@@ -315,7 +385,8 @@ fun EditBlockScreen(
                 onEdit = { editorMode = BlockEditorMode.Boundary },
             )
 
-            // Row layout — summary only; editing happens on the full-screen map.
+            // 3. Row Configuration + Row Numbering — summary only (unchanged);
+            // editing happens on the full-screen map's Rows tab.
             RowLayoutSummary(
                 layout = previewLayout,
                 rowCount = rowCount,
@@ -323,114 +394,18 @@ fun EditBlockScreen(
                 onEdit = { editorMode = BlockEditorMode.Rows },
             )
 
-            // Live block summary (area, rows, total length, vines)
-            run {
-                val polyCoords = boundary.map { CoordinatePoint(it.position.latitude, it.position.longitude) }
-                val summaryArea = previewAreaHectares(polyCoords)
-                val summaryLen = previewTotalRowLength(polyCoords, rowDirection, rowCount, rowWidth, rowOffset)
-                val overrideVines = vineCountOverride.toIntOrNull()
-                val summaryVines = overrideVines ?: if (vineSpacing > 0) (summaryLen / vineSpacing).toInt() else 0
-                if (polyCoords.size >= 3 || rowCount > 0) {
-                    BlockSummaryCard(
-                        areaHa = summaryArea,
-                        rowCount = rowCount,
-                        totalRowLengthM = rowLengthOverride.toDoubleOrNull() ?: summaryLen,
-                        vineCount = summaryVines,
-                    )
-                }
-            }
+            // 4. Vine & Trellis Spacing
+            VineTrellisSpacingSection(
+                vineSpacing = vineSpacing,
+                onVineSpacing = { vineSpacing = it },
+                postSpacing = postSpacing,
+                onPostSpacing = { postSpacing = it },
+                rowCount = rowCount,
+                // iOS uses the SAVED block's effective total row length here.
+                savedEffectiveRowLength = existing?.effectiveTotalRowLength ?: 0.0,
+            )
 
-            // Vines per row (sql/188) — compact list, tap a row to set its real
-            // vine count. Mirrors the iOS "Vines Per Row" section exactly.
-            if (rowCount > 0) {
-                RowVineCountsCard(
-                    entries = rowVineCountEntries(
-                        layout = previewLayout,
-                        vineSpacing = vineSpacing,
-                        overrides = rowVineCountOverrides,
-                    ),
-                    onEditRow = { rowVineCountTarget = it },
-                    onClearAll = { rowVineCountOverrides.clear() },
-                )
-            }
-
-            // Vine & spacing
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionHeader("Vine & Trellis Spacing", onLight = true)
-                VineyardCard {
-                    SliderRow("Vine spacing", "%.2f m".format(vineSpacing), vineSpacing.toFloat(), 0.5f..3f) {
-                        vineSpacing = it.toDouble()
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    NumberField("Intermediate post spacing (m)", postSpacing) { postSpacing = it }
-                }
-            }
-
-            // Irrigation
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionHeader("Irrigation", onLight = true)
-                VineyardCard {
-                    NumberField("Flow per emitter (L/h)", flowPerEmitter) { flowPerEmitter = it }
-                    Spacer(Modifier.height(8.dp))
-                    NumberField("Emitter spacing (m)", emitterSpacing) { emitterSpacing = it }
-                    val rate = applicationRate(flowPerEmitter.toDoubleOrNull(), emitterSpacing.toDoubleOrNull(), rowWidth)
-                    if (rate != null) {
-                        Spacer(Modifier.height(10.dp))
-                        Text(
-                            "Application rate ≈ %.2f mm/h".format(rate),
-                            color = vine.textSecondary,
-                            fontSize = 13.sp,
-                        )
-                    }
-                }
-            }
-
-            // Varieties
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionHeader("Grape Varieties", onLight = true)
-                VineyardCard {
-                    if (allocations.isEmpty()) {
-                        Text("No varieties added yet.", color = vine.textSecondary, fontSize = 14.sp)
-                    } else {
-                        allocations.forEachIndexed { index, alloc ->
-                            AllocationRow(
-                                alloc = alloc,
-                                onPercent = { p -> allocations[index] = alloc.copy(percent = p) },
-                                onEdit = { editingAllocationIndex = index },
-                                onRemove = { allocations.removeAt(index) },
-                            )
-                            if (index < allocations.lastIndex) Spacer(Modifier.height(10.dp))
-                        }
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    TextButton(onClick = { addingVariety = true }) {
-                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.size(6.dp))
-                        Text("Add variety")
-                    }
-                }
-            }
-
-            // Soil profile (existing blocks only — needs a server id)
-            if (existing != null) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Soil", onLight = true)
-                    VineyardCard {
-                        Text(
-                            "Soil class, available water capacity and root depth feed the Irrigation Advisor.",
-                            color = vine.textSecondary, fontSize = 13.sp,
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        TextButton(onClick = { showSoilEditor = true }, enabled = canEditSoil) {
-                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.size(6.dp))
-                            Text("Edit soil profile")
-                        }
-                    }
-                }
-            }
-
-            // Phenology
+            // 5. Phenology (dates + Planting Year)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SectionHeader("Phenology", onLight = true)
                 VineyardCard {
@@ -441,43 +416,155 @@ fun EditBlockScreen(
                     DateFieldRow("Veraison", veraison) { veraison = it }
                     Spacer(Modifier.height(6.dp))
                     DateFieldRow("Harvest", harvest) { harvest = it }
+                    Spacer(Modifier.height(6.dp))
+                    TrailingNumberRow(
+                        label = "Planting Year",
+                        value = plantingYear,
+                        placeholder = "e.g. 2018",
+                        unit = null,
+                        keyboard = KeyboardType.Number,
+                        fieldWidth = 96.dp,
+                        onChange = { plantingYear = it },
+                    )
                 }
+                Text(
+                    "Set key phenology dates each season. Degree-day accumulation starts from the Reset Point selected below (budburst is typical for ripeness tracking).",
+                    color = vine.textSecondary,
+                    fontSize = 12.sp,
+                )
             }
 
-            // GDD overrides
+            // 6. Degree Days Override — two labelled dropdowns; null = inherit.
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SectionHeader("Degree Days Override", onLight = true)
                 VineyardCard {
-                    OptionRow(
-                        label = "Calculation mode",
-                        options = listOf(null to "Use default", "gdd" to "Standard GDD", "bedd" to "BEDD"),
+                    OverrideDropdown(
+                        label = "Calculation",
+                        options = listOf<Pair<String?, String>>(
+                            null to "Vineyard Default (${gddDefaults.calculationMode.shortName})",
+                        ) + GddCalculationMode.entries.map { it.storageKey to it.displayName },
                         selected = calcMode,
-                    ) { calcMode = it }
-                    Spacer(Modifier.height(8.dp))
-                    OptionRow(
-                        label = "Reset point",
-                        options = listOf(
-                            null to "Use default",
-                            "seasonStart" to "Season Start",
-                            "budburst" to "Budburst",
-                            "flowering" to "Flowering",
-                            "veraison" to "Veraison",
-                        ),
+                        onSelect = { calcMode = it },
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OverrideDropdown(
+                        label = "Reset Point",
+                        options = listOf<Pair<String?, String>>(
+                            null to "Vineyard Default (${gddDefaults.resetMode.displayName})",
+                        ) + GddResetMode.entries.map { it.storageKey to it.displayName },
                         selected = resetMode,
-                    ) { resetMode = it }
+                        onSelect = { resetMode = it },
+                    )
+                }
+                Text(
+                    "Leave on “Vineyard Default” to inherit from Vineyard Setup. Override per block if, for example, you want to track ripening from flowering on this block only.",
+                    color = vine.textSecondary,
+                    fontSize = 12.sp,
+                )
+            }
+
+            // 7. Grape Varieties
+            run {
+                val totalPercent = allocations.sumOf { it.percent ?: 0.0 }
+                val totalOk = kotlin.math.abs(totalPercent - 100.0) < 0.5
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SectionHeader("Grape Varieties", onLight = true, fillWidth = false, modifier = Modifier.weight(1f))
+                        if (allocations.isNotEmpty()) {
+                            Text(
+                                "Total: ${totalPercent.toInt()}%",
+                                color = if (totalOk) VineColors.LeafGreen else VineColors.Warning,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                    VineyardCard {
+                        allocations.forEachIndexed { index, alloc ->
+                            AllocationRow(
+                                alloc = alloc,
+                                variety = resolveAllocationVariety(alloc, state.grapeVarieties),
+                                onPercent = { p -> allocations[index] = alloc.copy(percent = p) },
+                                onEdit = { editingAllocationIndex = index },
+                                onRemove = { allocations.removeAt(index) },
+                                onPickClone = { clonePickerIndex = index },
+                                onPickRootstock = { rootstockPickerIndex = index },
+                            )
+                            HorizontalDivider(Modifier.padding(vertical = 10.dp), color = vine.cardBorder)
+                        }
+                        TextButton(onClick = { addingVariety = true }) {
+                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.size(6.dp))
+                            Text("Add Variety")
+                        }
+                    }
+                    Text(
+                        when {
+                            allocations.isEmpty() ->
+                                "Add varieties planted in this block. Manage the master list in Settings → Vineyard Setup → Grape Varieties."
+                            !totalOk -> "Percentages should total 100%. Currently: ${totalPercent.toInt()}%."
+                            else -> "Percentages total 100%."
+                        },
+                        color = if (allocations.isNotEmpty() && !totalOk) VineColors.Warning else vine.textSecondary,
+                        fontSize = 12.sp,
+                    )
                 }
             }
 
-            // Overrides
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionHeader("Overrides & Planting", onLight = true)
-                VineyardCard {
-                    NumberField("Vine count override", vineCountOverride, KeyboardType.Number) { vineCountOverride = it }
-                    Spacer(Modifier.height(8.dp))
-                    NumberField("Total row length override (m)", rowLengthOverride) { rowLengthOverride = it }
-                    Spacer(Modifier.height(8.dp))
-                    NumberField("Planting year", plantingYear, KeyboardType.Number) { plantingYear = it }
+            // 8. Irrigation
+            IrrigationSection(
+                flowPerEmitter = flowPerEmitter,
+                onFlowPerEmitter = { flowPerEmitter = it },
+                emitterSpacing = emitterSpacing,
+                onEmitterSpacing = { emitterSpacing = it },
+                rowWidth = rowWidth,
+            )
+
+            // 9. Soil
+            SoilSection(
+                isNewBlock = existing == null,
+                loading = soilLoading,
+                profile = soilProfile,
+                isAustralianVineyard = isAustralianCountry(state.selectedVineyard?.country),
+                canEdit = canEditSoil,
+                onEdit = { showSoilEditor = true },
+            )
+
+            // 10. Block Summary + Vines Per Row (iOS: boundary AND rows required)
+            run {
+                val polyCoords = boundary.map { CoordinatePoint(it.position.latitude, it.position.longitude) }
+                if (polyCoords.size > 2 && rowCount > 0) {
+                    val calculatedLength = previewTotalRowLength(polyCoords, rowDirection, rowCount, rowWidth, rowOffset)
+                    BlockSummaryCard(
+                        calculatedRowLengthM = calculatedLength,
+                        vineSpacing = vineSpacing,
+                        rowLengthOverride = rowLengthOverride,
+                        onRowLengthOverride = { rowLengthOverride = it },
+                        vineCountOverride = vineCountOverride,
+                        onVineCountOverride = { vineCountOverride = it },
+                    )
+                    RowVineCountsCard(
+                        entries = rowVineCountEntries(
+                            layout = previewLayout,
+                            vineSpacing = vineSpacing,
+                            overrides = rowVineCountOverrides,
+                        ),
+                        onEditRow = { rowVineCountTarget = it },
+                        onClearAll = { rowVineCountOverrides.clear() },
+                    )
                 }
+            }
+
+            // 11. Danger Zone — existing blocks, authorised roles only.
+            if (showDangerZone) {
+                DangerZoneSection(
+                    loading = refCountsLoading,
+                    counts = refCounts,
+                    checkFailed = refCountsFailed,
+                    busy = performingDestructive,
+                    onArchive = { showArchiveConfirm = true },
+                    onDeletePermanently = { showPermanentDeleteConfirm = true },
+                )
             }
 
             Spacer(Modifier.height(12.dp))
@@ -508,10 +595,134 @@ fun EditBlockScreen(
                 paddockName = name.ifBlank { existing.name },
                 vineyardCountry = state.selectedVineyard?.country,
                 canEdit = canEditSoil,
-                onSaved = { showSoilEditor = false },
+                onSaved = { saved ->
+                    if (saved != null) soilProfile = saved
+                    soilReloadTick++
+                    showSoilEditor = false
+                },
                 onDismiss = { showSoilEditor = false },
             )
         }
+    }
+
+    // Clone / rootstock pickers from an allocation row — same dialogs as the
+    // add/edit flow; the result is applied with copy() onto the SAME allocation.
+    clonePickerIndex?.let { idx ->
+        val alloc = allocations.getOrNull(idx)
+        val variety = alloc?.let { resolveAllocationVariety(it, state.grapeVarieties) }
+        if (alloc == null) {
+            clonePickerIndex = null
+        } else {
+            val key = variety?.varietyKey ?: alloc.varietyKey
+            if (key == null) {
+                clonePickerIndex = null
+            } else {
+                ClonePickerDialog(
+                    state = state,
+                    varietyKey = key,
+                    varietyName = variety?.displayName ?: alloc.displayName ?: "Variety",
+                    currentKey = alloc.cloneKey,
+                    currentText = alloc.clone,
+                    onCreateCustomClone = vm::addCustomClone,
+                    onSelect = { k, text ->
+                        allocations[idx] = alloc.copy(cloneKey = k, clone = text?.trim()?.ifBlank { null })
+                        clonePickerIndex = null
+                    },
+                    onDismiss = { clonePickerIndex = null },
+                )
+            }
+        }
+    }
+    rootstockPickerIndex?.let { idx ->
+        val alloc = allocations.getOrNull(idx)
+        if (alloc == null) {
+            rootstockPickerIndex = null
+        } else {
+            RootstockPickerDialog(
+                state = state,
+                currentKey = alloc.rootstockKey,
+                currentText = alloc.rootstock,
+                onCreateCustomRootstock = vm::addCustomRootstock,
+                onSelect = { k, text ->
+                    allocations[idx] = alloc.copy(rootstockKey = k, rootstock = text?.trim()?.ifBlank { null })
+                    rootstockPickerIndex = null
+                },
+                onDismiss = { rootstockPickerIndex = null },
+            )
+        }
+    }
+
+    // Danger Zone confirmations (iOS: archive confirmation dialog; permanent
+    // delete requires typing the block name). Existing VM operations only.
+    if (showArchiveConfirm && existing != null) {
+        val preview = refCounts?.takeIf { !it.isEmpty }?.summaryLines?.take(4)?.joinToString(", ")
+        AlertDialog(
+            onDismissRequest = { showArchiveConfirm = false },
+            title = { Text("Archive ${existing.name}?") },
+            text = {
+                Text(
+                    if (preview != null) {
+                        "This block has linked records ($preview). Archiving keeps it available for historical reports but hides it from active selectors."
+                    } else {
+                        "Archiving keeps this block available for historical reports but hides it from active selectors."
+                    },
+                    color = vine.textSecondary,
+                    fontSize = 14.sp,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !performingDestructive,
+                    onClick = {
+                        showArchiveConfirm = false
+                        performingDestructive = true
+                        vm.archivePaddock(existing.id) { ok ->
+                            performingDestructive = false
+                            if (ok) onDone()
+                        }
+                    },
+                ) { Text("Archive block", color = VineColors.Destructive) }
+            },
+            dismissButton = { TextButton(onClick = { showArchiveConfirm = false }) { Text("Cancel") } },
+        )
+    }
+    if (showPermanentDeleteConfirm && existing != null) {
+        var typedName by remember { mutableStateOf("") }
+        val matches = typedName.trim().equals(existing.name, ignoreCase = true)
+        AlertDialog(
+            onDismissRequest = { showPermanentDeleteConfirm = false },
+            title = { Text("Delete ${existing.name} permanently?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "This cannot be undone. Type “${existing.name}” to confirm.",
+                        color = vine.textSecondary,
+                        fontSize = 14.sp,
+                    )
+                    OutlinedTextField(
+                        value = typedName,
+                        onValueChange = { typedName = it },
+                        placeholder = { Text("Type block name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = matches && !performingDestructive && refCounts?.isEmpty == true,
+                    onClick = {
+                        showPermanentDeleteConfirm = false
+                        performingDestructive = true
+                        vm.hardDeletePaddock(existing.id) { ok ->
+                            performingDestructive = false
+                            if (ok) onDone()
+                        }
+                    },
+                ) { Text("Delete permanently", color = VineColors.Destructive) }
+            },
+            dismissButton = { TextButton(onClick = { showPermanentDeleteConfirm = false }) { Text("Cancel") } },
+        )
     }
 
     if (addingVariety) {
@@ -784,82 +995,468 @@ private fun NumberField(
     )
 }
 
+/**
+ * Labelled single-choice dropdown (iOS `Picker` row parity). A `null` key is
+ * the inherited "Vineyard Default" option; any other key is an explicit
+ * block override. The selected title is a single unwrapped line.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun OptionRow(
+private fun OverrideDropdown(
     label: String,
     options: List<Pair<String?, String>>,
     selected: String?,
     onSelect: (String?) -> Unit,
 ) {
-    val vine = LocalVineColors.current
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(label, color = vine.textSecondary, fontSize = 13.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+    var open by remember { mutableStateOf(false) }
+    val selectedTitle = options.firstOrNull { it.first == selected }?.second
+        ?: options.firstOrNull { it.first == null }?.second
+        ?: ""
+    ExposedDropdownMenuBox(expanded = open, onExpandedChange = { open = it }) {
+        OutlinedTextField(
+            value = selectedTitle,
+            onValueChange = {},
+            readOnly = true,
+            singleLine = true,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = open) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+        )
+        ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             options.forEach { (key, title) ->
-                val active = key == selected
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(if (active) VineColors.LeafGreen else vine.appBackground)
-                        .border(1.dp, if (active) VineColors.LeafGreen else vine.cardBorder, RoundedCornerShape(10.dp))
-                        .clickable { onSelect(key) }
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                ) {
-                    Text(
-                        title,
-                        color = if (active) Color.White else vine.textPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                    )
-                }
+                val isSelected = key == selected
+                val check: (@Composable () -> Unit)? =
+                    if (isSelected) ({ Icon(Icons.Filled.Check, contentDescription = null, tint = VineColors.LeafGreen) }) else null
+                DropdownMenuItem(
+                    text = {
+                        Text(title, fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal)
+                    },
+                    trailingIcon = check,
+                    onClick = {
+                        onSelect(key)
+                        open = false
+                    },
+                )
             }
         }
     }
 }
 
+/** `Label ........ [value] unit` row with a compact trailing text field (iOS HStack form row). */
+@Composable
+private fun TrailingNumberRow(
+    label: String,
+    value: String,
+    placeholder: String,
+    unit: String?,
+    keyboard: KeyboardType,
+    onChange: (String) -> Unit,
+    fieldWidth: Dp = 88.dp,
+) {
+    val vine = LocalVineColors.current
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label, color = vine.textPrimary, fontSize = 14.sp, modifier = Modifier.weight(1f))
+        OutlinedTextField(
+            value = value,
+            onValueChange = onChange,
+            placeholder = { Text(placeholder, fontSize = 14.sp) },
+            singleLine = true,
+            textStyle = LocalTextStyle.current.copy(
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = FontFamily.Monospace,
+                textAlign = TextAlign.End,
+            ),
+            keyboardOptions = KeyboardOptions(keyboardType = keyboard),
+            modifier = Modifier.width(fieldWidth),
+        )
+        if (unit != null) Text(unit, color = vine.textSecondary, fontSize = 12.sp)
+    }
+}
+
+/** Read-only `Label ........ value` row; [emphasis] tints the value. */
+@Composable
+private fun ValueRow(label: String, value: String, emphasis: Color? = null, italic: Boolean = false) {
+    val vine = LocalVineColors.current
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = emphasis ?: vine.textPrimary, fontSize = 14.sp, modifier = Modifier.weight(1f))
+        Text(
+            value,
+            color = emphasis ?: vine.textPrimary,
+            fontSize = 14.sp,
+            fontWeight = if (italic) FontWeight.Normal else FontWeight.SemiBold,
+            fontStyle = if (italic) FontStyle.Italic else FontStyle.Normal,
+            fontFamily = if (italic) null else FontFamily.Monospace,
+        )
+    }
+}
+
+/** iOS `vineSpacingSection`: slider, post spacing, derived intermediate posts. */
+@Composable
+private fun VineTrellisSpacingSection(
+    vineSpacing: Double,
+    onVineSpacing: (Double) -> Unit,
+    postSpacing: String,
+    onPostSpacing: (String) -> Unit,
+    rowCount: Int,
+    savedEffectiveRowLength: Double,
+) {
+    val vine = LocalVineColors.current
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionHeader("Vine & Trellis Spacing", onLight = true)
+        VineyardCard {
+            SliderRow("Vine Spacing", "%.2f m".format(vineSpacing), vineSpacing.toFloat(), 0.5f..3f) {
+                onVineSpacing(it.toDouble())
+            }
+            Spacer(Modifier.height(8.dp))
+            TrailingNumberRow(
+                label = "Intermediate Post Spacing",
+                value = postSpacing,
+                placeholder = "0.00",
+                unit = "m",
+                keyboard = KeyboardType.Decimal,
+                onChange = onPostSpacing,
+            )
+            val spacing = postSpacing.toDoubleOrNull()?.takeIf { it > 0 }
+            if (spacing != null && savedEffectiveRowLength > 0) {
+                // iOS: posts = floor(total / spacing) - 2 end posts per row, never negative.
+                val posts = maxOf(0, (savedEffectiveRowLength / spacing).toInt() - 2 * maxOf(rowCount, 0))
+                Spacer(Modifier.height(10.dp))
+                ValueRow("Intermediate Posts", posts.toString(), emphasis = VineColors.EarthBrown)
+            }
+        }
+        Text(
+            "Vine Spacing is used to estimate vine count. Intermediate Post Spacing is the distance (m) between trellis posts inside a row, excluding the two end posts per row.",
+            color = vine.textSecondary,
+            fontSize = 12.sp,
+        )
+    }
+}
+
+/**
+ * iOS `irrigationSection`: Flow per Emitter (L/hr), Emitter Spacing (m), Row
+ * Spacing (read-only, bound to the block's row width), then the derived
+ * Application Rate in mm/hr and the ML/ha/hr figure it is derived from.
+ */
+@Composable
+private fun IrrigationSection(
+    flowPerEmitter: String,
+    onFlowPerEmitter: (String) -> Unit,
+    emitterSpacing: String,
+    onEmitterSpacing: (String) -> Unit,
+    rowWidth: Double,
+) {
+    val vine = LocalVineColors.current
+    val flow = flowPerEmitter.toDoubleOrNull()?.takeIf { it > 0 }
+    val spacing = emitterSpacing.toDoubleOrNull()?.takeIf { it > 0 }
+    val rate = irrigationApplicationRate(flow, spacing, rowWidth)
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionHeader("Irrigation", onLight = true)
+        VineyardCard {
+            TrailingNumberRow(
+                label = "Flow per Emitter",
+                value = flowPerEmitter,
+                placeholder = "0.0",
+                unit = "L/hr",
+                keyboard = KeyboardType.Decimal,
+                onChange = onFlowPerEmitter,
+            )
+            Spacer(Modifier.height(8.dp))
+            TrailingNumberRow(
+                label = "Emitter Spacing",
+                value = emitterSpacing,
+                placeholder = "0.00",
+                unit = "m",
+                keyboard = KeyboardType.Decimal,
+                onChange = onEmitterSpacing,
+            )
+            Spacer(Modifier.height(10.dp))
+            if (rowWidth > 0) {
+                ValueRow("Row Spacing", "%.2f m".format(rowWidth))
+            } else {
+                ValueRow("Row Spacing", "Not set", emphasis = vine.textSecondary, italic = true)
+            }
+            HorizontalDivider(Modifier.padding(vertical = 10.dp), color = vine.cardBorder)
+            if (rate != null) {
+                ValueRow("Application Rate", "%.2f mm/hr".format(rate.mmPerHour), emphasis = IrrigationTeal)
+                Spacer(Modifier.height(6.dp))
+                ValueRow("ML/ha/hr", "%.4f".format(rate.megalitresPerHaPerHour), emphasis = VineColors.Info)
+            } else {
+                ValueRow("Application Rate", "Not calculable", emphasis = vine.textSecondary, italic = true)
+            }
+        }
+        Text(
+            "ML/ha/hr = (emitters per ha × flow) ÷ 1,000,000. mm/hr = ML/ha/hr × 100. " +
+                "Row spacing (%.1f m) is used for the calculation.".format(rowWidth),
+            color = vine.textSecondary,
+            fontSize = 12.sp,
+        )
+    }
+}
+
+/** iOS `soilSection`: summary of the saved profile (read-only) + edit affordance. */
+@Composable
+private fun SoilSection(
+    isNewBlock: Boolean,
+    loading: Boolean,
+    profile: BackendSoilProfile?,
+    isAustralianVineyard: Boolean,
+    canEdit: Boolean,
+    onEdit: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionHeader("Soil", onLight = true)
+        VineyardCard {
+            when {
+                isNewBlock -> Text(
+                    "Save this block first to set up its soil profile.",
+                    color = vine.textSecondary, fontSize = 13.sp,
+                )
+                loading && profile == null -> Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = VineColors.Primary)
+                    Text("Loading soil profile…", color = vine.textSecondary, fontSize = 13.sp)
+                }
+                profile != null -> SoilProfileSummary(profile)
+                else -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("No soil profile set", color = vine.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    Text(
+                        if (isAustralianVineyard) {
+                            "Tip: Use “Fetch from NSW SEED” in the editor to estimate the soil profile from your block centroid, or set it manually."
+                        } else {
+                            "Add a soil class, available water capacity and root depth so the Irrigation Advisor can produce soil-aware recommendations."
+                        },
+                        color = vine.textSecondary, fontSize = 12.sp,
+                    )
+                }
+            }
+            if (!isNewBlock) {
+                Spacer(Modifier.height(6.dp))
+                TextButton(onClick = onEdit, enabled = canEdit) {
+                    Icon(
+                        if (profile == null) Icons.Filled.Add else Icons.Filled.Edit,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.size(6.dp))
+                    Text(if (profile == null) "Add soil profile" else "Edit soil profile")
+                }
+            }
+        }
+        Text(
+            "Soil information feeds the Irrigation Advisor. Manual edits set a manual override so NSW SEED won't silently overwrite your values.",
+            color = vine.textSecondary,
+            fontSize = 12.sp,
+        )
+    }
+}
+
+/** Field-for-field port of iOS `soilProfileSummary`. */
+@Composable
+private fun SoilProfileSummary(soil: BackendSoilProfile) {
+    val vine = LocalVineColors.current
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        SummaryLine("Soil class", soilClassDisplay(soil))
+        soil.soilLandscape?.takeIf { it.isNotEmpty() }?.let { SummaryLine("Soil landscape", it) }
+        soil.soilLandscapeCode?.takeIf { it.isNotEmpty() }?.let { SummaryLine("SALIS code", it) }
+        soil.australianSoilClassification?.takeIf { it.isNotEmpty() }?.let { SummaryLine("Australian Soil Classification", it) }
+        soil.landSoilCapability?.takeIf { it.isNotEmpty() }?.let { lsc ->
+            SummaryLine("Land and Soil Capability", soil.landSoilCapabilityClass?.let { "$lsc (class $it)" } ?: lsc)
+        }
+        soil.availableWaterCapacityMmPerM?.takeIf { it > 0 }?.let { SummaryLine("AWC", "%.0f mm/m".format(it)) }
+        soil.effectiveRootDepthM?.takeIf { it > 0 }?.let { SummaryLine("Effective root depth", "%.2f m".format(it)) }
+        soil.managementAllowedDepletionPercent?.takeIf { it > 0 }?.let { SummaryLine("Allowed depletion", "%.0f%%".format(it)) }
+        soil.rootZoneCapacityMm?.let { SummaryLine("Root-zone capacity", "%.0f mm".format(it)) }
+        soil.readilyAvailableWaterMm?.let { SummaryLine("Readily available water", "%.0f mm".format(it)) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            soil.confidence?.takeIf { it.isNotEmpty() }?.let {
+                Text(
+                    "Confidence: ${it.replaceFirstChar { c -> c.uppercase() }}",
+                    color = vine.textSecondary, fontSize = 11.sp,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            when {
+                soil.isManualOverride -> Text("Manual override", color = VineColors.Info, fontSize = 11.sp)
+                soil.source == "nsw_seed" -> Text("NSW SEED", color = vine.textSecondary, fontSize = 11.sp)
+            }
+        }
+        soil.manualNotes?.takeIf { it.isNotEmpty() }?.let {
+            Text(it, color = vine.textSecondary, fontSize = 12.sp)
+        }
+    }
+}
+
+private fun soilClassDisplay(soil: BackendSoilProfile): String {
+    soil.typedSoilClass?.let { return it.fallbackLabel }
+    soil.irrigationSoilClass?.takeIf { it.isNotEmpty() }?.let { return it }
+    return "Unknown"
+}
+
+private fun isAustralianCountry(country: String?): Boolean {
+    val c = country?.trim()?.lowercase() ?: return false
+    return c == "au" || c == "aus" || c == "australia"
+}
+
+/**
+ * iOS `dangerZoneSection`: linked-record status, Archive, and Delete
+ * permanently (only once the reference check confirms zero linked records).
+ * Confirmation dialogs live in the parent; this only surfaces the actions.
+ */
+@Composable
+private fun DangerZoneSection(
+    loading: Boolean,
+    counts: PaddockReferenceCounts?,
+    checkFailed: Boolean,
+    busy: Boolean,
+    onArchive: () -> Unit,
+    onDeletePermanently: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Icon(Icons.Filled.Warning, contentDescription = null, tint = VineColors.Destructive, modifier = Modifier.size(14.dp))
+            SectionHeader("Danger Zone", onLight = true, fillWidth = false)
+        }
+        VineyardCard {
+            when {
+                loading && counts == null -> Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = VineColors.Primary)
+                    Text("Checking linked records…", color = vine.textSecondary, fontSize = 12.sp)
+                }
+                counts != null && counts.isEmpty -> Text(
+                    "No linked records — safe to delete permanently.",
+                    color = vine.textSecondary, fontSize = 12.sp,
+                )
+                counts != null -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Linked records found", color = vine.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(counts.summaryLines.joinToString(", "), color = vine.textSecondary, fontSize = 11.sp)
+                    Text(
+                        "This block has linked records, so it cannot be permanently deleted. Archiving will remove it from active lists while keeping historical records intact.",
+                        color = vine.textSecondary, fontSize = 11.sp,
+                    )
+                }
+                checkFailed -> Text(
+                    "Couldn’t check linked records.",
+                    color = VineColors.Warning, fontSize = 12.sp,
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            TextButton(onClick = onArchive, enabled = !busy) {
+                Icon(Icons.Filled.Archive, contentDescription = null, tint = VineColors.Destructive, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.size(6.dp))
+                Text("Archive block", color = VineColors.Destructive)
+            }
+            if (counts != null && counts.isEmpty) {
+                TextButton(onClick = onDeletePermanently, enabled = !busy) {
+                    Icon(Icons.Filled.Delete, contentDescription = null, tint = VineColors.Destructive, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.size(6.dp))
+                    Text("Delete permanently", color = VineColors.Destructive)
+                }
+            }
+        }
+        Text(
+            "Archive removes the block from active selectors but keeps its history. Permanent delete is only offered when no linked records remain.",
+            color = vine.textSecondary,
+            fontSize = 12.sp,
+        )
+    }
+}
+
+/**
+ * Resolves an allocation to the vineyard's master variety row (iOS
+ * `PaddockVarietyResolver` light): by id, then key, then canonical name.
+ */
+private fun resolveAllocationVariety(
+    alloc: PaddockVarietyAllocation,
+    varieties: List<GrapeVarietyRow>,
+): GrapeVarietyRow? {
+    alloc.varietyId?.let { id -> varieties.firstOrNull { it.id.equals(id, ignoreCase = true) } }?.let { return it }
+    alloc.varietyKey?.let { key -> varieties.firstOrNull { it.varietyKey == key } }?.let { return it }
+    val canon = alloc.displayName?.let { canonicalVarietyName(it) } ?: return null
+    return varieties.firstOrNull { it.canonicalName == canon }
+}
+
+/**
+ * iOS variety allocation row: name + Optimal GDD (or a not-in-master warning),
+ * trailing percent field and remove control, then Clone / Rootstock selector
+ * rows with the shared-catalogue note. Tapping the name opens the full editor.
+ */
 @Composable
 private fun AllocationRow(
     alloc: PaddockVarietyAllocation,
+    variety: GrapeVarietyRow?,
     onPercent: (Double?) -> Unit,
     onEdit: () -> Unit,
     onRemove: () -> Unit,
+    onPickClone: () -> Unit,
+    onPickRootstock: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .clip(RoundedCornerShape(8.dp))
-                .clickable(onClick = onEdit)
-                .padding(vertical = 2.dp),
-        ) {
-            Text(
-                alloc.displayName ?: alloc.varietyKey ?: "Variety",
-                color = vine.textPrimary,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp,
+    val displayName = variety?.displayName ?: alloc.displayName ?: alloc.varietyKey ?: "Unknown"
+    val optimalGdd = variety?.let { it.optimalGddOverride ?: BuiltInGrapeVarietyGDD.gddForKey(it.varietyKey) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onEdit)
+                    .padding(vertical = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(displayName, color = vine.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                when {
+                    variety != null && optimalGdd != null ->
+                        Text("Optimal: ${optimalGdd.toInt()} GDD", color = vine.textSecondary, fontSize = 11.sp)
+                    variety == null && displayName != "Unknown" ->
+                        Text("Not in master list — add in Settings → Grape Varieties", color = VineColors.Warning, fontSize = 11.sp)
+                }
+            }
+            OutlinedTextField(
+                value = alloc.percent?.let { formatNum(it) } ?: "",
+                onValueChange = { onPercent(it.toDoubleOrNull()) },
+                placeholder = { Text("0", fontSize = 14.sp) },
+                singleLine = true,
+                textStyle = LocalTextStyle.current.copy(
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = FontFamily.Monospace,
+                    textAlign = TextAlign.End,
+                ),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.width(72.dp),
             )
-            val meta = buildList {
-                alloc.clone?.takeIf { it.isNotBlank() }?.let { add("Clone $it") }
-                alloc.rootstock?.takeIf { it.isNotBlank() }?.let { add("Rootstock $it") }
-            }
-            if (meta.isNotEmpty()) {
-                Text(meta.joinToString(" · "), color = vine.textSecondary, fontSize = 12.sp)
-            } else {
-                Text("Tap to set clone & rootstock", color = vine.textSecondary, fontSize = 12.sp)
+            Text("%", color = vine.textSecondary, fontSize = 12.sp)
+            IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Filled.RemoveCircle, contentDescription = "Remove $displayName", tint = VineColors.Destructive)
             }
         }
-        OutlinedTextField(
-            value = alloc.percent?.let { formatNum(it) } ?: "",
-            onValueChange = { onPercent(it.toDoubleOrNull()) },
-            label = { Text("%") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.size(width = 86.dp, height = 60.dp),
+        CatalogSelectorField(
+            label = "Clone",
+            value = alloc.clone?.takeIf { it.isNotBlank() } ?: "Not specified",
+            hint = null,
+            enabled = true,
+            onClick = onPickClone,
         )
-        IconButton(onClick = onRemove) {
-            Icon(Icons.Filled.Delete, contentDescription = "Remove", tint = VineColors.Destructive)
-        }
+        CatalogSelectorField(
+            label = "Rootstock",
+            value = alloc.rootstock?.takeIf { it.isNotBlank() } ?: "Not recorded",
+            hint = null,
+            enabled = true,
+            onClick = onPickRootstock,
+        )
+        Text(
+            "Optional — from the shared catalogue, synced across devices",
+            color = vine.textSecondary.copy(alpha = 0.8f),
+            fontSize = 11.sp,
+        )
     }
 }
 
@@ -1572,44 +2169,92 @@ private fun RowVineCountDialog(
     )
 }
 
+/**
+ * iOS `blockSummarySection`: Calculated Row Length, Estimated Vines, then the
+ * Calculation Overrides (Row Length, Vine Count) with a reset when active. The
+ * override fields are the SAME state the save path already writes.
+ */
 @Composable
-private fun BlockSummaryCard(areaHa: Double, rowCount: Int, totalRowLengthM: Double, vineCount: Int) {
+private fun BlockSummaryCard(
+    calculatedRowLengthM: Double,
+    vineSpacing: Double,
+    rowLengthOverride: String,
+    onRowLengthOverride: (String) -> Unit,
+    vineCountOverride: String,
+    onVineCountOverride: (String) -> Unit,
+) {
     val vine = LocalVineColors.current
-    // Geometry is stored in canonical hectares/metres; only the DISPLAY unit
-    // follows the vineyard's Region & Units.
-    val fmt = LocalRegionFormatter.current
-    val cells = listOf(
-        "Area" to (if (areaHa > 0) fmt.formatArea(areaHa) else "—"),
-        "Rows" to (if (rowCount > 0) rowCount.toString() else "—"),
-        "Row length" to (if (totalRowLengthM > 0) "%,.0f m".format(totalRowLengthM) else "—"),
-        "Vines" to (if (vineCount > 0) "%,d".format(vineCount) else "—"),
-    )
+    // iOS: estimated vines use the override row length when one is typed.
+    val effectiveRowLength = rowLengthOverride.toDoubleOrNull() ?: calculatedRowLengthM
+    val estimatedVines = if (vineSpacing > 0) (effectiveRowLength / vineSpacing).toInt() else 0
+    val overrideActive = rowLengthOverride.isNotEmpty() || vineCountOverride.isNotEmpty()
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SectionHeader("Block Summary", onLight = true)
         VineyardCard {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                cells.chunked(2).forEach { pair ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        pair.forEach { (label, value) ->
-                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(value, color = vine.textPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                                Text(label, color = vine.textSecondary, fontSize = 12.sp)
-                            }
-                        }
+            ValueRow("Calculated Row Length", "%.0f m".format(calculatedRowLengthM), emphasis = vine.textSecondary)
+            Spacer(Modifier.height(6.dp))
+            ValueRow("Estimated Vines", estimatedVines.toString(), emphasis = VineColors.Info)
+            HorizontalDivider(Modifier.padding(vertical = 10.dp), color = vine.cardBorder)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Calculation Overrides", color = vine.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Text(
+                    "Used for water usage & yield estimates only — does not affect trip path tracking.",
+                    color = vine.textSecondary, fontSize = 12.sp,
+                )
+                TrailingNumberRow(
+                    label = "Row Length",
+                    value = rowLengthOverride,
+                    placeholder = "%.0f".format(calculatedRowLengthM),
+                    unit = "m",
+                    keyboard = KeyboardType.Decimal,
+                    onChange = onRowLengthOverride,
+                    fieldWidth = 104.dp,
+                )
+                TrailingNumberRow(
+                    label = "Vine Count",
+                    value = vineCountOverride,
+                    placeholder = estimatedVines.toString(),
+                    unit = null,
+                    keyboard = KeyboardType.Number,
+                    onChange = onVineCountOverride,
+                    fieldWidth = 104.dp,
+                )
+                if (overrideActive) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Edit, contentDescription = null, tint = VineColors.Warning, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.size(6.dp))
+                        Text("Manual override active", color = VineColors.Warning, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                        TextButton(onClick = { onRowLengthOverride(""); onVineCountOverride("") }) { Text("Reset All", fontSize = 12.sp) }
                     }
                 }
             }
         }
+        Text(
+            "Row length and vine count are auto-calculated from boundary geometry. Override values here for more accurate water usage and yield calculations — trip path tracking always uses the mapped row geometry.",
+            color = vine.textSecondary,
+            fontSize = 12.sp,
+        )
     }
 }
 
-/** Litres-per-emitter + spacing + row width → mm/hour application rate. */
-private fun applicationRate(flow: Double?, emitterSpacing: Double?, rowWidth: Double?): Double? {
+/** iOS `.teal` used for the Application Rate row. */
+private val IrrigationTeal = Color(0xFF30B0C7)
+
+/** Derived irrigation figures, in the two units iOS displays. */
+private data class IrrigationRate(val megalitresPerHaPerHour: Double, val mmPerHour: Double)
+
+/**
+ * iOS `irrigationSection` maths: emitters/ha = 10,000 ÷ (row width × emitter
+ * spacing); L/ha/hr = emitters/ha × flow; ML/ha/hr = L/ha/hr ÷ 1,000,000;
+ * mm/hr = ML/ha/hr × 100. Same formula as before, now exposing both units.
+ */
+private fun irrigationApplicationRate(flow: Double?, emitterSpacing: Double?, rowWidth: Double?): IrrigationRate? {
     if (flow == null || emitterSpacing == null || rowWidth == null) return null
-    if (emitterSpacing <= 0 || rowWidth <= 0) return null
+    if (flow <= 0 || emitterSpacing <= 0 || rowWidth <= 0) return null
     val emittersPerHa = 10_000.0 / (rowWidth * emitterSpacing)
     val litresPerHaPerHour = emittersPerHa * flow
-    return litresPerHaPerHour / 1_000_000.0 * 100.0
+    val ml = litresPerHaPerHour / 1_000_000.0
+    return IrrigationRate(megalitresPerHaPerHour = ml, mmPerHour = ml * 100.0)
 }
 
 private fun formatNum(v: Double): String =
