@@ -260,47 +260,9 @@ struct QuickPinSheet: View {
                 proceed()
             }
         }
-        if placement.attachment.snappedToRow {
-            continueWith(placement)
-            return
-        }
-        guard let paddockId = placement.paddockId,
-              let paddock = store.paddocks.first(where: { $0.id == paddockId }) else {
-            errorMessage = "Pin not saved — mapped aisle confirmation is unavailable at this frozen position."
-            return
-        }
-        let choices = PinAisleGeometry.confirmationCandidates(
-            coordinate: loc.coordinate,
-            horizontalAccuracyMetres: placement.capture?.horizontalAccuracyMetres,
-            in: paddock
-        ).compactMap { aisle -> PendingMappedAisleConfirmation.Choice? in
-            let confirmed = PinAttachmentResolver.resolveConfirmedAisle(
-                rawCoordinate: loc.coordinate,
-                heading: placement.attachment.heading,
-                operatorSide: side,
-                aisleNumber: aisle.aisleNumber,
-                horizontalAccuracyMetres: placement.capture?.horizontalAccuracyMetres,
-                paddock: paddock
-            )
-            guard confirmed.snappedToRow, let row = confirmed.pinRowNumber else { return nil }
-            let confirmedPlacement: ResolvedPlacement = (
-                placement.paddockId, confirmed, placement.fallbackRowNumber, placement.capture
-            )
-            return PendingMappedAisleConfirmation.Choice(
-                aisleNumber: aisle.aisleNumber,
-                rowNumber: row,
-                side: side,
-                confirm: { continueWith(confirmedPlacement) }
-            )
-        }
-        guard !choices.isEmpty else {
-            errorMessage = "Pin not saved — mapped aisle, heading and selected side could not be confirmed."
-            return
-        }
-        pendingAisleConfirmation = PendingMappedAisleConfirmation(
-            paddockName: paddock.name,
-            choices: choices
-        )
+        // Missing heading/aisle/row leaves enrichment fields unset; a valid
+        // accepted point is persisted immediately without a compulsory dialog.
+        continueWith(placement)
     }
 
     private func handleGrowthStageSelected(_ stage: GrowthStage) {
@@ -313,12 +275,22 @@ struct QuickPinSheet: View {
             errorMessage = warning
             return
         }
-        let placement = resolvePlacement(location: loc, side: side)
-        guard placement.attachment.snappedToRow else {
-            errorMessage = "Pin not saved — row guidance could not confirm the mapped aisle, heading and selected side."
-            return
-        }
-        let duplicateCoordinate = placement.attachment.snappedCoordinate ?? loc.coordinate
+        let resolved = resolvePlacement(location: loc, side: side)
+        let placement: ResolvedPlacement = (
+            resolved.paddockId,
+            PinAttachmentResolver.Attachment(
+                drivingRowNumber: nil,
+                pinRowNumber: nil,
+                pinSide: nil,
+                snappedCoordinate: nil,
+                alongRowDistanceM: nil,
+                snappedToRow: false,
+                heading: resolved.attachment.heading
+            ),
+            resolved.fallbackRowNumber,
+            resolved.capture
+        )
+        let duplicateCoordinate = loc.coordinate
         let proceed = { createGrowthPin(stage: stage, location: loc, placement: placement) }
         if let dup = checkDuplicate(
             at: duplicateCoordinate,
@@ -442,6 +414,7 @@ struct QuickPinSheet: View {
         let capture: PinCaptureContext? = store.selectedVineyardId.map { vineyardId in
             PinCaptureContext(
                 capturedAt: capturedAt,
+                locationObservedAt: location.timestamp,
                 vineyardId: vineyardId,
                 tripId: store.currentActiveTripIdProvider?(),
                 rawCoordinate: coordinate,

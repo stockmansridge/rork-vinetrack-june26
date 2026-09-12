@@ -130,11 +130,13 @@ confidence is judged separately, from evidence:
   fresh heading and selected side are frozen together. The current raw fix—not an
   averaged or earlier coordinate—is projected onto the selected vine row. If the
   bounded evidence remains ambiguous, the frozen confirmation fallback applies.
-- **No rowless success.** An automatic Left/Right press that cannot establish
-  block, heading, aisle and side-selected vine row is not reported as a
-  successful row attachment. The app states whether heading, mapped geometry,
-  headland position or aisle ambiguity blocked it; any eventual confirmation
-  must continue using the frozen observation rather than a later GPS fix.
+- **Save first; enrich location later.** Once the existing GPS freshness and
+  accuracy gate accepts the tap, the point pin is durably saved exactly once.
+  Missing block, heading, aisle or attached row means only that those placement
+  fields remain unresolved; it never blocks capture and never creates a later
+  pin from a rejected tap. Left/Right is retained when pressed. Side-free E-L
+  capture does not invent a side or require heading/row. Any optional user
+  confirmation and automated enrichment keep the same pin ID and frozen fix.
 - **Row ends.** If the nearest point on a row is only its clamped endpoint, the
   fix lies beyond that row and containment is not proven. Two 100 m rows 3 m
   apart with the fix halfway across but 1 m past their ends stays unconfirmed.
@@ -187,3 +189,44 @@ Verify opposite-side drops at approximately the same along-row position, then
 repeat facing the opposite direction. Record pin IDs and screenshots
 immediately, after reopen, and after sync to the other platform. Report code
 verification and physical handset acceptance separately.
+
+## 13. Deferred enrichment evidence
+
+Capture evidence is immutable and separate from derived placement. It carries
+one stable pin ID, capture and GPS observation times, raw coordinates/accuracy,
+available qualified heading and its source/time, pressed side, trip context,
+resolver-supported placement, geometry identity where available, and at most 16
+pre-tap observations from the preceding 20 seconds. Freshness is judged against
+the capture instant, never upload time. Later movement cannot enter this bundle.
+
+The pin and evidence retry independently by exact ID. Evidence arriving after
+the pin still enqueues enrichment. Failed evidence delivery never removes the
+local pin or evidence. Server enrichment fills only absent, supported placement
+fields and provenance. It never changes completion, deletion, raw coordinates,
+creator, type, notes or photos; it refuses deleted records and does not overwrite
+mobile/user-confirmed placement. Normal pin delta sync returns accepted results.
+
+## 14. Worker rollout and reversal
+
+Ordered release: (1) apply `sql/231_pin_location_enrichment.sql`; (2) deploy
+`pin-location-enrichment-worker` with `PIN_ENRICHMENT_WORKER_SECRET`, leaving the
+schedule disabled; (3) install mobile test builds; (4) verify controlled fixtures
+and audit rows; (5) enable a one-minute authenticated schedule.
+
+Disable immediately by unscheduling the cron invocation; leased jobs expire and
+remain durable. Verification queries:
+
+```sql
+select location_enrichment_status, count(*) from public.pins group by 1;
+select attempts, count(*) from public.pin_location_enrichment_queue group by 1;
+select outcome, count(*) from public.pin_location_enrichment_audit group by 1;
+select count(*) filter (where paddock_id is null) unresolved_block,
+       count(*) filter (where pin_row_number is null) unresolved_row
+from public.pins where deleted_at is null; -- SELECT-only historical review
+```
+
+Reversal is audited and conditional: select the relevant audit before-image,
+lock the pin, and refuse reversal unless its current placement and enrichment
+revision still equal that audit's after-image. Never overwrite a subsequent
+mobile/user edit. Do not delete evidence or audit rows during reversal, and do
+not enqueue the historical inventory automatically.

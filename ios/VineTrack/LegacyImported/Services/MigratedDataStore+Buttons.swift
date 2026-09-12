@@ -154,6 +154,7 @@ extension MigratedDataStore {
         }
         let observed = capture?.rawCoordinate ?? coordinate
         let pin = VinePin(
+            id: capture?.pinId ?? UUID(),
             vineyardId: vineyardId,
             latitude: observed.latitude,
             longitude: observed.longitude,
@@ -212,6 +213,7 @@ extension MigratedDataStore {
         }
         let observed = capture?.rawCoordinate ?? coordinate
         let pin = VinePin(
+            id: capture?.pinId ?? UUID(),
             vineyardId: vineyardId,
             latitude: observed.latitude,
             longitude: observed.longitude,

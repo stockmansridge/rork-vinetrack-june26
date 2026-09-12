@@ -1840,7 +1840,7 @@ fun PinCategoryLauncherScreen(
     // Auto-dismiss the success card after a short moment, like the iOS toast.
     LaunchedEffect(successToast) {
         if (successToast != null) {
-            delay(2800)
+            delay(1500)
             successToast = null
         }
     }
@@ -1947,7 +1947,7 @@ fun PinCategoryLauncherScreen(
                 photoUri = null,
                 onCreatedPin = { pin ->
                     successToast = QuickPinToast(
-                        title = "$category pin dropped",
+                        title = "Pin saved",
                         subtitle = quickPinSubtitle(side, attachment),
                         offline = offline,
                     )
@@ -2033,57 +2033,9 @@ fun PinCategoryLauncherScreen(
             scope.launch { snackbarHostState.showSnackbar(result.operatorMessage()) }
             return
         }
-        val placement = capture.resolvedPlacement
-        if (placement?.snappedToRow != true) {
-            val paddock = placement?.paddockId?.let { id -> state.paddocks.firstOrNull { it.id == id } }
-            val choices = if (paddock != null && capture.headingDegrees != null) {
-                PinAisleGeometry.confirmationCandidates(
-                    paddock,
-                    fix.latitude,
-                    fix.longitude,
-                    fix.accuracyMetres,
-                ).mapNotNull { aisle ->
-                    val confirmed = PinPlacement.resolveConfirmedAisle(
-                        paddock = paddock,
-                        latitude = fix.latitude,
-                        longitude = fix.longitude,
-                        side = side,
-                        headingDegrees = capture.headingDegrees,
-                        aisleNumber = aisle.aisleNumber,
-                        accuracyMetres = fix.accuracyMetres,
-                    )
-                    if (!confirmed.snappedToRow) null else PendingAisleChoice(
-                        aisleNumber = aisle.aisleNumber,
-                        rowNumber = confirmed.pinRowNumber!!.toInt(),
-                        capture = capture.copy(
-                            resolvedPaddockId = confirmed.paddockId,
-                            resolvedRowNumber = confirmed.pinRowNumber!!.toInt(),
-                            resolvedPlacement = confirmed,
-                        ),
-                    )
-                }
-            } else emptyList()
-            if (paddock != null && choices.isNotEmpty()) {
-                aisleConfirmation = PendingAisleConfirmation(
-                    category = category,
-                    side = side,
-                    fix = fix,
-                    mode = mode,
-                    paddocks = state.paddocks.toList(),
-                    paddockName = paddock.name,
-                    choices = choices,
-                )
-                return
-            }
-            val message = when {
-                placement?.paddockId == null -> "Pin not saved — this position is outside a mapped block."
-                capture.headingDegrees == null -> "Pin not saved — direction is unavailable. Hold the phone facing forward and press again."
-                placement.snapState == PinSnapState.NO_ROW_GEOMETRY -> "Pin not saved — mapped row geometry is unavailable for this block."
-                else -> "Pin not saved — mapped aisle confirmation is unavailable at this frozen position."
-            }
-            scope.launch { snackbarHostState.showSnackbar(message) }
-            return
-        }
+        // GPS qualification decides whether this tap may save. Placement is
+        // optional enrichment: preserve whatever the existing resolver proved
+        // and leave unsupported row/heading fields unset without a dialog.
         quickCreate(
             category,
             side,

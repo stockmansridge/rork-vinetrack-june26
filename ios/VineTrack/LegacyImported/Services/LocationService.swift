@@ -6,10 +6,16 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
     let manager = CLLocationManager()
     var location: CLLocation?
     var heading: CLHeading?
+    private(set) var recentHeadingObservations: [HeadingObservation] = []
     var authorizationStatus: CLAuthorizationStatus = .notDetermined
     var isUsingMockLocation: Bool = false
     private var mockFallbackTask: Task<Void, Never>?
     private var recentDistinctLocations: [CLLocation] = []
+
+    nonisolated struct HeadingObservation: Sendable, Equatable {
+        let degrees: Double
+        let observedAt: Date
+    }
 
     /// Bounded observations already delivered by the existing location stream.
     /// Provider sample identity, not coordinate movement, determines freshness so
@@ -214,7 +220,33 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
         Task { @MainActor in
             self.heading = newHeading
+            let value = newHeading.trueHeading
+            guard value.isFinite, value >= 0, value <= 360 else { return }
+            self.recentHeadingObservations.append(.init(degrees: value, observedAt: newHeading.timestamp))
+            let cutoff = Date().addingTimeInterval(-5)
+            self.recentHeadingObservations.removeAll { $0.observedAt < cutoff }
+            if self.recentHeadingObservations.count > 32 {
+                self.recentHeadingObservations.removeFirst(self.recentHeadingObservations.count - 32)
+            }
         }
+    }
+
+    /// Circular mean avoids the 359°/1° wraparound error. This is display-only;
+    /// capture continues to use the independently qualified instantaneous sample.
+    nonisolated static func circularMean(
+        observations: [HeadingObservation],
+        now: Date,
+        window: TimeInterval = 3
+    ) -> Double? {
+        let recent = observations.filter {
+            let age = now.timeIntervalSince($0.observedAt)
+            return age >= 0 && age <= min(window, staleLocationThreshold)
+        }
+        guard !recent.isEmpty else { return nil }
+        let x = recent.reduce(0.0) { $0 + cos($1.degrees * .pi / 180) }
+        let y = recent.reduce(0.0) { $0 + sin($1.degrees * .pi / 180) }
+        guard abs(x) + abs(y) > 0.000_001 else { return nil }
+        return (atan2(y, x) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
     }
 
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {

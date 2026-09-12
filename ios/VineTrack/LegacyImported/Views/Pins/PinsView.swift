@@ -23,6 +23,7 @@ struct PinsView: View {
 
     @State private var selectedCategory: PinCategoryFilter?
     @State private var contextNow: Date = Date()
+    @State private var displayedLiveContextTitle: String?
     /// E-L records remain explicitly excluded until enabled, even while All is selected.
     @State private var showsELGrowthPins: Bool = false
     @State private var selectedELStageCodes: Set<String> = []
@@ -127,11 +128,11 @@ struct PinsView: View {
     }
 
     private var qualifiedHeading: Double? {
-        guard let sample = locationService.heading else { return nil }
-        return PinAisleGeometry.validHeading(
-            sample.trueHeading,
-            ageSeconds: contextNow.timeIntervalSince(sample.timestamp)
-        )
+        guard let mean = LocationService.circularMean(
+            observations: locationService.recentHeadingObservations,
+            now: contextNow
+        ) else { return nil }
+        return PinAisleGeometry.validHeading(mean, ageSeconds: 0)
     }
 
     private var travelResolution: (context: PinQueryPolicy.TravelContext?, reason: String) {
@@ -242,8 +243,8 @@ struct PinsView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text("Pins")
                         .font(.largeTitle.weight(.bold))
-                    if let liveContextTitle {
-                        Text(liveContextTitle)
+                    if let displayedLiveContextTitle {
+                        Text(displayedLiveContextTitle)
                             .font(.headline)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -287,6 +288,7 @@ struct PinsView: View {
             .navigationBarTitleDisplayMode(.inline)
         .onChange(of: store.selectedVineyardId) { _, _ in
             seasonSelection = .all
+            displayedLiveContextTitle = nil
         }
         .onChange(of: uniqueNames) { _, availableNames in
             selectedNames = PinQueryPolicy.cleanedNameSelection(selectedNames, availableNames: availableNames)
@@ -335,6 +337,10 @@ struct PinsView: View {
             .task {
                 while !Task.isCancelled {
                     contextNow = Date()
+                    let next = liveContextTitle
+                    if displayedLiveContextTitle != next {
+                        displayedLiveContextTitle = next
+                    }
                     try? await Task.sleep(for: .seconds(1))
                 }
             }

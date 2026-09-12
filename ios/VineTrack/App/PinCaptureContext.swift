@@ -10,8 +10,12 @@ import CoreLocation
 /// `data/QualifiedLocationFix.kt`; both follow
 /// `docs/core-pin-location-contract.md`.
 nonisolated struct PinCaptureContext: Sendable, Equatable {
+    /// Stable identity minted at the initiating tap and reused through retries.
+    let pinId: UUID
     /// Instant of the press — persisted as the pin's timestamp.
     let capturedAt: Date
+    /// Timestamp carried by the accepted GPS observation.
+    let locationObservedAt: Date
     /// Vineyard selected at the press. A save into any other vineyard is
     /// refused rather than silently rehomed.
     let vineyardId: UUID
@@ -24,13 +28,17 @@ nonisolated struct PinCaptureContext: Sendable, Equatable {
     let horizontalAccuracyMetres: Double?
 
     init(
+        pinId: UUID = UUID(),
         capturedAt: Date,
+        locationObservedAt: Date? = nil,
         vineyardId: UUID,
         tripId: UUID?,
         rawCoordinate: CLLocationCoordinate2D,
         horizontalAccuracyMetres: Double?
     ) {
+        self.pinId = pinId
         self.capturedAt = capturedAt
+        self.locationObservedAt = locationObservedAt ?? capturedAt
         self.vineyardId = vineyardId
         self.tripId = tripId
         self.rawCoordinate = rawCoordinate
@@ -38,7 +46,9 @@ nonisolated struct PinCaptureContext: Sendable, Equatable {
     }
 
     static func == (lhs: PinCaptureContext, rhs: PinCaptureContext) -> Bool {
-        lhs.capturedAt == rhs.capturedAt
+        lhs.pinId == rhs.pinId
+            && lhs.capturedAt == rhs.capturedAt
+            && lhs.locationObservedAt == rhs.locationObservedAt
             && lhs.vineyardId == rhs.vineyardId
             && lhs.tripId == rhs.tripId
             && lhs.rawCoordinate.latitude == rhs.rawCoordinate.latitude
