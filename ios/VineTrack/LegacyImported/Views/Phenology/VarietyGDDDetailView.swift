@@ -62,6 +62,13 @@ struct VarietyGDDDetailView: View {
     private var blockSeries: [BlockSeries] {
         guard let source = weatherSource else { return [] }
         let stationId = source.sourceKey
+        // No season fetch has ever populated this source's temperature
+        // cache (e.g. `loadGDDIfNeeded()` hasn't completed yet). Treat this
+        // the same as "no blocks resolved" — the header spinner already
+        // shows a fetch is in progress — rather than rendering every block
+        // at a fabricated 0 GDD (`dailyGDDSeries` can't distinguish an empty
+        // cache from a genuine zero-day accumulation).
+        guard degreeDayService.hasUsableData(forKey: stationId) else { return [] }
         let cal = Calendar.current
         let now = Date()
         let oneYearAgo = cal.date(byAdding: .year, value: -1, to: now) ?? now

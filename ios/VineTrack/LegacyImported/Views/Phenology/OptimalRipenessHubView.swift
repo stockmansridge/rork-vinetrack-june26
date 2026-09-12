@@ -43,6 +43,13 @@ struct OptimalRipenessHubView: View {
         let total: Double
         let target: Double
         let series: [(date: Date, daily: Double, cumulative: Double, interpolated: Bool)]
+        /// False when no season fetch has ever populated the temperature
+        /// cache for `activeSource` (e.g. right after launch, before
+        /// `loadGDDIfNeeded()` completes, or while it's still running).
+        /// Distinguishes "we don't have a number yet" from a genuine 0 GDD
+        /// accumulated — `dailyGDDSeries` returns an empty array in both
+        /// cases, so `total` alone can't tell them apart.
+        let hasData: Bool
     }
 
     private var blockRows: [BlockRow] {
@@ -54,6 +61,7 @@ struct OptimalRipenessHubView: View {
         let resetDefault = store.settings.resetMode
         let modeDefault = store.settings.calculationMode
         let latitude = store.settings.vineyardLatitude ?? store.paddockCentroidLatitude
+        let sourceHasData = degreeDayService.hasUsableData(forKey: source.sourceKey)
         var rows: [BlockRow] = []
         for block in store.orderedPaddocks {
             let resetMode = block.effectiveResetMode(defaultMode: resetDefault)
@@ -61,7 +69,8 @@ struct OptimalRipenessHubView: View {
             let calcMode = block.effectiveCalculationMode(defaultMode: modeDefault)
             var series: [(date: Date, daily: Double, cumulative: Double, interpolated: Bool)] = []
             var total: Double = 0
-            if let r = resetDate, r <= now, r >= oneYearAgo {
+            var hasData = false
+            if let r = resetDate, r <= now, r >= oneYearAgo, sourceHasData {
                 series = degreeDayService.dailyGDDSeries(
                     stationId: source.sourceKey,
                     from: cal.startOfDay(for: r),
@@ -70,6 +79,7 @@ struct OptimalRipenessHubView: View {
                     useBEDD: calcMode.useBEDD
                 )
                 total = series.last?.cumulative ?? 0
+                hasData = true
             }
 
             // One row per allocation so multi-variety blocks surface each
@@ -89,7 +99,8 @@ struct OptimalRipenessHubView: View {
                     resetDate: resetDate,
                     total: total,
                     target: 0,
-                    series: series
+                    series: series,
+                    hasData: hasData
                 ))
             } else {
                 for alloc in allocations {
@@ -104,7 +115,8 @@ struct OptimalRipenessHubView: View {
                         resetDate: resetDate,
                         total: total,
                         target: resolution.variety?.optimalGDD ?? 0,
-                        series: series
+                        series: series,
+                        hasData: hasData
                     ))
                 }
             }
@@ -302,6 +314,9 @@ private struct BlockRipenessRow: View {
         if row.resetDate == nil {
             return ("No reset", .secondary, "calendar.badge.exclamationmark")
         }
+        if !row.hasData {
+            return ("Fetching season weather…", .secondary, "arrow.triangle.2.circlepath")
+        }
         switch progress {
         case 1.05...: return ("Past optimal", .red, "exclamationmark.triangle.fill")
         case 0.98...: return ("In optimal window", VineyardTheme.leafGreen, "checkmark.seal.fill")
@@ -364,17 +379,24 @@ private struct BlockRipenessRow: View {
                 Spacer()
                 if row.target > 0 {
                     VStack(alignment: .trailing, spacing: 1) {
-                        HStack(alignment: .firstTextBaseline, spacing: 3) {
-                            Text("\(Int(row.total))")
-                                .font(.subheadline.weight(.bold).monospacedDigit())
+                        if row.hasData {
+                            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                Text("\(Int(row.total))")
+                                    .font(.subheadline.weight(.bold).monospacedDigit())
+                                    .foregroundStyle(progressColor)
+                                Text("/ \(Int(row.target))")
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text("\(Int(progress * 100))%")
+                                .font(.caption2.weight(.semibold))
                                 .foregroundStyle(progressColor)
-                            Text("/ \(Int(row.target))")
+                        } else {
+                            ProgressView().controlSize(.mini)
+                            Text("Target \(Int(row.target))")
                                 .font(.caption2.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
-                        Text("\(Int(progress * 100))%")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(progressColor)
                     }
                 }
             }
@@ -382,8 +404,10 @@ private struct BlockRipenessRow: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color(.tertiarySystemFill))
-                    Capsule().fill(progressColor.gradient)
-                        .frame(width: max(4, geo.size.width * progress))
+                    if row.hasData {
+                        Capsule().fill(progressColor.gradient)
+                            .frame(width: max(4, geo.size.width * progress))
+                    }
                 }
             }
             .frame(height: 6)

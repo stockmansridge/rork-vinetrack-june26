@@ -156,7 +156,17 @@ class DegreeDayService {
     /// to keep `lastSource` set after a network failure, or fall through
     /// to the next priority source.
     func hasUsableData(for source: GDDSource) -> Bool {
-        guard let cached = temps[source.sourceKey] else { return false }
+        hasUsableData(forKey: source.sourceKey)
+    }
+
+    /// Same as `hasUsableData(for:)` but keyed directly by `sourceKey`.
+    /// Ripeness surfaces that only have a cache key on hand (not a full
+    /// `GDDSource`) use this to tell "no season fetch has completed yet
+    /// for this station/location" apart from a genuine zero GDD total —
+    /// the two are otherwise indistinguishable once `dailyGDDSeries`
+    /// returns an empty array for an unpopulated cache.
+    func hasUsableData(forKey key: String) -> Bool {
+        guard let cached = temps[key] else { return false }
         return !cached.isEmpty
     }
 

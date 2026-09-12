@@ -144,6 +144,14 @@ enum RipenessMath {
         let resetMode = block.effectiveResetMode(defaultMode: resetDefault)
         guard let resetDate = block.resetDate(for: resetMode, seasonStart: seasonStart),
               resetDate <= now, resetDate >= oneYearAgo else { return nil }
+        // No station/location temperatures have ever been cached for this
+        // source yet (no season fetch has completed this session, and
+        // nothing persisted from a prior one). `dailyGDDSeries` can't tell
+        // that apart from "zero days accumulated" — it just returns an
+        // empty array either way — so callers would otherwise render a
+        // real-looking "0 / target GDD" chip before any data has ever been
+        // fetched. Report unavailable instead of a fabricated zero.
+        guard degreeDayService.hasUsableData(forKey: stationId) else { return nil }
         let calcMode = block.effectiveCalculationMode(defaultMode: modeDefault)
         let latitude = store.settings.vineyardLatitude ?? store.paddockCentroidLatitude
         let series = degreeDayService.dailyGDDSeries(
