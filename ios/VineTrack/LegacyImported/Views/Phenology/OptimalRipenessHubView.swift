@@ -50,6 +50,7 @@ struct OptimalRipenessHubView: View {
         /// accumulated — `dailyGDDSeries` returns an empty array in both
         /// cases, so `total` alone can't tell them apart.
         let hasData: Bool
+        let isIncomplete: Bool
     }
 
     private var blockRows: [BlockRow] {
@@ -69,6 +70,7 @@ struct OptimalRipenessHubView: View {
             var series: [(date: Date, daily: Double, cumulative: Double, interpolated: Bool)] = []
             var total: Double = 0
             var hasData = false
+            var isIncomplete = false
             // Coverage is checked against this block's own reset-date window,
             // not merely "is the source cache non-empty" — an unrelated
             // window fetched for a different block must never be presented
@@ -84,6 +86,7 @@ struct OptimalRipenessHubView: View {
                 )
                 total = series.last?.cumulative ?? 0
                 hasData = true
+                isIncomplete = series.contains(where: \.interpolated)
             }
 
             // One row per allocation so multi-variety blocks surface each
@@ -104,7 +107,8 @@ struct OptimalRipenessHubView: View {
                     total: total,
                     target: 0,
                     series: series,
-                    hasData: hasData
+                    hasData: hasData,
+                    isIncomplete: isIncomplete
                 ))
             } else {
                 for alloc in allocations {
@@ -120,7 +124,8 @@ struct OptimalRipenessHubView: View {
                         total: total,
                         target: resolution.variety?.optimalGDD ?? 0,
                         series: series,
-                        hasData: hasData
+                        hasData: hasData,
+                        isIncomplete: isIncomplete
                     ))
                 }
             }
@@ -250,7 +255,13 @@ struct OptimalRipenessHubView: View {
     }
 
     private var candidatesKey: String {
-        candidates.map(\.source.sourceKey).joined(separator: "|")
+        degreeDayService.loadSignature(
+            candidates: candidates,
+            vineyardId: store.selectedVineyardId,
+            latitude: store.settings.vineyardLatitude ?? store.paddockCentroidLatitude,
+            seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+            useBEDD: store.settings.calculationMode.useBEDD
+        )
     }
 
     /// True while the shared season-load request for this hub's active
@@ -258,6 +269,8 @@ struct OptimalRipenessHubView: View {
     private var isFetching: Bool {
         degreeDayService.isLoading(
             candidates: candidates,
+            vineyardId: store.selectedVineyardId,
+            latitude: store.settings.vineyardLatitude ?? store.paddockCentroidLatitude,
             seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
             useBEDD: store.settings.calculationMode.useBEDD
         )
@@ -299,6 +312,9 @@ private struct BlockRipenessRow: View {
         }
         if !row.hasData {
             return ("Fetching season weather…", .secondary, "arrow.triangle.2.circlepath")
+        }
+        if row.isIncomplete {
+            return ("Incomplete weather data", .orange, "exclamationmark.triangle.fill")
         }
         switch progress {
         case 1.05...: return ("Past optimal", .red, "exclamationmark.triangle.fill")
@@ -403,7 +419,7 @@ private struct BlockRipenessRow: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(progressColor)
                 Spacer()
-                if let days = daysToTarget, days > 0 {
+                if !row.isIncomplete, let days = daysToTarget, days > 0 {
                     Image(systemName: "calendar.badge.clock")
                         .font(.caption2)
                         .foregroundStyle(.orange)

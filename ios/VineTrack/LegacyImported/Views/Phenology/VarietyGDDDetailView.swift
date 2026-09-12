@@ -53,6 +53,7 @@ struct VarietyGDDDetailView: View {
         let points: [SeriesPoint]
         let resetDate: Date
         let total: Double
+        let isIncomplete: Bool
     }
 
     private var weatherSource: GDDSource? {
@@ -94,7 +95,8 @@ struct VarietyGDDDetailView: View {
                 block: block,
                 points: points,
                 resetDate: resetDate,
-                total: points.last?.cumulative ?? 0
+                total: points.last?.cumulative ?? 0,
+                isIncomplete: points.contains(where: \.interpolated)
             ))
         }
         return result
@@ -120,6 +122,7 @@ struct VarietyGDDDetailView: View {
     }
 
     private var daysToTarget: Int? {
+        guard !blockSeries.contains(where: \.isIncomplete) else { return nil }
         guard let target = variety?.optimalGDD, target > averageTotal else { return 0 }
         let series = blockSeries.first?.points ?? []
         guard series.count >= 14 else { return nil }
@@ -137,6 +140,7 @@ struct VarietyGDDDetailView: View {
     }
 
     private var targetIntersection: (date: Date, kind: IntersectionKind)? {
+        guard !blockSeries.contains(where: \.isIncomplete) else { return nil }
         guard let target = variety?.optimalGDD, target > 0 else { return nil }
         let points = unionPoints
         guard points.count >= 2 else { return nil }
@@ -197,7 +201,13 @@ struct VarietyGDDDetailView: View {
     }
 
     private var candidatesKey: String {
-        candidates.map(\.source.sourceKey).joined(separator: "|")
+        degreeDayService.loadSignature(
+            candidates: candidates,
+            vineyardId: store.selectedVineyardId,
+            latitude: effectiveLatitude,
+            seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+            useBEDD: store.settings.calculationMode.useBEDD
+        )
     }
 
     /// True while the shared season-load request for this variety's active
@@ -205,6 +215,8 @@ struct VarietyGDDDetailView: View {
     private var isFetching: Bool {
         degreeDayService.isLoading(
             candidates: candidates,
+            vineyardId: store.selectedVineyardId,
+            latitude: effectiveLatitude,
             seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
             useBEDD: store.settings.calculationMode.useBEDD
         )
@@ -213,10 +225,14 @@ struct VarietyGDDDetailView: View {
     /// True when the last completed fetch for the active source ended in an
     /// error rather than simply lacking coverage for these blocks' windows.
     private var fetchFailed: Bool {
-        guard let src = weatherSource,
-              degreeDayService.lastSource == src,
-              degreeDayService.errorMessage != nil else { return false }
-        return !degreeDayService.hasUsableData(for: src)
+        guard degreeDayService.loadErrorMessage(
+            candidates: candidates,
+            vineyardId: store.selectedVineyardId,
+            latitude: effectiveLatitude,
+            seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+            useBEDD: store.settings.calculationMode.useBEDD
+        ) != nil else { return false }
+        return !candidates.contains(where: { degreeDayService.hasUsableData(for: $0.source) })
     }
 
     private var emptyState: some View {
@@ -231,7 +247,13 @@ struct VarietyGDDDetailView: View {
                     .foregroundStyle(.orange)
                 Text("Couldn\u{2019}t fetch weather data")
                     .font(.subheadline.weight(.semibold))
-                Text(degreeDayService.errorMessage ?? "Check your connection and try again.")
+                Text(degreeDayService.loadErrorMessage(
+                    candidates: candidates,
+                    vineyardId: store.selectedVineyardId,
+                    latitude: effectiveLatitude,
+                    seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+                    useBEDD: store.settings.calculationMode.useBEDD
+                ) ?? "Check your connection and try again.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -318,11 +340,17 @@ struct VarietyGDDDetailView: View {
             .frame(height: 10)
 
             HStack {
-                Text("\(Int(progress * 100))% of optimal")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(progressColor)
+                if blockSeries.contains(where: \.isIncomplete) {
+                    Label("Incomplete weather data", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.orange)
+                } else {
+                    Text("\(Int(progress * 100))% of optimal")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(progressColor)
+                }
                 Spacer()
-                if let days = daysToTarget {
+                if !blockSeries.contains(where: \.isIncomplete), let days = daysToTarget {
                     if days == 0 {
                         Label("Ready", systemImage: "checkmark.seal.fill")
                             .font(.caption.weight(.semibold))

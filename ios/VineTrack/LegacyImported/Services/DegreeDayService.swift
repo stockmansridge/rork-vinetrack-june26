@@ -85,11 +85,11 @@ class DegreeDayService {
     /// Per-station cache of daily temperatures keyed by yyyyMMdd.
     private var temps: [String: [String: DailyTemp]] = [:]
 
-    /// In-flight season-load requests keyed by candidate chain + season
-    /// start + calc mode, so several ripeness surfaces (block chips,
-    /// dashboard tile, hub, variety detail) opening at once share one
-    /// underlying fetch instead of each starting its own.
-    private var loadTasks: [String: Task<Void, Never>] = [:]
+    /// In-flight season-load requests keyed by every effective input, so
+    /// equivalent ripeness surfaces share one fetch while different Davis
+    /// ownership or latitude-dependent requests remain isolated.
+    private var loadTasks: [String: Task<String?, Never>] = [:]
+    private var loadErrors: [String: String] = [:]
 
     private let apiKey: String = AppConfig.wundergroundAPIKey
     private let baseTemp: Double = 10.0
@@ -177,33 +177,103 @@ class DegreeDayService {
     }
 
     /// Same as `hasUsableData(forKey:)` but additionally requires at least
-    /// one cached day to fall inside `[start, end)`. A non-empty cache for
-    /// `key` alone isn't sufficient — the cache could hold days from an
-    /// unrelated earlier request (a different block's reset date, or a
-    /// stale prior season) that never touched the window a particular
-    /// block actually needs. Callers that render a specific accumulation
-    /// window (a block's reset date through today) must use this overload
-    /// so they never present an unfetched period as a complete — or
-    /// genuinely zero — result.
+    /// one cached day to fall inside `[start, end)`. Partial coverage remains
+    /// usable because the established GDD calculation marks interpolated
+    /// days; callers must preserve that incomplete-data indication.
     func hasUsableData(forKey key: String, coveringFrom start: Date, to end: Date) -> Bool {
         guard let cached = temps[key], !cached.isEmpty else { return false }
-        let cal = Calendar.current
-        var d = cal.startOfDay(for: start)
-        let endDay = cal.startOfDay(for: end)
-        while d < endDay {
-            if cached[Self.wuDateFormatter.string(from: d)] != nil { return true }
-            d = cal.date(byAdding: .day, value: 1, to: d) ?? endDay
+        return dates(from: start, to: end).contains { day in
+            cached[Self.wuDateFormatter.string(from: day)] != nil
         }
-        return false
     }
 
-    /// Stable dedup key for a season-load request: which candidate chain,
-    /// which season window, which calculation mode. Two callers that agree
-    /// on all three genuinely want the same data and can share one fetch.
-    private static func loadKey(candidates: [RipenessSourceCandidate], seasonStart: Date, useBEDD: Bool) -> String {
+    /// Returns true only when every required day in `[start, end)` has an
+    /// observed temperature. This is deliberately exact rather than a
+    /// percentage threshold: partial data may be displayed as incomplete,
+    /// but it must not suppress attempts to fetch the remaining days.
+    func hasCompleteData(forKey key: String, coveringFrom start: Date, to end: Date) -> Bool {
+        let requiredDates = dates(from: start, to: end)
+        guard !requiredDates.isEmpty, let cached = temps[key] else { return false }
+        return requiredDates.allSatisfy { day in
+            cached[Self.wuDateFormatter.string(from: day)] != nil
+        }
+    }
+
+    private func dates(from start: Date, to end: Date) -> [Date] {
+        let cal = Calendar.current
+        let endDay = cal.startOfDay(for: end)
+        var day = cal.startOfDay(for: start)
+        var result: [Date] = []
+        while day < endDay {
+            result.append(day)
+            day = cal.date(byAdding: .day, value: 1, to: day) ?? endDay
+        }
+        return result
+    }
+
+    /// Stable dedup key for every input that can affect a season load.
+    /// Weather-only candidates remain shareable through their source keys;
+    /// Davis proxy ownership and latitude-dependent BEDD results do not.
+    private static func loadKey(
+        candidates: [RipenessSourceCandidate],
+        vineyardId: UUID?,
+        latitude: Double?,
+        seasonStart: Date,
+        useBEDD: Bool
+    ) -> String {
         let chain = candidates.map { "\($0.source.sourceKey)|\($0.usesProxy)" }.joined(separator: ",")
         let dayBucket = Int((seasonStart.timeIntervalSince1970 / 86_400).rounded())
-        return "\(chain)#\(dayBucket)#\(useBEDD)"
+        let hasDavis = candidates.contains { candidate in
+            if case .davisWeatherLink = candidate.source { return true }
+            return false
+        }
+        let hasProxyDavis = candidates.contains { candidate in
+            if case .davisWeatherLink = candidate.source { return candidate.usesProxy }
+            return false
+        }
+        let vineyardKey = hasProxyDavis ? (vineyardId?.uuidString.lowercased() ?? "missing") : "shared"
+        let latitudeKey = hasDavis && useBEDD
+            ? (latitude.map { String(format: "%.8f", $0) } ?? "missing")
+            : "shared"
+        return "\(chain)#\(dayBucket)#\(useBEDD)#\(vineyardKey)#\(latitudeKey)"
+    }
+
+    /// Returns the exact identity used to coalesce a season-load request.
+    /// Surfaces also use it as their task identity so a change in any
+    /// result-affecting input starts the correct load.
+    func loadSignature(
+        candidates: [RipenessSourceCandidate],
+        vineyardId: UUID?,
+        latitude: Double?,
+        seasonStart: Date,
+        useBEDD: Bool
+    ) -> String {
+        Self.loadKey(
+            candidates: candidates,
+            vineyardId: vineyardId,
+            latitude: latitude,
+            seasonStart: seasonStart,
+            useBEDD: useBEDD
+        )
+    }
+
+    /// Returns the completed error for this exact request identity, rather
+    /// than exposing another vineyard or latitude's most recent error.
+    func loadErrorMessage(
+        candidates: [RipenessSourceCandidate],
+        vineyardId: UUID?,
+        latitude: Double?,
+        seasonStart: Date,
+        useBEDD: Bool
+    ) -> String? {
+        let key = Self.loadKey(
+            candidates: candidates,
+            vineyardId: vineyardId,
+            latitude: latitude,
+            seasonStart: seasonStart,
+            useBEDD: useBEDD
+        )
+        return loadErrors[key]
     }
 
     /// True while a season-load request matching this exact candidate
@@ -211,9 +281,22 @@ class DegreeDayService {
     /// that signature (which is vineyard- and season-specific) so a stale
     /// request for a different block, vineyard or season can never be
     /// mistaken for — or clear — a different signature's loading state.
-    func isLoading(candidates: [RipenessSourceCandidate], seasonStart: Date, useBEDD: Bool) -> Bool {
+    func isLoading(
+        candidates: [RipenessSourceCandidate],
+        vineyardId: UUID?,
+        latitude: Double?,
+        seasonStart: Date,
+        useBEDD: Bool
+    ) -> Bool {
         guard !candidates.isEmpty else { return false }
-        return loadTasks[Self.loadKey(candidates: candidates, seasonStart: seasonStart, useBEDD: useBEDD)] != nil
+        let key = Self.loadKey(
+            candidates: candidates,
+            vineyardId: vineyardId,
+            latitude: latitude,
+            seasonStart: seasonStart,
+            useBEDD: useBEDD
+        )
+        return loadTasks[key] != nil
     }
 
     /// Ensures season weather/GDD data is available for the given
@@ -222,10 +305,10 @@ class DegreeDayService {
     /// Weather Underground -> Open-Meteo Archive), stopping at the first
     /// one that yields usable data.
     ///
-    /// Concurrent callers that share the same candidate chain, season start
-    /// and calc mode (e.g. several block ripeness chips on one screen, or a
-    /// chip and the hub open at once) are coalesced onto a single in-flight
-    /// request via `loadTasks` — this fetches once, not once per caller.
+    /// Concurrent callers whose complete effective inputs match (e.g.
+    /// several block ripeness chips on one screen, or a chip and the hub
+    /// open at once) are coalesced onto a single in-flight request. Davis
+    /// proxy ownership and latitude-dependent BEDD inputs remain isolated.
     ///
     /// - Parameter forceRefresh: bypasses the "already fetched today" skip
     ///   so a genuine retry after a failure doesn't wait until tomorrow.
@@ -238,11 +321,18 @@ class DegreeDayService {
         forceRefresh: Bool = false
     ) async {
         guard !candidates.isEmpty else { return }
-        let key = Self.loadKey(candidates: candidates, seasonStart: seasonStart, useBEDD: useBEDD)
+        let key = Self.loadKey(
+            candidates: candidates,
+            vineyardId: vineyardId,
+            latitude: latitude,
+            seasonStart: seasonStart,
+            useBEDD: useBEDD
+        )
 
         if !forceRefresh,
            let last = lastSource,
            candidates.contains(where: { $0.source == last }),
+           hasCompleteData(forKey: last.sourceKey, coveringFrom: seasonStart, to: Date()),
            !needsDailyRefresh(for: last.sourceKey) {
             return
         }
@@ -252,8 +342,9 @@ class DegreeDayService {
             return
         }
 
-        let task = Task { [weak self] in
-            guard let self else { return }
+        let task = Task<String?, Never> { [weak self] in
+            guard let self else { return nil }
+            var completedError: String?
             for candidate in candidates {
                 switch candidate.source {
                 case .davisWeatherLink(let stationId):
@@ -268,10 +359,17 @@ class DegreeDayService {
                 case .weatherUnderground, .openMeteoArchive:
                     await self.fetchSeason(source: candidate.source, seasonStart: seasonStart, useBEDD: useBEDD)
                 }
+                completedError = self.errorMessage
                 if self.lastSource == candidate.source, self.hasUsableData(for: candidate.source) {
-                    return // success, stop cascading
+                    break // success, stop cascading
                 }
             }
+            if let completedError {
+                self.loadErrors[key] = completedError
+            } else {
+                self.loadErrors.removeValue(forKey: key)
+            }
+            return completedError
         }
         loadTasks[key] = task
         await task.value

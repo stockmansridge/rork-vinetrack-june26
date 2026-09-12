@@ -124,6 +124,7 @@ enum RipenessMath {
     struct BlockTotal {
         let total: Double
         let series: [(date: Date, daily: Double, cumulative: Double, interpolated: Bool)]
+        let isIncomplete: Bool
     }
 
     @MainActor
@@ -165,7 +166,11 @@ enum RipenessMath {
             useBEDD: calcMode.useBEDD
         )
         let total = series.last?.cumulative ?? 0
-        return BlockTotal(total: total, series: series)
+        return BlockTotal(
+            total: total,
+            series: series,
+            isIncomplete: series.contains(where: \.interpolated)
+        )
     }
 
     static func daysToTarget(total: Double, target: Double, series: [(date: Date, daily: Double, cumulative: Double, interpolated: Bool)]) -> Int? {
@@ -231,15 +236,26 @@ struct BlockRipenessChip: View {
     }
 
     private var candidatesKey: String {
-        let chain = candidates.map(\.source.sourceKey).joined(separator: "|")
-        return "\(chain)#\(Int(seasonStart.timeIntervalSince1970 / 86_400))#\(useBEDD)"
+        degreeDayService.loadSignature(
+            candidates: candidates,
+            vineyardId: store.selectedVineyardId,
+            latitude: store.settings.vineyardLatitude ?? store.paddockCentroidLatitude,
+            seasonStart: seasonStart,
+            useBEDD: useBEDD
+        )
     }
 
     /// True while a request matching this chip's exact candidate chain,
     /// season start and calc mode is genuinely in flight — never a stale
     /// flag left over from a different vineyard/season/source signature.
     private var isFetching: Bool {
-        degreeDayService.isLoading(candidates: candidates, seasonStart: seasonStart, useBEDD: useBEDD)
+        degreeDayService.isLoading(
+            candidates: candidates,
+            vineyardId: store.selectedVineyardId,
+            latitude: store.settings.vineyardLatitude ?? store.paddockCentroidLatitude,
+            seasonStart: seasonStart,
+            useBEDD: useBEDD
+        )
     }
 
     /// True when the most recent completed fetch for this chip's active
@@ -247,10 +263,14 @@ struct BlockRipenessChip: View {
     /// coverage for this block's window. Scoped to `candidates` so an
     /// error from an unrelated vineyard/source can never surface here.
     private var fetchFailed: Bool {
-        guard let src = degreeDayService.lastSource,
-              candidates.contains(where: { $0.source == src }),
-              degreeDayService.errorMessage != nil else { return false }
-        return !degreeDayService.hasUsableData(for: src)
+        guard degreeDayService.loadErrorMessage(
+            candidates: candidates,
+            vineyardId: store.selectedVineyardId,
+            latitude: store.settings.vineyardLatitude ?? store.paddockCentroidLatitude,
+            seasonStart: seasonStart,
+            useBEDD: useBEDD
+        ) != nil else { return false }
+        return !candidates.contains(where: { degreeDayService.hasUsableData(for: $0.source) })
     }
 
     private var blockTotal: RipenessMath.BlockTotal? {
@@ -359,7 +379,9 @@ struct BlockRipenessChip: View {
         } else if let total = blockTotal?.total, let target = variety?.optimalGDD, target > 0 {
             let color = RipenessMath.progressColor(progress: progress)
             let series = blockTotal?.series ?? []
-            let days = RipenessMath.daysToTarget(total: total, target: target, series: series)
+            let days = blockTotal?.isIncomplete == true
+                ? nil
+                : RipenessMath.daysToTarget(total: total, target: target, series: series)
             let projected: Date? = {
                 guard let d = days, d > 0 else { return nil }
                 return Calendar.current.date(byAdding: .day, value: d, to: Date())
@@ -374,7 +396,7 @@ struct BlockRipenessChip: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 0)
-                    if progress >= 1.0 {
+                    if progress >= 1.0, blockTotal?.isIncomplete != true {
                         Label("Ready", systemImage: "checkmark.seal.fill")
                             .font(.caption2.weight(.semibold))
                             .labelStyle(.titleAndIcon)
@@ -405,6 +427,11 @@ struct BlockRipenessChip: View {
                     Text("\(Int(total)) / \(Int(target)) GDD")
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
+                    if blockTotal?.isIncomplete == true {
+                        Label("Incomplete data", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
                     Spacer(minLength: 0)
                     if let days, days > 0, let projected {
                         Image(systemName: "calendar.badge.clock")
@@ -457,6 +484,7 @@ struct RipenessWatchTile: View {
         let progress: Double
         let days: Int?
         let blockCount: Int
+        let isIncomplete: Bool
     }
 
     private var allocatedVarieties: [GrapeVariety] {
@@ -480,12 +508,23 @@ struct RipenessWatchTile: View {
     }
 
     private var candidatesKey: String {
-        let chain = candidates.map(\.source.sourceKey).joined(separator: "|")
-        return "\(chain)#\(Int(seasonStart.timeIntervalSince1970 / 86_400))#\(useBEDD)"
+        degreeDayService.loadSignature(
+            candidates: candidates,
+            vineyardId: store.selectedVineyardId,
+            latitude: store.settings.vineyardLatitude ?? store.paddockCentroidLatitude,
+            seasonStart: seasonStart,
+            useBEDD: useBEDD
+        )
     }
 
     private var isFetching: Bool {
-        degreeDayService.isLoading(candidates: candidates, seasonStart: seasonStart, useBEDD: useBEDD)
+        degreeDayService.isLoading(
+            candidates: candidates,
+            vineyardId: store.selectedVineyardId,
+            latitude: store.settings.vineyardLatitude ?? store.paddockCentroidLatitude,
+            seasonStart: seasonStart,
+            useBEDD: useBEDD
+        )
     }
 
     private var topVariety: VarietyStatus? {
@@ -514,7 +553,8 @@ struct RipenessWatchTile: View {
                 target: target,
                 progress: progress,
                 days: days,
-                blockCount: blocks.count
+                blockCount: blocks.count,
+                isIncomplete: totals.contains(where: \.isIncomplete)
             ))
         }
         return results.max(by: { $0.progress < $1.progress })
@@ -562,7 +602,7 @@ struct RipenessWatchTile: View {
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                         Spacer(minLength: 0)
-                        if status.progress >= 1.0 {
+                        if status.progress >= 1.0, !status.isIncomplete {
                             Label("Ready", systemImage: "checkmark.seal.fill")
                                 .font(.caption2.weight(.semibold))
                                 .labelStyle(.titleAndIcon)
@@ -583,7 +623,11 @@ struct RipenessWatchTile: View {
                     }
                     .frame(height: 5)
                     HStack(spacing: 6) {
-                        if let days = status.days, days > 0 {
+                        if status.isIncomplete {
+                            Label("Incomplete weather data", systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        } else if let days = status.days, days > 0 {
                             Image(systemName: "calendar.badge.clock")
                                 .font(.caption2)
                                 .foregroundStyle(.orange)
