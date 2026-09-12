@@ -280,7 +280,7 @@ fun SettingsScreen(
                             Icons.Filled.Grass,
                             VineColors.LeafGreen,
                             "Vineyard Setup",
-                            "Blocks, Region & Growth Stages",
+                            "Map, blocks, location, varieties & field setup",
                             onClick = { onOpenTool(ToolRoute.Blocks) },
                         )
                         RowDivider(vine.cardBorder)

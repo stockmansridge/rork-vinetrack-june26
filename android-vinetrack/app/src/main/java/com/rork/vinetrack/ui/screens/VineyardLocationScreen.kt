@@ -235,11 +235,11 @@ private fun CoordField(
     onValueChange: (String) -> Unit,
 ) {
     val vine = LocalVineColors.current
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(label, color = vine.textPrimary, modifier = Modifier.weight(1f))
+        Text(label, color = vine.textPrimary, fontWeight = FontWeight.SemiBold)
         if (enabled) {
             OutlinedTextField(
                 value = value,
@@ -248,16 +248,18 @@ private fun CoordField(
                 suffix = { Text(suffix, color = vine.textSecondary) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.size(width = 170.dp, height = 56.dp),
+                modifier = Modifier.fillMaxWidth(),
             )
         } else {
-            Text(
-                if (value.isBlank()) "Not set" else "$value$suffix",
-                color = vine.textSecondary,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Box(Modifier.size(8.dp))
-            Icon(Icons.Filled.Lock, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(16.dp))
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (value.isBlank()) "Not set" else "$value$suffix",
+                    color = vine.textSecondary,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(Icons.Filled.Lock, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(16.dp))
+            }
         }
     }
 }

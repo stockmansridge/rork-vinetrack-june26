@@ -8,6 +8,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,6 +55,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -181,6 +186,116 @@ fun VineyardMapScreen(
             defaults = defaults,
             modifier = Modifier.fillMaxSize().padding(padding),
         )
+    }
+}
+
+/**
+ * Setup-only vineyard layout map. It deliberately excludes pins, pin camera
+ * points and global overlay preferences, while keeping rows, boundaries and
+ * block labels visible. Touches inside the bounded map stay with Google Maps;
+ * touches outside continue to scroll the setup page.
+ */
+@Composable
+fun SetupVineyardMapContent(
+    state: AppUiState,
+    modifier: Modifier = Modifier,
+) {
+    val hostView = LocalView.current
+    val blocks = remember(state.paddocks) { state.paddocks.filter { it.hasGeometry || it.hasRows } }
+    val framePoints = remember(state.paddocks, state.selectedVineyard) {
+        val boundaries = state.paddocks.flatMap { block ->
+            block.polygonPoints.orEmpty()
+                .filter { isValidMapCoordinate(it.latitude, it.longitude) }
+                .map { it.toLatLng() }
+        }
+        val geometry = if (boundaries.isNotEmpty()) boundaries else state.paddocks.flatMap { block ->
+            block.rows.orEmpty().flatMap { row ->
+                listOfNotNull(row.startPoint, row.endPoint)
+                    .filter { isValidMapCoordinate(it.latitude, it.longitude) }
+                    .map { it.toLatLng() }
+            }
+        }
+        if (geometry.isNotEmpty()) geometry else state.selectedVineyard?.let { vineyard ->
+            if (isValidMapCoordinate(vineyard.latitude, vineyard.longitude)) {
+                listOf(LatLng(vineyard.latitude ?: 0.0, vineyard.longitude ?: 0.0))
+            } else emptyList()
+        }.orEmpty()
+    }
+    val cameraState = rememberCameraPositionState {
+        estimatedCameraPosition(framePoints)?.let { position = it }
+    }
+    var mapLoaded by remember(state.selectedVineyardId) { mutableStateOf(false) }
+    var hasFramed by remember(state.selectedVineyardId) { mutableStateOf(false) }
+
+    LaunchedEffect(mapLoaded, framePoints, state.selectedVineyardId) {
+        if (!mapLoaded || hasFramed || framePoints.isEmpty()) return@LaunchedEffect
+        cameraState.fitToContent(framePoints, paddingPx = 96, singlePointZoom = 17f, animate = false)
+        hasFramed = true
+    }
+
+    if (framePoints.isEmpty()) {
+        Box(modifier.padding(16.dp), contentAlignment = Alignment.Center) {
+            EmptyState(
+                icon = Icons.Filled.Map,
+                title = "Nothing to map yet",
+                message = "Add a block boundary or row layout to see the vineyard map.",
+            )
+        }
+        return
+    }
+
+    GoogleMap(
+        modifier = modifier.pointerInput(hostView) {
+            awaitEachGesture {
+                awaitFirstDown(pass = PointerEventPass.Initial)
+                hostView.parent?.requestDisallowInterceptTouchEvent(true)
+                try {
+                    do {
+                        val event = awaitPointerEvent(pass = PointerEventPass.Final)
+                    } while (event.changes.any { it.pressed })
+                } finally {
+                    hostView.parent?.requestDisallowInterceptTouchEvent(false)
+                }
+            }
+        },
+        cameraPositionState = cameraState,
+        properties = MapProperties(mapType = MapType.HYBRID, isMyLocationEnabled = false),
+        uiSettings = MapUiSettings(
+            zoomControlsEnabled = false,
+            mapToolbarEnabled = false,
+            myLocationButtonEnabled = false,
+            scrollGesturesEnabled = true,
+            zoomGesturesEnabled = true,
+            tiltGesturesEnabled = false,
+            rotationGesturesEnabled = false,
+        ),
+        onMapLoaded = { mapLoaded = true },
+    ) {
+        blocks.forEach { block ->
+            val polygon = block.polygonPoints.orEmpty().map { it.toLatLng() }
+            if (polygon.size >= 3) {
+                Polygon(
+                    points = polygon,
+                    fillColor = BlockAmber.copy(alpha = 0.10f),
+                    strokeColor = BlockAmber,
+                    strokeWidth = 3f,
+                    zIndex = 0f,
+                )
+            }
+            block.rows.orEmpty().forEach { row ->
+                val start = row.startPoint
+                val end = row.endPoint
+                if (start != null && end != null) {
+                    Polyline(
+                        points = listOf(start.toLatLng(), end.toLatLng()),
+                        color = Color.White.copy(alpha = 0.60f),
+                        width = 2f,
+                        zIndex = 0f,
+                    )
+                }
+            }
+            block.centroid()?.let { BlockLabelMarker(block, it) }
+        }
     }
 }
 

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.shape.CircleShape
@@ -24,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudQueue
@@ -31,7 +33,9 @@ import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Grass
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material.icons.filled.Straighten
@@ -51,6 +55,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -66,9 +71,13 @@ import androidx.compose.ui.unit.sp
 import android.net.Uri
 import android.widget.Toast
 import com.rork.vinetrack.data.GddSettingsStore
+import com.rork.vinetrack.data.OperationPrefsStore
 import com.rork.vinetrack.data.PaddockTransferService
 import com.rork.vinetrack.data.SoilProfileRepository
 import com.rork.vinetrack.data.auth.SessionStore
+import com.rork.vinetrack.data.model.BuiltInGrapeVarietyGDD
+import com.rork.vinetrack.data.model.GrowthStage
+import com.rork.vinetrack.data.model.LauncherButton
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
@@ -82,6 +91,12 @@ import java.util.Locale
 
 private sealed interface BlockNav {
     data object List : BlockNav
+    data object VineyardLocation : BlockNav
+    data object GrapeVarieties : BlockNav
+    data object GrowthStageConfig : BlockNav
+    data object GrowthStageImages : BlockNav
+    data object Weather : BlockNav
+    data object RegionUnits : BlockNav
     data class Detail(val id: String) : BlockNav
     data class Edit(val id: String?) : BlockNav
 }
@@ -143,8 +158,37 @@ fun BlocksScreen(
                 onSelect = { nav = BlockNav.Detail(it.id) },
                 onCreate = { nav = BlockNav.Edit(null) },
                 onBack = onBack,
-                onOpenTool = onOpenTool,
+                onOpenLocation = { nav = BlockNav.VineyardLocation },
+                onOpenVarieties = { nav = BlockNav.GrapeVarieties },
+                onOpenGrowthStageConfig = { nav = BlockNav.GrowthStageConfig },
+                onOpenGrowthStageImages = { nav = BlockNav.GrowthStageImages },
+                onOpenWeather = { nav = BlockNav.Weather },
+                onOpenRegionUnits = { nav = BlockNav.RegionUnits },
             )
+            BlockNav.VineyardLocation -> {
+                BackHandler { nav = BlockNav.List }
+                VineyardLocationScreen(vm, state, onBack = { nav = BlockNav.List })
+            }
+            BlockNav.GrapeVarieties -> {
+                BackHandler { nav = BlockNav.List }
+                GrapeVarietiesCatalogScreen(vm, state, onBack = { nav = BlockNav.List })
+            }
+            BlockNav.GrowthStageConfig -> {
+                BackHandler { nav = BlockNav.List }
+                GrowthStageConfigScreen(onBack = { nav = BlockNav.List })
+            }
+            BlockNav.GrowthStageImages -> {
+                BackHandler { nav = BlockNav.List }
+                GrowthStageImagesScreen(vm, state, onBack = { nav = BlockNav.List })
+            }
+            BlockNav.Weather -> {
+                BackHandler { nav = BlockNav.List }
+                WeatherDataScreen(state, onBack = { nav = BlockNav.List }, onOpenTool = onOpenTool)
+            }
+            BlockNav.RegionUnits -> {
+                BackHandler { nav = BlockNav.List }
+                RegionUnitsSettingsScreen(vm, state, onBack = { nav = BlockNav.List })
+            }
             is BlockNav.Detail -> {
                 val block = state.paddocks.firstOrNull { it.id == target.id }
                 if (block == null) {
@@ -187,7 +231,12 @@ private fun VineyardSetupHub(
     onSelect: (Paddock) -> Unit,
     onCreate: () -> Unit,
     onBack: (() -> Unit)?,
-    onOpenTool: ((ToolRoute) -> Unit)?,
+    onOpenLocation: () -> Unit,
+    onOpenVarieties: () -> Unit,
+    onOpenGrowthStageConfig: () -> Unit,
+    onOpenGrowthStageImages: () -> Unit,
+    onOpenWeather: () -> Unit,
+    onOpenRegionUnits: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
@@ -195,16 +244,36 @@ private fun VineyardSetupHub(
     var sortOption by remember { mutableStateOf(BlockSortOption.RowNumber) }
     var importSummary by remember { mutableStateOf<PaddockTransferService.ImportSummary?>(null) }
     var importError by remember { mutableStateOf<String?>(null) }
+    var editButtonMode by remember { mutableStateOf<String?>(null) }
+    var templateMode by remember { mutableStateOf<String?>(null) }
+    val gddSettings = remember(state.selectedVineyardId) { GddSettingsStore(context).load() }
+    val operationSettings = remember(state.selectedVineyardId) { OperationPrefsStore(context).load() }
 
     // Which paddocks have a soil profile (drives the "Soil" checklist tick).
     var soilPaddockIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var soilVineyardId by remember { mutableStateOf<String?>(null) }
+    var isSoilLoading by remember { mutableStateOf(false) }
+    var soilLoadFailed by remember { mutableStateOf(false) }
     val soilRepo = remember { SoilProfileRepository(SessionStore(context)) }
     LaunchedEffect(state.selectedVineyardId, state.paddocks.size) {
-        val vid = state.selectedVineyardId ?: return@LaunchedEffect
-        soilPaddockIds = try {
-            soilRepo.listVineyardSoilProfiles(vid).mapNotNull { it.paddockId }.toSet()
-        } catch (e: Exception) {
-            soilPaddockIds
+        val vineyardId = state.selectedVineyardId
+        soilVineyardId = vineyardId
+        soilPaddockIds = emptySet()
+        soilLoadFailed = false
+        if (vineyardId == null) {
+            isSoilLoading = false
+            return@LaunchedEffect
+        }
+        isSoilLoading = true
+        try {
+            soilPaddockIds = soilRepo.listVineyardSoilProfiles(vineyardId)
+                .filter { it.vineyardId.equals(vineyardId, ignoreCase = true) }
+                .mapNotNull { it.paddockId }
+                .toSet()
+        } catch (_: Exception) {
+            soilLoadFailed = true
+        } finally {
+            isSoilLoading = false
         }
     }
 
@@ -227,7 +296,9 @@ private fun VineyardSetupHub(
     }
 
     val paddocks = state.paddocks
-    val sortedPaddocks = remember(paddocks, sortOption) { sortPaddocks(paddocks, sortOption) }
+    val sortedPaddocks = remember(paddocks, sortOption, state.grapeVarieties) {
+        sortPaddocks(paddocks, sortOption, state.grapeVarieties)
+    }
 
     Scaffold(
         containerColor = vine.appBackground,
@@ -265,10 +336,12 @@ private fun VineyardSetupHub(
                                 .clip(RoundedCornerShape(14.dp))
                                 .background(vine.cardBackground),
                         ) {
-                            VineyardMapContent(state = state, pins = state.pins)
+                            key(state.selectedVineyardId) {
+                                SetupVineyardMapContent(state = state, modifier = Modifier.fillMaxSize())
+                            }
                         }
                         Text(
-                            "Tap a block below to edit its boundaries, rows, varieties and irrigation.",
+                            "Review the vineyard layout here. Select a block below to view its setup details.",
                             fontSize = 12.sp,
                             color = vine.textSecondary,
                         )
@@ -276,6 +349,13 @@ private fun VineyardSetupHub(
 
                     // Blocks
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (state.membershipLoading || state.membershipError != null) {
+                            MembershipStatusCard(
+                                isLoading = state.membershipLoading,
+                                error = state.membershipError,
+                                onRetry = { vm.refresh() },
+                            )
+                        }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -293,8 +373,10 @@ private fun VineyardSetupHub(
                             sortedPaddocks.forEachIndexed { idx, block ->
                                 BlockSetupRow(
                                     block = block,
-                                    varietiesOk = blockVarietyRecognised(block, state.grapeVarieties),
-                                    soilOk = soilPaddockIds.contains(block.id),
+                                    varietiesOk = blockVarietiesCompleteness(block, state),
+                                    soilOk = if (soilVineyardId == state.selectedVineyardId && !isSoilLoading && !soilLoadFailed) {
+                                        soilPaddockIds.contains(block.id)
+                                    } else null,
                                     onClick = { onSelect(block) },
                                 )
                                 if (idx < sortedPaddocks.lastIndex) RowDivider(vine.cardBorder)
@@ -316,20 +398,21 @@ private fun VineyardSetupHub(
                     }
 
                     // Vineyard Location
-                    if (onOpenTool != null) {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             SectionLabel("Vineyard Location", Icons.Filled.Thermostat, VineColors.Orange)
                             VineyardCard {
-                                NavRow(
-                                    icon = Icons.Filled.Thermostat,
-                                    tint = VineColors.Orange,
-                                    title = "Location & Calculation",
-                                    value = locationSummary(state, context),
-                                    onClick = { onOpenTool(ToolRoute.VineyardLocation) },
-                                )
+                                SetupValueRow("Latitude", state.selectedVineyard?.latitude?.let { String.format(Locale.US, "%.5f°", it) } ?: "Not set", onOpenLocation)
+                                RowDivider(vine.cardBorder)
+                                SetupValueRow("Longitude", state.selectedVineyard?.longitude?.let { String.format(Locale.US, "%.5f°", it) } ?: "Not set", onOpenLocation)
+                                RowDivider(vine.cardBorder)
+                                SetupValueRow("Elevation", state.selectedVineyard?.elevationMetres?.let { String.format(Locale.US, "%.0f m", it) } ?: "Not set", onOpenLocation)
+                                RowDivider(vine.cardBorder)
+                                SetupValueRow("Calculation", gddSettings.calculationMode.shortName, onOpenLocation)
+                                RowDivider(vine.cardBorder)
+                                SetupValueRow("Reset Point", gddSettings.resetMode.displayName, onOpenLocation)
                             }
                             Text(
-                                "Coordinates and elevation improve degree-day accuracy. Reset Point determines when accumulation starts each season.",
+                                "Coordinates and elevation improve degree-day accuracy. Standard GDD is base 10°C. BEDD caps daily temps at 19°C, adds a diurnal-range bonus, and applies a day-length factor from latitude. Reset Point determines when accumulation starts each season (overridable per block).",
                                 fontSize = 12.sp,
                                 color = vine.textSecondary,
                             )
@@ -343,17 +426,27 @@ private fun VineyardSetupHub(
                                     icon = Icons.Filled.Spa,
                                     tint = VineColors.LeafGreen,
                                     title = "Grape Varieties",
-                                    value = state.grapeVarieties.size.takeIf { it > 0 }?.toString(),
-                                    onClick = { onOpenTool(ToolRoute.Growth) },
+                                    value = varietyCatalogSummary(state),
+                                    onClick = onOpenVarieties,
                                 )
                             }
                             Text(
-                                "Master list of grape varieties and their optimal ripeness. Used when assigning varieties to blocks.",
+                                "Master list of grape varieties and their optimal ripeness (Growing Degree Days). Used when assigning varieties to blocks.",
                                 fontSize = 12.sp,
                                 color = vine.textSecondary,
                             )
+                            if (state.grapeVarietyReferenceError != null) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "Reference list unavailable; saved allocation names are still shown.",
+                                        fontSize = 12.sp,
+                                        color = VineColors.Warning,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    TextButton(onClick = { vm.refresh() }) { Text("Retry") }
+                                }
+                            }
                         }
-                    }
 
                     // Export / Import
                     if (canExport || canImport) {
@@ -398,75 +491,109 @@ private fun VineyardSetupHub(
                         }
                     }
 
+                    // Button Customisation
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SectionLabel("Button Customisation", Icons.Filled.GridView, VineColors.Info)
+                        VineyardCard {
+                            ButtonCustomisationRow("Repair Buttons", Icons.Filled.Build, state.repairButtons) { editButtonMode = "Repairs" }
+                            RowDivider(vine.cardBorder)
+                            ButtonCustomisationRow("Repair Templates", Icons.Filled.GridView, emptyList()) { templateMode = "Repairs" }
+                            RowDivider(vine.cardBorder)
+                            ButtonCustomisationRow("Growth Buttons", Icons.Filled.Spa, state.growthButtons) { editButtonMode = "Growth" }
+                            RowDivider(vine.cardBorder)
+                            ButtonCustomisationRow("Growth Templates", Icons.Filled.GridView, emptyList()) { templateMode = "Growth" }
+                        }
+                        Text(
+                            "Customize buttons directly or create templates to quickly switch between different button sets. Templates pair rows left and right.",
+                            fontSize = 12.sp,
+                            color = vine.textSecondary,
+                        )
+                    }
+
                     // Growth Stages
-                    if (onOpenTool != null) {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            SectionLabel("Growth Stages", Icons.Filled.Checklist, VineColors.LeafGreen)
-                            VineyardCard {
-                                NavRow(
-                                    icon = Icons.Filled.Checklist,
-                                    tint = VineColors.LeafGreen,
-                                    title = "E-L Growth Stages",
-                                    value = null,
-                                    onClick = { onOpenTool(ToolRoute.GrowthStageConfig) },
-                                )
-                                RowDivider(vine.cardBorder)
-                                NavRow(
-                                    icon = Icons.Filled.PhotoLibrary,
-                                    tint = VineColors.LeafGreen,
-                                    title = "Growth Stage Images",
-                                    value = null,
-                                    onClick = { onOpenTool(ToolRoute.GrowthStageImages) },
-                                )
-                            }
-                            Text(
-                                "Configure which E-L growth stages are available and manage reference images for visual confirmation.",
-                                fontSize = 12.sp,
-                                color = vine.textSecondary,
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SectionLabel("Growth Stages", Icons.Filled.Checklist, VineColors.LeafGreen)
+                        VineyardCard {
+                            NavRow(
+                                icon = Icons.Filled.Checklist,
+                                tint = VineColors.LeafGreen,
+                                title = "E-L Growth Stages",
+                                value = "${operationSettings.enabledGrowthStageCodes.size}/${GrowthStage.allStages.size}",
+                                onClick = onOpenGrowthStageConfig,
+                            )
+                            RowDivider(vine.cardBorder)
+                            NavRow(
+                                icon = Icons.Filled.PhotoLibrary,
+                                tint = VineColors.LeafGreen,
+                                title = "Growth Stage Images",
+                                value = null,
+                                onClick = onOpenGrowthStageImages,
                             )
                         }
+                        Text(
+                            "Configure which E-L growth stages are available and manage reference images for visual confirmation.",
+                            fontSize = 12.sp,
+                            color = vine.textSecondary,
+                        )
+                    }
 
-                        // Weather
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            SectionLabel("Weather", Icons.Filled.CloudQueue, VineColors.Orange)
-                            VineyardCard {
-                                NavRow(
-                                    icon = Icons.Filled.CloudQueue,
-                                    tint = VineColors.Info,
-                                    title = "Weather Data & Forecasting",
-                                    value = null,
-                                    onClick = { onOpenTool(ToolRoute.WeatherData) },
-                                )
-                            }
-                            Text(
-                                "Manage forecast and local observation sources, station credentials and rainfall backfill from a single place.",
-                                fontSize = 12.sp,
-                                color = vine.textSecondary,
+                    // Weather
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SectionLabel("Weather", Icons.Filled.CloudQueue, VineColors.Orange)
+                        VineyardCard {
+                            NavRow(
+                                icon = Icons.Filled.CloudQueue,
+                                tint = VineColors.Info,
+                                title = "Weather Data & Forecasting",
+                                value = null,
+                                onClick = onOpenWeather,
                             )
                         }
+                        Text(
+                            "Manage forecast and local observation sources, station credentials and rainfall backfill from a single place.",
+                            fontSize = 12.sp,
+                            color = vine.textSecondary,
+                        )
+                    }
 
-                        // Region
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            SectionLabel("Region", Icons.Filled.Straighten, VineColors.Cyan)
-                            VineyardCard {
-                                NavRow(
-                                    icon = Icons.Filled.Straighten,
-                                    tint = VineColors.Indigo,
-                                    title = "Region & Units",
-                                    value = null,
-                                    onClick = { onOpenTool(ToolRoute.RegionUnits) },
-                                )
-                            }
-                            Text(
-                                "Set the country, currency, units, date format and terminology used to display and export records.",
-                                fontSize = 12.sp,
-                                color = vine.textSecondary,
+                    // Region / Units
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SectionLabel("Region / Units", Icons.Filled.Straighten, VineColors.Cyan)
+                        VineyardCard {
+                            NavRow(
+                                icon = Icons.Filled.Straighten,
+                                tint = VineColors.Indigo,
+                                title = "Region & Units",
+                                value = null,
+                                onClick = onOpenRegionUnits,
                             )
                         }
+                        Text(
+                            "Set the country, currency, units, date format and terminology used to display and export records.",
+                            fontSize = 12.sp,
+                            color = vine.textSecondary,
+                        )
                     }
                 }
             }
         }
+    }
+
+    editButtonMode?.let { mode ->
+        EditLauncherButtonsSheet(
+            vm = vm,
+            state = state,
+            mode = mode,
+            onDismiss = { editButtonMode = null },
+            onOpenTemplates = {
+                editButtonMode = null
+                templateMode = mode
+            },
+        )
+    }
+
+    templateMode?.let { mode ->
+        ButtonTemplatesSheet(vm = vm, state = state, mode = mode, onDismiss = { templateMode = null })
     }
 
     importSummary?.let { summary ->
@@ -488,12 +615,25 @@ private fun VineyardSetupHub(
     }
 }
 
-private fun sortPaddocks(paddocks: List<Paddock>, option: BlockSortOption): List<Paddock> = when (option) {
+private fun sortPaddocks(
+    paddocks: List<Paddock>,
+    option: BlockSortOption,
+    varieties: List<com.rork.vinetrack.data.model.GrapeVarietyRow>,
+): List<Paddock> = when (option) {
     BlockSortOption.RowNumber -> paddocks.sortedWith(
         compareBy({ it.rows?.minOfOrNull { r -> r.number } ?: Int.MAX_VALUE }, { it.name.lowercase() }),
     )
     BlockSortOption.VarietyAZ -> paddocks.sortedWith(
-        compareBy({ it.primaryVarietyName?.lowercase() ?: "\uFFFF" }, { it.name.lowercase() }),
+        compareBy(
+            { block ->
+                block.varietyAllocations.orEmpty()
+                    .maxByOrNull { it.displayPercent ?: 0.0 }
+                    ?.let { VineyardVarietyPresentation.resolve(it, varieties).name }
+                    ?.lowercase()
+                    ?: "\uFFFF"
+            },
+            { it.name.lowercase() },
+        ),
     )
     BlockSortOption.RowCount -> paddocks.sortedWith(
         compareByDescending<Paddock> { it.rowCount }.thenBy { it.name.lowercase() },
@@ -503,20 +643,10 @@ private fun sortPaddocks(paddocks: List<Paddock>, option: BlockSortOption): List
     )
 }
 
-private fun locationSummary(state: AppUiState, context: android.content.Context): String? {
-    val v = state.selectedVineyard
-    val parts = mutableListOf<String>()
-    if (v?.latitude != null && v.longitude != null) {
-        parts.add("${String.format(Locale.US, "%.4f", v.latitude)}\u00B0, ${String.format(Locale.US, "%.4f", v.longitude)}\u00B0")
-    }
-    v?.elevationMetres?.let { parts.add("${it.toInt()} m") }
-    val gdd = try {
-        GddSettingsStore(context).load().calculationMode.displayName
-    } catch (e: Exception) {
-        null
-    }
-    if (gdd != null) parts.add(gdd)
-    return parts.joinToString(" \u00B7 ").takeIf { it.isNotBlank() }
+private fun varietyCatalogSummary(state: AppUiState): String {
+    val customCount = state.grapeVarieties.count { it.isCustom && it.isActive }
+    val base = BuiltInGrapeVarietyGDD.catalogSize.toString()
+    return if (customCount > 0) "$base · +$customCount custom" else base
 }
 
 @Composable
@@ -579,8 +709,8 @@ private fun AddBlockRow(onClick: () -> Unit) {
 @Composable
 private fun BlockSetupRow(
     block: Paddock,
-    varietiesOk: Boolean,
-    soilOk: Boolean,
+    varietiesOk: Boolean?,
+    soilOk: Boolean?,
     onClick: () -> Unit,
 ) {
     val vine = LocalVineColors.current
@@ -634,6 +764,15 @@ private fun rowRange(block: Paddock): String {
     }
 }
 
+private fun blockVarietiesCompleteness(block: Paddock, state: AppUiState): Boolean? {
+    val allocations = block.varietyAllocations.orEmpty()
+    if (allocations.isEmpty()) return false
+    val total = allocations.sumOf { it.displayPercent ?: 0.0 }
+    if (kotlin.math.abs(total - 100.0) >= 0.5) return false
+    if (VineyardVarietyPresentation.isComplete(allocations, state.grapeVarieties)) return true
+    return if (state.grapeVarietyReferenceLoading || state.grapeVarietyReferenceError != null) null else false
+}
+
 private fun irrigationSummary(block: Paddock): String? {
     val parts = mutableListOf<String>()
     block.flowPerEmitter?.takeIf { it > 0 }?.let { parts.add(String.format(Locale.US, "%.1f L/hr", it)) }
@@ -654,9 +793,9 @@ private fun SetupChecklist(
     boundariesOk: Boolean,
     rowsOk: Boolean,
     trellisOk: Boolean,
-    varietiesOk: Boolean,
+    varietiesOk: Boolean?,
     irrigationOk: Boolean,
-    soilOk: Boolean,
+    soilOk: Boolean?,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -673,26 +812,94 @@ private fun SetupChecklist(
 }
 
 @Composable
-private fun ChecklistItem(label: String, ok: Boolean, modifier: Modifier = Modifier) {
+private fun ChecklistItem(label: String, ok: Boolean?, modifier: Modifier = Modifier) {
     val vine = LocalVineColors.current
-    val tint = if (ok) VineColors.Success else VineColors.Destructive
+    val tint = when (ok) {
+        true -> VineColors.Success
+        false -> VineColors.Destructive
+        null -> vine.textSecondary
+    }
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Box(
-            modifier = Modifier.size(16.dp).clip(CircleShape).background(tint.copy(alpha = if (ok) 1f else 0.85f)),
+            modifier = Modifier.size(16.dp).clip(CircleShape).background(tint.copy(alpha = if (ok == true) 1f else 0.85f)),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                if (ok) Icons.Filled.Done else Icons.Filled.Close,
+                when (ok) {
+                    true -> Icons.Filled.Done
+                    false -> Icons.Filled.Close
+                    null -> Icons.Filled.MoreHoriz
+                },
                 contentDescription = null,
                 tint = Color.White,
                 modifier = Modifier.size(11.dp),
             )
         }
         Text(label, fontSize = 12.sp, color = vine.textSecondary, maxLines = 1)
+    }
+}
+
+@Composable
+private fun SetupValueRow(label: String, value: String, onClick: () -> Unit) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(label, color = vine.textPrimary, modifier = Modifier.weight(0.45f))
+        Text(value, color = vine.textSecondary, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(0.55f))
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = vine.textSecondary)
+    }
+}
+
+@Composable
+private fun MembershipStatusCard(isLoading: Boolean, error: String?, onRetry: () -> Unit) {
+    val vine = LocalVineColors.current
+    VineyardCard {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (isLoading) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(if (isLoading) "Checking vineyard access…" else "Vineyard access unavailable", color = vine.textPrimary, fontWeight = FontWeight.SemiBold)
+                error?.let { Text(it, color = vine.textSecondary, fontSize = 12.sp) }
+            }
+            if (!isLoading) TextButton(onClick = onRetry) { Text("Retry") }
+        }
+    }
+}
+
+@Composable
+private fun ButtonCustomisationRow(
+    title: String,
+    icon: ImageVector,
+    buttons: List<LauncherButton>,
+    onClick: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Box(
+            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(11.dp)).background(VineColors.Info.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = VineColors.Info, modifier = Modifier.size(20.dp))
+        }
+        Text(title, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, modifier = Modifier.weight(1f))
+        if (buttons.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                buttons.sortedBy { it.index }.distinctBy { it.index % 4 }.take(4).forEach { button ->
+                    Box(Modifier.size(9.dp).clip(CircleShape).background(launcherColor(button.color)))
+                }
+            }
+        }
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = vine.textSecondary)
     }
 }
 

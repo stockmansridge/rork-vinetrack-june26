@@ -2399,7 +2399,7 @@ private fun draftsFromConfig(mode: String, buttons: List<LauncherButton>): List<
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EditLauncherButtonsSheet(
+internal fun EditLauncherButtonsSheet(
     vm: AppViewModel,
     state: AppUiState,
     mode: String,

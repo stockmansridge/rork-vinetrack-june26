@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -15,7 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -39,6 +42,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +53,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -56,6 +61,11 @@ import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.R
 import com.rork.vinetrack.data.MapDefaults
 import com.rork.vinetrack.data.RegionFormatter
+import com.rork.vinetrack.data.SoilProfileRepository
+import com.rork.vinetrack.data.auth.SessionStore
+import com.rork.vinetrack.data.model.BackendSoilProfile
+import com.rork.vinetrack.data.model.GrapeVarietyRow
+import com.rork.vinetrack.data.model.IrrigationSoilClass
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.ui.AppUiState
@@ -69,6 +79,12 @@ private fun Pin.isRepair(): Boolean = mode?.equals("Repairs", ignoreCase = true)
 
 /** True when this pin is a growth-mode pin (case-insensitive, iOS parity). */
 private fun Pin.isGrowth(): Boolean = mode?.equals("Growth", ignoreCase = true) == true
+
+private sealed interface OverviewSoilState {
+    data class Loading(val vineyardId: String) : OverviewSoilState
+    data class Loaded(val vineyardId: String, val profilesByBlockId: Map<String, BackendSoilProfile>) : OverviewSoilState
+    data class Failed(val vineyardId: String) : OverviewSoilState
+}
 
 /**
  * Read-only vineyard overview dashboard, the Android twin of iOS
@@ -93,8 +109,29 @@ fun VineyardOverviewScreen(
     val fmt = state.regionFormatter
     val paddocks = state.paddocks
     val pins = state.pins
+    val context = LocalContext.current
+    val soilRepository = remember { SoilProfileRepository(SessionStore(context)) }
+    var soilState by remember { mutableStateOf<OverviewSoilState?>(null) }
 
     var selectedBlock by remember { mutableStateOf<Paddock?>(null) }
+
+    LaunchedEffect(state.selectedVineyardId) {
+        val vineyardId = state.selectedVineyardId
+        if (vineyardId == null) {
+            soilState = null
+            return@LaunchedEffect
+        }
+        soilState = OverviewSoilState.Loading(vineyardId)
+        soilState = try {
+            val profiles = soilRepository.listVineyardSoilProfiles(vineyardId)
+                .filter { it.vineyardId.equals(vineyardId, ignoreCase = true) }
+                .mapNotNull { profile -> profile.paddockId?.let { it to profile } }
+                .toMap()
+            OverviewSoilState.Loaded(vineyardId, profiles)
+        } catch (_: Exception) {
+            OverviewSoilState.Failed(vineyardId)
+        }
+    }
 
     val totalAreaHa = remember(paddocks) { paddocks.sumOf { it.areaHectares } }
     val totalVines = remember(paddocks) { paddocks.sumOf { it.effectiveVineCount } }
@@ -201,11 +238,24 @@ fun VineyardOverviewScreen(
             item { OverviewHeading(fmt.blockTermPluralCapitalised) }
             if (paddocks.isEmpty()) {
                 item {
-                    EmptyCard("No ${fmt.blockTermPlural} configured", "Set up ${fmt.blockTermPlural} on the web portal or iOS app.")
+                    EmptyCard("No ${fmt.blockTermPlural} configured", "Set up ${fmt.blockTermPlural} in Vineyard Setup.")
                 }
             } else {
                 items(paddocks, key = { it.id }) { block ->
-                    BlockInfoCard(block = block, fmt = fmt, onClick = { selectedBlock = block })
+                    val activeSoilState = soilState?.takeIf {
+                        when (it) {
+                            is OverviewSoilState.Loading -> it.vineyardId == state.selectedVineyardId
+                            is OverviewSoilState.Loaded -> it.vineyardId == state.selectedVineyardId
+                            is OverviewSoilState.Failed -> it.vineyardId == state.selectedVineyardId
+                        }
+                    }
+                    BlockInfoCard(
+                        block = block,
+                        fmt = fmt,
+                        varieties = state.grapeVarieties,
+                        soilState = activeSoilState,
+                        onClick = { selectedBlock = block },
+                    )
                 }
             }
 
@@ -330,10 +380,25 @@ private fun StatCard(label: String, value: String, icon: Painter, color: Color, 
 }
 
 @Composable
-private fun BlockInfoCard(block: Paddock, fmt: RegionFormatter, onClick: () -> Unit) {
+private fun BlockInfoCard(
+    block: Paddock,
+    fmt: RegionFormatter,
+    varieties: List<GrapeVarietyRow>,
+    soilState: OverviewSoilState?,
+    onClick: () -> Unit,
+) {
     val vine = LocalVineColors.current
     val rowNumbers = remember(block) { block.rows?.map { it.number }?.sorted() ?: emptyList() }
-    val varieties = remember(block) { block.varietyAllocations?.filter { it.displayName != null } ?: emptyList() }
+    val varietyLines = remember(block.varietyAllocations, varieties) {
+        VineyardVarietyPresentation.lines(block.varietyAllocations.orEmpty(), varieties)
+    }
+    val flow = remember(block) { VineyardBlockPresentation.litresPerHour(block) }
+    val posts = remember(block) { VineyardBlockPresentation.intermediatePostCount(block) }
+    val soilLabel = when (soilState) {
+        is OverviewSoilState.Loading, null -> "Loading…"
+        is OverviewSoilState.Failed -> "Unavailable"
+        is OverviewSoilState.Loaded -> soilTypeLabel(soilState.profilesByBlockId[block.id]) ?: "Not set"
+    }
     VineyardCard(modifier = Modifier.clickable { onClick() }) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.Grass, contentDescription = null, tint = VineColors.Olive, modifier = Modifier.size(16.dp))
@@ -341,18 +406,31 @@ private fun BlockInfoCard(block: Paddock, fmt: RegionFormatter, onClick: () -> U
             Text(block.name, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary, modifier = Modifier.weight(1f))
             Text(fmt.formatArea(block.areaHectares), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = VineColors.LeafGreen)
         }
-        if (varieties.isNotEmpty()) {
+        if (varietyLines.isNotEmpty()) {
             Spacer(Modifier.height(6.dp))
-            varieties.forEach { v ->
-                val pct = v.displayPercent?.let { " · ${"%.0f".format(it)}%" } ?: ""
-                Text("${v.displayName}$pct", fontSize = 12.sp, color = vine.textSecondary)
+            varietyLines.forEach { line ->
+                Text(
+                    line.compactText,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    color = vine.textSecondary,
+                )
             }
         }
         Spacer(Modifier.height(10.dp))
+        Box(Modifier.fillMaxWidth().height(0.5.dp).background(vine.cardBorder))
+        Spacer(Modifier.height(10.dp))
         Row(modifier = Modifier.fillMaxWidth()) {
             BlockStat("Vines", "${block.effectiveVineCount}", Modifier.weight(1f))
-            BlockStat("Trellis", fmt.formatShortDistance(block.effectiveTotalRowLength), Modifier.weight(1f))
+            BlockStat("Trellis", formatBlockDistance(block.effectiveTotalRowLength), Modifier.weight(1f))
             BlockStat("Rows", "${block.rowCount}", Modifier.weight(1f))
+        }
+        if (flow != null || posts != null) {
+            Spacer(Modifier.height(10.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                flow?.let { BlockStat("Block Flow", "${"%,.0f".format(it)} L/Hr", Modifier.weight(1f)) }
+                posts?.let { BlockStat("Int. Posts", "%,d".format(it), Modifier.weight(1f)) }
+            }
         }
         if (rowNumbers.size > 1) {
             val first = rowNumbers.first()
@@ -362,7 +440,29 @@ private fun BlockInfoCard(block: Paddock, fmt: RegionFormatter, onClick: () -> U
                 Text("Rows $first–$last", fontSize = 12.sp, color = vine.textSecondary)
             }
         }
+        Spacer(Modifier.height(8.dp))
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Soil Type", fontSize = 12.sp, color = vine.textSecondary, modifier = Modifier.weight(1f))
+            Text(
+                soilLabel,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (soilLabel == "Not set" || soilLabel == "Unavailable" || soilLabel == "Loading…") vine.textSecondary else vine.textPrimary,
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
+}
+
+private fun formatBlockDistance(metres: Double): String =
+    if (metres >= 1_000.0) "%.1fkm".format(metres / 1_000.0) else "%.0fm".format(metres)
+
+private fun soilTypeLabel(profile: BackendSoilProfile?): String? {
+    profile ?: return null
+    profile.soilTextureClass?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+    profile.typedSoilClass?.takeIf { it != IrrigationSoilClass.Unknown }?.let { return it.fallbackLabel }
+    profile.australianSoilClassification?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+    return profile.soilLandscape?.trim()?.takeIf { it.isNotEmpty() }
 }
 
 @Composable
@@ -447,10 +547,17 @@ private fun BlockDetailSheetContent(block: Paddock, fmt: RegionFormatter, state:
     val vine = LocalVineColors.current
     val blockPins = state.pins.filter { it.paddockId == block.id }
     val blockTrips = state.trips.filter { !it.isActive && (it.paddockId == block.id || it.paddockIds.contains(block.id)) }
-    val varieties = block.varietyAllocations?.filter { it.displayName != null } ?: emptyList()
+    val varieties = remember(block.varietyAllocations, state.grapeVarieties) {
+        VineyardVarietyPresentation.lines(block.varietyAllocations.orEmpty(), state.grapeVarieties)
+    }
 
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .fillMaxHeight()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp)
+            .padding(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         Text(block.name, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
@@ -458,18 +565,27 @@ private fun BlockDetailSheetContent(block: Paddock, fmt: RegionFormatter, state:
         DetailSection("Overview") {
             DetailRow("Area", fmt.formatArea(block.areaHectares))
             DetailRow("Vines", "${block.effectiveVineCount}")
-            DetailRow("Trellis Length", fmt.formatShortDistance(block.effectiveTotalRowLength))
+            DetailRow("Trellis Length", "${"%,.0f".format(block.effectiveTotalRowLength)} m")
             DetailRow("Rows", "${block.rowCount}")
             block.rowWidth?.let { DetailRow("Row Spacing", "${"%.1f".format(it)} m") }
             block.vineSpacing?.let { DetailRow("Vine Spacing", "${"%.1f".format(it)} m") }
         }
 
-        if (block.hasIrrigationSetup) {
+        if (block.intermediatePostSpacing != null || VineyardBlockPresentation.intermediatePostCount(block) != null) {
+            DetailSection("Trellis") {
+                block.intermediatePostSpacing?.let { DetailRow("Intermediate Post Spacing", "${"%.1f".format(it)} m") }
+                VineyardBlockPresentation.intermediatePostCount(block)?.let { DetailRow("Intermediate Posts", "%,d".format(it)) }
+            }
+        }
+
+        if (block.flowPerEmitter != null || block.emitterSpacing != null) {
             DetailSection("Irrigation") {
-                block.flowPerEmitter?.let { DetailRow("Emitter Rate", "${fmt.formatVolume(it)}/hr") }
+                block.flowPerEmitter?.let { DetailRow("Emitter Rate", "${"%.1f".format(it)} L/hr") }
                 block.emitterSpacing?.let { DetailRow("Emitter Spacing", "${"%.1f".format(it)} m") }
-                // Derived irrigation rate — label and value both follow the vineyard.
-                block.litresPerHaPerHour?.let { DetailRow("Water Rate", fmt.formatVolumePerAreaPerHour(it)) }
+                VineyardBlockPresentation.totalEmitters(block)?.let { DetailRow("Emitters", "%,d".format(it)) }
+                VineyardBlockPresentation.litresPerVinePerHour(block)?.let { DetailRow("L/Vine/Hr", "%.1f".format(it)) }
+                VineyardBlockPresentation.litresPerHour(block)?.let { DetailRow("Block L/hr", "%,.0f".format(it)) }
+                block.litresPerHaPerHour?.let { DetailRow("L/ha/hr", "%,.0f".format(it)) }
             }
         }
 
@@ -482,16 +598,15 @@ private fun BlockDetailSheetContent(block: Paddock, fmt: RegionFormatter, state:
 
         if (varieties.isNotEmpty()) {
             DetailSection("Varieties") {
-                varieties.forEach { v ->
-                    val pct = v.displayPercent?.let { "${"%.0f".format(it)}%" }
+                varieties.forEach { line ->
                     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(v.displayName ?: "Variety", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                            v.clone?.let { Text("Clone: $it", fontSize = 12.sp, color = vine.textSecondary) }
-                            v.rootstock?.let { Text("Rootstock: $it", fontSize = 12.sp, color = vine.textSecondary) }
+                            Text(line.name ?: "Variety", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                            line.clone?.let { Text("Clone: $it", fontSize = 12.sp, color = vine.textSecondary) }
+                            line.rootstock?.let { Text("Rootstock: $it", fontSize = 12.sp, color = vine.textSecondary) }
                         }
-                        if (pct != null) {
-                            Text(pct, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = VineColors.LeafGreen)
+                        line.percentText?.let {
+                            Text(it, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = VineColors.LeafGreen)
                         }
                     }
                 }
@@ -516,9 +631,13 @@ private fun DetailSection(title: String, content: @Composable () -> Unit) {
 @Composable
 private fun DetailRow(label: String, value: String) {
     val vine = LocalVineColors.current
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         Text(label, fontSize = 14.sp, color = vine.textSecondary, modifier = Modifier.weight(1f))
-        Text(value, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = vine.textPrimary)
+        Text(value, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = vine.textPrimary, modifier = Modifier.weight(1f))
     }
 }
 

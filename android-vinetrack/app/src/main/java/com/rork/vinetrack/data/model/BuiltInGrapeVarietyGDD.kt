@@ -83,6 +83,7 @@ object BuiltInGrapeVarietyGDD {
     )
 
     private val byKey: Map<String, Double> = catalog.associate { it.key to it.gdd }
+    private val displayNameByKey: Map<String, String> = catalog.associate { it.key to it.name }
 
     private val byCanonicalName: Map<String, Double> = buildMap {
         catalog.forEach { entry ->
@@ -90,6 +91,22 @@ object BuiltInGrapeVarietyGDD {
             entry.aliases.forEach { alias -> put(canonicalVarietyName(alias), entry.gdd) }
         }
     }
+    private val displayNameByCanonicalName: Map<String, String> = buildMap {
+        catalog.forEach { entry ->
+            put(canonicalVarietyName(entry.name), entry.name)
+            entry.aliases.forEach { alias -> put(canonicalVarietyName(alias), entry.name) }
+        }
+    }
+
+    /** Number of active built-in varieties mirrored from the iOS catalogue. */
+    val catalogSize: Int get() = catalog.size
+
+    /** Built-in display name for a stable key, or null when the key is unknown. */
+    fun displayNameForKey(key: String?): String? = key?.trim()?.let { displayNameByKey[it] }
+
+    /** Built-in display name resolved from a canonical name or supported alias. */
+    fun displayNameForName(name: String?): String? =
+        name?.let { displayNameByCanonicalName[canonicalVarietyName(it)] }
 
     /** Built-in optimal GDD for a stable variety key, or null when unknown. */
     fun gddForKey(key: String?): Double? = key?.let { byKey[it] }

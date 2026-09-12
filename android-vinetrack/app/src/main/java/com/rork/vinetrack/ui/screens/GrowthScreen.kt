@@ -1,6 +1,7 @@
 package com.rork.vinetrack.ui.screens
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -103,6 +104,7 @@ import com.rork.vinetrack.data.PaddockRepository
 import com.rork.vinetrack.data.PinPresentationTarget
 import com.rork.vinetrack.data.PinPhotoSync
 import com.rork.vinetrack.data.RowAttachment
+import com.rork.vinetrack.data.model.BuiltInGrapeVarietyGDD
 import com.rork.vinetrack.data.model.GrowthStage
 import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.canonicalVarietyName
@@ -422,14 +424,36 @@ private fun GrowthListView(
  * its optimal GDD target and how many blocks currently plant it (resolved from
  * the existing `paddocks.variety_allocations` — no writes).
  */
+@Composable
+fun GrapeVarietiesCatalogScreen(
+    vm: AppViewModel,
+    state: AppUiState,
+    modifier: Modifier = Modifier,
+    onBack: (() -> Unit)? = null,
+) {
+    var selectedId by remember { mutableStateOf<String?>(null) }
+    val selected = state.grapeVarieties.firstOrNull { it.id == selectedId }
+    BackHandler(enabled = selected != null) { selectedId = null }
+    Box(modifier = modifier) {
+        if (selected != null) {
+            VarietyDetailView(state = state, variety = selected, onBack = { selectedId = null })
+        } else {
+            VarietiesCatalogView(
+                vm = vm,
+                state = state,
+                onBack = onBack,
+                onOpenVariety = { selectedId = it.id },
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun VarietiesCatalogView(
     vm: AppViewModel,
     state: AppUiState,
-    tab: GrowthTab,
     onBack: (() -> Unit)?,
-    onTabChange: (GrowthTab) -> Unit,
     onOpenVariety: (com.rork.vinetrack.data.model.GrapeVarietyRow) -> Unit,
 ) {
     val vine = LocalVineColors.current
@@ -456,7 +480,8 @@ private fun VarietiesCatalogView(
             var area = 0.0
             state.paddocks.forEach { paddock ->
                 val alloc = paddock.varietyAllocations.orEmpty().firstOrNull { a ->
-                    (a.varietyKey != null && a.varietyKey == variety.varietyKey) ||
+                    (a.varietyId != null && a.varietyId.equals(variety.id, ignoreCase = true)) ||
+                        (a.varietyKey != null && a.varietyKey == variety.varietyKey) ||
                         (a.displayName != null && canonicalVarietyName(a.displayName!!) == canonical)
                 }
                 if (alloc != null) {
@@ -472,7 +497,7 @@ private fun VarietiesCatalogView(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Growth & Phenology") },
+                title = { Text("Grape Varieties") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 actions = {
                     if (canManage) {
@@ -500,7 +525,6 @@ private fun VarietiesCatalogView(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            GrowthTabRow(tab = tab, onTabChange = onTabChange)
             VarietyCatalogTabRow(tab = catalogTab, onTabChange = { catalogTab = it })
             when (catalogTab) {
                 VarietyCatalogTab.Clones -> {
@@ -802,7 +826,8 @@ private fun VarietyCatalogCard(
                     StatusBadge(if (variety.isCustom) "Custom" else "Built-in", if (variety.isCustom) VineColors.Orange else VineColors.LeafGreen)
                 }
                 val sub = buildList {
-                    variety.optimalGddOverride?.let { add("Optimal ${it.toInt()} GDD") }
+                    (variety.optimalGddOverride ?: BuiltInGrapeVarietyGDD.gddForKey(variety.varietyKey))
+                        ?.let { add("Optimal ${it.toInt()} GDD") }
                     if (usage.blocks > 0) {
                         add("${usage.blocks} block${if (usage.blocks == 1) "" else "s"}")
                         if (usage.areaHectares > 0) add(fmt.formatAreaCompact(usage.areaHectares))
@@ -852,7 +877,8 @@ private fun VarietyDetailView(
     val blocks = remember(variety, state.paddocks) {
         state.paddocks.mapNotNull { paddock ->
             val alloc = paddock.varietyAllocations.orEmpty().firstOrNull { a ->
-                (a.varietyKey != null && a.varietyKey == variety.varietyKey) ||
+                (a.varietyId != null && a.varietyId.equals(variety.id, ignoreCase = true)) ||
+                    (a.varietyKey != null && a.varietyKey == variety.varietyKey) ||
                     (a.displayName != null && canonicalVarietyName(a.displayName!!) == canonical)
             } ?: return@mapNotNull null
             VarietyBlockUsage(paddock, alloc)
@@ -884,7 +910,7 @@ private fun VarietyDetailView(
 
                 VineyardCard {
                     DetailRowG(Icons.Filled.Spa, "Variety key", variety.varietyKey, VineColors.DarkGreen)
-                    variety.optimalGddOverride?.let {
+                    (variety.optimalGddOverride ?: BuiltInGrapeVarietyGDD.gddForKey(variety.varietyKey))?.let {
                         DividerG(vine.cardBorder)
                         DetailRowG(Icons.Filled.Schedule, "Optimal GDD", "${it.toInt()}", VineColors.Orange)
                     }

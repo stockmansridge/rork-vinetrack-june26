@@ -514,6 +514,9 @@ data class AppUiState(
     val machines: List<VineyardMachine> = emptyList(),
     val workTasks: List<WorkTask> = emptyList(),
     val members: List<VineyardMember> = emptyList(),
+    /** Vineyard-scoped membership/capability read state; never substitutes another vineyard's role. */
+    val membershipLoading: Boolean = false,
+    val membershipError: String? = null,
     val operatorCategories: List<OperatorCategory> = emptyList(),
     /** Vineyard-scoped custom Trip Functions (active + archived) for the picker and Settings. */
     val vineyardTripFunctions: List<VineyardTripFunction> = emptyList(),
@@ -552,6 +555,8 @@ data class AppUiState(
     /** Per-vineyard Growth launcher buttons from `vineyard_button_configs` (empty = use defaults). */
     val growthButtons: List<LauncherButton> = emptyList(),
     val grapeVarieties: List<GrapeVarietyRow> = emptyList(),
+    val grapeVarietyReferenceLoading: Boolean = false,
+    val grapeVarietyReferenceError: String? = null,
     /** Global clone catalogue (sql/182) — clones are scoped to one variety. */
     val cloneCatalog: List<CloneCatalogEntry> = emptyList(),
     /** Global rootstock catalogue (sql/182) — independent of scion variety. */
@@ -914,7 +919,17 @@ data class AppUiState(
     }
 
     /** The caller's role in the selected vineyard, if known. */
-    val currentRole: String? get() = members.firstOrNull { it.userId == currentUserId }?.role?.lowercase()
+    val currentRole: String?
+        get() {
+            val userId = currentUserId?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            val vineyardId = selectedVineyardId
+            return members.firstOrNull { member ->
+                member.userId.trim().equals(userId, ignoreCase = true) &&
+                    (member.vineyardId == null || vineyardId == null || member.vineyardId.equals(vineyardId, ignoreCase = true))
+            }?.role
+                ?.trim()
+                ?.lowercase()
+        }
     /** Only owners and managers may edit launcher buttons (matches iOS + RLS). */
     val canEditLauncherButtons: Boolean get() = currentRole == "owner" || currentRole == "manager"
 
@@ -5659,7 +5674,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         reportClientTelemetry()
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), tripsListKnowledge = TripsListKnowledge.Unknown, machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), grapeAllocations = emptyList(), grapePurchasers = emptyList(), grapeAllocationFinancialAccess = false, workTaskPaddocks = emptyList(), vineyardLabourLines = null, growthStageImages = emptyList(), seasonYieldOverview = null, seasonYieldVintage = null, seasonYieldError = null) }
+        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), tripsListKnowledge = TripsListKnowledge.Unknown, machines = emptyList(), workTasks = emptyList(), members = emptyList(), membershipLoading = true, membershipError = null, operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), grapeVarieties = emptyList(), grapeVarietyReferenceLoading = true, grapeVarietyReferenceError = null, vineyardClones = emptyList(), vineyardRootstocks = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), grapeAllocations = emptyList(), grapePurchasers = emptyList(), grapeAllocationFinancialAccess = false, workTaskPaddocks = emptyList(), vineyardLabourLines = null, growthStageImages = emptyList(), seasonYieldOverview = null, seasonYieldVintage = null, seasonYieldError = null) }
         loadedLogoKey = null
         // Apply the cached region settings instantly so units/currency render
         // correctly on first paint, then refresh from the backend below.
@@ -14158,10 +14173,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!preservation.isPreserved) {
             val message = "Recovery evidence couldn't be saved to this device, so vineyard refresh was stopped. " +
                 "Free up device storage, then retry."
-            _ui.update { it.copy(isLoadingVineyardData = false, pinError = message, tripError = message) }
+            _ui.update {
+                it.copy(
+                    isLoadingVineyardData = false,
+                    membershipLoading = false,
+                    membershipError = message,
+                    grapeVarietyReferenceLoading = false,
+                    grapeVarietyReferenceError = message,
+                    pinError = message,
+                    tripError = message,
+                )
+            }
             return
         }
-        _ui.update { it.copy(isLoadingVineyardData = true) }
+        _ui.update {
+            it.copy(
+                isLoadingVineyardData = true,
+                membershipLoading = true,
+                membershipError = null,
+                grapeVarietyReferenceLoading = true,
+                grapeVarietyReferenceError = null,
+            )
+        }
         val userId = session.userId
         val cachedPaddocks = domainCache.loadPaddocks(userId, vineyardId)
             ?.filter { it.vineyardId.equals(vineyardId, ignoreCase = true) }
@@ -14273,9 +14306,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Team members + operator categories back the trip operator picker.
         // Both are optional reference lists — soft-fail to the existing list
         // (or empty) so the Trips screen still works if either is unavailable.
+        var membershipError: String? = null
         val members = try {
-            repo.listTeamMembers(vineyardId)
-        } catch (e: Exception) {
+            repo.listTeamMembers(vineyardId).filter { member ->
+                member.vineyardId == null || member.vineyardId.equals(vineyardId, ignoreCase = true)
+            }
+        } catch (_: Exception) {
+            membershipError = "Couldn't confirm your vineyard role. Check your connection and retry."
             _ui.value.members
         }
         val operatorCategories = try {
@@ -14414,10 +14451,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         // Grape variety catalog is an optional read-only reference list backing
         // the agronomy Varieties surface; soft-fail to the existing list (or empty).
+        var grapeVarietyReferenceError: String? = null
         val grapeVarieties = try {
             repo.listGrapeVarieties(vineyardId)
-        } catch (e: Exception) {
-            _ui.value.grapeVarieties
+                .filter { it.vineyardId.equals(vineyardId, ignoreCase = true) }
+        } catch (_: Exception) {
+            grapeVarietyReferenceError = "The grape-variety reference list couldn't be refreshed. Saved allocation names remain available."
+            _ui.value.grapeVarieties.filter { it.vineyardId.equals(vineyardId, ignoreCase = true) }
         }
         // Shared clone + rootstock catalogues (sql/182): global reference
         // lists plus this vineyard's custom records. Read-only here. Audit
@@ -14615,6 +14655,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     vineyardId,
                 ),
                 members = members,
+                membershipLoading = false,
+                membershipError = membershipError,
                 operatorCategories = operatorCategories,
                 vineyardTripFunctions = vineyardTripFunctions,
                 sprayRecords = overlaidSpray,
@@ -14633,6 +14675,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 growthButtons = overlaidGrowthButtons,
                 currentUserId = session.userId,
                 grapeVarieties = grapeVarieties,
+                grapeVarietyReferenceLoading = false,
+                grapeVarietyReferenceError = grapeVarietyReferenceError,
                 cloneCatalog = cloneCatalog,
                 rootstockCatalog = rootstockCatalog,
                 vineyardClones = vineyardClones,
