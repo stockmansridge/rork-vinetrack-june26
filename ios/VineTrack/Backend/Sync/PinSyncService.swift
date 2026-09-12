@@ -342,8 +342,14 @@ final class PinSyncService {
         syncStatus = .syncing
         errorMessage = nil
         do {
+            // Evidence and pin rows are independent durable streams. Attempt
+            // evidence first (the server accepts either arrival order), but do
+            // not let its failure block the local pin's normal upload/pull.
+            var evidenceError: Error?
+            do { try await pushCaptureEvidence() } catch { evidenceError = error }
             try await pushLocalPins(vineyardId: vineyardId)
             try await pullRemotePins(vineyardId: vineyardId)
+            if let evidenceError { throw evidenceError }
             metadata.setLastSync(Date(), for: vineyardId)
             lastSyncDate = Date()
             syncStatus = .success
@@ -354,6 +360,21 @@ final class PinSyncService {
     }
 
     // MARK: - Push
+
+    private func pushCaptureEvidence() async throws {
+        var uploaded: Set<String> = []
+        var firstError: Error?
+        for evidence in PinCaptureEvidenceStore.shared.pending {
+            do {
+                try await repository.upsertPinCaptureEvidence(evidence.uploadPayload())
+                uploaded.insert(evidence.id)
+            } catch {
+                if firstError == nil { firstError = error }
+            }
+        }
+        if !uploaded.isEmpty { try PinCaptureEvidenceStore.shared.markUploaded(uploaded) }
+        if let firstError { throw firstError }
+    }
 
     func pushLocalPins(vineyardId: UUID) async throws {
         guard let store else { return }

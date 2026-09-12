@@ -1921,11 +1921,13 @@ fun PinCategoryLauncherScreen(
                     snappedLongitude = placement?.snappedLongitude,
                     alongRowDistanceMetres = placement?.alongRowDistanceM,
                     snappedToRow = placement?.snappedToRow ?: false,
+                    drivingRowNumber = placement?.drivingRowNumber,
+                    headingSource = capture.headingDegrees?.let { "qualified_device_heading" },
+                    headingObservedAtIso = capture.headingDegrees?.let { capture.observedAtIso },
                 ),
             )
             if (!evidenceSaved) {
-                scope.launch { snackbarHostState.showSnackbar("Couldn't preserve this GPS observation. Please try again.") }
-                return@doCreate
+                scope.launch { snackbarHostState.showSnackbar("Pin will still be saved; GPS evidence storage needs retry.") }
             }
             vm.createPin(
                 title = category,

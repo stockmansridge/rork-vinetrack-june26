@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
-/** Local-only evidence for qualified automatic pin observations; never uploaded. */
+/** Durable evidence outbox for qualified automatic pin observations. */
 class PinCaptureEvidenceStore(context: Context) {
     @Serializable
     data class Evidence(
@@ -14,7 +14,7 @@ class PinCaptureEvidenceStore(context: Context) {
         val tripId: String?,
         val buttonName: String,
         val mode: String,
-        val side: String,
+        val side: String? = null,
         val latitude: Double,
         val longitude: Double,
         val fixTimeEpochMs: Long,
@@ -28,6 +28,23 @@ class PinCaptureEvidenceStore(context: Context) {
         val snappedLongitude: Double?,
         val alongRowDistanceMetres: Double?,
         val snappedToRow: Boolean,
+        val drivingRowNumber: Double? = null,
+        val evidenceRevision: Int = 1,
+        val resolverVersion: String = "server-geometry-v2",
+        val headingSource: String? = null,
+        val headingObservedAtIso: String? = null,
+        val geometryRevision: String? = null,
+        val geometryHash: String? = null,
+        val observations: List<Observation> = emptyList(),
+        val uploaded: Boolean = false,
+    )
+
+    @Serializable
+    data class Observation(
+        val observedAtIso: String,
+        val latitude: Double,
+        val longitude: Double,
+        val accuracyMetres: Double,
     )
 
     private val preferences = context.applicationContext
@@ -41,6 +58,15 @@ class PinCaptureEvidenceStore(context: Context) {
             .putString(KEY, json.encodeToString(serializer, existing + evidence))
             .commit()
     }
+
+    fun markUploaded(pinId: String, evidenceRevision: Int): Boolean {
+        val next = load().map {
+            if (it.pinId == pinId && it.evidenceRevision == evidenceRevision) it.copy(uploaded = true) else it
+        }
+        return preferences.edit().putString(KEY, json.encodeToString(serializer, next)).commit()
+    }
+
+    fun pending(): List<Evidence> = load().filterNot { it.uploaded }
 
     fun load(): List<Evidence> = preferences.getString(KEY, null)?.let { raw ->
         runCatching { json.decodeFromString(serializer, raw) }.getOrDefault(emptyList())

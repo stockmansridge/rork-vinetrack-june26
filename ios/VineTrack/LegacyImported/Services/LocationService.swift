@@ -11,6 +11,9 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
     var isUsingMockLocation: Bool = false
     private var mockFallbackTask: Task<Void, Never>?
     private var recentDistinctLocations: [CLLocation] = []
+    private(set) var displayHeadingDegrees: Double?
+    private var displayContextId: String?
+    private var isDisplayConsumerActive: Bool = false
 
     nonisolated struct HeadingObservation: Sendable, Equatable {
         let degrees: Double
@@ -233,6 +236,43 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
 
     /// Circular mean avoids the 359°/1° wraparound error. This is display-only;
     /// capture continues to use the independently qualified instantaneous sample.
+    /// Starts or resumes the display-only smoothed heading consumer. Changing
+    /// vineyard/block context clears retained text so old field context cannot leak.
+    func beginDisplayConsumer(contextId: String?) {
+        if displayContextId != contextId {
+            displayHeadingDegrees = nil
+            displayContextId = contextId
+        }
+        isDisplayConsumerActive = true
+    }
+
+    func suspendDisplayConsumer() {
+        isDisplayConsumerActive = false
+        displayHeadingDegrees = nil
+    }
+
+    /// Publish no faster than the caller's one-second cadence. The previous
+    /// 16-point sector is retained until the circular mean crosses its boundary
+    /// by 5°, preventing brief boundary noise from changing visible text.
+    func refreshDisplayHeading(now: Date) {
+        guard isDisplayConsumerActive else { return }
+        let candidate = Self.circularMean(observations: recentHeadingObservations, now: now)
+        displayHeadingDegrees = Self.hystereticHeading(candidate: candidate, previous: displayHeadingDegrees)
+    }
+
+    nonisolated static func hystereticHeading(
+        candidate: Double?,
+        previous: Double?,
+        sectorWidth: Double = 22.5,
+        margin: Double = 5
+    ) -> Double? {
+        guard let candidate else { return previous }
+        guard let previous else { return candidate }
+        let previousCenter = (round(previous / sectorWidth) * sectorWidth).truncatingRemainder(dividingBy: 360)
+        let delta = abs(((candidate - previousCenter + 540).truncatingRemainder(dividingBy: 360)) - 180)
+        return delta <= sectorWidth / 2 + margin ? previous : candidate
+    }
+
     nonisolated static func circularMean(
         observations: [HeadingObservation],
         now: Date,

@@ -10,6 +10,7 @@ struct PinsView: View {
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(TripTrackingService.self) private var tripTracking
     @Environment(LocationService.self) private var locationService
+    @Environment(\.scenePhase) private var scenePhase
     private var canDelete: Bool { accessControl.canDeleteOperationalRecords }
     private var canExport: Bool { accessControl.canExport }
     @State private var viewMode: PinsViewMode
@@ -128,11 +129,7 @@ struct PinsView: View {
     }
 
     private var qualifiedHeading: Double? {
-        guard let mean = LocationService.circularMean(
-            observations: locationService.recentHeadingObservations,
-            now: contextNow
-        ) else { return nil }
-        return PinAisleGeometry.validHeading(mean, ageSeconds: 0)
+        locationService.displayHeadingDegrees.flatMap { PinAisleGeometry.validHeading($0, ageSeconds: 0) }
     }
 
     private var travelResolution: (context: PinQueryPolicy.TravelContext?, reason: String) {
@@ -334,16 +331,22 @@ struct PinsView: View {
                 await pinSync.syncPinsForSelectedVineyard()
                 await growthStageRecordSync.syncForSelectedVineyard()
             }
-            .task {
-                while !Task.isCancelled {
+            .task(id: scenePhase) {
+                guard scenePhase == .active else {
+                    locationService.suspendDisplayConsumer()
+                    return
+                }
+                locationService.beginDisplayConsumer(contextId: store.selectedVineyardId?.uuidString)
+                while !Task.isCancelled, scenePhase == .active {
                     contextNow = Date()
+                    locationService.beginDisplayConsumer(contextId: store.selectedVineyardId?.uuidString)
+                    locationService.refreshDisplayHeading(now: contextNow)
                     let next = liveContextTitle
-                    if displayedLiveContextTitle != next {
-                        displayedLiveContextTitle = next
-                    }
+                    if displayedLiveContextTitle != next { displayedLiveContextTitle = next }
                     try? await Task.sleep(for: .seconds(1))
                 }
             }
+            .onDisappear { locationService.suspendDisplayConsumer() }
             .sheet(isPresented: $showFilterSheet) {
                 PinFilterSheet(
                     selectedNames: $selectedNames,
@@ -1875,10 +1878,25 @@ struct PinDetailSheet: View {
     /// immediately (the `pin` snapshot it was presented with is immutable).
     @State private var typeDraft: PinTypeOption?
     @State private var memberDirectory: [UUID: String] = [:]
+    @State private var showSavedPlacementConfirmation: Bool = false
     private let teamRepository: any TeamRepositoryProtocol = SupabaseTeamRepository()
     private var fmt: RegionFormatter { store.settings.regionFormatter }
     private var hasUnsavedNotes: Bool {
         hasLoadedNotes && (notesDraft != lastSavedNotes || notesSaveError != nil)
+    }
+
+    private func confirmSavedPlacement() {
+        guard let candidate = savedPlacementCandidate else { return }
+        var updated = currentPin
+        updated.paddockId = candidate.paddock.id
+        updated.drivingRowNumber = candidate.attachment.drivingRowNumber
+        updated.pinRowNumber = candidate.attachment.pinRowNumber
+        updated.pinSide = candidate.attachment.pinSide
+        updated.snappedLatitude = candidate.attachment.snappedCoordinate?.latitude
+        updated.snappedLongitude = candidate.attachment.snappedCoordinate?.longitude
+        updated.alongRowDistanceM = candidate.attachment.alongRowDistanceM
+        updated.snappedToRow = candidate.attachment.snappedToRow
+        store.updatePin(updated)
     }
 
     private func resolveDisplayName(userId: UUID?, fallbackText: String?) -> String? {
@@ -1934,6 +1952,26 @@ struct PinDetailSheet: View {
         }
         return nil
     }
+    private var savedPlacementCandidate: (paddock: Paddock, attachment: PinAttachmentResolver.Attachment)? {
+        let rawCoordinate = CLLocationCoordinate2D(latitude: currentPin.latitude, longitude: currentPin.longitude)
+        guard currentPin.pinRowNumber == nil,
+              let side = currentPin.pinSide ?? currentPin.side,
+              let heading = currentPin.heading,
+              let paddock = RowGuidance.paddock(for: rawCoordinate, in: store.paddocks, fallbackRadius: 0) else { return nil }
+        let attachment = PinAttachmentResolver.resolveAutomatic(
+            rawCoordinate: rawCoordinate,
+            heading: heading,
+            headingAgeSeconds: 0,
+            horizontalAccuracyMetres: 0,
+            operatorSide: side,
+            paddock: paddock,
+            capturedAt: currentPin.timestamp,
+            aisleLock: nil
+        )
+        guard attachment.pinRowNumber != nil else { return nil }
+        return (paddock, attachment)
+    }
+
     private var currentPhotoPath: String? {
         if let path = currentPin.photoPath { return path }
         guard let growthId = target?.growthRecordId else { return nil }
@@ -2157,6 +2195,16 @@ struct PinDetailSheet: View {
                         .lineLimit(3...8)
                 }
 
+                if let candidate = savedPlacementCandidate {
+                    Section {
+                        Button("Confirm mapped row \(candidate.attachment.pinRowNumber ?? 0)") {
+                            showSavedPlacementConfirmation = true
+                        }
+                    } footer: {
+                        Text("Optional. Uses this pin’s original observation and keeps its identity, notes, photo and later edits.")
+                    }
+                }
+
                 Section("Details") {
                     LabeledContent(fmt.blockTermCapitalised, value: paddockName)
                     // Row-scope pins: the structured selection is authoritative
@@ -2274,6 +2322,12 @@ struct PinDetailSheet: View {
                 Button("Keep Editing", role: .cancel) { notesSaveError = nil }
             } message: {
                 Text(notesSaveError ?? "Your text is still here. Retry when device storage is available.")
+            }
+            .confirmationDialog("Confirm saved pin location?", isPresented: $showSavedPlacementConfirmation) {
+                Button("Confirm mapped row") { confirmSavedPlacement() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This updates only the saved pin’s mapped block, aisle and attached row. Its original GPS observation and pin identity stay unchanged.")
             }
             .alert("Photo not saved", isPresented: Binding(
                 get: { photoSaveError != nil },

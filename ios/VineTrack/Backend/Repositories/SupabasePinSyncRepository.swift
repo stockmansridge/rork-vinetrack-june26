@@ -52,6 +52,14 @@ final class SupabasePinSyncRepository: PinSyncRepositoryProtocol {
             .execute()
     }
 
+    func upsertPinCaptureEvidence(_ evidence: PinCaptureEvidenceUpload) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        try await provider.client
+            .from("pin_capture_evidence")
+            .upsert(evidence, onConflict: "pin_id,evidence_revision")
+            .execute()
+    }
+
     func updatePhotoPath(pinId: UUID, vineyardId: UUID, path: String?) async throws -> AttachmentReferenceConfirmation {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         let updated: [BackendPin] = try await provider.client

@@ -1133,6 +1133,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val onboardingStore = OnboardingStore(app)
     private val repo = VineyardRepository(session)
     private val pinRepo = PinRepository(session)
+    private val pinEvidenceStore = com.rork.vinetrack.data.PinCaptureEvidenceStore(app)
     private val pinPhotoRepo = PinPhotoRepository(session)
     private val vineyardLogoRepo = VineyardLogoRepository(session)
     private val tripRepo = TripRepository(session)
@@ -2468,6 +2469,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // pin now exists server-side (Stage 7C). Same coroutine so photos
             // upload only after their pin rows are confirmed.
             syncPendingPinPhotos(permit.replayPhotoIds)
+            replayPendingPinEvidence()
+        }
+    }
+
+    /** Evidence is its own durable outbox and may arrive before or after its pin. */
+    private fun replayPendingPinEvidence() {
+        if (session.accessToken == null) return
+        val pending = pinEvidenceStore.pending()
+        if (pending.isEmpty()) return
+        viewModelScope.launch {
+            pending.forEach { evidence ->
+                runCatching { pinRepo.uploadCaptureEvidence(evidence) }
+                    .onSuccess { pinEvidenceStore.markUploaded(evidence.pinId, evidence.evidenceRevision) }
+            }
         }
     }
 
@@ -3799,12 +3814,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (_ui.value.isRetryingSync) return
         if (!_ui.value.isOnline || session.accessToken == null) return
         if (!preserveAffectedRecoveryEvidence().didRun) return
+        val hasPendingEvidence = pinEvidenceStore.pending().isNotEmpty()
         val reset = pendingWrites.resetFailedForRetry()
-        if (reset == 0) return
+        if (reset == 0 && !hasPendingEvidence) return
         _ui.update { it.copy(isRetryingSync = true) }
-        // Same safe order as reconnect/post-load. Each replay launches its own
-        // mutex-guarded coroutine; per-coordinator dependency gates keep the
-        // ordering correct even though these are scheduled fire-and-forget.
+        // Same safe order as reconnect/post-load. Evidence is independent and
+        // deliberately allowed to arrive before its pin row.
+        replayPendingPinEvidence()
         replayPendingPinCreates()
         replayPendingCustomPins()
         replayPendingPinCompletions()

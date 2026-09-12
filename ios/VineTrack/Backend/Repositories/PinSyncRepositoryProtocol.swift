@@ -26,6 +26,11 @@ protocol PinSyncRepositoryProtocol: Sendable {
     func fetchAllPins(vineyardId: UUID) async throws -> [BackendPin]
     func upsertPin(_ pin: BackendPinUpsert) async throws
     func upsertPins(_ pins: [BackendPinUpsert]) async throws
+    func upsertPinCaptureEvidence(_ evidence: PinCaptureEvidenceUpload) async throws
     func updatePhotoPath(pinId: UUID, vineyardId: UUID, path: String?) async throws -> AttachmentReferenceConfirmation
     func softDeletePin(id: UUID) async throws
+}
+
+extension PinSyncRepositoryProtocol {
+    func upsertPinCaptureEvidence(_ evidence: PinCaptureEvidenceUpload) async throws {}
 }

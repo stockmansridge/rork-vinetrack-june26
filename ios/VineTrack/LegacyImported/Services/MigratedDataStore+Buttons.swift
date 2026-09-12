@@ -182,7 +182,9 @@ extension MigratedDataStore {
             rowSegments: rowSegments
         )
         do {
-            return try addPinDurably(pin)
+            let saved = try addPinDurably(pin)
+            preserveCaptureEvidence(capture: capture, pin: saved, attachment: attachment)
+            return saved
         } catch {
             return nil
         }
@@ -244,9 +246,52 @@ extension MigratedDataStore {
             rowSegments: rowSegments
         )
         do {
-            return try addPinDurably(pin)
+            let saved = try addPinDurably(pin)
+            preserveCaptureEvidence(capture: capture, pin: saved, attachment: attachment)
+            return saved
         } catch {
             return nil
         }
+    }
+
+    /// Evidence persistence is independent of the already-durable pin write.
+    /// A storage failure can be retried without retracting the field record.
+    private func preserveCaptureEvidence(
+        capture: PinCaptureContext?,
+        pin: VinePin,
+        attachment: PinAttachmentResolver.Attachment?
+    ) {
+        guard let capture else { return }
+        let paddock = pin.paddockId.flatMap { id in paddocks.first(where: { $0.id == id }) }
+        let geometry = PinCaptureEvidence.geometryIdentity(for: paddock)
+        let evidence = PinCaptureEvidence(
+            pinId: pin.id,
+            vineyardId: capture.vineyardId,
+            evidenceRevision: 1,
+            resolverVersion: "server-geometry-v2",
+            capturedAt: capture.capturedAt,
+            locationObservedAt: capture.locationObservedAt,
+            rawLatitude: capture.rawCoordinate.latitude,
+            rawLongitude: capture.rawCoordinate.longitude,
+            horizontalAccuracyM: max(0, capture.horizontalAccuracyMetres ?? 0),
+            headingDegrees: attachment?.heading,
+            headingSource: attachment?.heading == nil ? nil : "qualified_compass",
+            headingObservedAt: attachment?.heading == nil ? nil : capture.capturedAt,
+            pressedSide: pin.side?.rawValue,
+            tripId: capture.tripId,
+            supportedPaddockId: pin.paddockId,
+            supportedDrivingRow: attachment?.drivingRowNumber,
+            supportedPinRow: attachment?.pinRowNumber.map(Double.init),
+            supportedPinSide: attachment?.pinSide?.rawValue,
+            supportedSnappedLatitude: attachment?.snappedCoordinate?.latitude,
+            supportedSnappedLongitude: attachment?.snappedCoordinate?.longitude,
+            supportedAlongRowDistanceM: attachment?.alongRowDistanceM,
+            observations: [],
+            captureProvenance: ["platform": "ios", "capture": "save_first"],
+            geometryRevision: geometry.revision,
+            geometryHash: geometry.hash,
+            isUploaded: false
+        )
+        try? PinCaptureEvidenceStore.shared.save(evidence)
     }
 }

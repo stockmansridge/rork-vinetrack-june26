@@ -30,10 +30,18 @@ Deno.serve(async (request: Request): Promise<Response> => {
       p_resolver_version: job.resolver_version,
       p_lease_token: job.lease_token,
     });
-    outcomes.push({
-      pinId: job.pin_id,
-      outcome: result.error ? "retry_scheduled" : String(result.data ?? "unknown"),
-    });
+    if (result.error) {
+      const failed = await client.rpc("fail_pin_location_enrichment", {
+        p_pin_id: job.pin_id,
+        p_evidence_revision: job.evidence_revision,
+        p_resolver_version: job.resolver_version,
+        p_lease_token: job.lease_token,
+        p_error: result.error.message || "commit_failed",
+      });
+      outcomes.push({ pinId: job.pin_id, outcome: String(failed.data ?? "retry_not_recorded") });
+    } else {
+      outcomes.push({ pinId: job.pin_id, outcome: String(result.data ?? "unknown") });
+    }
   }
   return Response.json({ claimed: outcomes.length, outcomes });
 });

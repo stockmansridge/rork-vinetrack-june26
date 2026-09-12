@@ -145,6 +145,35 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
     )
 
     @Serializable
+    private data class PinEvidenceUpload(
+        @SerialName("pin_id") val pinId: String,
+        @SerialName("vineyard_id") val vineyardId: String,
+        @SerialName("evidence_revision") val evidenceRevision: Int,
+        @SerialName("resolver_version") val resolverVersion: String,
+        @SerialName("captured_at") val capturedAt: String,
+        @SerialName("location_observed_at") val locationObservedAt: String,
+        @SerialName("raw_latitude") val rawLatitude: Double,
+        @SerialName("raw_longitude") val rawLongitude: Double,
+        @SerialName("horizontal_accuracy_m") val horizontalAccuracyM: Double,
+        @SerialName("heading_degrees") val headingDegrees: Double?,
+        @SerialName("heading_source") val headingSource: String?,
+        @SerialName("heading_observed_at") val headingObservedAt: String?,
+        @SerialName("pressed_side") val pressedSide: String?,
+        @SerialName("trip_id") val tripId: String?,
+        @SerialName("supported_paddock_id") val supportedPaddockId: String?,
+        @SerialName("supported_driving_row") val supportedDrivingRow: Double?,
+        @SerialName("supported_pin_row") val supportedPinRow: Double?,
+        @SerialName("supported_pin_side") val supportedPinSide: String?,
+        @SerialName("supported_snapped_latitude") val supportedSnappedLatitude: Double?,
+        @SerialName("supported_snapped_longitude") val supportedSnappedLongitude: Double?,
+        @SerialName("supported_along_row_distance_m") val supportedAlongRowDistanceM: Double?,
+        val observations: List<PinCaptureEvidenceStore.Observation>,
+        @SerialName("capture_provenance") val captureProvenance: Map<String, String>,
+        @SerialName("geometry_revision") val geometryRevision: String?,
+        @SerialName("geometry_hash") val geometryHash: String?,
+    )
+
+    @Serializable
     private data class SoftDeleteArgs(@SerialName("p_pin_id") val pinId: String)
 
     @Serializable
@@ -170,6 +199,49 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
             authHeaders(token)
             contentType(ContentType.Application.Json)
             setBody(RowSegmentsArgs(pinId, segments))
+        }
+        when {
+            response.status.isSuccess() -> Unit
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
+
+    suspend fun uploadCaptureEvidence(evidence: PinCaptureEvidenceStore.Evidence): Unit = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val payload = PinEvidenceUpload(
+            pinId = evidence.pinId,
+            vineyardId = evidence.vineyardId,
+            evidenceRevision = evidence.evidenceRevision,
+            resolverVersion = evidence.resolverVersion,
+            capturedAt = evidence.observationTimeIso,
+            locationObservedAt = evidence.observationTimeIso,
+            rawLatitude = evidence.latitude,
+            rawLongitude = evidence.longitude,
+            horizontalAccuracyM = evidence.accuracyMetres.coerceAtLeast(0.0),
+            headingDegrees = evidence.headingDegrees,
+            headingSource = evidence.headingSource,
+            headingObservedAt = evidence.headingObservedAtIso,
+            pressedSide = evidence.side,
+            tripId = evidence.tripId,
+            supportedPaddockId = evidence.paddockId,
+            supportedDrivingRow = evidence.drivingRowNumber,
+            supportedPinRow = evidence.pinRowNumber,
+            supportedPinSide = evidence.pinSide,
+            supportedSnappedLatitude = evidence.snappedLatitude,
+            supportedSnappedLongitude = evidence.snappedLongitude,
+            supportedAlongRowDistanceM = evidence.alongRowDistanceMetres,
+            observations = evidence.observations.takeLast(16),
+            captureProvenance = mapOf("platform" to "android", "capture" to "save_first"),
+            geometryRevision = evidence.geometryRevision,
+            geometryHash = evidence.geometryHash,
+        )
+        val response = SupabaseClient.http.post(SupabaseClient.restUrl("pin_capture_evidence?on_conflict=pin_id,evidence_revision")) {
+            authHeaders(token)
+            headers { append("Prefer", "resolution=merge-duplicates,return=minimal") }
+            contentType(ContentType.Application.Json)
+            setBody(payload)
         }
         when {
             response.status.isSuccess() -> Unit
