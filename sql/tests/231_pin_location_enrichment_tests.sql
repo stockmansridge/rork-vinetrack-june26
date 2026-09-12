@@ -13,8 +13,17 @@ begin
   if to_regprocedure('public.reverse_pin_location_enrichment(uuid)') is null then raise exception 'T7 reversal RPC missing'; end if;
 
   body:=pg_get_functiondef('public.commit_pin_location_enrichment(uuid,integer,text,uuid)'::regprocedure);
-  if body not like '%lease_expires_at <= now()%' or body not like '%location_confirmation_revision%' or body not like '%partial_block_only%' or body not like '%conflict_overlapping_blocks%' then
-    raise exception 'T8 lease/conflict/partial/manual precedence contract missing';
+  if body !~ 'lease_expires_at[[:space:]]*<=[[:space:]]*now\(\)' then
+    raise exception 'T8a expired-lease rejection contract missing';
+  end if;
+  if position('location_confirmation_revision' in body)=0 then
+    raise exception 'T8b manual-confirmation precedence contract missing';
+  end if;
+  if position('partial_block_only' in body)=0 then
+    raise exception 'T8c partial block outcome contract missing';
+  end if;
+  if position('conflict_overlapping_blocks' in body)=0 then
+    raise exception 'T8d overlapping-block conflict contract missing';
   end if;
   body:=pg_get_functiondef('public.fail_pin_location_enrichment(uuid,integer,text,uuid,text)'::regprocedure);
   if body not like '%technical_failure_terminal%' or body not like '%power(2%' or body not like '%terminal_at%' then
