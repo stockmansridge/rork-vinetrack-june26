@@ -26,7 +26,13 @@ struct RepairsGrowthView: View {
     // Pin-duplicate warning state
     @State private var duplicateWarning: DuplicateWarning?
     @State private var pinForDetailSheet: VinePin?
-    @State private var pendingAisleConfirmation: PendingMappedAisleConfirmation?
+    @State private var pendingGrowthCapture: PendingGrowthCapture?
+
+    private struct PendingGrowthCapture {
+        let capture: PinCaptureContext
+        let resolved: PinContextResolver.Resolved
+        let attachment: PinAttachmentResolver.Attachment
+    }
 
     private struct DuplicateWarning: Identifiable {
         let id = UUID()
@@ -90,24 +96,6 @@ struct RepairsGrowthView: View {
         }
         .background(VineyardTheme.appBackground)
         .pinDroppedToast($pinToast)
-        .confirmationDialog(
-            "Confirm mapped aisle and row",
-            isPresented: Binding(
-                get: { pendingAisleConfirmation != nil },
-                set: { if !$0 { pendingAisleConfirmation = nil } }
-            ),
-            presenting: pendingAisleConfirmation
-        ) { request in
-            ForEach(request.choices) { choice in
-                Button(choice.label) {
-                    pendingAisleConfirmation = nil
-                    choice.confirm()
-                }
-            }
-            Button("Cancel", role: .cancel) { pendingAisleConfirmation = nil }
-        } message: { request in
-            Text("Frozen GPS observation in \(request.paddockName). Confirm this mapped result to continue.")
-        }
         .navigationTitle(store.selectedVineyard?.name ?? "Vineyard")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -283,8 +271,7 @@ struct RepairsGrowthView: View {
 
     private var growthStageBar: some View {
         Button {
-            guard canCreate else { return }
-            showGrowthPicker = true
+            beginGrowthStageCapture()
         } label: {
             HStack(spacing: 12) {
                 GrapeLeafIcon(size: 22, color: .white)
@@ -424,43 +411,9 @@ struct RepairsGrowthView: View {
                 proceed()
             }
         }
-        if attachment.snappedToRow {
-            continueWith(attachment)
-            return
-        }
-        guard let paddock = resolved.paddockId.flatMap({ id in store.paddocks.first(where: { $0.id == id }) }) else {
-            showError(attachmentFailureMessage(capture: capture, resolved: resolved, attachment: attachment))
-            return
-        }
-        let choices = PinAisleGeometry.confirmationCandidates(
-            coordinate: raw,
-            horizontalAccuracyMetres: capture.horizontalAccuracyMetres,
-            in: paddock
-        ).compactMap { aisle -> PendingMappedAisleConfirmation.Choice? in
-            let confirmed = PinAttachmentResolver.resolveConfirmedAisle(
-                rawCoordinate: raw,
-                heading: attachment.heading,
-                operatorSide: side,
-                aisleNumber: aisle.aisleNumber,
-                horizontalAccuracyMetres: capture.horizontalAccuracyMetres,
-                paddock: paddock
-            )
-            guard confirmed.snappedToRow, let row = confirmed.pinRowNumber else { return nil }
-            return PendingMappedAisleConfirmation.Choice(
-                aisleNumber: aisle.aisleNumber,
-                rowNumber: row,
-                side: side,
-                confirm: { continueWith(confirmed) }
-            )
-        }
-        guard !choices.isEmpty else {
-            showError(attachmentFailureMessage(capture: capture, resolved: resolved, attachment: attachment))
-            return
-        }
-        pendingAisleConfirmation = PendingMappedAisleConfirmation(
-            paddockName: paddock.name,
-            choices: choices
-        )
+        // Accepted GPS is sufficient. Unsupported placement fields remain nil
+        // and can be resolved later from the frozen evidence.
+        continueWith(attachment)
     }
 
     private func createRepairPin(
@@ -502,29 +455,44 @@ struct RepairsGrowthView: View {
         }
     }
 
-    private func handleGrowthStageSelected(_ stage: GrowthStage) {
+    private func beginGrowthStageCapture() {
         guard canCreate else { return }
         let fix = locationService.freshLocation()
-        guard let loc = fix.location else {
-            showError("Location unavailable \u{2014} enable location services to drop a pin.")
+        guard let location = fix.location else {
+            showError("Location unavailable — enable location services to drop a pin.")
             return
         }
         if let warning = staleOrLowAccuracyWarning(for: fix.quality) {
             showError(warning)
             return
         }
-        let raw = loc.coordinate
-        guard let capture = freezeCapture(location: loc) else {
-            showError("Could not create pin \u{2014} no vineyard selected.")
+        guard let capture = freezeCapture(location: location) else {
+            showError("Could not create pin — no vineyard selected.")
             return
         }
-        let resolved = PinContextResolver.resolve(coordinate: raw, store: store, tracking: tracking)
-        let attachment = liveAttachment(capture: capture, resolved: resolved, side: .right)
-        guard attachment.snappedToRow else {
-            showError(attachmentFailureMessage(capture: capture, resolved: resolved, attachment: attachment))
-            return
-        }
-        let coord = attachment.snappedCoordinate ?? raw
+        let resolved = PinContextResolver.resolve(coordinate: capture.rawCoordinate, store: store, tracking: tracking)
+        let candidate = liveAttachment(capture: capture, resolved: resolved, side: .right)
+        let attachment = PinAttachmentResolver.Attachment(
+            drivingRowNumber: nil,
+            pinRowNumber: nil,
+            pinSide: nil,
+            snappedCoordinate: nil,
+            alongRowDistanceM: nil,
+            snappedToRow: false,
+            heading: candidate.heading
+        )
+        pendingGrowthCapture = PendingGrowthCapture(capture: capture, resolved: resolved, attachment: attachment)
+        showGrowthPicker = true
+    }
+
+    private func handleGrowthStageSelected(_ stage: GrowthStage) {
+        guard canCreate, let pending = pendingGrowthCapture else { return }
+        pendingGrowthCapture = nil
+        let capture = pending.capture
+        let resolved = pending.resolved
+        let attachment = pending.attachment
+        let raw = capture.rawCoordinate
+        let coord = raw
         let proceed = {
             createGrowthPin(
                 stage: stage,
@@ -538,7 +506,7 @@ struct RepairsGrowthView: View {
             rawCoordinate: raw,
             resolved: resolved,
             attachment: attachment,
-            side: .right,
+            side: nil,
             mode: .growth,
             logicalType: "Growth Stage"
         ) {
@@ -567,7 +535,7 @@ struct RepairsGrowthView: View {
             coordinate: capture.rawCoordinate,
             heading: heading,
             capture: capture,
-            side: .right,
+            side: nil,
             paddockId: resolved.paddockId,
             rowNumber: attachment.pinRowNumber,
             createdBy: auth.userName,
@@ -612,6 +580,7 @@ struct RepairsGrowthView: View {
         guard let vineyardId = store.selectedVineyardId else { return nil }
         return PinCaptureContext(
             capturedAt: Date(),
+            locationObservedAt: location.timestamp,
             vineyardId: vineyardId,
             tripId: store.currentActiveTripIdProvider?(),
             rawCoordinate: location.coordinate,
@@ -717,7 +686,7 @@ struct RepairsGrowthView: View {
         rawCoordinate: CLLocationCoordinate2D,
         resolved: PinContextResolver.Resolved,
         attachment: PinAttachmentResolver.Attachment,
-        side: PinSide,
+        side: PinSide?,
         mode: PinMode,
         logicalType: String
     ) -> (pin: VinePin, distance: Double, radius: Double)? {

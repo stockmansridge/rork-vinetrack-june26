@@ -181,8 +181,11 @@ extension MigratedDataStore {
             locationScope: locationScope,
             rowSegments: rowSegments
         )
-        addPin(pin)
-        return pin
+        do {
+            return try addPinDurably(pin)
+        } catch {
+            return nil
+        }
     }
 
     /// Create a local growth-stage pin (button mode `.growth` with isGrowthStageButton).
@@ -240,7 +243,10 @@ extension MigratedDataStore {
             locationScope: locationScope,
             rowSegments: rowSegments
         )
-        addPin(pin)
-        return pin
+        do {
+            return try addPinDurably(pin)
+        } catch {
+            return nil
+        }
     }
 }

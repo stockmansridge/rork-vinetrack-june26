@@ -74,6 +74,10 @@ final class MigratedDataStore {
 
     // MARK: - Sync hooks (Phase 10B)
 
+    /// Called before a newly captured pin is published. The sync service uses
+    /// this throwing hook to retain its upload marker first, so a successful
+    /// capture can always be retried after restart.
+    var onPinCreateWillPersist: ((UUID, Date) throws -> Void)?
     /// Called when a pin is added/updated locally. Sync services observe this
     /// to mark the pin as dirty for upload.
     var onPinChanged: ((UUID) -> Void)?
@@ -783,7 +787,16 @@ final class MigratedDataStore {
     // MARK: - Pin CRUD
 
     func addPin(_ pin: VinePin) {
-        guard let vineyardId = selectedVineyardId else { return }
+        try? addPinDurably(pin)
+    }
+
+    /// Retains the upload marker and complete local pin before publishing it to
+    /// the UI. The stable pin ID makes retries idempotent.
+    @discardableResult
+    func addPinDurably(_ pin: VinePin) throws -> VinePin {
+        guard let vineyardId = selectedVineyardId else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: "No vineyard is selected."])
+        }
         var item = pin
         item.vineyardId = vineyardId
         // Self-heal: stamp the current authenticated user as the creator if
@@ -811,8 +824,15 @@ final class MigratedDataStore {
             print("[Pins] addPin self-linked tripId=\(activeTripId) on pin \(item.id)")
             #endif
         }
-        pins.append(item)
-        pinRepo.saveSlice(pins, for: vineyardId)
+        try onPinCreateWillPersist?(item.id, item.timestamp)
+        var nextPins = pins
+        if let existingIndex = nextPins.firstIndex(where: { $0.id == item.id }) {
+            nextPins[existingIndex] = item
+        } else {
+            nextPins.append(item)
+        }
+        try pinRepo.saveSliceOrThrow(nextPins, for: vineyardId)
+        pins = nextPins
         // Mirror growth-stage pins into the dedicated growth_stage_records
         // table for the Lovable Growth Stage Records page. Legacy pin-based
         // growth observations remain authoritative for the iOS workflow.
@@ -833,6 +853,7 @@ final class MigratedDataStore {
             onTripChanged?(tripId)
         }
         onPinChanged?(item.id)
+        return item
     }
 
     func updatePin(_ pin: VinePin) {

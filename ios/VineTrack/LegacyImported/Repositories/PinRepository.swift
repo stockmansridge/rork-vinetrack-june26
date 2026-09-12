@@ -83,10 +83,16 @@ final class PinRepository {
     // MARK: - Save
 
     func saveSlice(_ items: [VinePin], for vineyardId: UUID) {
-        var all = loadAll()
+        try? saveSliceOrThrow(items, for: vineyardId)
+    }
+
+    /// Replaces one vineyard slice without treating an unreadable cache or a
+    /// failed disk write as success.
+    func saveSliceOrThrow(_ items: [VinePin], for vineyardId: UUID) throws {
+        var all = try loadAllForDurableUpdate()
         all.removeAll { $0.vineyardId == vineyardId }
         all.append(contentsOf: items)
-        persistence.save(all, key: Self.storageKey)
+        try persistence.saveOrThrow(all, key: Self.storageKey)
     }
 
     /// Updates only notes on the originally-bound pin and vineyard, preserving

@@ -137,6 +137,10 @@ final class PinSyncService {
         store.currentUserNameProvider = { [weak auth] in auth?.userName }
         guard !isConfigured else { return }
         isConfigured = true
+        store.onPinCreateWillPersist = { [weak self] id, capturedAt in
+            guard let self else { throw CocoaError(.fileWriteUnknown) }
+            try self.metadata.markDirtyDurably(id, at: capturedAt)
+        }
         store.onPinChanged = { [weak self] id in
             self?.markPinDirty(id)
             self?.scheduleEagerPush()
@@ -369,7 +373,8 @@ final class PinSyncService {
         let currentUserName = auth?.userName
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
-            let pinsById = Dictionary(store.pins.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            let durablePins = try PinRepository(persistence: persistence).loadAllForDurableUpdate()
+            let pinsById = Dictionary(durablePins.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendPinUpsert] = []
             var pushedIds: [UUID] = []
             var orphans: [UUID] = []
@@ -877,9 +882,19 @@ final class PinSyncMetadata {
     }
 
     func markDirty(_ id: UUID, at date: Date) {
+        try? markDirtyDurably(id, at: date)
+    }
+
+    func markDirtyDurably(_ id: UUID, at date: Date) throws {
+        let previous = state
         state.pendingUpserts[id] = date
         state.failedUpserts.remove(id)
-        save()
+        do {
+            try persistence.saveOrThrow(state, key: key)
+        } catch {
+            state = previous
+            throw error
+        }
     }
 
     func markDeleted(_ id: UUID, at date: Date) {

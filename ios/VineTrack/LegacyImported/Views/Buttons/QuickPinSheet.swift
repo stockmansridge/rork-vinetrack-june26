@@ -17,6 +17,8 @@ struct QuickPinSheet: View {
     @State private var notes: String = ""
     @State private var showGrowthPicker: Bool = false
     @State private var pendingGrowthButton: ButtonConfig?
+    @State private var pendingGrowthLocation: CLLocation?
+    @State private var pendingGrowthPlacement: ResolvedPlacement?
     @State private var errorMessage: String?
     @State private var duplicateWarning: DuplicateWarning?
     @State private var pinForDetailSheet: VinePin?
@@ -232,13 +234,29 @@ struct QuickPinSheet: View {
             return
         }
 
+        let placement = resolvePlacement(location: loc, side: side)
         if mode == .growth && button.isGrowthStageButton {
+            let sideFree: ResolvedPlacement = (
+                placement.paddockId,
+                PinAttachmentResolver.Attachment(
+                    drivingRowNumber: nil,
+                    pinRowNumber: nil,
+                    pinSide: nil,
+                    snappedCoordinate: nil,
+                    alongRowDistanceM: nil,
+                    snappedToRow: false,
+                    heading: placement.attachment.heading
+                ),
+                nil,
+                placement.capture
+            )
             pendingGrowthButton = button
+            pendingGrowthLocation = loc
+            pendingGrowthPlacement = sideFree
             showGrowthPicker = true
             return
         }
 
-        let placement = resolvePlacement(location: loc, side: side)
         let continueWith: @MainActor (ResolvedPlacement) -> Void = { frozenPlacement in
             let duplicateCoordinate = frozenPlacement.attachment.snappedCoordinate ?? loc.coordinate
             let proceed = { createPin(button: button, location: loc, placement: frozenPlacement) }
@@ -266,30 +284,13 @@ struct QuickPinSheet: View {
     }
 
     private func handleGrowthStageSelected(_ stage: GrowthStage) {
-        let fix = locationService.freshLocation()
-        guard let loc = fix.location else {
-            errorMessage = "Location unavailable \u{2014} enable location services to drop a pin."
+        guard let loc = pendingGrowthLocation, let placement = pendingGrowthPlacement else {
+            errorMessage = "The frozen GPS observation is no longer available. Press Drop again."
             return
         }
-        if let warning = staleOrLowAccuracyWarning(for: fix.quality) {
-            errorMessage = warning
-            return
-        }
-        let resolved = resolvePlacement(location: loc, side: side)
-        let placement: ResolvedPlacement = (
-            resolved.paddockId,
-            PinAttachmentResolver.Attachment(
-                drivingRowNumber: nil,
-                pinRowNumber: nil,
-                pinSide: nil,
-                snappedCoordinate: nil,
-                alongRowDistanceM: nil,
-                snappedToRow: false,
-                heading: resolved.attachment.heading
-            ),
-            resolved.fallbackRowNumber,
-            resolved.capture
-        )
+        pendingGrowthLocation = nil
+        pendingGrowthPlacement = nil
+        pendingGrowthButton = nil
         let duplicateCoordinate = loc.coordinate
         let proceed = { createGrowthPin(stage: stage, location: loc, placement: placement) }
         if let dup = checkDuplicate(
@@ -316,20 +317,15 @@ struct QuickPinSheet: View {
         location: CLLocation,
         placement: ResolvedPlacement
     ) {
-        let rowNumber = Int(rowText.trimmingCharacters(in: .whitespacesAndNewlines))
         let created = store.createGrowthStagePin(
             stageCode: stage.code,
             stageDescription: stage.description,
-            // The original observation, never the snapped point.
             coordinate: location.coordinate,
-            // Frozen capture heading: the exact facing the row choice used.
             heading: placement.attachment.heading,
             capture: placement.capture,
-            side: side,
+            side: nil,
             paddockId: placement.paddockId,
-            // Typed row (manual intent) wins; otherwise only a confirmed
-            // attached row — never the nearest-row guess.
-            rowNumber: rowNumber ?? placement.attachment.pinRowNumber,
+            rowNumber: nil,
             createdBy: auth.userName,
             createdByUserId: auth.userId,
             notes: notes.isEmpty ? nil : notes,
@@ -441,7 +437,7 @@ struct QuickPinSheet: View {
         at coord: CLLocationCoordinate2D,
         rawCoordinate: CLLocationCoordinate2D,
         placement: ResolvedPlacement,
-        side: PinSide,
+        side: PinSide?,
         mode: PinMode,
         logicalType: String
     ) -> (pin: VinePin, distance: Double, radius: Double)? {

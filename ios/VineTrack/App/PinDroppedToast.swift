@@ -59,7 +59,7 @@ struct PinDroppedToastModifier: ViewModifier {
             .onChange(of: info?.id) { _, newId in
                 guard newId != nil else { return }
                 Task {
-                    try? await Task.sleep(for: .seconds(2.2))
+                    try? await Task.sleep(for: .seconds(1.5))
                     await MainActor.run {
                         if info?.id == newId {
                             info = nil
