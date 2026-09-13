@@ -1,6 +1,28 @@
 -- Forward-only correction for deployed pin enrichment 231.
 -- No historical enqueue, scheduling, worker deployment, or data rewrite.
 
+-- Supabase installs pgcrypto in the extensions schema. Qualify digest calls so
+-- security-definer functions with a restricted search_path remain executable.
+create or replace function public.pin_geometry_identity(points jsonb, rows jsonb)
+returns text language sql immutable as $$
+select 'pin-geometry-v1:' || encode(extensions.digest(
+  'pin-geometry-v1|p=' || coalesce((
+    select string_agg(to_char(coalesce((p->>'latitude')::numeric,(p->>'lat')::numeric),'FM999999990.00000000') || ',' ||
+                      to_char(coalesce((p->>'longitude')::numeric,(p->>'lng')::numeric),'FM999999990.00000000'),';' order by ord)
+    from jsonb_array_elements(coalesce(points,'[]'::jsonb)) with ordinality x(p,ord)
+  ),'') || '|r=' || coalesce((
+    select string_agg((r->>'number') || ':' ||
+      to_char(coalesce((coalesce(r->'startPoint',r->'start_point')->>'latitude')::numeric,(coalesce(r->'startPoint',r->'start_point')->>'lat')::numeric),'FM999999990.00000000') || ',' ||
+      to_char(coalesce((coalesce(r->'startPoint',r->'start_point')->>'longitude')::numeric,(coalesce(r->'startPoint',r->'start_point')->>'lng')::numeric),'FM999999990.00000000') || '>' ||
+      to_char(coalesce((coalesce(r->'endPoint',r->'end_point')->>'latitude')::numeric,(coalesce(r->'endPoint',r->'end_point')->>'lat')::numeric),'FM999999990.00000000') || ',' ||
+      to_char(coalesce((coalesce(r->'endPoint',r->'end_point')->>'longitude')::numeric,(coalesce(r->'endPoint',r->'end_point')->>'lng')::numeric),'FM999999990.00000000'),';' order by (r->>'number')::numeric)
+    from jsonb_array_elements(coalesce(rows,'[]'::jsonb)) x(r)
+  ),''), 'sha256'),'hex')
+$$;
+
+alter function public.insert_pin_capture_evidence(jsonb)
+  set search_path = public, extensions;
+
 create or replace function public.pin_capture_course_direction(
   observations jsonb,
   captured_at timestamptz,
@@ -212,7 +234,7 @@ declare
   before_row jsonb; after_row jsonb; resolved jsonb; v_hash text; existing_hash text; existing_outcome text; outcome text;
 begin
   if p_expected_sync_version is null then return 'conflict_missing_expected_revision'; end if;
-  v_hash:=encode(digest(concat_ws('|',p_pin_id,p_evidence_revision,p_expected_sync_version,p_paddock_id,p_driving_row,p_pin_row,p_pin_side,p_snapped_latitude,p_snapped_longitude,p_along_row_distance_m),'sha256'),'hex');
+  v_hash:=encode(extensions.digest(concat_ws('|',p_pin_id,p_evidence_revision,p_expected_sync_version,p_paddock_id,p_driving_row,p_pin_row,p_pin_side,p_snapped_latitude,p_snapped_longitude,p_along_row_distance_m),'sha256'),'hex');
   select payload_hash,outcome into existing_hash,existing_outcome from public.pin_location_confirmation_operations where operation_id=p_operation_id;
   if found then
     if existing_hash<>v_hash then return 'conflict_operation_payload'; end if;
