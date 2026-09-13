@@ -61,6 +61,9 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
     /// pin to the row geometry. Only confident snaps populate the
     /// attachment fields above.
     var snappedToRow: Bool
+    /// Last server revision observed for this exact pin. Optional only until the
+    /// first server round-trip; confirmation requires a concrete revision.
+    var syncVersion: Int?
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -106,6 +109,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         snappedLatitude: Double? = nil,
         snappedLongitude: Double? = nil,
         snappedToRow: Bool = false,
+        syncVersion: Int? = nil,
         locationScope: String? = nil,
         rowSegments: [ManualIssueSegment]? = nil
     ) {
@@ -139,6 +143,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         self.snappedLatitude = snappedLatitude
         self.snappedLongitude = snappedLongitude
         self.snappedToRow = snappedToRow
+        self.syncVersion = syncVersion
         self.locationScope = locationScope
         self.rowSegments = rowSegments
     }
@@ -152,7 +157,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         case isCompleted, completedBy, completedByUserId, completedAt
         case photoData, photoPath, tripId, growthStageCode, notes
         case drivingRowNumber, pinRowNumber, pinSide, alongRowDistanceM
-        case snappedLatitude, snappedLongitude, snappedToRow, locationScope
+        case snappedLatitude, snappedLongitude, snappedToRow, syncVersion, locationScope
         case rowSegments
     }
 
@@ -188,6 +193,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         snappedLatitude = try c.decodeIfPresent(Double.self, forKey: .snappedLatitude)
         snappedLongitude = try c.decodeIfPresent(Double.self, forKey: .snappedLongitude)
         snappedToRow = try c.decodeIfPresent(Bool.self, forKey: .snappedToRow) ?? false
+        syncVersion = try c.decodeIfPresent(Int.self, forKey: .syncVersion)
         locationScope = try c.decodeIfPresent(String.self, forKey: .locationScope)
         rowSegments = try c.decodeIfPresent([ManualIssueSegment].self, forKey: .rowSegments)
     }
@@ -231,6 +237,7 @@ extension VinePin {
             snappedLatitude: snappedLatitude,
             snappedLongitude: snappedLongitude,
             snappedToRow: snappedToRow,
+            syncVersion: syncVersion,
             locationScope: locationScope,
             rowSegments: rowSegments
         )

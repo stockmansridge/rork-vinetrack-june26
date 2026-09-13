@@ -46,4 +46,42 @@ final class PinOfflineCaptureDisplayTests: XCTestCase {
         XCTAssertEqual(capture.pinId, pinId)
         XCTAssertEqual(capture.locationObservedAt, observedAt)
     }
+
+    func testConfirmationHeadingUsesCircularNorthMean() {
+        let capturedAt = Date()
+        let heading = PinCaptureEvidence.confirmationHeading(
+            for: makeEvidence(capturedAt: capturedAt, courses: [359, 1, 0])
+        )
+        XCTAssertNotNil(heading)
+        XCTAssertTrue((heading ?? 180) < 2 || (heading ?? 180) > 358)
+    }
+
+    func testConfirmationHeadingRejectsContradictoryCourses() {
+        let evidence = makeEvidence(capturedAt: Date(), courses: [0, 180, 90])
+        XCTAssertNil(PinCaptureEvidence.confirmationHeading(for: evidence))
+    }
+
+    private func makeEvidence(capturedAt: Date, courses: [Double]) -> PinCaptureEvidence {
+        let observations = courses.enumerated().map { index, course in
+            PinCaptureObservation(
+                observedAt: capturedAt.addingTimeInterval(Double(index - courses.count)),
+                latitude: -33 + Double(index) * 0.00001,
+                longitude: 149,
+                horizontalAccuracyM: 0.4,
+                courseDegrees: course,
+                speedMps: 1
+            )
+        }
+        return PinCaptureEvidence(
+            pinId: UUID(), vineyardId: UUID(), evidenceRevision: 1, resolverVersion: "fixture",
+            capturedAt: capturedAt, locationObservedAt: capturedAt, rawLatitude: -32.99998,
+            rawLongitude: 149, horizontalAccuracyM: 0.4, headingDegrees: nil,
+            headingSource: nil, headingObservedAt: nil, pressedSide: "Left", tripId: nil,
+            captureUserId: UUID(), captureButtonName: "Fixture", captureMode: "Repairs",
+            supportedPaddockId: nil, supportedDrivingRow: nil, supportedPinRow: nil,
+            supportedPinSide: nil, supportedSnappedLatitude: nil, supportedSnappedLongitude: nil,
+            supportedAlongRowDistanceM: nil, aisleLock: nil, observations: observations,
+            captureProvenance: [:], geometryRevision: nil, geometryHash: nil, isUploaded: false
+        )
+    }
 }

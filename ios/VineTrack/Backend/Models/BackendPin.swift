@@ -312,6 +312,7 @@ extension BackendPin {
             snappedLatitude: snappedLatitude,
             snappedLongitude: snappedLongitude,
             snappedToRow: snappedToRow ?? false,
+            syncVersion: syncVersion,
             locationScope: locationScope,
             rowSegments: rowSegments?.map { ManualIssueSegment(row: $0.rowNumber, segment: $0.segmentNumber) }
         )

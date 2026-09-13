@@ -63,9 +63,9 @@ final class SupabasePinSyncRepository: PinSyncRepositoryProtocol {
         }
     }
 
-    func confirmSavedPinLocation(_ operation: PendingPinLocationConfirmation) async throws {
+    func confirmSavedPinLocation(_ operation: PendingPinLocationConfirmation) async throws -> String {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let _: String = try await provider.client
+        return try await provider.client
             .rpc("confirm_saved_pin_location_v2", params: PinLocationConfirmationRequest(operation: operation))
             .execute()
             .value
@@ -128,7 +128,7 @@ nonisolated private struct PinLocationConfirmationRequest: Encodable, Sendable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(operation.id, forKey: .operationId); try c.encode(operation.pinId, forKey: .pinId)
-        try c.encode(operation.evidenceRevision, forKey: .evidenceRevision); try c.encodeIfPresent(operation.expectedSyncVersion, forKey: .expectedSyncVersion)
+        try c.encode(operation.evidenceRevision, forKey: .evidenceRevision); try c.encode(operation.expectedSyncVersion, forKey: .expectedSyncVersion)
         try c.encode(operation.paddockId, forKey: .paddockId); try c.encode(operation.drivingRow, forKey: .drivingRow)
         try c.encode(operation.pinRow, forKey: .pinRow); try c.encode(operation.pinSide, forKey: .pinSide)
         try c.encode(operation.snappedLatitude, forKey: .snappedLatitude); try c.encode(operation.snappedLongitude, forKey: .snappedLongitude)

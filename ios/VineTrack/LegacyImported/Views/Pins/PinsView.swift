@@ -1895,6 +1895,7 @@ struct PinDetailSheet: View {
     private func confirmSavedPlacement() {
         guard let candidate = savedPlacementCandidate,
               let evidence = PinCaptureEvidenceStore.shared.evidence(pinId: currentPin.id),
+              let expectedSyncVersion = currentPin.syncVersion,
               let drivingRow = candidate.attachment.drivingRowNumber,
               let pinRow = candidate.attachment.pinRowNumber,
               let pinSide = candidate.attachment.pinSide,
@@ -1902,23 +1903,14 @@ struct PinDetailSheet: View {
               let along = candidate.attachment.alongRowDistanceM else { return }
         let operation = PendingPinLocationConfirmation(
             id: UUID(), pinId: currentPin.id, vineyardId: currentPin.vineyardId,
-            evidenceRevision: evidence.evidenceRevision, expectedSyncVersion: nil,
+            evidenceRevision: evidence.evidenceRevision, expectedSyncVersion: expectedSyncVersion,
             paddockId: candidate.paddock.id, drivingRow: drivingRow, pinRow: Double(pinRow),
             pinSide: pinSide.rawValue, snappedLatitude: snapped.latitude,
-            snappedLongitude: snapped.longitude, alongRowDistanceM: along
+            snappedLongitude: snapped.longitude, alongRowDistanceM: along,
+            status: .pending, conflictReason: nil
         )
         do {
             try pinSync.queueSavedPinConfirmation(operation)
-            var updated = currentPin
-            updated.paddockId = candidate.paddock.id
-            updated.drivingRowNumber = drivingRow
-            updated.pinRowNumber = pinRow
-            updated.pinSide = pinSide
-            updated.snappedLatitude = snapped.latitude
-            updated.snappedLongitude = snapped.longitude
-            updated.alongRowDistanceM = along
-            updated.snappedToRow = true
-            store.applyRemotePinUpsert(updated)
         } catch {
             savedPlacementConfirmationError = "The confirmation could not be retained on this device. The saved pin was not changed."
         }
@@ -1979,32 +1971,40 @@ struct PinDetailSheet: View {
     }
     private var savedPlacementCandidate: (paddock: Paddock, attachment: PinAttachmentResolver.Attachment)? {
         guard currentPin.pinRowNumber == nil,
+              currentPin.syncVersion != nil,
+              pinSync.savedPinConfirmationStatus(pinId: currentPin.id) == nil,
               let evidence = PinCaptureEvidenceStore.shared.evidence(pinId: currentPin.id),
               evidence.vineyardId == currentPin.vineyardId,
               evidence.rawLatitude == currentPin.latitude,
               evidence.rawLongitude == currentPin.longitude,
               evidence.capturedAt == currentPin.timestamp,
-              let paddockId = evidence.supportedPaddockId,
-              let paddock = store.paddocks.first(where: { $0.id == paddockId }),
-              PinCaptureEvidence.geometryIdentity(for: paddock).hash == evidence.geometryHash,
-              let drivingRow = evidence.supportedDrivingRow,
-              let pinRowValue = evidence.supportedPinRow,
-              pinRowValue.rounded() == pinRowValue,
-              let pinSideText = evidence.supportedPinSide,
-              let pinSide = PinSide(rawValue: pinSideText),
-              let snappedLatitude = evidence.supportedSnappedLatitude,
-              let snappedLongitude = evidence.supportedSnappedLongitude,
-              let along = evidence.supportedAlongRowDistanceM else { return nil }
-        let attachment = PinAttachmentResolver.Attachment(
-            drivingRowNumber: drivingRow,
-            pinRowNumber: Int(pinRowValue),
-            pinSide: pinSide,
-            snappedCoordinate: CLLocationCoordinate2D(latitude: snappedLatitude, longitude: snappedLongitude),
-            alongRowDistanceM: along,
-            snappedToRow: true,
-            heading: evidence.headingDegrees
-        )
-        return (paddock, attachment)
+              let sideText = evidence.pressedSide,
+              let operatorSide = PinSide(rawValue: sideText),
+              let heading = PinCaptureEvidence.confirmationHeading(for: evidence),
+              let geometryHash = evidence.geometryHash else { return nil }
+        let rawCoordinate = CLLocationCoordinate2D(latitude: evidence.rawLatitude, longitude: evidence.rawLongitude)
+        let candidates = store.paddocks.filter {
+            $0.vineyardId == evidence.vineyardId && PinCaptureEvidence.geometryIdentity(for: $0).hash == geometryHash
+        }.compactMap { paddock -> (Paddock, PinAttachmentResolver.Attachment)? in
+            let attachment = PinAttachmentResolver.resolveAutomatic(
+                rawCoordinate: rawCoordinate,
+                heading: heading,
+                headingAgeSeconds: 0,
+                horizontalAccuracyMetres: evidence.horizontalAccuracyM,
+                operatorSide: operatorSide,
+                paddock: paddock,
+                capturedAt: evidence.capturedAt,
+                aisleLock: nil
+            )
+            guard attachment.snappedToRow,
+                  attachment.drivingRowNumber != nil,
+                  attachment.pinRowNumber != nil,
+                  attachment.snappedCoordinate != nil,
+                  attachment.alongRowDistanceM != nil else { return nil }
+            return (paddock, attachment)
+        }
+        guard candidates.count == 1, let candidate = candidates.first else { return nil }
+        return (candidate.0, candidate.1)
     }
 
     private var currentPhotoPath: String? {
@@ -2237,6 +2237,18 @@ struct PinDetailSheet: View {
                         }
                     } footer: {
                         Text("Optional. Uses this pin’s original observation and keeps its identity, notes, photo and later edits.")
+                    }
+                } else if let confirmationStatus = pinSync.savedPinConfirmationStatus(pinId: currentPin.id) {
+                    Section("Mapped location confirmation") {
+                        switch confirmationStatus {
+                        case .pending:
+                            Label("Pending sync", systemImage: "clock.arrow.circlepath")
+                        case .conflict:
+                            Label("Needs review", systemImage: "exclamationmark.triangle")
+                            Text(pinSync.savedPinConfirmationConflict(pinId: currentPin.id) ?? "The pin changed before confirmation was acknowledged.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
 

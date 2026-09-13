@@ -218,11 +218,20 @@ final class PinSyncService {
     /// Durably queues an optional confirmation before applying its exact
     /// placement locally. The stable operation id makes response-loss retries safe.
     func queueSavedPinConfirmation(_ operation: PendingPinLocationConfirmation) throws {
+        guard pendingConfirmations.values.first(where: { $0.pinId == operation.pinId }) == nil else { return }
         var next = pendingConfirmations
         next[operation.id] = operation
         try persistence.saveOrThrow(next, key: pendingConfirmationsKey)
         pendingConfirmations = next
         scheduleEagerPush()
+    }
+
+    func savedPinConfirmationStatus(pinId: UUID) -> PinLocationConfirmationDeliveryStatus? {
+        pendingConfirmations.values.first(where: { $0.pinId == pinId })?.deliveryStatus
+    }
+
+    func savedPinConfirmationConflict(pinId: UUID) -> String? {
+        pendingConfirmations.values.first(where: { $0.pinId == pinId })?.conflictReason
     }
 
     // MARK: - Public sync entry points
@@ -393,10 +402,23 @@ final class PinSyncService {
     private func pushPendingConfirmations() async throws {
         var next = pendingConfirmations
         var firstError: Error?
-        for (id, operation) in pendingConfirmations {
+        for (id, operation) in pendingConfirmations where operation.deliveryStatus == .pending {
             do {
-                try await repository.confirmSavedPinLocation(operation)
-                next.removeValue(forKey: id)
+                let outcome = try await repository.confirmSavedPinLocation(operation)
+                if outcome == "confirmed" {
+                    next.removeValue(forKey: id)
+                } else if outcome.hasPrefix("conflict_") {
+                    var conflicted = operation
+                    conflicted.status = .conflict
+                    conflicted.conflictReason = Self.confirmationConflictMessage(for: outcome)
+                    next[id] = conflicted
+                } else {
+                    throw NSError(
+                        domain: "VineTrack.PinLocationConfirmation",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Unexpected location confirmation response."]
+                    )
+                }
                 try persistence.saveOrThrow(next, key: pendingConfirmationsKey)
                 pendingConfirmations = next
             } catch {
@@ -404,6 +426,19 @@ final class PinSyncService {
             }
         }
         if let firstError { throw firstError }
+    }
+
+    private nonisolated static func confirmationConflictMessage(for outcome: String) -> String {
+        switch outcome {
+        case "conflict_newer_edit", "conflict_current_placement":
+            return "The pin changed after this confirmation was queued. Its newer location was preserved."
+        case "conflict_candidate_invalid":
+            return "The mapped candidate no longer matches the capture-time evidence."
+        case "conflict_forbidden":
+            return "Your current vineyard access does not allow this confirmation."
+        default:
+            return "The server could not safely apply this confirmation."
+        }
     }
 
     func pushLocalPins(vineyardId: UUID) async throws {
