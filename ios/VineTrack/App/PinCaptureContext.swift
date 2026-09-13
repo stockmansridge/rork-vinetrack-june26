@@ -26,6 +26,14 @@ nonisolated struct PinCaptureContext: Sendable, Equatable {
     let rawCoordinate: CLLocationCoordinate2D
     /// Reported accuracy radius of that observation, used as aisle evidence.
     let horizontalAccuracyMetres: Double?
+    /// Actual bounded provider history available before the tap.
+    let observations: [PinCaptureObservation]
+    /// Actual heading sample identity; freshness is evaluated independently.
+    let headingDegrees: Double?
+    let headingSource: String?
+    let headingObservedAt: Date?
+    /// Observation-backed aisle lock available at the tap.
+    let aisleLock: PinCaptureAisleLock?
 
     init(
         pinId: UUID = UUID(),
@@ -34,7 +42,12 @@ nonisolated struct PinCaptureContext: Sendable, Equatable {
         vineyardId: UUID,
         tripId: UUID?,
         rawCoordinate: CLLocationCoordinate2D,
-        horizontalAccuracyMetres: Double?
+        horizontalAccuracyMetres: Double?,
+        observations: [PinCaptureObservation] = [],
+        headingDegrees: Double? = nil,
+        headingSource: String? = nil,
+        headingObservedAt: Date? = nil,
+        aisleLock: PinCaptureAisleLock? = nil
     ) {
         self.pinId = pinId
         self.capturedAt = capturedAt
@@ -43,6 +56,11 @@ nonisolated struct PinCaptureContext: Sendable, Equatable {
         self.tripId = tripId
         self.rawCoordinate = rawCoordinate
         self.horizontalAccuracyMetres = horizontalAccuracyMetres
+        self.observations = Array(observations.suffix(16))
+        self.headingDegrees = headingDegrees
+        self.headingSource = headingSource
+        self.headingObservedAt = headingObservedAt
+        self.aisleLock = aisleLock
     }
 
     static func == (lhs: PinCaptureContext, rhs: PinCaptureContext) -> Bool {
@@ -54,6 +72,11 @@ nonisolated struct PinCaptureContext: Sendable, Equatable {
             && lhs.rawCoordinate.latitude == rhs.rawCoordinate.latitude
             && lhs.rawCoordinate.longitude == rhs.rawCoordinate.longitude
             && lhs.horizontalAccuracyMetres == rhs.horizontalAccuracyMetres
+            && lhs.observations == rhs.observations
+            && lhs.headingDegrees == rhs.headingDegrees
+            && lhs.headingSource == rhs.headingSource
+            && lhs.headingObservedAt == rhs.headingObservedAt
+            && lhs.aisleLock == rhs.aisleLock
     }
 
     /// True when this capture may still be written: same vineyard, same trip.

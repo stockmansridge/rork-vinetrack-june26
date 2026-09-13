@@ -1922,8 +1922,14 @@ fun PinCategoryLauncherScreen(
                     alongRowDistanceMetres = placement?.alongRowDistanceM,
                     snappedToRow = placement?.snappedToRow ?: false,
                     drivingRowNumber = placement?.drivingRowNumber,
-                    headingSource = capture.headingDegrees?.let { "qualified_device_heading" },
-                    headingObservedAtIso = capture.headingDegrees?.let { capture.observedAtIso },
+                    capturedAtIso = capture.capturedAtIso,
+                    captureUserId = capture.captureUserId,
+                    headingSource = capture.headingSource,
+                    headingObservedAtIso = capture.headingObservedAtIso,
+                    aisleLock = capture.aisleLock,
+                    geometryRevision = PinCaptureEvidenceStore.geometryIdentity(paddock).first,
+                    geometryHash = PinCaptureEvidenceStore.geometryIdentity(paddock).second,
+                    observations = capture.observations,
                 ),
             )
             if (!evidenceSaved) {
@@ -2029,6 +2035,7 @@ fun PinCategoryLauncherScreen(
                 headingDegrees = trueHeading,
                 headingObservedAtElapsedRealtimeNanos = observation?.observedAtElapsedRealtimeNanos,
                 aisleLock = pinLocationTracker.lockedAisleFor(accepted, state.paddocks),
+                observationHistory = pinLocationTracker.pinAisleObservationHistory(),
             )
         }
         if (fix == null || capture == null) {
@@ -2134,6 +2141,7 @@ fun PinCategoryLauncherScreen(
                             null,
                             headingDegrees = trueHeading,
                             headingObservedAtElapsedRealtimeNanos = observation?.observedAtElapsedRealtimeNanos,
+                            observationHistory = pinLocationTracker.pinAisleObservationHistory(),
                         )
                     }
                     showGrowthStageSheet = true

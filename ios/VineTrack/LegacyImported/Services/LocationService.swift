@@ -25,6 +25,24 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
     /// stationary operators still accumulate separately delivered observations.
     var pinAisleObservationHistory: [CLLocation] { recentDistinctLocations }
 
+    /// Immutable evidence snapshot for the current tap; never includes samples
+    /// delivered after `capturedAt`.
+    func pinCaptureObservations(capturedAt: Date) -> [PinCaptureObservation] {
+        recentDistinctLocations
+            .filter { $0.timestamp <= capturedAt }
+            .suffix(PinAisleObservationLock.maximumObservationCount)
+            .map {
+                PinCaptureObservation(
+                    observedAt: $0.timestamp,
+                    latitude: $0.coordinate.latitude,
+                    longitude: $0.coordinate.longitude,
+                    horizontalAccuracyM: $0.horizontalAccuracy >= 0 ? $0.horizontalAccuracy : nil,
+                    courseDegrees: $0.course >= 0 ? $0.course : nil,
+                    speedMps: $0.speed >= 0 ? $0.speed : nil
+                )
+            }
+    }
+
     private(set) var isBackgroundUpdatingEnabled: Bool = false
     private(set) var isHighAccuracyEnabled: Bool = false
 
@@ -266,7 +284,7 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         sectorWidth: Double = 22.5,
         margin: Double = 5
     ) -> Double? {
-        guard let candidate else { return previous }
+        guard let candidate else { return nil }
         guard let previous else { return candidate }
         let previousCenter = (round(previous / sectorWidth) * sectorWidth).truncatingRemainder(dividingBy: 360)
         let delta = abs(((candidate - previousCenter + 540).truncatingRemainder(dividingBy: 360)) - 180)

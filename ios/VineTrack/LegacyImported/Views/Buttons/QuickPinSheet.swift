@@ -414,7 +414,19 @@ struct QuickPinSheet: View {
                 vineyardId: vineyardId,
                 tripId: store.currentActiveTripIdProvider?(),
                 rawCoordinate: coordinate,
-                horizontalAccuracyMetres: location.horizontalAccuracy
+                horizontalAccuracyMetres: location.horizontalAccuracy >= 0 ? location.horizontalAccuracy : nil,
+                observations: locationService.pinCaptureObservations(capturedAt: capturedAt),
+                headingDegrees: locationService.heading.flatMap { $0.trueHeading >= 0 ? $0.trueHeading : nil },
+                headingSource: locationService.heading == nil ? nil : "device_true_heading",
+                headingObservedAt: locationService.heading?.timestamp,
+                aisleLock: historyLock.map {
+                    PinCaptureAisleLock(
+                        paddockId: $0.paddockId,
+                        aisleNumber: $0.aisleNumber,
+                        supportingObservations: $0.supportingObservations,
+                        confirmedAt: $0.confirmedAt
+                    )
+                }
             )
         }
         return (paddockId, attachment, resolved.rowNumber, capture)

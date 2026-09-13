@@ -6383,7 +6383,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Stamp capture time here, at the moment of the drop, so an
             // offline pin keeps the day (and therefore the vintage) it was
             // actually recorded on instead of the day its queue drained.
-            createdAt = captureContext?.observedAtIso ?: java.time.Instant.now().toString(),
+            createdAt = captureContext?.capturedAtIso ?: java.time.Instant.now().toString(),
         )
         val canonicalSegments = segments
             ?.takeIf { locationScope == ManualIssueScopes.ROW }
@@ -8073,6 +8073,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         headingObservedAtElapsedRealtimeNanos: Long? = null,
         captureElapsedRealtimeNanos: Long = android.os.SystemClock.elapsedRealtimeNanos(),
         aisleLock: PinAisleObservationLock.Lock? = null,
+        observationHistory: List<QualifiedLocationFix> = emptyList(),
     ): PinCaptureContext? {
         val state = _ui.value
         val vineyardId = state.selectedVineyardId ?: return null
@@ -8113,11 +8114,38 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             aisleLock = aisleLock,
             captureElapsedRealtimeNanos = captureElapsedRealtimeNanos,
         )
+        val capturedInstant = java.time.Instant.now()
+        val headingObservedAtIso = headingObservedAtElapsedRealtimeNanos?.takeIf { it <= captureElapsedRealtimeNanos }?.let {
+            capturedInstant.minusNanos(captureElapsedRealtimeNanos - it).toString()
+        }
+        val frozenObservations = observationHistory
+            .filter { it.fixElapsedRealtimeNanos <= captureElapsedRealtimeNanos }
+            .takeLast(PinAisleObservationLock.MAX_OBSERVATIONS)
+            .map {
+                com.rork.vinetrack.data.PinCaptureEvidenceStore.Observation(
+                    observedAtIso = java.time.Instant.ofEpochMilli(it.fixTimeEpochMs).toString(),
+                    latitude = it.latitude,
+                    longitude = it.longitude,
+                    accuracyMetres = it.accuracyMetres,
+                    courseDegrees = it.bearingDegrees,
+                    speedMetresPerSecond = it.speedMetresPerSecond,
+                )
+            }
+        val frozenLock = aisleLock?.let {
+            val confirmedAt = capturedInstant.minusNanos((captureElapsedRealtimeNanos - it.confirmedAtElapsedRealtimeNanos).coerceAtLeast(0L))
+            com.rork.vinetrack.data.PinCaptureEvidenceStore.AisleLock(it.paddockId, it.aisleNumber, it.supportingObservations, confirmedAt.toString())
+        }
         return PinCaptureContext(
             pinId = pinId,
             vineyardId = vineyardId,
             tripId = state.activeTrip?.id,
-            observedAtIso = observedAtIso,
+            observedAtIso = java.time.Instant.ofEpochMilli(fix.fixTimeEpochMs).toString(),
+            capturedAtIso = capturedInstant.toString(),
+            captureUserId = session.userId,
+            headingSource = captureHeading?.let { "qualified_device_heading" },
+            headingObservedAtIso = headingObservedAtIso,
+            observations = frozenObservations,
+            aisleLock = frozenLock,
             resolvedPaddockId = attribution.paddockId,
             resolvedRowNumber = attribution.rowNumber,
             resolvedPlacement = attribution.placement,

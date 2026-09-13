@@ -26,8 +26,8 @@ final class PinOfflineCaptureDisplayTests: XCTestCase {
         XCTAssertEqual(turned, 18)
     }
 
-    func testHeadingHysteresisRetainsLastValueDuringBriefSampleLoss() {
-        XCTAssertEqual(LocationService.hystereticHeading(candidate: nil, previous: 90), 90)
+    func testHeadingHysteresisClearsExpiredGuidance() {
+        XCTAssertNil(LocationService.hystereticHeading(candidate: nil, previous: 90))
     }
 
     func testCaptureIdentityAndGpsTimeRemainFrozen() {

@@ -54,10 +54,21 @@ final class SupabasePinSyncRepository: PinSyncRepositoryProtocol {
 
     func upsertPinCaptureEvidence(_ evidence: PinCaptureEvidenceUpload) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        try await provider.client
-            .from("pin_capture_evidence")
-            .upsert(evidence, onConflict: "pin_id,evidence_revision")
+        let outcome: String = try await provider.client
+            .rpc("insert_pin_capture_evidence", params: PinEvidenceInsertRequest(payload: evidence))
             .execute()
+            .value
+        guard outcome == "inserted" || outcome == "identical" else {
+            throw PinCaptureEvidenceDeliveryError.immutableConflict
+        }
+    }
+
+    func confirmSavedPinLocation(_ operation: PendingPinLocationConfirmation) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let _: String = try await provider.client
+            .rpc("confirm_saved_pin_location_v2", params: PinLocationConfirmationRequest(operation: operation))
+            .execute()
+            .value
     }
 
     func updatePhotoPath(pinId: UUID, vineyardId: UUID, path: String?) async throws -> AttachmentReferenceConfirmation {
@@ -102,6 +113,32 @@ final class SupabasePinSyncRepository: PinSyncRepositoryProtocol {
             .rpc("soft_delete_pin", params: SoftDeletePinRequest(pinId: id))
             .execute()
     }
+}
+
+nonisolated private struct PinLocationConfirmationRequest: Encodable, Sendable {
+    let operation: PendingPinLocationConfirmation
+
+    enum CodingKeys: String, CodingKey {
+        case operationId = "p_operation_id", pinId = "p_pin_id", evidenceRevision = "p_evidence_revision"
+        case expectedSyncVersion = "p_expected_sync_version", paddockId = "p_paddock_id", drivingRow = "p_driving_row"
+        case pinRow = "p_pin_row", pinSide = "p_pin_side", snappedLatitude = "p_snapped_latitude"
+        case snappedLongitude = "p_snapped_longitude", alongRowDistanceM = "p_along_row_distance_m"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(operation.id, forKey: .operationId); try c.encode(operation.pinId, forKey: .pinId)
+        try c.encode(operation.evidenceRevision, forKey: .evidenceRevision); try c.encodeIfPresent(operation.expectedSyncVersion, forKey: .expectedSyncVersion)
+        try c.encode(operation.paddockId, forKey: .paddockId); try c.encode(operation.drivingRow, forKey: .drivingRow)
+        try c.encode(operation.pinRow, forKey: .pinRow); try c.encode(operation.pinSide, forKey: .pinSide)
+        try c.encode(operation.snappedLatitude, forKey: .snappedLatitude); try c.encode(operation.snappedLongitude, forKey: .snappedLongitude)
+        try c.encode(operation.alongRowDistanceM, forKey: .alongRowDistanceM)
+    }
+}
+
+nonisolated private struct PinEvidenceInsertRequest: Encodable, Sendable {
+    let payload: PinCaptureEvidenceUpload
+    enum CodingKeys: String, CodingKey { case payload = "p_payload" }
 }
 
 nonisolated private struct PinPhotoPathPatch: Encodable, Sendable {

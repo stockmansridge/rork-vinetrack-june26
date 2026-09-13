@@ -22,6 +22,12 @@ data class PinCaptureContext(
     val vineyardId: String,
     val tripId: String?,
     val observedAtIso: String,
+    val capturedAtIso: String = observedAtIso,
+    val captureUserId: String? = null,
+    val headingSource: String? = null,
+    val headingObservedAtIso: String? = null,
+    val observations: List<PinCaptureEvidenceStore.Observation> = emptyList(),
+    val aisleLock: PinCaptureEvidenceStore.AisleLock? = null,
     /** Placement resolved once from the trip and block selection that existed at capture. */
     val resolvedPaddockId: String? = null,
     val resolvedRowNumber: Int? = null,

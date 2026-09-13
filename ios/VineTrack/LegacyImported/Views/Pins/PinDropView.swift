@@ -426,12 +426,12 @@ struct PinDropView: View {
         )
         let paddockId = selectedPaddockId ?? resolved.paddockId
         let paddock = paddockId.flatMap { id in store.paddocks.first(where: { $0.id == id }) }
-        let capture = freezeCapture(location: location)
         let historyLock = PinAisleObservationLock.resolve(
             locations: locationService.pinAisleObservationHistory,
             current: location,
             paddock: paddock
         )
+        let capture = freezeCapture(location: location, aisleLock: historyLock)
         let attachment = PinAttachmentResolver.resolveAutomatic(
             rawCoordinate: location.coordinate,
             heading: locationService.heading?.trueHeading,
@@ -532,13 +532,18 @@ struct PinDropView: View {
             showFeedback(locationWarning(for: fix.quality), kind: .warning)
             return
         }
-        guard let capture = freezeCapture(location: location) else {
-            showFeedback("Select a vineyard before recording growth.", kind: .warning)
-            return
-        }
         let resolved = PinContextResolver.resolve(coordinate: location.coordinate, store: store, tracking: nil)
         let paddockId = selectedPaddockId ?? resolved.paddockId
         let paddock = paddockId.flatMap { id in store.paddocks.first(where: { $0.id == id }) }
+        let historyLock = PinAisleObservationLock.resolve(
+            locations: locationService.pinAisleObservationHistory,
+            current: location,
+            paddock: paddock
+        )
+        guard let capture = freezeCapture(location: location, aisleLock: historyLock) else {
+            showFeedback("Select a vineyard before recording growth.", kind: .warning)
+            return
+        }
         let qualifiedHeading = PinAisleGeometry.validHeading(
             locationService.heading?.trueHeading,
             ageSeconds: headingAge(at: capture.capturedAt)
@@ -578,15 +583,29 @@ struct PinDropView: View {
 
     /// Freeze identity, time and the original observation at the press so a
     /// growth-stage picker or any other delay cannot move the capture event.
-    private func freezeCapture(location: CLLocation) -> PinCaptureContext? {
-        store.selectedVineyardId.map { vineyardId in
+    private func freezeCapture(location: CLLocation, aisleLock: PinAisleObservationLock.Lock? = nil) -> PinCaptureContext? {
+        let capturedAt = Date()
+        let headingSample = locationService.heading
+        return store.selectedVineyardId.map { vineyardId in
             PinCaptureContext(
-                capturedAt: Date(),
+                capturedAt: capturedAt,
                 locationObservedAt: location.timestamp,
                 vineyardId: vineyardId,
                 tripId: store.currentActiveTripIdProvider?(),
                 rawCoordinate: location.coordinate,
-                horizontalAccuracyMetres: location.horizontalAccuracy
+                horizontalAccuracyMetres: location.horizontalAccuracy >= 0 ? location.horizontalAccuracy : nil,
+                observations: locationService.pinCaptureObservations(capturedAt: capturedAt),
+                headingDegrees: headingSample.flatMap { $0.trueHeading >= 0 ? $0.trueHeading : nil },
+                headingSource: headingSample == nil ? nil : "device_true_heading",
+                headingObservedAt: headingSample?.timestamp,
+                aisleLock: aisleLock.map {
+                    PinCaptureAisleLock(
+                        paddockId: $0.paddockId,
+                        aisleNumber: $0.aisleNumber,
+                        supportingObservations: $0.supportingObservations,
+                        confirmedAt: $0.confirmedAt
+                    )
+                }
             )
         }
     }

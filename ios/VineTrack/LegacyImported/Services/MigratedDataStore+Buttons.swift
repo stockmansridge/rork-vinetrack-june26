@@ -268,17 +268,20 @@ extension MigratedDataStore {
             pinId: pin.id,
             vineyardId: capture.vineyardId,
             evidenceRevision: 1,
-            resolverVersion: "server-geometry-v2",
+            resolverVersion: "server-geometry-v3",
             capturedAt: capture.capturedAt,
             locationObservedAt: capture.locationObservedAt,
             rawLatitude: capture.rawCoordinate.latitude,
             rawLongitude: capture.rawCoordinate.longitude,
-            horizontalAccuracyM: max(0, capture.horizontalAccuracyMetres ?? 0),
-            headingDegrees: attachment?.heading,
-            headingSource: attachment?.heading == nil ? nil : "qualified_compass",
-            headingObservedAt: attachment?.heading == nil ? nil : capture.capturedAt,
+            horizontalAccuracyM: capture.horizontalAccuracyMetres.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil },
+            headingDegrees: capture.headingDegrees,
+            headingSource: capture.headingSource,
+            headingObservedAt: capture.headingObservedAt,
             pressedSide: pin.side?.rawValue,
             tripId: capture.tripId,
+            captureUserId: pin.createdByUserId,
+            captureButtonName: pin.buttonName,
+            captureMode: pin.mode.rawValue,
             supportedPaddockId: pin.paddockId,
             supportedDrivingRow: attachment?.drivingRowNumber,
             supportedPinRow: attachment?.pinRowNumber.map(Double.init),
@@ -286,12 +289,22 @@ extension MigratedDataStore {
             supportedSnappedLatitude: attachment?.snappedCoordinate?.latitude,
             supportedSnappedLongitude: attachment?.snappedCoordinate?.longitude,
             supportedAlongRowDistanceM: attachment?.alongRowDistanceM,
-            observations: [],
-            captureProvenance: ["platform": "ios", "capture": "save_first"],
+            aisleLock: capture.aisleLock,
+            observations: capture.observations,
+            captureProvenance: ["platform": "ios", "capture": "save_first", "sensor_history": "pre_tap"],
             geometryRevision: geometry.revision,
             geometryHash: geometry.hash,
             isUploaded: false
         )
-        try? PinCaptureEvidenceStore.shared.save(evidence)
+        do {
+            try PinCaptureEvidenceStore.shared.save(evidence)
+        } catch {
+            // The pin is already durable. The evidence store uses an independent
+            // recovery channel before this can fail, so no second tap or identity
+            // is ever created.
+            #if DEBUG
+            print("[PinEvidence] recovery persistence failed for \(pin.id): \(error.localizedDescription)")
+            #endif
+        }
     }
 }

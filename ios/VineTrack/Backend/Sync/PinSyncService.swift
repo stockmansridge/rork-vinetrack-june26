@@ -105,7 +105,9 @@ final class PinSyncService {
     private let persistence: PersistenceStore
     private let deletionStore: LinkedPinGrowthDeletionStore
     private let pendingPhotosKey = "vinetrack_pending_pin_photos_v2"
+    private let pendingConfirmationsKey = "vinetrack_pending_pin_location_confirmations_v1"
     private var pendingPhotos: [UUID: PendingPinPhoto]
+    private var pendingConfirmations: [UUID: PendingPinLocationConfirmation]
     private var isConfigured: Bool = false
     private var isSyncInFlight: Bool = false
     private var eagerPushTask: Task<Void, Never>?
@@ -123,6 +125,7 @@ final class PinSyncService {
         self.persistence = persistence
         self.deletionStore = deletionStore ?? .shared
         self.pendingPhotos = persistence.load(key: pendingPhotosKey) ?? [:]
+        self.pendingConfirmations = persistence.load(key: pendingConfirmationsKey) ?? [:]
     }
 
     // MARK: - Configuration
@@ -209,6 +212,16 @@ final class PinSyncService {
         pendingPhotos = next
         pin.photoData = payload
         store?.updatePin(pin)
+        scheduleEagerPush()
+    }
+
+    /// Durably queues an optional confirmation before applying its exact
+    /// placement locally. The stable operation id makes response-loss retries safe.
+    func queueSavedPinConfirmation(_ operation: PendingPinLocationConfirmation) throws {
+        var next = pendingConfirmations
+        next[operation.id] = operation
+        try persistence.saveOrThrow(next, key: pendingConfirmationsKey)
+        pendingConfirmations = next
         scheduleEagerPush()
     }
 
@@ -349,6 +362,7 @@ final class PinSyncService {
             do { try await pushCaptureEvidence() } catch { evidenceError = error }
             try await pushLocalPins(vineyardId: vineyardId)
             try await pullRemotePins(vineyardId: vineyardId)
+            try await pushPendingConfirmations()
             if let evidenceError { throw evidenceError }
             metadata.setLastSync(Date(), for: vineyardId)
             lastSyncDate = Date()
@@ -373,6 +387,22 @@ final class PinSyncService {
             }
         }
         if !uploaded.isEmpty { try PinCaptureEvidenceStore.shared.markUploaded(uploaded) }
+        if let firstError { throw firstError }
+    }
+
+    private func pushPendingConfirmations() async throws {
+        var next = pendingConfirmations
+        var firstError: Error?
+        for (id, operation) in pendingConfirmations {
+            do {
+                try await repository.confirmSavedPinLocation(operation)
+                next.removeValue(forKey: id)
+                try persistence.saveOrThrow(next, key: pendingConfirmationsKey)
+                pendingConfirmations = next
+            } catch {
+                if firstError == nil { firstError = error }
+            }
+        }
         if let firstError { throw firstError }
     }
 

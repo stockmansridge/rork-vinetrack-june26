@@ -154,12 +154,15 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
         @SerialName("location_observed_at") val locationObservedAt: String,
         @SerialName("raw_latitude") val rawLatitude: Double,
         @SerialName("raw_longitude") val rawLongitude: Double,
-        @SerialName("horizontal_accuracy_m") val horizontalAccuracyM: Double,
+        @SerialName("horizontal_accuracy_m") val horizontalAccuracyM: Double?,
         @SerialName("heading_degrees") val headingDegrees: Double?,
         @SerialName("heading_source") val headingSource: String?,
         @SerialName("heading_observed_at") val headingObservedAt: String?,
         @SerialName("pressed_side") val pressedSide: String?,
         @SerialName("trip_id") val tripId: String?,
+        @SerialName("capture_user_id") val captureUserId: String?,
+        @SerialName("capture_button_name") val captureButtonName: String,
+        @SerialName("capture_mode") val captureMode: String,
         @SerialName("supported_paddock_id") val supportedPaddockId: String?,
         @SerialName("supported_driving_row") val supportedDrivingRow: Double?,
         @SerialName("supported_pin_row") val supportedPinRow: Double?,
@@ -167,11 +170,15 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
         @SerialName("supported_snapped_latitude") val supportedSnappedLatitude: Double?,
         @SerialName("supported_snapped_longitude") val supportedSnappedLongitude: Double?,
         @SerialName("supported_along_row_distance_m") val supportedAlongRowDistanceM: Double?,
+        @SerialName("aisle_lock") val aisleLock: PinCaptureEvidenceStore.AisleLock?,
         val observations: List<PinCaptureEvidenceStore.Observation>,
         @SerialName("capture_provenance") val captureProvenance: Map<String, String>,
         @SerialName("geometry_revision") val geometryRevision: String?,
         @SerialName("geometry_hash") val geometryHash: String?,
     )
+
+    @Serializable
+    private data class EvidenceInsertArgs(@SerialName("p_payload") val payload: PinEvidenceUpload)
 
     @Serializable
     private data class SoftDeleteArgs(@SerialName("p_pin_id") val pinId: String)
@@ -215,16 +222,19 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
             vineyardId = evidence.vineyardId,
             evidenceRevision = evidence.evidenceRevision,
             resolverVersion = evidence.resolverVersion,
-            capturedAt = evidence.observationTimeIso,
+            capturedAt = evidence.capturedAtIso,
             locationObservedAt = evidence.observationTimeIso,
             rawLatitude = evidence.latitude,
             rawLongitude = evidence.longitude,
-            horizontalAccuracyM = evidence.accuracyMetres.coerceAtLeast(0.0),
+            horizontalAccuracyM = evidence.accuracyMetres.takeIf { it.isFinite() && it >= 0.0 },
             headingDegrees = evidence.headingDegrees,
             headingSource = evidence.headingSource,
             headingObservedAt = evidence.headingObservedAtIso,
             pressedSide = evidence.side,
             tripId = evidence.tripId,
+            captureUserId = evidence.captureUserId,
+            captureButtonName = evidence.buttonName,
+            captureMode = evidence.mode,
             supportedPaddockId = evidence.paddockId,
             supportedDrivingRow = evidence.drivingRowNumber,
             supportedPinRow = evidence.pinRowNumber,
@@ -232,21 +242,22 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
             supportedSnappedLatitude = evidence.snappedLatitude,
             supportedSnappedLongitude = evidence.snappedLongitude,
             supportedAlongRowDistanceM = evidence.alongRowDistanceMetres,
+            aisleLock = evidence.aisleLock,
             observations = evidence.observations.takeLast(16),
             captureProvenance = mapOf("platform" to "android", "capture" to "save_first"),
             geometryRevision = evidence.geometryRevision,
             geometryHash = evidence.geometryHash,
         )
-        val response = SupabaseClient.http.post(SupabaseClient.restUrl("pin_capture_evidence?on_conflict=pin_id,evidence_revision")) {
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("insert_pin_capture_evidence")) {
             authHeaders(token)
-            headers { append("Prefer", "resolution=merge-duplicates,return=minimal") }
             contentType(ContentType.Application.Json)
-            setBody(payload)
+            setBody(EvidenceInsertArgs(payload))
         }
         when {
-            response.status.isSuccess() -> Unit
             response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
-            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+            !response.status.isSuccess() -> throw BackendError.Server(response.status.value, response.bodyAsText())
+            response.bodyAsText().trim().trim('"') in setOf("inserted", "identical") -> Unit
+            else -> throw BackendError.Server(409, "Immutable capture evidence conflict")
         }
     }
 

@@ -203,6 +203,12 @@ struct PinsView: View {
     private var qualifiedTravelContext: PinQueryPolicy.TravelContext? { travelResolution.context }
     private var rowUnavailableReason: String { travelResolution.reason }
 
+    private var displayHeadingContextId: String {
+        let vineyard = store.selectedVineyardId?.uuidString ?? "no-vineyard"
+        let block = qualifiedTravelContext?.blockId.uuidString ?? "no-block"
+        return "\(vineyard)#\(block)"
+    }
+
     private var liveContextTitle: String? {
         guard viewMode != .summary, let context = qualifiedTravelContext else { return nil }
         let prefix = context.isEstimated ? "Approx. row" : "Row"
@@ -336,10 +342,10 @@ struct PinsView: View {
                     locationService.suspendDisplayConsumer()
                     return
                 }
-                locationService.beginDisplayConsumer(contextId: store.selectedVineyardId?.uuidString)
+                locationService.beginDisplayConsumer(contextId: displayHeadingContextId)
                 while !Task.isCancelled, scenePhase == .active {
                     contextNow = Date()
-                    locationService.beginDisplayConsumer(contextId: store.selectedVineyardId?.uuidString)
+                    locationService.beginDisplayConsumer(contextId: displayHeadingContextId)
                     locationService.refreshDisplayHeading(now: contextNow)
                     let next = liveContextTitle
                     if displayedLiveContextTitle != next { displayedLiveContextTitle = next }
@@ -1879,6 +1885,7 @@ struct PinDetailSheet: View {
     @State private var typeDraft: PinTypeOption?
     @State private var memberDirectory: [UUID: String] = [:]
     @State private var showSavedPlacementConfirmation: Bool = false
+    @State private var savedPlacementConfirmationError: String?
     private let teamRepository: any TeamRepositoryProtocol = SupabaseTeamRepository()
     private var fmt: RegionFormatter { store.settings.regionFormatter }
     private var hasUnsavedNotes: Bool {
@@ -1886,17 +1893,35 @@ struct PinDetailSheet: View {
     }
 
     private func confirmSavedPlacement() {
-        guard let candidate = savedPlacementCandidate else { return }
-        var updated = currentPin
-        updated.paddockId = candidate.paddock.id
-        updated.drivingRowNumber = candidate.attachment.drivingRowNumber
-        updated.pinRowNumber = candidate.attachment.pinRowNumber
-        updated.pinSide = candidate.attachment.pinSide
-        updated.snappedLatitude = candidate.attachment.snappedCoordinate?.latitude
-        updated.snappedLongitude = candidate.attachment.snappedCoordinate?.longitude
-        updated.alongRowDistanceM = candidate.attachment.alongRowDistanceM
-        updated.snappedToRow = candidate.attachment.snappedToRow
-        store.updatePin(updated)
+        guard let candidate = savedPlacementCandidate,
+              let evidence = PinCaptureEvidenceStore.shared.evidence(pinId: currentPin.id),
+              let drivingRow = candidate.attachment.drivingRowNumber,
+              let pinRow = candidate.attachment.pinRowNumber,
+              let pinSide = candidate.attachment.pinSide,
+              let snapped = candidate.attachment.snappedCoordinate,
+              let along = candidate.attachment.alongRowDistanceM else { return }
+        let operation = PendingPinLocationConfirmation(
+            id: UUID(), pinId: currentPin.id, vineyardId: currentPin.vineyardId,
+            evidenceRevision: evidence.evidenceRevision, expectedSyncVersion: nil,
+            paddockId: candidate.paddock.id, drivingRow: drivingRow, pinRow: Double(pinRow),
+            pinSide: pinSide.rawValue, snappedLatitude: snapped.latitude,
+            snappedLongitude: snapped.longitude, alongRowDistanceM: along
+        )
+        do {
+            try pinSync.queueSavedPinConfirmation(operation)
+            var updated = currentPin
+            updated.paddockId = candidate.paddock.id
+            updated.drivingRowNumber = drivingRow
+            updated.pinRowNumber = pinRow
+            updated.pinSide = pinSide
+            updated.snappedLatitude = snapped.latitude
+            updated.snappedLongitude = snapped.longitude
+            updated.alongRowDistanceM = along
+            updated.snappedToRow = true
+            store.applyRemotePinUpsert(updated)
+        } catch {
+            savedPlacementConfirmationError = "The confirmation could not be retained on this device. The saved pin was not changed."
+        }
     }
 
     private func resolveDisplayName(userId: UUID?, fallbackText: String?) -> String? {
@@ -1953,22 +1978,32 @@ struct PinDetailSheet: View {
         return nil
     }
     private var savedPlacementCandidate: (paddock: Paddock, attachment: PinAttachmentResolver.Attachment)? {
-        let rawCoordinate = CLLocationCoordinate2D(latitude: currentPin.latitude, longitude: currentPin.longitude)
         guard currentPin.pinRowNumber == nil,
-              let side = currentPin.pinSide ?? currentPin.side,
-              let heading = currentPin.heading,
-              let paddock = RowGuidance.paddock(for: rawCoordinate, in: store.paddocks, fallbackRadius: 0) else { return nil }
-        let attachment = PinAttachmentResolver.resolveAutomatic(
-            rawCoordinate: rawCoordinate,
-            heading: heading,
-            headingAgeSeconds: 0,
-            horizontalAccuracyMetres: 0,
-            operatorSide: side,
-            paddock: paddock,
-            capturedAt: currentPin.timestamp,
-            aisleLock: nil
+              let evidence = PinCaptureEvidenceStore.shared.evidence(pinId: currentPin.id),
+              evidence.vineyardId == currentPin.vineyardId,
+              evidence.rawLatitude == currentPin.latitude,
+              evidence.rawLongitude == currentPin.longitude,
+              evidence.capturedAt == currentPin.timestamp,
+              let paddockId = evidence.supportedPaddockId,
+              let paddock = store.paddocks.first(where: { $0.id == paddockId }),
+              PinCaptureEvidence.geometryIdentity(for: paddock).hash == evidence.geometryHash,
+              let drivingRow = evidence.supportedDrivingRow,
+              let pinRowValue = evidence.supportedPinRow,
+              pinRowValue.rounded() == pinRowValue,
+              let pinSideText = evidence.supportedPinSide,
+              let pinSide = PinSide(rawValue: pinSideText),
+              let snappedLatitude = evidence.supportedSnappedLatitude,
+              let snappedLongitude = evidence.supportedSnappedLongitude,
+              let along = evidence.supportedAlongRowDistanceM else { return nil }
+        let attachment = PinAttachmentResolver.Attachment(
+            drivingRowNumber: drivingRow,
+            pinRowNumber: Int(pinRowValue),
+            pinSide: pinSide,
+            snappedCoordinate: CLLocationCoordinate2D(latitude: snappedLatitude, longitude: snappedLongitude),
+            alongRowDistanceM: along,
+            snappedToRow: true,
+            heading: evidence.headingDegrees
         )
-        guard attachment.pinRowNumber != nil else { return nil }
         return (paddock, attachment)
     }
 
@@ -2328,6 +2363,14 @@ struct PinDetailSheet: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("This updates only the saved pin’s mapped block, aisle and attached row. Its original GPS observation and pin identity stay unchanged.")
+            }
+            .alert("Location confirmation not saved", isPresented: Binding(
+                get: { savedPlacementConfirmationError != nil },
+                set: { if !$0 { savedPlacementConfirmationError = nil } }
+            )) {
+                Button("OK", role: .cancel) { savedPlacementConfirmationError = nil }
+            } message: {
+                Text(savedPlacementConfirmationError ?? "The saved pin remains unchanged.")
             }
             .alert("Photo not saved", isPresented: Binding(
                 get: { photoSaveError != nil },
