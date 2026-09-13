@@ -100,6 +100,7 @@ import com.rork.vinetrack.R
 import com.rork.vinetrack.data.AlertsRepository
 import com.rork.vinetrack.data.HomePrefsStore
 import com.rork.vinetrack.data.OperationalToolLayoutResolver
+import com.rork.vinetrack.data.dashboardWorkedBlockIds
 import com.rork.vinetrack.data.MapPrefsStore
 import com.rork.vinetrack.data.SeasonWindow
 import com.rork.vinetrack.data.auth.SessionStore
@@ -1163,14 +1164,14 @@ private fun RecentSection(state: AppUiState) {
     val vintagePins = state.pins.filter { window.containsIsoDate(it.createdAt, state.seasonZone) }
     val vintageTrips = state.trips.filter { window.containsEpochMs(it.startEpochMs, state.seasonZone) }
     val vintageSprayRecords = state.sprayRecords.filter { window.containsEpochMs(it.dateEpochMs, state.seasonZone) }
-    val currentBlockIds = state.paddocks.mapTo(mutableSetOf()) { it.id }
-    val workedBlockIds = buildSet {
-        vintagePins.mapNotNullTo(this) { it.paddockId }
-        vintageTrips.flatMapTo(this) { it.effectivePaddockIds }
-        vintageSprayRecords.flatMapTo(this) { record ->
+    val workedBlockIds = dashboardWorkedBlockIds(
+        currentBlockIds = state.paddocks.map { it.id },
+        pinBlockIds = vintagePins.mapNotNull { it.paddockId },
+        tripBlockIds = vintageTrips.flatMap { it.effectivePaddockIds },
+        sprayBlockIds = vintageSprayRecords.flatMap { record ->
             record.applicationBlocks?.map { it.blockId } ?: record.blockIds.orEmpty()
-        }
-    }.intersect(currentBlockIds)
+        },
+    )
     val rows = listOf(
         Triple("Pins", vintagePins.size, Icons.Filled.LocationOn) to VineColors.Orange,
         Triple("Trips", vintageTrips.size, Icons.Filled.Map) to VineColors.Info,

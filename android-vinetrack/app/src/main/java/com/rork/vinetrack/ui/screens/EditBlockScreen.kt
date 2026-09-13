@@ -3,6 +3,8 @@ package com.rork.vinetrack.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -63,6 +65,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -200,6 +204,7 @@ fun EditBlockScreen(
     val canSave by remember { derivedStateOf { name.isNotBlank() && !saving } }
 
     var editorMode by remember { mutableStateOf<BlockEditorMode?>(null) }
+    var isPreviewMapInteracting by remember { mutableStateOf(false) }
     var showSoilEditor by remember { mutableStateOf(false) }
     val canEditSoil = state.currentRole in setOf("owner", "manager", "supervisor", "operator")
 
@@ -342,7 +347,7 @@ fun EditBlockScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(rememberScrollState(), enabled = !isPreviewMapInteracting)
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
@@ -383,6 +388,7 @@ fun EditBlockScreen(
                     if (lat != null && lng != null) LatLng(lat, lng) else null
                 },
                 onEdit = { editorMode = BlockEditorMode.Boundary },
+                onInteractionChanged = { isPreviewMapInteracting = it },
             )
 
             // 3. Row Configuration + Row Numbering — summary only (unchanged);
@@ -772,6 +778,7 @@ private fun BlockPreviewSection(
     layout: BlockRowLayout,
     vineyardCenter: LatLng?,
     onEdit: () -> Unit,
+    onInteractionChanged: (Boolean) -> Unit,
 ) {
     val vine = LocalVineColors.current
     val camera = rememberCameraPositionState()
@@ -784,18 +791,23 @@ private fun BlockPreviewSection(
     val framePoints = remember(boundaryPoints, layout) {
         boundaryPoints + layout.framePoints.map { LatLng(it.latitude, it.longitude) }
     }
+    var framedGeometry by remember { mutableStateOf<List<LatLng>?>(null) }
 
     // Re-frames whenever the geometry itself changes — so returning from the
     // editor immediately shows the new boundary and rows at a sensible zoom
     // instead of whatever the editor was left at. Panning/zooming by hand does
     // not change the geometry, so it is never fought by this effect.
     LaunchedEffect(mapLoaded, framePoints) {
-        if (!mapLoaded) return@LaunchedEffect
+        if (!mapLoaded || framePoints == framedGeometry) return@LaunchedEffect
         when {
-            framePoints.isNotEmpty() ->
+            framePoints.isNotEmpty() -> {
                 camera.fitToContent(points = framePoints, paddingPx = 96, singlePointZoom = 17f, animate = true)
-            vineyardCenter != null ->
+                framedGeometry = framePoints
+            }
+            vineyardCenter != null -> {
                 camera.fitToContent(points = listOf(vineyardCenter), singlePointZoom = 16f)
+                framedGeometry = emptyList()
+            }
         }
     }
 
@@ -809,7 +821,19 @@ private fun BlockPreviewSection(
                 .border(1.dp, vine.cardBorder, RoundedCornerShape(16.dp)),
         ) {
             GoogleMap(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().pointerInput(onInteractionChanged) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        onInteractionChanged(true)
+                        try {
+                            do {
+                                val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                            } while (event.changes.any { it.pressed })
+                        } finally {
+                            onInteractionChanged(false)
+                        }
+                    }
+                },
                 cameraPositionState = camera,
                 // Real base map + over-zoom imagery, matching the editor, so the
                 // preview can never render as a blank canvas.
@@ -818,6 +842,8 @@ private fun BlockPreviewSection(
                     zoomControlsEnabled = false,
                     mapToolbarEnabled = false,
                     myLocationButtonEnabled = false,
+                    scrollGesturesEnabled = true,
+                    zoomGesturesEnabled = true,
                     rotationGesturesEnabled = false,
                     tiltGesturesEnabled = false,
                 ),
