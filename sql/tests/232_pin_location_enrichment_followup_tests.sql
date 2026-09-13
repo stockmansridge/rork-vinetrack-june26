@@ -106,21 +106,36 @@ begin
   values(pin_id,vineyard_id,1,'fixture-232',captured,captured,0.00002,0.0,0.4,'Left',user_id,'Fixture','Repairs',observations,'pin-geometry-v1',geometry_hash,user_id),
         (stale_pin_id,vineyard_id,1,'fixture-232',captured,captured,0.00002,0.0,0.4,'Left',user_id,'Fixture','Repairs',observations,'pin-geometry-v1',geometry_hash,user_id);
 
-  select sync_version into expected_version from public.pins where id=pin_id;
+  select fixture_pin.sync_version into expected_version
+  from public.pins as fixture_pin
+  where fixture_pin.id = pin_id;
   first_outcome:=public.confirm_saved_pin_location_v2(operation_id,pin_id,1,expected_version,paddock_id,25.5,25,'Left',
     (resolved->>'snapped_latitude')::double precision,(resolved->>'snapped_longitude')::double precision,(resolved->>'along_m')::numeric);
   retry_outcome:=public.confirm_saved_pin_location_v2(operation_id,pin_id,1,expected_version,paddock_id,25.5,25,'Left',
     (resolved->>'snapped_latitude')::double precision,(resolved->>'snapped_longitude')::double precision,(resolved->>'along_m')::numeric);
   if first_outcome<>'confirmed' or retry_outcome<>'confirmed' then raise exception 'T10 lost-response retry was not idempotent: %, %',first_outcome,retry_outcome; end if;
-  if (select sync_version from public.pins where id=pin_id)<>expected_version+1 then raise exception 'T11 identical retry applied twice'; end if;
+  if (select fixture_pin.sync_version from public.pins as fixture_pin where fixture_pin.id = pin_id)<>expected_version+1 then
+    raise exception 'T11 identical retry applied twice';
+  end if;
 
-  select sync_version into expected_version from public.pins where id=stale_pin_id;
-  update public.pins set notes='newer handset edit',sync_version=sync_version+1 where id=stale_pin_id;
+  select fixture_pin.sync_version into expected_version
+  from public.pins as fixture_pin
+  where fixture_pin.id = stale_pin_id;
+  update public.pins as fixture_pin
+  set notes='newer handset edit',sync_version=fixture_pin.sync_version+1
+  where fixture_pin.id = stale_pin_id;
   stale_outcome:=public.confirm_saved_pin_location_v2(stale_operation_id,stale_pin_id,1,expected_version,paddock_id,25.5,25,'Left',
     (resolved->>'snapped_latitude')::double precision,(resolved->>'snapped_longitude')::double precision,(resolved->>'along_m')::numeric);
   if stale_outcome<>'conflict_newer_edit' then raise exception 'T12 newer edit was not preserved: %',stale_outcome; end if;
-  if (select pin_row_number from public.pins where id=stale_pin_id) is not null then raise exception 'T13 stale confirmation changed placement'; end if;
-  if not exists(select 1 from public.pin_location_confirmation_operations where operation_id=stale_operation_id and outcome='conflict_newer_edit') then
+  if (select fixture_pin.pin_row_number from public.pins as fixture_pin where fixture_pin.id = stale_pin_id) is not null then
+    raise exception 'T13 stale confirmation changed placement';
+  end if;
+  if not exists(
+    select 1
+    from public.pin_location_confirmation_operations as confirmation_operation
+    where confirmation_operation.operation_id = stale_operation_id
+      and confirmation_operation.outcome = 'conflict_newer_edit'
+  ) then
     raise exception 'T14 durable conflict outcome missing';
   end if;
 end $$;
