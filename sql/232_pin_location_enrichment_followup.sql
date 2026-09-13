@@ -231,11 +231,14 @@ create or replace function public.confirm_saved_pin_location_v2(
 returns text language plpgsql security definer set search_path=public as $$
 declare
   p public.pins%rowtype; e public.pin_capture_evidence%rowtype; g public.pin_location_geometry_history%rowtype;
-  before_row jsonb; after_row jsonb; resolved jsonb; v_hash text; existing_hash text; existing_outcome text; outcome text;
+  before_row jsonb; after_row jsonb; resolved jsonb; v_hash text; existing_hash text; existing_outcome text; v_outcome text;
 begin
   if p_expected_sync_version is null then return 'conflict_missing_expected_revision'; end if;
   v_hash:=encode(extensions.digest(concat_ws('|',p_pin_id,p_evidence_revision,p_expected_sync_version,p_paddock_id,p_driving_row,p_pin_row,p_pin_side,p_snapped_latitude,p_snapped_longitude,p_along_row_distance_m),'sha256'),'hex');
-  select payload_hash,outcome into existing_hash,existing_outcome from public.pin_location_confirmation_operations where operation_id=p_operation_id;
+  select operations.payload_hash, operations.outcome
+  into existing_hash, existing_outcome
+  from public.pin_location_confirmation_operations as operations
+  where operations.operation_id = p_operation_id;
   if found then
     if existing_hash<>v_hash then return 'conflict_operation_payload'; end if;
     return existing_outcome;
@@ -247,16 +250,16 @@ begin
   select * into e from public.pin_capture_evidence where pin_id=p.id and evidence_revision=p_evidence_revision and vineyard_id=p.vineyard_id;
   if not found then return 'conflict_evidence_missing'; end if;
 
-  if p.sync_version<>p_expected_sync_version then outcome:='conflict_newer_edit';
-  elsif p.location_confirmation_revision is not null and p.location_confirmation_revision>=p_evidence_revision then outcome:='conflict_newer_edit';
-  elsif p.driving_row_number is not null or p.pin_row_number is not null or p.pin_side is not null or p.snapped_to_row then outcome:='conflict_current_placement';
+  if p.sync_version<>p_expected_sync_version then v_outcome:='conflict_newer_edit';
+  elsif p.location_confirmation_revision is not null and p.location_confirmation_revision>=p_evidence_revision then v_outcome:='conflict_newer_edit';
+  elsif p.driving_row_number is not null or p.pin_row_number is not null or p.pin_side is not null or p.snapped_to_row then v_outcome:='conflict_current_placement';
   else
     select * into g from public.pin_location_geometry_history h
     where h.paddock_id=p_paddock_id and h.vineyard_id=p.vineyard_id
       and h.valid_from<=e.captured_at and (h.valid_to is null or h.valid_to>e.captured_at)
       and public.pin_point_in_polygon(e.raw_latitude,e.raw_longitude,h.polygon_points)
     order by h.valid_from desc limit 1;
-    if not found or (e.geometry_hash is not null and e.geometry_hash<>g.geometry_hash) then outcome:='conflict_candidate_invalid';
+    if not found or (e.geometry_hash is not null and e.geometry_hash<>g.geometry_hash) then v_outcome:='conflict_candidate_invalid';
     else
       resolved:=public.resolve_pin_row_geometry(g.rows,g.polygon_points,g.paddock_id,e.raw_latitude,e.raw_longitude,e.horizontal_accuracy_m,e.heading_degrees,e.heading_observed_at,e.captured_at,e.pressed_side,e.aisle_lock,e.observations,g.row_width);
       if resolved is null
@@ -265,15 +268,15 @@ begin
          or resolved->>'pin_side' is distinct from p_pin_side
          or abs((resolved->>'snapped_latitude')::double precision-p_snapped_latitude)>0.0000001
          or abs((resolved->>'snapped_longitude')::double precision-p_snapped_longitude)>0.0000001
-         or abs((resolved->>'along_m')::numeric-p_along_row_distance_m)>0.05 then outcome:='conflict_candidate_invalid';
-      else outcome:='confirmed'; end if;
+         or abs((resolved->>'along_m')::numeric-p_along_row_distance_m)>0.05 then v_outcome:='conflict_candidate_invalid';
+      else v_outcome:='confirmed'; end if;
     end if;
   end if;
 
-  if outcome<>'confirmed' then
+  if v_outcome<>'confirmed' then
     insert into public.pin_location_confirmation_operations(operation_id,pin_id,evidence_revision,payload_hash,outcome)
-    values(p_operation_id,p_pin_id,p_evidence_revision,v_hash,outcome);
-    return outcome;
+    values(p_operation_id,p_pin_id,p_evidence_revision,v_hash,v_outcome);
+    return v_outcome;
   end if;
 
   before_row:=public.pin_location_placement_json(p);
@@ -283,10 +286,10 @@ begin
     location_enrichment_status='user_confirmed',location_resolver_version='user-confirmation-v3',sync_version=sync_version+1
   where id=p_pin_id and sync_version=p_expected_sync_version returning * into p;
   if not found then
-    outcome:='conflict_newer_edit';
+    v_outcome:='conflict_newer_edit';
     insert into public.pin_location_confirmation_operations(operation_id,pin_id,evidence_revision,payload_hash,outcome)
-    values(p_operation_id,p_pin_id,p_evidence_revision,v_hash,outcome);
-    return outcome;
+    values(p_operation_id,p_pin_id,p_evidence_revision,v_hash,v_outcome);
+    return v_outcome;
   end if;
   after_row:=public.pin_location_placement_json(p);
   insert into public.pin_location_confirmation_operations(operation_id,pin_id,evidence_revision,payload_hash,outcome)
