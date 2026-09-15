@@ -1,5 +1,6 @@
 package com.rork.vinetrack.ui.screens
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
@@ -29,7 +29,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -205,30 +207,52 @@ fun MapAlignmentCrosshairMap(
     }
 }
 
-/** A stationary reticle: two hairlines and a ring, with an open centre. */
+/**
+ * A stationary precision reticle: four hairlines around a hollow centre ring.
+ *
+ * The operator is aiming at a specific feature in the imagery — a post, a
+ * corner, an end assembly — so the target itself must stay visible. Nothing is
+ * filled: the ring is stroked, and the hairlines stop short of the centre so
+ * the exact pixel under the camera target is never covered.
+ *
+ * Each stroke is drawn twice, a dark casing under a white line, so the reticle
+ * reads over both pale dirt and dark canopy. It is a passive overlay and takes
+ * no input — selection remains the map camera target.
+ */
 @Composable
 private fun CrosshairReticle(modifier: Modifier = Modifier) {
-    Box(modifier = modifier.size(64.dp), contentAlignment = Alignment.Center) {
-        // Horizontal hairline
-        Box(
-            modifier = Modifier
-                .width(64.dp)
-                .height(2.dp)
-                .background(Color.White.copy(alpha = 0.9f)),
+    Canvas(modifier = modifier.size(72.dp)) {
+        val centre = Offset(size.width / 2f, size.height / 2f)
+        val ringRadius = 9.dp.toPx()
+        val armOuter = size.width / 2f
+        // Hairlines stop at the ring, leaving the target clear.
+        val armInner = ringRadius + 3.dp.toPx()
+        val line = 1.5.dp.toPx()
+        val casing = line + 2.dp.toPx()
+
+        fun hairlines(colour: Color, stroke: Float) {
+            // Left, right, top, bottom — all stopping short of the centre.
+            drawLine(colour, Offset(centre.x - armOuter, centre.y), Offset(centre.x - armInner, centre.y), stroke)
+            drawLine(colour, Offset(centre.x + armInner, centre.y), Offset(centre.x + armOuter, centre.y), stroke)
+            drawLine(colour, Offset(centre.x, centre.y - armOuter), Offset(centre.x, centre.y - armInner), stroke)
+            drawLine(colour, Offset(centre.x, centre.y + armInner), Offset(centre.x, centre.y + armOuter), stroke)
+        }
+
+        // Dark casing first, so the white strokes stay legible on pale imagery.
+        hairlines(Color.Black.copy(alpha = 0.55f), casing)
+        drawCircle(
+            color = Color.Black.copy(alpha = 0.55f),
+            radius = ringRadius,
+            center = centre,
+            style = Stroke(width = casing),
         )
-        // Vertical hairline
-        Box(
-            modifier = Modifier
-                .width(2.dp)
-                .height(64.dp)
-                .background(Color.White.copy(alpha = 0.9f)),
-        )
-        // Centre ring, open so the exact point stays visible.
-        Box(
-            modifier = Modifier
-                .size(18.dp)
-                .clip(CircleShape)
-                .background(VineColors.Orange.copy(alpha = 0.35f)),
+
+        hairlines(Color.White, line)
+        drawCircle(
+            color = VineColors.Orange,
+            radius = ringRadius,
+            center = centre,
+            style = Stroke(width = line),
         )
     }
 }

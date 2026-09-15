@@ -53,6 +53,7 @@ import com.rork.vinetrack.data.PinLocationResult
 import com.rork.vinetrack.data.mapalignment.AndroidDisplayCoordinate
 import com.rork.vinetrack.data.mapalignment.CanonicalCoordinate
 import com.rork.vinetrack.data.mapalignment.MapAlignmentDraft
+import com.rork.vinetrack.data.mapalignment.MapAlignmentExitGuard
 import com.rork.vinetrack.data.mapalignment.MapAlignmentGpsEvidence
 import com.rork.vinetrack.data.mapalignment.MapAlignmentGpsRules
 import com.rork.vinetrack.data.mapalignment.MapAlignmentGpsSampling
@@ -105,22 +106,22 @@ fun MapAlignmentWizard(
     state: AppUiState,
     onRequestFix: (onResult: (PinLocationResult) -> Unit) -> Unit,
     modifier: Modifier = Modifier,
+    exitGuard: MapAlignmentExitGuard = remember { MapAlignmentExitGuard() },
 ) {
     val context = LocalContext.current
     val installationId = remember { AndroidInstallationIdentity.current(context) }
 
     var step by remember { mutableStateOf(MapAlignmentWizardStep.Scope) }
     var draft by remember { mutableStateOf<MapAlignmentDraft?>(null) }
-    var pendingExit by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    // Keep the shared guard in step with the session draft, so the host's
+    // toolbar Back and system Back protect exactly the same evidence as the
+    // wizard's own Cancel and Discard actions.
+    LaunchedEffect(draft?.referencePoints?.size) { exitGuard.onDraftChanged(draft) }
 
     /** Route a discard through confirmation whenever evidence would be lost. */
     fun requestDiscard(andThen: () -> Unit) {
-        val current = draft
-        if (current == null || current.referencePoints.isEmpty()) {
-            andThen()
-        } else {
-            pendingExit = andThen
-        }
+        exitGuard.requestExit(andThen)
     }
 
     val current = draft
@@ -194,13 +195,10 @@ fun MapAlignmentWizard(
         )
     }
 
-    pendingExit?.let { exit ->
+    if (exitGuard.isConfirmingDiscard) {
         DiscardCalibrationDialog(
-            onKeep = { pendingExit = null },
-            onDiscard = {
-                pendingExit = null
-                exit()
-            },
+            onKeep = exitGuard::keepCalibrating,
+            onDiscard = exitGuard::discard,
         )
     }
 }
@@ -213,7 +211,7 @@ fun MapAlignmentWizard(
  * leaving might have changed vineyard data.
  */
 @Composable
-private fun DiscardCalibrationDialog(onKeep: () -> Unit, onDiscard: () -> Unit) {
+internal fun DiscardCalibrationDialog(onKeep: () -> Unit, onDiscard: () -> Unit) {
     AlertDialog(
         onDismissRequest = onKeep,
         title = { Text("Discard calibration?") },
@@ -483,17 +481,27 @@ private fun MapAlignmentCaptureStep(
             onStable = { coordinate, evidence, capturedAt ->
                 val editing = currentMode.editingId
                 if (editing != null) {
-                    // Retake: keep the marked image point, replace the GPS.
-                    onDraftChanged(
-                        draft.withRetakenGps(
-                            pointId = editing,
-                            canonicalCoordinate = coordinate,
-                            gpsAccuracyMetres = evidence?.representativeAccuracyMetres,
-                            gpsEvidence = evidence,
-                            capturedAtEpochMillis = capturedAt,
-                        ),
-                    )
-                    mode = CaptureMode.Overview
+                    // A retake obeys the same near-duplicate rule as a new
+                    // point. Excluding its own id is what stops the reference
+                    // colliding with the position it is replacing.
+                    if (draft.isNearDuplicate(coordinate, excludingId = editing)) {
+                        // Rejected: the original reference is left untouched
+                        // and the operator stays here to retry or cancel.
+                        false
+                    } else {
+                        // Retake: keep the marked image point, replace the GPS.
+                        onDraftChanged(
+                            draft.withRetakenGps(
+                                pointId = editing,
+                                canonicalCoordinate = coordinate,
+                                gpsAccuracyMetres = evidence?.representativeAccuracyMetres,
+                                gpsEvidence = evidence,
+                                capturedAtEpochMillis = capturedAt,
+                            ),
+                        )
+                        mode = CaptureMode.Overview
+                        true
+                    }
                 } else {
                     mode = CaptureMode.Marking(
                         editingId = null,
@@ -501,6 +509,7 @@ private fun MapAlignmentCaptureStep(
                         evidence = evidence,
                         capturedAtEpochMillis = capturedAt,
                     )
+                    true
                 }
             },
         )
@@ -556,13 +565,15 @@ private fun GpsSamplingStep(
     onRequestFix: (onResult: (PinLocationResult) -> Unit) -> Unit,
     modifier: Modifier,
     onCancel: () -> Unit,
-    onStable: (CanonicalCoordinate, MapAlignmentGpsEvidence?, Long) -> Unit,
+    onStable: (CanonicalCoordinate, MapAlignmentGpsEvidence?, Long) -> Boolean,
 ) {
     val vine = LocalVineColors.current
     var attempt by remember { mutableStateOf(0) }
     var sampling by remember(attempt) { mutableStateOf(MapAlignmentGpsSampling()) }
     var lastRejection by remember(attempt) { mutableStateOf<String?>(null) }
     var timedOut by remember(attempt) { mutableStateOf(false) }
+    // Set when a retaken position lands on top of a DIFFERENT reference.
+    var duplicateConflict by remember(attempt) { mutableStateOf(false) }
 
     val progress = sampling.progress
     val stable = progress as? MapAlignmentGpsSampling.Progress.Stable
@@ -676,13 +687,42 @@ private fun GpsSamplingStep(
                         color = VineColors.Orange,
                     )
                 }
+
+                if (duplicateConflict) {
+                    Row(verticalAlignment = Alignment.Top) {
+                        Icon(
+                            Icons.Filled.Warning,
+                            contentDescription = null,
+                            tint = VineColors.Orange,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                "This reference is too close to an existing point. Choose " +
+                                    "another identifiable location further away.",
+                                fontSize = 13.sp,
+                                color = VineColors.Orange,
+                            )
+                            Text(
+                                "The original reference point has not been changed. Retry here " +
+                                    "if you believe this was GPS drift, or cancel to leave it " +
+                                    "exactly as it is.",
+                                fontSize = 12.sp,
+                                color = vine.textSecondary,
+                            )
+                        }
+                    }
+                }
             }
         }
 
         Button(
             onClick = {
                 val coordinate = sampling.representative ?: return@Button
-                onStable(coordinate, stable?.evidence, System.currentTimeMillis())
+                // A rejected retake reports back rather than updating the draft.
+                duplicateConflict =
+                    !onStable(coordinate, stable?.evidence, System.currentTimeMillis())
             },
             enabled = stable != null,
             modifier = Modifier.fillMaxWidth(),
@@ -698,9 +738,11 @@ private fun GpsSamplingStep(
         ) {
             Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.size(8.dp))
-            Text("Retry")
+            Text(if (duplicateConflict) "Retry GPS at this location" else "Retry")
         }
-        OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+        OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
+            Text(if (editingId != null) "Cancel retake" else "Cancel")
+        }
         CanonicalInvariantNote()
     }
 }

@@ -226,6 +226,74 @@ class MapAlignmentDraftTest {
         assertFalse(d.isNearDuplicate(farEnough))
     }
 
+    // ----- Retake must obey the near-duplicate rule -----
+
+    @Test
+    fun `a retake at its own original position does not collide with itself`() {
+        val d = readyDraft()
+        val own = d.referencePoints.first { it.id == "p2" }.canonicalCoordinate
+        // A metre of drift around its own recorded position is normal and must
+        // never be read as landing on top of another reference.
+        val drifted = shifted(201.0, 0.5)
+
+        assertFalse(d.isNearDuplicate(own, excludingId = "p2"))
+        assertFalse(d.isNearDuplicate(drifted, excludingId = "p2"))
+    }
+
+    @Test
+    fun `a retake within ten metres of a different reference is rejected`() {
+        val d = readyDraft()
+        // p1 sits at the origin; retaking p2 practically on top of it is the
+        // failure this rule exists to stop.
+        val ontoP1 = shifted(3.0, 2.0)
+
+        assertTrue(d.isNearDuplicate(ontoP1, excludingId = "p2"))
+        // Excluding its own id must not excuse a collision with ANOTHER point.
+        assertTrue(d.isNearDuplicate(ontoP1, excludingId = "p4"))
+    }
+
+    @Test
+    fun `a rejected retake leaves the original reference untouched`() {
+        val d = readyDraft()
+        val before = d.referencePoints.first { it.id == "p2" }
+        val ontoP1 = shifted(3.0, 2.0)
+
+        // The wizard checks first and only then writes. Mirror that order: a
+        // conflicting position is never handed to the draft at all.
+        val accepted = !d.isNearDuplicate(ontoP1, excludingId = "p2")
+        assertFalse(accepted)
+
+        val after = d.referencePoints.first { it.id == "p2" }
+        assertEquals(before, after)
+        assertEquals(before.canonicalCoordinate, after.canonicalCoordinate)
+        assertEquals(before.gpsEvidence, after.gpsEvidence)
+        assertEquals(before.selectedMapCoordinate, after.selectedMapCoordinate)
+        assertEquals(4, d.pointCount)
+    }
+
+    @Test
+    fun `a valid retake replaces the GPS evidence and invalidates the candidate`() {
+        val solved = readyDraft().solved("draft-1", null)
+        assertNotNull(solved.solution)
+        val moved = shifted(215.0, 4.0) // clear of every other reference
+        assertFalse(solved.isNearDuplicate(moved, excludingId = "p2"))
+
+        val retaken = solved.withRetakenGps(
+            pointId = "p2",
+            canonicalCoordinate = moved,
+            gpsAccuracyMetres = 1.4,
+            gpsEvidence = MapAlignmentGpsEvidence(9, 10_000, 1.4, 2.2, 0.8),
+            capturedAtEpochMillis = 1_757_000_200_000,
+        )
+        val updated = retaken.referencePoints.first { it.id == "p2" }
+
+        assertEquals(moved, updated.canonicalCoordinate)
+        assertEquals(9, updated.gpsEvidence?.sampleCount)
+        assertEquals(1.4, updated.gpsAccuracyMetres!!, 1e-9)
+        assertNull(retaken.solution)
+        assertNull(retaken.candidate)
+    }
+
     @Test
     fun `editing an unknown reference is a no-op`() {
         val d = readyDraft()

@@ -1,5 +1,6 @@
 package com.rork.vinetrack.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -11,11 +12,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.rork.vinetrack.data.PinLocationResult
 import com.rork.vinetrack.data.mapalignment.MapAlignmentAccess
+import com.rork.vinetrack.data.mapalignment.MapAlignmentExitGuard
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.EmptyState
@@ -46,6 +49,14 @@ import com.rork.vinetrack.ui.theme.LocalVineColors
  * navigation state, a process-death restore or any other internal route cannot
  * surface it to a non-System-Admin. This mirrors `AdminDashboardScreen`.
  *
+ * ## Exit protection
+ *
+ * Reference points cost real walking, so no exit route may drop them silently.
+ * The toolbar Back button and Android system Back both go through the same
+ * [MapAlignmentExitGuard] the wizard's own Cancel and Discard actions use, so
+ * all three raise one "Discard calibration?" confirmation. With no reference
+ * points collected, Back simply exits.
+ *
  * @param onRequestFix one-shot GPS request served by the EXISTING location
  *   pipeline (`AppViewModel.fetchCurrentFix` -> `LocationTracker` ->
  *   `PinLocationFixValidator`). Injected rather than created here so the wizard
@@ -69,13 +80,25 @@ fun MapAlignmentPreviewScreen(
     }
 
     val vine = LocalVineColors.current
+    val exitGuard = remember { MapAlignmentExitGuard() }
+
+    // System Back gets the same protection as the toolbar button, but only
+    // while evidence would actually be lost — otherwise normal Back stands.
+    BackHandler(enabled = onBack != null && exitGuard.hasReferencePoints) {
+        if (onBack != null) exitGuard.requestExit(onBack)
+    }
+
     Scaffold(
         modifier = modifier,
         containerColor = vine.appBackground,
         topBar = {
             TopAppBar(
                 title = { Text("Android Map Alignment") },
-                navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
+                navigationIcon = {
+                    if (onBack != null) {
+                        BackNavIcon { exitGuard.requestExit(onBack) }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },
@@ -84,6 +107,7 @@ fun MapAlignmentPreviewScreen(
             state = state,
             onRequestFix = onRequestFix,
             modifier = Modifier.fillMaxSize().padding(padding),
+            exitGuard = exitGuard,
         )
     }
 }
