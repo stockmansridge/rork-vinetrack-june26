@@ -97,6 +97,12 @@ final class SprayTankActualStore {
         records.contains { $0.tripId == tripId && pendingIds.contains($0.id) }
     }
 
+    /// Number of actual-use rows still queued for a trip. Used for finalisation
+    /// diagnostics.
+    func pendingCount(tripId: UUID) -> Int {
+        records.filter { $0.tripId == tripId && pendingIds.contains($0.id) }.count
+    }
+
     func actual(tripId: UUID, tankNumber: Int) -> SprayTankActual? {
         records.filter { $0.tripId == tripId && $0.tankNumber == tankNumber }
             .max { $0.clientUpdatedAt < $1.clientUpdatedAt }
@@ -168,7 +174,18 @@ final class SprayTankActualStore {
             .sorted { $0.clientUpdatedAt < $1.clientUpdatedAt }
         for actual in queued {
             let id = actual.id
-            if tripSync?.isPendingUpsert(actual.tripId) == true || spraySync?.isPendingUpsert(actual.sprayRecordId) == true {
+            // A trip queued ONLY because its final ended state is deferred must
+            // not block its own actuals — that mutual wait was the Phase 5
+            // deadlock (trip pending -> actual skipped -> gate never released).
+            // Only a parent row that has never reached the server defers a child.
+            let decision = SprayTankActualUploadGate.decide(
+                parentTripBlocked: tripSync?.isPendingParentCreation(actual.tripId) ?? false,
+                sprayRecordPending: spraySync?.isPendingUpsert(actual.sprayRecordId) ?? false
+            )
+            guard decision == .upload else {
+                #if DEBUG
+                print("[SprayTankActual] skipped \(id) for trip \(actual.tripId): \(decision.skipReason ?? "-")")
+                #endif
                 continue
             }
             do {
@@ -179,6 +196,9 @@ final class SprayTankActualStore {
                 pending.remove(id)
                 try persistence.saveOrThrow(SprayTankActualCache(records: records, pendingIds: pending), key: Self.persistenceKey)
                 pendingIds = pending
+                // Releasing the Phase 5 gate is the caller's next stage: once
+                // this trip has no pending actuals, `hasPending` returns false
+                // and the queued final ended state uploads unchanged.
             } catch {
                 // Durable queue remains pending. A later app/sync cycle retries idempotently.
             }

@@ -29,6 +29,53 @@ final class TripSyncService {
     /// Whether a specific trip has local changes queued for upload.
     func isPendingUpsert(_ id: UUID) -> Bool { metadata.pendingUpserts[id] != nil }
 
+    /// Whether the parent trip row is known to exist on the server (uploaded or
+    /// pulled at least once). Deliberately separate from `isPendingUpsert`: a
+    /// trip can be queued purely because its FINAL ended state is held back
+    /// while its actual-use rows upload, and that must never block its own
+    /// children.
+    func isParentEstablished(_ id: UUID) -> Bool { metadata.isParentEstablished(id) }
+
+    /// True only when the parent row has never reached the server. This is the
+    /// one legitimate reason to defer a child upload.
+    func isPendingParentCreation(_ id: UUID) -> Bool {
+        metadata.pendingUpserts[id] != nil && !metadata.isParentEstablished(id)
+    }
+
+    /// True when the trip is queued ONLY because Phase 5 finalisation is held.
+    func isPendingFinalisationOnly(_ id: UUID) -> Bool {
+        metadata.pendingUpserts[id] != nil && metadata.isParentEstablished(id)
+    }
+
+    /// Lightweight, content-free finalisation diagnostics for recurrence checks.
+    nonisolated struct FinalisationDiagnostic: Sendable, Equatable {
+        let tripId: UUID
+        let pendingActualCount: Int
+        let isPhase5Held: Bool
+        let parentEstablished: Bool
+        let isPendingUpsert: Bool
+        let isActive: Bool
+        let hasEndTime: Bool
+
+        var summary: String {
+            "trip \(tripId) pendingActuals=\(pendingActualCount) held=\(isPhase5Held) parentOnServer=\(parentEstablished) queued=\(isPendingUpsert) active=\(isActive) endTime=\(hasEndTime)"
+        }
+    }
+
+    /// Snapshot of the finalisation state for one trip.
+    func finalisationDiagnostic(for id: UUID, pendingActualCount: Int) -> FinalisationDiagnostic {
+        let trip = store?.trips.first { $0.id == id }
+        return FinalisationDiagnostic(
+            tripId: id,
+            pendingActualCount: pendingActualCount,
+            isPhase5Held: shouldDeferEndedTrip(id),
+            parentEstablished: metadata.isParentEstablished(id),
+            isPendingUpsert: metadata.pendingUpserts[id] != nil,
+            isActive: trip?.isActive ?? false,
+            hasEndTime: trip?.endTime != nil
+        )
+    }
+
     /// Whether a specific trip is queued for a remote delete.
     func isPendingDelete(_ id: UUID) -> Bool { metadata.pendingDeletes[id] != nil }
 
@@ -558,10 +605,12 @@ final class TripSyncService {
                     }
                 }
                 if !trip.isActive && shouldDeferEndedTrip(tripId) {
-                    // Upload parent and exact tank-session state first, but keep
-                    // the durable final end queued until actual-use succeeds.
-                    trip.isActive = true
-                    trip.endTime = nil
+                    // Phase 5 hold. The trip is uploaded with its TRUE ended
+                    // state. Reactivating it here (is_active = true while the
+                    // payload omits the nil end_time) left the server showing an
+                    // ended trip as active and deadlocked the actual-use queue.
+                    // The hold now only keeps the trip queued locally until its
+                    // actuals clear; it never falsifies server state.
                     deferredEndIds.insert(tripId)
                 }
                 payloads.append(BackendTrip.upsert(from: trip, createdBy: createdBy, clientUpdatedAt: ts))
@@ -576,8 +625,13 @@ final class TripSyncService {
                 queuedAt: dirty,
                 vineyardId: vineyardId
             ) { try await repository.upsertTrips($0) }
+            // The parent row demonstrably exists for everything uploaded, so
+            // children may upload even while finalisation stays queued.
+            metadata.markParentsEstablished(result.uploaded)
             metadata.clearDirty(result.uploaded)
-            for id in result.uploaded where deferredEndIds.contains(id) {
+            for id in result.uploaded where deferredEndIds.contains(id) && shouldDeferEndedTrip(id) {
+                // Still waiting on actual-use rows: keep the trip queued so the
+                // finalisation stage re-runs once they clear.
                 metadata.markDirty(id, at: Date())
             }
             metadata.markUpsertsFailed(result.failed)
@@ -724,6 +778,7 @@ final class TripSyncService {
             if pendingDirtyAt > remoteAt { return }
         }
 
+        metadata.markParentsEstablished([backendTrip.id])
         let mapped = backendTrip.toTrip()
         let local = store.trips.first { $0.id == mapped.id }
         let reconciled = ActiveTripPathReconciler.reconcile(local: local, remote: mapped)
@@ -750,12 +805,17 @@ final class TripSyncMetadata {
         /// Trips needing an explicit `work_task_id = null` patch (offline/failed
         /// unlinks). Keyed by trip id with the time the clear was enqueued.
         var pendingWorkTaskClears: [UUID: Date] = [:]
+        /// Trips whose parent row is known to exist on the server. Separate from
+        /// the pending queue so a trip held only for Phase 5 finalisation does
+        /// not look like a missing parent to its children.
+        var establishedParents: Set<UUID> = []
 
         init() {}
 
         enum CodingKeys: String, CodingKey {
             case lastSyncByVineyard, pendingUpserts, pendingDeletes
             case failedUpserts, failedDeletes, pendingWorkTaskClears
+            case establishedParents
         }
 
         // Lenient decode so newly added fields don't wipe persisted pending
@@ -768,6 +828,7 @@ final class TripSyncMetadata {
             failedUpserts = try c.decodeIfPresent(Set<UUID>.self, forKey: .failedUpserts) ?? []
             failedDeletes = try c.decodeIfPresent(Set<UUID>.self, forKey: .failedDeletes) ?? []
             pendingWorkTaskClears = try c.decodeIfPresent([UUID: Date].self, forKey: .pendingWorkTaskClears) ?? [:]
+            establishedParents = try c.decodeIfPresent(Set<UUID>.self, forKey: .establishedParents) ?? []
         }
     }
 
@@ -783,6 +844,17 @@ final class TripSyncMetadata {
     var failedUpsertIds: Set<UUID> { state.failedUpserts }
     var failedDeleteIds: Set<UUID> { state.failedDeletes }
     func isUpsertFailed(_ id: UUID) -> Bool { state.failedUpserts.contains(id) }
+
+    var establishedParentIds: Set<UUID> { state.establishedParents }
+    func isParentEstablished(_ id: UUID) -> Bool { state.establishedParents.contains(id) }
+
+    /// Record that these trip rows demonstrably exist on the server.
+    func markParentsEstablished(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        let before = state.establishedParents.count
+        for id in ids { state.establishedParents.insert(id) }
+        if state.establishedParents.count != before { save() }
+    }
     func isDeleteFailed(_ id: UUID) -> Bool { state.failedDeletes.contains(id) }
 
     func markUpsertsFailed(_ ids: [UUID]) {
@@ -830,6 +902,7 @@ final class TripSyncMetadata {
         // A deleted trip needs no link clear — the soft-delete subsumes it.
         state.pendingWorkTaskClears.removeValue(forKey: id)
         state.pendingDeletes[id] = date
+        state.establishedParents.remove(id)
         save()
     }
 

@@ -443,7 +443,12 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         rowSpacingMetres = try container.decodeIfPresent(Double.self, forKey: .rowSpacingMetres)
         geometrySource = try? container.decodeIfPresent(SprayGeometrySource.self, forKey: .geometrySource)
         geometryQuality = try? container.decodeIfPresent(SprayGeometryQuality.self, forKey: .geometryQuality)
-        carrierVolumeBasis = try? container.decodeIfPresent(SprayCarrierBasis.self, forKey: .carrierVolumeBasis)
+        // Accepts the local raw value AND the canonical server value, so a
+        // snapshot written by either build round-trips instead of silently
+        // losing its carrier basis.
+        carrierVolumeBasis = SprayCarrierBasisSyncContract.basis(
+            fromServerValue: try? container.decodeIfPresent(String.self, forKey: .carrierVolumeBasis)
+        )
         totalCarrierLitres = try container.decodeIfPresent(Double.self, forKey: .totalCarrierLitres)
         carrierLitresPerHectare = try container.decodeIfPresent(Double.self, forKey: .carrierLitresPerHectare)
         diluteLitresPer100m = try container.decodeIfPresent(Double.self, forKey: .diluteLitresPer100m)

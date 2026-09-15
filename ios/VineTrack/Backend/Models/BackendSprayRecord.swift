@@ -295,7 +295,11 @@ extension BackendSprayRecord {
             rowSpacingMetres: geometry?.rowSpacingMetres,
             geometrySource: geometry?.geometrySource?.rawValue,
             geometryQuality: geometry?.geometryQuality?.rawValue,
-            carrierVolumeBasis: geometry?.carrierVolumeBasis?.rawValue,
+            // Canonicalised at the sync boundary: the local enum stores manual
+            // total volume as `manual`, which the server CHECK constraint
+            // rejects. An unrecognised value is omitted (NULL) rather than
+            // guessed into L/ha or L/100 m — the record itself is preserved.
+            carrierVolumeBasis: SprayCarrierBasisSyncContract.serverValue(for: geometry?.carrierVolumeBasis),
             totalCarrierLitres: geometry?.totalCarrierLitres,
             carrierLitresPerHectare: geometry?.carrierLitresPerHectare,
             diluteLitresPer100m: geometry?.diluteLitresPer100m,
@@ -370,7 +374,7 @@ extension BackendSprayRecord {
             rowSpacingMetres: rowSpacingMetres,
             geometrySource: geometrySource.flatMap { SprayGeometrySource(rawValue: $0) },
             geometryQuality: geometryQuality.flatMap { SprayGeometryQuality(rawValue: $0) },
-            carrierVolumeBasis: carrierVolumeBasis.flatMap { SprayCarrierBasis(rawValue: $0) },
+            carrierVolumeBasis: SprayCarrierBasisSyncContract.basis(fromServerValue: carrierVolumeBasis),
             totalCarrierLitres: totalCarrierLitres,
             carrierLitresPerHectare: carrierLitresPerHectare,
             diluteLitresPer100m: diluteLitresPer100m,
