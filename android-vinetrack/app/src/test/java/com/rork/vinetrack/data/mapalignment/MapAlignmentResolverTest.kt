@@ -6,11 +6,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * V1 scope precedence: Block > Vineyard > None.
+ * V1 scope precedence: Enabled Block > Enabled Vineyard > None.
  *
  * The most important property here is the negative one: an alignment captured on
  * ONE Android installation must never leak to another device, because that would
  * turn one operator's imagery observation into a vineyard-wide correction.
+ *
+ * The second is that a DISABLED alignment is not an active candidate — it must
+ * fall through rather than win and silently suppress the scope beneath it.
  */
 class MapAlignmentResolverTest {
 
@@ -24,12 +27,13 @@ class MapAlignmentResolverTest {
         blockId: String? = null,
         east: Double = 5.0,
         north: Double = 5.0,
+        enabled: Boolean = true,
     ) = MapAlignment(
         id = id,
         scope = MapAlignmentScope(installationId, vineyardId, blockId),
         eastOffsetMetres = east,
         northOffsetMetres = north,
-        isEnabled = true,
+        isEnabled = enabled,
     )
 
     private fun resolve(
@@ -128,6 +132,96 @@ class MapAlignmentResolverTest {
         // A real match is returned untouched.
         val real = alignment("vineyard", installA, "v1")
         assertEquals("vineyard", MapAlignmentResolver.resolveOrNone(listOf(real), installA, "v1").id)
+    }
+
+    // ----- Enablement is part of candidate selection -----
+
+    @Test
+    fun `a disabled block alignment does not suppress an enabled vineyard alignment`() {
+        val alignments = listOf(
+            alignment("vineyard", installA, "v1"),
+            alignment("block-off", installA, "v1", blockId = "b1", enabled = false),
+        )
+        // Switching a block override off must reveal the vineyard correction,
+        // not silently cancel it via an identity transform.
+        assertEquals("vineyard", resolve(alignments, blockId = "b1")?.id)
+        assertEquals("vineyard", resolve(alignments.reversed(), blockId = "b1")?.id)
+    }
+
+    @Test
+    fun `a disabled vineyard alignment resolves to none`() {
+        val alignments = listOf(alignment("vineyard-off", installA, "v1", enabled = false))
+        assertNull(resolve(alignments))
+        assertNull(resolve(alignments, blockId = "b1"))
+    }
+
+    @Test
+    fun `a disabled block alignment with no vineyard alignment resolves to none`() {
+        val alignments = listOf(
+            alignment("block-off", installA, "v1", blockId = "b1", enabled = false),
+        )
+        assertNull(resolve(alignments, blockId = "b1"))
+    }
+
+    @Test
+    fun `an enabled zero-offset block override wins over an enabled vineyard alignment`() {
+        val zeroBlock = alignment(
+            "block-zero",
+            installA,
+            "v1",
+            blockId = "b1",
+            east = 0.0,
+            north = 0.0,
+        )
+        val alignments = listOf(alignment("vineyard", installA, "v1"), zeroBlock)
+
+        // "This block intentionally needs no correction" is an ACTIVE override.
+        val winner = resolve(alignments, blockId = "b1")
+        assertEquals("block-zero", winner?.id)
+        assertEquals("block-zero", resolve(alignments.reversed(), blockId = "b1")?.id)
+
+        // It wins as a candidate, yet transforms as identity for that block.
+        assertTrue("enabled zero offset must still be an identity transform", winner!!.isIdentity)
+        assertTrue("enablement, not isIdentity, decides candidacy", winner.isEnabled)
+
+        // Another block in the same vineyard still gets the vineyard alignment.
+        assertEquals("vineyard", resolve(alignments, blockId = "b2")?.id)
+    }
+
+    @Test
+    fun `a disabled alignment from another installation still never applies`() {
+        val alignments = listOf(
+            alignment("other-off", installB, "v1", enabled = false),
+            alignment("other-block-off", installB, "v1", blockId = "b1", enabled = false),
+        )
+        assertNull(resolve(alignments, installationId = installA, blockId = "b1"))
+        assertNull(resolve(alignments, installationId = installA))
+        // Enabling them changes nothing for installation A either.
+        assertNull(
+            resolve(
+                listOf(alignment("other-on", installB, "v1")),
+                installationId = installA,
+            ),
+        )
+    }
+
+    @Test
+    fun `a disabled block falls through to the vineyard only within its own installation`() {
+        val alignments = listOf(
+            alignment("a-vineyard", installA, "v1"),
+            alignment("b-block-off", installB, "v1", blockId = "b1", enabled = false),
+            alignment("b-vineyard", installB, "v1"),
+        )
+        assertEquals("a-vineyard", resolve(alignments, installationId = installA, blockId = "b1")?.id)
+        assertEquals("b-vineyard", resolve(alignments, installationId = installB, blockId = "b1")?.id)
+    }
+
+    @Test
+    fun `resolveOrNone yields identity when the only candidate is disabled`() {
+        val disabledOnly = listOf(alignment("off", installA, "v1", enabled = false))
+        val none = MapAlignmentResolver.resolveOrNone(disabledOnly, installA, "v1")
+        assertTrue(none.isIdentity)
+        assertEquals("none", none.id)
     }
 
     @Test

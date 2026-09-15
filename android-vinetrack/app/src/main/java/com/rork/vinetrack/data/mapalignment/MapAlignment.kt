@@ -275,18 +275,66 @@ data class MapAlignment(
  * Kept as a distinct aggregate so reference points are never discarded once an
  * alignment is derived — they remain available for recalculation, quality
  * assessment, diagnostics and detecting imagery drift over time.
+ *
+ * ## Single-scope invariant (enforced at construction)
+ *
+ * A calibration describes ONE alignment and the evidence that produced it, so
+ * every reference point must carry exactly [alignment]'s scope. Points from
+ * another Android installation, another vineyard, or another block scope
+ * (including mixing vineyard-level and block-level evidence) can never
+ * participate: they would corrupt any offset derived from the set and make
+ * residuals meaningless.
+ *
+ * This is enforced with `require` in [init] rather than by filtering, because
+ * silently dropping mismatched evidence would hide a real caller bug — a point
+ * arriving with the wrong scope means the collection logic is wrong, and the
+ * operator would be shown a confident result computed from fewer points than
+ * they believe they captured. Constructing an invalid calibration is therefore
+ * impossible, and every derived calculation can trust [referencePoints]
+ * unconditionally.
+ *
+ * Use [acceptable] / [withReferencePoint] to add evidence safely.
  */
 data class MapAlignmentCalibration(
     val alignment: MapAlignment,
     val referencePoints: List<MapAlignmentReferencePoint> = emptyList(),
 ) {
-    /** Reference points that belong to this alignment's own scope. */
+    init {
+        val mismatched = referencePoints.filterNot { it.scope == alignment.scope }
+        require(mismatched.isEmpty()) {
+            "Mixed-scope calibration evidence: ${mismatched.size} reference point(s) " +
+                "do not belong to scope ${alignment.scope}. Offending point ids: " +
+                mismatched.joinToString(limit = 5) { it.id }
+        }
+    }
+
+    /**
+     * The calibration's evidence. Identical to [referencePoints] — every point
+     * is in scope by construction. Retained as the explicit name for call sites
+     * that want to state that intent.
+     */
     val pointsInScope: List<MapAlignmentReferencePoint>
-        get() = referencePoints.filter { it.scope == alignment.scope }
+        get() = referencePoints
+
+    /** True when [point] may join this calibration, i.e. it shares the exact scope. */
+    fun acceptable(point: MapAlignmentReferencePoint): Boolean = point.scope == alignment.scope
+
+    /**
+     * Add one reference point. Throws when [point] belongs to a different
+     * scope; check with [acceptable] first if the caller cannot guarantee it.
+     *
+     * `alignmentId` on the point is deliberately NOT required here: it stays
+     * null while a calibration is still being collected.
+     */
+    fun withReferencePoint(point: MapAlignmentReferencePoint): MapAlignmentCalibration =
+        copy(referencePoints = referencePoints + point)
 
     /**
      * Per-point residual against the applied alignment, in metres: how far each
      * point still disagrees after the translation. Diagnostics only.
+     *
+     * Safe to compute over every point because the single-scope invariant is
+     * guaranteed at construction.
      */
     fun residuals(): List<MapAlignmentOffset> = referencePoints.map { point ->
         MapAlignmentOffset(

@@ -90,24 +90,62 @@ object MapAlignmentTransform {
     /**
      * The observed discrepancy between a physically-recorded canonical position
      * and the display position the operator matched it to. Evidence only.
+     *
+     * ### Exactly invertible by construction
+     *
+     * This is the inverse of [translate], so it MUST use the identical latitude
+     * convention — see [scaleLatitudeFor]. Previously it always scaled east by
+     * the canonical latitude while [translate] uses the *resolved* latitude for a
+     * southward move, so a southward observation produced an east offset that
+     * did not reconstruct the operator's own display coordinate.
+     *
+     * Guarantee: feeding this result into an enabled [MapAlignment] and calling
+     * [toDisplay] on the same canonical coordinate reproduces [display].
      */
     fun observedOffset(
         canonical: CanonicalCoordinate,
         display: AndroidDisplayCoordinate,
-    ): MapAlignmentOffset = MapAlignmentOffset(
-        eastMetres = (display.longitude - canonical.longitude) * metresPerDegLon(canonical.latitude),
-        northMetres = (display.latitude - canonical.latitude) * METRES_PER_DEG_LAT,
-    )
+    ): MapAlignmentOffset {
+        val northMetres = (display.latitude - canonical.latitude) * METRES_PER_DEG_LAT
+        // Same source/resolved/direction triple translate() would see for this move.
+        val scaleLatitude = scaleLatitudeFor(
+            sourceLatitude = canonical.latitude,
+            resolvedLatitude = display.latitude,
+            northMetres = northMetres,
+        )
+        return MapAlignmentOffset(
+            eastMetres = (display.longitude - canonical.longitude) * metresPerDegLon(scaleLatitude),
+            northMetres = northMetres,
+        )
+    }
+
+    /**
+     * The single latitude convention for the local east/north frame, shared by
+     * [translate] and [observedOffset] so a derived offset always round-trips.
+     *
+     * A northward move scales longitude at the source latitude; a southward move
+     * scales at the resolved latitude. Keeping one definition is what makes
+     * [toCanonical] an exact inverse of [toDisplay] and makes an offset derived
+     * from an observation reproduce that observation.
+     */
+    private fun scaleLatitudeFor(
+        sourceLatitude: Double,
+        resolvedLatitude: Double,
+        northMetres: Double,
+    ): Double = if (northMetres >= 0.0) sourceLatitude else resolvedLatitude
 
     /**
      * Shared translation core, working on raw degrees so it can serve both
      * directions without either coordinate type leaking into the other.
      *
-     * Latitude is resolved FIRST, then the longitude scale is taken from the
-     * appropriate latitude. That ordering is what makes [toCanonical] an exact
+     * Latitude is resolved FIRST, then the longitude scale is taken from
+     * [scaleLatitudeFor]. That ordering is what makes [toCanonical] an exact
      * inverse of [toDisplay]: the forward call scales longitude by the source
      * latitude, and the inverse call reconstructs that same latitude before
      * undoing the longitude shift.
+     *
+     * Still a local vineyard-scale east/north translation only — no projection
+     * library, no rotation/scale/skew.
      */
     private fun translate(
         latitude: Double,
@@ -116,7 +154,11 @@ object MapAlignmentTransform {
         northMetres: Double,
     ): Pair<Double, Double> {
         val resolvedLatitude = latitude + northMetres / METRES_PER_DEG_LAT
-        val scaleLatitude = if (northMetres >= 0.0) latitude else resolvedLatitude
+        val scaleLatitude = scaleLatitudeFor(
+            sourceLatitude = latitude,
+            resolvedLatitude = resolvedLatitude,
+            northMetres = northMetres,
+        )
         val resolvedLongitude = longitude + eastMetres / metresPerDegLon(scaleLatitude)
         return resolvedLatitude to resolvedLongitude
     }

@@ -188,6 +188,65 @@ class MapAlignmentTransformTest {
         assertEquals(0.0, calibration.residuals().first().magnitudeMetres, 1e-6)
     }
 
+    /**
+     * The correction that matters most for calibration: an offset DERIVED from
+     * an operator's observation must, when applied, reproduce that operator's
+     * own display coordinate. Southward cases are the regression — the derived
+     * east component previously used canonical latitude while the translation
+     * core uses the resolved latitude for a southward move, so the
+     * reconstruction missed the point the operator actually selected.
+     */
+    @Test
+    fun `a derived offset reconstructs the observed display coordinate`() {
+        listOf(
+            "north + east" to AndroidDisplayCoordinate(-33.2830, 149.0995),
+            "north + west" to AndroidDisplayCoordinate(-33.2830, 149.0981),
+            "south + east" to AndroidDisplayCoordinate(-33.2841, 149.0995),
+            "south + west" to AndroidDisplayCoordinate(-33.2841, 149.0981),
+            "south only" to AndroidDisplayCoordinate(-33.2841, 149.0988),
+            "north only" to AndroidDisplayCoordinate(-33.2830, 149.0988),
+            "far south + west" to AndroidDisplayCoordinate(-33.3100, 149.0900),
+        ).forEach { (label, observedDisplay) ->
+            // 1..3: canonical + display -> derived offset.
+            val observed = MapAlignmentTransform.observedOffset(canonical, observedDisplay)
+            // 4: an enabled alignment built from exactly that offset.
+            val derived = alignment(observed.eastMetres, observed.northMetres)
+            // 5..6: forward transform must land back on the supplied display point.
+            val reconstructed = canonical.toDisplay(derived)
+
+            assertEquals("$label lat", observedDisplay.latitude, reconstructed.latitude, TIGHT)
+            assertEquals("$label lon", observedDisplay.longitude, reconstructed.longitude, TIGHT)
+        }
+    }
+
+    @Test
+    fun `a derived offset has the expected direction signs`() {
+        val southWest = MapAlignmentTransform.observedOffset(
+            canonical,
+            AndroidDisplayCoordinate(-33.2841, 149.0981),
+        )
+        assertTrue("southward observation must be negative north", southWest.northMetres < 0.0)
+        assertTrue("westward observation must be negative east", southWest.eastMetres < 0.0)
+
+        val northEast = MapAlignmentTransform.observedOffset(
+            canonical,
+            AndroidDisplayCoordinate(-33.2830, 149.0995),
+        )
+        assertTrue(northEast.northMetres > 0.0)
+        assertTrue(northEast.eastMetres > 0.0)
+    }
+
+    @Test
+    fun `a derived southward offset still round-trips through the inverse`() {
+        val observedDisplay = AndroidDisplayCoordinate(-33.2841, 149.0981)
+        val observed = MapAlignmentTransform.observedOffset(canonical, observedDisplay)
+        val derived = alignment(observed.eastMetres, observed.northMetres)
+
+        val back = canonical.toDisplay(derived).toCanonical(derived)
+        assertEquals(canonical.latitude, back.latitude, TIGHT)
+        assertEquals(canonical.longitude, back.longitude, TIGHT)
+    }
+
     @Test
     fun `alignment magnitude is reported in metres`() {
         assertEquals(5.0, alignment(3.0, 4.0).magnitudeMetres, 1e-9)
