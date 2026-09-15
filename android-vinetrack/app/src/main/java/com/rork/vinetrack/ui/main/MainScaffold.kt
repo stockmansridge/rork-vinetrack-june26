@@ -562,6 +562,14 @@ private fun ToolHost(
         ToolRoute.Admin -> AdminDashboardScreen(vm, modifier, onBack = onBack)
         // Unreleased System Admin preview. The screen re-resolves access itself,
         // so a restored/stale navigation state cannot surface it to a non-admin.
-        ToolRoute.MapAlignment -> MapAlignmentPreviewScreen(state, modifier, onBack = onBack)
+        // GPS comes from the EXISTING one-shot pipeline (fetchCurrentFix ->
+        // LocationTracker -> PinLocationFixValidator); the wizard never starts a
+        // competing location manager and never relaxes production admission.
+        ToolRoute.MapAlignment -> MapAlignmentPreviewScreen(
+            state = state,
+            onRequestFix = { onResult -> vm.fetchCurrentFix(onResult) },
+            modifier = modifier,
+            onBack = onBack,
+        )
     }
 }

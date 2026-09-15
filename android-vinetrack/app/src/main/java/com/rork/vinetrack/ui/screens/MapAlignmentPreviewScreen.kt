@@ -1,13 +1,8 @@
 package com.rork.vinetrack.ui.screens
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ShieldMoon
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -18,22 +13,31 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.PinLocationResult
 import com.rork.vinetrack.data.mapalignment.MapAlignmentAccess
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.EmptyState
-import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
-import com.rork.vinetrack.ui.theme.VineColors
 
 /**
- * System Admin preview of the unfinished Android Map Alignment feature.
+ * System Admin host for the Android Map Alignment onsite calibration wizard.
  *
- * Renders nothing but an explanation — there is no alignment to configure yet,
- * nothing is persisted and no map is touched.
+ * Hosts [MapAlignmentWizard], which lets a System Admin record reference points
+ * onsite, derive a candidate translation and inspect it in a PRIVATE
+ * before/after preview.
+ *
+ * ## What this phase deliberately does not do
+ *
+ * * No production vineyard or block map is aligned — the candidate affects only
+ *   the preview inside the wizard.
+ * * Nothing is persisted: no SQL, Supabase table, RPC, RLS, API endpoint, sync
+ *   entity, SharedPreferences or local database write. The draft is session
+ *   memory and is discarded when the wizard closes.
+ * * No canonical coordinate is altered. Capture only creates new reference
+ *   points; vineyard coordinates, block boundaries, rows, pins, routes and raw
+ *   GPS fixes are read-only here.
  *
  * ## Navigation-layer guard
  *
@@ -41,11 +45,17 @@ import com.rork.vinetrack.ui.theme.VineColors
  * This screen re-resolves [MapAlignmentAccess] itself so a stale saved
  * navigation state, a process-death restore or any other internal route cannot
  * surface it to a non-System-Admin. This mirrors `AdminDashboardScreen`.
+ *
+ * @param onRequestFix one-shot GPS request served by the EXISTING location
+ *   pipeline (`AppViewModel.fetchCurrentFix` -> `LocationTracker` ->
+ *   `PinLocationFixValidator`). Injected rather than created here so the wizard
+ *   cannot start a competing location manager.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MapAlignmentPreviewScreen(
     state: AppUiState,
+    onRequestFix: (onResult: (PinLocationResult) -> Unit) -> Unit,
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
 ) {
@@ -70,47 +80,11 @@ fun MapAlignmentPreviewScreen(
             )
         },
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            VineyardCard {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text(
-                        "Android Map Alignment",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = vine.textPrimary,
-                    )
-                    Text(
-                        "System Admin Preview",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = VineColors.Orange,
-                    )
-                    Text(
-                        "This tool will allow an Android satellite map to be aligned with " +
-                            "VineTrack's canonical vineyard coordinates without changing the " +
-                            "underlying GPS data.",
-                        fontSize = 14.sp,
-                        color = vine.textSecondary,
-                    )
-                    Text(
-                        "Map alignment is not yet active.",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = vine.textPrimary,
-                    )
-                }
-            }
-        }
+        MapAlignmentWizard(
+            state = state,
+            onRequestFix = onRequestFix,
+            modifier = Modifier.fillMaxSize().padding(padding),
+        )
     }
 }
 

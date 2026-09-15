@@ -120,6 +120,28 @@ object MapAlignmentTransform {
     }
 
     /**
+     * Straight-line distance between two canonical coordinates, in metres,
+     * measured in the SAME local east/north frame the rest of this object uses.
+     *
+     * Provided so calibration separation checks cannot quietly adopt a second
+     * distance convention. This is a local vineyard-scale approximation, which
+     * is entirely adequate for "are these two reference points well separated?"
+     * and is deliberately not a geodesic. It does not replace the production
+     * haversine used for route distance.
+     */
+    fun metresBetween(a: CanonicalCoordinate, b: CanonicalCoordinate): Double {
+        val northMetres = (b.latitude - a.latitude) * METRES_PER_DEG_LAT
+        val eastMetres = (b.longitude - a.longitude) * metresPerDegLon(
+            scaleLatitudeFor(
+                sourceLatitude = a.latitude,
+                resolvedLatitude = b.latitude,
+                northMetres = northMetres,
+            ),
+        )
+        return kotlin.math.sqrt(eastMetres * eastMetres + northMetres * northMetres)
+    }
+
+    /**
      * The single latitude convention for the local east/north frame, shared by
      * [translate] and [observedOffset] so a derived offset always round-trips.
      *
