@@ -13,7 +13,6 @@ import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.util.UUID
 
 /**
  * Best-effort, throttled client telemetry heartbeat (SQL 154), mirroring the
@@ -43,14 +42,14 @@ class ClientTelemetryRepository(app: Application, private val session: SessionSt
      * Random per-installation identifier. Survives sign-out (the same
      * installation used by a new account creates a separate user/client
      * association server-side); reset only on reinstall.
+     *
+     * Now delegated to [AndroidInstallationIdentity], which owns the same
+     * SharedPreferences file and key. Behaviour and the stored value are
+     * unchanged — the identity was extracted so other features can reference
+     * this installation without duplicating the storage key.
      */
     private val clientInstanceId: String
-        get() {
-            prefs.getString(KEY_CLIENT_ID, null)?.let { return it }
-            val id = UUID.randomUUID().toString()
-            prefs.edit().putString(KEY_CLIENT_ID, id).apply()
-            return id
-        }
+        get() = AndroidInstallationIdentity.current(appContext)
 
     /**
      * Send a heartbeat if due. Safe to call from any auth/foreground/
@@ -125,7 +124,6 @@ class ClientTelemetryRepository(app: Application, private val session: SessionSt
     }
 
     private companion object {
-        const val KEY_CLIENT_ID = "telemetry_client_instance_id"
         const val KEY_LAST_SIGNATURE = "telemetry_last_signature"
         const val KEY_LAST_SENT_AT = "telemetry_last_sent_at"
         const val MIN_INTERVAL_MS = 15L * 60L * 1000L

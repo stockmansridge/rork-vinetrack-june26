@@ -3,48 +3,123 @@ package com.rork.vinetrack.data.mapalignment
 /**
  * Android-only map alignment domain foundation.
  *
+ * ## Fixed V1 product rules
+ *
+ * These are settled product decisions, not implementation preferences. Do not
+ * relax them without an explicit product decision:
+ *
+ * * **Android only.** Nothing in this package exists on iOS or Portal.
+ * * **System Admin preview only** until the feature is explicitly released.
+ * * **Portal and iOS remain VineTrack's canonical/master geographic
+ *   representation.** Android never becomes the source of geographic truth.
+ * * **Map Alignment corrects Android map presentation only.** It is a drawing
+ *   concern, not a data concern.
+ * * **Canonical WGS84 data remains unchanged.** No vineyard, block, row, pin,
+ *   route or historical coordinate is ever rewritten by this feature.
+ * * **Alignment is scoped to an Android installation** — see [MapAlignmentScope].
+ *   It is never a vineyard-wide correction imposed on every Android device.
+ * * **Vineyard alignment is the normal scope.**
+ * * **Block alignment is an optional override.**
+ * * **Block override takes precedence over vineyard alignment** — see
+ *   [MapAlignmentResolver].
+ * * **Translation only in V1.** No rotation, scale, skew, affine transform or
+ *   arbitrary warping.
+ * * **Satellite/hybrid presentation is the intended future use.** Do not assume
+ *   standard vector maps need correction; the observed discrepancy is with
+ *   aerial imagery georeferencing.
+ * * **No historical coordinate remediation is performed.** This feature never
+ *   goes back and "fixes" previously captured data.
+ *
  * ## What this is
  *
  * A *display-time* translation that lets the Android satellite basemap be
- * nudged so it lines up with VineTrack's canonical vineyard geometry. Some
- * Android basemap tiles are georeferenced slightly differently to the imagery
- * Portal/iOS operate against, which makes correct canonical rows and pins look
- * offset from the imagery underneath them on this platform only.
+ * nudged so it lines up with VineTrack's canonical vineyard geometry, on the
+ * one installation that is seeing the mismatch.
  *
  * ## What this is NOT
  *
  * This is **not** a GPS correction system. It does not improve, adjust or
- * second-guess any location fix. It never changes canonical WGS84 data.
+ * second-guess any location fix.
  *
  * ## The absolute coordinate invariant
  *
- * The aligned/display coordinate produced here may be used **only** for drawing
- * on the Android map. It must NEVER be written into domain data, persistence,
- * an outbox payload or a sync payload, and must never replace a canonical
- * coordinate. The canonical coordinate always remains the single stored truth
- * for vineyard boundaries, block boundaries, rows, pins, route/path points, GPS
- * capture and map-created geometry.
- *
- * Portal and iOS remain the canonical/master geographic representation of
- * VineTrack vineyard data; nothing in this package exists on those platforms.
- *
- * This first version is deliberately **translation only** — no rotation, scale,
- * skew, affine transform or arbitrary warping. Those will only be considered if
- * field evidence later proves them necessary.
+ * **Android display coordinates can never become stored VineTrack geographic
+ * truth.** An [AndroidDisplayCoordinate] may be used only for drawing on the
+ * Android map. It must never be written into domain data, persistence, an
+ * outbox payload or a sync payload. The type system now enforces the boundary:
+ * a display coordinate cannot be handed to code expecting a
+ * [CanonicalCoordinate] without an explicit, deliberate conversion.
  */
 
 /**
- * An immutable geographic coordinate.
+ * A canonical WGS84 coordinate — VineTrack's stored geographic truth.
  *
- * The same type is used for a canonical WGS84 coordinate and for a derived
- * Android display coordinate; which one an instance holds is expressed by the
- * transform function that produced it, and by the variable it is stored in.
- * See [MapAlignmentTransform] for the one-way rule about which may be persisted.
+ * This is the only kind of coordinate that may be persisted, synced or treated
+ * as the real-world position of anything. It is deliberately a *different type*
+ * from [AndroidDisplayCoordinate] so the compiler, rather than developer
+ * discipline, prevents a display coordinate being stored by mistake.
  */
-data class GeoCoordinate(
+data class CanonicalCoordinate(
     val latitude: Double,
     val longitude: Double,
-)
+) {
+    /**
+     * Apply an alignment to produce the position this coordinate should be
+     * DRAWN at on the Android map. The result is presentation-only.
+     */
+    fun toDisplay(alignment: MapAlignment): AndroidDisplayCoordinate =
+        MapAlignmentTransform.toDisplay(this, alignment)
+}
+
+/**
+ * A coordinate in the *aligned Android map's* frame of reference.
+ *
+ * Purely a rendering/interaction value: where something is drawn, or where the
+ * operator tapped on the shifted imagery. It is NOT a real-world position and
+ * must never be persisted, synced, compared against canonical geometry or fed
+ * into row/aisle/duplicate logic. Convert with [toCanonical] first.
+ */
+data class AndroidDisplayCoordinate(
+    val latitude: Double,
+    val longitude: Double,
+) {
+    /**
+     * Convert a display position (typically a map tap) back to the canonical
+     * coordinate it truly represents. This is the ONLY legitimate route from
+     * display space into anything that may be stored.
+     */
+    fun toCanonical(alignment: MapAlignment): CanonicalCoordinate =
+        MapAlignmentTransform.toCanonical(this, alignment)
+}
+
+/**
+ * Identifies exactly what an alignment applies to.
+ *
+ * An alignment is always tied to ONE Android installation. That is the whole
+ * point: the imagery offset one operator sees on one device must never silently
+ * become a vineyard-wide correction applied to every Android device, and it
+ * must never reach iOS or Portal.
+ *
+ * @property androidInstallationId VineTrack's opaque per-installation
+ *   identifier (`AndroidInstallationIdentity`). A random UUID stored on the
+ *   device — never a hardware identifier, advertising ID, email or user ID.
+ * @property vineyardId the vineyard the alignment applies within. Always
+ *   present: alignment is meaningless without a vineyard's geometry.
+ * @property blockId optional block override. When null this is the vineyard's
+ *   normal alignment; when set it applies to that block only and takes
+ *   precedence over the vineyard alignment.
+ */
+data class MapAlignmentScope(
+    val androidInstallationId: String,
+    val vineyardId: String,
+    val blockId: String? = null,
+) {
+    /** True when this is the optional per-block override rather than the vineyard default. */
+    val isBlockOverride: Boolean get() = blockId != null
+
+    /** The vineyard-level scope for the same installation and vineyard. */
+    fun asVineyardScope(): MapAlignmentScope = if (blockId == null) this else copy(blockId = null)
+}
 
 /** Optional classification of what a calibration/reference point was taken against. */
 enum class MapAlignmentReferenceType {
@@ -62,54 +137,97 @@ enum class MapAlignmentRowPosition {
     End,
 }
 
+/** An east/north translation in metres. Positive is east and north respectively. */
+data class MapAlignmentOffset(
+    val eastMetres: Double,
+    val northMetres: Double,
+) {
+    val magnitudeMetres: Double
+        get() = kotlin.math.sqrt(eastMetres * eastMetres + northMetres * northMetres)
+
+    companion object {
+        val ZERO = MapAlignmentOffset(0.0, 0.0)
+    }
+}
+
 /**
  * A calibration/reference point: one physical place, recorded twice.
  *
  * [canonicalCoordinate] is the real GPS coordinate recorded while standing at
- * the location. [selectedMapCoordinate] is where the operator had to tap on the
- * Android satellite image for it to *look* like the same place. The difference
- * between the two is the evidence an alignment is later derived from.
+ * the location — canonical truth. [selectedMapCoordinate] is where the operator
+ * had to tap on the Android satellite image for it to *look* like the same
+ * place — display space. The two are deliberately different types so they can
+ * never be transposed or confused.
+ *
+ * ## Why these are retained individually
+ *
+ * The derived east/north offsets are a summary, and a summary is not evidence.
+ * Individual points are kept so we can later support recalculation, quality
+ * assessment, diagnostics, and detecting whether Google's imagery shifts over
+ * time. Never reduce a calibration to just its two offset numbers.
+ *
+ * @property scope the scope this point was captured for, so evidence always
+ *   travels with the installation/vineyard/block it belongs to.
+ * @property alignmentId the alignment this point contributed to, when one has
+ *   been computed from it. Null while a calibration is still being collected.
  *
  * Capturing these is a later prompt — this pass only models them. Nothing here
  * is persisted or synced.
  */
 data class MapAlignmentReferencePoint(
     val id: String,
+    /** Scope that owns this evidence. */
+    val scope: MapAlignmentScope,
     /** The canonical, physically-recorded WGS84 coordinate. Never modified. */
-    val canonicalCoordinate: GeoCoordinate,
+    val canonicalCoordinate: CanonicalCoordinate,
     /** The matching point the operator selected on the Android satellite image. */
-    val selectedMapCoordinate: GeoCoordinate,
+    val selectedMapCoordinate: AndroidDisplayCoordinate,
     /** Horizontal accuracy of the canonical fix, in metres, when reported. */
     val gpsAccuracyMetres: Double? = null,
     /** Epoch millis at which the canonical coordinate was captured. */
     val capturedAtEpochMillis: Long,
+    /** The alignment computed from this point, once one exists. */
+    val alignmentId: String? = null,
     val referenceType: MapAlignmentReferenceType? = null,
     val description: String? = null,
     val rowNumber: Int? = null,
     val rowPosition: MapAlignmentRowPosition? = null,
 ) {
     /**
-     * Eastward component of this point's observed discrepancy, in metres.
-     * Evidence only — it is not automatically applied to anything.
+     * This point's observed discrepancy. Evidence only — it is not
+     * automatically applied to anything.
      */
-    val observedEastOffsetMetres: Double
-        get() = MapAlignmentTransform.eastMetresBetween(canonicalCoordinate, selectedMapCoordinate)
+    val observedOffset: MapAlignmentOffset
+        get() = MapAlignmentTransform.observedOffset(canonicalCoordinate, selectedMapCoordinate)
 
-    /** Northward component of this point's observed discrepancy, in metres. */
-    val observedNorthOffsetMetres: Double
-        get() = MapAlignmentTransform.northMetresBetween(canonicalCoordinate, selectedMapCoordinate)
+    /** Eastward component of the observed discrepancy, in metres. */
+    val observedEastOffsetMetres: Double get() = observedOffset.eastMetres
+
+    /** Northward component of the observed discrepancy, in metres. */
+    val observedNorthOffsetMetres: Double get() = observedOffset.northMetres
 }
 
 /**
- * A translation-only alignment for one vineyard on Android.
+ * A translation-only alignment for one [MapAlignmentScope] on Android.
  *
  * [eastOffsetMetres] is positive toward the east, [northOffsetMetres] positive
  * toward the north. A disabled alignment, or one with both offsets at zero, is
  * exactly equivalent to current production behaviour.
+ *
+ * ### Persistence boundary
+ *
+ * TODO(map-alignment): When alignment persistence is introduced, writes must be
+ * authorised at the authoritative write layer (server RPC / RLS on the owning
+ * table) and must NOT rely solely on the cached UI System Admin flag
+ * (`AppUiState.isSystemAdmin`). That cached flag is fine for deciding what to
+ * show and what to navigate to, but it is client state and can be stale; it is
+ * not an authorisation decision. Server/RPC/RLS enforcement is the final
+ * authority. No persistence exists in this pass.
  */
 data class MapAlignment(
     val id: String,
-    val vineyardId: String,
+    /** Exactly what this alignment applies to. See [MapAlignmentScope]. */
+    val scope: MapAlignmentScope,
     /** Positive = shift display east. Metres. */
     val eastOffsetMetres: Double = 0.0,
     /** Positive = shift display north. Metres. */
@@ -122,6 +240,11 @@ data class MapAlignment(
     val createdByUserId: String? = null,
     val updatedByUserId: String? = null,
 ) {
+    /** Convenience accessors for the scope this alignment belongs to. */
+    val vineyardId: String get() = scope.vineyardId
+    val blockId: String? get() = scope.blockId
+    val androidInstallationId: String get() = scope.androidInstallationId
+
     /**
      * True when this alignment cannot move anything — either switched off, or
      * carrying a zero translation. Callers must treat this as "render exactly
@@ -136,107 +259,39 @@ data class MapAlignment(
             eastOffsetMetres * eastOffsetMetres + northOffsetMetres * northOffsetMetres,
         )
 
+    val offset: MapAlignmentOffset
+        get() = MapAlignmentOffset(eastOffsetMetres, northOffsetMetres)
+
     companion object {
-        /** The explicit "no alignment" value for a vineyard. Behaviourally invisible. */
-        fun none(vineyardId: String, id: String = "none"): MapAlignment =
-            MapAlignment(id = id, vineyardId = vineyardId)
+        /** The explicit "no alignment" value for a scope. Behaviourally invisible. */
+        fun none(scope: MapAlignmentScope, id: String = "none"): MapAlignment =
+            MapAlignment(id = id, scope = scope)
     }
 }
 
 /**
- * Pure, side-effect-free conversion between canonical WGS84 coordinates and
- * Android display coordinates.
+ * An alignment together with the calibration evidence that produced it.
  *
- * No database access, no sync, no persistence, no Android framework types — so
- * it is fully unit-testable and can never mutate app state. Every function
- * returns a NEW [GeoCoordinate]; inputs are immutable and are never modified.
- *
- * ### Direction of travel
- *
- * ```
- * canonical (stored, synced, master)  --toDisplay-->  display (drawing only)
- * display (a map tap)                --toCanonical--> canonical (safe to store)
- * ```
- *
- * A map tap must be converted back with [toCanonical] before the resulting
- * coordinate is allowed anywhere near domain data.
+ * Kept as a distinct aggregate so reference points are never discarded once an
+ * alignment is derived — they remain available for recalculation, quality
+ * assessment, diagnostics and detecting imagery drift over time.
  */
-object MapAlignmentTransform {
+data class MapAlignmentCalibration(
+    val alignment: MapAlignment,
+    val referencePoints: List<MapAlignmentReferencePoint> = emptyList(),
+) {
+    /** Reference points that belong to this alignment's own scope. */
+    val pointsInScope: List<MapAlignmentReferencePoint>
+        get() = referencePoints.filter { it.scope == alignment.scope }
 
     /**
-     * Metres per degree of latitude. Matches the constant already used by
-     * `PinAisleGeometry`'s local metric frame so alignment maths and existing
-     * row geometry cannot drift apart. (That constant is private to its own
-     * object; this is a deliberate, documented duplicate of the same value, not
-     * a second convention.)
+     * Per-point residual against the applied alignment, in metres: how far each
+     * point still disagrees after the translation. Diagnostics only.
      */
-    private const val METRES_PER_DEG_LAT = 111_320.0
-
-    /**
-     * Guard for the longitude scale. cos(latitude) collapses to zero at the
-     * poles, which would divide by ~0 and produce a nonsensical longitude.
-     * VineTrack vineyards are nowhere near this limit; the clamp exists purely
-     * so a corrupt or extreme input can never yield infinity/NaN.
-     */
-    private const val MIN_COS_LATITUDE = 1e-6
-
-    private fun metresPerDegLon(latitude: Double): Double {
-        val cos = kotlin.math.cos(latitude * Math.PI / 180.0)
-        val safeCos = if (kotlin.math.abs(cos) < MIN_COS_LATITUDE) MIN_COS_LATITUDE else kotlin.math.abs(cos)
-        return METRES_PER_DEG_LAT * safeCos
+    fun residuals(): List<MapAlignmentOffset> = referencePoints.map { point ->
+        MapAlignmentOffset(
+            eastMetres = point.observedOffset.eastMetres - alignment.eastOffsetMetres,
+            northMetres = point.observedOffset.northMetres - alignment.northOffsetMetres,
+        )
     }
-
-    /**
-     * Forward transform: canonical WGS84 -> Android map display coordinate.
-     *
-     * The returned value is for RENDERING ONLY and must never be stored or
-     * synced. Returns the input value unchanged when [alignment] is identity,
-     * which is what guarantees a zero/disabled alignment is indistinguishable
-     * from today's production behaviour.
-     */
-    fun toDisplay(canonical: GeoCoordinate, alignment: MapAlignment): GeoCoordinate {
-        if (alignment.isIdentity) return canonical
-        return translate(canonical, alignment.eastOffsetMetres, alignment.northOffsetMetres)
-    }
-
-    /**
-     * Inverse transform: Android map display coordinate -> canonical WGS84.
-     *
-     * Exactly inverts [toDisplay]. Required later so a tap on an aligned map
-     * resolves to the true canonical coordinate before anything is created.
-     */
-    fun toCanonical(display: GeoCoordinate, alignment: MapAlignment): GeoCoordinate {
-        if (alignment.isIdentity) return display
-        return translate(display, -alignment.eastOffsetMetres, -alignment.northOffsetMetres)
-    }
-
-    /**
-     * Shared translation core.
-     *
-     * Latitude is resolved FIRST, then the longitude scale is taken from the
-     * *resolved* latitude. That ordering is what makes [toCanonical] an exact
-     * inverse of [toDisplay]: the forward call scales longitude by the source
-     * latitude, and the inverse call reconstructs that same latitude before
-     * undoing the longitude shift.
-     */
-    private fun translate(
-        from: GeoCoordinate,
-        eastMetres: Double,
-        northMetres: Double,
-    ): GeoCoordinate {
-        val latitude = from.latitude + northMetres / METRES_PER_DEG_LAT
-        // Scale longitude on the latitude the ORIGINAL forward call used, which
-        // is `from.latitude` going forward and `latitude` coming back.
-        val scaleLatitude = if (northMetres >= 0.0) from.latitude else latitude
-        val longitude = from.longitude + eastMetres / metresPerDegLon(scaleLatitude)
-        return GeoCoordinate(latitude = latitude, longitude = longitude)
-    }
-
-    /** Signed eastward metres from [origin] to [target]. Evidence/diagnostics only. */
-    fun eastMetresBetween(origin: GeoCoordinate, target: GeoCoordinate): Double =
-        (target.longitude - origin.longitude) * metresPerDegLon(origin.latitude)
-
-    /** Signed northward metres from [origin] to [target]. Evidence/diagnostics only. */
-    fun northMetresBetween(origin: GeoCoordinate, target: GeoCoordinate): Double =
-        (target.latitude - origin.latitude) * METRES_PER_DEG_LAT
 }

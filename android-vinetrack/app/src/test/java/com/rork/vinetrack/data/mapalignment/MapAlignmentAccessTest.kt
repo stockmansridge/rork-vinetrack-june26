@@ -8,8 +8,12 @@ import org.junit.Test
 
 /**
  * Android Map Alignment is System Admin gated and unreleased. These tests pin
- * the single access decision used by the visibility, navigation and execution
- * layers, so no screen can drift from it.
+ * the single access decision used by the visibility and navigation layers, so
+ * no screen can drift from it.
+ *
+ * There is deliberately no mutation-guard test here: no persistent alignment
+ * operation exists yet, and write authorisation will belong to the server
+ * (RPC/RLS), not to this cached client-side decision.
  */
 class MapAlignmentAccessTest {
 
@@ -86,22 +90,18 @@ class MapAlignmentAccessTest {
     }
 
     @Test
-    fun `execution guard rejects every non admin case`() {
-        // Hiding the entry is not the boundary — mutations must ask too.
-        assertTrue(
-            MapAlignmentAccess.canMutateAlignment(access(SessionPhase.AuthenticatedOnline, true)),
-        )
+    fun `only a confirmed system admin session is ever allowed`() {
+        // Every non-admin combination stays denied for visibility AND navigation.
         listOf(
             access(SessionPhase.AuthenticatedOnline, isSystemAdmin = false),
             access(SessionPhase.AuthenticatedOffline, isSystemAdmin = false),
             access(SessionPhase.SignedOut, isSystemAdmin = false),
             access(SessionPhase.SignedOut, isSystemAdmin = true),
             access(SessionPhase.Restoring, isSystemAdmin = true),
+            access(SessionPhase.Restoring, isSystemAdmin = false),
         ).forEach { denied ->
-            assertFalse(
-                "mutation must be refused for $denied",
-                MapAlignmentAccess.canMutateAlignment(denied),
-            )
+            assertFalse("must be refused: $denied", denied.isAllowed)
         }
+        assertTrue(access(SessionPhase.AuthenticatedOnline, isSystemAdmin = true).isAllowed)
     }
 }

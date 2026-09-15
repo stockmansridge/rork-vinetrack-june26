@@ -5,9 +5,21 @@ import com.rork.vinetrack.data.auth.SessionPhase
 /**
  * The single access decision for Android Map Alignment.
  *
- * Every layer — entry visibility, navigation and execution — asks THIS, so a
- * role comparison is never re-implemented inside a Compose screen and the three
- * layers can never disagree.
+ * Entry visibility and navigation both ask THIS, so a role comparison is never
+ * re-implemented inside a Compose screen and the two layers cannot disagree.
+ *
+ * ## Scope of this decision — read before adding writes
+ *
+ * This resolves **UI availability only**: whether the Settings entry is shown
+ * and whether the route may be opened. It is derived from cached client state
+ * (`AppUiState.isSystemAdmin`), which is appropriate for presentation but is
+ * NOT an authorisation decision for a persistent mutation — cached client state
+ * can be stale, and nothing on the device is trustworthy to a server.
+ *
+ * There are deliberately no alignment mutations in this phase, and this type
+ * offers no "may mutate" helper, so no future developer can mistake a cached UI
+ * flag for sufficient security on a write. See the persistence-boundary TODO on
+ * `MapAlignment`.
  *
  * ## Authority
  *
@@ -55,10 +67,11 @@ sealed interface MapAlignmentAccess {
 
     companion object {
         /**
-         * Resolve whether the current user may use Android Map Alignment.
+         * Resolve whether the current user may SEE and OPEN Android Map
+         * Alignment. Visibility and navigation only — not write authorisation.
          *
          * @param sessionPhase the authentication lifecycle state.
-         * @param isSystemAdmin the authoritative platform System Admin flag from
+         * @param isSystemAdmin the platform System Admin flag from
          *   `AppUiState.isSystemAdmin` (backed by `is_system_admin()`).
          *
          * Note there is deliberately no `role` parameter: a vineyard role can
@@ -75,13 +88,11 @@ sealed interface MapAlignmentAccess {
             else -> Unavailable(Reason.NotSystemAdmin)
         }
 
-        /**
-         * Execution guard for alignment create/edit/reset operations.
-         *
-         * Hiding the entry is never the boundary: any mutation added in a later
-         * pass must call this first and refuse when it returns false, exactly as
-         * the Admin RPCs are server-enforced independently of the Settings entry.
-         */
-        fun canMutateAlignment(access: MapAlignmentAccess): Boolean = access.isAllowed
+        // TODO(map-alignment): When alignment persistence is introduced, writes
+        // must be authorised at the authoritative write layer (server RPC / RLS)
+        // and must NOT rely solely on this cached UI System Admin flag. Do not
+        // reintroduce a `canMutateAlignment(...)` style helper here: a local
+        // boolean derived from client state is a presentation decision, not a
+        // security boundary. Server enforcement is the final authority.
     }
 }
