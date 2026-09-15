@@ -119,6 +119,30 @@ object MapAlignmentGpsRules {
 
     /** How long to keep sampling before offering Retry, in millis. Never blocks forever. */
     const val SAMPLING_TIMEOUT_MILLIS: Long = 45_000L
+
+    /**
+     * How long each attempt lets the receiver settle at the NEW physical
+     * reference point before any observation may become evidence, in millis.
+     *
+     * Calibration-only. Production admits a fix up to about five seconds old,
+     * which is correct for a manual pin press but means the first callbacks of
+     * a new subscription can carry an observation *generated* at the previous
+     * corner — the ~203 m spread seen in the field. Ignoring the first five
+     * seconds of OBSERVATION time keeps that travel history out of the group.
+     *
+     * This does NOT modify `PinLocationFixValidator.MAX_AGE_MS` or any other
+     * production threshold. See [MapAlignmentSettlingWindow].
+     */
+    const val SETTLING_MILLIS: Long = 5_000L
+
+    /**
+     * Total wall time one attempt may run before offering Retry, in millis.
+     *
+     * Settling is ADDED to the collection window, never taken out of it: the
+     * operator keeps the full [SAMPLING_TIMEOUT_MILLIS] of real collection
+     * opportunity after the receiver has settled.
+     */
+    const val TOTAL_ATTEMPT_TIMEOUT_MILLIS: Long = SETTLING_MILLIS + SAMPLING_TIMEOUT_MILLIS
 }
 
 /**
@@ -155,6 +179,28 @@ data class MapAlignmentGpsSampling(
         ) : Outcome
 
         /**
+         * Generated inside the attempt's settling window, so it is not counted.
+         *
+         * NOT a quality judgement: the reading may be perfectly accurate. It
+         * simply sits too close to the transition from the previous physical
+         * location to be evidence about this one.
+         */
+        data class Settling(
+            override val sampling: MapAlignmentGpsSampling,
+            val remainingMillis: Long,
+        ) : Outcome
+
+        /**
+         * Generated BEFORE this attempt began — a delayed or batched
+         * observation of wherever the operator previously was. It can never
+         * describe this reference point, whenever its callback happened to
+         * arrive.
+         */
+        data class BeforeAttempt(
+            override val sampling: MapAlignmentGpsSampling,
+        ) : Outcome
+
+        /**
          * Operator wording for an automatically-running sampler, or null when
          * the outcome is routine and should stay silent.
          *
@@ -170,6 +216,10 @@ data class MapAlignmentGpsSampling(
             // Progress is shown by the sample counter; a redelivered cached
             // observation is normal and must not look like a failure.
             is Accepted, is Duplicate -> null
+            // The settling countdown is shown by the step itself, and a
+            // pre-attempt observation is not the operator's problem. Never
+            // call either one inaccurate — it usually is not.
+            is Settling, is BeforeAttempt -> null
             is TooImprecise ->
                 "Latest reading was ±${format(accuracyMetres)} m. Waiting for " +
                     "±${MapAlignmentGpsRules.MAX_SAMPLE_ACCURACY_METRES.toInt()} m or better…"
@@ -255,9 +305,29 @@ data class MapAlignmentGpsSampling(
      * and this only ever narrows. A fix production rejected can never be
      * accepted here.
      */
-    fun offer(production: PinLocationResult): Outcome {
+    fun offer(
+        production: PinLocationResult,
+        settling: MapAlignmentSettlingWindow? = null,
+        nowElapsedRealtimeNanos: Long = 0L,
+    ): Outcome {
         val fix: QualifiedLocationFix = (production as? PinLocationResult.Success)?.fix
             ?: return Outcome.RejectedByProduction(this, production)
+
+        // Settling is judged on the OBSERVATION clock, before accuracy, so a
+        // valid reading of the previous corner is excluded as out-of-window
+        // rather than mislabelled imprecise. Arrival time is irrelevant: a
+        // batched fix stamped before the boundary is still excluded.
+        if (settling != null) {
+            if (settling.precedesAttempt(fix.fixElapsedRealtimeNanos)) {
+                return Outcome.BeforeAttempt(this)
+            }
+            if (!settling.admits(fix.fixElapsedRealtimeNanos)) {
+                return Outcome.Settling(
+                    sampling = this,
+                    remainingMillis = settling.remainingMillis(nowElapsedRealtimeNanos),
+                )
+            }
+        }
 
         if (fix.accuracyMetres > MapAlignmentGpsRules.MAX_SAMPLE_ACCURACY_METRES) {
             return Outcome.TooImprecise(this, fix.accuracyMetres)

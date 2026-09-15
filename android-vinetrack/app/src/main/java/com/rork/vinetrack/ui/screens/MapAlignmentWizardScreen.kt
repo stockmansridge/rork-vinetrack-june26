@@ -67,6 +67,7 @@ import com.rork.vinetrack.data.mapalignment.MapAlignmentReferencePoint
 import com.rork.vinetrack.data.mapalignment.MapAlignmentReferenceType
 import com.rork.vinetrack.data.mapalignment.MapAlignmentRowPosition
 import com.rork.vinetrack.data.mapalignment.MapAlignmentScope
+import com.rork.vinetrack.data.mapalignment.MapAlignmentSettlingWindow
 import com.rork.vinetrack.data.mapalignment.MapAlignmentSolver
 import com.rork.vinetrack.data.mapalignment.MapAlignmentWizardStep
 import com.rork.vinetrack.data.model.Paddock
@@ -585,6 +586,14 @@ private fun MapAlignmentCaptureStep(
  * are ARRIVING, so "delivering readings that are not good enough yet" can be
  * told apart from "Android is delivering nothing". It is display state: it
  * cannot accept, reject, restart or stop anything.
+ *
+ * Each attempt also opens with a [MapAlignmentSettlingWindow]. Production
+ * correctly admits a fix up to about five seconds old, so the first callbacks
+ * of a new subscription can carry an observation GENERATED at the previous
+ * corner — which in the field put a ~203 m spread into a stationary point and
+ * made it permanently unstable. Observations generated inside the window still
+ * count as live updates but never as evidence; the five-sample counter starts
+ * from zero once the window closes.
  */
 @Composable
 private fun GpsSamplingStep(
@@ -611,6 +620,15 @@ private fun GpsSamplingStep(
     var nowElapsedMillis by remember(attempt) {
         mutableStateOf(SystemClock.elapsedRealtime())
     }
+    // Settling boundary for THIS attempt, on the monotonic observation clock.
+    // Retry changes `attempt`, so the boundary is always re-established.
+    val settling = remember(attempt) {
+        MapAlignmentSettlingWindow.startingAt(SystemClock.elapsedRealtimeNanos())
+    }
+    var nowElapsedNanos by remember(attempt) {
+        mutableStateOf(SystemClock.elapsedRealtimeNanos())
+    }
+    val isSettling = !settling.hasExpired(nowElapsedNanos) && sampling.sampleCount == 0
 
     val progress = sampling.progress
     val stable = progress as? MapAlignmentGpsSampling.Progress.Stable
@@ -638,19 +656,32 @@ private fun GpsSamplingStep(
             // Count the ARRIVAL first, before any calibration judgement: a
             // rejected or duplicate fix is still proof the receiver is alive.
             liveUpdates = liveUpdates.onCallbackReceived(SystemClock.elapsedRealtime())
-            when (val outcome = sampling.offer(production)) {
+            val outcome = sampling.offer(
+                production = production,
+                settling = settling,
+                nowElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos(),
+            )
+            when (outcome) {
                 is MapAlignmentGpsSampling.Outcome.Accepted -> {
                     sampling = outcome.sampling
                     lastRejection = null
                 }
                 // A redelivered observation is routine, not a failure.
                 is MapAlignmentGpsSampling.Outcome.Duplicate -> Unit
+                // Settling and pre-attempt observations are not failures and
+                // must never be described as inaccurate. The countdown below
+                // is the only thing shown for them.
+                is MapAlignmentGpsSampling.Outcome.Settling,
+                is MapAlignmentGpsSampling.Outcome.BeforeAttempt,
+                -> Unit
                 else -> lastRejection = outcome.calibrationMessage()
             }
             if (sampling.isStable) session.end()
         }
-        // Never block indefinitely: fall through to an explicit Retry.
-        delay(MapAlignmentGpsRules.SAMPLING_TIMEOUT_MILLIS)
+        // Never block indefinitely: fall through to an explicit Retry. Settling
+        // is ADDED to the collection window, so the operator still gets the
+        // full SAMPLING_TIMEOUT_MILLIS of real collection opportunity.
+        delay(MapAlignmentGpsRules.TOTAL_ATTEMPT_TIMEOUT_MILLIS)
         if (!sampling.isStable) {
             session.end()
             timedOut = true
@@ -662,6 +693,7 @@ private fun GpsSamplingStep(
     LaunchedEffect(attempt, isStable, timedOut) {
         while (!isStable && !timedOut) {
             nowElapsedMillis = SystemClock.elapsedRealtime()
+            nowElapsedNanos = SystemClock.elapsedRealtimeNanos()
             delay(1_000L)
         }
     }
@@ -702,10 +734,23 @@ private fun GpsSamplingStep(
                         Spacer(Modifier.size(10.dp))
                     }
                     Text(
-                        progress.message(),
+                        if (isSettling) "Settling GPS at this point…" else progress.message(),
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Medium,
                         color = vine.textPrimary,
+                    )
+                }
+
+                // Explains the wait without calling the ignored readings bad:
+                // they are often perfectly accurate, they simply belong too
+                // close to the walk from the previous reference point.
+                if (isSettling && !timedOut) {
+                    Text(
+                        "Letting the receiver settle at this location. " +
+                            "Starting readings in " +
+                            "${settling.remainingSeconds(nowElapsedNanos)} s",
+                        fontSize = 12.sp,
+                        color = vine.textSecondary,
                     )
                 }
 

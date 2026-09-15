@@ -1,5 +1,6 @@
 package com.rork.vinetrack.data.mapalignment
 
+import com.rork.vinetrack.data.PinLocationFixValidator
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -241,7 +242,8 @@ class MapAlignmentMarkingInteractionTest {
         // The live-subscription contract from the previous pass must survive.
         assertTrue(gps.contains("session.begin {"))
         assertTrue(gps.contains("LaunchedEffect(isStable) { if (isStable) session.end() }"))
-        assertTrue(gps.contains("MapAlignmentGpsRules.SAMPLING_TIMEOUT_MILLIS"))
+        // Settling is added to the collection window, never taken out of it.
+        assertTrue(gps.contains("MapAlignmentGpsRules.TOTAL_ATTEMPT_TIMEOUT_MILLIS"))
         assertTrue(gps.contains("liveUpdates.onCallbackReceived("))
         assertFalse("the marking fix must not touch one-shot GPS", gps.contains("fetchCurrentFix"))
 
@@ -249,6 +251,61 @@ class MapAlignmentMarkingInteractionTest {
         assertEquals(8.0, MapAlignmentGpsRules.MAX_SAMPLE_ACCURACY_METRES, 1e-9)
         assertEquals(8.0, MapAlignmentGpsRules.MAX_STABILITY_RADIUS_METRES, 1e-9)
         assertEquals(45_000L, MapAlignmentGpsRules.SAMPLING_TIMEOUT_MILLIS)
+    }
+
+    // ----- Settling wiring in the sampling step -----
+
+    @Test
+    fun `each attempt establishes a settling window that retry resets`() {
+        val gps = wizard()
+            .substringAfter("private fun GpsSamplingStep(")
+            .substringBefore("// --- 3b.")
+
+        // remember(attempt) is what makes Retry a genuinely fresh attempt:
+        // new monotonic start, new boundary, empty sample group.
+        assertTrue(
+            gps.contains("val settling = remember(attempt) {"),
+        )
+        assertTrue(gps.contains("MapAlignmentSettlingWindow.startingAt(SystemClock.elapsedRealtimeNanos())"))
+        assertTrue(gps.contains("var sampling by remember(attempt) { mutableStateOf(MapAlignmentGpsSampling()) }"))
+    }
+
+    @Test
+    fun `the offered fix is judged against the settling window`() {
+        val gps = wizard()
+            .substringAfter("private fun GpsSamplingStep(")
+            .substringBefore("// --- 3b.")
+
+        assertTrue(gps.contains("settling = settling,"))
+        assertTrue(gps.contains("nowElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos(),"))
+        // Arrival is counted BEFORE the settling judgement, so an ignored
+        // observation still proves the subscription is delivering.
+        assertTrue(
+            gps.substringBefore("sampling.offer(").contains("liveUpdates.onCallbackReceived("),
+        )
+    }
+
+    @Test
+    fun `settling shows a countdown and never calls the readings inaccurate`() {
+        val gps = wizard()
+            .substringAfter("private fun GpsSamplingStep(")
+            .substringBefore("// --- 3b.")
+
+        assertTrue(gps.contains("\"Settling GPS at this point…\""))
+        assertTrue(gps.contains("Starting readings in "))
+        assertTrue(gps.contains("settling.remainingSeconds(nowElapsedNanos)"))
+        // Settling/BeforeAttempt must not be routed into the rejection line.
+        assertTrue(
+            gps.contains("is MapAlignmentGpsSampling.Outcome.Settling,") &&
+                gps.contains("is MapAlignmentGpsSampling.Outcome.BeforeAttempt,"),
+        )
+    }
+
+    @Test
+    fun `production location thresholds are untouched by the settling fix`() {
+        assertEquals(5_000L, PinLocationFixValidator.MAX_AGE_MS)
+        assertEquals(15.0, PinLocationFixValidator.MAX_ACCURACY_METRES, 1e-9)
+        assertEquals(5_000L, MapAlignmentGpsRules.SETTLING_MILLIS)
     }
 
     @Test
