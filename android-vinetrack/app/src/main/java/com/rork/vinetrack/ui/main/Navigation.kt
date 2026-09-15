@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.FactCheck
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.GppGood
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Grain
 import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.Checklist
@@ -113,4 +114,14 @@ enum class ToolRoute(
     ContactSupport("Contact Support", "Send feedback, feature requests or report an issue", Icons.Filled.Email, VineColors.Success, ToolGroup.Account),
     DeleteAccount("Delete Account", "Permanently remove your account", Icons.Filled.DeleteForever, VineColors.Destructive, ToolGroup.Account),
     Admin("Admin", "Platform users, vineyards & feature flags", Icons.Filled.AdminPanelSettings, VineColors.Destructive, ToolGroup.Account),
+
+    /**
+     * Android-only Map Alignment preview. System Admin gated and NOT released.
+     *
+     * Deliberately excluded from the More hub's tool list (see [com.rork.vinetrack.ui.screens.MoreScreen]),
+     * which otherwise renders every entry of this enum to every user. It is
+     * reachable only from the System Admin section of Settings, and
+     * `MapAlignmentPreviewScreen` re-checks access itself.
+     */
+    MapAlignment("Android Map Alignment", "System Admin Preview", Icons.Filled.Explore, VineColors.Purple, ToolGroup.Account),
 }

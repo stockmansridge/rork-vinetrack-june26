@@ -66,6 +66,10 @@ fun MoreScreen(
                         tool != ToolRoute.SprayManagement &&
                         // Reached from the Operational Tools grid itself.
                         tool != ToolRoute.CustomiseTools &&
+                        // Android Map Alignment is an unreleased System Admin
+                        // preview: it is reached only from the System Admin
+                        // section of Settings, never from this hub.
+                        tool != ToolRoute.MapAlignment &&
                         (tool != ToolRoute.CostReports || canViewCosting)
                     // Irrigation Records is publicly released (SQL 151): every
                     // vineyard role may open it. The screen resolves the

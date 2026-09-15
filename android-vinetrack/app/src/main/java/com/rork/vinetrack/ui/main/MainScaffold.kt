@@ -77,6 +77,7 @@ import com.rork.vinetrack.ui.screens.AccountDeletionScreen
 import com.rork.vinetrack.ui.screens.AppPreferencesScreen
 import com.rork.vinetrack.ui.screens.AdminDashboardScreen
 import com.rork.vinetrack.ui.screens.BiometricSettingsScreen
+import com.rork.vinetrack.ui.screens.MapAlignmentPreviewScreen
 import com.rork.vinetrack.ui.screens.AlertSettingsScreen
 import com.rork.vinetrack.ui.screens.AlertsCentreScreen
 import com.rork.vinetrack.ui.screens.SupportRequestScreen
@@ -559,5 +560,8 @@ private fun ToolHost(
         ToolRoute.ContactSupport -> SupportRequestScreen(vm, modifier, onBack = onBack)
         ToolRoute.DeleteAccount -> AccountDeletionScreen(vm, modifier, onBack = onBack)
         ToolRoute.Admin -> AdminDashboardScreen(vm, modifier, onBack = onBack)
+        // Unreleased System Admin preview. The screen re-resolves access itself,
+        // so a restored/stale navigation state cannot surface it to a non-admin.
+        ToolRoute.MapAlignment -> MapAlignmentPreviewScreen(state, modifier, onBack = onBack)
     }
 }

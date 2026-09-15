@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.FactCheck
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.Checklist
@@ -565,6 +566,19 @@ fun SettingsScreen(
                             "Admin",
                             "Users, vineyards, blocks & feature flags",
                             onClick = { onOpenTool(ToolRoute.Admin) },
+                        )
+                    }
+                    // Unreleased Android-only preview. Gated on the SAME
+                    // authoritative platform System Admin flag as the Admin
+                    // entry above; vineyard owner/manager/supervisor roles do
+                    // not qualify. The screen re-checks access itself.
+                    VineyardCard {
+                        PreferenceRow(
+                            Icons.Filled.Explore,
+                            VineColors.Purple,
+                            "Android Map Alignment",
+                            "System Admin Preview",
+                            onClick = { onOpenTool(ToolRoute.MapAlignment) },
                         )
                     }
                 }
