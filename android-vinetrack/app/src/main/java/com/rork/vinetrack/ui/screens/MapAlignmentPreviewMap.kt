@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
+import com.google.maps.android.compose.Circle
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapType
@@ -60,6 +61,14 @@ import com.rork.vinetrack.ui.theme.VineColors
 
 /** Close field zoom used when framing a single GPS position for marking. */
 private const val CROSSHAIR_ZOOM = 20f
+
+/**
+ * Ground radius of the recorded-position ring, in metres.
+ *
+ * Small enough to indicate one spot, large enough to stay visible at field
+ * zoom, and hollow so it never hides the imagery feature under the crosshair.
+ */
+private const val GPS_RING_RADIUS_METRES = 1.5
 
 /**
  * Canonical geometry for the draft's scope, read-only.
@@ -111,10 +120,20 @@ private fun Paddock.displayRing(alignment: MapAlignment): List<LatLng> =
  * measured. The resulting coordinate is therefore display space and is NOT
  * inverse-transformed during capture.
  *
- * The VineTrack GPS marker is shown separately, visually distinct, so the
- * operator can see how far the imagery sits from their recorded position. The
- * Google "my location" dot is disabled — it is not a selection control and
- * would compete with the crosshair.
+ * The recorded position is drawn as a small hollow ring rather than a dropped
+ * pin. A pin's teardrop is tens of metres wide at field zoom, sits ABOVE its
+ * coordinate and is opaque, so it covered the crosshair and hid the very
+ * imagery feature being aimed at. A stroked ring at a true ground radius marks
+ * the same position, leaves the imagery visible through it, scales honestly
+ * with zoom, and can never be mistaken for the selection control. The Google
+ * "my location" dot stays disabled for the same reason.
+ *
+ * ## Gesture ownership
+ *
+ * Pan and pinch are set EXPLICITLY below rather than left to defaults, and this
+ * composable requires a parent with no vertically scrolling ancestor — see
+ * `MarkingScaffold` in the wizard. Inside a `verticalScroll` parent the scroll
+ * container wins the drag and the imagery cannot be moved at all.
  */
 @Composable
 fun MapAlignmentCrosshairMap(
@@ -148,12 +167,19 @@ fun MapAlignmentCrosshairMap(
             modifier = Modifier.fillMaxSize(),
             cameraPositionState = camera,
             properties = MapProperties(mapType = MapType.HYBRID, isMyLocationEnabled = false),
+            // Stated explicitly, not inherited: this step is unusable if pan or
+            // pinch is off, and a rotated or tilted view would corrupt a
+            // precision judgement about north/east offsets.
             uiSettings = MapUiSettings(
-                zoomControlsEnabled = false,
-                mapToolbarEnabled = false,
-                tiltGesturesEnabled = false,
+                scrollGesturesEnabled = true,
+                zoomGesturesEnabled = true,
                 rotationGesturesEnabled = false,
+                tiltGesturesEnabled = false,
                 myLocationButtonEnabled = false,
+                mapToolbarEnabled = false,
+                // Left hidden: pinch is the primary zoom and Google's buttons
+                // would land on top of the Recentre control in this corner.
+                zoomControlsEnabled = false,
             ),
         ) {
             blocks.forEach { block ->
@@ -167,12 +193,22 @@ fun MapAlignmentCrosshairMap(
                     )
                 }
             }
-            // VineTrack's own GPS marker — deliberately a plain marker so it is
-            // never confused with the crosshair, which is the selection control.
-            Marker(
-                state = MarkerState(position = LatLng(gpsPosition.latitude, gpsPosition.longitude)),
-                title = "Your recorded GPS position",
-                alpha = 0.9f,
+            // VineTrack's own recorded position: hollow, at a real ground
+            // radius, so the imagery under the crosshair is never obscured.
+            // White casing under an orange stroke, legible on dirt and canopy.
+            Circle(
+                center = LatLng(gpsPosition.latitude, gpsPosition.longitude),
+                radius = GPS_RING_RADIUS_METRES,
+                strokeColor = Color.Black.copy(alpha = 0.55f),
+                strokeWidth = 6f,
+                fillColor = Color.Transparent,
+            )
+            Circle(
+                center = LatLng(gpsPosition.latitude, gpsPosition.longitude),
+                radius = GPS_RING_RADIUS_METRES,
+                strokeColor = VineColors.Orange,
+                strokeWidth = 3f,
+                fillColor = Color.Transparent,
             )
             // Already-captured evidence, for context while marking the next one.
             draft.referencePoints.forEach { point ->

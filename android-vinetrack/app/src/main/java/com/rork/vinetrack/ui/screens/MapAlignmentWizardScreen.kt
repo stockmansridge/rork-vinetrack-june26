@@ -5,11 +5,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -854,90 +856,63 @@ private fun MarkOnImageStep(
     val duplicate = !mode.remarkOnly &&
         draft.isNearDuplicate(mode.gps, excludingId = mode.editingId)
 
-    WizardScaffold(modifier = modifier) {
-        SystemAdminPreviewBadge()
-
-        VineyardCard {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionTitle(
-                    if (mode.remarkOnly) "Re-mark the image point" else "Mark the image point",
-                )
-                Text(
-                    "Move the map until the crosshair is positioned over the exact point " +
-                        "where you are standing.",
-                    fontSize = 13.sp,
-                    color = vine.textSecondary,
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(340.dp)
-                        .clip(RoundedCornerShape(12.dp)),
-                ) {
-                    MapAlignmentCrosshairMap(
-                        state = state,
-                        draft = draft,
-                        gpsPosition = mode.gps,
-                        initialTarget = mode.existingMark,
-                        onTargetChanged = { target = it },
-                    )
-                }
-                Text(
-                    "Zoom right in for the best result. The satellite image is shown " +
-                        "uncorrected — that is the discrepancy you are measuring.",
-                    fontSize = 12.sp,
-                    color = vine.textSecondary,
-                )
-            }
-        }
-
+    MarkingScaffold(
+        modifier = modifier,
+        title = if (mode.remarkOnly) "Re-mark the image point" else "Mark the image point",
+        instruction = "Pan and pinch the satellite image until the crosshair sits on the " +
+            "exact point where you are standing. Zoom right in — the image is uncorrected, " +
+            "and that discrepancy is what you are measuring.",
+        map = {
+            MapAlignmentCrosshairMap(
+                state = state,
+                draft = draft,
+                gpsPosition = mode.gps,
+                initialTarget = mode.existingMark,
+                onTargetChanged = { target = it },
+            )
+        },
+    ) {
         if (duplicate) {
-            VineyardCard {
-                Row {
-                    Icon(
-                        Icons.Filled.Warning,
-                        contentDescription = null,
-                        tint = VineColors.Orange,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Spacer(Modifier.size(8.dp))
-                    Text(
-                        MapAlignmentSolver.NEAR_DUPLICATE_MESSAGE,
-                        fontSize = 13.sp,
-                        color = vine.textPrimary,
-                    )
-                }
+            Row {
+                Icon(
+                    Icons.Filled.Warning,
+                    contentDescription = null,
+                    tint = VineColors.Orange,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    MapAlignmentSolver.NEAR_DUPLICATE_MESSAGE,
+                    fontSize = 13.sp,
+                    color = vine.textPrimary,
+                )
             }
         }
 
         if (!mode.remarkOnly) {
-            VineyardCard {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionTitle("About this point (optional)")
-                    ReferenceTypeChips(referenceType) { referenceType = it }
-                    OutlinedTextField(
-                        value = description,
-                        onValueChange = { description = it },
-                        label = { Text("Description") },
-                        placeholder = { Text("e.g. north-west corner post") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    // Row metadata only where it means something. A gate or a
-                    // block corner has no row, and asking for one invites junk.
-                    if (referenceType == MapAlignmentReferenceType.RowEnd) {
-                        OutlinedTextField(
-                            value = rowNumber,
-                            onValueChange = { entered ->
-                                rowNumber = entered.filter { it.isDigit() }
-                            },
-                            label = { Text("Row number") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        RowPositionChips(rowPosition) { rowPosition = it }
-                    }
-                }
+            SectionTitle("About this point (optional)")
+            ReferenceTypeChips(referenceType) { referenceType = it }
+            OutlinedTextField(
+                value = description,
+                onValueChange = { description = it },
+                label = { Text("Description") },
+                placeholder = { Text("e.g. north-west corner post") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            // Row metadata only where it means something. A gate or a block
+            // corner has no row, and asking for one invites junk.
+            if (referenceType == MapAlignmentReferenceType.RowEnd) {
+                OutlinedTextField(
+                    value = rowNumber,
+                    onValueChange = { entered ->
+                        rowNumber = entered.filter { it.isDigit() }
+                    },
+                    label = { Text("Row number") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                RowPositionChips(rowPosition) { rowPosition = it }
             }
         }
 
@@ -972,7 +947,79 @@ private fun MarkOnImageStep(
         ) { Text("Use this map point") }
 
         OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
-        CanonicalInvariantNote()
+    }
+}
+
+/**
+ * Layout for the marking step only — deliberately NOT [WizardScaffold].
+ *
+ * ## Why this exists
+ *
+ * [WizardScaffold] applies `verticalScroll` to the whole page. A Google Map
+ * nested inside a vertically scrolling parent loses the drag contest: the
+ * scroll container consumes the vertical component of every one-finger pan, so
+ * in the field the imagery could not be moved and pinch was unreliable. The
+ * fix is structural rather than a pointer-event hack — the map is given its own
+ * interaction area with no scrolling ancestor at all, so Google's own gesture
+ * detector receives the raw stream and pan, pinch and fling behave natively.
+ *
+ * ## Structure
+ *
+ * A fixed compact header, then the map claiming all remaining height via
+ * `weight`, then the controls. Only the controls row scrolls, and it is a
+ * SIBLING of the map, never its parent — so the optional metadata fields and
+ * the keyboard can never re-introduce a scrolling ancestor over the map. The
+ * map keeps a sensible minimum height so a small screen with the keyboard open
+ * degrades by scrolling the controls rather than crushing the imagery.
+ *
+ * This is a precision task, so the map gets the screen: no surrounding card,
+ * no duplicated instruction text below it, and the standing note about
+ * canonical coordinates is dropped from this step only (it is still shown on
+ * the GPS and overview steps).
+ */
+@Composable
+private fun MarkingScaffold(
+    modifier: Modifier,
+    title: String,
+    instruction: String,
+    map: @Composable () -> Unit,
+    controls: @Composable ColumnScope.() -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Column(modifier = modifier.fillMaxSize()) {
+        // Compact, fixed: enough to say what to do, no more.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            SectionTitle(title)
+            Text(instruction, fontSize = 12.sp, color = vine.textSecondary)
+        }
+
+        // The map owns its area. No scrolling ancestor, so Google Maps receives
+        // pan and pinch directly.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .heightIn(min = 240.dp)
+                .padding(horizontal = 12.dp)
+                .clip(RoundedCornerShape(12.dp)),
+        ) { map() }
+
+        // Sibling of the map, never an ancestor: scrolls on its own if the
+        // optional fields or the keyboard need the room.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 300.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            content = controls,
+        )
     }
 }
 
