@@ -237,6 +237,60 @@ struct SprayCarrierBasisSyncContractTests {
         )
     }
 
+    // MARK: - Ended trip payload
+
+    private func endedTrip(id: UUID) -> Trip {
+        Trip(
+            id: id,
+            vineyardId: UUID(uuidString: "00BB9A18-28DA-4BA7-9136-B2C5A1B56FB5")!,
+            startTime: Date(timeIntervalSince1970: 1_779_990_000),
+            endTime: Date(timeIntervalSince1970: 1_780_000_000),
+            isActive: false
+        )
+    }
+
+    @Test("A deferred ended trip uploads its true ended state, never active-with-end-time")
+    func deferredEndedTripUploadsTrueState() {
+        let id = UUID(uuidString: "C4DB2285-F69E-49DC-BD9F-521CF92CE207")!
+        let trip = endedTrip(id: id)
+        let payload = BackendTrip.upsert(from: trip, createdBy: nil, clientUpdatedAt: Date(timeIntervalSince1970: 1_780_000_100))
+
+        // The old hold set isActive = true and endTime = nil; the nil was omitted
+        // by the encoder, leaving is_active = true alongside a populated
+        // server end_time. That combination must now be unreachable.
+        #expect(payload.isActive == false)
+        #expect(payload.endTime == trip.endTime)
+        #expect(!(payload.isActive && payload.endTime != nil))
+        #expect(payload.id == id)
+        #expect(payload.startTime == trip.startTime)
+    }
+
+    @MainActor
+    @Test("Once actuals clear, the hold releases and the trip finishes ended")
+    func holdReleasesAndTripFinishesEnded() throws {
+        let (metadata, directory) = try metadata()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let id = UUID(uuidString: "890D268F-EA69-4A98-B0FA-844362F55B76")!
+        let trip = endedTrip(id: id)
+
+        // Parent exists on the server; finalisation is queued behind actuals.
+        metadata.markParentsEstablished([id])
+        metadata.markDirty(id, at: Date(timeIntervalSince1970: 1_780_000_050))
+        #expect(metadata.isParentEstablished(id))
+
+        // The actual is no longer blocked, so it uploads.
+        #expect(SprayTankActualUploadGate.decide(parentTripBlocked: false, sprayRecordPending: false) == .upload)
+
+        // Hold released: the final upload carries the real ended state.
+        let payload = BackendTrip.upsert(from: trip, createdBy: nil, clientUpdatedAt: Date(timeIntervalSince1970: 1_780_000_200))
+        #expect(payload.isActive == false)
+        #expect(payload.endTime == trip.endTime)
+
+        metadata.clearDirty([id])
+        #expect(metadata.pendingUpserts[id] == nil)
+        #expect(metadata.isParentEstablished(id))
+    }
+
     @MainActor
     @Test("A deleted trip drops its established-parent claim")
     func deletedTripDropsParentClaim() throws {
