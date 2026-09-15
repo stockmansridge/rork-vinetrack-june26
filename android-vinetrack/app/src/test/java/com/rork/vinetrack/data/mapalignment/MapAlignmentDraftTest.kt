@@ -12,8 +12,9 @@ import org.junit.Test
  * The wizard's session draft.
  *
  * The properties that matter: the before/after preview can never imply a
- * correction that was not calculated, adding or removing evidence invalidates a
- * stale candidate, and the draft's scope owns all of its evidence.
+ * correction that was not calculated, ANY change to the evidence invalidates a
+ * stale candidate, editing a reference preserves the half of it that was not
+ * being replaced, and the draft's scope owns all of its evidence.
  */
 class MapAlignmentDraftTest {
 
@@ -48,11 +49,18 @@ class MapAlignmentDraftTest {
             canonicalCoordinate = canonical,
             selectedMapCoordinate = canonical.toDisplay(observation),
             gpsAccuracyMetres = 2.0,
+            gpsEvidence = MapAlignmentGpsEvidence(
+                sampleCount = 6,
+                samplingDurationMillis = 7_000,
+                representativeAccuracyMetres = 2.0,
+                worstAccuracyMetres = 3.5,
+                stabilityRadiusMetres = 1.2,
+            ),
             capturedAtEpochMillis = 1_757_000_000_000,
         )
     }
 
-    /** Four well-separated points sharing one observed offset. */
+    /** Four distinct locations sharing one observed offset. */
     private fun readyDraft(scope: MapAlignmentScope = this.scope): MapAlignmentDraft {
         var d = draft(scope)
         listOf(
@@ -67,7 +75,7 @@ class MapAlignmentDraftTest {
     // ----- Preview honesty -----
 
     @Test
-    fun `before and after are both identity until an alignment is calculated`() {
+    fun `original and aligned are both identity until an alignment is calculated`() {
         val collecting = readyDraft()
         assertNull(collecting.candidate)
         // The preview must not imply a correction that has not been calculated.
@@ -77,11 +85,11 @@ class MapAlignmentDraftTest {
     }
 
     @Test
-    fun `before stays identity after calculating and after becomes the candidate`() {
+    fun `original stays identity after calculating and aligned becomes the candidate`() {
         val solved = readyDraft().solved("draft-1", nowEpochMillis = 1_757_000_000_000)
-        val candidate = assertNotNull(solved.candidate).let { solved.candidate!! }
+        val candidate = requireNotNull(solved.candidate)
 
-        // "Before" must be exactly current production rendering, always.
+        // "Original" must be exactly current production rendering, always.
         assertTrue(solved.previewBefore.isIdentity)
         assertEquals(MapAlignment.none(scope), solved.previewBefore)
 
@@ -89,6 +97,23 @@ class MapAlignmentDraftTest {
         assertFalse(solved.previewAfter.isIdentity)
         assertEquals(10.0, solved.previewAfter.eastOffsetMetres, 1e-6)
         assertEquals(-6.0, solved.previewAfter.northOffsetMetres, 1e-6)
+    }
+
+    @Test
+    fun `the preview never mutates the canonical coordinates it draws`() {
+        val solved = readyDraft().solved("draft-1", null)
+        val candidate = requireNotNull(solved.candidate)
+        val before = solved.referencePoints.map { it.canonicalCoordinate }
+
+        // Rendering through the alignment is what the preview does.
+        val drawn = solved.referencePoints.map { it.canonicalCoordinate.toDisplay(candidate) }
+
+        assertEquals(before, solved.referencePoints.map { it.canonicalCoordinate })
+        // Display coordinates are genuinely different values, not aliases.
+        drawn.forEachIndexed { index, display ->
+            assertFalse(display.latitude == before[index].latitude &&
+                display.longitude == before[index].longitude)
+        }
     }
 
     // ----- Stale candidate invalidation -----
@@ -107,12 +132,16 @@ class MapAlignmentDraftTest {
     }
 
     @Test
-    fun `removing evidence invalidates a previously calculated candidate`() {
+    fun `deleting down to three points makes the calibration incomplete`() {
         val solved = readyDraft().solved("draft-1", null)
         val reduced = solved.withoutReferencePoint("p1")
+
         assertNull(reduced.solution)
         assertEquals(3, reduced.pointCount)
         assertFalse(reduced.readiness.isReady)
+        assertTrue(reduced.readiness is MapAlignmentSolver.Readiness.NeedMorePoints)
+        // It cannot be talked back into a candidate either.
+        assertNull(reduced.solved("draft-2", null).solution)
     }
 
     @Test
@@ -122,6 +151,89 @@ class MapAlignmentDraftTest {
         assertNull(cleared.solution)
         assertEquals(scope, cleared.scope)
         assertEquals("Stockman's Ridge", cleared.vineyardName)
+    }
+
+    // ----- Editing an existing reference -----
+
+    @Test
+    fun `retaking GPS replaces only the position and invalidates the candidate`() {
+        val solved = readyDraft().solved("draft-1", null)
+        val original = solved.referencePoints.first { it.id == "p2" }
+        val moved = shifted(205.0, 3.0)
+
+        val retaken = solved.withRetakenGps(
+            pointId = "p2",
+            canonicalCoordinate = moved,
+            gpsAccuracyMetres = 1.5,
+            gpsEvidence = MapAlignmentGpsEvidence(8, 9_000, 1.5, 2.0, 0.9),
+            capturedAtEpochMillis = 1_757_000_100_000,
+        )
+        val updated = retaken.referencePoints.first { it.id == "p2" }
+
+        assertEquals(moved, updated.canonicalCoordinate)
+        assertEquals(1.5, updated.gpsAccuracyMetres!!, 1e-9)
+        assertEquals(8, updated.gpsEvidence?.sampleCount)
+        // The marked image point is the operator's own observation and survives.
+        assertEquals(original.selectedMapCoordinate, updated.selectedMapCoordinate)
+        // Order is preserved so "Point 2" stays Point 2.
+        assertEquals(1, retaken.referencePoints.indexOfFirst { it.id == "p2" })
+        assertEquals(4, retaken.pointCount)
+        assertNull(retaken.solution)
+        assertNull(updated.alignmentId)
+    }
+
+    @Test
+    fun `re-marking replaces only the image point and preserves the GPS evidence`() {
+        val solved = readyDraft().solved("draft-1", null)
+        val original = solved.referencePoints.first { it.id == "p3" }
+        val newMark = AndroidDisplayCoordinate(
+            original.selectedMapCoordinate.latitude + 0.00005,
+            original.selectedMapCoordinate.longitude + 0.00005,
+        )
+
+        val remarked = solved.withRemarkedImagePoint("p3", newMark)
+        val updated = remarked.referencePoints.first { it.id == "p3" }
+
+        assertEquals(newMark, updated.selectedMapCoordinate)
+        // Canonical GPS evidence is untouched — it was never in question.
+        assertEquals(original.canonicalCoordinate, updated.canonicalCoordinate)
+        assertEquals(original.gpsEvidence, updated.gpsEvidence)
+        assertEquals(original.gpsAccuracyMetres, updated.gpsAccuracyMetres)
+        assertEquals(original.capturedAtEpochMillis, updated.capturedAtEpochMillis)
+        assertEquals(4, remarked.pointCount)
+        assertNull(remarked.solution)
+    }
+
+    @Test
+    fun `editing a reference does not collide with its own position`() {
+        val d = readyDraft()
+        val ownPlace = d.referencePoints.first { it.id == "p1" }.canonicalCoordinate
+
+        assertTrue(d.isNearDuplicate(ownPlace))
+        assertFalse(
+            "a point being retaken must not be its own duplicate",
+            d.isNearDuplicate(ownPlace, excludingId = "p1"),
+        )
+    }
+
+    @Test
+    fun `a near-duplicate location is detected before it is added`() {
+        val d = readyDraft()
+        val tooClose = shifted(202.0, 1.0) // ~2 m from p2
+        val farEnough = shifted(400.0, 0.0)
+
+        assertTrue(d.isNearDuplicate(tooClose))
+        assertFalse(d.isNearDuplicate(farEnough))
+    }
+
+    @Test
+    fun `editing an unknown reference is a no-op`() {
+        val d = readyDraft()
+        assertEquals(d, d.withRemarkedImagePoint("missing", AndroidDisplayCoordinate(0.0, 0.0)))
+        assertEquals(
+            d,
+            d.withRetakenGps("missing", origin, 1.0, null, 1L),
+        )
     }
 
     // ----- Scope ownership -----
@@ -148,7 +260,6 @@ class MapAlignmentDraftTest {
         assertEquals("Block 1", solved.blockName)
         assertEquals(blockScope, solved.candidate?.scope)
         assertEquals("b1", solved.candidate?.blockId)
-        // Evidence travels with the block scope too.
         assertTrue(solved.solution?.calibration?.referencePoints?.all { it.scope == blockScope } == true)
     }
 
@@ -164,18 +275,33 @@ class MapAlignmentDraftTest {
     }
 
     @Test
-    fun `solving is refused while evidence is clustered`() {
-        var clustered = draft()
+    fun `solving is refused while two references describe the same place`() {
+        var duplicated = draft()
         listOf(
             point("c1", origin),
-            point("c2", shifted(3.0, 0.0)),
-            point("c3", shifted(0.0, 3.0)),
-            point("c4", shifted(3.0, 3.0)),
-        ).forEach { clustered = clustered.withReferencePoint(it) }
+            point("c2", shifted(2.0, 0.0)),
+            point("c3", shifted(0.0, 200.0)),
+            point("c4", shifted(200.0, 200.0)),
+        ).forEach { duplicated = duplicated.withReferencePoint(it) }
 
-        assertEquals(4, clustered.pointCount)
-        assertFalse(clustered.readiness.isReady)
-        assertNull(clustered.solved("draft-1", null).solution)
+        assertEquals(4, duplicated.pointCount)
+        assertFalse(duplicated.readiness.isReady)
+        assertNull(duplicated.solved("draft-1", null).solution)
+    }
+
+    @Test
+    fun `a small block with distinct references can still be calculated`() {
+        var small = draft()
+        listOf(
+            point("s1", origin),
+            point("s2", shifted(15.0, 0.0)),
+            point("s3", shifted(0.0, 15.0)),
+            point("s4", shifted(15.0, 15.0)),
+        ).forEach { small = small.withReferencePoint(it) }
+
+        assertTrue(small.widestSpanMetres < 40.0)
+        assertTrue(small.readiness.isReady)
+        assertNotNull(small.solved("draft-1", null).solution)
     }
 
     @Test

@@ -19,20 +19,23 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,13 +50,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.AndroidInstallationIdentity
 import com.rork.vinetrack.data.PinLocationResult
-import com.rork.vinetrack.data.QualifiedLocationFix
 import com.rork.vinetrack.data.mapalignment.AndroidDisplayCoordinate
 import com.rork.vinetrack.data.mapalignment.CanonicalCoordinate
-import com.rork.vinetrack.data.mapalignment.MapAlignmentCaptureQuality
 import com.rork.vinetrack.data.mapalignment.MapAlignmentDraft
+import com.rork.vinetrack.data.mapalignment.MapAlignmentGpsEvidence
+import com.rork.vinetrack.data.mapalignment.MapAlignmentGpsRules
+import com.rork.vinetrack.data.mapalignment.MapAlignmentGpsSampling
 import com.rork.vinetrack.data.mapalignment.MapAlignmentReferencePoint
 import com.rork.vinetrack.data.mapalignment.MapAlignmentReferenceType
+import com.rork.vinetrack.data.mapalignment.MapAlignmentRowPosition
 import com.rork.vinetrack.data.mapalignment.MapAlignmentScope
 import com.rork.vinetrack.data.mapalignment.MapAlignmentSolver
 import com.rork.vinetrack.data.mapalignment.MapAlignmentWizardStep
@@ -63,6 +68,7 @@ import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
+import kotlinx.coroutines.delay
 import java.util.Locale
 import java.util.UUID
 
@@ -71,9 +77,9 @@ import java.util.UUID
  *
  * ## What this phase does, and deliberately does not do
  *
- * It lets a System Admin walk the vineyard, record well-separated reference
- * points, derive a candidate translation and inspect it in a PRIVATE
- * before/after preview. That is all.
+ * It lets a System Admin walk the vineyard, record reference points, derive a
+ * candidate translation and inspect it in a PRIVATE before/after preview. That
+ * is all.
  *
  * * **No production map is aligned.** No vineyard or block map consults the
  *   candidate. The only thing it affects is the preview inside this screen.
@@ -89,8 +95,10 @@ import java.util.UUID
  * Capture reuses the existing location pipeline
  * (`AppViewModel.fetchCurrentFix` -> `LocationTracker` ->
  * `PinLocationFixValidator`). No competing location manager, request or
- * subscription is created. [MapAlignmentCaptureQuality] then applies a stricter
- * wizard-only accuracy rule on top of that unchanged production result.
+ * subscription is created — the wizard simply calls that same one-shot path
+ * repeatedly. [MapAlignmentGpsSampling] then requires several unique, agreeing
+ * fixes before a reference may be created, because a single fix is not
+ * sufficient evidence for a measurement of this size.
  */
 @Composable
 fun MapAlignmentWizard(
@@ -103,6 +111,17 @@ fun MapAlignmentWizard(
 
     var step by remember { mutableStateOf(MapAlignmentWizardStep.Scope) }
     var draft by remember { mutableStateOf<MapAlignmentDraft?>(null) }
+    var pendingExit by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    /** Route a discard through confirmation whenever evidence would be lost. */
+    fun requestDiscard(andThen: () -> Unit) {
+        val current = draft
+        if (current == null || current.referencePoints.isEmpty()) {
+            andThen()
+        } else {
+            pendingExit = andThen
+        }
+    }
 
     val current = draft
     when {
@@ -121,9 +140,10 @@ fun MapAlignmentWizard(
             modifier = modifier,
             onStart = { step = MapAlignmentWizardStep.Capture },
             onCancel = {
-                // Discarding the wizard discards the candidate. Intentional.
-                draft = null
-                step = MapAlignmentWizardStep.Scope
+                requestDiscard {
+                    draft = null
+                    step = MapAlignmentWizardStep.Scope
+                }
             },
         )
 
@@ -140,20 +160,74 @@ fun MapAlignmentWizard(
                 )
                 step = MapAlignmentWizardStep.Review
             },
-            onBackToIntro = { step = MapAlignmentWizardStep.Introduction },
+            onExit = {
+                requestDiscard {
+                    draft = null
+                    step = MapAlignmentWizardStep.Scope
+                }
+            },
         )
 
-        else -> MapAlignmentReviewStep(
+        step == MapAlignmentWizardStep.Review -> MapAlignmentReviewStep(
             state = state,
             draft = current,
             modifier = modifier,
             onCaptureMore = { step = MapAlignmentWizardStep.Capture },
+            onFinish = { step = MapAlignmentWizardStep.Complete },
             onDiscard = {
+                requestDiscard {
+                    draft = null
+                    step = MapAlignmentWizardStep.Scope
+                }
+            },
+        )
+
+        else -> CompletionStep(
+            modifier = modifier,
+            onViewAgain = { step = MapAlignmentWizardStep.Review },
+            onDiscardAndFinish = {
+                // Explicit discard: the operator has already been told, on this
+                // very screen, that nothing was saved. No second prompt.
                 draft = null
                 step = MapAlignmentWizardStep.Scope
             },
         )
     }
+
+    pendingExit?.let { exit ->
+        DiscardCalibrationDialog(
+            onKeep = { pendingExit = null },
+            onDiscard = {
+                pendingExit = null
+                exit()
+            },
+        )
+    }
+}
+
+/**
+ * Confirmation shown before collected references are thrown away.
+ *
+ * Reference points cost real walking, so Back or Cancel must never silently
+ * drop them. The wording also settles the operator's obvious worry — that
+ * leaving might have changed vineyard data.
+ */
+@Composable
+private fun DiscardCalibrationDialog(onKeep: () -> Unit, onDiscard: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onKeep,
+        title = { Text("Discard calibration?") },
+        text = {
+            Text(
+                "This calibration has not been saved. Leaving now will discard the " +
+                    "reference points collected in this session.\n\nNo vineyard data will " +
+                    "be changed.",
+                fontSize = 14.sp,
+            )
+        },
+        confirmButton = { TextButton(onClick = onKeep) { Text("Keep calibrating") } },
+        dismissButton = { TextButton(onClick = onDiscard) { Text("Discard") } },
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -303,8 +377,8 @@ private fun IntroductionStep(
                     color = vine.textSecondary,
                 )
                 Text(
-                    "You'll record at least ${MapAlignmentSolver.MIN_POINTS} well-separated " +
-                        "reference points around the vineyard.",
+                    "You'll record at least ${MapAlignmentSolver.MIN_POINTS} reference points. " +
+                        MapAlignmentSolver.SPREAD_ADVICE,
                     fontSize = 14.sp,
                     color = vine.textSecondary,
                 )
@@ -314,7 +388,11 @@ private fun IntroductionStep(
                     fontWeight = FontWeight.Medium,
                     color = vine.textPrimary,
                 )
-                NumberedStep(1, "Stand at a location you can clearly identify, such as a boundary corner, row end, post or gate.")
+                NumberedStep(
+                    1,
+                    "Stand at a location you can clearly identify, such as a boundary " +
+                        "corner, row end, post or gate.",
+                )
                 NumberedStep(2, "Allow VineTrack to record your GPS position.")
                 NumberedStep(3, "Mark that same physical point on the satellite image.")
                 Text(
@@ -333,11 +411,18 @@ private fun IntroductionStep(
 
         VineyardCard {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                SectionTitle("Accuracy needed")
+                SectionTitle("How the GPS reading is taken")
                 Text(
-                    "Alignment needs a fix of ±${MapAlignmentCaptureQuality.MAX_ACCURACY_METRES.toInt()} m " +
-                        "or better — stricter than normal pin dropping. The offset being measured " +
-                        "may itself be only a few metres, so a poor fix could be larger than the " +
+                    "At each point VineTrack collects at least " +
+                        "${MapAlignmentGpsRules.MIN_SAMPLES} separate GPS readings over about " +
+                        "${MapAlignmentGpsRules.MIN_SAMPLING_MILLIS / 1000} seconds and uses " +
+                        "the middle of them. Stand still while it does.",
+                    fontSize = 13.sp,
+                    color = vine.textSecondary,
+                )
+                Text(
+                    "One single reading is not enough. The offset being measured may itself " +
+                        "be only a few metres, so a single reading could be as large as the " +
                         "discrepancy it is meant to measure.",
                     fontSize = 13.sp,
                     color = vine.textSecondary,
@@ -355,6 +440,27 @@ private fun IntroductionStep(
 // Step 3 — capture
 // ---------------------------------------------------------------------------
 
+/** What the capture step is currently doing. */
+private sealed interface CaptureMode {
+    /** Showing the collected references. */
+    data object Overview : CaptureMode
+
+    /** Running the multi-sample GPS process. [editingId] is set when retaking. */
+    data class Sampling(val editingId: String?) : CaptureMode
+
+    /** Marking the imagery with the crosshair. */
+    data class Marking(
+        val editingId: String?,
+        val gps: CanonicalCoordinate,
+        val evidence: MapAlignmentGpsEvidence?,
+        val capturedAtEpochMillis: Long,
+        /** Set when only the image point is being replaced. */
+        val existingMark: AndroidDisplayCoordinate? = null,
+        /** True when the canonical GPS evidence must be preserved as-is. */
+        val remarkOnly: Boolean = false,
+    ) : CaptureMode
+}
+
 @Composable
 private fun MapAlignmentCaptureStep(
     state: AppUiState,
@@ -363,136 +469,427 @@ private fun MapAlignmentCaptureStep(
     modifier: Modifier,
     onDraftChanged: (MapAlignmentDraft) -> Unit,
     onCalculate: () -> Unit,
-    onBackToIntro: () -> Unit,
+    onExit: () -> Unit,
+) {
+    var mode by remember { mutableStateOf<CaptureMode>(CaptureMode.Overview) }
+
+    when (val currentMode = mode) {
+        is CaptureMode.Sampling -> GpsSamplingStep(
+            draft = draft,
+            editingId = currentMode.editingId,
+            onRequestFix = onRequestFix,
+            modifier = modifier,
+            onCancel = { mode = CaptureMode.Overview },
+            onStable = { coordinate, evidence, capturedAt ->
+                val editing = currentMode.editingId
+                if (editing != null) {
+                    // Retake: keep the marked image point, replace the GPS.
+                    onDraftChanged(
+                        draft.withRetakenGps(
+                            pointId = editing,
+                            canonicalCoordinate = coordinate,
+                            gpsAccuracyMetres = evidence?.representativeAccuracyMetres,
+                            gpsEvidence = evidence,
+                            capturedAtEpochMillis = capturedAt,
+                        ),
+                    )
+                    mode = CaptureMode.Overview
+                } else {
+                    mode = CaptureMode.Marking(
+                        editingId = null,
+                        gps = coordinate,
+                        evidence = evidence,
+                        capturedAtEpochMillis = capturedAt,
+                    )
+                }
+            },
+        )
+
+        is CaptureMode.Marking -> MarkOnImageStep(
+            state = state,
+            draft = draft,
+            mode = currentMode,
+            modifier = modifier,
+            onCancel = { mode = CaptureMode.Overview },
+            onConfirmed = { updated ->
+                onDraftChanged(updated)
+                mode = CaptureMode.Overview
+            },
+        )
+
+        CaptureMode.Overview -> CaptureOverviewStep(
+            state = state,
+            draft = draft,
+            modifier = modifier,
+            onDraftChanged = onDraftChanged,
+            onStartNewPoint = { mode = CaptureMode.Sampling(editingId = null) },
+            onRetakeGps = { mode = CaptureMode.Sampling(editingId = it.id) },
+            onRemark = { point ->
+                mode = CaptureMode.Marking(
+                    editingId = point.id,
+                    gps = point.canonicalCoordinate,
+                    evidence = point.gpsEvidence,
+                    capturedAtEpochMillis = point.capturedAtEpochMillis,
+                    existingMark = point.selectedMapCoordinate,
+                    remarkOnly = true,
+                )
+            },
+            onCalculate = onCalculate,
+            onExit = onExit,
+        )
+    }
+}
+
+// --- 3a. Multi-sample GPS ---------------------------------------------------
+
+/**
+ * Collects several unique, agreeing GPS fixes for one reference point.
+ *
+ * Repeatedly calls the SAME existing one-shot production path rather than
+ * opening a second location subscription, so production admission rules stay
+ * exactly as they are and the wizard simply asks more often.
+ */
+@Composable
+private fun GpsSamplingStep(
+    draft: MapAlignmentDraft,
+    editingId: String?,
+    onRequestFix: (onResult: (PinLocationResult) -> Unit) -> Unit,
+    modifier: Modifier,
+    onCancel: () -> Unit,
+    onStable: (CanonicalCoordinate, MapAlignmentGpsEvidence?, Long) -> Unit,
 ) {
     val vine = LocalVineColors.current
-    var pendingFix by remember { mutableStateOf<QualifiedLocationFix?>(null) }
-    var pendingTap by remember { mutableStateOf<AndroidDisplayCoordinate?>(null) }
-    var status by remember { mutableStateOf<String?>(null) }
-    var isRecording by remember { mutableStateOf(false) }
-    var referenceType by remember { mutableStateOf<MapAlignmentReferenceType?>(null) }
+    var attempt by remember { mutableStateOf(0) }
+    var sampling by remember(attempt) { mutableStateOf(MapAlignmentGpsSampling()) }
+    var lastRejection by remember(attempt) { mutableStateOf<String?>(null) }
+    var timedOut by remember(attempt) { mutableStateOf(false) }
 
-    val readiness = draft.readiness
+    val progress = sampling.progress
+    val stable = progress as? MapAlignmentGpsSampling.Progress.Stable
+
+    LaunchedEffect(attempt) {
+        val started = System.currentTimeMillis()
+        while (
+            !sampling.isStable &&
+            System.currentTimeMillis() - started < MapAlignmentGpsRules.SAMPLING_TIMEOUT_MILLIS
+        ) {
+            onRequestFix { production ->
+                when (val outcome = sampling.offer(production)) {
+                    is MapAlignmentGpsSampling.Outcome.Accepted -> {
+                        sampling = outcome.sampling
+                        lastRejection = null
+                    }
+                    is MapAlignmentGpsSampling.Outcome.Duplicate -> Unit
+                    is MapAlignmentGpsSampling.Outcome.TooImprecise ->
+                        lastRejection = "Last reading was ±${metres(outcome.accuracyMetres)} m — " +
+                            "waiting for ±${MapAlignmentGpsRules.MAX_SAMPLE_ACCURACY_METRES.toInt()} m or better."
+                    is MapAlignmentGpsSampling.Outcome.RejectedByProduction ->
+                        // Existing production wording, unchanged.
+                        lastRejection = outcome.underlying.operatorMessage()
+                }
+            }
+            delay(1_000)
+        }
+        // Never block indefinitely: fall through to an explicit Retry.
+        if (!sampling.isStable) timedOut = true
+    }
 
     WizardScaffold(modifier = modifier) {
         SystemAdminPreviewBadge()
         ScopeSummary(draft)
 
-        // --- The map: canonical geometry, and the operator's taps ---
+        VineyardCard {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                SectionTitle(
+                    if (editingId != null) {
+                        "Retake GPS"
+                    } else {
+                        "Reference point ${draft.pointCount + 1} — GPS"
+                    },
+                )
+                Text(
+                    "Stand still at the point you can identify on the satellite image.",
+                    fontSize = 13.sp,
+                    color = vine.textSecondary,
+                )
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (!progress.isStable && !timedOut) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(Modifier.size(10.dp))
+                    } else if (progress.isStable) {
+                        Icon(
+                            Icons.Filled.CheckCircle,
+                            contentDescription = null,
+                            tint = VineColors.Orange,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.size(10.dp))
+                    }
+                    Text(
+                        progress.message(),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = vine.textPrimary,
+                    )
+                }
+
+                LinearProgressIndicator(
+                    progress = {
+                        (sampling.sampleCount.toFloat() /
+                            MapAlignmentGpsRules.MIN_SAMPLES.toFloat()).coerceIn(0f, 1f)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                sampling.evidence?.let { evidence ->
+                    AlignmentStatRow("Samples", "${evidence.sampleCount}")
+                    AlignmentStatRow(
+                        "Sampling time",
+                        "${evidence.samplingDurationMillis / 1000} s",
+                    )
+                    AlignmentStatRow(
+                        "Representative accuracy",
+                        "±${metres(evidence.representativeAccuracyMetres)} m",
+                    )
+                    AlignmentStatRow("Worst reading", "±${metres(evidence.worstAccuracyMetres)} m")
+                    AlignmentStatRow(
+                        "Spread of readings",
+                        "${metres(evidence.stabilityRadiusMetres)} m",
+                        highlight = evidence.stabilityRadiusMetres >
+                            MapAlignmentGpsRules.MAX_STABILITY_RADIUS_METRES,
+                    )
+                }
+
+                lastRejection?.let {
+                    Text(it, fontSize = 12.sp, color = vine.textSecondary)
+                }
+
+                if (timedOut && !progress.isStable) {
+                    Text(
+                        "A stable GPS reading could not be obtained here. Move into clearer " +
+                            "sky if you can, then try again.",
+                        fontSize = 13.sp,
+                        color = VineColors.Orange,
+                    )
+                }
+            }
+        }
+
+        Button(
+            onClick = {
+                val coordinate = sampling.representative ?: return@Button
+                onStable(coordinate, stable?.evidence, System.currentTimeMillis())
+            },
+            enabled = stable != null,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Filled.GpsFixed, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.size(8.dp))
+            Text(if (editingId != null) "Use this GPS position" else "Continue to the map")
+        }
+
+        OutlinedButton(
+            onClick = { attempt += 1 },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.size(8.dp))
+            Text("Retry")
+        }
+        OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+        CanonicalInvariantNote()
+    }
+}
+
+// --- 3b. Precision crosshair marking ---------------------------------------
+
+@Composable
+private fun MarkOnImageStep(
+    state: AppUiState,
+    draft: MapAlignmentDraft,
+    mode: CaptureMode.Marking,
+    modifier: Modifier,
+    onCancel: () -> Unit,
+    onConfirmed: (MapAlignmentDraft) -> Unit,
+) {
+    val vine = LocalVineColors.current
+    var target by remember {
+        mutableStateOf(
+            mode.existingMark
+                ?: AndroidDisplayCoordinate(mode.gps.latitude, mode.gps.longitude),
+        )
+    }
+    var referenceType by remember { mutableStateOf<MapAlignmentReferenceType?>(null) }
+    var description by remember { mutableStateOf("") }
+    var rowNumber by remember { mutableStateOf("") }
+    var rowPosition by remember { mutableStateOf<MapAlignmentRowPosition?>(null) }
+
+    val duplicate = !mode.remarkOnly &&
+        draft.isNearDuplicate(mode.gps, excludingId = mode.editingId)
+
+    WizardScaffold(modifier = modifier) {
+        SystemAdminPreviewBadge()
+
         VineyardCard {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionTitle("Mark the point on the satellite image")
+                SectionTitle(
+                    if (mode.remarkOnly) "Re-mark the image point" else "Mark the image point",
+                )
                 Text(
-                    if (pendingFix == null) {
-                        "Record your GPS position first."
-                    } else {
-                        "Now tap the satellite image at the SAME physical place you are standing."
-                    },
+                    "Move the map until the crosshair is positioned over the exact point " +
+                        "where you are standing.",
                     fontSize = 13.sp,
                     color = vine.textSecondary,
                 )
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(320.dp)
+                        .height(340.dp)
                         .clip(RoundedCornerShape(12.dp)),
                 ) {
-                    MapAlignmentCaptureMap(
+                    MapAlignmentCrosshairMap(
                         state = state,
                         draft = draft,
-                        pendingTap = pendingTap,
-                        tapEnabled = pendingFix != null,
-                        onTap = { pendingTap = it },
+                        gpsPosition = mode.gps,
+                        initialTarget = mode.existingMark,
+                        onTargetChanged = { target = it },
+                    )
+                }
+                Text(
+                    "Zoom right in for the best result. The satellite image is shown " +
+                        "uncorrected — that is the discrepancy you are measuring.",
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                )
+            }
+        }
+
+        if (duplicate) {
+            VineyardCard {
+                Row {
+                    Icon(
+                        Icons.Filled.Warning,
+                        contentDescription = null,
+                        tint = VineColors.Orange,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    Text(
+                        MapAlignmentSolver.NEAR_DUPLICATE_MESSAGE,
+                        fontSize = 13.sp,
+                        color = vine.textPrimary,
                     )
                 }
             }
         }
 
-        // --- Capture controls ---
-        VineyardCard {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionTitle("Reference point ${draft.pointCount + 1}")
-
-                PendingFixRow(pendingFix)
-
-                Button(
-                    onClick = {
-                        isRecording = true
-                        status = null
-                        onRequestFix { production ->
-                            isRecording = false
-                            // Existing production pipeline first, then the
-                            // stricter wizard-only gate on top of its result.
-                            when (val quality = MapAlignmentCaptureQuality.evaluate(production)) {
-                                is MapAlignmentCaptureQuality.Result.Accepted -> {
-                                    pendingFix = quality.fix
-                                    pendingTap = null
-                                    status = quality.operatorMessage()
-                                }
-                                else -> {
-                                    pendingFix = null
-                                    status = quality.operatorMessage()
-                                }
-                            }
-                        }
-                    },
-                    enabled = !isRecording,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (isRecording) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                            color = Color.White,
+        if (!mode.remarkOnly) {
+            VineyardCard {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SectionTitle("About this point (optional)")
+                    ReferenceTypeChips(referenceType) { referenceType = it }
+                    OutlinedTextField(
+                        value = description,
+                        onValueChange = { description = it },
+                        label = { Text("Description") },
+                        placeholder = { Text("e.g. north-west corner post") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    // Row metadata only where it means something. A gate or a
+                    // block corner has no row, and asking for one invites junk.
+                    if (referenceType == MapAlignmentReferenceType.RowEnd) {
+                        OutlinedTextField(
+                            value = rowNumber,
+                            onValueChange = { entered ->
+                                rowNumber = entered.filter { it.isDigit() }
+                            },
+                            label = { Text("Row number") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
                         )
-                        Spacer(Modifier.size(8.dp))
-                        Text("Recording GPS…")
-                    } else {
-                        Icon(Icons.Filled.GpsFixed, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.size(8.dp))
-                        Text(if (pendingFix == null) "Record my GPS position" else "Record again")
+                        RowPositionChips(rowPosition) { rowPosition = it }
                     }
-                }
-
-                status?.let {
-                    Text(it, fontSize = 13.sp, color = vine.textSecondary)
-                }
-
-                ReferenceTypeChips(referenceType) { referenceType = it }
-
-                Button(
-                    onClick = {
-                        val fix = pendingFix ?: return@Button
-                        val tap = pendingTap ?: return@Button
-                        val point = MapAlignmentReferencePoint(
-                            id = UUID.randomUUID().toString(),
-                            scope = draft.scope,
-                            // Canonical truth, straight from the existing pipeline.
-                            canonicalCoordinate = CanonicalCoordinate(fix.latitude, fix.longitude),
-                            // Display space: where the operator had to tap for it
-                            // to LOOK like the same place. Never stored as truth.
-                            selectedMapCoordinate = tap,
-                            gpsAccuracyMetres = fix.accuracyMetres,
-                            capturedAtEpochMillis = fix.fixTimeEpochMs,
-                            referenceType = referenceType,
-                        )
-                        onDraftChanged(draft.withReferencePoint(point))
-                        pendingFix = null
-                        pendingTap = null
-                        referenceType = null
-                        status = "Reference point added."
-                    },
-                    enabled = pendingFix != null && pendingTap != null,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Filled.TouchApp, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.size(8.dp))
-                    Text("Add reference point")
                 }
             }
         }
 
-        // --- Progress and collected evidence ---
+        Button(
+            onClick = {
+                val updated = if (mode.remarkOnly && mode.editingId != null) {
+                    draft.withRemarkedImagePoint(mode.editingId, target)
+                } else {
+                    draft.withReferencePoint(
+                        MapAlignmentReferencePoint(
+                            id = UUID.randomUUID().toString(),
+                            scope = draft.scope,
+                            // Canonical truth: the robust centre of the sample group.
+                            canonicalCoordinate = mode.gps,
+                            // Display space: where the imagery had to be moved for
+                            // this to LOOK like the same place. Never stored as truth.
+                            selectedMapCoordinate = target,
+                            gpsAccuracyMetres = mode.evidence?.representativeAccuracyMetres,
+                            gpsEvidence = mode.evidence,
+                            capturedAtEpochMillis = mode.capturedAtEpochMillis,
+                            referenceType = referenceType,
+                            description = description.takeIf { it.isNotBlank() },
+                            rowNumber = rowNumber.toIntOrNull(),
+                            rowPosition = rowPosition,
+                        ),
+                    )
+                }
+                onConfirmed(updated)
+            },
+            enabled = !duplicate,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Use this map point") }
+
+        OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+        CanonicalInvariantNote()
+    }
+}
+
+// --- 3c. Overview and reference management ---------------------------------
+
+@Composable
+private fun CaptureOverviewStep(
+    state: AppUiState,
+    draft: MapAlignmentDraft,
+    modifier: Modifier,
+    onDraftChanged: (MapAlignmentDraft) -> Unit,
+    onStartNewPoint: () -> Unit,
+    onRetakeGps: (MapAlignmentReferencePoint) -> Unit,
+    onRemark: (MapAlignmentReferencePoint) -> Unit,
+    onCalculate: () -> Unit,
+    onExit: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val readiness = draft.readiness
+
+    WizardScaffold(modifier = modifier) {
+        SystemAdminPreviewBadge()
+        ScopeSummary(draft)
+
+        if (draft.referencePoints.isNotEmpty()) {
+            VineyardCard {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SectionTitle("Collected reference points")
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(260.dp)
+                            .clip(RoundedCornerShape(12.dp)),
+                    ) {
+                        MapAlignmentCaptureOverviewMap(state = state, draft = draft)
+                    }
+                }
+            }
+        }
+
         VineyardCard {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SectionTitle("Reference points (${draft.pointCount})")
@@ -502,9 +899,12 @@ private fun MapAlignmentCaptureStep(
                     color = if (readiness.isReady) VineColors.Orange else vine.textSecondary,
                 )
                 if (draft.referencePoints.isEmpty()) {
+                    Text("None recorded yet.", fontSize = 13.sp, color = vine.textSecondary)
+                } else {
                     Text(
-                        "None recorded yet.",
-                        fontSize = 13.sp,
+                        "Spread over ${draft.widestSpanMetres.toInt()} m. " +
+                            MapAlignmentSolver.SPREAD_ADVICE,
+                        fontSize = 12.sp,
                         color = vine.textSecondary,
                     )
                 }
@@ -512,10 +912,18 @@ private fun MapAlignmentCaptureStep(
                     CapturedPointRow(
                         index = index + 1,
                         point = point,
+                        onRetakeGps = { onRetakeGps(point) },
+                        onRemark = { onRemark(point) },
                         onRemove = { onDraftChanged(draft.withoutReferencePoint(point.id)) },
                     )
                 }
             }
+        }
+
+        Button(onClick = onStartNewPoint, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.GpsFixed, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.size(8.dp))
+            Text("Record reference point ${draft.pointCount + 1}")
         }
 
         Button(
@@ -524,8 +932,8 @@ private fun MapAlignmentCaptureStep(
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Calculate alignment") }
 
-        OutlinedButton(onClick = onBackToIntro, modifier = Modifier.fillMaxWidth()) {
-            Text("Back to instructions")
+        OutlinedButton(onClick = onExit, modifier = Modifier.fillMaxWidth()) {
+            Text("Cancel calibration")
         }
         CanonicalInvariantNote()
         DraftOnlyNote()
@@ -533,47 +941,151 @@ private fun MapAlignmentCaptureStep(
 }
 
 @Composable
-private fun PendingFixRow(fix: QualifiedLocationFix?) {
+private fun CapturedPointRow(
+    index: Int,
+    point: MapAlignmentReferencePoint,
+    onRetakeGps: () -> Unit,
+    onRemark: () -> Unit,
+    onRemove: () -> Unit,
+) {
     val vine = LocalVineColors.current
-    if (fix == null) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                Icons.Filled.MyLocation,
-                contentDescription = null,
-                tint = vine.textSecondary,
-                modifier = Modifier.size(16.dp),
-            )
-            Spacer(Modifier.size(8.dp))
-            Text("No GPS position recorded yet.", fontSize = 13.sp, color = vine.textSecondary)
-        }
-        return
-    }
-    val comfortable = MapAlignmentCaptureQuality.isComfortable(fix.accuracyMetres)
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(
-            Icons.Filled.CheckCircle,
-            contentDescription = null,
-            tint = if (comfortable) VineColors.Orange else vine.textSecondary,
-            modifier = Modifier.size(16.dp),
+    val offset = point.observedOffset
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(vine.appBackground)
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            buildString {
+                append("Point $index")
+                point.referenceLabel()?.let { append(" — $it") }
+            },
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            color = vine.textPrimary,
         )
-        Spacer(Modifier.size(8.dp))
-        Column {
-            Text(
-                "GPS recorded — ±${metres(fix.accuracyMetres)} m",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                color = vine.textPrimary,
-            )
-            if (!comfortable) {
-                Text(
-                    "Waiting a moment for ±${MapAlignmentCaptureQuality.GOOD_ACCURACY_METRES.toInt()} m " +
-                        "or better will give a stronger alignment.",
-                    fontSize = 12.sp,
-                    color = vine.textSecondary,
+        // Enough detail to diagnose a problem point without opening anything.
+        Text(
+            offsetDescription(offset.eastMetres, offset.northMetres) +
+                " · ${metres(offset.magnitudeMetres)} m total",
+            fontSize = 12.sp,
+            color = vine.textSecondary,
+        )
+        Text(
+            buildString {
+                append("GPS ±${metres(point.gpsAccuracyMetres ?: 0.0)} m")
+                point.gpsEvidence?.let {
+                    append(" · ${it.sampleCount} samples")
+                    append(" · spread ${metres(it.stabilityRadiusMetres)} m")
+                }
+            },
+            fontSize = 12.sp,
+            color = vine.textSecondary,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(onClick = onRetakeGps) {
+                Icon(
+                    Icons.Filled.Refresh,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                )
+                Spacer(Modifier.size(4.dp))
+                Text("Retake GPS", fontSize = 12.sp)
+            }
+            TextButton(onClick = onRemark) {
+                Icon(
+                    Icons.Filled.Edit,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                )
+                Spacer(Modifier.size(4.dp))
+                Text("Re-mark", fontSize = 12.sp)
+            }
+            TextButton(onClick = onRemove) {
+                Icon(
+                    Icons.Filled.Delete,
+                    contentDescription = "Delete point",
+                    modifier = Modifier.size(14.dp),
                 )
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Step 5 — completion
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun CompletionStep(
+    modifier: Modifier,
+    onViewAgain: () -> Unit,
+    onDiscardAndFinish: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    WizardScaffold(modifier = modifier) {
+        SystemAdminPreviewBadge()
+        VineyardCard {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "Calibration preview complete",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = vine.textPrimary,
+                )
+                Text(
+                    "This calibration was created for testing on this Android device.",
+                    fontSize = 14.sp,
+                    color = vine.textSecondary,
+                )
+                Text(
+                    "No vineyard, block, row, pin, route or GPS coordinates have been changed.",
+                    fontSize = 14.sp,
+                    color = vine.textSecondary,
+                )
+                Text(
+                    "The alignment has not yet been enabled on VineTrack's normal maps.",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = vine.textPrimary,
+                )
+            }
+        }
+        Button(onClick = onViewAgain, modifier = Modifier.fillMaxWidth()) {
+            Text("View preview again")
+        }
+        OutlinedButton(onClick = onDiscardAndFinish, modifier = Modifier.fillMaxWidth()) {
+            Text("Discard and finish")
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared pieces
+// ---------------------------------------------------------------------------
+
+/** Short human label for a reference: its description, or its type and row. */
+internal fun MapAlignmentReferencePoint.referenceLabel(): String? {
+    description?.takeIf { it.isNotBlank() }?.let { return it }
+    val type = referenceType?.let {
+        when (it) {
+            MapAlignmentReferenceType.RowEnd -> "Row end"
+            MapAlignmentReferenceType.BlockCorner -> "Block corner"
+            MapAlignmentReferenceType.Infrastructure -> "Post/gate"
+            MapAlignmentReferenceType.Landmark -> "Landmark"
+            MapAlignmentReferenceType.Other -> "Other"
+        }
+    }
+    val row = rowNumber?.let { number ->
+        buildString {
+            append("Row $number")
+            rowPosition?.let { append(" ${it.name.lowercase(Locale.US)}") }
+        }
+    }
+    return listOfNotNull(type, row).takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
 
 @Composable
@@ -583,7 +1095,7 @@ private fun ReferenceTypeChips(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
-            "What is this point? (optional)",
+            "What is this point?",
             fontSize = 12.sp,
             color = LocalVineColors.current.textSecondary,
         )
@@ -592,12 +1104,12 @@ private fun ReferenceTypeChips(
                 MapAlignmentReferenceType.BlockCorner to "Corner",
                 MapAlignmentReferenceType.RowEnd to "Row end",
                 MapAlignmentReferenceType.Infrastructure to "Post/gate",
+                MapAlignmentReferenceType.Landmark to "Landmark",
             ).forEach { (type, label) ->
                 FilterChip(
                     selected = selected == type,
                     onClick = { onSelect(if (selected == type) null else type) },
                     label = { Text(label, fontSize = 12.sp) },
-                    colors = FilterChipDefaults.filterChipColors(),
                 )
             }
         }
@@ -605,41 +1117,27 @@ private fun ReferenceTypeChips(
 }
 
 @Composable
-private fun CapturedPointRow(
-    index: Int,
-    point: MapAlignmentReferencePoint,
-    onRemove: () -> Unit,
+private fun RowPositionChips(
+    selected: MapAlignmentRowPosition?,
+    onSelect: (MapAlignmentRowPosition?) -> Unit,
 ) {
-    val vine = LocalVineColors.current
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                "Point $index — ${offsetDescription(point.observedOffset.eastMetres, point.observedOffset.northMetres)}",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                color = vine.textPrimary,
-            )
-            Text(
-                buildString {
-                    append("±${metres(point.gpsAccuracyMetres ?: 0.0)} m")
-                    point.referenceType?.let { append(" · ${it.name}") }
-                },
-                fontSize = 12.sp,
-                color = vine.textSecondary,
-            )
-        }
-        TextButton(onClick = onRemove) {
-            Icon(Icons.Filled.Delete, contentDescription = "Remove point", modifier = Modifier.size(16.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            "Where along the row?",
+            fontSize = 12.sp,
+            color = LocalVineColors.current.textSecondary,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            MapAlignmentRowPosition.entries.forEach { position ->
+                FilterChip(
+                    selected = selected == position,
+                    onClick = { onSelect(if (selected == position) null else position) },
+                    label = { Text(position.name, fontSize = 12.sp) },
+                )
+            }
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Shared pieces
-// ---------------------------------------------------------------------------
 
 @Composable
 internal fun WizardScaffold(

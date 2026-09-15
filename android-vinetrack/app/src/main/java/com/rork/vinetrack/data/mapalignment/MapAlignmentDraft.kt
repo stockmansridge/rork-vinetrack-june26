@@ -39,9 +39,21 @@ data class MapAlignmentDraft(
 
     val pointCount: Int get() = referencePoints.size
 
-    /** Whether enough well-separated evidence exists to calculate. */
+    /** Whether enough distinct evidence exists to calculate. */
     val readiness: MapAlignmentSolver.Readiness
         get() = MapAlignmentSolver.readiness(referencePoints)
+
+    /** Widest separation across the collected evidence, in metres. Diagnostic only. */
+    val widestSpanMetres: Double get() = MapAlignmentSolver.widestSpan(referencePoints)
+
+    /**
+     * Whether [coordinate] would land on top of an existing reference.
+     *
+     * @param excludingId the reference being retaken, so a point can never
+     *   collide with its own previous position.
+     */
+    fun isNearDuplicate(coordinate: CanonicalCoordinate, excludingId: String? = null): Boolean =
+        MapAlignmentSolver.isNearDuplicate(coordinate, referencePoints, excludingId)
 
     /** The candidate alignment, or null before calculation. */
     val candidate: MapAlignment? get() = solution?.alignment
@@ -78,6 +90,66 @@ data class MapAlignmentDraft(
     fun withoutReferencePoint(pointId: String): MapAlignmentDraft =
         copy(referencePoints = referencePoints.filterNot { it.id == pointId }, solution = null)
 
+    /**
+     * Replace one reference point in place, keeping its position in the list.
+     *
+     * Used by Retake GPS and Re-mark image point. Like any other change to the
+     * evidence this invalidates the candidate: a displayed alignment must never
+     * outlive the points it was derived from.
+     */
+    fun withUpdatedReferencePoint(point: MapAlignmentReferencePoint): MapAlignmentDraft {
+        require(point.scope == scope) {
+            "Reference point ${point.id} belongs to ${point.scope}, not the draft scope $scope"
+        }
+        require(referencePoints.any { it.id == point.id }) {
+            "Reference point ${point.id} is not part of this draft"
+        }
+        return copy(
+            referencePoints = referencePoints.map { if (it.id == point.id) point else it },
+            solution = null,
+        )
+    }
+
+    /**
+     * Replace only the canonical GPS evidence of an existing reference,
+     * preserving the operator's marked image point and its metadata.
+     */
+    fun withRetakenGps(
+        pointId: String,
+        canonicalCoordinate: CanonicalCoordinate,
+        gpsAccuracyMetres: Double?,
+        gpsEvidence: MapAlignmentGpsEvidence?,
+        capturedAtEpochMillis: Long,
+    ): MapAlignmentDraft {
+        val existing = referencePoints.firstOrNull { it.id == pointId } ?: return this
+        return withUpdatedReferencePoint(
+            existing.copy(
+                canonicalCoordinate = canonicalCoordinate,
+                gpsAccuracyMetres = gpsAccuracyMetres,
+                gpsEvidence = gpsEvidence,
+                capturedAtEpochMillis = capturedAtEpochMillis,
+                alignmentId = null,
+            ),
+        )
+    }
+
+    /**
+     * Replace only the marked image point of an existing reference, preserving
+     * its canonical GPS evidence entirely.
+     */
+    fun withRemarkedImagePoint(
+        pointId: String,
+        selectedMapCoordinate: AndroidDisplayCoordinate,
+    ): MapAlignmentDraft {
+        val existing = referencePoints.firstOrNull { it.id == pointId } ?: return this
+        return withUpdatedReferencePoint(
+            existing.copy(
+                selectedMapCoordinate = selectedMapCoordinate,
+                alignmentId = null,
+            ),
+        )
+    }
+
     /** Discard every point and any candidate, keeping the chosen scope. */
     fun cleared(): MapAlignmentDraft = copy(referencePoints = emptyList(), solution = null)
 
@@ -107,9 +179,12 @@ enum class MapAlignmentWizardStep {
     /** The explanatory introduction shown before any capture. */
     Introduction,
 
-    /** Record GPS + matching map tap, repeatedly. */
+    /** Sample GPS, mark the imagery with the crosshair, and manage references. */
     Capture,
 
     /** Review the derived candidate, residuals and the before/after preview. */
     Review,
+
+    /** Final state making the session-only, nothing-changed outcome explicit. */
+    Complete,
 }

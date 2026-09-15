@@ -159,6 +159,9 @@ data class MapAlignmentOffset(
  * place — display space. The two are deliberately different types so they can
  * never be transposed or confused.
  *
+ * The canonical coordinate is the robust centre of several accepted GPS
+ * samples rather than any single fix — see [MapAlignmentGpsSampling].
+ *
  * ## Why these are retained individually
  *
  * The derived east/north offsets are a summary, and a summary is not evidence.
@@ -184,6 +187,12 @@ data class MapAlignmentReferencePoint(
     val selectedMapCoordinate: AndroidDisplayCoordinate,
     /** Horizontal accuracy of the canonical fix, in metres, when reported. */
     val gpsAccuracyMetres: Double? = null,
+    /**
+     * Multi-sample quality behind [canonicalCoordinate], when it was produced
+     * by the calibration sampler. Diagnostics only — it explains why a point
+     * behaves the way it does, and is never treated as geographic truth.
+     */
+    val gpsEvidence: MapAlignmentGpsEvidence? = null,
     /** Epoch millis at which the canonical coordinate was captured. */
     val capturedAtEpochMillis: Long,
     /** The alignment computed from this point, once one exists. */

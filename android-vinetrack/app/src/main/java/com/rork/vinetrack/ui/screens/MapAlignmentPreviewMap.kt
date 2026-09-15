@@ -1,5 +1,6 @@
 package com.rork.vinetrack.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
@@ -18,16 +21,19 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
@@ -49,6 +55,9 @@ import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.components.estimatedCameraPosition
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
+
+/** Close field zoom used when framing a single GPS position for marking. */
+private const val CROSSHAIR_ZOOM = 20f
 
 /**
  * Canonical geometry for the draft's scope, read-only.
@@ -79,21 +88,160 @@ private fun Paddock.displayRing(alignment: MapAlignment): List<LatLng> =
         LatLng(display.latitude, display.longitude)
     }
 
+// ---------------------------------------------------------------------------
+// Precision crosshair selector
+// ---------------------------------------------------------------------------
+
 /**
- * The capture map: canonical geometry drawn UNALIGNED over satellite imagery,
- * plus the operator's pending tap.
+ * The precision selector used to mark a reference point on the imagery.
  *
- * Geometry is deliberately drawn with no alignment during capture. The operator
- * is being asked to observe the raw discrepancy between imagery and truth; pre-
- * correcting the overlay would hide the very thing they are measuring.
+ * ## Why a fixed crosshair rather than a map tap
+ *
+ * A tap is limited by fingertip size: at field zoom the contact patch covers
+ * several metres, which is the same magnitude as the offset being measured, and
+ * the finger hides the target at the moment of selection. A fixed centre
+ * crosshair inverts the interaction — the operator moves the *imagery* under a
+ * stationary reticle and can zoom in as far as they like to refine it, with
+ * nothing obscuring the point. The selected coordinate is the camera target.
+ *
+ * The map is deliberately drawn UNALIGNED: the operator is observing the raw
+ * discrepancy, and pre-correcting the imagery would hide the very thing being
+ * measured. The resulting coordinate is therefore display space and is NOT
+ * inverse-transformed during capture.
+ *
+ * The VineTrack GPS marker is shown separately, visually distinct, so the
+ * operator can see how far the imagery sits from their recorded position. The
+ * Google "my location" dot is disabled — it is not a selection control and
+ * would compete with the crosshair.
  */
 @Composable
-fun MapAlignmentCaptureMap(
+fun MapAlignmentCrosshairMap(
     state: AppUiState,
     draft: MapAlignmentDraft,
-    pendingTap: AndroidDisplayCoordinate?,
-    tapEnabled: Boolean,
-    onTap: (AndroidDisplayCoordinate) -> Unit,
+    gpsPosition: CanonicalCoordinate,
+    /** Where the crosshair should start; the previous mark when re-marking. */
+    initialTarget: AndroidDisplayCoordinate?,
+    onTargetChanged: (AndroidDisplayCoordinate) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val blocks = remember(state.paddocks, draft.scope) { scopeBlocks(state, draft) }
+    val unaligned = MapAlignment.none(draft.scope)
+    val start = initialTarget?.let { LatLng(it.latitude, it.longitude) }
+        ?: LatLng(gpsPosition.latitude, gpsPosition.longitude)
+
+    val camera = rememberCameraPositionState {
+        position = CameraPosition.fromLatLngZoom(start, CROSSHAIR_ZOOM)
+    }
+
+    // The selection IS the camera target: whatever sits under the reticle. Read
+    // in composition so the reported coordinate stays exactly in step with the
+    // imagery the operator can see.
+    val target = camera.position.target
+    LaunchedEffect(target.latitude, target.longitude) {
+        onTargetChanged(AndroidDisplayCoordinate(target.latitude, target.longitude))
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        GoogleMap(
+            modifier = Modifier.fillMaxSize(),
+            cameraPositionState = camera,
+            properties = MapProperties(mapType = MapType.HYBRID, isMyLocationEnabled = false),
+            uiSettings = MapUiSettings(
+                zoomControlsEnabled = false,
+                mapToolbarEnabled = false,
+                tiltGesturesEnabled = false,
+                rotationGesturesEnabled = false,
+                myLocationButtonEnabled = false,
+            ),
+        ) {
+            blocks.forEach { block ->
+                val ring = block.displayRing(unaligned)
+                if (ring.size >= 3) {
+                    Polygon(
+                        points = ring,
+                        strokeColor = VineColors.Orange,
+                        strokeWidth = 4f,
+                        fillColor = VineColors.Orange.copy(alpha = 0.08f),
+                    )
+                }
+            }
+            // VineTrack's own GPS marker — deliberately a plain marker so it is
+            // never confused with the crosshair, which is the selection control.
+            Marker(
+                state = MarkerState(position = LatLng(gpsPosition.latitude, gpsPosition.longitude)),
+                title = "Your recorded GPS position",
+                alpha = 0.9f,
+            )
+            // Already-captured evidence, for context while marking the next one.
+            draft.referencePoints.forEach { point ->
+                val gps = LatLng(
+                    point.canonicalCoordinate.latitude,
+                    point.canonicalCoordinate.longitude,
+                )
+                val marked = LatLng(
+                    point.selectedMapCoordinate.latitude,
+                    point.selectedMapCoordinate.longitude,
+                )
+                Polyline(points = listOf(gps, marked), color = Color.White, width = 3f)
+            }
+        }
+
+        // The reticle. Fixed to the centre of the viewport while imagery moves
+        // underneath it.
+        CrosshairReticle(modifier = Modifier.align(Alignment.Center))
+
+        // Recentre on the recorded GPS position, since panning far away is easy.
+        OutlinedButton(
+            onClick = {
+                camera.position = CameraPosition.fromLatLngZoom(
+                    LatLng(gpsPosition.latitude, gpsPosition.longitude),
+                    CROSSHAIR_ZOOM,
+                )
+            },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(10.dp),
+        ) { Text("Recentre", fontSize = 12.sp) }
+    }
+}
+
+/** A stationary reticle: two hairlines and a ring, with an open centre. */
+@Composable
+private fun CrosshairReticle(modifier: Modifier = Modifier) {
+    Box(modifier = modifier.size(64.dp), contentAlignment = Alignment.Center) {
+        // Horizontal hairline
+        Box(
+            modifier = Modifier
+                .width(64.dp)
+                .height(2.dp)
+                .background(Color.White.copy(alpha = 0.9f)),
+        )
+        // Vertical hairline
+        Box(
+            modifier = Modifier
+                .width(2.dp)
+                .height(64.dp)
+                .background(Color.White.copy(alpha = 0.9f)),
+        )
+        // Centre ring, open so the exact point stays visible.
+        Box(
+            modifier = Modifier
+                .size(18.dp)
+                .clip(CircleShape)
+                .background(VineColors.Orange.copy(alpha = 0.35f)),
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Overview map: all captured evidence
+// ---------------------------------------------------------------------------
+
+/** Read-only overview of every captured reference, for orientation during capture. */
+@Composable
+fun MapAlignmentCaptureOverviewMap(
+    state: AppUiState,
+    draft: MapAlignmentDraft,
     modifier: Modifier = Modifier,
 ) {
     val blocks = remember(state.paddocks, draft.scope) { scopeBlocks(state, draft) }
@@ -111,7 +259,6 @@ fun MapAlignmentCaptureMap(
     GoogleMap(
         modifier = modifier.fillMaxSize(),
         cameraPositionState = camera,
-        // Satellite/hybrid is the presentation this feature exists to correct.
         properties = MapProperties(mapType = MapType.HYBRID),
         uiSettings = MapUiSettings(
             zoomControlsEnabled = false,
@@ -120,11 +267,6 @@ fun MapAlignmentCaptureMap(
             rotationGesturesEnabled = false,
             myLocationButtonEnabled = false,
         ),
-        onMapClick = { latLng ->
-            // A map tap is DISPLAY space by definition. It is typed as such so
-            // it can never be mistaken for a canonical position.
-            if (tapEnabled) onTap(AndroidDisplayCoordinate(latLng.latitude, latLng.longitude))
-        },
     ) {
         blocks.forEach { block ->
             val ring = block.displayRing(unaligned)
@@ -137,31 +279,29 @@ fun MapAlignmentCaptureMap(
                 )
             }
         }
-
-        // Already-captured evidence: the recorded GPS position and the tap that
-        // was matched to it, joined so the discrepancy is visible.
-        draft.referencePoints.forEach { point ->
+        draft.referencePoints.forEachIndexed { index, point ->
             val gps = LatLng(point.canonicalCoordinate.latitude, point.canonicalCoordinate.longitude)
-            val tapped = LatLng(
+            val marked = LatLng(
                 point.selectedMapCoordinate.latitude,
                 point.selectedMapCoordinate.longitude,
             )
-            Polyline(points = listOf(gps, tapped), color = Color.White, width = 3f)
-            Marker(state = MarkerState(position = gps), title = "Recorded GPS", alpha = 0.9f)
-            Marker(state = MarkerState(position = tapped), title = "Marked on image", alpha = 0.6f)
-        }
-
-        pendingTap?.let {
+            Polyline(points = listOf(gps, marked), color = Color.White, width = 3f)
             Marker(
-                state = MarkerState(position = LatLng(it.latitude, it.longitude)),
-                title = "This reference point",
+                state = MarkerState(position = gps),
+                title = "Point ${index + 1} — recorded GPS",
+                alpha = 0.9f,
+            )
+            Marker(
+                state = MarkerState(position = marked),
+                title = "Point ${index + 1} — marked on image",
+                alpha = 0.55f,
             )
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Step 4 — review, with the private before/after preview
+// Review, with the private before/after preview
 // ---------------------------------------------------------------------------
 
 /**
@@ -177,6 +317,7 @@ fun MapAlignmentReviewStep(
     draft: MapAlignmentDraft,
     modifier: Modifier = Modifier,
     onCaptureMore: () -> Unit,
+    onFinish: () -> Unit,
     onDiscard: () -> Unit,
 ) {
     val vine = LocalVineColors.current
@@ -201,31 +342,59 @@ fun MapAlignmentReviewStep(
             return@WizardScaffold
         }
 
+        val quality = solution.quality
+        val alignment = solution.alignment
+
         VineyardCard {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SectionTitle("Calculated alignment")
-                Text(
-                    offsetDescription(
-                        solution.alignment.eastOffsetMetres,
-                        solution.alignment.northOffsetMetres,
-                    ),
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = vine.textPrimary,
+                // Numeric values as well as the classification, so the result is
+                // never reduced to a single reassuring word.
+                AlignmentStatRow(
+                    "East/West adjustment",
+                    "${metres(kotlin.math.abs(alignment.eastOffsetMetres))} m " +
+                        if (alignment.eastOffsetMetres >= 0) "east" else "west",
+                )
+                AlignmentStatRow(
+                    "North/South adjustment",
+                    "${metres(kotlin.math.abs(alignment.northOffsetMetres))} m " +
+                        if (alignment.northOffsetMetres >= 0) "north" else "south",
+                )
+                AlignmentStatRow("Total adjustment", "${metres(alignment.magnitudeMetres)} m")
+                AlignmentStatRow("Reference points", solution.pointCount.toString())
+                AlignmentStatRow(
+                    "RMS residual",
+                    "${metres(solution.rmsResidualMetres)} m",
+                    highlight = solution.rmsResidualMetres >
+                        MapAlignmentSolver.GOOD_RMS_RESIDUAL_METRES,
+                )
+                AlignmentStatRow(
+                    "Maximum residual",
+                    "${metres(solution.maxResidualMetres)} m",
+                    highlight = solution.maxResidualMetres >
+                        MapAlignmentSolver.GOOD_MAX_RESIDUAL_METRES,
+                )
+                AlignmentStatRow(
+                    "Alignment quality",
+                    quality.label,
+                    highlight = quality != MapAlignmentSolver.Quality.Good,
                 )
                 Text(
-                    "The Android satellite map is drawn this far from your GPS position. " +
-                        "Derived from ${solution.pointCount} reference points spread over " +
-                        "${solution.widestSpanMetres.toInt()} m.",
-                    fontSize = 13.sp,
+                    "Reference points spread over ${solution.widestSpanMetres.toInt()} m.",
+                    fontSize = 12.sp,
                     color = vine.textSecondary,
                 )
-                StatRow("Typical remaining error", "±${metres(solution.meanResidualMetres)} m")
-                StatRow("Worst point", "±${metres(solution.maxResidualMetres)} m")
+                if (solution.spreadIsNarrow) {
+                    Text(
+                        MapAlignmentSolver.SPREAD_ADVICE,
+                        fontSize = 12.sp,
+                        color = VineColors.Orange,
+                    )
+                }
             }
         }
 
-        if (solution.needsReview) {
+        if (quality != MapAlignmentSolver.Quality.Good) {
             VineyardCard {
                 Row {
                     Icon(
@@ -237,17 +406,18 @@ fun MapAlignmentReviewStep(
                     Spacer(Modifier.size(8.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
-                            "Worth a closer look",
+                            "Check alignment",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = vine.textPrimary,
                         )
                         Text(
-                            "One or more points still disagree by more than " +
-                                "${MapAlignmentSolver.RESIDUAL_REVIEW_METRES.toInt()} m after " +
-                                "alignment. A simple shift may not fully explain this imagery — " +
-                                "it can also mean a point was marked in the wrong place. Check " +
-                                "the points below before trusting this result.",
+                            "The reference points do not all agree with this single shift " +
+                                "(RMS ${metres(solution.rmsResidualMetres)} m, worst " +
+                                "${metres(solution.maxResidualMetres)} m). That can mean one " +
+                                "point was marked in the wrong place, or that a simple shift " +
+                                "does not fully explain this imagery. Check the highlighted " +
+                                "points below before trusting this result.",
                             fontSize = 13.sp,
                             color = vine.textSecondary,
                         )
@@ -259,7 +429,7 @@ fun MapAlignmentReviewStep(
         // --- The private before/after preview ---
         VineyardCard {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionTitle(if (showAligned) "After alignment" else "Before alignment")
+                SectionTitle(if (showAligned) "Aligned" else "Original")
                 Text(
                     if (showAligned) {
                         "Your vineyard geometry drawn with the calculated alignment applied."
@@ -279,18 +449,20 @@ fun MapAlignmentReviewStep(
                         state = state,
                         draft = draft,
                         alignment = if (showAligned) draft.previewAfter else draft.previewBefore,
+                        showAligned = showAligned,
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = { showAligned = false },
                         modifier = Modifier.weight(1f),
-                    ) { Text("Before") }
+                    ) { Text("Original") }
                     Button(
                         onClick = { showAligned = true },
                         modifier = Modifier.weight(1f),
-                    ) { Text("After") }
+                    ) { Text("Aligned") }
                 }
+                MarkerLegend()
                 Text(
                     "This preview is private to this screen. Your vineyard and block maps " +
                         "are unchanged.",
@@ -303,19 +475,32 @@ fun MapAlignmentReviewStep(
         VineyardCard {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SectionTitle("Reference points")
+                val worst = solution.worstPointIndex
                 solution.calibration.referencePoints.forEachIndexed { index, point ->
-                    val residual = solution.calibration.residuals()[index]
-                    StatRow(
-                        label = "Point ${index + 1}",
-                        value = "±${metres(residual.magnitudeMetres)} m remaining",
-                        highlight = residual.magnitudeMetres > MapAlignmentSolver.RESIDUAL_REVIEW_METRES,
+                    val residual = solution.residualMagnitudesMetres[index]
+                    AlignmentStatRow(
+                        label = buildString {
+                            append("Point ${index + 1}")
+                            point.referenceLabel()?.let { append(" — $it") }
+                            if (index == worst && solution.pointCount > 1) append("  (largest)")
+                        },
+                        value = "${metres(residual)} m",
+                        highlight = index == worst &&
+                            residual > MapAlignmentSolver.GOOD_MAX_RESIDUAL_METRES,
                     )
                 }
+                Text(
+                    "Every reference is kept. Nothing is removed automatically — if one point " +
+                        "is wrong, retake or re-mark it yourself.",
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                )
             }
         }
 
+        Button(onClick = onFinish, modifier = Modifier.fillMaxWidth()) { Text("Done") }
         OutlinedButton(onClick = onCaptureMore, modifier = Modifier.fillMaxWidth()) {
-            Text("Add more reference points")
+            Text("Back to reference points")
         }
         OutlinedButton(onClick = onDiscard, modifier = Modifier.fillMaxWidth()) {
             Text("Discard calibration")
@@ -325,22 +510,43 @@ fun MapAlignmentReviewStep(
     }
 }
 
+@Composable
+private fun MarkerLegend() {
+    val vine = LocalVineColors.current
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            "Recorded GPS position · marked image point · aligned result",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = vine.textPrimary,
+        )
+        Text(
+            "The line between a reference's GPS position and the point you marked shows " +
+                "what that point contributed. A line that disagrees with the others is why a " +
+                "residual is large.",
+            fontSize = 12.sp,
+            color = vine.textSecondary,
+        )
+    }
+}
+
 /**
- * Canonical geometry and captured GPS positions drawn through [alignment].
+ * Canonical geometry and captured evidence drawn through [alignment].
  *
  * With [MapAlignment.none] this is identical to production rendering, which is
- * what makes the before/after comparison honest.
+ * what makes the Original/Aligned comparison honest. The camera is framed on
+ * the UNALIGNED geometry in both states and never re-framed, so the geometry
+ * visibly shifts against fixed Google imagery rather than the map chasing it.
  */
 @Composable
 private fun MapAlignmentBeforeAfterMap(
     state: AppUiState,
     draft: MapAlignmentDraft,
     alignment: MapAlignment,
+    showAligned: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val blocks = remember(state.paddocks, draft.scope) { scopeBlocks(state, draft) }
-    // Frame on the unaligned geometry so the camera does NOT move between the
-    // before and after views — otherwise the shift would be invisible.
     val framePoints = remember(blocks) {
         blocks.flatMap { it.displayRing(MapAlignment.none(draft.scope)) }
     }
@@ -371,21 +577,37 @@ private fun MapAlignmentBeforeAfterMap(
                 )
             }
         }
-        // The recorded GPS positions move with the alignment too, since they are
-        // canonical truth being drawn on a corrected map.
-        draft.referencePoints.forEach { point ->
-            val display = point.canonicalCoordinate.toDisplay(alignment)
+        draft.referencePoints.forEachIndexed { index, point ->
+            // Canonical GPS truth, drawn through the alignment currently shown.
+            val gpsDisplay = point.canonicalCoordinate.toDisplay(alignment)
+            val gps = LatLng(gpsDisplay.latitude, gpsDisplay.longitude)
+            // The operator's marked image point never moves: it is already an
+            // observation of the imagery itself.
+            val marked = LatLng(
+                point.selectedMapCoordinate.latitude,
+                point.selectedMapCoordinate.longitude,
+            )
             Marker(
-                state = MarkerState(position = LatLng(display.latitude, display.longitude)),
-                title = "Recorded GPS",
+                state = MarkerState(position = gps),
+                title = "Point ${index + 1} — ${if (showAligned) "aligned" else "recorded"} GPS",
                 alpha = 0.9f,
+            )
+            Marker(
+                state = MarkerState(position = marked),
+                title = "Point ${index + 1} — marked on image",
+                alpha = 0.55f,
+            )
+            Polyline(
+                points = listOf(gps, marked),
+                color = if (showAligned) VineColors.Orange else Color.White,
+                width = 3f,
             )
         }
     }
 }
 
 @Composable
-private fun StatRow(label: String, value: String, highlight: Boolean = false) {
+internal fun AlignmentStatRow(label: String, value: String, highlight: Boolean = false) {
     val vine = LocalVineColors.current
     Row(modifier = Modifier.fillMaxWidth()) {
         Text(label, fontSize = 13.sp, color = vine.textSecondary, modifier = Modifier.weight(1f))
