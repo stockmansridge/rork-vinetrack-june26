@@ -59,6 +59,7 @@ struct SyncDiagnosticsView: View {
             paddockForceRefreshSection
             grapeVarietyCatalogSection
             grapeVarietyDiagnosticsSection
+            sprayFinalisationSection
             if systemAdmin.isEnabled(SystemFeatureFlagKey.showPinDiagnostics) {
                 pinAuditSection
             }
@@ -97,6 +98,118 @@ struct SyncDiagnosticsView: View {
             Text("Entities")
         } footer: {
             Text("Local = rows currently loaded for the selected vineyard. Pending = local changes not yet pushed.")
+        }
+    }
+
+    // MARK: - Spray finalisation (read-only observability)
+
+    /// Trips relevant to spray finalisation, in true dependency order. Built
+    /// from live sync state only — identifiers, counts and states, never notes,
+    /// chemical content or credentials.
+    private var sprayTripInputs: [SprayFinalisationDiagnostics.TripInput] {
+        let vineyardId = store.selectedVineyardId
+        let actuals = SprayTankActualStore.shared
+        return store.trips
+            .filter { vineyardId == nil || $0.vineyardId == vineyardId }
+            .map { trip in
+                let sprayRecordId = store.sprayRecords.first { $0.tripId == trip.id }?.id
+                let diagnostic = tripSync.finalisationDiagnostic(
+                    for: trip.id,
+                    pendingActualCount: actuals.pendingCount(tripId: trip.id)
+                )
+                return SprayFinalisationDiagnostics.TripInput(
+                    tripId: trip.id,
+                    sprayRecordId: sprayRecordId,
+                    isActive: diagnostic.isActive,
+                    hasEndTime: diagnostic.hasEndTime,
+                    tripPendingUpsert: diagnostic.isPendingUpsert,
+                    parentEstablished: diagnostic.parentEstablished,
+                    isPhase5Held: diagnostic.isPhase5Held,
+                    pendingActualCount: diagnostic.pendingActualCount,
+                    sprayRecordPending: sprayRecordId.map { sprayRecordSync.isPendingUpsert($0) } ?? false
+                )
+            }
+    }
+
+    private var sprayTankActualInputs: [SprayFinalisationDiagnostics.TankActualInput] {
+        let vineyardId = store.selectedVineyardId
+        let actuals = SprayTankActualStore.shared
+        let issues = SyncIssueCenter.shared.issues
+        return actuals.records
+            .filter { vineyardId == nil || $0.vineyardId == vineyardId }
+            .filter { actuals.pendingIds.contains($0.id) }
+            .sorted { ($0.tripId.uuidString, $0.tankNumber) < ($1.tripId.uuidString, $1.tankNumber) }
+            .map { actual in
+                SprayFinalisationDiagnostics.TankActualInput(
+                    actualId: actual.id,
+                    tripId: actual.tripId,
+                    sprayRecordId: actual.sprayRecordId,
+                    tankNumber: actual.tankNumber,
+                    tankSessionId: actual.tankSessionId,
+                    isPending: true,
+                    parentTripBlocked: tripSync.isPendingParentCreation(actual.tripId),
+                    sprayRecordPending: sprayRecordSync.isPendingUpsert(actual.sprayRecordId),
+                    failureKind: issues[actual.id]?.kind
+                )
+            }
+    }
+
+    /// Carrier basis for spray records still queued — makes another CHECK
+    /// mismatch obvious without exposing the record payload.
+    private var sprayCarrierInputs: [SprayFinalisationDiagnostics.CarrierBasisInput] {
+        let vineyardId = store.selectedVineyardId
+        return store.sprayRecords
+            .filter { vineyardId == nil || $0.vineyardId == vineyardId }
+            .filter { sprayRecordSync.isPendingUpsert($0.id) }
+            .map {
+                SprayFinalisationDiagnostics.CarrierBasisInput(
+                    sprayRecordId: $0.id,
+                    localBasisRaw: $0.applicationGeometry?.carrierVolumeBasis?.rawValue
+                )
+            }
+    }
+
+    private var sprayFinalisationSummary: SprayFinalisationDiagnostics.Summary {
+        let issues = SyncIssueCenter.shared.issues.values
+        return SprayFinalisationDiagnostics.summary(
+            trips: sprayTripInputs,
+            actuals: sprayTankActualInputs,
+            carriers: sprayCarrierInputs,
+            sprayRecordsPending: sprayRecordSync.pendingUpsertCount,
+            retryableFailures: issues.filter { $0.kind == .retryable }.count,
+            permanentFailures: issues.filter { $0.kind == .permanent }.count
+        )
+    }
+
+    @ViewBuilder
+    private var sprayFinalisationSection: some View {
+        let trips = SprayFinalisationDiagnostics.relevantTrips(sprayTripInputs)
+        let summary = sprayFinalisationSummary
+        Section {
+            LabeledContent("Trips pending", value: "\(summary.tripsPending)")
+            LabeledContent("Phase 5 held", value: "\(summary.tripsPhase5Held)")
+            LabeledContent("Waiting for parent", value: "\(summary.tripsWaitingForParent)")
+            LabeledContent("Tank actuals pending", value: "\(summary.tankActualsPending)")
+            LabeledContent("Spray records pending", value: "\(summary.sprayRecordsPending)")
+            if summary.carrierBasisConversions > 0 {
+                LabeledContent("Carrier basis converted", value: "\(summary.carrierBasisConversions)")
+            }
+            if summary.carrierBasisUnsupported > 0 {
+                LabeledContent("Carrier basis unsupported", value: "\(summary.carrierBasisUnsupported)")
+                    .foregroundStyle(.orange)
+            }
+            ForEach(trips, id: \SprayFinalisationDiagnostics.TripInput.tripId) { trip in
+                SprayFinalisationTripRow(trip: trip)
+            }
+            if trips.isEmpty {
+                Text("No spray trips awaiting finalisation.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Spray Finalisation")
+        } footer: {
+            Text("A record can be pending without being failed. Use Copy sync diagnostics to send the full breakdown.")
         }
     }
 
@@ -1308,11 +1421,36 @@ struct SyncDiagnosticsView: View {
             lines.append("")
             lines.append(contentsOf: auditService.diagnosticsSnippet())
         }
+        lines.append("")
+        lines.append(contentsOf: SprayFinalisationDiagnostics.report(
+            trips: sprayTripInputs,
+            actuals: sprayTankActualInputs,
+            carriers: sprayCarrierInputs,
+            summary: sprayFinalisationSummary
+        ))
         return lines.joined(separator: "\n")
     }
 }
 
 // MARK: - Row
+
+/// One spray trip's finalisation state. Identifiers, counts and states only.
+private struct SprayFinalisationTripRow: View {
+    let trip: SprayFinalisationDiagnostics.TripInput
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(String(trip.tripId.uuidString.prefix(8)) + "…")
+                .font(.footnote.monospaced())
+            Text(trip.status.rawValue)
+                .font(.caption)
+                .foregroundStyle(trip.status == .fullySynced ? Color.secondary : Color.orange)
+            Text("pending_actuals \(trip.pendingActualCount) · parent \(trip.parentEstablished ? "yes" : "no")")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
 
 private struct EntityDiagnosticRow: View {
     let row: SyncDiagnosticsView.DiagnosticRow

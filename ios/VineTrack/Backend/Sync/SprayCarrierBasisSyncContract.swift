@@ -143,3 +143,32 @@ nonisolated enum SprayTankActualUploadGate {
         return .upload
     }
 }
+
+/// Operator-readable stage of a spray trip's finalisation lifecycle.
+///
+/// Pure and read-only — used by Sync Diagnostics so a customer can say WHERE a
+/// trip is stuck. A record can be pending without being failed, which is
+/// exactly what the production incident looked like, so this never infers
+/// success from `failed_items = 0`.
+nonisolated enum SprayFinalisationStatus: String, Sendable, Equatable {
+    case waitingForTripParent = "waiting_for_trip_parent"
+    case waitingForSprayRecord = "waiting_for_spray_record"
+    case waitingForTankActuals = "waiting_for_tank_actuals"
+    case readyForFinalTripSync = "ready_for_final_trip_sync"
+    case fullySynced = "fully_synced"
+
+    /// Resolve in true dependency order:
+    /// parent trip -> spray record -> tank actuals -> final trip state.
+    static func resolve(
+        isPendingParentCreation: Bool,
+        sprayRecordPending: Bool,
+        pendingActualCount: Int,
+        tripPendingUpsert: Bool
+    ) -> SprayFinalisationStatus {
+        if isPendingParentCreation { return .waitingForTripParent }
+        if sprayRecordPending { return .waitingForSprayRecord }
+        if pendingActualCount > 0 { return .waitingForTankActuals }
+        if tripPendingUpsert { return .readyForFinalTripSync }
+        return .fullySynced
+    }
+}
