@@ -49,6 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.os.SystemClock
 import com.rork.vinetrack.data.AndroidInstallationIdentity
 import com.rork.vinetrack.data.PinLocationResult
 import com.rork.vinetrack.data.mapalignment.AndroidDisplayCoordinate
@@ -59,6 +60,7 @@ import com.rork.vinetrack.data.mapalignment.MapAlignmentGpsEvidence
 import com.rork.vinetrack.data.mapalignment.MapAlignmentGpsRules
 import com.rork.vinetrack.data.mapalignment.MapAlignmentGpsSampling
 import com.rork.vinetrack.data.mapalignment.MapAlignmentLiveGpsSession
+import com.rork.vinetrack.data.mapalignment.MapAlignmentLiveUpdateDiagnostic
 import com.rork.vinetrack.data.mapalignment.MapAlignmentReferencePoint
 import com.rork.vinetrack.data.mapalignment.MapAlignmentReferenceType
 import com.rork.vinetrack.data.mapalignment.MapAlignmentRowPosition
@@ -576,6 +578,11 @@ private fun MapAlignmentCaptureStep(
  * The subscription is stopped as soon as the group is Stable, and on cancel,
  * retry, timeout and disposal — so the accepted evidence is frozen while the
  * operator decides, and no subscription can outlive the step.
+ *
+ * A separate [MapAlignmentLiveUpdateDiagnostic] records only whether callbacks
+ * are ARRIVING, so "delivering readings that are not good enough yet" can be
+ * told apart from "Android is delivering nothing". It is display state: it
+ * cannot accept, reject, restart or stop anything.
  */
 @Composable
 private fun GpsSamplingStep(
@@ -594,6 +601,14 @@ private fun GpsSamplingStep(
     var timedOut by remember(attempt) { mutableStateOf(false) }
     // Set when a retaken position lands on top of a DIFFERENT reference.
     var duplicateConflict by remember(attempt) { mutableStateOf(false) }
+    // Arrival-only diagnostic for THIS attempt. Never read back into sampling.
+    var liveUpdates by remember(attempt) {
+        mutableStateOf(MapAlignmentLiveUpdateDiagnostic.started(SystemClock.elapsedRealtime()))
+    }
+    // Re-evaluates the silence line on a monotonic clock while the step is open.
+    var nowElapsedMillis by remember(attempt) {
+        mutableStateOf(SystemClock.elapsedRealtime())
+    }
 
     val progress = sampling.progress
     val stable = progress as? MapAlignmentGpsSampling.Progress.Stable
@@ -618,6 +633,9 @@ private fun GpsSamplingStep(
             // A late fix from a superseded attempt is already filtered by the
             // session; ignore anything arriving after the group froze.
             if (sampling.isStable) return@begin
+            // Count the ARRIVAL first, before any calibration judgement: a
+            // rejected or duplicate fix is still proof the receiver is alive.
+            liveUpdates = liveUpdates.onCallbackReceived(SystemClock.elapsedRealtime())
             when (val outcome = sampling.offer(production)) {
                 is MapAlignmentGpsSampling.Outcome.Accepted -> {
                     sampling = outcome.sampling
@@ -634,6 +652,15 @@ private fun GpsSamplingStep(
         if (!sampling.isStable) {
             session.end()
             timedOut = true
+        }
+    }
+
+    // Ticks the displayed silence duration only. Stops once the group is stable
+    // or the attempt has timed out; it never touches the session or sampling.
+    LaunchedEffect(attempt, isStable, timedOut) {
+        while (!isStable && !timedOut) {
+            nowElapsedMillis = SystemClock.elapsedRealtime()
+            delay(1_000L)
         }
     }
 
@@ -710,6 +737,17 @@ private fun GpsSamplingStep(
                 lastRejection?.let {
                     Text(it, fontSize = 12.sp, color = vine.textSecondary)
                 }
+
+                // Quiet, and only after several seconds of true silence. It
+                // clears itself the moment any callback arrives.
+                if (!progress.isStable && !timedOut) {
+                    liveUpdates.message(nowElapsedMillis)?.let { silence ->
+                        Text(silence, fontSize = 12.sp, color = vine.textSecondary)
+                    }
+                }
+
+                // System Admin preview only; not customer-facing wording yet.
+                AlignmentStatRow("Live updates received", "${liveUpdates.callbackCount}")
 
                 if (timedOut && !progress.isStable) {
                     Text(
