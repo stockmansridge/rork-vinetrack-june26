@@ -27,10 +27,20 @@ import com.rork.vinetrack.data.QualifiedLocationFix
  * ```
  *
  * Every sample has ALREADY passed production validation before this type sees
- * it. No competing `LocationManager`/`FusedLocationProvider` subscription is
- * created: the wizard repeatedly calls the same existing one-shot path. No
- * production threshold, message or code path is modified, and nothing here is
- * reachable from pin capture, spray trips or row placement.
+ * it. The wizard feeds this layer from ONE live foreground subscription using
+ * the existing `LocationTracker.startPinFixUpdates` mechanism. No production
+ * threshold, message or code path is modified, and nothing here is reachable
+ * from pin capture, spray trips or row placement.
+ *
+ * ## Why a live subscription, not repeated one-shot requests
+ *
+ * The first field test stalled at `1 of 5` with individually acceptable
+ * accuracy. The cause was not the thresholds: `currentPinLocation()` is a
+ * one-shot pin-style API that legitimately returns its cached fix while that
+ * fix is still fresh. Polling it therefore re-delivered ONE observation, which
+ * this layer correctly refused to count five times. A live subscription is the
+ * only way to obtain genuinely independent observations, and accepting
+ * repeats would have faked both the count and the stability.
  *
  * Nothing in this file is persisted.
  */
@@ -40,7 +50,17 @@ data class MapAlignmentGpsSample(
     val latitude: Double,
     val longitude: Double,
     val accuracyMetres: Double,
-    /** Identity of the underlying fix. Two samples with this value are the same fix. */
+    /**
+     * Identity of the underlying observation, from Android's monotonic
+     * elapsed-realtime clock. Two samples sharing this value are the SAME
+     * observation redelivered, not new evidence.
+     *
+     * Monotonic rather than wall-clock because it is the clock the platform
+     * stamps onto the location itself: it identifies a distinct observation and
+     * cannot be moved by an NTP correction or a manual time change mid-sampling.
+     */
+    val observationElapsedRealtimeNanos: Long,
+    /** Wall-clock time of the fix. Diagnostics and display only, never identity. */
     val fixTimeEpochMs: Long,
 ) {
     val coordinate: CanonicalCoordinate get() = CanonicalCoordinate(latitude, longitude)
@@ -133,6 +153,58 @@ data class MapAlignmentGpsSampling(
             override val sampling: MapAlignmentGpsSampling,
             val accuracyMetres: Double,
         ) : Outcome
+
+        /**
+         * Operator wording for an automatically-running sampler, or null when
+         * the outcome is routine and should stay silent.
+         *
+         * Production's own [PinLocationResult.operatorMessage] is deliberately
+         * NOT used here and is not modified: it is written for a manual pin
+         * press, so it quotes the 15 m pin limit and tells the operator to
+         * "press again". Both are wrong on this screen — calibration requires
+         * 8 m and is already sampling continuously. A configuration problem
+         * still has to name itself precisely, because only the operator can fix
+         * permissions or location services.
+         */
+        fun calibrationMessage(): String? = when (this) {
+            // Progress is shown by the sample counter; a redelivered cached
+            // observation is normal and must not look like a failure.
+            is Accepted, is Duplicate -> null
+            is TooImprecise ->
+                "Latest reading was ±${format(accuracyMetres)} m. Waiting for " +
+                    "±${MapAlignmentGpsRules.MAX_SAMPLE_ACCURACY_METRES.toInt()} m or better…"
+            is RejectedByProduction -> when (underlying) {
+                PinLocationResult.Inaccurate ->
+                    "Latest GPS reading was not accurate enough. Waiting for a better reading…"
+                PinLocationResult.Stale,
+                PinLocationResult.Timeout,
+                PinLocationResult.Cancelled,
+                -> "Waiting for a fresh GPS reading…"
+                PinLocationResult.Invalid ->
+                    "Latest GPS reading was not usable. Waiting for a better reading…"
+                PinLocationResult.PermissionDenied ->
+                    "Precise location permission is required to calibrate. Enable it for " +
+                        "VineTrack in Android settings, then retry."
+                PinLocationResult.ApproximatePermission ->
+                    "Precise location is off. Switch this app's location permission to " +
+                        "precise in Android settings, then retry."
+                PinLocationResult.ServicesDisabled ->
+                    "Location services are off. Turn them on in Android settings, then retry."
+                // Production accepted it; the narrowing rules above decide.
+                is PinLocationResult.Success -> null
+            }
+        }
+
+        /**
+         * True when only the operator can clear the cause, so sampling cannot
+         * simply keep waiting for it.
+         */
+        val isConfigurationProblem: Boolean
+            get() = this is RejectedByProduction && underlying.let {
+                it == PinLocationResult.PermissionDenied ||
+                    it == PinLocationResult.ApproximatePermission ||
+                    it == PinLocationResult.ServicesDisabled
+            }
     }
 
     /** Operator-facing progress through the sampling run. */
@@ -162,12 +234,18 @@ data class MapAlignmentGpsSampling(
 
     val sampleCount: Int get() = samples.size
 
-    /** Wall-clock span covered by the accepted samples, in millis. */
+    /**
+     * Span covered by the accepted samples, in millis, measured on the
+     * monotonic observation clock so a wall-clock change mid-sampling cannot
+     * inflate or collapse it.
+     */
     val samplingDurationMillis: Long
         get() = if (samples.size < 2) {
             0L
         } else {
-            samples.maxOf { it.fixTimeEpochMs } - samples.minOf { it.fixTimeEpochMs }
+            val newest = samples.maxOf { it.observationElapsedRealtimeNanos }
+            val oldest = samples.minOf { it.observationElapsedRealtimeNanos }
+            (newest - oldest) / 1_000_000L
         }
 
     /**
@@ -184,9 +262,10 @@ data class MapAlignmentGpsSampling(
         if (fix.accuracyMetres > MapAlignmentGpsRules.MAX_SAMPLE_ACCURACY_METRES) {
             return Outcome.TooImprecise(this, fix.accuracyMetres)
         }
-        // A repeated cached fix is the SAME observation, not new evidence.
-        // Counting it twice would fake both the sample count and the stability.
-        if (samples.any { it.fixTimeEpochMs == fix.fixTimeEpochMs }) {
+        // A redelivered fix is the SAME observation, not new evidence. Counting
+        // it twice would fake both the sample count and the stability, which is
+        // exactly what a cached one-shot fix would otherwise have done.
+        if (samples.any { it.observationElapsedRealtimeNanos == fix.fixElapsedRealtimeNanos }) {
             return Outcome.Duplicate(this)
         }
         return Outcome.Accepted(
@@ -195,6 +274,7 @@ data class MapAlignmentGpsSampling(
                     latitude = fix.latitude,
                     longitude = fix.longitude,
                     accuracyMetres = fix.accuracyMetres,
+                    observationElapsedRealtimeNanos = fix.fixElapsedRealtimeNanos,
                     fixTimeEpochMs = fix.fixTimeEpochMs,
                 ),
             ),

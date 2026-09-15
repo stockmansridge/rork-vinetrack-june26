@@ -8192,6 +8192,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Live location subscription owned by the System Admin Map Alignment
+     * calibration wizard only. Null while no calibration attempt is sampling.
+     */
+    private var mapAlignmentTracker: LocationTracker? = null
+
+    /**
+     * Start ONE live high-accuracy subscription for a calibration sampling
+     * attempt, using the EXISTING [LocationTracker.startPinFixUpdates]
+     * mechanism (2 s interval, 1 s fastest, 0 m displacement,
+     * `PRIORITY_HIGH_ACCURACY`) whose fixes have already passed
+     * `PinLocationFixValidator`.
+     *
+     * Calibration needs genuinely independent observations of a stationary
+     * point, which a one-shot API cannot provide: [fetchCurrentFix] may return
+     * the same cached fix while it is still fresh. That path is deliberately
+     * left exactly as it is for its existing one-shot callers.
+     *
+     * This tracker instance is private to calibration, so starting and stopping
+     * it cannot disturb pin capture, trip tracking or Follow Me.
+     */
+    fun startMapAlignmentFixUpdates(onFix: (PinLocationResult) -> Unit) {
+        stopMapAlignmentFixUpdates()
+        val tracker = LocationTracker(getApplication())
+        mapAlignmentTracker = tracker
+        tracker.startPinFixUpdates(onFix)
+    }
+
+    /** Stop the calibration subscription. Safe to call when none is running. */
+    fun stopMapAlignmentFixUpdates() {
+        mapAlignmentTracker?.stopPinFixUpdates()
+        mapAlignmentTracker = null
+    }
+
     /** Whether foreground location permission is currently granted. */
     fun hasLocationPermission(): Boolean = LocationTracker(getApplication()).hasPermission
 
@@ -8448,6 +8482,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         tracker?.stop()
         tracker = null
+        // A calibration attempt must never outlive the ViewModel.
+        stopMapAlignmentFixUpdates()
         super.onCleared()
     }
 

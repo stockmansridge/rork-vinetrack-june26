@@ -62,6 +62,21 @@ sealed interface MainSurface {
 
     companion object {
         /**
+         * Whether the main bottom navigation bar must be suppressed for this
+         * surface.
+         *
+         * Only the System Admin Map Alignment calibration wizard qualifies. It
+         * holds an unsaved in-memory draft of reference points that each cost
+         * real walking, and routes toolbar Back, system Back and its own Cancel
+         * through `MapAlignmentExitGuard`. A bottom-tab tap is a further exit
+         * route, so the bar is removed for the duration rather than given five
+         * more discard interceptors — which also gives the calibration map more
+         * usable height. Every other surface keeps the bar exactly as before.
+         */
+        fun hidesBottomNavigation(surface: MainSurface): Boolean =
+            surface is Tool && surface.route == ToolRoute.MapAlignment
+
+        /**
          * Resolve the surface in MainScaffold's real precedence order:
          * full-screen overlays first, then the pin-drop launcher, then a tool
          * opened on top of a tab, and finally the tab root itself.

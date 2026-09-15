@@ -35,6 +35,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +58,7 @@ import com.rork.vinetrack.data.mapalignment.MapAlignmentExitGuard
 import com.rork.vinetrack.data.mapalignment.MapAlignmentGpsEvidence
 import com.rork.vinetrack.data.mapalignment.MapAlignmentGpsRules
 import com.rork.vinetrack.data.mapalignment.MapAlignmentGpsSampling
+import com.rork.vinetrack.data.mapalignment.MapAlignmentLiveGpsSession
 import com.rork.vinetrack.data.mapalignment.MapAlignmentReferencePoint
 import com.rork.vinetrack.data.mapalignment.MapAlignmentReferenceType
 import com.rork.vinetrack.data.mapalignment.MapAlignmentRowPosition
@@ -93,18 +95,24 @@ import java.util.UUID
  *
  * ## GPS
  *
- * Capture reuses the existing location pipeline
- * (`AppViewModel.fetchCurrentFix` -> `LocationTracker` ->
- * `PinLocationFixValidator`). No competing location manager, request or
- * subscription is created — the wizard simply calls that same one-shot path
- * repeatedly. [MapAlignmentGpsSampling] then requires several unique, agreeing
- * fixes before a reference may be created, because a single fix is not
+ * Capture reuses the existing live foreground location mechanism
+ * (`LocationTracker.startPinFixUpdates` -> `PinLocationFixValidator`), opened
+ * as exactly ONE subscription per sampling attempt and closed the moment the
+ * attempt ends. [MapAlignmentGpsSampling] then requires several unique,
+ * agreeing fixes before a reference may be created, because a single fix is not
  * sufficient evidence for a measurement of this size.
+ *
+ * A live subscription rather than repeated one-shot requests: the one-shot pin
+ * API may legitimately return its cached fix while it is still fresh, so
+ * polling it re-delivered ONE observation and sampling stalled at `1 of 5` in
+ * the field. Production admission rules are untouched — this layer only ever
+ * narrows them.
  */
 @Composable
 fun MapAlignmentWizard(
     state: AppUiState,
-    onRequestFix: (onResult: (PinLocationResult) -> Unit) -> Unit,
+    onStartFixUpdates: (onFix: (PinLocationResult) -> Unit) -> Unit,
+    onStopFixUpdates: () -> Unit,
     modifier: Modifier = Modifier,
     exitGuard: MapAlignmentExitGuard = remember { MapAlignmentExitGuard() },
 ) {
@@ -151,7 +159,8 @@ fun MapAlignmentWizard(
         step == MapAlignmentWizardStep.Capture -> MapAlignmentCaptureStep(
             state = state,
             draft = current,
-            onRequestFix = onRequestFix,
+            onStartFixUpdates = onStartFixUpdates,
+            onStopFixUpdates = onStopFixUpdates,
             modifier = modifier,
             onDraftChanged = { draft = it },
             onCalculate = {
@@ -463,7 +472,8 @@ private sealed interface CaptureMode {
 private fun MapAlignmentCaptureStep(
     state: AppUiState,
     draft: MapAlignmentDraft,
-    onRequestFix: (onResult: (PinLocationResult) -> Unit) -> Unit,
+    onStartFixUpdates: (onFix: (PinLocationResult) -> Unit) -> Unit,
+    onStopFixUpdates: () -> Unit,
     modifier: Modifier,
     onDraftChanged: (MapAlignmentDraft) -> Unit,
     onCalculate: () -> Unit,
@@ -475,7 +485,8 @@ private fun MapAlignmentCaptureStep(
         is CaptureMode.Sampling -> GpsSamplingStep(
             draft = draft,
             editingId = currentMode.editingId,
-            onRequestFix = onRequestFix,
+            onStartFixUpdates = onStartFixUpdates,
+            onStopFixUpdates = onStopFixUpdates,
             modifier = modifier,
             onCancel = { mode = CaptureMode.Overview },
             onStable = { coordinate, evidence, capturedAt ->
@@ -554,15 +565,24 @@ private fun MapAlignmentCaptureStep(
 /**
  * Collects several unique, agreeing GPS fixes for one reference point.
  *
- * Repeatedly calls the SAME existing one-shot production path rather than
- * opening a second location subscription, so production admission rules stay
- * exactly as they are and the wizard simply asks more often.
+ * Opens exactly ONE live subscription per attempt through the existing
+ * `LocationTracker.startPinFixUpdates` mechanism, so the receiver delivers
+ * genuinely independent observations of the stationary point. Repeated one-shot
+ * requests could not do this: the one-shot pin API returns its cached fix while
+ * that fix is still fresh, so the same observation arrived over and over and
+ * sampling stalled at `1 of 5` in the field. Production admission rules are
+ * untouched; this layer only narrows them.
+ *
+ * The subscription is stopped as soon as the group is Stable, and on cancel,
+ * retry, timeout and disposal — so the accepted evidence is frozen while the
+ * operator decides, and no subscription can outlive the step.
  */
 @Composable
 private fun GpsSamplingStep(
     draft: MapAlignmentDraft,
     editingId: String?,
-    onRequestFix: (onResult: (PinLocationResult) -> Unit) -> Unit,
+    onStartFixUpdates: (onFix: (PinLocationResult) -> Unit) -> Unit,
+    onStopFixUpdates: () -> Unit,
     modifier: Modifier,
     onCancel: () -> Unit,
     onStable: (CanonicalCoordinate, MapAlignmentGpsEvidence?, Long) -> Boolean,
@@ -578,31 +598,43 @@ private fun GpsSamplingStep(
     val progress = sampling.progress
     val stable = progress as? MapAlignmentGpsSampling.Progress.Stable
 
+    // One owner for the subscription. Retry replaces it rather than stacking a
+    // second one, and leaving the step always closes it.
+    val session = remember {
+        MapAlignmentLiveGpsSession(
+            start = { onFix -> onStartFixUpdates(onFix) },
+            stop = { onStopFixUpdates() },
+        )
+    }
+    DisposableEffect(session) { onDispose { session.end() } }
+
+    // Freeze at Stable: once the group qualifies, further fixes must not move
+    // the representative coordinate under the operator while they decide.
+    val isStable = progress.isStable
+    LaunchedEffect(isStable) { if (isStable) session.end() }
+
     LaunchedEffect(attempt) {
-        val started = System.currentTimeMillis()
-        while (
-            !sampling.isStable &&
-            System.currentTimeMillis() - started < MapAlignmentGpsRules.SAMPLING_TIMEOUT_MILLIS
-        ) {
-            onRequestFix { production ->
-                when (val outcome = sampling.offer(production)) {
-                    is MapAlignmentGpsSampling.Outcome.Accepted -> {
-                        sampling = outcome.sampling
-                        lastRejection = null
-                    }
-                    is MapAlignmentGpsSampling.Outcome.Duplicate -> Unit
-                    is MapAlignmentGpsSampling.Outcome.TooImprecise ->
-                        lastRejection = "Last reading was ±${metres(outcome.accuracyMetres)} m — " +
-                            "waiting for ±${MapAlignmentGpsRules.MAX_SAMPLE_ACCURACY_METRES.toInt()} m or better."
-                    is MapAlignmentGpsSampling.Outcome.RejectedByProduction ->
-                        // Existing production wording, unchanged.
-                        lastRejection = outcome.underlying.operatorMessage()
+        session.begin { production ->
+            // A late fix from a superseded attempt is already filtered by the
+            // session; ignore anything arriving after the group froze.
+            if (sampling.isStable) return@begin
+            when (val outcome = sampling.offer(production)) {
+                is MapAlignmentGpsSampling.Outcome.Accepted -> {
+                    sampling = outcome.sampling
+                    lastRejection = null
                 }
+                // A redelivered observation is routine, not a failure.
+                is MapAlignmentGpsSampling.Outcome.Duplicate -> Unit
+                else -> lastRejection = outcome.calibrationMessage()
             }
-            delay(1_000)
+            if (sampling.isStable) session.end()
         }
         // Never block indefinitely: fall through to an explicit Retry.
-        if (!sampling.isStable) timedOut = true
+        delay(MapAlignmentGpsRules.SAMPLING_TIMEOUT_MILLIS)
+        if (!sampling.isStable) {
+            session.end()
+            timedOut = true
+        }
     }
 
     WizardScaffold(modifier = modifier) {
@@ -733,14 +765,25 @@ private fun GpsSamplingStep(
         }
 
         OutlinedButton(
-            onClick = { attempt += 1 },
+            // Stop the old subscription before the new attempt starts one, so
+            // two can never feed the sampler at once.
+            onClick = {
+                session.end()
+                attempt += 1
+            },
             modifier = Modifier.fillMaxWidth(),
         ) {
             Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.size(8.dp))
             Text(if (duplicateConflict) "Retry GPS at this location" else "Retry")
         }
-        OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(
+            onClick = {
+                session.end()
+                onCancel()
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Text(if (editingId != null) "Cancel retake" else "Cancel")
         }
         CanonicalInvariantNote()

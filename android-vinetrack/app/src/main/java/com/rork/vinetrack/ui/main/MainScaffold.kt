@@ -192,22 +192,52 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
         )
     }
 
+    // The one place the restored work context is turned into a screen.
+    // Resolving through MainSurface (rather than re-deriving the branch
+    // conditions inline) is what makes the restore path assertable off-device.
+    // Hoisted above the Scaffold because the bottom bar consults the same
+    // routing decision the content does.
+    val surface = MainSurface.of(
+        WorkSnapshot(
+            tab = tab,
+            tool = tool,
+            pinMode = pinMode,
+            launcherMode = launcherMode,
+            tripHudLauncherMode = tripHudLauncherMode,
+            pinsBlockIds = pinsBlockIds,
+            pinsViewMode = pinsViewMode,
+            selectedTripId = selectedTripId,
+            programOpenCalculator = programOpenCalculator,
+            programCalculatorPrefill = programCalculatorPrefill,
+            showSetupWizard = showSetupWizard,
+            showAddPinComposer = showAddPinComposer,
+        )
+    )
+
     Scaffold(
         bottomBar = {
-            NavigationBar {
-                MainTab.entries.forEach { entry ->
-                    NavigationBarItem(
-                        selected = tab == entry && tool == null && launcherMode == null,
-                        onClick = { work.openTab(entry) },
-                        icon = {
-                            if (entry == MainTab.Trip) {
-                                SteeringWheelIcon(Modifier.size(24.dp))
-                            } else {
-                                Icon(entry.icon, contentDescription = entry.label)
-                            }
-                        },
-                        label = { Text(entry.label) },
-                    )
+            // The System Admin calibration wizard holds an unsaved in-memory
+            // draft and protects every exit through MapAlignmentExitGuard. A
+            // tab tap is another exit, so the bar is suppressed for that route
+            // rather than given five more interceptors. It also gives the
+            // calibration map the extra height it needs. No other screen is
+            // affected.
+            if (!MainSurface.hidesBottomNavigation(surface)) {
+                NavigationBar {
+                    MainTab.entries.forEach { entry ->
+                        NavigationBarItem(
+                            selected = tab == entry && tool == null && launcherMode == null,
+                            onClick = { work.openTab(entry) },
+                            icon = {
+                                if (entry == MainTab.Trip) {
+                                    SteeringWheelIcon(Modifier.size(24.dp))
+                                } else {
+                                    Icon(entry.icon, contentDescription = entry.label)
+                                }
+                            },
+                            label = { Text(entry.label) },
+                        )
+                    }
                 }
             }
         }
@@ -221,26 +251,6 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
         ) {
         OfflineBanner(isOnline = state.isOnline)
         val modifier = Modifier
-
-        // The one place the restored work context is turned into a screen.
-        // Resolving through MainSurface (rather than re-deriving the branch
-        // conditions inline) is what makes the restore path assertable off-device.
-        val surface = MainSurface.of(
-            WorkSnapshot(
-                tab = tab,
-                tool = tool,
-                pinMode = pinMode,
-                launcherMode = launcherMode,
-                tripHudLauncherMode = tripHudLauncherMode,
-                pinsBlockIds = pinsBlockIds,
-                pinsViewMode = pinsViewMode,
-                selectedTripId = selectedTripId,
-                programOpenCalculator = programOpenCalculator,
-                programCalculatorPrefill = programCalculatorPrefill,
-                showSetupWizard = showSetupWizard,
-                showAddPinComposer = showAddPinComposer,
-            )
-        )
 
         when (surface) {
             MainSurface.SetupWizard -> {
@@ -562,12 +572,16 @@ private fun ToolHost(
         ToolRoute.Admin -> AdminDashboardScreen(vm, modifier, onBack = onBack)
         // Unreleased System Admin preview. The screen re-resolves access itself,
         // so a restored/stale navigation state cannot surface it to a non-admin.
-        // GPS comes from the EXISTING one-shot pipeline (fetchCurrentFix ->
-        // LocationTracker -> PinLocationFixValidator); the wizard never starts a
-        // competing location manager and never relaxes production admission.
+        // GPS comes from ONE live subscription per sampling attempt, opened via
+        // the EXISTING LocationTracker.startPinFixUpdates mechanism ->
+        // PinLocationFixValidator. Repeated one-shot polling of fetchCurrentFix
+        // could return the SAME cached observation, which stalled sampling at
+        // "1 of 5" in the field. Production admission is never relaxed, and
+        // fetchCurrentFix itself is unchanged for its existing callers.
         ToolRoute.MapAlignment -> MapAlignmentPreviewScreen(
             state = state,
-            onRequestFix = { onResult -> vm.fetchCurrentFix(onResult) },
+            onStartFixUpdates = { onFix -> vm.startMapAlignmentFixUpdates(onFix) },
+            onStopFixUpdates = { vm.stopMapAlignmentFixUpdates() },
             modifier = modifier,
             onBack = onBack,
         )

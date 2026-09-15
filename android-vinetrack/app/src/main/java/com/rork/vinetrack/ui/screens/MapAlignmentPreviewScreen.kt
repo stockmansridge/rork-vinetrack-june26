@@ -57,16 +57,28 @@ import com.rork.vinetrack.ui.theme.LocalVineColors
  * all three raise one "Discard calibration?" confirmation. With no reference
  * points collected, Back simply exits.
  *
- * @param onRequestFix one-shot GPS request served by the EXISTING location
- *   pipeline (`AppViewModel.fetchCurrentFix` -> `LocationTracker` ->
- *   `PinLocationFixValidator`). Injected rather than created here so the wizard
- *   cannot start a competing location manager.
+ * ## Bottom navigation
+ *
+ * The main bottom navigation bar is suppressed for this route (see
+ * `MainSurface.hidesBottomNavigation`). A tab tap would be a further exit route
+ * around [MapAlignmentExitGuard], and removing the bar is preferable to adding
+ * five more interceptors. It also gives the calibration map more height.
+ *
+ * @param onStartFixUpdates opens ONE live GPS subscription for a sampling
+ *   attempt, served by the EXISTING mechanism
+ *   (`LocationTracker.startPinFixUpdates` -> `PinLocationFixValidator`).
+ *   Injected rather than created here so the wizard cannot start a competing
+ *   location manager. A live subscription rather than repeated one-shot
+ *   requests because the one-shot pin API may return the SAME cached fix while
+ *   it is still fresh, which stalled field sampling at "1 of 5".
+ * @param onStopFixUpdates closes that subscription.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MapAlignmentPreviewScreen(
     state: AppUiState,
-    onRequestFix: (onResult: (PinLocationResult) -> Unit) -> Unit,
+    onStartFixUpdates: (onFix: (PinLocationResult) -> Unit) -> Unit,
+    onStopFixUpdates: () -> Unit,
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
 ) {
@@ -105,7 +117,8 @@ fun MapAlignmentPreviewScreen(
     ) { padding ->
         MapAlignmentWizard(
             state = state,
-            onRequestFix = onRequestFix,
+            onStartFixUpdates = onStartFixUpdates,
+            onStopFixUpdates = onStopFixUpdates,
             modifier = Modifier.fillMaxSize().padding(padding),
             exitGuard = exitGuard,
         )
