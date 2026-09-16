@@ -9,12 +9,31 @@ import SwiftUI
 struct CustomiseOperationalToolsView: View {
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(OperationalToolLayoutStore.self) private var layout
+    @Environment(NewBackendAuthService.self) private var auth
+    @Environment(MigratedDataStore.self) private var store
+    @Environment(SystemAdminService.self) private var systemAdmin
 
     @State private var showResetConfirmation = false
     @State private var minimumVisibleAlert = false
 
+    /// The same Vineyard Insights decision the Home grid uses. Customisation
+    /// must never be able to reveal a tool the caller has no access to, so an
+    /// unauthorised preview is absent from BOTH sections here.
+    private var vineyardInsightsAccess: VineyardInsightsAccess {
+        VineyardInsightsAccess.resolve(
+            isAuthenticated: auth.isSignedIn,
+            isResolving: systemAdmin.isLoading || systemAdmin.lastLoadedAt == nil,
+            isSystemAdmin: systemAdmin.isSystemAdmin,
+            selectedVineyardID: store.selectedVineyardId,
+            isMemberOfSelectedVineyard: accessControl.currentRole != nil
+        )
+    }
+
     private var authorised: [OperationalTool] {
-        OperationalToolCatalog.authorised(canViewCosting: accessControl.canViewCosting)
+        OperationalToolCatalog.authorised(
+            canViewCosting: accessControl.canViewCosting,
+            canUseVineyardInsights: vineyardInsightsAccess.isAllowed
+        )
     }
 
     private var visible: [OperationalTool] { layout.visibleTools(authorised: authorised) }

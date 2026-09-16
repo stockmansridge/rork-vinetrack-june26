@@ -1197,6 +1197,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Observed by the Home grid and the Customise Tools screen. */
     val operationalToolLayout: StateFlow<OperationalToolLayout> = operationalToolLayoutStore.layout
 
+    /**
+     * Vineyard Insights preview (SQL 236) — System Admin only, offline-first.
+     *
+     * Held as one self-contained controller rather than being spread through
+     * this view model: the feature is unreleased, so it must be removable
+     * without unpicking anything else.
+     */
+    val vineyardInsights = com.rork.vinetrack.data.insights.VineyardInsightsController(
+        com.rork.vinetrack.data.insights.VineyardInsightsStore(app),
+    )
+
     /** Persists an edited layout (local first, then Supabase). */
     fun saveOperationalToolLayout(
         visibleToolIds: List<String>,
@@ -4265,6 +4276,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Drop the in-memory tool layout so the next account starts from
             // its own cached/served layout (the per-user cache stays on disk).
             runCatching { operationalToolLayoutStore.signOut() }
+            // Unreleased preview data is System Admin-only and must not be
+            // visible to whoever signs in on this device next.
+            runCatching { vineyardInsights.clearForSignOut() }
             // Drop every keep-awake hold so the next account starts clean.
             runCatching { ScreenAwakeController.reset() }
             _ui.value = AppUiState(route = AppRoute.Login, sessionPhase = SessionPhase.SignedOut)

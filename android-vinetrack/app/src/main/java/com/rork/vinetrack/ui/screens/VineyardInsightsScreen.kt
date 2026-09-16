@@ -1,0 +1,1185 @@
+package com.rork.vinetrack.ui.screens
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.EventNote
+import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.rork.vinetrack.data.PinLocationResult
+import com.rork.vinetrack.data.VintageResolver
+import com.rork.vinetrack.data.insights.PhotoLocationStatus
+import com.rork.vinetrack.data.insights.ScoutItem
+import com.rork.vinetrack.data.insights.ScoutOption
+import com.rork.vinetrack.data.insights.ScoutPhoto
+import com.rork.vinetrack.data.insights.ScoutReview
+import com.rork.vinetrack.data.insights.ScoutStatus
+import com.rork.vinetrack.data.insights.ScoutVisit
+import com.rork.vinetrack.data.insights.VineyardInsightsAccess
+import com.rork.vinetrack.data.insights.VineyardInsightsCatalog
+import com.rork.vinetrack.data.insights.VintageNoteCatalog
+import com.rork.vinetrack.data.insights.VintageNoteDraft
+import com.rork.vinetrack.data.insights.VintageNoteRules
+import com.rork.vinetrack.data.insights.VintageNoteType
+import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.ui.AppUiState
+import com.rork.vinetrack.ui.AppViewModel
+import com.rork.vinetrack.ui.components.BackNavIcon
+import com.rork.vinetrack.ui.components.SectionHeader
+import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.theme.LocalVineColors
+import com.rork.vinetrack.ui.theme.VineColors
+import java.time.Instant
+import java.time.LocalDate
+
+/**
+ * Vineyard Insights — System Admin preview (SQL 236, Round 1).
+ *
+ * Hosts Scout, Vintage Notes and the prepared Vintage Report workspace behind
+ * a single continuously re-checked access gate.
+ */
+
+private enum class InsightsPane { Hub, Scout, Notes, Report }
+
+/** Shown under the disabled Round 1 report controls. Mirrored on iOS. */
+const val VINTAGE_REPORT_DISABLED_MESSAGE: String =
+    "Vintage Report generation will be enabled after the Scout and Vintage Notes " +
+        "data foundation is verified."
+
+@Composable
+fun VineyardInsightsScreen(
+    vm: AppViewModel,
+    state: AppUiState,
+    modifier: Modifier = Modifier,
+    onBack: () -> Unit,
+) {
+    // Access is resolved on EVERY composition, not once on entry. A restored
+    // navigation state, a deep link, a sign-out, or a System Admin row revoked
+    // while the screen is open must close the preview — an entry-time check
+    // would leave it visible until the user happened to navigate away.
+    val access = VineyardInsightsAccess.resolve(
+        sessionPhase = state.sessionPhase,
+        isSystemAdmin = state.isSystemAdmin,
+        selectedVineyardId = state.selectedVineyardId,
+        isMemberOfSelectedVineyard = state.currentRole != null,
+    )
+
+    if (!access.isAllowed) {
+        InsightsUnavailable(access, modifier, onBack)
+        return
+    }
+
+    var pane by remember { mutableStateOf(InsightsPane.Hub) }
+
+    when (pane) {
+        InsightsPane.Hub -> InsightsHub(modifier, onBack) { pane = it }
+        InsightsPane.Scout -> ScoutWorkspace(vm, state, modifier) { pane = InsightsPane.Hub }
+        InsightsPane.Notes -> VintageNotesWorkspace(vm, state, modifier) { pane = InsightsPane.Hub }
+        InsightsPane.Report -> VintageReportWorkspace(state, modifier) { pane = InsightsPane.Hub }
+    }
+}
+
+/**
+ * Shown when access is refused while the screen is somehow open.
+ *
+ * Deliberately says nothing about System Admin or about a preview existing —
+ * an explanation would disclose the feature to exactly the person who may not
+ * have it. A still-restoring session reads as "not yet", never as "denied", so
+ * a launch race does not look like a permissions error.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun InsightsUnavailable(
+    access: VineyardInsightsAccess,
+    modifier: Modifier,
+    onBack: () -> Unit,
+) {
+    val restoring = (access as? VineyardInsightsAccess.Unavailable)?.reason ==
+        VineyardInsightsAccess.Reason.SessionRestoring
+    Scaffold(
+        modifier = modifier,
+        topBar = { TopAppBar(title = { Text("") }, navigationIcon = { BackNavIcon(onBack) }) },
+    ) { padding ->
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Icon(Icons.Filled.Lock, contentDescription = null, tint = VineColors.TextSecondaryLight)
+            Spacer(Modifier.height(12.dp))
+            Text(
+                if (restoring) "Loading\u2026" else "This tool is not available.",
+                fontSize = 15.sp,
+                color = VineColors.TextSecondaryLight,
+            )
+        }
+    }
+}
+
+// ---------------------------------------------------------------------- Hub
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun InsightsHub(
+    modifier: Modifier,
+    onBack: () -> Unit,
+    onOpen: (InsightsPane) -> Unit,
+) {
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            TopAppBar(
+                title = { Text(VineyardInsightsCatalog.TOOL_TITLE) },
+                navigationIcon = { BackNavIcon(onBack) },
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            PreviewBadge()
+            HubCard(
+                title = "Scout",
+                subtitle = "Block assessments, observations & photos",
+                icon = Icons.Filled.Explore,
+                tint = VineColors.LeafGreen,
+                actions = listOf("New Scout", "Draft Scouts", "Completed Scouts"),
+            ) { onOpen(InsightsPane.Scout) }
+            HubCard(
+                title = "Vintage Notes",
+                subtitle = "Record important events during the vintage",
+                icon = Icons.Filled.EventNote,
+                tint = VineColors.Orange,
+                actions = listOf("Add Vintage Note", "View notes for selected Vintage"),
+            ) { onOpen(InsightsPane.Notes) }
+            HubCard(
+                title = "Vintage Report",
+                subtitle = "Build the plain-English story of the vintage",
+                icon = Icons.Filled.Article,
+                tint = VineColors.Indigo,
+                actions = listOf("Open report workspace"),
+            ) { onOpen(InsightsPane.Report) }
+        }
+    }
+}
+
+@Composable
+private fun PreviewBadge() {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(VineColors.Purple.copy(alpha = 0.14f))
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(
+            Icons.Filled.Lock,
+            contentDescription = null,
+            tint = VineColors.Purple,
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            VineyardInsightsCatalog.PREVIEW_BADGE,
+            color = VineColors.Purple,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
+private fun HubCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    tint: Color,
+    actions: List<String>,
+    onClick: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(vine.cardBackground)
+            .border(BorderStroke(0.5.dp, vine.cardBorder), RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(tint.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, contentDescription = null, tint = tint)
+            }
+            Column(Modifier.weight(1f)) {
+                Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                Text(subtitle, fontSize = 13.sp, color = vine.textSecondary)
+            }
+        }
+        actions.forEach { Text("\u2022  $it", fontSize = 13.sp, color = vine.textSecondary) }
+    }
+}
+
+// -------------------------------------------------------------------- Scout
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ScoutWorkspace(
+    vm: AppViewModel,
+    state: AppUiState,
+    modifier: Modifier,
+    onBack: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val insights = vm.vineyardInsights
+    val visits by insights.visits.collectAsStateWithLifecycle()
+    val openId by insights.openVisitId.collectAsStateWithLifecycle()
+    val writeFailed by insights.lastWriteFailed.collectAsStateWithLifecycle()
+    val current = visits.firstOrNull { it.id == openId }
+    var showReview by remember { mutableStateOf(false) }
+
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            TopAppBar(
+                title = { Text("Scout") },
+                navigationIcon = {
+                    BackNavIcon { if (current != null) insights.openVisit(null) else onBack() }
+                },
+            )
+        },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            item { PreviewBadge() }
+
+            if (writeFailed) {
+                item {
+                    // An observation that silently failed to save is the worst
+                    // outcome this feature can produce, so the failure is shown
+                    // rather than swallowed.
+                    VineyardCard {
+                        Text(
+                            "This device could not save your latest change.",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = VineColors.Destructive,
+                        )
+                        Text(
+                            "Earlier work is still saved. Try the change again before " +
+                                "leaving this Scout.",
+                            fontSize = 12.sp,
+                            color = vine.textSecondary,
+                        )
+                    }
+                }
+            }
+
+            if (current == null) {
+                item {
+                    VineyardCard {
+                        Text("Start a Scout", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Pick the blocks you are walking. Everything is saved on this " +
+                                "device first, so a Scout started out of signal is never lost.",
+                            fontSize = 13.sp,
+                            color = vine.textSecondary,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = {
+                                val vineyardId = state.selectedVineyardId ?: return@Button
+                                insights.startVisit(
+                                    vineyardId = vineyardId,
+                                    scoutUserId = state.currentUserId,
+                                    scoutName = state.userDisplayName,
+                                    seasonStartMonth = state.seasonStartMonth,
+                                    seasonStartDay = state.seasonStartDay,
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+                        ) {
+                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.size(6.dp))
+                            Text("New Scout")
+                        }
+                    }
+                }
+                item {
+                    ScoutList("Draft Scouts", insights.visits(ScoutStatus.DRAFT), state.paddocks) {
+                        insights.openVisit(it)
+                    }
+                }
+                item {
+                    ScoutList("Completed Scouts", insights.visits(ScoutStatus.COMPLETED), state.paddocks) {
+                        insights.openVisit(it)
+                    }
+                }
+            } else {
+                item { ScoutVisitHeader(vm, state, current) }
+                item {
+                    ScoutBlockPicker(
+                        paddocks = state.paddocks,
+                        selectedPaddockIds = current.assessments.map { it.paddockId }.toSet(),
+                        enabled = current.isEditable,
+                    ) { insights.toggleBlock(current.id, it) }
+                }
+                items(current.assessments, key = { it.id }) { assessment ->
+                    ScoutBlockAssessmentCard(
+                        vm = vm,
+                        paddock = state.paddocks.firstOrNull { it.id == assessment.paddockId },
+                        visitId = current.id,
+                        assessmentId = assessment.id,
+                        enabled = current.isEditable,
+                        observations = assessment.observations,
+                    )
+                }
+                item {
+                    Button(
+                        onClick = { showReview = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Indigo),
+                    ) { Text(if (current.isEditable) "Review & complete" else "Review") }
+                }
+                if (!current.isEditable) {
+                    item {
+                        OutlinedButton(
+                            onClick = { insights.reopenVisit(current.id) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Return to Draft") }
+                    }
+                }
+            }
+        }
+    }
+
+    val reviewVisit = current
+    if (showReview && reviewVisit != null) {
+        ScoutReviewDialog(
+            review = ScoutReview.of(reviewVisit),
+            editable = reviewVisit.isEditable,
+            onDismiss = { showReview = false },
+            onComplete = {
+                insights.completeVisit(reviewVisit.id)
+                showReview = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun ScoutList(
+    title: String,
+    visits: List<ScoutVisit>,
+    paddocks: List<Paddock>,
+    onOpen: (String) -> Unit,
+) {
+    val vine = LocalVineColors.current
+    VineyardCard {
+        Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+        Spacer(Modifier.height(8.dp))
+        if (visits.isEmpty()) {
+            Text("None yet.", fontSize = 13.sp, color = vine.textSecondary)
+        }
+        visits.forEach { visit ->
+            val names = visit.assessments
+                .mapNotNull { a -> paddocks.firstOrNull { it.id == a.paddockId }?.name }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpen(visit.id) }
+                    .padding(vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(visit.scoutDateIso, fontSize = 14.sp, color = vine.textPrimary)
+                    Text(
+                        if (names.isEmpty()) "No blocks yet" else names.joinToString(", "),
+                        fontSize = 12.sp,
+                        color = vine.textSecondary,
+                    )
+                }
+                Text("Vintage ${visit.vintageYear}", fontSize = 12.sp, color = vine.textSecondary)
+            }
+            HorizontalDivider(color = vine.cardBorder)
+        }
+    }
+}
+
+@Composable
+private fun ScoutVisitHeader(vm: AppViewModel, state: AppUiState, visit: ScoutVisit) {
+    val vine = LocalVineColors.current
+    VineyardCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Scout visit",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = vine.textPrimary,
+                modifier = Modifier.weight(1f),
+            )
+            Text(visit.status.label, fontSize = 12.sp, color = vine.textSecondary)
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("Date  ${visit.scoutDateIso}", fontSize = 13.sp, color = vine.textSecondary)
+        Text("Vintage  ${visit.vintageYear}", fontSize = 13.sp, color = vine.textSecondary)
+        Text(
+            "Scout  ${visit.scoutNameSnapshot ?: state.userDisplayName ?: "\u2014"}",
+            fontSize = 13.sp,
+            color = vine.textSecondary,
+        )
+        Spacer(Modifier.height(4.dp))
+        // Weather never blocks saving and is never invented: when no reading is
+        // held the record says so rather than leaving a confident blank.
+        val weather = visit.weather
+        Text(
+            when {
+                weather == null -> "Weather  not captured"
+                weather.isUnavailable -> "Weather  unavailable at capture time"
+                weather.isStale -> "Weather  last reading may be out of date"
+                else -> buildString {
+                    append("Weather  ")
+                    weather.temperatureCelsius?.let { append("${it}\u00B0C  ") }
+                    weather.humidityPercent?.let { append("${it}% RH  ") }
+                    weather.windSpeedKph?.let { append("wind ${it} km/h") }
+                }
+            },
+            fontSize = 12.sp,
+            color = vine.textSecondary,
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = visit.visitSummary.orEmpty(),
+            onValueChange = { vm.vineyardInsights.setSummary(visit.id, it) },
+            label = { Text("Visit summary (optional)") },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = visit.isEditable,
+            minLines = 2,
+        )
+    }
+}
+
+@Composable
+private fun ScoutBlockPicker(
+    paddocks: List<Paddock>,
+    selectedPaddockIds: Set<String>,
+    enabled: Boolean,
+    onToggle: (String) -> Unit,
+) {
+    val vine = LocalVineColors.current
+    VineyardCard {
+        Text("Blocks", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+        Spacer(Modifier.height(8.dp))
+        if (paddocks.isEmpty()) {
+            Text("No blocks in this vineyard.", fontSize = 13.sp, color = vine.textSecondary)
+        }
+        paddocks.forEach { paddock ->
+            val selected = paddock.id in selectedPaddockIds
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = enabled) { onToggle(paddock.id) }
+                    .padding(vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    if (selected) Icons.Filled.Check else Icons.Filled.Add,
+                    contentDescription = null,
+                    tint = if (selected) VineColors.LeafGreen else vine.textSecondary,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.size(10.dp))
+                Text(paddock.name, fontSize = 14.sp, color = vine.textPrimary)
+            }
+        }
+    }
+}
+
+/** Existing block facts, displayed rather than re-asked. */
+private fun blockDetailLine(paddock: Paddock?, vintageYear: Int): String {
+    if (paddock == null) return "Vintage $vintageYear"
+    val parts = mutableListOf<String>()
+    paddock.varietyAllocations
+        ?.mapNotNull { allocation -> allocation.displayName?.takeIf { it.isNotBlank() } }
+        ?.distinct()
+        ?.takeIf { it.isNotEmpty() }
+        ?.let { parts += it.joinToString(", ") }
+    paddock.rows?.size?.takeIf { it > 0 }?.let { parts += "$it rows" }
+    parts += "Vintage $vintageYear"
+    return parts.joinToString("  \u2022  ")
+}
+
+@Composable
+private fun ScoutBlockAssessmentCard(
+    vm: AppViewModel,
+    paddock: Paddock?,
+    visitId: String,
+    assessmentId: String,
+    enabled: Boolean,
+    observations: List<com.rork.vinetrack.data.insights.ScoutObservation>,
+) {
+    val vine = LocalVineColors.current
+    val insights = vm.vineyardInsights
+    val visit = insights.visit(visitId)
+
+    VineyardCard {
+        Text(
+            paddock?.name ?: "Block",
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold,
+            color = vine.textPrimary,
+        )
+        Text(
+            blockDetailLine(paddock, visit?.vintageYear ?: 0),
+            fontSize = 12.sp,
+            color = vine.textSecondary,
+        )
+        Spacer(Modifier.height(10.dp))
+
+        ScoutItem.entries.forEach { item ->
+            val observation = observations.firstOrNull { it.item == item }
+            SectionHeader(item.label, onLight = true)
+            Spacer(Modifier.height(6.dp))
+
+            when {
+                item == ScoutItem.GROWTH_STAGE -> {
+                    Text(
+                        observation?.valueLabel ?: "Not recorded",
+                        fontSize = 13.sp,
+                        color = vine.textSecondary,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Recording an E-L stage here creates the same Growth Stage pin " +
+                            "and record as the normal workflow \u2014 never a second value.",
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                    )
+                }
+                item.isFreeText -> {
+                    OutlinedTextField(
+                        value = observation?.notes.orEmpty(),
+                        onValueChange = {
+                            insights.setObservationNotes(visitId, assessmentId, item, it)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = enabled,
+                        minLines = 2,
+                        label = { Text("Notes (optional)") },
+                    )
+                }
+                else -> {
+                    VineyardInsightsCatalog.options(item).forEach { option ->
+                        OptionRow(
+                            option = option,
+                            selected = observation?.valueCode == option.code,
+                            enabled = enabled,
+                        ) { insights.setObservationValue(visitId, assessmentId, item, option) }
+                    }
+                    OutlinedTextField(
+                        value = observation?.notes.orEmpty(),
+                        onValueChange = {
+                            insights.setObservationNotes(visitId, assessmentId, item, it)
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        enabled = enabled,
+                        label = { Text("Notes (optional)") },
+                    )
+                }
+            }
+
+            val photos = observation?.photos.orEmpty()
+            PhotoRow(
+                photoCount = photos.size,
+                blockOnlyCount = photos.count {
+                    it.locationStatus == PhotoLocationStatus.UNAVAILABLE
+                },
+                enabled = enabled,
+            ) {
+                // The GPS decision uses the EXISTING strict validation. A fix
+                // that does not qualify never becomes coordinates — the photo
+                // is recorded as block-associated instead, which is the honest
+                // claim and the only other shape ScoutPhoto can hold.
+                vm.fetchCurrentFix { result ->
+                    val capturedAt = Instant.now().toString()
+                    val photo = when (result) {
+                        is PinLocationResult.Success -> ScoutPhoto.gpsConfirmed(
+                            observationId = observation?.id ?: assessmentId,
+                            localPath = null,
+                            capturedAtIso = capturedAt,
+                            capturedByUserId = visit?.scoutUserId,
+                            latitude = result.fix.latitude,
+                            longitude = result.fix.longitude,
+                            accuracyMetres = result.fix.accuracyMetres,
+                        )
+                        else -> ScoutPhoto.blockOnly(
+                            observationId = observation?.id ?: assessmentId,
+                            localPath = null,
+                            capturedAtIso = capturedAt,
+                            capturedByUserId = visit?.scoutUserId,
+                        )
+                    }
+                    insights.addPhoto(visitId, assessmentId, item, photo)
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+        }
+    }
+}
+
+@Composable
+private fun OptionRow(
+    option: ScoutOption,
+    selected: Boolean,
+    enabled: Boolean,
+    onSelect: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, onClick = onSelect)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            if (selected) Icons.Filled.Check else Icons.Filled.Add,
+            contentDescription = null,
+            tint = if (selected) VineColors.LeafGreen else vine.textSecondary,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.size(10.dp))
+        Text(
+            option.label,
+            fontSize = 14.sp,
+            color = vine.textPrimary,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+        )
+    }
+}
+
+@Composable
+private fun PhotoRow(
+    photoCount: Int,
+    blockOnlyCount: Int,
+    enabled: Boolean,
+    onAdd: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = onAdd, enabled = enabled) {
+                Icon(Icons.Filled.PhotoCamera, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.size(6.dp))
+                Text("Add photo")
+            }
+            Spacer(Modifier.size(10.dp))
+            if (photoCount > 0) {
+                Text(
+                    "$photoCount photo" + if (photoCount == 1) "" else "s",
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                )
+            }
+        }
+        if (blockOnlyCount > 0) {
+            // Stated plainly rather than hidden: a photo without a qualifying
+            // fix is block-associated, and presenting it as positioned would
+            // be a false claim about evidence.
+            Text(
+                "$blockOnlyCount ${PhotoLocationStatus.UNAVAILABLE.label}",
+                fontSize = 11.sp,
+                color = VineColors.Warning,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ScoutReviewDialog(
+    review: ScoutReview,
+    editable: Boolean,
+    onDismiss: () -> Unit,
+    onComplete: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Review Scout") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Blocks assessed: ${review.blocksAssessed}")
+                Text("Blocks still incomplete: ${review.blocksIncomplete}")
+                Text("E-L observations created: ${review.growthStageObservations}")
+                Text("Items marked as needing attention: ${review.attentionItems}")
+                Text("Photographs: ${review.photoCount}")
+                Text("Other issues: ${review.otherIssues}")
+                Text("General recommendations: ${review.generalRecommendations}")
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    review.blockedReason() ?: ScoutReview.COMPLETION_HINT,
+                    fontSize = 12.sp,
+                    color = VineColors.TextSecondaryLight,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onComplete, enabled = editable && review.canComplete) {
+                Text("Complete Scout")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Keep editing") } },
+    )
+}
+
+// ------------------------------------------------------------ Vintage Notes
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun VintageNotesWorkspace(
+    vm: AppViewModel,
+    state: AppUiState,
+    modifier: Modifier,
+    onBack: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val insights = vm.vineyardInsights
+    val allNotes by insights.notes.collectAsStateWithLifecycle()
+    var draft by remember { mutableStateOf(VintageNoteDraft()) }
+    var showPicker by remember { mutableStateOf(false) }
+    var isEditing by remember { mutableStateOf(false) }
+
+    val vintage = draft.resolvedVintage(state.seasonStartMonth, state.seasonStartDay)
+    val notes = remember(allNotes, vintage) { VintageNoteRules.forVintage(allNotes, vintage) }
+    val customTypes = remember(state.selectedVineyardId) {
+        state.selectedVineyardId?.let { insights.customNoteTypes(it) }.orEmpty()
+    }
+
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            TopAppBar(
+                title = { Text("Vintage Notes") },
+                navigationIcon = { BackNavIcon(onBack) },
+            )
+        },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            item { PreviewBadge() }
+            item {
+                VineyardCard {
+                    Text(
+                        if (isEditing) "Edit Vintage Note" else "Add Vintage Note",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = vine.textPrimary,
+                    )
+                    Spacer(Modifier.height(10.dp))
+
+                    Text("Date", fontSize = 12.sp, color = vine.textSecondary)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(onClick = { draft = draft.copy(date = draft.date.minusDays(1)) }) {
+                            Text("\u2212")
+                        }
+                        Text(
+                            draft.date.toString(),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = vine.textPrimary,
+                        )
+                        OutlinedButton(onClick = { draft = draft.copy(date = draft.date.plusDays(1)) }) {
+                            Text("+")
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+
+                    // The Vintage moves with the date so the observer can see
+                    // which season they are filing against before they save.
+                    Text("Vintage  $vintage", fontSize = 14.sp, color = vine.textPrimary)
+                    Text(VintageNoteRules.VINTAGE_SERVER_NOTE, fontSize = 11.sp, color = vine.textSecondary)
+                    Spacer(Modifier.height(10.dp))
+
+                    OutlinedButton(onClick = { showPicker = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text(draft.noteTypeLabel ?: "Note type (optional)")
+                    }
+                    Spacer(Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = draft.notes,
+                        onValueChange = { draft = draft.copy(notes = it) },
+                        label = { Text("Notes (optional)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 3,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Observation made by  ${state.userDisplayName ?: "\u2014"}",
+                        fontSize = 13.sp,
+                        color = vine.textSecondary,
+                    )
+
+                    draft.blockedReason?.let {
+                        Spacer(Modifier.height(6.dp))
+                        Text(it, fontSize = 12.sp, color = VineColors.Destructive)
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                val vineyardId = state.selectedVineyardId ?: return@Button
+                                insights.saveNote(
+                                    draft = draft,
+                                    vineyardId = vineyardId,
+                                    observedByUserId = state.currentUserId,
+                                    observerName = state.userDisplayName,
+                                    seasonStartMonth = state.seasonStartMonth,
+                                    seasonStartDay = state.seasonStartDay,
+                                )
+                                draft = VintageNoteDraft()
+                                isEditing = false
+                            },
+                            enabled = draft.canSave,
+                            colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+                        ) { Text("Save note") }
+                        if (isEditing) {
+                            OutlinedButton(onClick = {
+                                draft = VintageNoteDraft()
+                                isEditing = false
+                            }) { Text("Cancel") }
+                        }
+                    }
+                }
+            }
+
+            item { SectionHeader("Notes for Vintage $vintage", onLight = true) }
+
+            if (notes.isEmpty()) {
+                item {
+                    VineyardCard {
+                        Text("No notes for this Vintage yet.", fontSize = 13.sp, color = vine.textSecondary)
+                    }
+                }
+            }
+
+            items(notes, key = { it.id }) { note ->
+                VineyardCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                note.displayType(),
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = vine.textPrimary,
+                            )
+                            Text(note.noteDateIso, fontSize = 12.sp, color = vine.textSecondary)
+                        }
+                        if (note.isEdited) {
+                            Text("Edited", fontSize = 11.sp, color = vine.textSecondary)
+                        }
+                    }
+                    val preview = note.preview()
+                    if (preview.isNotEmpty()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(preview, fontSize = 13.sp, color = vine.textPrimary)
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(note.observerNameSnapshot ?: "\u2014", fontSize = 12.sp, color = vine.textSecondary)
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = {
+                            isEditing = true
+                            draft = VintageNoteDraft(
+                                id = note.id,
+                                date = runCatching { LocalDate.parse(note.noteDateIso) }
+                                    .getOrDefault(LocalDate.now()),
+                                noteTypeId = note.noteTypeId,
+                                noteTypeLabel = note.noteTypeLabelSnapshot,
+                                notes = note.notes.orEmpty(),
+                            )
+                        }) {
+                            Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.size(4.dp))
+                            Text("Edit")
+                        }
+                        TextButton(onClick = { insights.deleteNote(note.id) }) {
+                            Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.size(4.dp))
+                            Text("Delete")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showPicker) {
+        NoteTypePicker(
+            customTypes = customTypes,
+            onDismiss = { showPicker = false },
+        ) { type ->
+            draft = draft.copy(noteTypeId = type.code, noteTypeLabel = type.label)
+            showPicker = false
+        }
+    }
+}
+
+@Composable
+private fun NoteTypePicker(
+    customTypes: List<VintageNoteType>,
+    onDismiss: () -> Unit,
+    onSelect: (VintageNoteType) -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    val results = remember(query, customTypes) { VintageNoteCatalog.search(query, customTypes) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Note type") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("Search") },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                LazyColumn(modifier = Modifier.height(320.dp)) {
+                    // Grouped, weather first — see VintageNoteCatalog ordering.
+                    VintageNoteCatalog.grouped(customTypes).forEach { (group, types) ->
+                        item(key = "group-${group.code}") {
+                            Text(
+                                group.label,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = VineColors.TextSecondaryLight,
+                                modifier = Modifier.padding(top = 10.dp, bottom = 4.dp),
+                            )
+                        }
+                        items(
+                            types.filter { it in results },
+                            key = { "${group.code}-${it.code}" },
+                        ) { type ->
+                            Text(
+                                type.label,
+                                fontSize = 14.sp,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSelect(type) }
+                                    .padding(vertical = 10.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+}
+
+// ----------------------------------------------------------- Vintage Report
+
+/**
+ * The prepared report workspace.
+ *
+ * Round 1 deliberately shows an EMPTY report area and disabled controls. There
+ * is no template prose and no model call: a plausible-looking narrative
+ * produced before the capture data has been reviewed would be indistinguishable
+ * from a real one, and a grower would reasonably believe it. The information
+ * architecture is settled here so the next round only has to fill it.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun VintageReportWorkspace(
+    state: AppUiState,
+    modifier: Modifier,
+    onBack: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    var vintage by remember {
+        mutableStateOf(
+            VintageResolver.vintageYear(
+                LocalDate.now(),
+                state.seasonStartMonth,
+                state.seasonStartDay,
+            ),
+        )
+    }
+
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            TopAppBar(
+                title = { Text("Vintage Report") },
+                navigationIcon = { BackNavIcon(onBack) },
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            PreviewBadge()
+
+            VineyardCard {
+                Text("Vintage", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    OutlinedButton(onClick = { vintage -= 1 }) { Text("\u2212") }
+                    Text("$vintage", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                    OutlinedButton(onClick = { vintage += 1 }) { Text("+") }
+                }
+            }
+
+            VineyardCard {
+                Text("Report status", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                Spacer(Modifier.height(6.dp))
+                Text("Not generated", fontSize = 14.sp, color = vine.textSecondary)
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(140.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(vine.cardBorder.copy(alpha = 0.25f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("The report will appear here.", fontSize = 13.sp, color = vine.textSecondary)
+                }
+            }
+
+            VineyardCard {
+                Text(
+                    "Where the report will come from",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = vine.textPrimary,
+                )
+                Spacer(Modifier.height(8.dp))
+                listOf(
+                    "Scout visits and block observations",
+                    "Vintage Notes",
+                    "Growth Stage records",
+                    "Spray dates, blocks, targets and applications",
+                    "Rainfall and available weather history",
+                    "Frost, heat, wind, hail, smoke and prolonged wet or dry periods",
+                    "Work Tasks and operational Trips",
+                    "Pruning, thinning, wire lifting, plucking and trimming activity",
+                    "Disease pressure and the responses to it",
+                    "Yield estimates, damage, picking and actual yield",
+                ).forEach { Text("\u2022  $it", fontSize = 13.sp, color = vine.textSecondary) }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "The report will state plainly where data is missing, and will not " +
+                        "compare a season against an \u201Caverage\u201D unless the baseline " +
+                        "period and source coverage are known.",
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                )
+            }
+
+            VineyardCard {
+                listOf(
+                    "Generate / Re-generate Report",
+                    "Add to Existing Report",
+                    "Export PDF",
+                    "Export Word",
+                ).forEach { label ->
+                    Button(
+                        onClick = {},
+                        enabled = false,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    ) { Text(label) }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(VINTAGE_REPORT_DISABLED_MESSAGE, fontSize = 12.sp, color = vine.textSecondary)
+            }
+        }
+    }
+}

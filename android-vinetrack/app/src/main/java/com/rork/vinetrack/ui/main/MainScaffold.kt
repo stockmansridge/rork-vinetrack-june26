@@ -78,6 +78,7 @@ import com.rork.vinetrack.ui.screens.AppPreferencesScreen
 import com.rork.vinetrack.ui.screens.AdminDashboardScreen
 import com.rork.vinetrack.ui.screens.BiometricSettingsScreen
 import com.rork.vinetrack.ui.screens.MapAlignmentPreviewScreen
+import com.rork.vinetrack.ui.screens.VineyardInsightsScreen
 import com.rork.vinetrack.ui.screens.AlertSettingsScreen
 import com.rork.vinetrack.ui.screens.AlertsCentreScreen
 import com.rork.vinetrack.ui.screens.SupportRequestScreen
@@ -582,6 +583,16 @@ private fun ToolHost(
             state = state,
             onStartFixUpdates = { onFix -> vm.startMapAlignmentFixUpdates(onFix) },
             onStopFixUpdates = { vm.stopMapAlignmentFixUpdates() },
+            modifier = modifier,
+            onBack = onBack,
+        )
+        // Unreleased System Admin preview (SQL 236). The screen re-resolves
+        // access itself on every composition, so a restored navigation state,
+        // a deep link, or a session that loses System Admin while the screen
+        // is open cannot keep the preview on screen.
+        ToolRoute.VineyardInsights -> VineyardInsightsScreen(
+            vm = vm,
+            state = state,
             modifier = modifier,
             onBack = onBack,
         )

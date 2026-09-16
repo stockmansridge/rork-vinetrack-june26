@@ -70,6 +70,10 @@ struct VineTrackApp: App {
     @State private var vineyardTripFunctionService = VineyardTripFunctionService()
     @State private var appNoticeService = AppNoticeService()
     @State private var systemAdminService = SystemAdminService()
+    /// Vineyard Insights preview (SQL 236) — System Admin only, offline-first.
+    /// Held as one self-contained service so an unreleased feature can be
+    /// withdrawn without unpicking anything else.
+    @State private var vineyardInsightsService = VineyardInsightsService()
     @State private var networkMonitor = NetworkMonitor.shared
     @State private var syncStatusCenter = SyncStatusCenter()
     /// Per-user Operational Tools layout (sql/159) — shared with Android.
@@ -151,6 +155,7 @@ struct VineTrackApp: App {
                         .environment(vineyardTripFunctionService)
                         .environment(appNoticeService)
                         .environment(systemAdminService)
+                        .environment(vineyardInsightsService)
                         .environment(networkMonitor)
                         .environment(syncStatusCenter)
                         .environment(operationalToolLayout)

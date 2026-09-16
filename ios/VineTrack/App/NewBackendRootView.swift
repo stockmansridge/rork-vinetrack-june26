@@ -7,6 +7,7 @@ struct NewBackendRootView: View {
     @Environment(EntitlementGate.self) private var entitlementGate
     @Environment(BiometricAuthService.self) private var biometric
     @Environment(SystemAdminService.self) private var systemAdmin
+    @Environment(VineyardInsightsService.self) private var vineyardInsights
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var didAttemptRestore: Bool = false
@@ -236,6 +237,9 @@ struct NewBackendRootView: View {
                 await ClientTelemetryService.shared.reportActivity(vineyardId: store.selectedVineyardId)
             } else {
                 systemAdmin.clearOnSignOut()
+                // Unreleased preview data is System Admin-only and must not be
+                // visible to whoever signs in on this device next.
+                vineyardInsights.clearOnSignOut()
                 // Clear only the user-linked throttle cache — the random
                 // installation ID is kept (a new account creates its own
                 // separate user/client association server-side).

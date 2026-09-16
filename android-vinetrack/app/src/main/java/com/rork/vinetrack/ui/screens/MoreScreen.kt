@@ -70,6 +70,12 @@ fun MoreScreen(
                         // preview: it is reached only from the System Admin
                         // section of Settings, never from this hub.
                         tool != ToolRoute.MapAlignment &&
+                        // Vineyard Insights is an unreleased System Admin
+                        // preview: it is reached only from the Operational
+                        // Tools grid, which resolves the full access decision
+                        // (System Admin AND vineyard membership). This hub has
+                        // no such check, so listing it here would expose it.
+                        tool != ToolRoute.VineyardInsights &&
                         (tool != ToolRoute.CostReports || canViewCosting)
                     // Irrigation Records is publicly released (SQL 151): every
                     // vineyard role may open it. The screen resolves the

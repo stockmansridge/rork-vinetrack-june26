@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.LocationOn
@@ -124,4 +125,16 @@ enum class ToolRoute(
      * `MapAlignmentPreviewScreen` re-checks access itself.
      */
     MapAlignment("Android Map Alignment", "System Admin Preview", Icons.Filled.Explore, VineColors.Purple, ToolGroup.Account),
+
+    /**
+     * Vineyard Insights preview (SQL 236). System Admin gated and NOT released.
+     *
+     * Excluded from the More hub's tool list, which otherwise renders every
+     * entry of this enum to every user. It is reachable only from the Home
+     * Operational Tools grid, which resolves the full access decision (System
+     * Admin AND membership of the selected vineyard), and
+     * `VineyardInsightsScreen` re-resolves that decision itself so a restored
+     * or direct navigation cannot bypass the tile's absence.
+     */
+    VineyardInsights("Vineyard Insights", "Scouting, vintage notes & reports", Icons.Filled.Insights, VineColors.Purple, ToolGroup.Operations),
 }

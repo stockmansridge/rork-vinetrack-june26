@@ -737,6 +737,7 @@ private struct NewHomeTabView: View {
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(TripTrackingService.self) private var tripTracking
     @Environment(OperationalToolLayoutStore.self) private var toolLayout
+    @Environment(SystemAdminService.self) private var systemAdmin
 
     @State private var showQuickPin: Bool = false
     @State private var showTripChoice: Bool = false
@@ -1243,10 +1244,30 @@ private struct NewHomeTabView: View {
 
     // MARK: Operational Tools
 
+    /// The Vineyard Insights preview decision (SQL 236) — System Admin AND
+    /// membership of the selected vineyard.
+    ///
+    /// `isResolving` deliberately includes the in-flight admin check: while it
+    /// is loading the tile must be ABSENT rather than optimistically shown,
+    /// because a tile that flashes in and disappears discloses the feature to
+    /// someone who may not have it.
+    private var vineyardInsightsAccess: VineyardInsightsAccess {
+        VineyardInsightsAccess.resolve(
+            isAuthenticated: auth.isSignedIn,
+            isResolving: systemAdmin.isLoading || systemAdmin.lastLoadedAt == nil,
+            isSystemAdmin: systemAdmin.isSystemAdmin,
+            selectedVineyardID: store.selectedVineyardId,
+            isMemberOfSelectedVineyard: accessControl.currentRole != nil
+        )
+    }
+
     /// Tools this user is entitled to see. Customisation is applied on top of
     /// this — it can never reveal a tool the user has no access to.
     private var authorisedTools: [OperationalTool] {
-        OperationalToolCatalog.authorised(canViewCosting: accessControl.canViewCosting)
+        OperationalToolCatalog.authorised(
+            canViewCosting: accessControl.canViewCosting,
+            canUseVineyardInsights: vineyardInsightsAccess.isAllowed
+        )
     }
 
     private var operationsSection: some View {
@@ -1319,6 +1340,9 @@ private struct NewHomeTabView: View {
         // get_irrigation_capabilities, and the server enforces every action.
         case "irrigation_records": IrrigationRecordsView()
         case "resistance_planner": ResistancePlannerView()
+        // Unreleased System Admin preview. The view re-resolves access itself,
+        // so a restored navigation state cannot surface it to a non-admin.
+        case "vineyard_insights": VineyardInsightsView()
         default: EmptyView()
         }
     }

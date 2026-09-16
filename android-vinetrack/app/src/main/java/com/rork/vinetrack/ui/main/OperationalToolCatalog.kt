@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Coronavirus
+import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Grain
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.LocalGasStation
@@ -33,6 +34,19 @@ data class OperationalToolDefinition(
     val route: ToolRoute,
     /** Owner/Manager costing permission. Customisation never overrides this. */
     val requiresCosting: Boolean = false,
+    /**
+     * Platform System Admin requirement (`public.system_admins`).
+     *
+     * Deliberately separate from [requiresCosting]: costing is a VINEYARD role
+     * permission, whereas this is platform authority. A vineyard owner has the
+     * former and never the latter, and conflating them would hand every
+     * customer's owner an unreleased preview.
+     *
+     * Like [requiresCosting], customisation never overrides this — an
+     * unauthorised tool is absent from the grid AND from both customisation
+     * sections, so a saved layout cannot reveal it.
+     */
+    val requiresSystemAdmin: Boolean = false,
 )
 
 /**
@@ -161,6 +175,19 @@ object OperationalToolCatalog {
             tint = VineColors.Purple,
             route = ToolRoute.ResistancePlanner,
         ),
+        // System Admin preview (SQL 236). Not released: only an active row in
+        // public.system_admins who is ALSO a member of the selected vineyard
+        // may see or open it, and the server enforces the same conjunction on
+        // every read and write. `id` matches iOS exactly.
+        OperationalToolDefinition(
+            id = "vineyard_insights",
+            title = "Vineyard Insights",
+            subtitle = "Scouting, vintage notes & reports",
+            icon = Icons.Filled.Insights,
+            tint = VineColors.Purple,
+            route = ToolRoute.VineyardInsights,
+            requiresSystemAdmin = true,
+        ),
     )
 
     val defaultOrder: List<String> = all.map { it.id }
@@ -171,10 +198,27 @@ object OperationalToolCatalog {
      * Tools the caller is entitled to see, in VineTrack default order. The grid
      * and the customisation screen both filter through this, so a saved layout
      * can never expose a restricted tool.
+     *
+     * [canUseVineyardInsights] must be the resolved
+     * [com.rork.vinetrack.data.insights.VineyardInsightsAccess] decision —
+     * System Admin AND membership of the selected vineyard — not a bare
+     * `isSystemAdmin` flag. It defaults to false so a caller that has not yet
+     * resolved access (or an older call site) fails closed rather than
+     * briefly exposing the preview while the admin check is in flight.
      */
-    fun authorised(canViewCosting: Boolean): List<OperationalToolDefinition> =
-        all.filter { !it.requiresCosting || canViewCosting }
+    fun authorised(
+        canViewCosting: Boolean,
+        canUseVineyardInsights: Boolean = false,
+    ): List<OperationalToolDefinition> = all.filter { tool ->
+        when {
+            tool.requiresCosting && !canViewCosting -> false
+            tool.requiresSystemAdmin && !canUseVineyardInsights -> false
+            else -> true
+        }
+    }
 
-    fun authorisedIds(canViewCosting: Boolean): List<String> =
-        authorised(canViewCosting).map { it.id }
+    fun authorisedIds(
+        canViewCosting: Boolean,
+        canUseVineyardInsights: Boolean = false,
+    ): List<String> = authorised(canViewCosting, canUseVineyardInsights).map { it.id }
 }

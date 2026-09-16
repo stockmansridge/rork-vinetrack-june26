@@ -13,6 +13,14 @@ struct OperationalTool: Identifiable, Equatable {
     enum Requirement: Equatable {
         case always
         case costing
+        /// Platform System Admin (`public.system_admins`) AND membership of the
+        /// selected vineyard.
+        ///
+        /// Deliberately separate from `.costing`: costing is a VINEYARD role
+        /// permission, whereas this is platform authority. A vineyard owner has
+        /// the former and never the latter, and conflating them would hand
+        /// every customer's owner an unreleased preview.
+        case systemAdminPreview
     }
 
     let id: String
@@ -145,6 +153,18 @@ enum OperationalToolCatalog {
             icon: "shield.lefthalf.filled",
             tint: .purple
         ),
+        // System Admin preview (SQL 236). Not released: only an active row in
+        // public.system_admins who is ALSO a member of the selected vineyard
+        // may see or open it, and the server enforces the same conjunction on
+        // every read and write. `id` matches Android exactly.
+        OperationalTool(
+            id: "vineyard_insights",
+            title: "Vineyard Insights",
+            subtitle: "Scouting, vintage notes & reports",
+            icon: "chart.line.text.clipboard",
+            tint: .purple,
+            requirement: .systemAdminPreview
+        ),
     ]
 
     static let defaultOrder: [String] = all.map(\.id)
@@ -156,11 +176,21 @@ enum OperationalToolCatalog {
     /// Tools the caller is entitled to see, in VineTrack default order.
     /// Everything downstream (grid + customisation screen) filters through
     /// this, so a saved layout can never expose a restricted tool.
-    static func authorised(canViewCosting: Bool) -> [OperationalTool] {
+    ///
+    /// `canUseVineyardInsights` must be the resolved `VineyardInsightsAccess`
+    /// decision — System Admin AND membership of the selected vineyard — not a
+    /// bare `isSystemAdmin` flag. It defaults to `false` so a caller that has
+    /// not yet resolved access (or an older call site) fails closed rather
+    /// than briefly exposing the preview while the admin check is in flight.
+    static func authorised(
+        canViewCosting: Bool,
+        canUseVineyardInsights: Bool = false
+    ) -> [OperationalTool] {
         all.filter { tool in
             switch tool.requirement {
             case .always: return true
             case .costing: return canViewCosting
+            case .systemAdminPreview: return canUseVineyardInsights
             }
         }
     }
