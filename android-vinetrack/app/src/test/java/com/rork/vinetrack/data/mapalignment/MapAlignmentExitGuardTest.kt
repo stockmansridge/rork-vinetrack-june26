@@ -162,6 +162,7 @@ class MapAlignmentExitGuardTest {
     fun `the exit wording says progress is saved and never says discard`() {
         val guard = MapAlignmentExitGuard()
         guard.onDraftChanged(draftWithPoints(3))
+        guard.onPersistResult(true)
 
         val message = guard.exitMessage()
 
@@ -177,6 +178,7 @@ class MapAlignmentExitGuardTest {
     fun `an unfinished GPS reading is called out explicitly`() {
         val guard = MapAlignmentExitGuard()
         guard.onDraftChanged(draftWithPoints(3))
+        guard.onPersistResult(true)
         guard.onSamplingChanged(true)
 
         val message = guard.exitMessage()

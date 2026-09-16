@@ -57,6 +57,7 @@ import com.rork.vinetrack.data.PinLocationResult
 import com.rork.vinetrack.data.mapalignment.AndroidDisplayCoordinate
 import com.rork.vinetrack.data.mapalignment.CanonicalCoordinate
 import com.rork.vinetrack.data.mapalignment.MapAlignmentDraft
+import com.rork.vinetrack.data.mapalignment.MapAlignmentExitConfirmation
 import com.rork.vinetrack.data.mapalignment.MapAlignmentExitGuard
 import com.rork.vinetrack.data.mapalignment.MapAlignmentGpsEvidence
 import com.rork.vinetrack.data.mapalignment.MapAlignmentGpsRules
@@ -160,6 +161,10 @@ fun MapAlignmentWizard(
     // from the draft throughout: a recalibration must never be able to disturb
     // one by existing.
     var saved by remember { mutableStateOf<List<MapAlignmentSavedCalibration>>(emptyList()) }
+    // Set when saved-calibration bytes exist but cannot be decoded. Held
+    // separately from [saved] so unreadable storage can never be displayed, or
+    // acted on, as "no saved calibrations".
+    var savedUnreadable by remember { mutableStateOf<String?>(null) }
     var viewing by remember { mutableStateOf<MapAlignmentSavedCalibration?>(null) }
     var confirmingStartOver by remember { mutableStateOf<MapAlignmentStoredDraft?>(null) }
     var confirmingDeleteDraft by remember { mutableStateOf<MapAlignmentStoredDraft?>(null) }
@@ -181,29 +186,83 @@ fun MapAlignmentWizard(
             MapAlignmentStorage.Decoded.Empty -> ResumeState.None
             is MapAlignmentStorage.Decoded.Unusable -> ResumeState.Unusable(decoded.reason)
         }
-        saved = store.savedCalibrationsOrEmpty()
+        // Draft and completed storage are read, and fail, independently: an
+        // unreadable saved list must not stop a perfectly good draft being
+        // resumed, and vice versa.
+        when (val decoded = store.loadSavedCalibrations()) {
+            is MapAlignmentStorage.Decoded.Restored -> {
+                saved = decoded.value
+                savedUnreadable = null
+            }
+            MapAlignmentStorage.Decoded.Empty -> {
+                saved = emptyList()
+                savedUnreadable = null
+            }
+            is MapAlignmentStorage.Decoded.Unusable -> {
+                saved = emptyList()
+                savedUnreadable = decoded.reason
+            }
+        }
+    }
+
+    /** Re-read completed calibrations, preserving the unreadable outcome. */
+    fun refreshSaved() {
+        when (val decoded = store.loadSavedCalibrations()) {
+            is MapAlignmentStorage.Decoded.Restored -> {
+                saved = decoded.value
+                savedUnreadable = null
+            }
+            MapAlignmentStorage.Decoded.Empty -> {
+                saved = emptyList()
+                savedUnreadable = null
+            }
+            is MapAlignmentStorage.Decoded.Unusable -> {
+                saved = emptyList()
+                savedUnreadable = decoded.reason
+            }
+        }
+    }
+
+    /**
+     * The current session as a storable draft, or null when there is nothing
+     * to store. Shared by autosave and the manual retry so both write exactly
+     * the same state.
+     */
+    fun storableDraft(
+        current: MapAlignmentDraft?,
+        atStep: MapAlignmentWizardStep,
+        checkpoint: MapAlignmentPendingReference?,
+        alignmentId: String?,
+    ): MapAlignmentStoredDraft? {
+        val subject = current ?: return null
+        return MapAlignmentStoredDraft(
+            draft = subject,
+            step = atStep,
+            pending = checkpoint,
+            solvedAlignmentId = alignmentId,
+            updatedAtEpochMillis = System.currentTimeMillis(),
+        )
     }
 
     /**
      * Autosave. Called after every meaningful change rather than from a Save
      * button, so an accidental exit can never cost a completed reference point.
+     *
+     * The store's ACTUAL result is recorded on the exit guard. Ignoring it was
+     * how the leave dialog came to promise "your progress has been saved"
+     * without knowing whether it had been — the operator would then leave, in
+     * good faith, on the strength of a write that never happened.
      */
     fun persist(
         current: MapAlignmentDraft?,
         atStep: MapAlignmentWizardStep = step,
         checkpoint: MapAlignmentPendingReference? = pending,
         alignmentId: String? = solvedAlignmentId,
-    ) {
-        val subject = current ?: return
-        store.saveDraft(
-            MapAlignmentStoredDraft(
-                draft = subject,
-                step = atStep,
-                pending = checkpoint,
-                solvedAlignmentId = alignmentId,
-                updatedAtEpochMillis = System.currentTimeMillis(),
-            ),
-        )
+    ): Boolean {
+        val storable = storableDraft(current, atStep, checkpoint, alignmentId) ?: return false
+        val succeeded = store.saveDraft(storable)
+        exitGuard.onPersistResult(succeeded)
+        return succeeded
     }
 
     /** Apply a draft change and autosave it in one place. */
@@ -230,7 +289,7 @@ fun MapAlignmentWizard(
             MapAlignmentStorage.Decoded.Empty -> ResumeState.None
             is MapAlignmentStorage.Decoded.Unusable -> ResumeState.Unusable(decoded.reason)
         }
-        saved = store.savedCalibrationsOrEmpty()
+        refreshSaved()
     }
 
     /**
@@ -256,7 +315,7 @@ fun MapAlignmentWizard(
         if (MapAlignmentSaveFlow.mayRemoveDraft(saveSucceeded = true)) {
             store.deleteDraft()
         }
-        saved = store.savedCalibrationsOrEmpty()
+        refreshSaved()
         resume = ResumeState.None
         saveStage = SaveStage.Saved(record)
         step = MapAlignmentWizardStep.Complete
@@ -340,6 +399,21 @@ fun MapAlignmentWizard(
             },
         )
 
+        // An unreadable saved list blocks only the saved-calibration side. A
+        // readable draft is still offered above this, because the two records
+        // fail independently.
+        current == null && resume !is ResumeState.Offered && savedUnreadable != null ->
+            UnreadableSavedCalibrationsStep(
+                reason = savedUnreadable!!,
+                modifier = modifier,
+                onRemove = {
+                    // Explicit removal is the ONLY way past the store's refusal
+                    // to overwrite bytes it could not decode. Any draft stays.
+                    store.removeUnreadableSavedCalibrations()
+                    refreshSaved()
+                },
+            )
+
         // The hub: whatever is actually stored on this installation. Shown
         // whenever there is something to resume or review, so neither record
         // can be reached only by accident.
@@ -348,7 +422,12 @@ fun MapAlignmentWizard(
             MapAlignmentHomeStep(
                 stored = offered,
                 saved = saved,
+                savedUnreadable = savedUnreadable,
                 modifier = modifier,
+                onRemoveUnreadableSaved = {
+                    store.removeUnreadableSavedCalibrations()
+                    refreshSaved()
+                },
                 onResume = {
                     val target = offered ?: return@MapAlignmentHomeStep
                     draft = target.restoredDraft()
@@ -476,11 +555,26 @@ fun MapAlignmentWizard(
         SaveStage.Failed -> SaveFailedDialog(onDismiss = { saveStage = SaveStage.Idle })
     }
 
-    if (exitGuard.isConfirmingExit) {
-        LeaveCalibrationDialog(
+    when (exitGuard.confirmation) {
+        null -> Unit
+
+        MapAlignmentExitConfirmation.Leave -> LeaveCalibrationDialog(
             message = exitGuard.exitMessage(),
             onKeep = exitGuard::keepCalibrating,
             onLeave = exitGuard::leaveAndContinueLater,
+        )
+
+        // The latest change is NOT on disk, so the reassuring leave path is
+        // deliberately not offered — only a retry and staying put.
+        MapAlignmentExitConfirmation.SaveFailed -> SaveProgressFailedDialog(
+            message = exitGuard.saveFailedMessage(),
+            onKeep = exitGuard::keepCalibrating,
+            onRetry = {
+                exitGuard.retrySave {
+                    val storable = storableDraft(draft, step, pending, solvedAlignmentId)
+                    storable != null && store.saveDraft(storable)
+                }
+            },
         )
     }
 
@@ -519,7 +613,7 @@ fun MapAlignmentWizard(
                 // Saved calibration only. A recalibration draft in progress is
                 // deliberately left alone — the operator did not ask to lose it.
                 store.deleteCalibration(target.alignment.id)
-                saved = store.savedCalibrationsOrEmpty()
+                refreshSaved()
                 confirmingDeleteSaved = null
                 viewing = null
             },
@@ -582,6 +676,50 @@ internal fun LeaveCalibrationDialog(
         confirmButton = { TextButton(onClick = onKeep) { Text("Keep calibrating") } },
         dismissButton = {
             TextButton(onClick = onLeave) { Text("Leave and continue later") }
+        },
+    )
+}
+
+/**
+ * Shown on the way out when the LATEST autosave did not reach disk.
+ *
+ * ## Why this has no "leave" action
+ *
+ * The ordinary leave dialog exists to reassure, and its reassurance is only
+ * true because the draft is on disk. When the write failed that sentence would
+ * be a lie told at the exact moment it does the most damage: the operator acts
+ * on it, leaves, and the newest reference point is gone. So this variant offers
+ * only a retry and staying put. Leaving is still physically possible — the
+ * operator can background the app — but VineTrack will not present it as a
+ * safe, sanctioned choice while the evidence is unconfirmed.
+ *
+ * It says the LATEST progress could not be saved rather than "nothing is
+ * saved", because an earlier draft usually is stored and telling someone they
+ * have lost work they still have sends them to re-walk a vineyard for nothing.
+ */
+@Composable
+internal fun SaveProgressFailedDialog(
+    message: String,
+    onKeep: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onKeep,
+        icon = {
+            Icon(
+                Icons.Filled.Warning,
+                contentDescription = null,
+                tint = VineColors.Orange,
+                modifier = Modifier.size(20.dp),
+            )
+        },
+        title = { Text(MapAlignmentExitGuard.SAVE_FAILED_TITLE) },
+        text = { Text(message, fontSize = 14.sp) },
+        confirmButton = {
+            TextButton(onClick = onRetry) { Text(MapAlignmentExitGuard.RETRY_ACTION_LABEL) }
+        },
+        dismissButton = {
+            TextButton(onClick = onKeep) { Text(MapAlignmentExitGuard.KEEP_ACTION_LABEL) }
         },
     )
 }
@@ -774,7 +912,9 @@ internal fun DeleteSavedCalibrationDialog(
 private fun MapAlignmentHomeStep(
     stored: MapAlignmentStoredDraft?,
     saved: List<MapAlignmentSavedCalibration>,
+    savedUnreadable: String?,
     modifier: Modifier,
+    onRemoveUnreadableSaved: () -> Unit,
     onResume: () -> Unit,
     onStartOver: () -> Unit,
     onDeleteDraft: () -> Unit,
@@ -850,6 +990,13 @@ private fun MapAlignmentHomeStep(
             Spacer(Modifier.size(8.dp))
             Text("Delete draft")
         }
+        }
+
+        // Unreadable completed storage is reported in place of the saved list,
+        // never as an absence. The draft card above is unaffected: the two
+        // records fail independently, and a readable draft stays resumable.
+        savedUnreadable?.let { reason ->
+            UnreadableSavedCalibrationsCard(reason = reason, onRemove = onRemoveUnreadableSaved)
         }
 
         // Saved calibrations are listed SEPARATELY from the draft above, and
@@ -956,6 +1103,80 @@ private fun SavedCalibrationCard(
         }
     }
 }
+
+/**
+ * Reports unreadable COMPLETED-calibration bytes.
+ *
+ * ## Why this is not "No saved calibrations"
+ *
+ * Collapsing unreadable storage into an empty list is comfortable and wrong.
+ * The bytes are still there, so an operator told "none saved" would reasonably
+ * walk the vineyard again and save a replacement — over a record the app merely
+ * failed to parse, which might have been readable again after a fix. Worse, the
+ * data would be unremovable, because nothing in the UI would admit it existed.
+ *
+ * So saving is REFUSED until the operator removes this deliberately (see
+ * [MapAlignmentRecordStore.saveCalibration]), and removal is offered right
+ * here. Any calibration draft is untouched either way.
+ */
+@Composable
+private fun UnreadableSavedCalibrationsCard(reason: String, onRemove: () -> Unit) {
+    val vine = LocalVineColors.current
+    VineyardCard {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Warning,
+                    contentDescription = null,
+                    tint = VineColors.Orange,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.size(8.dp))
+                SectionTitle("Saved calibrations could not be read")
+            }
+            Text(
+                "The locally saved Android Map Alignment data could not be read.\n\n" +
+                    "It has not been loaded and is not being used.",
+                fontSize = 14.sp,
+                color = vine.textSecondary,
+            )
+            Text(reason, fontSize = 13.sp, color = vine.textSecondary)
+            Text(
+                "A new field-test calibration cannot be saved until this data is removed. " +
+                    "No vineyard, block, row, pin, route or GPS coordinates are affected, and " +
+                    "any calibration draft is kept.",
+                fontSize = 13.sp,
+                color = vine.textPrimary,
+            )
+            OutlinedButton(onClick = onRemove, modifier = Modifier.fillMaxWidth()) {
+                Icon(
+                    Icons.Filled.Delete,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.size(8.dp))
+                Text(REMOVE_UNREADABLE_SAVED_LABEL)
+            }
+        }
+    }
+}
+
+/** Full-step form of [UnreadableSavedCalibrationsCard], with no draft to show. */
+@Composable
+private fun UnreadableSavedCalibrationsStep(
+    reason: String,
+    modifier: Modifier,
+    onRemove: () -> Unit,
+) {
+    WizardScaffold(modifier = modifier) {
+        SystemAdminPreviewBadge()
+        UnreadableSavedCalibrationsCard(reason = reason, onRemove = onRemove)
+        LocalDraftNote()
+    }
+}
+
+/** Action wording for discarding undecodable completed-calibration bytes. */
+internal const val REMOVE_UNREADABLE_SAVED_LABEL: String = "Remove unreadable saved data"
 
 /**
  * Shown when stored calibration data exists but cannot be read — an unknown

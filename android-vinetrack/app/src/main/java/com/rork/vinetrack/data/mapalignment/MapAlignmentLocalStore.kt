@@ -2,7 +2,6 @@ package com.rork.vinetrack.data.mapalignment
 
 import android.content.Context
 import android.util.Log
-import androidx.core.content.edit
 
 /**
  * The ONLY place Android Map Alignment state is read from or written to disk.
@@ -47,6 +46,19 @@ import androidx.core.content.edit
  * false as "this is NOT on disk": in particular a completed save that fails
  * leaves the draft in place, so a vineyard walk is never traded for a write
  * that did not happen.
+ *
+ * ## Why `commit()` and not `apply()`
+ *
+ * These writes report their own success, so the result has to be real.
+ * `apply()` returns Unit and schedules the disk write for later, so it can only
+ * ever be reported as "true, probably" — and this feature spends that boolean
+ * on a genuinely destructive decision: the draft holding a whole vineyard walk
+ * is deleted only once the completed calibration is confirmed saved. A hopeful
+ * true there would delete the draft on the strength of a write that had not
+ * happened yet and might still fail. `commit()` writes synchronously and
+ * returns whether it actually succeeded, which is the only answer worth acting
+ * on. Autosave is a handful of small writes at human pace, so the synchronous
+ * cost is irrelevant.
  */
 class MapAlignmentLocalStore(
     context: Context,
@@ -63,15 +75,27 @@ class MapAlignmentLocalStore(
                     .onFailure { Log.w(TAG, "Could not read $key: ${it.javaClass.simpleName}") }
                     .getOrNull()
 
-            override fun write(key: String, value: String?): Boolean = runCatching {
-                prefs.edit(commit = true) {
-                    if (value == null) remove(key) else putString(key, value)
-                }
-                true
+            // Returns the editor's OWN commit result. Never a hardcoded true:
+            // callers delete a vineyard walk's draft on the strength of this.
+            override fun write(key: String, value: String): Boolean = commit(key) {
+                it.putString(key, value)
+            }
+
+            override fun remove(key: String): Boolean = commit(key) { it.remove(key) }
+
+            private fun commit(
+                key: String,
+                change: (android.content.SharedPreferences.Editor) -> Unit,
+            ): Boolean = runCatching {
+                val editor = prefs.edit()
+                change(editor)
+                editor.commit()
             }.onFailure {
                 // Never rethrow: a storage failure must not end a calibration walk.
                 Log.w(TAG, "Could not write $key: ${it.javaClass.simpleName}")
-            }.getOrDefault(false)
+            }.getOrDefault(false).also { committed ->
+                if (!committed) Log.w(TAG, "Commit for $key returned false")
+            }
         },
         installationId = installationId,
     )
@@ -103,7 +127,12 @@ class MapAlignmentLocalStore(
     fun loadSavedCalibrations(): MapAlignmentStorage.Decoded<List<MapAlignmentSavedCalibration>> =
         records.loadSavedCalibrations()
 
-    /** The saved calibrations, or empty when absent or unreadable. */
+    /**
+     * The saved calibrations, or empty when absent or unreadable.
+     *
+     * For display only. Use [loadSavedCalibrations] to decide anything, so
+     * unreadable bytes are never mistaken for "none saved".
+     */
     fun savedCalibrationsOrEmpty(): List<MapAlignmentSavedCalibration> =
         records.savedCalibrationsOrEmpty()
 
@@ -119,6 +148,15 @@ class MapAlignmentLocalStore(
 
     /** Remove one saved calibration. Any active draft is untouched. */
     fun deleteCalibration(alignmentId: String): Boolean = records.deleteCalibration(alignmentId)
+
+    /**
+     * Discard saved-calibration bytes that could not be decoded.
+     *
+     * The only way past the refusal in [saveCalibration], and reached solely
+     * from the System Admin "Remove unreadable saved data" action. Any draft is
+     * deliberately untouched.
+     */
+    fun removeUnreadableSavedCalibrations(): Boolean = records.removeUnreadableSavedCalibrations()
 
     /** Remove every locally stored Map Alignment record for this installation. */
     fun deleteEverything(): Boolean = records.deleteEverything()

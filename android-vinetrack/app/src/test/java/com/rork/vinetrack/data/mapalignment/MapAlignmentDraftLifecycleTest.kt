@@ -26,10 +26,19 @@ class MapAlignmentDraftLifecycleTest {
     private class FakeRawStore : MapAlignmentRawStore {
         val values = mutableMapOf<String, String>()
 
+        /** Set to simulate a full or unwritable device. */
+        var failWrites: Boolean = false
+
         override fun read(key: String): String? = values[key]
 
-        override fun write(key: String, value: String?): Boolean {
-            if (value == null) values.remove(key) else values[key] = value
+        override fun write(key: String, value: String): Boolean {
+            if (failWrites) return false
+            values[key] = value
+            return true
+        }
+
+        override fun remove(key: String): Boolean {
+            values.remove(key)
             return true
         }
     }

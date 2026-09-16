@@ -25,24 +25,59 @@ class MapAlignmentSaveFlowTest {
     private val otherVineyard = MapAlignmentScope(installation, "vineyard-2")
     private val origin = CanonicalCoordinate(latitude = -33.2835, longitude = 149.0988)
 
-    /** In-memory bytes. Interchangeable with SharedPreferences by design. */
+    /**
+     * In-memory bytes. Interchangeable with SharedPreferences by design.
+     *
+     * Writing and removing are separate operations here, exactly as in the
+     * production contract, so a test can assert that a failed encode never
+     * caused a REMOVAL rather than merely observing that a value vanished.
+     */
     private class FakeRawStore(
         /** Set to make every write fail, as a full or unwritable device would. */
         var failWrites: Boolean = false,
     ) : MapAlignmentRawStore {
         val values = mutableMapOf<String, String>()
 
+        /** Keys this store was ever asked to delete. */
+        val removedKeys = mutableListOf<String>()
+
         override fun read(key: String): String? = values[key]
 
-        override fun write(key: String, value: String?): Boolean {
+        override fun write(key: String, value: String): Boolean {
             if (failWrites) return false
-            if (value == null) values.remove(key) else values[key] = value
+            values[key] = value
+            return true
+        }
+
+        override fun remove(key: String): Boolean {
+            removedKeys += key
+            if (failWrites) return false
+            values.remove(key)
             return true
         }
     }
 
+    /** An encoder that fails, standing in for a serialization defect. */
+    private class FailingEncoder(
+        private val onDraft: Boolean = true,
+        private val onCalibrations: Boolean = true,
+    ) : MapAlignmentEncoder {
+        override fun encodeDraft(draft: MapAlignmentStoredDraft): String =
+            if (onDraft) error("draft encoding failed") else MapAlignmentJsonEncoder.encodeDraft(draft)
+
+        override fun encodeCalibrations(saved: List<MapAlignmentSavedCalibration>): String =
+            if (onCalibrations) {
+                error("calibration encoding failed")
+            } else {
+                MapAlignmentJsonEncoder.encodeCalibrations(saved)
+            }
+    }
+
     private fun store(raw: FakeRawStore) =
         MapAlignmentRecordStore(raw = raw, installationId = installation)
+
+    private fun brokenStore(raw: FakeRawStore, encoder: MapAlignmentEncoder) =
+        MapAlignmentRecordStore(raw = raw, installationId = installation, encoder = encoder)
 
     private fun shift(
         from: CanonicalCoordinate,
