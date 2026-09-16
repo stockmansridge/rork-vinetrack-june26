@@ -43,10 +43,64 @@ class ScoutCaptureTest {
         }
     }
 
+    /**
+     * In-memory photo storage.
+     *
+     * Lets the durability rules be exercised off-device: bytes must reach
+     * storage before an upload is queued, and a failed write must never be
+     * reported as a saved photograph.
+     */
+    private class MemoryPhotoFiles : ScoutPhotoFiles {
+        val files = mutableMapOf<String, ByteArray>()
+        var failWrites = false
+
+        override fun relativePath(
+            vineyardId: String,
+            observationId: String,
+            photoId: String,
+        ): String = "$vineyardId/$observationId/$photoId.jpg"
+
+        override fun storagePath(
+            vineyardId: String,
+            observationId: String,
+            photoId: String,
+        ): String = relativePath(vineyardId, observationId, photoId)
+
+        override fun write(
+            jpeg: ByteArray,
+            vineyardId: String,
+            observationId: String,
+            photoId: String,
+        ): String? {
+            if (failWrites) return null
+            val path = relativePath(vineyardId, observationId, photoId)
+            files[path] = jpeg
+            return path
+        }
+
+        override fun read(relativePath: String): ByteArray? = files[relativePath]
+
+        override fun exists(relativePath: String): Boolean = files.containsKey(relativePath)
+
+        override fun remove(relativePath: String) {
+            files.remove(relativePath)
+        }
+
+        override fun clearForSignOut() {
+            files.clear()
+        }
+    }
+
     private val raw = MemoryStore()
+    private val photoFiles = MemoryPhotoFiles()
     private var clockMillis = 1_757_000_000_000L
     private val store = VineyardInsightsStore(raw)
-    private val controller = VineyardInsightsController(store) { Instant.ofEpochMilli(clockMillis) }
+    private val controller =
+        VineyardInsightsController(store, photoFiles) { Instant.ofEpochMilli(clockMillis) }
+
+    private fun jpeg(marker: Byte = 1): ByteArray = byteArrayOf(marker, 2, 3, 4)
+
+    private val confirmedFix = ScoutPhotoFix(-33.2835, 149.0988, 4.2)
 
     private fun tick(millis: Long = 1_000L) {
         clockMillis += millis
@@ -301,7 +355,7 @@ class ScoutCaptureTest {
         controller.toggleBlock(visit.id, blockA)
         val id = assessmentId(visit.id, blockA)
         val recordId = UUID.randomUUID().toString()
-        controller.linkGrowthStageRecord(visit.id, id, recordId, "E-L 23 80% cap fall")
+        controller.linkGrowthStageRecord(visit.id, id, null, recordId, "E-L 23 80% cap fall")
 
         val retained = controller.deleteVisit(visit.id)
 
@@ -318,7 +372,7 @@ class ScoutCaptureTest {
         val id = assessmentId(visit.id, blockA)
         val recordId = UUID.randomUUID().toString()
 
-        controller.linkGrowthStageRecord(visit.id, id, recordId, "E-L 23")
+        controller.linkGrowthStageRecord(visit.id, id, null, recordId, "E-L 23")
 
         val saved = observation(visit.id, blockA, ScoutItem.GROWTH_STAGE)
         assertEquals(recordId, saved?.linkedGrowthStageRecordId)
@@ -393,10 +447,7 @@ class ScoutCaptureTest {
         val visit = startVisit()
         controller.toggleBlock(visit.id, blockA)
         val id = assessmentId(visit.id, blockA)
-        controller.addPhoto(
-            visit.id, id, ScoutItem.WEEDS,
-            ScoutPhoto.blockOnly("obs-1", null, "2026-11-20T09:18:00Z", "user-1"),
-        )
+        controller.capturePhoto(visit.id, id, ScoutItem.WEEDS, jpeg(), null, "user-1")
 
         val reloaded = VineyardInsightsStore(raw).loadVisits().single()
         val photo = reloaded.assessment(blockA)!!.observation(ScoutItem.WEEDS)!!.photos.single()
@@ -412,9 +463,9 @@ class ScoutCaptureTest {
         val id = assessmentId(visit.id, blockA)
 
         repeat(3) { index ->
-            controller.addPhoto(
+            controller.capturePhoto(
                 visit.id, id, ScoutItem.POWDERY_MILDEW,
-                ScoutPhoto.blockOnly("obs-$index", "/tmp/$index.jpg", "2026-11-20T09:2$index:00Z", "user-1"),
+                jpeg(index.toByte()), null, "user-1",
             )
             tick()
         }
@@ -431,14 +482,11 @@ class ScoutCaptureTest {
         val visit = startVisit()
         controller.toggleBlock(visit.id, blockA)
         val id = assessmentId(visit.id, blockA)
-        controller.addPhoto(
-            visit.id, id, ScoutItem.WEEDS,
-            ScoutPhoto.blockOnly("obs-w", null, "2026-11-20T09:30:00Z", "user-1"),
-        )
+        controller.capturePhoto(visit.id, id, ScoutItem.WEEDS, jpeg(), null, "user-1")
         tick()
-        controller.addPhoto(
+        controller.capturePhoto(
             visit.id, id, ScoutItem.OTHER_ISSUE,
-            ScoutPhoto.gpsConfirmed("obs-o", null, "2026-11-20T09:31:00Z", "user-1", -33.28, 149.09, 3.0),
+            jpeg(9), confirmedFix, "user-1",
         )
 
         val reloaded = VineyardInsightsStore(raw).loadVisits().single().assessment(blockA)!!
@@ -510,10 +558,7 @@ class ScoutCaptureTest {
         val visit = startVisit()
         controller.toggleBlock(visit.id, blockA)
         val id = assessmentId(visit.id, blockA)
-        controller.addPhoto(
-            visit.id, id, ScoutItem.OTHER_ISSUE,
-            ScoutPhoto.blockOnly("obs-1", null, "2026-11-20T09:40:00Z", "user-1"),
-        )
+        controller.capturePhoto(visit.id, id, ScoutItem.OTHER_ISSUE, jpeg(), null, "user-1")
 
         assertTrue(controller.review(visit.id).canComplete)
     }
@@ -533,11 +578,10 @@ class ScoutCaptureTest {
         )
         controller.setObservationNotes(visit.id, id, ScoutItem.OTHER_ISSUE, "Fence down")
         controller.setObservationNotes(visit.id, id, ScoutItem.GENERAL_RECOMMENDATION, "Spray next week")
-        controller.linkGrowthStageRecord(visit.id, id, UUID.randomUUID().toString(), "E-L 23")
-        controller.addPhoto(
-            visit.id, id, ScoutItem.DOWNY_MILDEW,
-            ScoutPhoto.blockOnly("obs-1", null, "2026-11-20T09:45:00Z", "user-1"),
+        controller.linkGrowthStageRecord(
+            visit.id, id, null, UUID.randomUUID().toString(), "E-L 23",
         )
+        controller.capturePhoto(visit.id, id, ScoutItem.DOWNY_MILDEW, jpeg(), null, "user-1")
 
         val review = controller.review(visit.id)
 

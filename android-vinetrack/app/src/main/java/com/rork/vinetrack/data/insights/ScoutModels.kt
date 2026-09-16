@@ -71,9 +71,19 @@ enum class PhotoLocationStatus(val code: String, val label: String) {
 data class ScoutPhoto(
     val id: String,
     val observationId: String,
-    /** App-private file path, written BEFORE any upload is attempted. */
+    /**
+     * App-private file path, written BEFORE any upload is attempted.
+     *
+     * This is what makes the photograph survive a crash, a restart and a
+     * vineyard switch. The bytes live on disk from the moment of capture; the
+     * upload is a later reconciliation, never the place the evidence lives.
+     */
     val localPath: String?,
-    /** Server storage path once uploaded; null while local-only. */
+    /**
+     * Server storage path once uploaded; null while local-only. Reconciled by
+     * photo id, so a late upload completion can only ever finish ITS OWN
+     * photograph and can never replace or remove a newer one.
+     */
     val storagePath: String?,
     val capturedAtIso: String,
     val capturedByUserId: String?,
@@ -81,7 +91,16 @@ data class ScoutPhoto(
     val longitude: Double?,
     val accuracyMetres: Double?,
     val locationStatus: PhotoLocationStatus,
+    /**
+     * True when the last upload attempt failed. The local file is retained and
+     * Retry is offered — a failed upload must never look like a lost
+     * photograph.
+     */
+    val uploadFailed: Boolean = false,
 ) {
+    /** True once the bytes are known to be in the bucket. */
+    val isUploaded: Boolean get() = storagePath != null
+
     init {
         // A structurally impossible claim is rejected at construction rather
         // than discovered in a report months later.
@@ -103,17 +122,20 @@ data class ScoutPhoto(
             longitude: Double,
             accuracyMetres: Double,
             id: String = UUID.randomUUID().toString(),
+            storagePath: String? = null,
+            uploadFailed: Boolean = false,
         ): ScoutPhoto = ScoutPhoto(
             id = id,
             observationId = observationId,
             localPath = localPath,
-            storagePath = null,
+            storagePath = storagePath,
             capturedAtIso = capturedAtIso,
             capturedByUserId = capturedByUserId,
             latitude = latitude,
             longitude = longitude,
             accuracyMetres = accuracyMetres,
             locationStatus = PhotoLocationStatus.GPS_CONFIRMED,
+            uploadFailed = uploadFailed,
         )
 
         /**
@@ -127,17 +149,20 @@ data class ScoutPhoto(
             capturedAtIso: String,
             capturedByUserId: String?,
             id: String = UUID.randomUUID().toString(),
+            storagePath: String? = null,
+            uploadFailed: Boolean = false,
         ): ScoutPhoto = ScoutPhoto(
             id = id,
             observationId = observationId,
             localPath = localPath,
-            storagePath = null,
+            storagePath = storagePath,
             capturedAtIso = capturedAtIso,
             capturedByUserId = capturedByUserId,
             latitude = null,
             longitude = null,
             accuracyMetres = null,
             locationStatus = PhotoLocationStatus.UNAVAILABLE,
+            uploadFailed = uploadFailed,
         )
     }
 }

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,15 +29,18 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EventNote
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.LocationOff
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -51,15 +55,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.rork.vinetrack.data.PinLocationResult
+import coil3.compose.AsyncImage
 import com.rork.vinetrack.data.VintageResolver
 import com.rork.vinetrack.data.insights.PhotoLocationStatus
+import com.rork.vinetrack.data.insights.ScoutGrowthStageLink
 import com.rork.vinetrack.data.insights.ScoutItem
 import com.rork.vinetrack.data.insights.ScoutOption
 import com.rork.vinetrack.data.insights.ScoutPhoto
@@ -72,15 +78,16 @@ import com.rork.vinetrack.data.insights.VintageNoteCatalog
 import com.rork.vinetrack.data.insights.VintageNoteDraft
 import com.rork.vinetrack.data.insights.VintageNoteRules
 import com.rork.vinetrack.data.insights.VintageNoteType
+import com.rork.vinetrack.data.model.GrowthStage
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
+import com.rork.vinetrack.ui.components.rememberPhotoCaptureCoordinator
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
-import java.time.Instant
 import java.time.LocalDate
 
 /**
@@ -591,6 +598,37 @@ private fun ScoutBlockAssessmentCard(
     val vine = LocalVineColors.current
     val insights = vm.vineyardInsights
     val visit = insights.visit(visitId)
+    val appState by vm.ui.collectAsStateWithLifecycle()
+
+    // Which item a pending camera belongs to, held in state so a recomposition
+    // while the camera is open cannot attach the photograph to the wrong item.
+    var photoItem by remember { mutableStateOf<ScoutItem?>(null) }
+    var showStagePicker by remember { mutableStateOf(false) }
+    var confirmUnlink by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var messageIsError by remember { mutableStateOf(false) }
+
+    val camera = rememberPhotoCaptureCoordinator(
+        onPhoto = { uri ->
+            val item = photoItem
+            photoItem = null
+            if (uri != null && item != null) {
+                vm.captureScoutPhoto(visitId, assessmentId, item, uri) { ok ->
+                    message = if (ok) {
+                        "Photograph saved on this device and queued to upload."
+                    } else {
+                        "This device could not save the photograph. Try again."
+                    }
+                    messageIsError = !ok
+                }
+            }
+        },
+        onError = {
+            photoItem = null
+            message = it
+            messageIsError = true
+        },
+    )
 
     VineyardCard {
         Text(
@@ -613,15 +651,62 @@ private fun ScoutBlockAssessmentCard(
 
             when {
                 item == ScoutItem.GROWTH_STAGE -> {
+                    // The displayed stage is read from the CANONICAL record, not
+                    // from a value cached here, so a correction made in the
+                    // Growth Stage workflow shows through rather than the Scout
+                    // presenting a stale copy.
+                    val linkedRecord = observation?.linkedGrowthStageRecordId?.let { id ->
+                        appState.growthRecords.firstOrNull { it.id == id }
+                    }
+                    val canonicalLabel = linkedRecord?.let { record ->
+                        GrowthStage.byCode(record.stageCode)?.displayName
+                            ?: record.stageLabel
+                            ?: record.stageCode
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = enabled) { showStagePicker = true }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                canonicalLabel
+                                    ?: observation?.valueLabel
+                                    ?: "Tap to select current E-L stage",
+                                fontSize = 14.sp,
+                                color = if (canonicalLabel == null &&
+                                    observation?.valueLabel == null
+                                ) {
+                                    vine.textSecondary
+                                } else {
+                                    vine.textPrimary
+                                },
+                            )
+                            if (observation?.linkedGrowthStageRecordId != null) {
+                                Text(
+                                    "Linked to a Growth Stage record",
+                                    fontSize = 11.sp,
+                                    color = vine.textSecondary,
+                                )
+                            }
+                        }
+                        Icon(
+                            Icons.Filled.Add,
+                            contentDescription = null,
+                            tint = VineColors.LeafGreen,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                    if (observation?.linkedGrowthStageRecordId != null && enabled) {
+                        TextButton(onClick = { confirmUnlink = true }) {
+                            Text("Remove link", color = VineColors.Destructive, fontSize = 12.sp)
+                        }
+                    }
                     Text(
-                        observation?.valueLabel ?: "Not recorded",
-                        fontSize = 13.sp,
-                        color = vine.textSecondary,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "Recording an E-L stage here creates the same Growth Stage pin " +
-                            "and record as the normal workflow \u2014 never a second value.",
+                        "Recording an E-L stage here creates the same Growth Stage " +
+                            "record as the normal workflow \u2014 never a second value.",
                         fontSize = 11.sp,
                         color = vine.textSecondary,
                     )
@@ -659,40 +744,270 @@ private fun ScoutBlockAssessmentCard(
             }
 
             val photos = observation?.photos.orEmpty()
-            PhotoRow(
-                photoCount = photos.size,
-                blockOnlyCount = photos.count {
-                    it.locationStatus == PhotoLocationStatus.UNAVAILABLE
-                },
+            ScoutPhotoRow(
+                photos = photos,
                 enabled = enabled,
-            ) {
-                // The GPS decision uses the EXISTING strict validation. A fix
-                // that does not qualify never becomes coordinates — the photo
-                // is recorded as block-associated instead, which is the honest
-                // claim and the only other shape ScoutPhoto can hold.
-                vm.fetchCurrentFix { result ->
-                    val capturedAt = Instant.now().toString()
-                    val photo = when (result) {
-                        is PinLocationResult.Success -> ScoutPhoto.gpsConfirmed(
-                            observationId = observation?.id ?: assessmentId,
-                            localPath = null,
-                            capturedAtIso = capturedAt,
-                            capturedByUserId = visit?.scoutUserId,
-                            latitude = result.fix.latitude,
-                            longitude = result.fix.longitude,
-                            accuracyMetres = result.fix.accuracyMetres,
-                        )
-                        else -> ScoutPhoto.blockOnly(
-                            observationId = observation?.id ?: assessmentId,
-                            localPath = null,
-                            capturedAtIso = capturedAt,
-                            capturedByUserId = visit?.scoutUserId,
-                        )
+                bytesFor = { insights.photoBytes(it) },
+                onAdd = {
+                    photoItem = item
+                    camera.takePhoto()
+                },
+                onDelete = { photo ->
+                    insights.deletePhoto(visitId, assessmentId, item, photo.id)
+                },
+                onRetry = {
+                    visit?.vineyardId?.let { vm.retryVineyardInsightsPhotos(it) }
+                },
+            )
+            Spacer(Modifier.height(14.dp))
+        }
+
+        message?.let {
+            Text(
+                it,
+                fontSize = 12.sp,
+                color = if (messageIsError) VineColors.Destructive else vine.textSecondary,
+            )
+        }
+    }
+
+    if (showStagePicker) {
+        val blockId = paddock?.id
+        ScoutGrowthStagePickerSheet(
+            vm = vm,
+            onDismiss = { showStagePicker = false },
+            onPicked = { stage ->
+                showStagePicker = false
+                if (blockId == null) {
+                    message = "This block is no longer available."
+                    messageIsError = true
+                } else {
+                    vm.captureScoutGrowthStage(
+                        visitId = visitId,
+                        assessmentId = assessmentId,
+                        paddockId = blockId,
+                        stage = stage,
+                    ) { ok, text ->
+                        message = text
+                        messageIsError = !ok
                     }
-                    insights.addPhoto(visitId, assessmentId, item, photo)
+                }
+            },
+        )
+    }
+
+    if (confirmUnlink) {
+        AlertDialog(
+            onDismissRequest = { confirmUnlink = false },
+            title = { Text("Remove the link to this Growth Stage record?") },
+            // Stated before the operator commits: the phenology record is not
+            // being deleted, only this Scout's reference to it.
+            text = { Text(ScoutGrowthStageLink.RETENTION_NOTICE) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        insights.unlinkGrowthStageRecord(visitId, assessmentId)
+                        confirmUnlink = false
+                        message = ScoutGrowthStageLink.RETENTION_NOTICE
+                        messageIsError = false
+                    },
+                ) { Text("Remove link", color = VineColors.Destructive) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmUnlink = false }) { Text("Keep link") }
+            },
+        )
+    }
+}
+
+/**
+ * Wraps the EXISTING [GrowthStagePickList] and [GrowthStageConfirm] components
+ * so Scout reuses the production picker rather than presenting its own list of
+ * stages that could drift from the vineyard's enabled catalogue.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ScoutGrowthStagePickerSheet(
+    vm: AppViewModel,
+    onDismiss: () -> Unit,
+    onPicked: (GrowthStage) -> Unit,
+) {
+    val state by vm.ui.collectAsStateWithLifecycle()
+    val imagesByCode = remember(state.growthStageImages) {
+        state.growthStageImages.associateBy { it.stageCode }
+    }
+    var searchText by remember { mutableStateOf("") }
+    var pending by remember { mutableStateOf<GrowthStage?>(null) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        val stage = pending
+        if (stage == null) {
+            GrowthStagePickList(
+                vm = vm,
+                imagesByCode = imagesByCode,
+                searchText = searchText,
+                onSearchChange = { searchText = it },
+                onPick = { chosen ->
+                    // Same rule as the Growth screen: a stage with reference
+                    // imagery gets the confirmation step.
+                    val hasImage = imagesByCode[chosen.code] != null ||
+                        GrowthStageBundledImages.hasBundled(chosen.code)
+                    if (hasImage) pending = chosen else onPicked(chosen)
+                },
+            )
+        } else {
+            GrowthStageConfirm(
+                vm = vm,
+                stage = stage,
+                image = imagesByCode[stage.code],
+                onConfirm = { onPicked(stage) },
+                onBack = { pending = null },
+            )
+        }
+    }
+}
+
+/**
+ * Photographs for one item: multiple, retained, and immediately visible.
+ *
+ * Previews come from the LOCAL bytes, so a photograph looks identical before,
+ * during and after upload. An operator must never be left wondering whether a
+ * photograph "took" because it renders differently while still pending.
+ */
+@Composable
+private fun ScoutPhotoRow(
+    photos: List<ScoutPhoto>,
+    enabled: Boolean,
+    bytesFor: (ScoutPhoto) -> ByteArray?,
+    onAdd: () -> Unit,
+    onDelete: (ScoutPhoto) -> Unit,
+    onRetry: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val blockOnly = photos.count { it.locationStatus == PhotoLocationStatus.UNAVAILABLE }
+    val failed = photos.count { it.uploadFailed }
+
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        if (photos.isNotEmpty()) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(photos, key = { it.id }) { photo ->
+                    ScoutPhotoThumbnail(
+                        photo = photo,
+                        bytes = bytesFor(photo),
+                        canDelete = enabled,
+                    ) { onDelete(photo) }
                 }
             }
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(8.dp))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = onAdd, enabled = enabled) {
+                Icon(
+                    Icons.Filled.PhotoCamera,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.size(6.dp))
+                Text(if (photos.isEmpty()) "Add photograph" else "Add another")
+            }
+            if (failed > 0) {
+                Spacer(Modifier.size(10.dp))
+                // The photographs themselves are safe on this device; only the
+                // upload failed, so Retry is offered rather than an error that
+                // implies the evidence is gone.
+                OutlinedButton(onClick = onRetry) { Text("Retry upload") }
+            }
+        }
+        if (blockOnly > 0) {
+            // Stated plainly rather than hidden: a photo without a qualifying
+            // fix is block-associated, and presenting it as positioned would
+            // be a false claim about evidence.
+            Text(
+                "$blockOnly ${PhotoLocationStatus.UNAVAILABLE.label}",
+                fontSize = 11.sp,
+                color = VineColors.Warning,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+        if (failed > 0) {
+            Text(
+                "$failed photograph" + (if (failed == 1) "" else "s") +
+                    " saved here but not yet uploaded.",
+                fontSize = 11.sp,
+                color = VineColors.Warning,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ScoutPhotoThumbnail(
+    photo: ScoutPhoto,
+    bytes: ByteArray?,
+    canDelete: Boolean,
+    onDelete: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Box(
+        modifier = Modifier
+            .size(72.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(vine.cardBorder.copy(alpha = 0.3f)),
+    ) {
+        if (bytes != null) {
+            AsyncImage(
+                model = bytes,
+                contentDescription = if (
+                    photo.locationStatus == PhotoLocationStatus.GPS_CONFIRMED
+                ) {
+                    "Photograph with confirmed location"
+                } else {
+                    "Photograph, location unavailable"
+                },
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Icon(
+                Icons.Filled.PhotoCamera,
+                contentDescription = null,
+                tint = vine.textSecondary,
+                modifier = Modifier.size(20.dp).align(Alignment.Center),
+            )
+        }
+        if (photo.locationStatus == PhotoLocationStatus.UNAVAILABLE) {
+            Icon(
+                Icons.Filled.LocationOff,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(3.dp)
+                    .size(14.dp),
+            )
+        } else if (photo.uploadFailed) {
+            Icon(
+                Icons.Filled.Warning,
+                contentDescription = null,
+                tint = VineColors.Warning,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(3.dp)
+                    .size(14.dp),
+            )
+        }
+        if (canDelete) {
+            Icon(
+                Icons.Filled.Delete,
+                contentDescription = "Delete photograph",
+                tint = Color.White,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(2.dp)
+                    .size(16.dp)
+                    .clickable(onClick = onDelete),
+            )
         }
     }
 }

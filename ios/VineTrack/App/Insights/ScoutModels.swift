@@ -81,9 +81,22 @@ nonisolated struct ScoutPhoto: Identifiable, Equatable, Sendable {
     let id: UUID
     let observationID: UUID
     /// App-private file path, written BEFORE any upload is attempted.
+    ///
+    /// This is what makes the photograph survive a crash, a restart and a
+    /// vineyard switch. The bytes live on disk from the moment of capture; the
+    /// upload is a later reconciliation, never the place the evidence lives.
     let localPath: String?
     /// Server storage path once uploaded; nil while local-only.
-    let storagePath: String?
+    ///
+    /// Mutable because reconciliation fills it in after the bytes land in the
+    /// `scout-photos` bucket. Keyed by this photo's own id, so a late upload
+    /// callback can only ever complete ITS OWN photograph and can never
+    /// overwrite or remove a newer one.
+    var storagePath: String?
+    /// True when the last upload attempt failed. The local file is retained and
+    /// the operator is offered Retry — a failed upload must never look like a
+    /// lost photograph.
+    var uploadFailed: Bool
     let capturedAt: Date
     let capturedByUserID: UUID?
     let latitude: Double?
@@ -91,11 +104,15 @@ nonisolated struct ScoutPhoto: Identifiable, Equatable, Sendable {
     let accuracyMetres: Double?
     let locationStatus: PhotoLocationStatus
 
+    /// True once the bytes are known to be in the bucket.
+    var isUploaded: Bool { storagePath != nil }
+
     private init(
         id: UUID,
         observationID: UUID,
         localPath: String?,
         storagePath: String?,
+        uploadFailed: Bool,
         capturedAt: Date,
         capturedByUserID: UUID?,
         latitude: Double?,
@@ -107,6 +124,7 @@ nonisolated struct ScoutPhoto: Identifiable, Equatable, Sendable {
         self.observationID = observationID
         self.localPath = localPath
         self.storagePath = storagePath
+        self.uploadFailed = uploadFailed
         self.capturedAt = capturedAt
         self.capturedByUserID = capturedByUserID
         self.latitude = latitude
@@ -124,13 +142,16 @@ nonisolated struct ScoutPhoto: Identifiable, Equatable, Sendable {
         latitude: Double,
         longitude: Double,
         accuracyMetres: Double,
-        id: UUID = UUID()
+        id: UUID = UUID(),
+        storagePath: String? = nil,
+        uploadFailed: Bool = false
     ) -> ScoutPhoto {
         ScoutPhoto(
             id: id,
             observationID: observationID,
             localPath: localPath,
-            storagePath: nil,
+            storagePath: storagePath,
+            uploadFailed: uploadFailed,
             capturedAt: capturedAt,
             capturedByUserID: capturedByUserID,
             latitude: latitude,
@@ -147,13 +168,16 @@ nonisolated struct ScoutPhoto: Identifiable, Equatable, Sendable {
         localPath: String?,
         capturedAt: Date,
         capturedByUserID: UUID?,
-        id: UUID = UUID()
+        id: UUID = UUID(),
+        storagePath: String? = nil,
+        uploadFailed: Bool = false
     ) -> ScoutPhoto {
         ScoutPhoto(
             id: id,
             observationID: observationID,
             localPath: localPath,
-            storagePath: nil,
+            storagePath: storagePath,
+            uploadFailed: uploadFailed,
             capturedAt: capturedAt,
             capturedByUserID: capturedByUserID,
             latitude: nil,

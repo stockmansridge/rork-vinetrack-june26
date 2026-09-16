@@ -214,6 +214,7 @@ import com.rork.vinetrack.ui.components.ScreenAwakeController
 import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.GrapeVarietyRow
 import com.rork.vinetrack.data.model.DamageRecord
+import com.rork.vinetrack.data.model.GrowthStage
 import com.rork.vinetrack.data.model.GrowthStageImage
 import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.HistoricalBlockResult
@@ -1206,7 +1207,215 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     val vineyardInsights = com.rork.vinetrack.data.insights.VineyardInsightsController(
         com.rork.vinetrack.data.insights.VineyardInsightsStore(app),
+        com.rork.vinetrack.data.insights.ScoutPhotoFileStore(app),
+        com.rork.vinetrack.data.insights.VineyardInsightsSyncRepository(session),
     )
+
+    /**
+     * Push queued Scout/Vintage Note work and pull the server's view.
+     *
+     * The vineyard is passed explicitly because every queued entry carries its
+     * OWN vineyard id — replay must never be filed against whichever vineyard
+     * happens to be selected when connectivity returns.
+     */
+    fun syncVineyardInsights(vineyardId: String) {
+        viewModelScope.launch { runCatching { vineyardInsights.sync(vineyardId) } }
+    }
+
+    /** Retry failed Scout photograph uploads. The local bytes are retained. */
+    fun retryVineyardInsightsPhotos(vineyardId: String) {
+        viewModelScope.launch { runCatching { vineyardInsights.retryPhotoUploads(vineyardId) } }
+    }
+
+    /**
+     * Record a Scout E-L selection through the CANONICAL Growth Stage workflow.
+     *
+     * Reuses the production writers exactly — [createGrowthStageRecord] and
+     * [updateGrowthStageRecord] — so Scout adds no second phenology authority.
+     * The record it produces is indistinguishable from one created on the
+     * Growth screen: same table, same optimistic row, same offline outbox,
+     * same retry, so it appears in the Growth Stage list, reports and the E-L
+     * heatmap and is counted once.
+     *
+     * The Scout then keeps only a LINK plus a label snapshot for report
+     * presentation — never a competing stage value.
+     *
+     * Placement uses the EXISTING strict validator. A fix that does not qualify
+     * refuses the capture rather than dropping the observation at a block
+     * centroid or a last-known position.
+     */
+    fun captureScoutGrowthStage(
+        visitId: String,
+        assessmentId: String,
+        paddockId: String,
+        stage: GrowthStage,
+        onResult: (Boolean, String?) -> Unit,
+    ) {
+        val visit = vineyardInsights.visit(visitId)
+            ?: run { onResult(false, "This Scout is no longer open."); return }
+        val observation = visit.assessments
+            .firstOrNull { it.id == assessmentId }
+            ?.observation(com.rork.vinetrack.data.insights.ScoutItem.GROWTH_STAGE)
+        val existingRecordId = observation?.linkedGrowthStageRecordId
+        val existingRecord = existingRecordId?.let { id ->
+            _ui.value.growthRecords.firstOrNull { it.id == id }
+        }
+
+        val plan = com.rork.vinetrack.data.insights.ScoutGrowthStageLink.plan(
+            observationId = observation?.id ?: assessmentId,
+            vineyardId = visit.vineyardId,
+            paddockId = paddockId,
+            existingRecordId = existingRecordId,
+            existingStageCode = existingRecord?.stageCode,
+            selectedStageCode = stage.code,
+        )
+
+        // Offline replay or a re-selection of the same stage. Deliberately a
+        // no-op: creating a second record here is the duplication this whole
+        // contract exists to prevent.
+        if (plan is com.rork.vinetrack.data.insights.ScoutGrowthStageLink.Unchanged) {
+            onResult(true, "That E-L stage is already recorded for this block.")
+            return
+        }
+
+        val block = _ui.value.paddocks.firstOrNull { it.id == paddockId }
+
+        fun link(record: GrowthStageRecord) {
+            vineyardInsights.linkGrowthStageRecord(
+                visitId = visitId,
+                assessmentId = assessmentId,
+                // Android authors DIRECT growth records (pin_id null), matching
+                // the existing Growth screen, so there is no pin to reference.
+                pinId = record.pinId,
+                recordId = record.id,
+                stageLabel = stage.displayName,
+            )
+        }
+
+        // An edit goes through the canonical UPDATE path, so the SAME record is
+        // amended rather than a second one being minted.
+        if (plan is com.rork.vinetrack.data.insights.ScoutGrowthStageLink.Update) {
+            val current = existingRecord
+                ?: run { onResult(false, "That Growth Stage record is not on this device yet."); return }
+            updateGrowthStageRecord(
+                current.id,
+                GrowthStageRecordRepository.GrowthInput(
+                    paddockId = current.paddockId ?: paddockId,
+                    stageCode = stage.code,
+                    stageLabel = stage.description,
+                    variety = current.variety ?: block?.primaryVarietyName,
+                    observedAt = current.observedAt ?: java.time.Instant.now().toString(),
+                    rowNumber = current.rowNumber,
+                    notes = current.notes,
+                    latitude = current.latitude,
+                    longitude = current.longitude,
+                ),
+            ) { ok ->
+                if (ok) {
+                    _ui.value.growthRecords.firstOrNull { it.id == current.id }?.let { link(it) }
+                    onResult(true, "Growth Stage record updated.")
+                } else {
+                    onResult(false, _ui.value.growthError ?: "Could not update the stage.")
+                }
+            }
+            return
+        }
+
+        // A new capture needs a qualified fix, exactly as the Growth screen does.
+        fetchCurrentFix { result ->
+            if (result !is PinLocationResult.Success) {
+                onResult(false, result.operatorMessage())
+                return@fetchCurrentFix
+            }
+            var created: GrowthStageRecord? = null
+            createGrowthStageRecord(
+                input = GrowthStageRecordRepository.GrowthInput(
+                    paddockId = paddockId,
+                    stageCode = stage.code,
+                    stageLabel = stage.description,
+                    // Snapshot the variety so a later allocation change cannot
+                    // rewrite what this observation was made against.
+                    variety = block?.primaryVarietyName,
+                    observedAt = java.time.Instant.now().toString(),
+                    rowNumber = null,
+                    notes = null,
+                    latitude = result.fix.latitude,
+                    longitude = result.fix.longitude,
+                ),
+                onCreatedRecord = { record ->
+                    // Linked from the optimistic row, whose id is client-minted
+                    // and final, so an offline capture is linked immediately.
+                    if (created == null) {
+                        created = record
+                        link(record)
+                    }
+                },
+            ) { ok ->
+                if (ok) {
+                    onResult(true, "Growth Stage record created.")
+                } else {
+                    // The canonical create rolled back, so the Scout must not
+                    // keep pointing at a record that does not exist.
+                    vineyardInsights.unlinkGrowthStageRecord(visitId, assessmentId)
+                    onResult(false, _ui.value.growthError ?: "Could not record the stage.")
+                }
+            }
+        }
+    }
+
+    /**
+     * Capture a Scout photograph: compress with the EXISTING pin-photo
+     * convention, resolve a fix through the EXISTING strict validator, then
+     * store bytes locally and queue the upload.
+     *
+     * A fix that does not qualify never becomes coordinates — the photograph is
+     * recorded as block-associated instead, which is the honest claim and the
+     * only other shape ScoutPhoto can hold.
+     */
+    fun captureScoutPhoto(
+        visitId: String,
+        assessmentId: String,
+        item: com.rork.vinetrack.data.insights.ScoutItem,
+        uri: Uri,
+        onResult: (Boolean) -> Unit,
+    ) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        // The fix request runs through the EXISTING validator first; only a
+        // Success verdict can become coordinates.
+        fetchCurrentFix { result ->
+            val fix = (result as? PinLocationResult.Success)?.let {
+                com.rork.vinetrack.data.insights.ScoutPhotoFix(
+                    latitude = it.fix.latitude,
+                    longitude = it.fix.longitude,
+                    accuracyMetres = it.fix.accuracyMetres,
+                )
+            }
+            viewModelScope.launch {
+                val jpeg = runCatching { PinPhotoImageUtil.compress(getApplication(), uri) }
+                    .getOrNull()
+                if (jpeg == null) {
+                    _ui.update {
+                        it.copy(growthError = "Couldn't read that photograph. Try again.")
+                    }
+                    onResult(false)
+                    return@launch
+                }
+                val saved = vineyardInsights.capturePhoto(
+                    visitId = visitId,
+                    assessmentId = assessmentId,
+                    item = item,
+                    jpeg = jpeg,
+                    fix = fix,
+                    capturedByUserId = session.userId,
+                )
+                onResult(saved != null)
+                // Bytes are already durable; this is the opportunistic upload.
+                if (saved != null) {
+                    runCatching { vineyardInsights.retryPhotoUploads(vineyardId) }
+                }
+            }
+        }
+    }
 
     /** Persists an edited layout (local first, then Supabase). */
     fun saveOperationalToolLayout(
@@ -12580,13 +12789,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * Photo upload/removal remains online-only (parked); this path never queues
      * photo writes.
      */
-    fun createGrowthStageRecord(input: GrowthStageRecordRepository.GrowthInput, onResult: (Boolean) -> Unit) {
+    fun createGrowthStageRecord(
+        input: GrowthStageRecordRepository.GrowthInput,
+        // Fires with the optimistic (or server-reconciled) record so a caller
+        // such as Scout can reference the CANONICAL identity without running a
+        // second writer of its own. Defaulted, so existing callers are
+        // unaffected.
+        onCreatedRecord: (GrowthStageRecord) -> Unit = {},
+        onResult: (Boolean) -> Unit,
+    ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
         val id = java.util.UUID.randomUUID().toString()
         val now = java.time.Instant.now().toString()
         val optimistic = growthRepo.buildGrowthRecord(vineyardId, input, id, now)
         // Optimistic insert at the top — the operator sees the observation straight away.
         _ui.update { it.copy(growthRecords = listOf(optimistic) + it.growthRecords, growthError = null) }
+        // Reported before any network so an offline capture can still be linked
+        // to its canonical id. The id is client-minted and final.
+        onCreatedRecord(optimistic)
 
         // Known-offline: queue the create marker without touching the network.
         if (!_ui.value.isOnline) {
@@ -12601,6 +12821,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val created = growthRepo.createGrowthStageRecord(vineyardId, input, id, now)
                 _ui.update { st -> st.copy(growthRecords = st.growthRecords.map { if (it.id == id) created else it }, growthBusy = false) }
+                onCreatedRecord(created)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(growthBusy = false) }; onUnauthorized("createGrowthStageRecord"); onResult(false)

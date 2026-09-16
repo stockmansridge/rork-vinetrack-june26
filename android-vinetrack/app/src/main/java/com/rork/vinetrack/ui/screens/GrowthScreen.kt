@@ -1555,7 +1555,11 @@ fun GrowthSheet(
                 onSaved()
             }
         }
-        if (existing == null) vm.createGrowthStageRecord(input, cb) else vm.updateGrowthStageRecord(existing.id, input, cb)
+        if (existing == null) {
+            vm.createGrowthStageRecord(input, onResult = cb)
+        } else {
+            vm.updateGrowthStageRecord(existing.id, input, cb)
+        }
     }
 
     /** Advance the flow once a stage is chosen: stages with a high-res image

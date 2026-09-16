@@ -587,7 +587,11 @@ struct VineyardInsightsTests {
         let id = assessmentID(service, visit.id, blockA)
         let recordID = UUID()
         service.linkGrowthStageRecord(
-            visitID: visit.id, assessmentID: id, recordID: recordID, stageLabel: "E-L 23"
+            visitID: visit.id,
+            assessmentID: id,
+            pinID: UUID(),
+            recordID: recordID,
+            stageLabel: "E-L 23"
         )
 
         let retained = service.deleteVisit(visit.id)
@@ -666,17 +670,14 @@ struct VineyardInsightsTests {
         service.toggleBlock(visitID: visit.id, paddockID: blockA)
         let id = assessmentID(service, visit.id, blockA)
 
-        for _ in 0..<3 {
-            service.addPhoto(
+        for index in 0..<3 {
+            service.capturePhoto(
                 visitID: visit.id,
                 assessmentID: id,
                 item: .powderyMildew,
-                photo: ScoutPhoto.blockOnly(
-                    observationID: UUID(),
-                    localPath: nil,
-                    capturedAt: Date(),
-                    capturedByUserID: nil
-                )
+                imageData: Data([UInt8(index), 2, 3, 4]),
+                locationFix: nil,
+                capturedByUserID: nil
             )
         }
 
@@ -888,15 +889,19 @@ struct VineyardInsightsTests {
             visitID: visit.id, assessmentID: id, item: .generalRecommendation, notes: "Spray next week"
         )
         service.linkGrowthStageRecord(
-            visitID: visit.id, assessmentID: id, recordID: UUID(), stageLabel: "E-L 23"
+            visitID: visit.id,
+            assessmentID: id,
+            pinID: nil,
+            recordID: UUID(),
+            stageLabel: "E-L 23"
         )
-        service.addPhoto(
+        service.capturePhoto(
             visitID: visit.id,
             assessmentID: id,
             item: .downyMildew,
-            photo: ScoutPhoto.blockOnly(
-                observationID: UUID(), localPath: nil, capturedAt: Date(), capturedByUserID: nil
-            )
+            imageData: Data([1, 2, 3, 4]),
+            locationFix: nil,
+            capturedByUserID: nil
         )
 
         let review = service.review(visitID: visit.id)

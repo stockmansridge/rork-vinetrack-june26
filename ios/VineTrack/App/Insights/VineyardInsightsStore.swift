@@ -33,6 +33,8 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         static let notes = "vineyard_insights.vintage_notes"
         static let queue = "vineyard_insights.pending_operations"
         static let noteTypes = "vineyard_insights.custom_note_types"
+        static let photoQueue = "vineyard_insights.pending_photos"
+        static let lastPull = "vineyard_insights.last_pull"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -65,6 +67,29 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         var attemptCount: Int
     }
 
+    /// A photograph whose bytes are already on disk and whose upload is owed.
+    ///
+    /// Separate from `QueuedOperation` because a photo upload is two distinct
+    /// server effects — bytes into the `scout-photos` bucket, then a row in
+    /// `scout_observation_photos` — and the bytes may succeed while the row
+    /// write fails. Keeping the entry until BOTH are done is what makes a
+    /// half-finished upload retryable instead of silently lost.
+    nonisolated struct QueuedPhoto: Codable, Equatable, Sendable, Identifiable {
+        let id: UUID
+        /// Ownership captured at enqueue time, never re-derived from whatever
+        /// vineyard happens to be selected when connectivity returns.
+        let vineyardID: UUID
+        let visitID: UUID
+        let observationID: UUID
+        /// Relative path under the app's ScoutPhotos directory.
+        let localPath: String
+        /// Filled once the bytes are in the bucket but the row is still owed.
+        var uploadedStoragePath: String?
+        let capturedAt: Date
+        var attemptCount: Int
+        var lastError: String?
+    }
+
     // MARK: - Codable DTOs
 
     private struct StoredPhoto: Codable {
@@ -78,6 +103,9 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         let longitude: Double?
         let accuracy: Double?
         let locationStatus: String
+        /// Optional for backward compatibility with rows written before upload
+        /// failure was tracked; absent decodes as "no failure recorded".
+        let uploadFailed: Bool?
     }
 
     private struct StoredObservation: Codable {
@@ -174,7 +202,9 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
                 latitude: latitude,
                 longitude: longitude,
                 accuracyMetres: stored.accuracy ?? 0,
-                id: stored.id
+                id: stored.id,
+                storagePath: stored.storagePath,
+                uploadFailed: stored.uploadFailed ?? false
             )
         }
         return ScoutPhoto.blockOnly(
@@ -182,7 +212,9 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
             localPath: stored.localPath,
             capturedAt: stored.capturedAt,
             capturedByUserID: stored.capturedBy,
-            id: stored.id
+            id: stored.id,
+            storagePath: stored.storagePath,
+            uploadFailed: stored.uploadFailed ?? false
         )
     }
 
@@ -197,7 +229,8 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
             latitude: photo.latitude,
             longitude: photo.longitude,
             accuracy: photo.accuracyMetres,
-            locationStatus: photo.locationStatus.code
+            locationStatus: photo.locationStatus.code,
+            uploadFailed: photo.uploadFailed
         )
     }
 
@@ -356,6 +389,22 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         decode([QueuedOperation].self, Key.queue) ?? []
     }
 
+    func loadPhotoQueue() -> [QueuedPhoto] {
+        decode([QueuedPhoto].self, Key.photoQueue) ?? []
+    }
+
+    /// Delta cursor per vineyard, so a pull asks only for what changed.
+    func lastPull(vineyardID: UUID) -> Date? {
+        (decode([String: Date].self, Key.lastPull) ?? [:])[vineyardID.uuidString]
+    }
+
+    @discardableResult
+    func setLastPull(_ date: Date, vineyardID: UUID) -> Bool {
+        var all = decode([String: Date].self, Key.lastPull) ?? [:]
+        all[vineyardID.uuidString] = date
+        return encodeAndWrite(all, Key.lastPull)
+    }
+
     /// Custom types belonging to one vineyard. Never another's.
     func customNoteTypes(vineyardID: UUID) -> [VintageNoteType] {
         (decode([StoredNoteType].self, Key.noteTypes) ?? [])
@@ -456,6 +505,48 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         return encodeAndWrite(all, Key.queue)
     }
 
+    /// Queue a photograph whose bytes are ALREADY on disk.
+    ///
+    /// Keyed by the photo's own id so repeated capture of several photographs
+    /// for one item produces several independent entries — photographs must
+    /// never collapse into one another the way repeated edits of a single
+    /// record legitimately do.
+    @discardableResult
+    func enqueuePhoto(_ photo: QueuedPhoto) -> Bool {
+        var all = loadPhotoQueue()
+        all.removeAll { $0.id == photo.id }
+        all.append(photo)
+        return encodeAndWrite(all, Key.photoQueue)
+    }
+
+    /// Record that the bytes landed but the row write is still owed.
+    @discardableResult
+    func markPhotoUploaded(photoID: UUID, storagePath: String) -> Bool {
+        var all = loadPhotoQueue()
+        guard let index = all.firstIndex(where: { $0.id == photoID }) else { return false }
+        all[index].uploadedStoragePath = storagePath
+        all[index].lastError = nil
+        return encodeAndWrite(all, Key.photoQueue)
+    }
+
+    @discardableResult
+    func recordPhotoFailure(photoID: UUID, message: String) -> Bool {
+        var all = loadPhotoQueue()
+        guard let index = all.firstIndex(where: { $0.id == photoID }) else { return false }
+        all[index].attemptCount += 1
+        all[index].lastError = message
+        return encodeAndWrite(all, Key.photoQueue)
+    }
+
+    /// Remove a photo entry once BOTH the bytes and the row are stored, or when
+    /// the operator deleted the photograph before it ever uploaded.
+    @discardableResult
+    func dequeuePhoto(photoID: UUID) -> Bool {
+        var all = loadPhotoQueue()
+        all.removeAll { $0.id == photoID }
+        return encodeAndWrite(all, Key.photoQueue)
+    }
+
     /// Wipe every locally held preview record.
     ///
     /// Called on sign-out: this is unreleased System Admin data and the next
@@ -465,6 +556,8 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         defaults.removeObject(forKey: Key.notes)
         defaults.removeObject(forKey: Key.queue)
         defaults.removeObject(forKey: Key.noteTypes)
+        defaults.removeObject(forKey: Key.photoQueue)
+        defaults.removeObject(forKey: Key.lastPull)
     }
 
     // MARK: - Plumbing

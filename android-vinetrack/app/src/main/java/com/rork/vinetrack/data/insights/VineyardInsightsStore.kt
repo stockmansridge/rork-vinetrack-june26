@@ -60,6 +60,36 @@ class VineyardInsightsStore(private val raw: InsightsKeyValueStore) {
         val longitude: Double? = null,
         val accuracy: Double? = null,
         @SerialName("location_status") val locationStatus: String,
+        /** Defaulted so rows written before upload tracking still decode. */
+        @SerialName("upload_failed") val uploadFailed: Boolean = false,
+    )
+
+    /**
+     * A photograph whose bytes are already on disk and whose upload is owed.
+     *
+     * Separate from [StoredQueueEntry] because a photo upload is two distinct
+     * server effects — bytes into the `scout-photos` bucket, then a row in
+     * `scout_observation_photos` — and the bytes may succeed while the row
+     * write fails. Keeping the entry until BOTH are done is what makes a
+     * half-finished upload retryable instead of silently lost.
+     */
+    @Serializable
+    data class QueuedPhoto(
+        val id: String,
+        /**
+         * Ownership captured at enqueue time, never re-derived from whatever
+         * vineyard happens to be selected when connectivity returns.
+         */
+        @SerialName("vineyard_id") val vineyardId: String,
+        @SerialName("visit_id") val visitId: String,
+        @SerialName("observation_id") val observationId: String,
+        /** Relative path under the app's scout_photos directory. */
+        @SerialName("local_path") val localPath: String,
+        /** Set once the bytes are in the bucket but the row is still owed. */
+        @SerialName("uploaded_storage_path") val uploadedStoragePath: String? = null,
+        @SerialName("captured_at") val capturedAt: String,
+        @SerialName("attempt_count") val attemptCount: Int = 0,
+        @SerialName("last_error") val lastError: String? = null,
     )
 
     @Serializable
@@ -207,6 +237,7 @@ class VineyardInsightsStore(private val raw: InsightsKeyValueStore) {
             } else {
                 PhotoLocationStatus.UNAVAILABLE
             },
+            uploadFailed = uploadFailed,
         )
     }.getOrNull()
 
@@ -221,6 +252,7 @@ class VineyardInsightsStore(private val raw: InsightsKeyValueStore) {
         longitude = longitude,
         accuracy = accuracyMetres,
         locationStatus = locationStatus.code,
+        uploadFailed = uploadFailed,
     )
 
     private fun StoredObservation.toDomain(): ScoutObservation? {
@@ -364,6 +396,26 @@ class VineyardInsightsStore(private val raw: InsightsKeyValueStore) {
 
     fun loadNotes(): List<VintageNote> = decodeList<StoredNote>(KEY_NOTES).map { it.toDomain() }
 
+    fun loadPhotoQueue(): List<QueuedPhoto> = decodeList<QueuedPhoto>(KEY_PHOTO_QUEUE)
+
+    /** Delta cursor per vineyard, so a pull asks only for what changed. */
+    fun lastPull(vineyardId: String): String? =
+        decodeList<StoredPullCursor>(KEY_LAST_PULL)
+            .firstOrNull { it.vineyardId == vineyardId }
+            ?.updatedAt
+
+    fun setLastPull(vineyardId: String, updatedAtIso: String): Boolean {
+        val next = decodeList<StoredPullCursor>(KEY_LAST_PULL)
+            .filterNot { it.vineyardId == vineyardId } + StoredPullCursor(vineyardId, updatedAtIso)
+        return encodeAndWrite(KEY_LAST_PULL, next)
+    }
+
+    @Serializable
+    private data class StoredPullCursor(
+        @SerialName("vineyard_id") val vineyardId: String,
+        @SerialName("updated_at") val updatedAt: String,
+    )
+
     fun loadQueue(): List<QueuedOperation> =
         decodeList<StoredQueueEntry>(KEY_QUEUE).mapNotNull { entry ->
             val entity = QueuedOperation.Entity.byCode(entry.entity) ?: return@mapNotNull null
@@ -489,6 +541,47 @@ class VineyardInsightsStore(private val raw: InsightsKeyValueStore) {
         return encodeAndWrite(KEY_QUEUE, next)
     }
 
+    /**
+     * Queue a photograph whose bytes are ALREADY on disk.
+     *
+     * Keyed by the photograph's own id so capturing several photographs for one
+     * item produces several independent entries. Photographs must never
+     * collapse into one another the way repeated edits of a single record
+     * legitimately do.
+     */
+    fun enqueuePhoto(photo: QueuedPhoto): Boolean {
+        val next = loadPhotoQueue().filterNot { it.id == photo.id } + photo
+        return encodeAndWrite(KEY_PHOTO_QUEUE, next)
+    }
+
+    /** Record that the bytes landed but the metadata row is still owed. */
+    fun markPhotoUploaded(photoId: String, storagePath: String): Boolean {
+        val next = loadPhotoQueue().map {
+            if (it.id == photoId) it.copy(uploadedStoragePath = storagePath, lastError = null) else it
+        }
+        return encodeAndWrite(KEY_PHOTO_QUEUE, next)
+    }
+
+    fun recordPhotoFailure(photoId: String, message: String): Boolean {
+        val next = loadPhotoQueue().map {
+            if (it.id == photoId) {
+                it.copy(attemptCount = it.attemptCount + 1, lastError = message)
+            } else {
+                it
+            }
+        }
+        return encodeAndWrite(KEY_PHOTO_QUEUE, next)
+    }
+
+    /**
+     * Remove a photo entry once BOTH the bytes and the row are stored, or when
+     * the operator deleted the photograph before it ever uploaded.
+     */
+    fun dequeuePhoto(photoId: String): Boolean {
+        val next = loadPhotoQueue().filterNot { it.id == photoId }
+        return encodeAndWrite(KEY_PHOTO_QUEUE, next)
+    }
+
     fun recordAttempt(queueId: String): Boolean {
         val next = decodeList<StoredQueueEntry>(KEY_QUEUE).map {
             if (it.id == queueId) it.copy(attemptCount = it.attemptCount + 1) else it
@@ -503,7 +596,14 @@ class VineyardInsightsStore(private val raw: InsightsKeyValueStore) {
      * person to sign in on this device may be someone else entirely.
      */
     fun clearForSignOut() {
-        listOf(KEY_VISITS, KEY_NOTES, KEY_QUEUE, KEY_NOTE_TYPES).forEach { key ->
+        listOf(
+            KEY_VISITS,
+            KEY_NOTES,
+            KEY_QUEUE,
+            KEY_NOTE_TYPES,
+            KEY_PHOTO_QUEUE,
+            KEY_LAST_PULL,
+        ).forEach { key ->
             if (!raw.remove(key)) Log.w(TAG, "Sign-out clear did not remove $key")
         }
     }
@@ -538,5 +638,7 @@ class VineyardInsightsStore(private val raw: InsightsKeyValueStore) {
         const val KEY_NOTES = "vintage_notes"
         const val KEY_QUEUE = "pending_operations"
         const val KEY_NOTE_TYPES = "custom_note_types"
+        const val KEY_PHOTO_QUEUE = "pending_photos"
+        const val KEY_LAST_PULL = "last_pull"
     }
 }

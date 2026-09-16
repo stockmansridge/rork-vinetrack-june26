@@ -24,6 +24,14 @@ import java.util.UUID
  */
 class VineyardInsightsController(
     private val store: VineyardInsightsStore,
+    /**
+     * Durable photo bytes. Null only in pure-JVM tests that exercise capture
+     * rules without a filesystem; capture then refuses rather than pretending
+     * to have stored an image.
+     */
+    private val photoFiles: ScoutPhotoFiles? = null,
+    /** Null in tests and whenever the backend is unreachable. */
+    private val repository: VineyardInsightsSyncRepository? = null,
     private val clock: () -> Instant = { Instant.now() },
 ) {
 
@@ -46,6 +54,13 @@ class VineyardInsightsController(
      */
     private val _lastWriteFailed = MutableStateFlow(false)
     val lastWriteFailed: StateFlow<Boolean> = _lastWriteFailed.asStateFlow()
+
+    /** Non-fatal sync state, so a stuck queue is visible rather than silent. */
+    private val _lastSyncError = MutableStateFlow<String?>(null)
+    val lastSyncError: StateFlow<String?> = _lastSyncError.asStateFlow()
+
+    private val _pendingPhotoCount = MutableStateFlow(store.loadPhotoQueue().size)
+    val pendingPhotoCount: StateFlow<Int> = _pendingPhotoCount.asStateFlow()
 
     private fun nowIso(): String = clock().toString()
 
@@ -133,24 +148,170 @@ class VineyardInsightsController(
         }
     }
 
-    fun addPhoto(visitId: String, assessmentId: String, item: ScoutItem, photo: ScoutPhoto) {
-        updateObservation(visitId, assessmentId, item) { it.copy(photos = it.photos + photo) }
+    // -------------------------------------------------------- Photographs
+
+    /** Local bytes for immediate display, identical before and after upload. */
+    fun photoBytes(photo: ScoutPhoto): ByteArray? =
+        photo.localPath?.let { photoFiles?.read(it) }
+
+    /**
+     * Capture one photograph for one assessment item.
+     *
+     * Order matters and is the whole contract:
+     *  1. mint a stable client photo id,
+     *  2. write the compressed bytes to app-private storage,
+     *  3. record the photograph against the observation locally,
+     *  4. queue the upload.
+     *
+     * All four complete without any network. A later upload failure therefore
+     * cannot lose the photograph, and Retry is genuinely retryable.
+     *
+     * [fix] is the verdict from the EXISTING strict validator, resolved by the
+     * caller. A non-qualifying fix arrives here as null and becomes an explicit
+     * block-only photograph — never a stale or last-known position.
+     */
+    fun capturePhoto(
+        visitId: String,
+        assessmentId: String,
+        item: ScoutItem,
+        jpeg: ByteArray,
+        fix: ScoutPhotoFix?,
+        capturedByUserId: String?,
+    ): ScoutPhoto? {
+        val visit = visit(visitId) ?: return null
+        if (!visit.isEditable) return null
+        val assessment = visit.assessments.firstOrNull { it.id == assessmentId } ?: return null
+        val files = photoFiles ?: run { record(false); return null }
+
+        // The observation must exist before the photograph can reference it:
+        // scout_observation_photos.observation_id is a real foreign key.
+        val observation = assessment.observation(item)
+            ?: ScoutObservation.empty(assessmentId, item)
+        val photoId = UUID.randomUUID().toString()
+
+        val localPath = files.write(jpeg, visit.vineyardId, observation.id, photoId)
+            ?: run {
+                // A photograph that could not be written is NOT recorded.
+                // Showing it and losing it later is worse than refusing now.
+                record(false)
+                return null
+            }
+
+        val capturedAt = nowIso()
+        val photo = if (fix != null) {
+            ScoutPhoto.gpsConfirmed(
+                observationId = observation.id,
+                localPath = localPath,
+                capturedAtIso = capturedAt,
+                capturedByUserId = capturedByUserId,
+                latitude = fix.latitude,
+                longitude = fix.longitude,
+                accuracyMetres = fix.accuracyMetres,
+                id = photoId,
+            )
+        } else {
+            ScoutPhoto.blockOnly(
+                observationId = observation.id,
+                localPath = localPath,
+                capturedAtIso = capturedAt,
+                capturedByUserId = capturedByUserId,
+                id = photoId,
+            )
+        }
+
+        val nextAssessment = assessment
+            .withObservation(observation.copy(photos = observation.photos + photo))
+            .let {
+                it.copy(
+                    status = if (it.isComplete) {
+                        ScoutAssessmentStatus.COMPLETE
+                    } else {
+                        ScoutAssessmentStatus.IN_PROGRESS
+                    },
+                )
+            }
+        if (!persist(visit.withAssessment(nextAssessment))) return null
+
+        store.enqueuePhoto(
+            VineyardInsightsStore.QueuedPhoto(
+                id = photoId,
+                vineyardId = visit.vineyardId,
+                visitId = visitId,
+                observationId = observation.id,
+                localPath = localPath,
+                capturedAt = capturedAt,
+            ),
+        )
+        _pendingPhotoCount.value = store.loadPhotoQueue().size
+        return photo
     }
 
     /**
-     * Attach the canonical Growth Stage record created for an E-L selection.
+     * Delete one photograph, invalidating any queued upload for it.
      *
-     * The stage VALUE is deliberately not stored on the observation — only the
-     * link and the label shown at the time. See [ScoutGrowthStageLink].
+     * The queue entry is removed FIRST so a replay already running cannot
+     * resurrect a photograph the operator deleted. An already-uploaded row is
+     * soft-deleted server-side on the next sync attempt.
+     */
+    fun deletePhoto(
+        visitId: String,
+        assessmentId: String,
+        item: ScoutItem,
+        photoId: String,
+    ): ScoutPhoto? {
+        val visit = visit(visitId) ?: return null
+        if (!visit.isEditable) return null
+        val assessment = visit.assessments.firstOrNull { it.id == assessmentId } ?: return null
+        val observation = assessment.observation(item) ?: return null
+        val photo = observation.photos.firstOrNull { it.id == photoId } ?: return null
+
+        store.dequeuePhoto(photoId)
+        _pendingPhotoCount.value = store.loadPhotoQueue().size
+
+        val nextAssessment = assessment.withObservation(
+            observation.copy(photos = observation.photos.filterNot { it.id == photoId }),
+        )
+        if (!persist(visit.withAssessment(nextAssessment))) return null
+        photo.localPath?.let { photoFiles?.remove(it) }
+        return photo
+    }
+
+    // ------------------------------------------------------------ E-L link
+
+    /**
+     * Attach the canonical Growth Stage pin and record created for an E-L
+     * selection.
+     *
+     * The stage VALUE is deliberately not stored as an authoritative figure —
+     * only the two canonical ids plus a label snapshot for report
+     * presentation. See [ScoutGrowthStageLink].
      */
     fun linkGrowthStageRecord(
         visitId: String,
         assessmentId: String,
+        pinId: String?,
         recordId: String,
         stageLabel: String,
     ) {
         updateObservation(visitId, assessmentId, ScoutItem.GROWTH_STAGE) {
-            it.copy(linkedGrowthStageRecordId = recordId, valueLabel = stageLabel)
+            it.copy(
+                linkedPinId = pinId,
+                linkedGrowthStageRecordId = recordId,
+                valueLabel = stageLabel,
+            )
+        }
+    }
+
+    /**
+     * Drop the Scout's reference to a canonical record.
+     *
+     * The canonical pin and `growth_stage_records` row are NOT touched. The
+     * observation genuinely happened; only the scout's citation of it is
+     * removed. Callers must confirm with the operator first.
+     */
+    fun unlinkGrowthStageRecord(visitId: String, assessmentId: String) {
+        updateObservation(visitId, assessmentId, ScoutItem.GROWTH_STAGE) {
+            it.copy(linkedPinId = null, linkedGrowthStageRecordId = null, valueLabel = null)
         }
     }
 
@@ -320,14 +481,59 @@ class VineyardInsightsController(
         return true
     }
 
+    // --------------------------------------------------------------- Sync
+
+    private val worker: VineyardInsightsSyncWorker? = repository?.let {
+        VineyardInsightsSyncWorker(store, photoFiles, it) { nowIso() }
+    }
+
+    /**
+     * Push queued work then pull the server's view for one vineyard.
+     *
+     * Local state is already durable before this runs, so every failure path is
+     * "try again later" and never data loss. Reloads state from the store at the
+     * end so pulled work becomes visible.
+     */
+    suspend fun sync(vineyardId: String) {
+        val outcome = worker?.sync(vineyardId) ?: return
+        _visits.value = store.loadVisits()
+        _notes.value = store.loadNotes()
+        _pendingPhotoCount.value = store.loadPhotoQueue().size
+        _lastSyncError.value = outcome.error
+    }
+
+    /** Retry failed photograph uploads. The local bytes were never discarded. */
+    suspend fun retryPhotoUploads(vineyardId: String) {
+        val outcome = worker?.pushPhotos(vineyardId) ?: return
+        _visits.value = store.loadVisits()
+        _pendingPhotoCount.value = store.loadPhotoQueue().size
+        _lastSyncError.value = outcome.error
+    }
+
     // ------------------------------------------------------------ Session
 
     /** Drop every locally held preview record on sign-out. */
     fun clearForSignOut() {
         store.clearForSignOut()
+        photoFiles?.clearForSignOut()
         _visits.value = emptyList()
         _notes.value = emptyList()
         _openVisitId.value = null
         _lastWriteFailed.value = false
+        _lastSyncError.value = null
+        _pendingPhotoCount.value = 0
     }
 }
+
+/**
+ * A GPS fix that ALREADY passed the existing strict validator.
+ *
+ * Only a caller that ran the validator can construct one, so a non-qualifying
+ * reading cannot reach photo storage as coordinates. The absence of this value
+ * is what produces an explicit block-only photograph.
+ */
+data class ScoutPhotoFix(
+    val latitude: Double,
+    val longitude: Double,
+    val accuracyMetres: Double,
+)
