@@ -69,6 +69,8 @@ import com.rork.vinetrack.data.mapalignment.MapAlignmentPendingReference
 import com.rork.vinetrack.data.mapalignment.MapAlignmentReferencePoint
 import com.rork.vinetrack.data.mapalignment.MapAlignmentReferenceType
 import com.rork.vinetrack.data.mapalignment.MapAlignmentRowPosition
+import com.rork.vinetrack.data.mapalignment.MapAlignmentSaveFlow
+import com.rork.vinetrack.data.mapalignment.MapAlignmentSavedCalibration
 import com.rork.vinetrack.data.mapalignment.MapAlignmentScope
 import com.rork.vinetrack.data.mapalignment.MapAlignmentSettlingWindow
 import com.rork.vinetrack.data.mapalignment.MapAlignmentSolver
@@ -154,12 +156,19 @@ fun MapAlignmentWizard(
     var solvedAlignmentId by remember { mutableStateOf<String?>(null) }
     // Resume offer, resolved once from disk before anything is shown.
     var resume by remember { mutableStateOf<ResumeState>(ResumeState.Loading) }
+    // The completed calibrations saved on this installation. Held separately
+    // from the draft throughout: a recalibration must never be able to disturb
+    // one by existing.
+    var saved by remember { mutableStateOf<List<MapAlignmentSavedCalibration>>(emptyList()) }
+    var viewing by remember { mutableStateOf<MapAlignmentSavedCalibration?>(null) }
     var confirmingStartOver by remember { mutableStateOf<MapAlignmentStoredDraft?>(null) }
     var confirmingDeleteDraft by remember { mutableStateOf<MapAlignmentStoredDraft?>(null) }
+    var confirmingDeleteSaved by remember { mutableStateOf<MapAlignmentSavedCalibration?>(null) }
+    var saveStage by remember { mutableStateOf<SaveStage>(SaveStage.Idle) }
     // Set when the outlier warning sends the operator to a specific reference.
     var reviewTargetPointId by remember { mutableStateOf<String?>(null) }
 
-    // Read the local draft exactly once per entry to the wizard. An unreadable
+    // Read local storage exactly once per entry to the wizard. An unreadable
     // document is surfaced rather than hidden, so its bytes can be removed.
     LaunchedEffect(store) {
         resume = when (val decoded = store.loadDraft()) {
@@ -172,6 +181,7 @@ fun MapAlignmentWizard(
             MapAlignmentStorage.Decoded.Empty -> ResumeState.None
             is MapAlignmentStorage.Decoded.Unusable -> ResumeState.Unusable(decoded.reason)
         }
+        saved = store.savedCalibrationsOrEmpty()
     }
 
     /**
@@ -211,6 +221,91 @@ fun MapAlignmentWizard(
         pending = null
         solvedAlignmentId = null
         step = MapAlignmentWizardStep.Scope
+        saveStage = SaveStage.Idle
+        // Re-offer whatever is actually stored, so leaving lands back on the
+        // hub rather than on a blank scope picker with work still on disk.
+        resume = when (val decoded = store.loadDraft()) {
+            is MapAlignmentStorage.Decoded.Restored ->
+                if (decoded.value.hasProgress) ResumeState.Offered(decoded.value) else ResumeState.None
+            MapAlignmentStorage.Decoded.Empty -> ResumeState.None
+            is MapAlignmentStorage.Decoded.Unusable -> ResumeState.Unusable(decoded.reason)
+        }
+        saved = store.savedCalibrationsOrEmpty()
+    }
+
+    /**
+     * Write the completed calibration, then — and only then — remove the draft.
+     *
+     * The ordering is the whole point. A failed write leaves the draft exactly
+     * where it was, because at that moment the draft is the only remaining copy
+     * of a walk around a vineyard. Deleting first and saving second would trade
+     * that walk for a write that might not happen.
+     */
+    fun performSave() {
+        val subject = draft ?: return
+        val solution = subject.solution ?: return
+        val record = MapAlignmentSaveFlow.savedFrom(
+            draft = subject,
+            solution = solution,
+            nowEpochMillis = System.currentTimeMillis(),
+        )
+        if (!store.saveCalibration(record)) {
+            saveStage = SaveStage.Failed
+            return
+        }
+        if (MapAlignmentSaveFlow.mayRemoveDraft(saveSucceeded = true)) {
+            store.deleteDraft()
+        }
+        saved = store.savedCalibrationsOrEmpty()
+        resume = ResumeState.None
+        saveStage = SaveStage.Saved(record)
+        step = MapAlignmentWizardStep.Complete
+    }
+
+    /** Replace-check stage: runs after any quality confirmation. */
+    fun continueToReplaceCheck() {
+        val subject = draft ?: return
+        val existing = store.savedFor(subject.scope)
+        if (existing == null) performSave() else saveStage = SaveStage.ConfirmReplace(existing)
+    }
+
+    /**
+     * Begin saving a reviewed calibration.
+     *
+     * The overall quality question is asked first and separately from the
+     * per-point outlier warning already shown on the review step — they are
+     * different problems, and a calibration can fail either one alone.
+     */
+    fun beginSave() {
+        val solution = draft?.solution ?: return
+        saveStage = if (MapAlignmentSaveFlow.needsQualityConfirmation(solution)) {
+            SaveStage.QualityWarning(solution)
+        } else {
+            SaveStage.Idle.also { continueToReplaceCheck() }
+        }
+    }
+
+    /**
+     * Start a recalibration for [existing]'s scope in a SEPARATE draft.
+     *
+     * The saved calibration is deliberately left exactly as it is. It is only
+     * replaced once a new calibration is completed, reviewed and explicitly
+     * saved — so an interrupted or abandoned recalibration costs the operator
+     * nothing they already had.
+     */
+    fun recalibrate(existing: MapAlignmentSavedCalibration) {
+        viewing = null
+        val fresh = MapAlignmentDraft(
+            scope = existing.alignment.scope,
+            vineyardName = existing.vineyardName,
+            blockName = existing.blockName,
+        )
+        draft = fresh
+        pending = null
+        solvedAlignmentId = null
+        step = MapAlignmentWizardStep.Introduction
+        resume = ResumeState.None
+        persist(fresh, atStep = MapAlignmentWizardStep.Introduction, checkpoint = null, alignmentId = null)
     }
 
     // Keep the shared guard in step with the session, so the host's toolbar
@@ -227,22 +322,14 @@ fun MapAlignmentWizard(
         // repetition this phase exists to remove.
         current == null && resume is ResumeState.Loading -> Unit
 
-        current == null && resume is ResumeState.Offered -> {
-            val offered = (resume as ResumeState.Offered).stored
-            ResumeCalibrationStep(
-                stored = offered,
-                modifier = modifier,
-                onResume = {
-                    draft = offered.restoredDraft()
-                    pending = offered.pending
-                    solvedAlignmentId = offered.solvedAlignmentId
-                    step = offered.step
-                    resume = ResumeState.None
-                },
-                onStartOver = { confirmingStartOver = offered },
-                onDeleteDraft = { confirmingDeleteDraft = offered },
-            )
-        }
+        current == null && viewing != null -> SavedCalibrationDetailStep(
+            state = state,
+            saved = viewing!!,
+            modifier = modifier,
+            onBack = { viewing = null },
+            onRecalibrate = { recalibrate(viewing!!) },
+            onDelete = { confirmingDeleteSaved = viewing },
+        )
 
         current == null && resume is ResumeState.Unusable -> UnusableDraftStep(
             reason = (resume as ResumeState.Unusable).reason,
@@ -252,6 +339,32 @@ fun MapAlignmentWizard(
                 resume = ResumeState.None
             },
         )
+
+        // The hub: whatever is actually stored on this installation. Shown
+        // whenever there is something to resume or review, so neither record
+        // can be reached only by accident.
+        current == null && (resume is ResumeState.Offered || saved.isNotEmpty()) -> {
+            val offered = (resume as? ResumeState.Offered)?.stored
+            MapAlignmentHomeStep(
+                stored = offered,
+                saved = saved,
+                modifier = modifier,
+                onResume = {
+                    val target = offered ?: return@MapAlignmentHomeStep
+                    draft = target.restoredDraft()
+                    pending = target.pending
+                    solvedAlignmentId = target.solvedAlignmentId
+                    step = target.step
+                    resume = ResumeState.None
+                },
+                onStartOver = { confirmingStartOver = offered },
+                onDeleteDraft = { confirmingDeleteDraft = offered },
+                onView = { viewing = it },
+                onRecalibrate = ::recalibrate,
+                onDeleteSaved = { confirmingDeleteSaved = it },
+                onNewCalibration = { resume = ResumeState.None; saved = emptyList() },
+            )
+        }
 
         step == MapAlignmentWizardStep.Scope || current == null -> ScopeStep(
             state = state,
@@ -327,15 +440,40 @@ fun MapAlignmentWizard(
                 step = MapAlignmentWizardStep.Capture
                 persist(current, atStep = MapAlignmentWizardStep.Capture)
             },
-            onFinish = { step = MapAlignmentWizardStep.Complete },
+            onSave = ::beginSave,
             onDiscard = { exitGuard.requestExit(::leaveSession) },
         )
 
         else -> CompletionStep(
+            saved = (saveStage as? SaveStage.Saved)?.record,
             modifier = modifier,
             onViewAgain = { step = MapAlignmentWizardStep.Review },
             onDiscardAndFinish = { exitGuard.requestExit(::leaveSession) },
         )
+    }
+
+    when (val stage = saveStage) {
+        SaveStage.Idle, is SaveStage.Saved -> Unit
+
+        is SaveStage.QualityWarning -> SaveWithWarningsDialog(
+            message = MapAlignmentSaveFlow.qualityWarningMessage(stage.solution),
+            onKeepReviewing = { saveStage = SaveStage.Idle },
+            onSave = {
+                saveStage = SaveStage.Idle
+                continueToReplaceCheck()
+            },
+        )
+
+        is SaveStage.ConfirmReplace -> ReplaceCalibrationDialog(
+            message = MapAlignmentSaveFlow.replaceMessage(stage.existing),
+            onCancel = { saveStage = SaveStage.Idle },
+            onReplace = {
+                saveStage = SaveStage.Idle
+                performSave()
+            },
+        )
+
+        SaveStage.Failed -> SaveFailedDialog(onDismiss = { saveStage = SaveStage.Idle })
     }
 
     if (exitGuard.isConfirmingExit) {
@@ -365,12 +503,43 @@ fun MapAlignmentWizard(
             pointCount = target.pointCount,
             onCancel = { confirmingDeleteDraft = null },
             onDelete = {
+                // Draft only. Any saved calibration for this scope is untouched.
                 store.deleteDraft()
                 confirmingDeleteDraft = null
                 resume = ResumeState.None
             },
         )
     }
+
+    confirmingDeleteSaved?.let { target ->
+        DeleteSavedCalibrationDialog(
+            saved = target,
+            onCancel = { confirmingDeleteSaved = null },
+            onDelete = {
+                // Saved calibration only. A recalibration draft in progress is
+                // deliberately left alone — the operator did not ask to lose it.
+                store.deleteCalibration(target.alignment.id)
+                saved = store.savedCalibrationsOrEmpty()
+                confirmingDeleteSaved = null
+                viewing = null
+            },
+        )
+    }
+}
+
+/** Where a completed save has got to. Nothing is written until [performSave]. */
+private sealed interface SaveStage {
+    data object Idle : SaveStage
+
+    /** The overall Check alignment confirmation, separate from the outlier one. */
+    data class QualityWarning(val solution: MapAlignmentSolver.Solution) : SaveStage
+
+    data class ConfirmReplace(val existing: MapAlignmentSavedCalibration) : SaveStage
+
+    /** The write failed. The draft is deliberately still on disk. */
+    data object Failed : SaveStage
+
+    data class Saved(val record: MapAlignmentSavedCalibration) : SaveStage
 }
 
 /** Whether a stored draft is being offered on entry to the wizard. */
@@ -471,31 +640,154 @@ internal fun DeleteDraftDialog(
     )
 }
 
+/**
+ * The OVERALL quality confirmation, shown before saving a Check alignment result.
+ *
+ * Deliberately separate from the per-point outlier warning on the review step.
+ * They detect different problems: this one fires when the fit as a whole is
+ * outside the recommended limits, which can happen with no odd point at all,
+ * while the outlier warning fires when one point disagrees with its siblings
+ * even though the overall fit looks acceptable. Collapsing them into one rule
+ * would let each other's case through unnoticed.
+ *
+ * Saving anyway is a legitimate choice — a field-test calibration is evidence,
+ * and a poor one is still worth keeping and reviewing.
+ */
+@Composable
+internal fun SaveWithWarningsDialog(
+    message: String,
+    onKeepReviewing: () -> Unit,
+    onSave: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onKeepReviewing,
+        icon = {
+            Icon(
+                Icons.Filled.Warning,
+                contentDescription = null,
+                tint = VineColors.Orange,
+                modifier = Modifier.size(20.dp),
+            )
+        },
+        title = { Text("Save calibration with warnings?") },
+        text = { Text(message, fontSize = 14.sp) },
+        confirmButton = {
+            TextButton(onClick = onSave) { Text(MapAlignmentSaveFlow.SAVE_ACTION_LABEL) }
+        },
+        dismissButton = { TextButton(onClick = onKeepReviewing) { Text("Keep reviewing") } },
+    )
+}
+
+/**
+ * Confirmation before an existing saved calibration is replaced.
+ *
+ * This is the only moment a saved calibration can be destroyed by a new one.
+ * Until the operator confirms here, a recalibration — however far along — has
+ * changed nothing about what is already saved.
+ */
+@Composable
+internal fun ReplaceCalibrationDialog(
+    message: String,
+    onCancel: () -> Unit,
+    onReplace: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text("Replace saved calibration?") },
+        text = { Text(message, fontSize = 14.sp) },
+        confirmButton = { TextButton(onClick = onReplace) { Text("Replace") } },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
+    )
+}
+
+/**
+ * Shown when the completed save could not be written.
+ *
+ * The draft is deliberately still on disk at this point — it is only removed
+ * after a genuinely successful save — so the message can truthfully say the
+ * field work is safe.
+ */
+@Composable
+internal fun SaveFailedDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Could not save calibration") },
+        text = { Text(MapAlignmentSaveFlow.SAVE_FAILED_MESSAGE, fontSize = 14.sp) },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
+    )
+}
+
+/**
+ * Confirmation for deleting a COMPLETED saved calibration.
+ *
+ * Says plainly that a calibration draft in progress is not affected. Deleting a
+ * saved result and abandoning a recalibration are separate decisions, and an
+ * operator clearing out an old calibration must not silently lose the new one
+ * they are part-way through collecting to replace it.
+ */
+@Composable
+internal fun DeleteSavedCalibrationDialog(
+    saved: MapAlignmentSavedCalibration,
+    onCancel: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text("Delete saved calibration?") },
+        text = {
+            Text(
+                "This will permanently remove the saved field-test calibration for " +
+                    "${saved.vineyardName} and its ${saved.pointCount} reference " +
+                    "${if (saved.pointCount == 1) "point" else "points"} from this Android " +
+                    "device.\n\nAny calibration draft in progress is not affected.\n\n" +
+                    "No vineyard, block, row, pin, route or GPS coordinates will be changed.",
+                fontSize = 14.sp,
+            )
+        },
+        confirmButton = { TextButton(onClick = onDelete) { Text("Delete calibration") } },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
+    )
+}
+
 // ---------------------------------------------------------------------------
-// Resume an unfinished calibration
+// The hub: what is stored on this installation
 // ---------------------------------------------------------------------------
 
 /**
- * Offers the autosaved, unfinished calibration found on this installation.
+ * Everything Map Alignment has stored on this installation: the unfinished
+ * calibration, and the completed field-test calibration(s).
+ *
+ * ## Why both live on one screen
+ *
+ * They are different records answering different questions, and the operator
+ * needs to see both at once to understand the one thing that matters most here
+ * — that a recalibration in progress has NOT replaced the calibration they
+ * already have. Showing them together makes that visible rather than something
+ * to be trusted.
  *
  * Shown BEFORE scope selection, because making an operator re-pick the vineyard
  * for a calibration that already holds three walked points is exactly the
  * repetition autosave exists to remove. Resuming returns them to the step they
- * left, including the "Mark the image point" step when a GPS-complete
- * checkpoint is waiting.
+ * left, including "Mark the image point" when a GPS-complete checkpoint waits.
  */
 @Composable
-private fun ResumeCalibrationStep(
-    stored: MapAlignmentStoredDraft,
+private fun MapAlignmentHomeStep(
+    stored: MapAlignmentStoredDraft?,
+    saved: List<MapAlignmentSavedCalibration>,
     modifier: Modifier,
     onResume: () -> Unit,
     onStartOver: () -> Unit,
     onDeleteDraft: () -> Unit,
+    onView: (MapAlignmentSavedCalibration) -> Unit,
+    onRecalibrate: (MapAlignmentSavedCalibration) -> Unit,
+    onDeleteSaved: (MapAlignmentSavedCalibration) -> Unit,
+    onNewCalibration: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     WizardScaffold(modifier = modifier) {
         SystemAdminPreviewBadge()
 
+        if (stored != null) {
         VineyardCard {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SectionTitle("Calibration in progress")
@@ -558,7 +850,110 @@ private fun ResumeCalibrationStep(
             Spacer(Modifier.size(8.dp))
             Text("Delete draft")
         }
+        }
+
+        // Saved calibrations are listed SEPARATELY from the draft above, and
+        // are untouched by anything the draft does.
+        saved.forEach { record ->
+            SavedCalibrationCard(
+                saved = record,
+                onView = { onView(record) },
+                onRecalibrate = { onRecalibrate(record) },
+                onDelete = { onDeleteSaved(record) },
+            )
+        }
+
+        if (stored == null) {
+            Button(onClick = onNewCalibration, modifier = Modifier.fillMaxWidth()) {
+                Text("Start a new calibration")
+            }
+        }
         LocalDraftNote()
+    }
+}
+
+/**
+ * One completed field-test calibration, with its full result and its actions.
+ *
+ * Every figure shown is recomputed from the stored reference points rather than
+ * read from a stored summary, so what the operator sees can never disagree with
+ * the evidence it claims to come from.
+ */
+@Composable
+private fun SavedCalibrationCard(
+    saved: MapAlignmentSavedCalibration,
+    onView: () -> Unit,
+    onRecalibrate: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val alignment = saved.alignment
+    val review = saved.review()
+    VineyardCard {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionTitle("Saved field-test calibration")
+            Text(
+                saved.vineyardName,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = vine.textPrimary,
+            )
+            Text(
+                if (saved.isBlockOverride) {
+                    "Block override — ${saved.blockName ?: alignment.scope.blockId}"
+                } else {
+                    "Whole vineyard"
+                },
+                fontSize = 13.sp,
+                color = if (saved.isBlockOverride) VineColors.Orange else vine.textSecondary,
+            )
+            AlignmentStatRow("Reference points", saved.pointCount.toString())
+            AlignmentStatRow(
+                "East/West adjustment",
+                "${metres(kotlin.math.abs(alignment.eastOffsetMetres))} m " +
+                    if (alignment.eastOffsetMetres >= 0) "east" else "west",
+            )
+            AlignmentStatRow(
+                "North/South adjustment",
+                "${metres(kotlin.math.abs(alignment.northOffsetMetres))} m " +
+                    if (alignment.northOffsetMetres >= 0) "north" else "south",
+            )
+            if (review != null) {
+                AlignmentStatRow(
+                    "Alignment quality",
+                    review.quality.label,
+                    highlight = review.quality != MapAlignmentSolver.Quality.Good,
+                )
+                AlignmentStatRow(
+                    "RMS residual",
+                    "${metres(review.rmsResidualMetres)} m",
+                    highlight = review.rmsResidualMetres >
+                        MapAlignmentSolver.GOOD_RMS_RESIDUAL_METRES,
+                )
+                AlignmentStatRow(
+                    "Maximum residual",
+                    "${metres(review.maxResidualMetres)} m",
+                    highlight = review.maxResidualMetres >
+                        MapAlignmentSolver.GOOD_MAX_RESIDUAL_METRES,
+                )
+            }
+            Text(
+                "Updated: ${formatStoredTimestamp(saved.savedAtEpochMillis)}",
+                fontSize = 12.sp,
+                color = vine.textSecondary,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onView) { Text("View", fontSize = 12.sp) }
+                TextButton(onClick = onRecalibrate) { Text("Recalibrate", fontSize = 12.sp) }
+                TextButton(onClick = onDelete) { Text("Delete", fontSize = 12.sp) }
+            }
+            Text(
+                "Saved on this Android device for field testing. It is not applied to " +
+                    "VineTrack's normal maps.",
+                fontSize = 12.sp,
+                color = vine.textSecondary,
+            )
+        }
     }
 }
 
@@ -1719,6 +2114,7 @@ private fun CapturedPointRow(
 
 @Composable
 private fun CompletionStep(
+    saved: MapAlignmentSavedCalibration?,
     modifier: Modifier,
     onViewAgain: () -> Unit,
     onDiscardAndFinish: () -> Unit,
@@ -1729,23 +2125,43 @@ private fun CompletionStep(
         VineyardCard {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    "Calibration preview complete",
+                    if (saved != null) {
+                        "Field-test calibration saved"
+                    } else {
+                        "Calibration preview complete"
+                    },
                     fontSize = 20.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = vine.textPrimary,
                 )
-                Text(
-                    "This calibration was created for testing on this Android device.",
-                    fontSize = 14.sp,
-                    color = vine.textSecondary,
-                )
+                if (saved != null) {
+                    Text(
+                        "Saved for ${saved.vineyardName} with ${saved.pointCount} reference " +
+                            "${if (saved.pointCount == 1) "point" else "points"} on this " +
+                            "Android device.",
+                        fontSize = 14.sp,
+                        color = vine.textSecondary,
+                    )
+                    Text(
+                        "The calibration draft has been cleared now that the completed " +
+                            "calibration is saved.",
+                        fontSize = 13.sp,
+                        color = vine.textSecondary,
+                    )
+                } else {
+                    Text(
+                        "This calibration was created for testing on this Android device.",
+                        fontSize = 14.sp,
+                        color = vine.textSecondary,
+                    )
+                }
                 Text(
                     "No vineyard, block, row, pin, route or GPS coordinates have been changed.",
                     fontSize = 14.sp,
                     color = vine.textSecondary,
                 )
                 Text(
-                    "The alignment has not yet been enabled on VineTrack's normal maps.",
+                    "The alignment has not been enabled on VineTrack's normal maps.",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
                     color = vine.textPrimary,
@@ -1756,8 +2172,63 @@ private fun CompletionStep(
             Text("View preview again")
         }
         OutlinedButton(onClick = onDiscardAndFinish, modifier = Modifier.fillMaxWidth()) {
-            Text("Discard and finish")
+            Text("Done")
         }
+    }
+}
+
+/**
+ * A saved field-test calibration, reopened for review.
+ *
+ * Read-only by construction: the actions are Recalibrate (which starts a
+ * SEPARATE draft and leaves this record exactly as it is) and Delete. Viewing
+ * a calibration can never modify it.
+ */
+@Composable
+private fun SavedCalibrationDetailStep(
+    state: AppUiState,
+    saved: MapAlignmentSavedCalibration,
+    modifier: Modifier,
+    onBack: () -> Unit,
+    onRecalibrate: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val review = saved.review()
+    WizardScaffold(modifier = modifier) {
+        SystemAdminPreviewBadge()
+        SavedCalibrationCard(
+            saved = saved,
+            onView = {},
+            onRecalibrate = onRecalibrate,
+            onDelete = onDelete,
+        )
+
+        if (review != null) {
+            VineyardCard {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SectionTitle("Reference points")
+                    review.calibration.referencePoints.forEachIndexed { index, point ->
+                        AlignmentStatRow(
+                            label = buildString {
+                                append("Point ${index + 1}")
+                                point.referenceLabel()?.let { append(" \u2014 $it") }
+                            },
+                            value = "${metres(review.residualMagnitudesMetres[index])} m",
+                        )
+                    }
+                    Text(
+                        "Residuals are recalculated from the saved GPS evidence, so these " +
+                            "figures always match the points above.",
+                        fontSize = 12.sp,
+                        color = vine.textSecondary,
+                    )
+                }
+            }
+        }
+
+        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back") }
+        CanonicalInvariantNote()
     }
 }
 

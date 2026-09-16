@@ -523,4 +523,23 @@ data class MapAlignmentSavedCalibration(
     val pointCount: Int get() = calibration.referencePoints.size
 
     val isBlockOverride: Boolean get() = alignment.scope.isBlockOverride
+
+    /**
+     * Quality figures RECOMPUTED from the stored reference points.
+     *
+     * Residuals, RMS, maximum and quality are deliberately not persisted. A
+     * stored summary can outlive the evidence it describes — after a restore
+     * the operator would be shown a reassuring "Good" that the points on the
+     * same screen no longer support. Deriving them here is cheap and cannot
+     * drift.
+     *
+     * @return null when the stored evidence is no longer solvable, so callers
+     *   show nothing rather than an invented figure.
+     */
+    fun review(): MapAlignmentSolver.Solution? = MapAlignmentSolver.solve(
+        points = calibration.referencePoints,
+        scope = alignment.scope,
+        alignmentId = alignment.id,
+        nowEpochMillis = savedAtEpochMillis,
+    )
 }

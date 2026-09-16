@@ -55,6 +55,7 @@ import com.rork.vinetrack.data.mapalignment.MapAlignment
 import com.rork.vinetrack.data.mapalignment.MapAlignmentDraft
 import com.rork.vinetrack.data.mapalignment.MapAlignmentOutliers
 import com.rork.vinetrack.data.mapalignment.MapAlignmentReferencePoint
+import com.rork.vinetrack.data.mapalignment.MapAlignmentSaveFlow
 import com.rork.vinetrack.data.mapalignment.MapAlignmentSolver
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.ui.AppUiState
@@ -382,7 +383,7 @@ fun MapAlignmentReviewStep(
     modifier: Modifier = Modifier,
     onCaptureMore: () -> Unit,
     onReviewPoint: (MapAlignmentReferencePoint) -> Unit,
-    onFinish: () -> Unit,
+    onSave: () -> Unit,
     onDiscard: () -> Unit,
 ) {
     val vine = LocalVineColors.current
@@ -570,7 +571,11 @@ fun MapAlignmentReviewStep(
             }
         }
 
-        Button(onClick = onFinish, modifier = Modifier.fillMaxWidth()) { Text("Done") }
+        // Saving is explicit and deliberate. Reaching this screen, or having
+        // been warned about a point, never saves anything on its own.
+        Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
+            Text(MapAlignmentSaveFlow.SAVE_ACTION_LABEL)
+        }
         OutlinedButton(onClick = onCaptureMore, modifier = Modifier.fillMaxWidth()) {
             Text("Back to reference points")
         }
