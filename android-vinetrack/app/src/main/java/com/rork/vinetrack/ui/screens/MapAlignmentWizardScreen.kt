@@ -63,12 +63,17 @@ import com.rork.vinetrack.data.mapalignment.MapAlignmentGpsRules
 import com.rork.vinetrack.data.mapalignment.MapAlignmentGpsSampling
 import com.rork.vinetrack.data.mapalignment.MapAlignmentLiveGpsSession
 import com.rork.vinetrack.data.mapalignment.MapAlignmentLiveUpdateDiagnostic
+import com.rork.vinetrack.data.mapalignment.MapAlignmentLocalStore
+import com.rork.vinetrack.data.mapalignment.MapAlignmentOutliers
+import com.rork.vinetrack.data.mapalignment.MapAlignmentPendingReference
 import com.rork.vinetrack.data.mapalignment.MapAlignmentReferencePoint
 import com.rork.vinetrack.data.mapalignment.MapAlignmentReferenceType
 import com.rork.vinetrack.data.mapalignment.MapAlignmentRowPosition
 import com.rork.vinetrack.data.mapalignment.MapAlignmentScope
 import com.rork.vinetrack.data.mapalignment.MapAlignmentSettlingWindow
 import com.rork.vinetrack.data.mapalignment.MapAlignmentSolver
+import com.rork.vinetrack.data.mapalignment.MapAlignmentStorage
+import com.rork.vinetrack.data.mapalignment.MapAlignmentStoredDraft
 import com.rork.vinetrack.data.mapalignment.MapAlignmentWizardStep
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Vineyard
@@ -91,12 +96,27 @@ import java.util.UUID
  *
  * * **No production map is aligned.** No vineyard or block map consults the
  *   candidate. The only thing it affects is the preview inside this screen.
- * * **Nothing is persisted.** The draft is session memory only — no SQL,
- *   Supabase table, RPC, RLS, API endpoint, sync entity, SharedPreferences or
- *   local database write exists for it. Leaving the wizard discards it.
+ * * **Persistence is local to THIS Android installation.** The draft and any
+ *   saved field-test calibration live in this installation's own storage
+ *   ([MapAlignmentLocalStore]) and nowhere else — no SQL, Supabase table,
+ *   migration, RPC, API endpoint, sync entity, outbox, Portal record or iOS
+ *   file. It works entirely offline and may be lost on uninstall.
  * * **No canonical coordinate is altered.** Capture only ever creates new
  *   reference points. Vineyard coordinates, block boundaries, rows, pins,
  *   routes and raw GPS fixes are read-only here.
+ *
+ * ## Autosave, and why leaving is no longer destructive
+ *
+ * Every reference point costs a walk, so the operator must never have to
+ * remember to press Save. The draft is written after each meaningful change —
+ * scope chosen, a point completed, metadata edited, a retake, a re-mark, a
+ * deletion, a recalculation — and once GPS reaches Stable the completed half of
+ * that point is checkpointed too ([MapAlignmentPendingReference]), so an
+ * accidental exit returns to "Mark the image point" rather than to the walk.
+ *
+ * An actively-running partial sample group is deliberately NOT persisted: a
+ * partial group is not evidence. That one unfinished reading restarts on
+ * resume; every completed point survives.
  *
  * ## GPS
  *
@@ -123,22 +143,116 @@ fun MapAlignmentWizard(
 ) {
     val context = LocalContext.current
     val installationId = remember { AndroidInstallationIdentity.current(context) }
+    val store = remember(installationId) {
+        MapAlignmentLocalStore(context = context, installationId = installationId)
+    }
 
     var step by remember { mutableStateOf(MapAlignmentWizardStep.Scope) }
     var draft by remember { mutableStateOf<MapAlignmentDraft?>(null) }
+    // The GPS-complete, image-mark-pending checkpoint, when one exists.
+    var pending by remember { mutableStateOf<MapAlignmentPendingReference?>(null) }
+    var solvedAlignmentId by remember { mutableStateOf<String?>(null) }
+    // Resume offer, resolved once from disk before anything is shown.
+    var resume by remember { mutableStateOf<ResumeState>(ResumeState.Loading) }
+    var confirmingStartOver by remember { mutableStateOf<MapAlignmentStoredDraft?>(null) }
+    var confirmingDeleteDraft by remember { mutableStateOf<MapAlignmentStoredDraft?>(null) }
+    // Set when the outlier warning sends the operator to a specific reference.
+    var reviewTargetPointId by remember { mutableStateOf<String?>(null) }
 
-    // Keep the shared guard in step with the session draft, so the host's
-    // toolbar Back and system Back protect exactly the same evidence as the
-    // wizard's own Cancel and Discard actions.
-    LaunchedEffect(draft?.referencePoints?.size) { exitGuard.onDraftChanged(draft) }
+    // Read the local draft exactly once per entry to the wizard. An unreadable
+    // document is surfaced rather than hidden, so its bytes can be removed.
+    LaunchedEffect(store) {
+        resume = when (val decoded = store.loadDraft()) {
+            is MapAlignmentStorage.Decoded.Restored ->
+                if (decoded.value.hasProgress) {
+                    ResumeState.Offered(decoded.value)
+                } else {
+                    ResumeState.None
+                }
+            MapAlignmentStorage.Decoded.Empty -> ResumeState.None
+            is MapAlignmentStorage.Decoded.Unusable -> ResumeState.Unusable(decoded.reason)
+        }
+    }
 
-    /** Route a discard through confirmation whenever evidence would be lost. */
-    fun requestDiscard(andThen: () -> Unit) {
-        exitGuard.requestExit(andThen)
+    /**
+     * Autosave. Called after every meaningful change rather than from a Save
+     * button, so an accidental exit can never cost a completed reference point.
+     */
+    fun persist(
+        current: MapAlignmentDraft?,
+        atStep: MapAlignmentWizardStep = step,
+        checkpoint: MapAlignmentPendingReference? = pending,
+        alignmentId: String? = solvedAlignmentId,
+    ) {
+        val subject = current ?: return
+        store.saveDraft(
+            MapAlignmentStoredDraft(
+                draft = subject,
+                step = atStep,
+                pending = checkpoint,
+                solvedAlignmentId = alignmentId,
+                updatedAtEpochMillis = System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    /** Apply a draft change and autosave it in one place. */
+    fun updateDraft(updated: MapAlignmentDraft) {
+        draft = updated
+        // A change to the evidence invalidates any candidate, so the stored
+        // alignment id must go with it rather than outliving its points.
+        if (updated.solution == null) solvedAlignmentId = null
+        persist(updated, alignmentId = updated.solution?.alignment?.id)
+    }
+
+    /** Clear the in-memory session without touching what is on disk. */
+    fun leaveSession() {
+        draft = null
+        pending = null
+        solvedAlignmentId = null
+        step = MapAlignmentWizardStep.Scope
+    }
+
+    // Keep the shared guard in step with the session, so the host's toolbar
+    // Back and system Back reassure with exactly the same wording the wizard's
+    // own Cancel uses. Leaving is non-destructive now that drafts autosave.
+    LaunchedEffect(draft?.referencePoints?.size, pending) {
+        exitGuard.onDraftChanged(draft, hasPendingReference = pending != null)
     }
 
     val current = draft
     when {
+        // Resume offer comes before scope selection: re-choosing the vineyard
+        // for a calibration that already has three points is exactly the
+        // repetition this phase exists to remove.
+        current == null && resume is ResumeState.Loading -> Unit
+
+        current == null && resume is ResumeState.Offered -> {
+            val offered = (resume as ResumeState.Offered).stored
+            ResumeCalibrationStep(
+                stored = offered,
+                modifier = modifier,
+                onResume = {
+                    draft = offered.restoredDraft()
+                    pending = offered.pending
+                    solvedAlignmentId = offered.solvedAlignmentId
+                    step = offered.step
+                    resume = ResumeState.None
+                },
+                onStartOver = { confirmingStartOver = offered },
+                onDeleteDraft = { confirmingDeleteDraft = offered },
+            )
+        }
+
+        current == null && resume is ResumeState.Unusable -> UnusableDraftStep(
+            reason = (resume as ResumeState.Unusable).reason,
+            modifier = modifier,
+            onRemove = {
+                store.deleteDraft()
+                resume = ResumeState.None
+            },
+        )
+
         step == MapAlignmentWizardStep.Scope || current == null -> ScopeStep(
             state = state,
             installationId = installationId,
@@ -146,100 +260,347 @@ fun MapAlignmentWizard(
             onScopeChosen = {
                 draft = it
                 step = MapAlignmentWizardStep.Introduction
+                // Autosave trigger: scope selected.
+                persist(it, atStep = MapAlignmentWizardStep.Introduction, checkpoint = null)
             },
         )
 
         step == MapAlignmentWizardStep.Introduction -> IntroductionStep(
             draft = current,
             modifier = modifier,
-            onStart = { step = MapAlignmentWizardStep.Capture },
-            onCancel = {
-                requestDiscard {
-                    draft = null
-                    step = MapAlignmentWizardStep.Scope
-                }
+            onStart = {
+                step = MapAlignmentWizardStep.Capture
+                persist(current, atStep = MapAlignmentWizardStep.Capture)
             },
+            onCancel = { exitGuard.requestExit(::leaveSession) },
         )
 
         step == MapAlignmentWizardStep.Capture -> MapAlignmentCaptureStep(
             state = state,
             draft = current,
+            initialPending = pending,
+            highlightPointId = reviewTargetPointId,
+            onHighlightShown = { reviewTargetPointId = null },
             onStartFixUpdates = onStartFixUpdates,
             onStopFixUpdates = onStopFixUpdates,
             modifier = modifier,
-            onDraftChanged = { draft = it },
+            onDraftChanged = ::updateDraft,
+            onPendingChanged = { checkpoint ->
+                // Checkpointing the completed GPS half the moment it qualifies
+                // is what stops an accidental exit costing the operator the
+                // walk and the stationary wait.
+                pending = checkpoint
+                persist(current, checkpoint = checkpoint)
+            },
+            onSamplingChanged = exitGuard::onSamplingChanged,
             onCalculate = {
-                draft = current.solved(
-                    alignmentId = "draft-${UUID.randomUUID()}",
+                val alignmentId = "draft-${UUID.randomUUID()}"
+                val solved = current.solved(
+                    alignmentId = alignmentId,
                     nowEpochMillis = System.currentTimeMillis(),
                 )
+                draft = solved
+                solvedAlignmentId = solved.solution?.alignment?.id
                 step = MapAlignmentWizardStep.Review
+                // Autosave trigger: candidate recalculated.
+                persist(
+                    solved,
+                    atStep = MapAlignmentWizardStep.Review,
+                    alignmentId = solved.solution?.alignment?.id,
+                )
             },
-            onExit = {
-                requestDiscard {
-                    draft = null
-                    step = MapAlignmentWizardStep.Scope
-                }
-            },
+            onExit = { exitGuard.requestExit(::leaveSession) },
         )
 
         step == MapAlignmentWizardStep.Review -> MapAlignmentReviewStep(
             state = state,
             draft = current,
             modifier = modifier,
-            onCaptureMore = { step = MapAlignmentWizardStep.Capture },
-            onFinish = { step = MapAlignmentWizardStep.Complete },
-            onDiscard = {
-                requestDiscard {
-                    draft = null
-                    step = MapAlignmentWizardStep.Scope
-                }
+            onCaptureMore = {
+                step = MapAlignmentWizardStep.Capture
+                persist(current, atStep = MapAlignmentWizardStep.Capture)
             },
+            onReviewPoint = { point ->
+                // The advisory warning routes back into the EXISTING reference
+                // tools rather than a second editing implementation.
+                reviewTargetPointId = point.id
+                step = MapAlignmentWizardStep.Capture
+                persist(current, atStep = MapAlignmentWizardStep.Capture)
+            },
+            onFinish = { step = MapAlignmentWizardStep.Complete },
+            onDiscard = { exitGuard.requestExit(::leaveSession) },
         )
 
         else -> CompletionStep(
             modifier = modifier,
             onViewAgain = { step = MapAlignmentWizardStep.Review },
-            onDiscardAndFinish = {
-                // Explicit discard: the operator has already been told, on this
-                // very screen, that nothing was saved. No second prompt.
-                draft = null
-                step = MapAlignmentWizardStep.Scope
+            onDiscardAndFinish = { exitGuard.requestExit(::leaveSession) },
+        )
+    }
+
+    if (exitGuard.isConfirmingExit) {
+        LeaveCalibrationDialog(
+            message = exitGuard.exitMessage(),
+            onKeep = exitGuard::keepCalibrating,
+            onLeave = exitGuard::leaveAndContinueLater,
+        )
+    }
+
+    confirmingStartOver?.let { target ->
+        StartOverDialog(
+            pointCount = target.pointCount,
+            onCancel = { confirmingStartOver = null },
+            onStartOver = {
+                // The ONLY destructive paths are this and Delete draft, both
+                // explicitly confirmed. Leaving never reaches here.
+                store.deleteDraft()
+                confirmingStartOver = null
+                resume = ResumeState.None
             },
         )
     }
 
-    if (exitGuard.isConfirmingDiscard) {
-        DiscardCalibrationDialog(
-            onKeep = exitGuard::keepCalibrating,
-            onDiscard = exitGuard::discard,
+    confirmingDeleteDraft?.let { target ->
+        DeleteDraftDialog(
+            pointCount = target.pointCount,
+            onCancel = { confirmingDeleteDraft = null },
+            onDelete = {
+                store.deleteDraft()
+                confirmingDeleteDraft = null
+                resume = ResumeState.None
+            },
         )
     }
 }
 
+/** Whether a stored draft is being offered on entry to the wizard. */
+private sealed interface ResumeState {
+    /** Still reading local storage. Nothing is shown yet. */
+    data object Loading : ResumeState
+
+    /** Nothing stored, or the operator has dealt with what was. */
+    data object None : ResumeState
+
+    data class Offered(val stored: MapAlignmentStoredDraft) : ResumeState
+
+    /** Present but unreadable. Offered for removal, never adopted. */
+    data class Unusable(val reason: String) : ResumeState
+}
+
 /**
- * Confirmation shown before collected references are thrown away.
+ * Informational confirmation shown on the way out of a calibration in progress.
  *
- * Reference points cost real walking, so Back or Cancel must never silently
- * drop them. The wording also settles the operator's obvious worry — that
- * leaving might have changed vineyard data.
+ * ## Deliberately not a discard prompt
+ *
+ * Drafts are autosaved to this installation, so leaving destroys nothing. The
+ * previous "Discard calibration?" wording is now simply untrue, and telling an
+ * operator their walked reference points are about to be thrown away — when
+ * they are already on disk — teaches them to fear the Back button. This exists
+ * to reassure, not to block: neither action deletes anything.
+ *
+ * Destruction lives behind an explicit [StartOverDialog] or [DeleteDraftDialog].
  */
 @Composable
-internal fun DiscardCalibrationDialog(onKeep: () -> Unit, onDiscard: () -> Unit) {
+internal fun LeaveCalibrationDialog(
+    message: String,
+    onKeep: () -> Unit,
+    onLeave: () -> Unit,
+) {
     AlertDialog(
         onDismissRequest = onKeep,
-        title = { Text("Discard calibration?") },
+        title = { Text("Leave calibration?") },
+        text = { Text(message, fontSize = 14.sp) },
+        confirmButton = { TextButton(onClick = onKeep) { Text("Keep calibrating") } },
+        dismissButton = {
+            TextButton(onClick = onLeave) { Text("Leave and continue later") }
+        },
+    )
+}
+
+/**
+ * Confirmation for the genuinely destructive Start over.
+ *
+ * States the cost in the operator's own terms — the number of reference points
+ * they walked — and settles the obvious worry that starting again might undo
+ * vineyard data. It does not.
+ */
+@Composable
+internal fun StartOverDialog(
+    pointCount: Int,
+    onCancel: () -> Unit,
+    onStartOver: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text("Start calibration again?") },
         text = {
             Text(
-                "This calibration has not been saved. Leaving now will discard the " +
-                    "reference points collected in this session.\n\nNo vineyard data will " +
-                    "be changed.",
+                "This will remove the current calibration draft and its " +
+                    "$pointCount completed reference " +
+                    "${if (pointCount == 1) "point" else "points"}.\n\n" +
+                    "No vineyard, block, row, pin, route or GPS coordinates will be changed.",
                 fontSize = 14.sp,
             )
         },
-        confirmButton = { TextButton(onClick = onKeep) { Text("Keep calibrating") } },
-        dismissButton = { TextButton(onClick = onDiscard) { Text("Discard") } },
+        confirmButton = { TextButton(onClick = onStartOver) { Text("Start over") } },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
     )
+}
+
+/** Confirmation for deleting the stored draft outright. */
+@Composable
+internal fun DeleteDraftDialog(
+    pointCount: Int,
+    onCancel: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text("Delete calibration draft?") },
+        text = {
+            Text(
+                "This will permanently remove the saved draft and its $pointCount completed " +
+                    "reference ${if (pointCount == 1) "point" else "points"} from this " +
+                    "Android device.\n\nNo vineyard, block, row, pin, route or GPS " +
+                    "coordinates will be changed.",
+                fontSize = 14.sp,
+            )
+        },
+        confirmButton = { TextButton(onClick = onDelete) { Text("Delete draft") } },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Resume an unfinished calibration
+// ---------------------------------------------------------------------------
+
+/**
+ * Offers the autosaved, unfinished calibration found on this installation.
+ *
+ * Shown BEFORE scope selection, because making an operator re-pick the vineyard
+ * for a calibration that already holds three walked points is exactly the
+ * repetition autosave exists to remove. Resuming returns them to the step they
+ * left, including the "Mark the image point" step when a GPS-complete
+ * checkpoint is waiting.
+ */
+@Composable
+private fun ResumeCalibrationStep(
+    stored: MapAlignmentStoredDraft,
+    modifier: Modifier,
+    onResume: () -> Unit,
+    onStartOver: () -> Unit,
+    onDeleteDraft: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    WizardScaffold(modifier = modifier) {
+        SystemAdminPreviewBadge()
+
+        VineyardCard {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SectionTitle("Calibration in progress")
+                Text(
+                    stored.draft.vineyardName,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = vine.textPrimary,
+                )
+                Text(
+                    if (stored.draft.isBlockOverride) {
+                        "Block override — " +
+                            "${stored.draft.blockName ?: stored.draft.scope.blockId}"
+                    } else {
+                        "Whole vineyard"
+                    },
+                    fontSize = 13.sp,
+                    color = if (stored.draft.isBlockOverride) {
+                        VineColors.Orange
+                    } else {
+                        vine.textSecondary
+                    },
+                )
+                Text(
+                    stored.progressSummary(),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = vine.textPrimary,
+                )
+                // Names the exact checkpoint so the operator knows the GPS work
+                // at that point does not have to be repeated.
+                stored.pendingSummary()?.let { summary ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Filled.GpsFixed,
+                            contentDescription = null,
+                            tint = VineColors.Orange,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text(summary, fontSize = 13.sp, color = VineColors.Orange)
+                    }
+                }
+                Text(
+                    "Last updated: ${formatStoredTimestamp(stored.updatedAtEpochMillis)}",
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                )
+            }
+        }
+
+        Button(onClick = onResume, modifier = Modifier.fillMaxWidth()) {
+            Text("Resume calibration")
+        }
+        OutlinedButton(onClick = onStartOver, modifier = Modifier.fillMaxWidth()) {
+            Text("Start over")
+        }
+        OutlinedButton(onClick = onDeleteDraft, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.size(8.dp))
+            Text("Delete draft")
+        }
+        LocalDraftNote()
+    }
+}
+
+/**
+ * Shown when stored calibration data exists but cannot be read — an unknown
+ * storage version, or a malformed document.
+ *
+ * It is never coerced, partially adopted or made active. The bytes still exist,
+ * so the operator is given a way to remove them rather than being told there is
+ * no draft while an unremovable file sits on the device.
+ */
+@Composable
+private fun UnusableDraftStep(
+    reason: String,
+    modifier: Modifier,
+    onRemove: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    WizardScaffold(modifier = modifier) {
+        SystemAdminPreviewBadge()
+        VineyardCard {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SectionTitle("Saved calibration could not be read")
+                Text(reason, fontSize = 14.sp, color = vine.textSecondary)
+                Text(
+                    "It has not been loaded and is not being used. Remove it to start a new " +
+                        "calibration.",
+                    fontSize = 13.sp,
+                    color = vine.textSecondary,
+                )
+                Text(
+                    "No vineyard, block, row, pin, route or GPS coordinates are affected.",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = vine.textPrimary,
+                )
+            }
+        }
+        Button(onClick = onRemove, modifier = Modifier.fillMaxWidth()) {
+            Text("Remove and start a new calibration")
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -477,14 +838,38 @@ private sealed interface CaptureMode {
 private fun MapAlignmentCaptureStep(
     state: AppUiState,
     draft: MapAlignmentDraft,
+    initialPending: MapAlignmentPendingReference?,
+    highlightPointId: String?,
+    onHighlightShown: () -> Unit,
     onStartFixUpdates: (onFix: (PinLocationResult) -> Unit) -> Unit,
     onStopFixUpdates: () -> Unit,
     modifier: Modifier,
     onDraftChanged: (MapAlignmentDraft) -> Unit,
+    onPendingChanged: (MapAlignmentPendingReference?) -> Unit,
+    onSamplingChanged: (Boolean) -> Unit,
     onCalculate: () -> Unit,
     onExit: () -> Unit,
 ) {
-    var mode by remember { mutableStateOf<CaptureMode>(CaptureMode.Overview) }
+    // A restored GPS-complete checkpoint resumes directly at marking, so the
+    // operator never repeats a walk and a stationary wait they already did.
+    var mode by remember {
+        mutableStateOf<CaptureMode>(
+            initialPending?.let { checkpoint ->
+                CaptureMode.Marking(
+                    editingId = checkpoint.editingId,
+                    gps = checkpoint.canonicalCoordinate,
+                    evidence = checkpoint.gpsEvidence,
+                    capturedAtEpochMillis = checkpoint.capturedAtEpochMillis,
+                    existingMark = checkpoint.existingMark,
+                    remarkOnly = checkpoint.remarkOnly,
+                )
+            } ?: CaptureMode.Overview,
+        )
+    }
+
+    // Only an actively-running sample group makes an exit lossy, and only of
+    // that one attempt. Everything already completed is on disk.
+    LaunchedEffect(mode) { onSamplingChanged(mode is CaptureMode.Sampling) }
 
     when (val currentMode = mode) {
         is CaptureMode.Sampling -> GpsSamplingStep(
@@ -506,6 +891,7 @@ private fun MapAlignmentCaptureStep(
                         false
                     } else {
                         // Retake: keep the marked image point, replace the GPS.
+                        // Autosave trigger: Retake GPS completed.
                         onDraftChanged(
                             draft.withRetakenGps(
                                 pointId = editing,
@@ -519,6 +905,16 @@ private fun MapAlignmentCaptureStep(
                         true
                     }
                 } else {
+                    // Checkpoint the completed GPS half IMMEDIATELY. From here
+                    // an accidental exit returns to marking, not to the walk.
+                    onPendingChanged(
+                        MapAlignmentPendingReference(
+                            editingId = null,
+                            canonicalCoordinate = coordinate,
+                            gpsEvidence = evidence,
+                            capturedAtEpochMillis = capturedAt,
+                        ),
+                    )
                     mode = CaptureMode.Marking(
                         editingId = null,
                         gps = coordinate,
@@ -535,8 +931,16 @@ private fun MapAlignmentCaptureStep(
             draft = draft,
             mode = currentMode,
             modifier = modifier,
-            onCancel = { mode = CaptureMode.Overview },
+            onCancel = {
+                // Cancelling marking abandons the checkpoint deliberately: the
+                // operator chose not to complete this point.
+                onPendingChanged(null)
+                mode = CaptureMode.Overview
+            },
             onConfirmed = { updated ->
+                // The point is now a real reference, so the checkpoint has done
+                // its job and must not linger and resume a second time.
+                onPendingChanged(null)
                 onDraftChanged(updated)
                 mode = CaptureMode.Overview
             },
@@ -545,6 +949,8 @@ private fun MapAlignmentCaptureStep(
         CaptureMode.Overview -> CaptureOverviewStep(
             state = state,
             draft = draft,
+            highlightPointId = highlightPointId,
+            onHighlightShown = onHighlightShown,
             modifier = modifier,
             onDraftChanged = onDraftChanged,
             onStartNewPoint = { mode = CaptureMode.Sampling(editingId = null) },
@@ -1074,6 +1480,8 @@ private fun MarkingScaffold(
 private fun CaptureOverviewStep(
     state: AppUiState,
     draft: MapAlignmentDraft,
+    highlightPointId: String?,
+    onHighlightShown: () -> Unit,
     modifier: Modifier,
     onDraftChanged: (MapAlignmentDraft) -> Unit,
     onStartNewPoint: () -> Unit,
@@ -1085,9 +1493,53 @@ private fun CaptureOverviewStep(
     val vine = LocalVineColors.current
     val readiness = draft.readiness
 
+    // The advisory outlier check runs against the CURRENT candidate, so a
+    // retake or re-mark that fixes a point makes its flag disappear as soon as
+    // the alignment is recalculated.
+    val review = remember(draft.solution) {
+        draft.solution?.let { MapAlignmentOutliers.review(it) }
+    }
+    val highlighted = highlightPointId?.takeIf { id ->
+        draft.referencePoints.any { it.id == id }
+    }
+
     WizardScaffold(modifier = modifier) {
         SystemAdminPreviewBadge()
         ScopeSummary(draft)
+
+        // Arriving from the outlier warning: say plainly why the operator is
+        // here and which tools address it, then stop repeating it.
+        if (highlighted != null) {
+            val suspect = review?.suspectFor(highlighted)
+            VineyardCard {
+                Row(verticalAlignment = Alignment.Top) {
+                    Icon(
+                        Icons.Filled.Warning,
+                        contentDescription = null,
+                        tint = VineColors.Orange,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            "Reviewing point ${suspect?.pointNumber ?: ""}".trim(),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = vine.textPrimary,
+                        )
+                        Text(
+                            "Use Retake GPS if you may have been standing slightly away " +
+                                "from the point, or Re-mark if the satellite image point " +
+                                "looks misplaced. Recalculate afterwards to see whether it " +
+                                "now agrees.",
+                            fontSize = 13.sp,
+                            color = vine.textSecondary,
+                        )
+                        TextButton(onClick = onHighlightShown) { Text("Dismiss", fontSize = 12.sp) }
+                    }
+                }
+            }
+        }
 
         if (draft.referencePoints.isNotEmpty()) {
             VineyardCard {
@@ -1127,8 +1579,11 @@ private fun CaptureOverviewStep(
                     CapturedPointRow(
                         index = index + 1,
                         point = point,
+                        suspect = review?.suspectFor(point.id),
+                        isHighlighted = point.id == highlighted,
                         onRetakeGps = { onRetakeGps(point) },
                         onRemark = { onRemark(point) },
+                        // Autosave trigger: reference point deleted.
                         onRemove = { onDraftChanged(draft.withoutReferencePoint(point.id)) },
                     )
                 }
@@ -1159,6 +1614,8 @@ private fun CaptureOverviewStep(
 private fun CapturedPointRow(
     index: Int,
     point: MapAlignmentReferencePoint,
+    suspect: MapAlignmentOutliers.Suspect?,
+    isHighlighted: Boolean,
     onRetakeGps: () -> Unit,
     onRemark: () -> Unit,
     onRemove: () -> Unit,
@@ -1169,7 +1626,13 @@ private fun CapturedPointRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .background(vine.appBackground)
+            .background(
+                if (isHighlighted) {
+                    VineColors.Orange.copy(alpha = 0.14f)
+                } else {
+                    vine.appBackground
+                },
+            )
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -1182,6 +1645,26 @@ private fun CapturedPointRow(
             fontWeight = FontWeight.Medium,
             color = vine.textPrimary,
         )
+        // Restrained advisory marker. It says "worth checking", never "wrong":
+        // we do not know whether the GPS reading or the image mark is the
+        // source, and naming one would send the operator to redo the wrong one.
+        suspect?.let {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Warning,
+                    contentDescription = null,
+                    tint = VineColors.Orange,
+                    modifier = Modifier.size(14.dp),
+                )
+                Spacer(Modifier.size(6.dp))
+                Text(
+                    "Review recommended · residual ${metres(it.residualMetres)} m",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = VineColors.Orange,
+                )
+            }
+        }
         // Enough detail to diagnose a problem point without opening anything.
         Text(
             offsetDescription(offset.eastMetres, offset.northMetres) +
@@ -1489,9 +1972,19 @@ internal fun CanonicalInvariantNote() {
     )
 }
 
-/** States, in the UI, that this phase intentionally keeps nothing. */
+/**
+ * States exactly where this calibration lives, and what it does not do.
+ *
+ * The old wording said the draft was discarded on leaving. That is no longer
+ * true — progress is autosaved to this installation — and a note that
+ * contradicts the app's actual behaviour is worse than no note, because the
+ * operator stops believing the rest of it.
+ */
 @Composable
-internal fun DraftOnlyNote() {
+internal fun DraftOnlyNote() = LocalDraftNote()
+
+@Composable
+internal fun LocalDraftNote() {
     val vine = LocalVineColors.current
     Row(
         modifier = Modifier
@@ -1508,13 +2001,18 @@ internal fun DraftOnlyNote() {
         )
         Spacer(Modifier.size(8.dp))
         Text(
-            "Field-test draft. This calibration is not saved and is discarded when you " +
-                "leave or close the app. It is not applied to any vineyard or block map.",
+            "Field-test calibration. Your progress is saved on this Android device only — " +
+                "it is not sent anywhere, and it is not applied to any vineyard or block map.",
             fontSize = 12.sp,
             color = vine.textSecondary,
         )
     }
 }
+
+/** Local date and time for the "Last updated" line on the resume card. */
+internal fun formatStoredTimestamp(epochMillis: Long): String =
+    java.text.SimpleDateFormat("d MMM yyyy, h:mm a", Locale.getDefault())
+        .format(java.util.Date(epochMillis))
 
 @Composable
 private fun InstallationScopeNote(installationId: String) {

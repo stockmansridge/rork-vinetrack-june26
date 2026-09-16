@@ -6,12 +6,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Every way out of the calibration wizard must ask the same question.
+ * Every way out of the calibration wizard must behave the same way.
  *
- * Reference points cost real walking, so the toolbar Back button, Android
- * system Back and the wizard's own Cancel/Discard actions all route through
- * this one guard. The property being protected: evidence is never dropped
- * without the operator confirming it.
+ * The property under test changed with local persistence. It used to be
+ * "evidence is never dropped without confirmation", because leaving genuinely
+ * destroyed the draft. Now that drafts are autosaved, the property is stronger:
+ * **no exit route destroys anything at all**. The confirmation still appears,
+ * but only to tell the operator their work is saved.
  */
 class MapAlignmentExitGuardTest {
 
@@ -58,12 +59,12 @@ class MapAlignmentExitGuardTest {
         assertEquals(2, exits)
         assertFalse(
             "leaving with nothing collected must not raise a confirmation",
-            guard.isConfirmingDiscard,
+            guard.isConfirmingExit,
         )
     }
 
     @Test
-    fun `with reference points back requests confirmation instead of exiting`() {
+    fun `with reference points back confirms before leaving`() {
         val guard = MapAlignmentExitGuard()
         guard.onDraftChanged(draftWithPoints(2))
         var exits = 0
@@ -71,12 +72,12 @@ class MapAlignmentExitGuardTest {
         val exited = guard.requestExit { exits++ }
 
         assertFalse(exited)
-        assertEquals("evidence must not be dropped on the spot", 0, exits)
-        assertTrue(guard.isConfirmingDiscard)
+        assertEquals("the operator must see the reassurance first", 0, exits)
+        assertTrue(guard.isConfirmingExit)
     }
 
     @Test
-    fun `keep calibrating dismisses the confirmation without exiting`() {
+    fun `keep calibrating dismisses the confirmation without leaving`() {
         val guard = MapAlignmentExitGuard()
         guard.onDraftChanged(draftWithPoints(3))
         var exits = 0
@@ -85,26 +86,40 @@ class MapAlignmentExitGuardTest {
         guard.keepCalibrating()
 
         assertEquals(0, exits)
-        assertFalse(guard.isConfirmingDiscard)
+        assertFalse(guard.isConfirmingExit)
         // The held exit is abandoned, not merely deferred: a later confirm
         // must not fire a stale one.
-        guard.discard()
+        guard.leaveAndContinueLater()
         assertEquals(0, exits)
     }
 
     @Test
-    fun `discard runs the held exit exactly once`() {
+    fun `leave and continue later runs the held exit exactly once`() {
         val guard = MapAlignmentExitGuard()
         guard.onDraftChanged(draftWithPoints(4))
         var exits = 0
         guard.requestExit { exits++ }
 
-        guard.discard()
+        guard.leaveAndContinueLater()
 
         assertEquals(1, exits)
-        assertFalse(guard.isConfirmingDiscard)
-        guard.discard()
+        assertFalse(guard.isConfirmingExit)
+        guard.leaveAndContinueLater()
         assertEquals("a second confirm must not exit again", 1, exits)
+    }
+
+    @Test
+    fun `a GPS-complete checkpoint alone is worth confirming`() {
+        // Reaching Stable costs a walk plus a stationary wait, so the operator
+        // is told it is saved even before any reference point exists.
+        val guard = MapAlignmentExitGuard()
+
+        guard.onDraftChanged(draftWithPoints(0), hasPendingReference = false)
+        assertFalse(guard.hasReferencePoints)
+
+        guard.onDraftChanged(draftWithPoints(0), hasPendingReference = true)
+        assertTrue(guard.hasReferencePoints)
+        assertFalse(guard.requestExit { })
     }
 
     @Test
@@ -115,9 +130,8 @@ class MapAlignmentExitGuardTest {
         assertFalse(guard.hasReferencePoints)
 
         guard.onDraftChanged(draftWithPoints(1))
-        assertTrue("one point is already worth protecting", guard.hasReferencePoints)
+        assertTrue("one point is already worth mentioning", guard.hasReferencePoints)
 
-        // After a discard the draft is emptied, so Back must stop prompting.
         guard.onDraftChanged(draftWithPoints(0))
         assertFalse(guard.hasReferencePoints)
         var exits = 0
@@ -138,9 +152,53 @@ class MapAlignmentExitGuardTest {
         guard.keepCalibrating()
 
         assertFalse(guard.requestExit { systemExits++ })
-        guard.discard()
+        guard.leaveAndContinueLater()
 
         assertEquals(0, toolbarExits)
         assertEquals(1, systemExits)
+    }
+
+    @Test
+    fun `the exit wording says progress is saved and never says discard`() {
+        val guard = MapAlignmentExitGuard()
+        guard.onDraftChanged(draftWithPoints(3))
+
+        val message = guard.exitMessage()
+
+        assertTrue(message.contains("has been saved on this Android device"))
+        assertTrue(message.contains("continue from this point later"))
+        // The old wording claimed the opposite of what now happens. An exit
+        // prompt that lies about losing work teaches operators to fear Back.
+        assertFalse(message.lowercase().contains("discard"))
+        assertFalse(message.lowercase().contains("will be lost"))
+    }
+
+    @Test
+    fun `an unfinished GPS reading is called out explicitly`() {
+        val guard = MapAlignmentExitGuard()
+        guard.onDraftChanged(draftWithPoints(3))
+        guard.onSamplingChanged(true)
+
+        val message = guard.exitMessage()
+
+        // A partial sample group is deliberately never persisted, so this one
+        // attempt genuinely restarts. Say so rather than let it surprise them.
+        assertTrue(message.contains("Completed reference points have been saved"))
+        assertTrue(message.contains("unfinished GPS reading will restart"))
+
+        guard.onSamplingChanged(false)
+        assertFalse(guard.exitMessage().contains("will restart"))
+    }
+
+    @Test
+    fun `the guard exposes no destructive action at all`() {
+        // Deletion must require an explicit Delete draft or Start over. If the
+        // guard offered a discard, an exit route could be wired to it by
+        // mistake — which is exactly the bug this phase removed.
+        val methods = MapAlignmentExitGuard::class.java.methods.map { it.name }
+
+        assertFalse(methods.contains("discard"))
+        assertFalse(methods.contains("deleteDraft"))
+        assertTrue(methods.contains("leaveAndContinueLater"))
     }
 }

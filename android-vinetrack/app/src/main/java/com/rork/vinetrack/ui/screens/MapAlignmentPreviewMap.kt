@@ -16,10 +16,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -51,6 +53,8 @@ import com.rork.vinetrack.data.mapalignment.AndroidDisplayCoordinate
 import com.rork.vinetrack.data.mapalignment.CanonicalCoordinate
 import com.rork.vinetrack.data.mapalignment.MapAlignment
 import com.rork.vinetrack.data.mapalignment.MapAlignmentDraft
+import com.rork.vinetrack.data.mapalignment.MapAlignmentOutliers
+import com.rork.vinetrack.data.mapalignment.MapAlignmentReferencePoint
 import com.rork.vinetrack.data.mapalignment.MapAlignmentSolver
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.ui.AppUiState
@@ -377,12 +381,20 @@ fun MapAlignmentReviewStep(
     draft: MapAlignmentDraft,
     modifier: Modifier = Modifier,
     onCaptureMore: () -> Unit,
+    onReviewPoint: (MapAlignmentReferencePoint) -> Unit,
     onFinish: () -> Unit,
     onDiscard: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     val solution = draft.solution
     var showAligned by remember { mutableStateOf(true) }
+
+    // Advisory only: this reads the candidate and forms an opinion. It removes,
+    // reweights and reorders nothing, and the median estimator is untouched.
+    val review = remember(solution) { solution?.let { MapAlignmentOutliers.review(it) } }
+    // Raised once per candidate. Recalculating after a retake or re-mark
+    // produces a new solution, so a genuinely fixed point stops warning.
+    var warningDismissed by remember(solution) { mutableStateOf(false) }
 
     WizardScaffold(modifier = modifier) {
         SystemAdminPreviewBadge()
@@ -563,11 +575,65 @@ fun MapAlignmentReviewStep(
             Text("Back to reference points")
         }
         OutlinedButton(onClick = onDiscard, modifier = Modifier.fillMaxWidth()) {
-            Text("Discard calibration")
+            Text("Leave calibration")
         }
         CanonicalInvariantNote()
         DraftOnlyNote()
     }
+
+    // Shown BEFORE review is treated as complete, so a suspect point is raised
+    // while the operator can still do something about it.
+    if (review != null && review.hasSuspects && !warningDismissed) {
+        OutlierWarningDialog(
+            review = review,
+            onReview = {
+                warningDismissed = true
+                review.suspects.firstOrNull()?.let { onReviewPoint(it.point) }
+            },
+            onContinueAnyway = { warningDismissed = true },
+        )
+    }
+}
+
+/**
+ * Advisory warning that one or more references disagree with the others.
+ *
+ * ## What it deliberately does not do
+ *
+ * Nothing is deleted, reweighted or recalculated by either action. "Continue
+ * anyway" is a real, respected choice: the operator may well know the point is
+ * correct and the imagery is simply poor there. The warning exists to make sure
+ * they SAW the discrepancy, not to overrule them.
+ *
+ * The wording names the measurement and both plausible causes without asserting
+ * which one it is, because we genuinely cannot tell from the residual whether
+ * the GPS position or the image mark is at fault.
+ */
+@Composable
+private fun OutlierWarningDialog(
+    review: MapAlignmentOutliers.Review,
+    onReview: () -> Unit,
+    onContinueAnyway: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onContinueAnyway,
+        icon = {
+            Icon(
+                Icons.Filled.Warning,
+                contentDescription = null,
+                tint = VineColors.Orange,
+                modifier = Modifier.size(20.dp),
+            )
+        },
+        title = { Text(review.title()) },
+        text = { Text(review.message(), fontSize = 14.sp) },
+        confirmButton = {
+            TextButton(onClick = onReview) { Text(review.reviewActionLabel()) }
+        },
+        dismissButton = {
+            TextButton(onClick = onContinueAnyway) { Text("Continue anyway") }
+        },
+    )
 }
 
 @Composable
