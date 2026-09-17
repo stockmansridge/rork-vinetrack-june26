@@ -1,8 +1,5 @@
 package com.rork.vinetrack.data.insights
 
-import android.content.Context
-import android.content.SharedPreferences
-import android.util.Log
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -33,13 +30,14 @@ import kotlinx.serialization.json.Json
  * Admin must not be visible to the next person who signs in on the same
  * device.
  */
-class VineyardInsightsStore(private val raw: InsightsKeyValueStore) {
-
-    constructor(prefs: SharedPreferences) : this(SharedPreferencesKeyValueStore(prefs))
-
-    constructor(context: Context) : this(
-        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
-    )
+class VineyardInsightsStore(
+    private val raw: InsightsKeyValueStore,
+    /**
+     * Diagnostics seam. Defaulting to silent keeps this class free of
+     * `android.util.Log`, so it compiles into an ordinary JVM test.
+     */
+    private val logger: InsightsLogger = InsightsLogger.Silent,
+) {
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -85,12 +83,32 @@ class VineyardInsightsStore(private val raw: InsightsKeyValueStore) {
         @SerialName("observation_id") val observationId: String,
         /** Relative path under the app's scout_photos directory. */
         @SerialName("local_path") val localPath: String,
-        /** Set once the bytes are in the bucket but the row is still owed. */
+        /**
+         * Set once the bytes are in the bucket but the row is still owed.
+         *
+         * This is the persisted [PhotoUploadState.OBJECT_UPLOADED] marker. It
+         * survives a restart so the next attempt resumes at the metadata upsert
+         * instead of re-uploading bytes that are already there.
+         */
         @SerialName("uploaded_storage_path") val uploadedStoragePath: String? = null,
+        /**
+         * Set once the metadata row exists. Only when this AND
+         * [uploadedStoragePath] are set is the photograph genuinely stored, so
+         * a crash between the two effects can never present as success.
+         */
+        @SerialName("row_committed") val rowCommitted: Boolean = false,
         @SerialName("captured_at") val capturedAt: String,
         @SerialName("attempt_count") val attemptCount: Int = 0,
         @SerialName("last_error") val lastError: String? = null,
-    )
+    ) {
+        /** Observable progression, for display and for assertions. */
+        val uploadState: PhotoUploadState
+            get() = ScoutPhotoUpload.state(
+                isQueued = true,
+                uploadedStoragePath = uploadedStoragePath,
+                rowCommitted = rowCommitted,
+            )
+    }
 
     @Serializable
     private data class StoredObservation(
@@ -554,13 +572,44 @@ class VineyardInsightsStore(private val raw: InsightsKeyValueStore) {
         return encodeAndWrite(KEY_PHOTO_QUEUE, next)
     }
 
-    /** Record that the bytes landed but the metadata row is still owed. */
-    fun markPhotoUploaded(photoId: String, storagePath: String): Boolean {
-        val next = loadPhotoQueue().map {
+    /**
+     * Record that the bytes landed but the metadata row is still owed.
+     *
+     * Deliberately does NOT dequeue and does NOT mark the photograph complete.
+     * A storage object with no metadata row is invisible to every client, so
+     * reporting success here would tell the operator their evidence was saved
+     * when no report could ever find it.
+     *
+     * Only applied while the entry is still queued: a photograph the operator
+     * deleted mid-upload has already left the queue and must not be revived by
+     * its own in-flight callback.
+     */
+    fun markPhotoObjectUploaded(photoId: String, storagePath: String): Boolean {
+        val queue = loadPhotoQueue()
+        if (queue.none { it.id == photoId }) return false
+        val next = queue.map {
             if (it.id == photoId) it.copy(uploadedStoragePath = storagePath, lastError = null) else it
         }
         return encodeAndWrite(KEY_PHOTO_QUEUE, next)
     }
+
+    /**
+     * Record that the metadata row committed. The entry stays queued until
+     * [dequeuePhoto] discharges it, so a crash between the two is still visibly
+     * outstanding rather than silently finished.
+     */
+    fun markPhotoRowCommitted(photoId: String): Boolean {
+        val queue = loadPhotoQueue()
+        if (queue.none { it.id == photoId }) return false
+        val next = queue.map {
+            if (it.id == photoId) it.copy(rowCommitted = true, lastError = null) else it
+        }
+        return encodeAndWrite(KEY_PHOTO_QUEUE, next)
+    }
+
+    /** The queue entry for one photograph, if it is still owed. */
+    fun photoQueueEntry(photoId: String): QueuedPhoto? =
+        loadPhotoQueue().firstOrNull { it.id == photoId }
 
     fun recordPhotoFailure(photoId: String, message: String): Boolean {
         val next = loadPhotoQueue().map {
@@ -604,7 +653,7 @@ class VineyardInsightsStore(private val raw: InsightsKeyValueStore) {
             KEY_PHOTO_QUEUE,
             KEY_LAST_PULL,
         ).forEach { key ->
-            if (!raw.remove(key)) Log.w(TAG, "Sign-out clear did not remove $key")
+            if (!raw.remove(key)) logger.warn("Sign-out clear did not remove $key")
         }
     }
 
@@ -613,7 +662,7 @@ class VineyardInsightsStore(private val raw: InsightsKeyValueStore) {
     private inline fun <reified T> decodeList(key: String): List<T> {
         val stored = raw.read(key) ?: return emptyList()
         return runCatching { json.decodeFromString<List<T>>(stored) }
-            .onFailure { Log.w(TAG, "Unreadable $key: ${it.javaClass.simpleName}") }
+            .onFailure { logger.warn("Unreadable $key: ${it.javaClass.simpleName}") }
             .getOrDefault(emptyList())
     }
 
@@ -626,14 +675,13 @@ class VineyardInsightsStore(private val raw: InsightsKeyValueStore) {
      */
     private inline fun <reified T> encodeAndWrite(key: String, value: List<T>): Boolean {
         val encoded = runCatching { json.encodeToString(value) }
-            .onFailure { Log.w(TAG, "Encoding $key failed: ${it.javaClass.simpleName}") }
+            .onFailure { logger.warn("Encoding $key failed: ${it.javaClass.simpleName}") }
             .getOrNull() ?: return false
         return raw.write(key, encoded)
     }
 
-    private companion object {
+    internal companion object {
         const val PREFS_NAME = "vineyard_insights_preview"
-        const val TAG = "VineyardInsights"
         const val KEY_VISITS = "scout_visits"
         const val KEY_NOTES = "vintage_notes"
         const val KEY_QUEUE = "pending_operations"

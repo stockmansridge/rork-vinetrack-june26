@@ -1556,8 +1556,27 @@ fun GrowthSheet(
             }
         }
         if (existing == null) {
-            vm.createGrowthStageRecord(input, onResult = cb)
+            // THE canonical paired writer: one Growth Stage observation creates
+            // one real `pins` row AND one record that references it. This screen
+            // previously wrote a record with `pin_id` null and relied on
+            // PinsScreen synthesising a display-only pin that never reached the
+            // database.
+            vm.captureCanonicalGrowthStage(
+                paddockId = block?.id,
+                stage = chosen,
+                latitude = locatedLat,
+                longitude = locatedLng,
+                notes = notes.trim().ifBlank { null },
+                rowNumber = locatedRow ?: existing?.rowNumber,
+                observedAtIso = observedIso,
+                variety = variety,
+                onResult = cb,
+            )
         } else {
+            // An edit amends the SAME canonical event. A historical record with
+            // no pin stays pin-less deliberately — back-filling one here would
+            // drop a new map pin at today's position for an observation made
+            // somewhere else months ago.
             vm.updateGrowthStageRecord(existing.id, input, cb)
         }
     }

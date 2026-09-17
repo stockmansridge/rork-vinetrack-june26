@@ -1206,7 +1206,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * without unpicking anything else.
      */
     val vineyardInsights = com.rork.vinetrack.data.insights.VineyardInsightsController(
-        com.rork.vinetrack.data.insights.VineyardInsightsStore(app),
+        com.rork.vinetrack.data.insights.VineyardInsightsStore(
+            com.rork.vinetrack.data.insights.SharedPreferencesKeyValueStore(
+                app.getSharedPreferences(
+                    com.rork.vinetrack.data.insights.VineyardInsightsStore.PREFS_NAME,
+                    android.content.Context.MODE_PRIVATE,
+                ),
+            ),
+            com.rork.vinetrack.data.insights.AndroidInsightsLogger(),
+        ),
         com.rork.vinetrack.data.insights.ScoutPhotoFileStore(app),
         com.rork.vinetrack.data.insights.VineyardInsightsSyncRepository(session),
     )
@@ -1284,8 +1292,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             vineyardInsights.linkGrowthStageRecord(
                 visitId = visitId,
                 assessmentId = assessmentId,
-                // Android authors DIRECT growth records (pin_id null), matching
-                // the existing Growth screen, so there is no pin to reference.
+                // BOTH persistent canonical ids. The pin is a real `pins` row
+                // created by the paired writer, not a display-only synthesis.
                 pinId = record.pinId,
                 recordId = record.id,
                 stageLabel = stage.displayName,
@@ -1328,23 +1336,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 return@fetchCurrentFix
             }
             var created: GrowthStageRecord? = null
-            createGrowthStageRecord(
-                input = GrowthStageRecordRepository.GrowthInput(
-                    paddockId = paddockId,
-                    stageCode = stage.code,
-                    stageLabel = stage.description,
-                    // Snapshot the variety so a later allocation change cannot
-                    // rewrite what this observation was made against.
-                    variety = block?.primaryVarietyName,
-                    observedAt = java.time.Instant.now().toString(),
-                    rowNumber = null,
-                    notes = null,
-                    latitude = result.fix.latitude,
-                    longitude = result.fix.longitude,
-                ),
-                onCreatedRecord = { record ->
-                    // Linked from the optimistic row, whose id is client-minted
-                    // and final, so an offline capture is linked immediately.
+            // THE canonical paired writer. Scout adds no second phenology
+            // authority: this produces the same pin + record pair the Growth
+            // screen and the Pin Composer now produce.
+            captureCanonicalGrowthStage(
+                paddockId = paddockId,
+                stage = stage,
+                latitude = result.fix.latitude,
+                longitude = result.fix.longitude,
+                variety = block?.primaryVarietyName,
+                onCaptured = { _, record ->
+                    // Linked from the optimistic row, whose ids are
+                    // client-minted and final, so an offline capture is linked
+                    // to BOTH persistent identities immediately.
                     if (created == null) {
                         created = record
                         link(record)
@@ -6535,6 +6539,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Automatic GPS capture freezes identity, vineyard, trip and observation
         // time at the initiating tap. Null preserves explicit/manual placement.
         captureContext: PinCaptureContext? = null,
+        // Pre-minted pin id. Used by the canonical paired Growth Stage writer,
+        // which must know BOTH ids before anything is persisted so the record
+        // can carry its pin_id offline and every retry re-sends the same
+        // identity. Null keeps the existing mint-here behaviour.
+        pinId: String? = null,
         // Quick-pin parity: fires with the created (or queued optimistic) pin so the
         // launcher's success card and auto-photo prompt have the concrete row to
         // work with. Independent of [onResult], which still reports save success.
@@ -6569,7 +6578,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // optimistic pin, the network insert, and (if queued) the outbox
         // payload — keeping replay idempotent.
         val input = PinRepository.PinInput(
-            id = captureContext?.pinId ?: UUID.randomUUID().toString(),
+            id = pinId ?: captureContext?.pinId ?: UUID.randomUUID().toString(),
             vineyardId = vineyardId,
             // Link the pin to the in-progress trip (iOS parity) so it shows up
             // in that trip's detail view and PDF export.
@@ -12769,6 +12778,112 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // MARK: - Growth-stage record write path
+
+    /**
+     * THE canonical Android Growth Stage capture. All three entry points — the
+     * Growth Stage screen, the Unified Pin Composer and Vineyard Insights Scout
+     * — go through here, so one observation always produces one pin AND one
+     * record that references it.
+     *
+     * ## What this replaced
+     *
+     * Android had two divergent half-flows. The Growth screen wrote a record
+     * with `pin_id` null and no pin; the Composer wrote a Growth pin and no
+     * record. `PinsScreen.synthesizeGrowthPins` then fabricated display-only
+     * pins in memory so the records still appeared on the map — which is why
+     * the gap survived. Those pins never reached the database and never synced.
+     * iOS has always produced the pair; this ports that, it does not add a
+     * third writer.
+     *
+     * ## Ordering and durability
+     *
+     * Both ids are minted BEFORE anything is persisted, so the record can carry
+     * its `pin_id` even offline and every retry re-sends the same identities.
+     * The pin is created first because `growth_stage_records.pin_id` is a real
+     * foreign key — a record replayed before its pin would be rejected. Each
+     * half owns its established outbox, so a partial failure replays only the
+     * missing half and a restart preserves both. Queue ownership comes from the
+     * entry's own vineyard id, never the currently selected vineyard.
+     *
+     * [onResult] reports false if EITHER half failed to persist locally, so a
+     * half-saved capture is never presented as complete.
+     */
+    fun captureCanonicalGrowthStage(
+        paddockId: String?,
+        stage: GrowthStage,
+        latitude: Double?,
+        longitude: Double?,
+        notes: String? = null,
+        rowNumber: Int? = null,
+        observedAtIso: String? = null,
+        variety: String? = null,
+        placement: PinPlacementResult? = null,
+        locationScope: String? = null,
+        segments: List<com.rork.vinetrack.data.model.ManualIssueSegment>? = null,
+        // Fires with both canonical ids once the pin and record exist locally,
+        // so Scout can store BOTH persistent references.
+        onCaptured: (pinId: String, record: GrowthStageRecord) -> Unit = { _, _ -> },
+        onResult: (Boolean) -> Unit,
+    ) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        val block = _ui.value.paddocks.firstOrNull { it.id == paddockId }
+        // Both identities minted up front and final. The record references the
+        // pin from its very first optimistic render.
+        val pinId = UUID.randomUUID().toString()
+        val observedAt = observedAtIso ?: java.time.Instant.now().toString()
+        val title = UnifiedPinContract.growthStagePinTitle(stage.code)
+
+        // ---- Step 1: the pin. First because the record's pin_id needs it. ----
+        createPin(
+            title = title,
+            mode = "Growth",
+            category = null,
+            notes = stage.description,
+            side = null,
+            paddockId = paddockId,
+            rowNumber = rowNumber,
+            isCompleted = false,
+            latitude = latitude,
+            longitude = longitude,
+            buttonName = title,
+            buttonColor = UnifiedPinContract.GROWTH_STAGE_PIN_COLOR,
+            heading = null,
+            placement = placement,
+            locationScope = locationScope,
+            segments = segments,
+            growthStageCode = stage.code,
+            pinId = pinId,
+        ) { pinOk ->
+            if (!pinOk) {
+                // The pin did not persist. Creating the record alone would
+                // reproduce exactly the orphaned-record defect this replaces.
+                _ui.update {
+                    it.copy(growthError = it.pinError ?: "Could not save the Growth Stage pin.")
+                }
+                onResult(false)
+                return@createPin
+            }
+            // ---- Step 2: the record, carrying the real pin id. ----
+            createGrowthStageRecord(
+                input = GrowthStageRecordRepository.GrowthInput(
+                    paddockId = paddockId,
+                    stageCode = stage.code,
+                    stageLabel = stage.description,
+                    // Snapshot the variety so a later allocation change cannot
+                    // rewrite what this observation was made against.
+                    variety = variety ?: block?.primaryVarietyName,
+                    observedAt = observedAt,
+                    rowNumber = rowNumber,
+                    notes = notes,
+                    latitude = latitude,
+                    longitude = longitude,
+                    pinId = pinId,
+                ),
+                onCreatedRecord = { record -> onCaptured(pinId, record) },
+                onResult = onResult,
+            )
+        }
+    }
 
     /**
      * Log a new growth-stage observation (Android Stage N-1 — offline/retryable).

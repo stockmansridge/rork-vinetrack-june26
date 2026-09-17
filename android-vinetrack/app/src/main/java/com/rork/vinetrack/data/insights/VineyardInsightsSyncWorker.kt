@@ -26,7 +26,7 @@ package com.rork.vinetrack.data.insights
 class VineyardInsightsSyncWorker(
     private val store: VineyardInsightsStore,
     private val photoFiles: ScoutPhotoFiles?,
-    private val repository: VineyardInsightsSyncRepository,
+    private val repository: VineyardInsightsSyncApi,
     private val nowIso: () -> String,
 ) {
 
@@ -83,14 +83,14 @@ class VineyardInsightsSyncWorker(
         val visit = store.loadVisits().firstOrNull { it.id == entry.recordId } ?: return
 
         // vintage_year is NOT sent: SQL 236 resolves it from scout_date.
-        val payload = VineyardInsightsSyncRepository.VisitUpsert(
+        val payload = VineyardInsightsSyncApi.VisitUpsert(
             id = visit.id,
             vineyardId = visit.vineyardId,
             scoutDate = visit.scoutDateIso,
             status = visit.status.code,
             visitSummary = visit.visitSummary,
             weatherSnapshot = visit.weather?.let {
-                VineyardInsightsSyncRepository.WeatherPayload(
+                VineyardInsightsSyncApi.WeatherPayload(
                     observedAt = it.observedAtIso,
                     capturedAt = it.capturedAtIso,
                     source = it.source,
@@ -109,7 +109,7 @@ class VineyardInsightsSyncWorker(
         )
 
         val assessments = visit.assessments.map {
-            VineyardInsightsSyncRepository.AssessmentUpsert(
+            VineyardInsightsSyncApi.AssessmentUpsert(
                 id = it.id,
                 scoutVisitId = visit.id,
                 vineyardId = it.vineyardId,
@@ -124,7 +124,7 @@ class VineyardInsightsSyncWorker(
         // "not assessed" entries the scout never actually considered.
         val observations = visit.assessments.flatMap { assessment ->
             assessment.observations.filter { it.hasContent }.map {
-                VineyardInsightsSyncRepository.ObservationUpsert(
+                VineyardInsightsSyncApi.ObservationUpsert(
                     id = it.id,
                     assessmentId = assessment.id,
                     vineyardId = assessment.vineyardId,
@@ -152,7 +152,7 @@ class VineyardInsightsSyncWorker(
         }
         val note = store.loadNotes().firstOrNull { it.id == entry.recordId } ?: return
         val returned = repository.upsertNote(
-            VineyardInsightsSyncRepository.UpsertNoteArgs(
+            VineyardInsightsSyncApi.UpsertNoteArgs(
                 id = note.id,
                 vineyardId = note.vineyardId,
                 noteDate = note.noteDateIso,
@@ -174,11 +174,21 @@ class VineyardInsightsSyncWorker(
     // ---------------------------------------------------------- Photographs
 
     /**
-     * Upload queued photographs, then write their metadata rows.
+     * Drive queued photographs through
+     * local_saved -> queued -> object_uploaded -> row_committed -> completed.
      *
-     * A late completion can only ever touch ITS OWN photo id, so it cannot
-     * replace or remove a newer photograph. A photograph the operator deleted
-     * has already left the queue and is skipped.
+     * The ordering rule this method exists to honour: the queue entry is
+     * discharged and the photograph reported stored only after BOTH the storage
+     * object and the metadata row exist. A storage object with no row is
+     * invisible to every client, so completing on the upload alone would tell
+     * the operator their evidence was saved when no report could find it.
+     *
+     * Ownership comes from each entry's own `vineyardId`, never from whatever
+     * vineyard is selected when connectivity returns.
+     *
+     * A late completion can only ever touch ITS OWN photo id, and a photograph
+     * the operator deleted has already left the queue, so an in-flight upload
+     * cannot resurrect it.
      */
     suspend fun pushPhotos(vineyardId: String): Outcome {
         val files = photoFiles ?: return Outcome()
@@ -186,36 +196,65 @@ class VineyardInsightsSyncWorker(
         var error: String? = null
         for (entry in store.loadPhotoQueue().filter { it.vineyardId == vineyardId }) {
             val photo = findPhoto(entry.id)
-            if (photo == null) {
-                // Deleted locally while queued. Tombstone the row if it was
-                // already referenced, then drop the obligation.
-                if (entry.uploadedStoragePath != null) {
+            val step = ScoutPhotoUpload.nextStep(
+                photoId = entry.id,
+                storagePath = files.storagePath(entry.vineyardId, entry.observationId, entry.id),
+                uploadedStoragePath = entry.uploadedStoragePath,
+                stillPresentLocally = photo != null,
+                rowCommitted = entry.rowCommitted,
+            )
+
+            if (step is ScoutPhotoUpload.Step.Cancel) {
+                // Deleted locally while queued. An object with no row is
+                // referenced by nothing, so it is removed rather than left as
+                // unreachable clutter; a committed row is tombstoned instead.
+                step.orphanedStoragePath?.let { orphan ->
+                    runCatching { repository.removePhotoObject(orphan) }
+                }
+                if (entry.rowCommitted) {
                     runCatching { repository.softDeletePhoto(entry.id, nowIso()) }
                 }
                 store.dequeuePhoto(entry.id)
                 continue
             }
-            val jpeg = files.read(entry.localPath)
-            if (jpeg == null) {
-                error = "The photograph file is missing on this device."
-                store.recordPhotoFailure(entry.id, error)
-                markPhotoFailed(entry.id)
-                continue
-            }
-            try {
-                // Bytes already landed on a previous attempt; only the row is
-                // still owed. Re-uploading would be wasted work.
-                val path = entry.uploadedStoragePath ?: repository.uploadPhotoBytes(
-                    files.storagePath(entry.vineyardId, entry.observationId, entry.id),
-                    jpeg,
-                ).also { store.markPhotoUploaded(entry.id, it) }
+            if (photo == null) continue
 
+            try {
+                // ---- object_uploaded ----------------------------------------
+                // Persisted BEFORE the row is attempted, so a crash in between
+                // resumes at the metadata upsert instead of re-uploading bytes
+                // that are already in the bucket.
+                var path = entry.uploadedStoragePath
+                if (step is ScoutPhotoUpload.Step.UploadObject) {
+                    val jpeg = files.read(entry.localPath)
+                    if (jpeg == null) {
+                        error = "The photograph file is missing on this device."
+                        store.recordPhotoFailure(entry.id, error)
+                        markPhotoFailed(entry.id)
+                        continue
+                    }
+                    // Same photo id, same path on every retry: the object is
+                    // overwritten, never duplicated.
+                    path = repository.uploadPhotoBytes(step.storagePath, jpeg)
+                    // Refuses if the operator deleted the photograph while this
+                    // upload was in flight — the entry is gone and must not be
+                    // recreated by its own callback.
+                    if (!store.markPhotoObjectUploaded(entry.id, path)) {
+                        runCatching { repository.removePhotoObject(path) }
+                        continue
+                    }
+                }
+                val storagePath = path ?: continue
+
+                // ---- row_committed -------------------------------------------
+                // Upserted on the photograph's own primary key, so a retry after
+                // a failed row write updates rather than duplicating.
                 repository.pushPhotoRow(
-                    VineyardInsightsSyncRepository.PhotoUpsert(
+                    VineyardInsightsSyncApi.PhotoUpsert(
                         id = photo.id,
                         observationId = photo.observationId,
                         vineyardId = entry.vineyardId,
-                        storagePath = path,
+                        storagePath = storagePath,
                         capturedAt = photo.capturedAtIso,
                         latitude = photo.latitude,
                         longitude = photo.longitude,
@@ -225,12 +264,17 @@ class VineyardInsightsSyncWorker(
                         clientUpdatedAt = nowIso(),
                     ),
                 )
-                applyPhotoStoragePath(entry.id, path, failed = false)
+                if (!store.markPhotoRowCommitted(entry.id)) continue
+
+                // ---- completed ------------------------------------------------
+                // Only now, with both effects durable, is the obligation gone.
+                applyPhotoStoragePath(entry.id, storagePath, failed = false)
                 store.dequeuePhoto(entry.id)
                 uploaded += 1
             } catch (e: Exception) {
-                // The local photograph is retained and Retry stays available. A
-                // failed upload must never present as a lost photograph.
+                // The local photograph and its queue entry are both retained, so
+                // a half-finished upload stays retryable. A failed upload must
+                // never present as a lost photograph.
                 error = e.message ?: "Could not upload the photograph yet."
                 store.recordPhotoFailure(entry.id, error)
                 markPhotoFailed(entry.id)
@@ -238,6 +282,25 @@ class VineyardInsightsSyncWorker(
         }
         return Outcome(photosUploaded = uploaded, error = error)
     }
+
+    /**
+     * Remove a storage object left behind by a photograph the operator deleted
+     * between its bytes landing and its metadata row being written.
+     *
+     * Returns whether the object is genuinely gone, so the caller keeps the
+     * obligation outstanding on failure rather than abandoning an unreachable
+     * object nobody can ever see or clean up.
+     */
+    suspend fun removeOrphanedPhotoObject(storagePath: String): Boolean =
+        runCatching { repository.removePhotoObject(storagePath) }.isSuccess
+
+    /**
+     * Tombstone a fully stored photograph's metadata row. The storage object is
+     * retained: the established policy keeps uploaded evidence recoverable
+     * rather than destroying the record of a real observation.
+     */
+    suspend fun tombstonePhoto(photoId: String): Boolean =
+        runCatching { repository.softDeletePhoto(photoId, nowIso()) }.isSuccess
 
     private fun findPhoto(photoId: String): ScoutPhoto? =
         store.loadVisits().asSequence()
@@ -323,7 +386,7 @@ class VineyardInsightsSyncWorker(
      * unsent change is newer than anything the server can currently return, and
      * clobbering it would silently discard their work.
      */
-    fun applyNoteRow(row: VineyardInsightsSyncRepository.NoteRow) {
+    fun applyNoteRow(row: VineyardInsightsSyncApi.NoteRow) {
         val pending = store.loadQueue().any {
             it.recordId == row.id &&
                 it.entity == VineyardInsightsStore.QueuedOperation.Entity.VINTAGE_NOTE
@@ -351,10 +414,10 @@ class VineyardInsightsSyncWorker(
     }
 
     fun applyVisitRow(
-        row: VineyardInsightsSyncRepository.VisitRow,
-        assessments: List<VineyardInsightsSyncRepository.AssessmentRow>,
-        observations: List<VineyardInsightsSyncRepository.ObservationRow>,
-        photos: List<VineyardInsightsSyncRepository.PhotoRow>,
+        row: VineyardInsightsSyncApi.VisitRow,
+        assessments: List<VineyardInsightsSyncApi.AssessmentRow>,
+        observations: List<VineyardInsightsSyncApi.ObservationRow>,
+        photos: List<VineyardInsightsSyncApi.PhotoRow>,
     ) {
         val pending = store.loadQueue().any {
             it.recordId == row.id &&
@@ -445,7 +508,7 @@ class VineyardInsightsSyncWorker(
      * Local bytes are retained when this device already holds them, so a pulled
      * row never blanks a preview that is already on screen.
      */
-    private fun VineyardInsightsSyncRepository.PhotoRow.toDomain(): ScoutPhoto {
+    private fun VineyardInsightsSyncApi.PhotoRow.toDomain(): ScoutPhoto {
         val relative = photoFiles?.relativePath(vineyardId, observationId, id)
         val localPath = relative?.takeIf { photoFiles?.exists(it) == true }
         return if (

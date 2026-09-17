@@ -31,7 +31,7 @@ class VineyardInsightsController(
      */
     private val photoFiles: ScoutPhotoFiles? = null,
     /** Null in tests and whenever the backend is unreachable. */
-    private val repository: VineyardInsightsSyncRepository? = null,
+    private val repository: VineyardInsightsSyncApi? = null,
     private val clock: () -> Instant = { Instant.now() },
 ) {
 
@@ -247,11 +247,20 @@ class VineyardInsightsController(
     }
 
     /**
-     * Delete one photograph, invalidating any queued upload for it.
+     * Delete one photograph, by how far its upload had progressed.
      *
-     * The queue entry is removed FIRST so a replay already running cannot
-     * resurrect a photograph the operator deleted. An already-uploaded row is
-     * soft-deleted server-side on the next sync attempt.
+     * The queue entry is cancelled FIRST, always. A replay already in flight
+     * checks the queue before it writes anything, so removing the entry up front
+     * is what stops a deleted photograph being resurrected by its own callback.
+     *
+     * The four cases, per [ScoutPhotoUpload.planDeletion]:
+     *  - local-only: remove the bytes; nothing exists server-side.
+     *  - queued: cancel, then remove the bytes.
+     *  - object uploaded, row pending: cancel, remove the bytes, and mark the
+     *    orphaned object for removal — no row references it, so nothing could
+     *    ever find it again.
+     *  - fully uploaded: the row is SOFT-deleted on the next sync and the object
+     *    retained, following the established evidence-retention policy.
      */
     fun deletePhoto(
         visitId: String,
@@ -265,6 +274,15 @@ class VineyardInsightsController(
         val observation = assessment.observation(item) ?: return null
         val photo = observation.photos.firstOrNull { it.id == photoId } ?: return null
 
+        val entry = store.photoQueueEntry(photoId)
+        val plan = ScoutPhotoUpload.planDeletion(
+            localPath = photo.localPath,
+            isQueued = entry != null,
+            uploadedStoragePath = entry?.uploadedStoragePath ?: photo.storagePath,
+            rowCommitted = entry?.rowCommitted ?: (entry == null && photo.storagePath != null),
+        )
+
+        // Cancelled before anything else, so an in-flight upload cannot revive it.
         store.dequeuePhoto(photoId)
         _pendingPhotoCount.value = store.loadPhotoQueue().size
 
@@ -272,9 +290,33 @@ class VineyardInsightsController(
             observation.copy(photos = observation.photos.filterNot { it.id == photoId }),
         )
         if (!persist(visit.withAssessment(nextAssessment))) return null
-        photo.localPath?.let { photoFiles?.remove(it) }
+
+        when (plan) {
+            is ScoutPhotoUpload.Deletion.LocalOnly -> plan.localPath?.let { photoFiles?.remove(it) }
+            is ScoutPhotoUpload.Deletion.Queued -> plan.localPath?.let { photoFiles?.remove(it) }
+            is ScoutPhotoUpload.Deletion.ObjectUploadedPending -> {
+                plan.localPath?.let { photoFiles?.remove(it) }
+                // Queued as a tombstone so the unreferenced object is removed on
+                // the next sync, rather than lingering unreachable.
+                pendingOrphanedObjects.add(plan.orphanedStoragePath)
+            }
+            is ScoutPhotoUpload.Deletion.FullyUploaded -> {
+                plan.localPath?.let { photoFiles?.remove(it) }
+                pendingPhotoTombstones.add(photoId)
+            }
+        }
         return photo
     }
+
+    /**
+     * Storage objects whose bytes uploaded but whose metadata row never landed,
+     * for a deleted photograph. Removed on the next sync: nothing references
+     * them, so they are unreachable rather than recoverable.
+     */
+    private val pendingOrphanedObjects = mutableSetOf<String>()
+
+    /** Fully-stored photographs awaiting a server-side soft delete. */
+    private val pendingPhotoTombstones = mutableSetOf<String>()
 
     // ------------------------------------------------------------ E-L link
 
@@ -495,7 +537,9 @@ class VineyardInsightsController(
      * end so pulled work becomes visible.
      */
     suspend fun sync(vineyardId: String) {
-        val outcome = worker?.sync(vineyardId) ?: return
+        val worker = this.worker ?: return
+        flushPhotoDeletions(worker)
+        val outcome = worker.sync(vineyardId)
         _visits.value = store.loadVisits()
         _notes.value = store.loadNotes()
         _pendingPhotoCount.value = store.loadPhotoQueue().size
@@ -504,10 +548,28 @@ class VineyardInsightsController(
 
     /** Retry failed photograph uploads. The local bytes were never discarded. */
     suspend fun retryPhotoUploads(vineyardId: String) {
-        val outcome = worker?.pushPhotos(vineyardId) ?: return
+        val worker = this.worker ?: return
+        flushPhotoDeletions(worker)
+        val outcome = worker.pushPhotos(vineyardId)
         _visits.value = store.loadVisits()
         _pendingPhotoCount.value = store.loadPhotoQueue().size
         _lastSyncError.value = outcome.error
+    }
+
+    /**
+     * Apply deletions that could only be finished server-side.
+     *
+     * Each entry is dropped only once its server effect succeeded, so a failure
+     * here leaves the obligation outstanding for the next attempt rather than
+     * silently abandoning an unreachable object or an un-tombstoned row.
+     */
+    private suspend fun flushPhotoDeletions(worker: VineyardInsightsSyncWorker) {
+        pendingOrphanedObjects.toList().forEach { path ->
+            if (worker.removeOrphanedPhotoObject(path)) pendingOrphanedObjects.remove(path)
+        }
+        pendingPhotoTombstones.toList().forEach { photoId ->
+            if (worker.tombstonePhoto(photoId)) pendingPhotoTombstones.remove(photoId)
+        }
     }
 
     // ------------------------------------------------------------ Session

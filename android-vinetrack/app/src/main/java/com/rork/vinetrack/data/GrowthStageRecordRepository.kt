@@ -25,11 +25,17 @@ import java.util.UUID
  * owner/manager/supervisor/operator may insert and update; only
  * owner/manager/supervisor may soft-delete.
  *
- * Online-first — there is no local queue yet. Android authors records directly
- * (no source pin), so `pin_id` is left null and the growth form is the sole
- * editor of these columns. `created_by` and the server-managed sync columns are
- * left untouched on edit. Records mirrored from iOS pins (with a `pin_id`) are
- * still readable and editable through the same path.
+ * Online-first — there is no local queue yet. `created_by` and the server-managed
+ * sync columns are left untouched on edit.
+ *
+ * ## pin_id is now written by Android too
+ *
+ * Android previously hard-coded `pin_id = null` because it had no pin to point
+ * at. That was the defect: a growth observation is one event that owns BOTH a
+ * `pins` row and a `growth_stage_records` row, exactly as iOS has always
+ * produced. New captures arrive here through the canonical paired writer with a
+ * real, already-minted pin id. [GrowthInput.pinId] is null ONLY when replaying
+ * or editing a historical record written before that correction.
  */
 class GrowthStageRecordRepository(private val session: SessionStore) : GrowthPhotoReferenceGateway {
 
@@ -38,6 +44,8 @@ class GrowthStageRecordRepository(private val session: SessionStore) : GrowthPho
         val id: String,
         @SerialName("vineyard_id") val vineyardId: String,
         @SerialName("paddock_id") val paddockId: String? = null,
+        /** The canonical pin this observation belongs to. Null only for legacy replays. */
+        @SerialName("pin_id") val pinId: String? = null,
         @SerialName("stage_code") val stageCode: String,
         @SerialName("stage_label") val stageLabel: String? = null,
         val variety: String? = null,
@@ -86,6 +94,14 @@ class GrowthStageRecordRepository(private val session: SessionStore) : GrowthPho
         /** GPS drop point captured like a map pin (auto-placement), or null. */
         val latitude: Double? = null,
         val longitude: Double? = null,
+        /**
+         * The canonical pin minted for this observation by the paired writer.
+         *
+         * Null means "do not touch pin_id": either a legacy replay, or an edit
+         * of a historical record that genuinely has no pin. An edit never
+         * back-fills a pin — see [GrowthStageCapture.isLegacyUnlinked].
+         */
+        val pinId: String? = null,
     )
 
     private fun nowIso(): String = Instant.now().toString()
@@ -95,16 +111,18 @@ class GrowthStageRecordRepository(private val session: SessionStore) : GrowthPho
      * observation purely (no network). The same snapshot is used for the
      * optimistic UI row, the queued GROWTH_RECORD / CREATE marker payload, and
      * matches the row the server insert/replay produces — so the visible record
-     * never changes shape once it syncs. Android authors direct records (no
-     * source pin), so pin/geo/side/photo columns are null and `created_by` is
-     * resolved from the live session at insert time, never carried here.
+     * never changes shape once it syncs. `created_by` is resolved from the live
+     * session at insert time, never carried here.
      */
     fun buildGrowthRecord(vineyardId: String, input: GrowthInput, id: String, clientUpdatedAt: String): GrowthStageRecord =
         GrowthStageRecord(
             id = id,
             vineyardId = vineyardId,
             paddockId = input.paddockId,
-            pinId = null,
+            // The canonical pin minted alongside this record by the paired
+            // writer. Present from the first optimistic render, so the pin and
+            // record are linked offline and stay linked through replay.
+            pinId = input.pinId,
             stageCode = input.stageCode,
             stageLabel = input.stageLabel,
             variety = input.variety,
@@ -142,6 +160,7 @@ class GrowthStageRecordRepository(private val session: SessionStore) : GrowthPho
                 id = id ?: UUID.randomUUID().toString(),
                 vineyardId = vineyardId,
                 paddockId = input.paddockId,
+                pinId = input.pinId,
                 stageCode = input.stageCode,
                 stageLabel = input.stageLabel,
                 variety = input.variety,

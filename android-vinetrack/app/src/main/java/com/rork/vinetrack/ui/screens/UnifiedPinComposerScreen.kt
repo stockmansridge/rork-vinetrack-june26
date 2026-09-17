@@ -334,28 +334,19 @@ fun UnifiedPinComposerScreen(
 
         when (chosen) {
             is ComposerTypeSelection.GrowthStageSel -> {
-                // A normal Growth pin carrying the EXACT stage identifier the
-                // existing growth-stage workflow stores — never a second list.
-                val title = UnifiedPinContract.growthStagePinTitle(chosen.stage.code)
-                vm.createPin(
-                    title = title,
-                    mode = "Growth",
-                    category = null,
-                    notes = chosen.stage.description,
-                    side = null,
+                // THE canonical paired writer. This composer previously created
+                // a Growth pin and NO growth_stage_records row, so a stage
+                // chosen here never reached the Growth Stage list, reports or
+                // the E-L heatmap. It now produces both halves of the one event.
+                vm.captureCanonicalGrowthStage(
                     paddockId = resolvedBlock,
-                    rowNumber = null,
-                    isCompleted = false,
+                    stage = chosen.stage,
                     latitude = marker.latitude,
                     longitude = marker.longitude,
-                    buttonName = title,
-                    buttonColor = UnifiedPinContract.GROWTH_STAGE_PIN_COLOR,
-                    heading = null,
                     placement = placement,
                     locationScope = method,
                     segments = rowSegments,
-                    growthStageCode = chosen.stage.code,
-                    onCreatedPin = { pin -> promptForPhoto(pin.id) },
+                    onCaptured = { pinId, _ -> promptForPhoto(pinId) },
                 ) { ok ->
                     saving = false
                     if (!ok) {
