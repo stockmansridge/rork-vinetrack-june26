@@ -51,6 +51,13 @@ import com.rork.vinetrack.data.GddPoint
 import com.rork.vinetrack.data.GddResetMode
 import com.rork.vinetrack.data.GddSettingsStore
 import com.rork.vinetrack.data.OperationPrefsStore
+import com.rork.vinetrack.data.DailyWeatherCacheStore
+import com.rork.vinetrack.data.DavisWeatherLinkRepository
+import com.rork.vinetrack.data.OptimalRipenessSourceSelection
+import com.rork.vinetrack.data.OptimalRipenessSourceStore
+import com.rork.vinetrack.data.OptimalRipenessWeatherRepository
+import com.rork.vinetrack.data.VineyardWeatherIntegrationRepository
+import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.BuiltInGrapeVarietyGDD
 import com.rork.vinetrack.data.model.GrapeVarietyRow
 import com.rork.vinetrack.data.model.Paddock
@@ -90,6 +97,7 @@ private data class BlockGddSeries(
 private data class VarietyGddResult(
     val sourceConfigured: Boolean,
     val series: List<BlockGddSeries>,
+    val sourceLabel: String,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -109,6 +117,13 @@ fun VarietyGDDDetailScreen(
         )
     }
     val gddSettings = remember { GddSettingsStore(context).load() }
+    val session = remember { SessionStore(context) }
+    val sourceStore = remember { OptimalRipenessSourceStore(context) }
+    val integrationRepository = remember { VineyardWeatherIntegrationRepository(session) }
+    val davisRepository = remember { DavisWeatherLinkRepository(session) }
+    val weatherRepository = remember(service, integrationRepository, davisRepository) {
+        OptimalRipenessWeatherRepository(service, integrationRepository, davisRepository)
+    }
 
     val target = remember(variety) {
         BuiltInGrapeVarietyGDD.resolveTarget(variety.optimalGddOverride, variety.varietyKey, variety.displayName)
@@ -137,28 +152,39 @@ fun VarietyGDDDetailScreen(
         seasonStartDateMs(state.seasonStartMonth, state.seasonStartDay)
     }
 
+    val vineyardId = state.selectedVineyardId
+    val cachedSource = remember(vineyardId) { vineyardId?.let { sourceStore.load(session.userId, it) } }
+    val initialSourceKey = cachedSource?.sourceFingerprint
+    val initialResult = remember(initialSourceKey, allocatedBlocks, coords) {
+        if (initialSourceKey != null && service.hasUsableData(initialSourceKey)) {
+            VarietyGddResult(
+                sourceConfigured = true,
+                series = computeVarietySeries(service, initialSourceKey, coords?.first ?: 0.0, allocatedBlocks, gddSettings.calculationMode.useBEDD),
+                sourceLabel = cachedSource?.sourceLabel ?: "Cached weather",
+            )
+        } else null
+    }
     val resultState = produceState<VarietyGddResult?>(
-        initialValue = null,
-        coords, allocatedBlocks, seasonStartMs,
+        initialValue = initialResult,
+        vineyardId, coords, allocatedBlocks,
     ) {
         val c = coords
-        if (c == null) {
-            value = VarietyGddResult(sourceConfigured = false, series = emptyList())
+        val id = vineyardId
+        if (c == null || id == null) {
+            value = VarietyGddResult(sourceConfigured = false, series = emptyList(), sourceLabel = "Weather source required")
             return@produceState
         }
-        value = null
-        service.fetchSeasonOpenMeteo(c.first, c.second, seasonStartMs)
+        val earliestBudburst = allocatedBlocks.mapNotNull(::optimalRipenessBudburstMs).minOrNull()
+        if (earliestBudburst == null) {
+            value = VarietyGddResult(sourceConfigured = true, series = emptyList(), sourceLabel = cachedSource?.sourceLabel ?: "Weather source")
+            return@produceState
+        }
+        val weather = weatherRepository.refresh(id, c.first, c.second, earliestBudburst, System.currentTimeMillis(), cachedSource?.sourceFingerprint)
+        sourceStore.save(OptimalRipenessSourceSelection(session.userId.orEmpty(), id, weather.source.sourceKey, weather.source.label))
         value = VarietyGddResult(
             sourceConfigured = true,
-            series = computeVarietySeries(
-                service = service,
-                sourceKey = DegreeDayService.openMeteoKey(c.first, c.second),
-                latitude = c.first,
-                blocks = allocatedBlocks,
-                seasonStartMs = seasonStartMs,
-                useBEDD = gddSettings.calculationMode.useBEDD,
-                resetMode = gddSettings.resetMode,
-            ),
+            series = computeVarietySeries(service, weather.source.sourceKey, weather.source.latitude, allocatedBlocks, gddSettings.calculationMode.useBEDD),
+            sourceLabel = weather.source.label,
         )
     }
 
@@ -192,6 +218,7 @@ fun VarietyGDDDetailScreen(
                 series = series,
                 loading = result == null,
                 sourceConfigured = result?.sourceConfigured == true,
+                sourceLabel = result?.sourceLabel ?: cachedSource?.sourceLabel ?: "Weather source",
             )
 
             when {
@@ -236,6 +263,7 @@ private fun VarietyHeaderCard(
     series: List<BlockGddSeries>,
     loading: Boolean,
     sourceConfigured: Boolean,
+    sourceLabel: String,
 ) {
     val vine = LocalVineColors.current
     val progress = if (target > 0) min(1.0, max(0.0, averageTotal / target)) else 0.0
@@ -247,7 +275,7 @@ private fun VarietyHeaderCard(
             if (sourceConfigured) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Icon(Icons.Filled.WbSunny, contentDescription = null, tint = VineColors.Orange, modifier = Modifier.size(14.dp))
-                    Text("GDD source: Open-Meteo archive", color = vine.textSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                    Text("GDD source: $sourceLabel", color = vine.textSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f))
                     if (loading) CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = VineColors.LeafGreen)
                 }
             }
@@ -481,21 +509,13 @@ private fun computeVarietySeries(
     sourceKey: String,
     latitude: Double,
     blocks: List<Paddock>,
-    seasonStartMs: Long,
     useBEDD: Boolean,
-    resetMode: GddResetMode,
 ): List<BlockGddSeries> {
     val now = System.currentTimeMillis()
     val oneYearAgo = run { val cal = Calendar.getInstance(); cal.timeInMillis = now; cal.add(Calendar.YEAR, -1); cal.timeInMillis }
     val out = mutableListOf<BlockGddSeries>()
     for (block in blocks) {
-        val stageMs = when (resetMode) {
-            GddResetMode.SEASON_START -> null
-            GddResetMode.BUDBURST -> parseIsoToEpochMs(block.budburstDate)
-            GddResetMode.FLOWERING -> parseIsoToEpochMs(block.floweringDate)
-            GddResetMode.VERAISON -> parseIsoToEpochMs(block.veraisonDate)
-        }
-        val resetMs = stageMs ?: seasonStartMs
+        val resetMs = optimalRipenessBudburstMs(block) ?: continue
         if (resetMs !in oneYearAgo..now) continue
         val series = service.dailyGddSeries(
             sourceKey = sourceKey,

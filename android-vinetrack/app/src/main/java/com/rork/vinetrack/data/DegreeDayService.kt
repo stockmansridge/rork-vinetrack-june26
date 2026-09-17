@@ -30,6 +30,9 @@ data class GddPoint(
     val interpolated: Boolean,
 )
 
+/** Exclusive-end date range requested from one weather provider. */
+data class WeatherDateWindow(val startEpochMs: Long, val endEpochMs: Long)
+
 /**
  * Growing Degree Day engine for the Optimal Ripeness surface. Ports the iOS
  * `DegreeDayService` Open-Meteo path: daily min/max temperatures are pulled from
@@ -41,7 +44,7 @@ data class GddPoint(
  * session; missing days are interpolated from neighbours, matching iOS.
  */
 class DegreeDayService(
-    private val persistentCache: DailyWeatherCacheStore? = null,
+    private val persistentCache: DailyWeatherCache? = null,
     private val timeZone: TimeZone = TimeZone.getDefault(),
 ) {
 
@@ -108,7 +111,45 @@ class DegreeDayService(
         return day > startOfDay(fromMs)
     }
 
-    /** Installs daily data fetched through the shared vineyard Davis integration. */
+    /**
+     * Plans provider-specific refreshes. Missing dates are requested, plus the
+     * latest three completed days so revised provider observations are upserted.
+     */
+    fun refreshWindows(
+        sourceKey: String,
+        fromMs: Long,
+        toMs: Long,
+        recentOverlapDays: Int = 3,
+    ): List<WeatherDateWindow> {
+        val start = startOfDay(fromMs)
+        val end = startOfDay(toMs)
+        if (start >= end) return emptyList()
+        val rows = sourceTemps(sourceKey)
+        val formatter = compactFormatter(timeZone)
+        val overlapStart = max(start, addDays(end, -recentOverlapDays.coerceAtLeast(0)))
+        val requestedDays = mutableListOf<Long>()
+        var day = start
+        while (day < end) {
+            val isMissing = rows[formatter.format(Date(day))] == null
+            if (isMissing || day >= overlapStart) requestedDays.add(day)
+            day = addDays(day, 1)
+        }
+        if (requestedDays.isEmpty()) return emptyList()
+        val windows = mutableListOf<WeatherDateWindow>()
+        var windowStart = requestedDays.first()
+        var previous = windowStart
+        for (candidate in requestedDays.drop(1)) {
+            if (candidate != addDays(previous, 1)) {
+                windows.add(WeatherDateWindow(windowStart, addDays(previous, 1)))
+                windowStart = candidate
+            }
+            previous = candidate
+        }
+        windows.add(WeatherDateWindow(windowStart, addDays(previous, 1)))
+        return windows
+    }
+
+    /** Installs daily data fetched through the canonical provider repository. */
     fun installDailyTemps(sourceKey: String, temperatures: Map<String, DailyTemp>): Boolean {
         val merged = sourceTemps(sourceKey)
         merged.putAll(temperatures)
@@ -119,62 +160,49 @@ class DegreeDayService(
         return merged.isNotEmpty()
     }
 
-    /**
-     * Fetches & caches daily temps for [latitude]/[longitude] from [seasonStartMs]
-     * through yesterday via Open-Meteo. Safe to call repeatedly — already-cached
-     * days are skipped. Returns true when usable data is available afterwards.
-     */
-    suspend fun fetchSeasonOpenMeteo(latitude: Double, longitude: Double, seasonStartMs: Long): Boolean {
+    /** Fetches only the planned missing/recent windows from Open-Meteo. */
+    suspend fun fetchOpenMeteoWindows(
+        latitude: Double,
+        longitude: Double,
+        windows: List<WeatherDateWindow>,
+    ): Boolean {
         val key = openMeteoKey(latitude, longitude)
         val today = startOfDay(System.currentTimeMillis())
-        val start = startOfDay(seasonStartMs)
+        val archiveCutoff = addDays(today, -6)
+        val station = sourceTemps(key)
+        val isoFmt = isoFormatter(timeZone)
         isLoading = true
         try {
-            if (start > today) {
-                lastSourceKey = key
-                return hasUsableData(key)
-            }
-            val station = sourceTemps(key)
-            val dates = buildList {
-                var d = start
-                while (d < today) { add(d); d = addDays(d, 1) }
-            }
-            val compactFmt = compactFormatter(timeZone)
-            val isoFmt = isoFormatter(timeZone)
-            val missing = dates.filter { station[compactFmt.format(Date(it))] == null }
-            if (missing.isNotEmpty()) {
-                val archiveCutoff = addDays(today, -6)
-                // 1. Archive endpoint for older days.
-                val archiveStart = missing.min()
-                val archiveEnd = min(missing.max(), archiveCutoff)
-                if (archiveStart <= archiveEnd) {
+            windows.forEach { window ->
+                val finalIncludedDay = addDays(window.endEpochMs, -1)
+                val archiveEnd = min(finalIncludedDay, archiveCutoff)
+                if (window.startEpochMs <= archiveEnd) {
                     val url = "https://archive-api.open-meteo.com/v1/archive" +
                         "?latitude=$latitude&longitude=$longitude" +
-                        "&start_date=${isoFmt.format(Date(archiveStart))}" +
+                        "&start_date=${isoFmt.format(Date(window.startEpochMs))}" +
                         "&end_date=${isoFmt.format(Date(archiveEnd))}" +
                         "&daily=temperature_2m_max,temperature_2m_min&timezone=auto"
                     runCatching { applyDaily(fetchJson(url), station) }
                 }
-                // 2. Forecast past_days fills recent days the archive doesn't cover.
-                val stillMissing = dates.filter { station[compactFmt.format(Date(it))] == null }
-                if (stillMissing.isNotEmpty()) {
-                    val earliest = stillMissing.min()
-                    val daysBack = ((today - earliest) / (24L * 60 * 60 * 1000)).toInt() + 1
-                    val pastDays = max(1, min(92, daysBack))
-                    val url = "https://api.open-meteo.com/v1/forecast" +
-                        "?latitude=$latitude&longitude=$longitude" +
-                        "&daily=temperature_2m_max,temperature_2m_min" +
-                        "&past_days=$pastDays&forecast_days=1&timezone=auto"
-                    runCatching { applyDaily(fetchJson(url), station) }
-                }
+            }
+            val firstRecentDay = addDays(archiveCutoff, 1)
+            val recentStart = windows
+                .filter { it.endEpochMs > firstRecentDay }
+                .minOfOrNull { max(it.startEpochMs, firstRecentDay) }
+            if (recentStart != null) {
+                val daysBack = ((today - recentStart) / 86_400_000L).toInt() + 1
+                val pastDays = max(1, min(92, daysBack))
+                val url = "https://api.open-meteo.com/v1/forecast" +
+                    "?latitude=$latitude&longitude=$longitude" +
+                    "&daily=temperature_2m_max,temperature_2m_min" +
+                    "&past_days=$pastDays&forecast_days=1&timezone=auto"
+                runCatching { applyDaily(fetchJson(url), station) }
             }
             lastSourceKey = key
-            if (station.isNotEmpty()) {
-                persistentCache?.save(key, timeZone.id, key, station)
-            }
-            return hasUsableData(key)
+            if (station.isNotEmpty()) persistentCache?.save(key, timeZone.id, key, station)
+            return station.isNotEmpty()
         } catch (_: Exception) {
-            return hasUsableData(key)
+            return station.isNotEmpty()
         } finally {
             isLoading = false
         }

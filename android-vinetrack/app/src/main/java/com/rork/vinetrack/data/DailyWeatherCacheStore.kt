@@ -3,8 +3,20 @@ package com.rork.vinetrack.data
 import android.content.Context
 import kotlinx.serialization.Serializable
 
-/** Durable provider-isolated daily weather cache used by Optimal Ripeness. */
-class DailyWeatherCacheStore(context: Context) {
+/** Provider-isolated persistence contract for Optimal Ripeness daily weather. */
+interface DailyWeatherCache {
+    fun load(sourceKey: String): Map<String, DailyTemp>
+    fun save(
+        sourceKey: String,
+        timeZoneId: String,
+        stationOrLocationId: String,
+        rows: Map<String, DailyTemp>,
+        refreshedAtMs: Long = System.currentTimeMillis(),
+    )
+}
+
+/** Durable SharedPreferences implementation of [DailyWeatherCache]. */
+class DailyWeatherCacheStore(context: Context) : DailyWeatherCache {
     @Serializable
     private data class CachedTemp(val high: Double, val low: Double)
 
@@ -21,7 +33,7 @@ class DailyWeatherCacheStore(context: Context) {
 
     private val preferences = context.getSharedPreferences("optimal_ripeness_daily_weather_v1", Context.MODE_PRIVATE)
 
-    fun load(sourceKey: String): Map<String, DailyTemp> {
+    override fun load(sourceKey: String): Map<String, DailyTemp> {
         val payload = preferences.getString(key(sourceKey), null) ?: return emptyMap()
         val snapshot = runCatching {
             SupabaseClient.json.decodeFromString(SourceSnapshot.serializer(), payload)
@@ -30,12 +42,12 @@ class DailyWeatherCacheStore(context: Context) {
         return snapshot.rows.mapValues { DailyTemp(it.value.high, it.value.low) }
     }
 
-    fun save(
+    override fun save(
         sourceKey: String,
         timeZoneId: String,
         stationOrLocationId: String,
         rows: Map<String, DailyTemp>,
-        refreshedAtMs: Long = System.currentTimeMillis(),
+        refreshedAtMs: Long,
     ) {
         val dates = rows.keys.sorted()
         val snapshot = SourceSnapshot(

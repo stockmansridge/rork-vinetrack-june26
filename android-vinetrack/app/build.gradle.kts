@@ -204,6 +204,21 @@ kotlin {
     }
 }
 
+// The full legacy JVM source set currently contains two unrelated, stale tests
+// that do not compile. This opt-in keeps focused Optimal Ripeness certification
+// deterministic without weakening the normal test task.
+if (providers.gradleProperty("optimalRipenessFocusedTests").orNull == "true") {
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/OptimalRipenessParityTest.kt")
+                include("**/OptimalRipenessLoadingRegressionTest.kt")
+                include("**/OptimalRipenessOfflineSourceResolutionTest.kt")
+            })
+        }
+    }
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

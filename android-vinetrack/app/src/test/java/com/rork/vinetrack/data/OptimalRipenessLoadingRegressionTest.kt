@@ -3,6 +3,7 @@ package com.rork.vinetrack.data
 import com.rork.vinetrack.data.model.GrapeVarietyRow
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PaddockVarietyAllocation
+import com.rork.vinetrack.data.model.parseIsoToEpochMs
 import com.rork.vinetrack.ui.screens.OptimalRipenessScreenState
 import com.rork.vinetrack.ui.screens.buildImmediateRipenessResult
 import com.rork.vinetrack.ui.screens.planOptimalRipenessRefresh
@@ -129,7 +130,7 @@ class OptimalRipenessLoadingRegressionTest {
                 blockId = block.id,
                 varietyName = "Shiraz",
                 allocationPercent = 100.0,
-                resetDateMs = 1_756_684_800_000L,
+                resetDateMs = parseIsoToEpochMs(block.budburstDate),
                 total = 812.0,
                 target = 1_450.0,
                 daysToTarget = 31,

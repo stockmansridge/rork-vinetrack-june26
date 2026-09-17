@@ -3,6 +3,8 @@ package com.rork.vinetrack.data
 import com.rork.vinetrack.data.insights.BudburstReconciler
 import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.ui.screens.computeRows
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -49,6 +51,107 @@ class OptimalRipenessParityTest {
     }
 
     @Test
+    fun `missing Budburst produces no season-start GDD result`() {
+        val service = DegreeDayService(timeZone = utc)
+        val key = DegreeDayService.openMeteoKey(-33.28, 149.10)
+        service.installDailyTemps(key, (1..4).associate { day -> "2026090$day" to DailyTemp(30.0, 10.0) })
+        val block = Paddock(id = "b1", vineyardId = "v1", name = "North")
+
+        val row = computeRows(service, key, -33.28, listOf(block), emptyList(), false, end).rows.single()
+
+        assertNull(row.resetDateMs)
+        assertFalse(row.hasGddValue)
+        assertEquals(0.0, row.total, 0.0)
+    }
+
+    @Test
+    fun `EL4 establishes Budburst and recalculates only from EL4 date`() {
+        val service = DegreeDayService(timeZone = utc)
+        val key = DegreeDayService.openMeteoKey(-33.28, 149.10)
+        service.installDailyTemps(key, (1..4).associate { day -> "2026090$day" to DailyTemp(30.0, 10.0) })
+        val block = Paddock(id = "b1", vineyardId = "v1", name = "North")
+        val el4 = GrowthStageRecord(id = "el4", vineyardId = "v1", paddockId = "b1", stageCode = "EL4", observedAt = "2026-09-03T09:00:00Z")
+        val update = BudburstReconciler.missingBudburstUpdates(listOf(block), listOf(el4)).single()
+        val established = block.copy(budburstDate = "${update.localDate}T00:00:00Z")
+
+        val row = computeRows(service, key, -33.28, listOf(established), emptyList(), false, end).rows.single()
+
+        assertTrue(row.hasGddValue)
+        assertEquals(Instant.parse("2026-09-03T00:00:00Z").toEpochMilli(), row.resetDateMs)
+        assertEquals(20.0, row.total, 0.0001)
+    }
+
+    @Test
+    fun `persisted daily rows restore after service recreation`() {
+        val cache = MemoryDailyWeatherCache()
+        val key = DegreeDayService.openMeteoKey(-33.28, 149.10)
+        DegreeDayService(cache, utc).installDailyTemps(key, mapOf("20260901" to DailyTemp(20.0, 10.0)))
+
+        val recreated = DegreeDayService(cache, utc)
+
+        assertTrue(recreated.hasUsableData(key))
+        assertEquals(5.0, recreated.dailyGddSeries(key, start, Instant.parse("2026-09-02T00:00:00Z").toEpochMilli(), null, false).single().daily, 0.0)
+    }
+
+    @Test
+    fun `warm cache requests only missing dates plus three-day overlap`() {
+        val service = DegreeDayService(timeZone = utc)
+        val key = DegreeDayService.openMeteoKey(-33.28, 149.10)
+        val tenDayEnd = Instant.parse("2026-09-11T00:00:00Z").toEpochMilli()
+        val rows = (1..10).associate { day -> "202609${day.toString().padStart(2, '0')}" to DailyTemp(20.0, 10.0) }.toMutableMap()
+        rows.remove("20260904")
+        service.installDailyTemps(key, rows)
+
+        val windows = service.refreshWindows(key, start, tenDayEnd)
+
+        assertEquals(2, windows.size)
+        assertEquals(Instant.parse("2026-09-04T00:00:00Z").toEpochMilli(), windows[0].startEpochMs)
+        assertEquals(Instant.parse("2026-09-05T00:00:00Z").toEpochMilli(), windows[0].endEpochMs)
+        assertEquals(Instant.parse("2026-09-08T00:00:00Z").toEpochMilli(), windows[1].startEpochMs)
+        assertEquals(tenDayEnd, windows[1].endEpochMs)
+    }
+
+    @Test
+    fun `Davis selection remains authoritative for every ripeness calculation surface`() {
+        val integration = VineyardWeatherIntegration(
+            id = "i1", vineyardId = "v1", provider = WeatherIntegrationProvider.DAVIS,
+            hasApiKey = true, hasApiSecret = true, stationId = "station-42", isActive = true,
+        )
+        val surfaces = listOf("hub", "detail", "season-total", "cumulative-chart", "daily-chart", "dashboard-chip", "projection")
+
+        val keys = surfaces.map {
+            resolveOptimalRipenessSource(Result.success(integration), -33.28, 149.10, null).sourceKey
+        }.toSet()
+
+        assertEquals(setOf("davis:station-42"), keys)
+    }
+
+    @Test
+    fun `Open-Meteo selection remains authoritative for every ripeness calculation surface`() {
+        val expected = DegreeDayService.openMeteoKey(-33.28, 149.10)
+        val surfaces = List(7) { it }
+
+        val keys = surfaces.map {
+            resolveOptimalRipenessSource(Result.success(null), -33.28, 149.10, "davis:old").sourceKey
+        }.toSet()
+
+        assertEquals(setOf(expected), keys)
+    }
+
+    @Test
+    fun `provider switch cannot reuse previous provider rows or coverage`() {
+        val service = DegreeDayService(timeZone = utc)
+        val davis = DegreeDayService.davisKey("station-1")
+        val openMeteo = DegreeDayService.openMeteoKey(-33.28, 149.10)
+        service.installDailyTemps(davis, (1..4).associate { day -> "2026090$day" to DailyTemp(20.0, 10.0) })
+
+        assertTrue(service.hasCompleteData(davis, start, end))
+        assertFalse(service.hasUsableData(openMeteo))
+        assertFalse(service.hasCompleteData(openMeteo, start, end))
+        assertEquals(listOf(WeatherDateWindow(start, end)), service.refreshWindows(openMeteo, start, end))
+    }
+
+    @Test
     fun `EL4 fills only an unset budburst and chooses earliest existing observation`() {
         val missing = Paddock(id = "b1", vineyardId = "v1", name = "North")
         val manual = Paddock(id = "b2", vineyardId = "v1", name = "South", budburstDate = "2026-09-03")
@@ -64,5 +167,21 @@ class OptimalRipenessParityTest {
         assertEquals("b1", updates.single().paddockId)
         assertEquals("earlier", updates.single().observationId)
         assertEquals("2026-09-02", updates.single().localDate)
+    }
+
+    private class MemoryDailyWeatherCache : DailyWeatherCache {
+        private val rowsBySource = mutableMapOf<String, Map<String, DailyTemp>>()
+
+        override fun load(sourceKey: String): Map<String, DailyTemp> = rowsBySource[sourceKey].orEmpty()
+
+        override fun save(
+            sourceKey: String,
+            timeZoneId: String,
+            stationOrLocationId: String,
+            rows: Map<String, DailyTemp>,
+            refreshedAtMs: Long,
+        ) {
+            rowsBySource[sourceKey] = rows.toMap()
+        }
     }
 }
