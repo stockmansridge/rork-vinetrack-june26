@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreLocation
 
 /// Vineyard Insights — System Admin preview (SQL 236, Round 1).
 ///

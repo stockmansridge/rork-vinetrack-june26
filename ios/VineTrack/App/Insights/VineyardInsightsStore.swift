@@ -74,6 +74,14 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
     /// `scout_observation_photos` — and the bytes may succeed while the row
     /// write fails. Keeping the entry until BOTH are done is what makes a
     /// half-finished upload retryable instead of silently lost.
+    nonisolated enum PhotoUploadState: String, Codable, Sendable {
+        case localSaved = "local_saved"
+        case queued
+        case objectUploaded = "object_uploaded"
+        case rowCommitted = "row_committed"
+        case completed
+    }
+
     nonisolated struct QueuedPhoto: Codable, Equatable, Sendable, Identifiable {
         let id: UUID
         /// Ownership captured at enqueue time, never re-derived from whatever
@@ -85,9 +93,17 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         let localPath: String
         /// Filled once the bytes are in the bucket but the row is still owed.
         var uploadedStoragePath: String?
+        /// Optional for backward-compatible decoding of entries saved before this state existed.
+        var rowCommitted: Bool?
         let capturedAt: Date
         var attemptCount: Int
         var lastError: String?
+
+        var uploadState: PhotoUploadState {
+            if rowCommitted == true { return .rowCommitted }
+            if uploadedStoragePath != nil { return .objectUploaded }
+            return .queued
+        }
     }
 
     // MARK: - Codable DTOs
@@ -525,6 +541,15 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         var all = loadPhotoQueue()
         guard let index = all.firstIndex(where: { $0.id == photoID }) else { return false }
         all[index].uploadedStoragePath = storagePath
+        all[index].lastError = nil
+        return encodeAndWrite(all, Key.photoQueue)
+    }
+
+    @discardableResult
+    func markPhotoRowCommitted(photoID: UUID) -> Bool {
+        var all = loadPhotoQueue()
+        guard let index = all.firstIndex(where: { $0.id == photoID }) else { return false }
+        all[index].rowCommitted = true
         all[index].lastError = nil
         return encodeAndWrite(all, Key.photoQueue)
     }

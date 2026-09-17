@@ -176,6 +176,9 @@ class GrowthRecordCreateSync(
                     retryOrBlock(write, "Sign-in needed to sync this observation.")
                 } catch (e: BackendError.Server) {
                     when {
+                        // The independent pin outbox has not landed yet. Keep the
+                        // exact same record payload queued and retry after it does.
+                        com.rork.vinetrack.data.insights.GrowthCaptureServerOrdering.isMissingPinForeignKey(e.body) -> retryOrBlock(write, "Waiting for the Growth Stage pin to sync.")
                         // Duplicate primary key — the client id is already on the
                         // server, so the record exists. Idempotent success; the
                         // optimistic row stays as-is.

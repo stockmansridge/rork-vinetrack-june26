@@ -346,6 +346,7 @@ fun UnifiedPinComposerScreen(
                     placement = placement,
                     locationScope = method,
                     segments = rowSegments,
+                    originatingFeature = "pin_composer",
                     onCaptured = { pinId, _ -> promptForPhoto(pinId) },
                 ) { ok ->
                     saving = false

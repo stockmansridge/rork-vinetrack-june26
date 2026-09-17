@@ -340,6 +340,45 @@ struct ScoutPhotoDurabilityTests {
         service.clearOnSignOut()
     }
 
+    @Test("Object-uploaded state survives restart with the same photo identity and path")
+    func objectUploadedStateSurvivesRestart() {
+        let suiteName = "scout-photo-state-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        let store = VineyardInsightsStore(defaults: defaults)
+        let photoID = UUID()
+        let entry = VineyardInsightsStore.QueuedPhoto(
+            id: photoID, vineyardID: vineyardID, visitID: UUID(), observationID: UUID(),
+            localPath: "photo.jpg", uploadedStoragePath: nil, rowCommitted: false,
+            capturedAt: Date(), attemptCount: 0, lastError: nil
+        )
+        #expect(store.enqueuePhoto(entry))
+        #expect(store.markPhotoUploaded(photoID: photoID, storagePath: "\(vineyardID)/observation/\(photoID).jpg"))
+
+        let restored = VineyardInsightsStore(defaults: defaults).loadPhotoQueue().first
+        #expect(restored?.id == photoID)
+        #expect(restored?.vineyardID == vineyardID)
+        #expect(restored?.uploadState == .objectUploaded)
+        #expect(restored?.uploadedStoragePath == "\(vineyardID)/observation/\(photoID).jpg")
+    }
+
+    @Test("Queue remains until metadata commit and then can complete")
+    func metadataCommitPrecedesDequeue() {
+        let (_, store) = makeService()
+        let photoID = UUID()
+        let entry = VineyardInsightsStore.QueuedPhoto(
+            id: photoID, vineyardID: vineyardID, visitID: UUID(), observationID: UUID(),
+            localPath: "photo.jpg", uploadedStoragePath: "path/photo.jpg", rowCommitted: false,
+            capturedAt: Date(), attemptCount: 0, lastError: nil
+        )
+        #expect(store.enqueuePhoto(entry))
+        #expect(store.loadPhotoQueue().first?.uploadState == .objectUploaded)
+        #expect(store.markPhotoRowCommitted(photoID: photoID))
+        #expect(store.loadPhotoQueue().first?.uploadState == .rowCommitted)
+        #expect(store.dequeuePhoto(photoID: photoID))
+        #expect(store.loadPhotoQueue().isEmpty)
+    }
+
     @Test("An offline replay of the same E-L selection is planned as unchanged")
     func replayOfSameStageIsNoOp() {
         // Creating a second record on retry is the duplication the link

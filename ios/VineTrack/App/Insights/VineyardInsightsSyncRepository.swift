@@ -256,6 +256,12 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         return try await provider.client.storage.from(Self.photoBucket).download(path: path)
     }
 
+    /// Remove an uploaded object that has no committed metadata row.
+    func removePhotoObject(path: String) async throws {
+        try requireConfigured()
+        _ = try await provider.client.storage.from(Self.photoBucket).remove(paths: [path])
+    }
+
     // MARK: - Soft deletion
 
     struct SoftDeletePatch: Encodable, Sendable {

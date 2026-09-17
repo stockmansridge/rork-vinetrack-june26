@@ -260,6 +260,7 @@ final class VineyardInsightsService {
                 observationID: observation.id,
                 localPath: relativePath,
                 uploadedStoragePath: nil,
+                rowCommitted: false,
                 capturedAt: capturedAt,
                 attemptCount: 0,
                 lastError: nil
@@ -284,6 +285,7 @@ final class VineyardInsightsService {
               var observation = assessment.observation(item),
               let photo = observation.photos.first(where: { $0.id == photoID }) else { return false }
 
+        let queued = store.loadPhotoQueue().first { $0.id == photoID }
         store.dequeuePhoto(photoID: photoID)
         pendingPhotoCount = store.loadPhotoQueue().count
 
@@ -295,8 +297,12 @@ final class VineyardInsightsService {
 
         if let path = photo.localPath { photoFiles.remove(relativePath: path) }
 
-        if photo.storagePath != nil {
-            let deletedAt = now()
+        let deletedAt = now()
+        if let orphanedPath = queued?.uploadedStoragePath, queued?.rowCommitted != true {
+            Task { [repository] in
+                try? await repository.removePhotoObject(path: orphanedPath)
+            }
+        } else if photo.storagePath != nil || queued?.rowCommitted == true {
             Task { [repository] in
                 try? await repository.softDeletePhoto(id: photoID, at: deletedAt)
             }
@@ -705,7 +711,17 @@ final class VineyardInsightsService {
                         ),
                         data: data
                     )
-                    store.markPhotoUploaded(photoID: entry.id, storagePath: path)
+                    guard store.markPhotoUploaded(photoID: entry.id, storagePath: path) else {
+                        // Deleted while upload was in flight: remove the now-orphaned object.
+                        try? await repository.removePhotoObject(path: path)
+                        continue
+                    }
+                }
+
+                // Cancellation always wins, including after a restart-resumed object upload.
+                guard store.loadPhotoQueue().contains(where: { $0.id == entry.id }) else {
+                    try? await repository.removePhotoObject(path: path)
+                    continue
                 }
 
                 try await repository.pushPhotoRow(
@@ -724,6 +740,12 @@ final class VineyardInsightsService {
                     )
                 )
 
+                guard store.markPhotoRowCommitted(photoID: entry.id) else {
+                    // A deletion raced the metadata callback. Tombstone the row;
+                    // never recreate the local queue entry or photograph.
+                    try? await repository.softDeletePhoto(id: entry.id, at: now())
+                    continue
+                }
                 applyPhotoStoragePath(photoID: entry.id, storagePath: path, failed: false)
                 store.dequeuePhoto(photoID: entry.id)
             } catch {

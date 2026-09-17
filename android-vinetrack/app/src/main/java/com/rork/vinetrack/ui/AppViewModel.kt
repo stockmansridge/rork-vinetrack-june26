@@ -1345,6 +1345,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 latitude = result.fix.latitude,
                 longitude = result.fix.longitude,
                 variety = block?.primaryVarietyName,
+                originatingFeature = "scout",
                 onCaptured = { _, record ->
                     // Linked from the optimistic row, whose ids are
                     // client-minted and final, so an offline capture is linked
@@ -1775,6 +1776,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * photos in every replay pipeline.
      */
     private val growthCreateSync = GrowthRecordCreateSync(growthRepo, pendingWrites)
+    private val pairedGrowthJournalStore =
+        com.rork.vinetrack.data.insights.SharedPreferencesPairedGrowthCaptureJournalStore(
+            app.getSharedPreferences("vinetrack_paired_growth_capture", android.content.Context.MODE_PRIVATE),
+        )
+    private val pairedGrowthCoordinator =
+        com.rork.vinetrack.data.insights.PairedGrowthCaptureCoordinator(pairedGrowthJournalStore)
 
     /**
      * Replay coordinator for growth-stage record UPDATE only (Android Stage N-2).
@@ -12831,6 +12838,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         placement: PinPlacementResult? = null,
         locationScope: String? = null,
         segments: List<com.rork.vinetrack.data.model.ManualIssueSegment>? = null,
+        originatingFeature: String = "growth_screen",
         // Fires with both canonical ids once the pin and record exist locally,
         // so Scout can store BOTH persistent references.
         onCaptured: (pinId: String, record: GrowthStageRecord) -> Unit = { _, _ -> },
@@ -12838,62 +12846,116 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
         val block = _ui.value.paddocks.firstOrNull { it.id == paddockId }
-        // Both identities minted up front and final. The record references the
-        // pin from its very first optimistic render.
-        val pinId = UUID.randomUUID().toString()
-        val observedAt = observedAtIso ?: java.time.Instant.now().toString()
-        val title = UnifiedPinContract.growthStagePinTitle(stage.code)
-
-        // ---- Step 1: the pin. First because the record's pin_id needs it. ----
-        createPin(
-            title = title,
-            mode = "Growth",
-            category = null,
-            notes = stage.description,
-            side = null,
+        val timestamp = System.currentTimeMillis()
+        val candidate = com.rork.vinetrack.data.insights.PairedGrowthCaptureJournal(
+            operationId = UUID.randomUUID().toString(),
+            pinId = UUID.randomUUID().toString(),
+            growthRecordId = UUID.randomUUID().toString(),
+            vineyardId = vineyardId,
             paddockId = paddockId,
-            rowNumber = rowNumber,
-            isCompleted = false,
             latitude = latitude,
             longitude = longitude,
-            buttonName = title,
-            buttonColor = UnifiedPinContract.GROWTH_STAGE_PIN_COLOR,
-            heading = null,
-            placement = placement,
+            rowNumber = rowNumber,
+            stageCode = stage.code,
+            stageLabel = stage.description,
+            variety = variety ?: block?.primaryVarietyName,
+            notes = notes,
+            observedAtIso = observedAtIso ?: java.time.Instant.now().toString(),
+            originatingFeature = originatingFeature,
             locationScope = locationScope,
-            segments = segments,
-            growthStageCode = stage.code,
-            pinId = pinId,
-        ) { pinOk ->
-            if (!pinOk) {
-                // The pin did not persist. Creating the record alone would
-                // reproduce exactly the orphaned-record defect this replaces.
-                _ui.update {
-                    it.copy(growthError = it.pinError ?: "Could not save the Growth Stage pin.")
-                }
-                onResult(false)
-                return@createPin
-            }
-            // ---- Step 2: the record, carrying the real pin id. ----
-            createGrowthStageRecord(
-                input = GrowthStageRecordRepository.GrowthInput(
-                    paddockId = paddockId,
-                    stageCode = stage.code,
-                    stageLabel = stage.description,
-                    // Snapshot the variety so a later allocation change cannot
-                    // rewrite what this observation was made against.
-                    variety = variety ?: block?.primaryVarietyName,
-                    observedAt = observedAt,
-                    rowNumber = rowNumber,
-                    notes = notes,
-                    latitude = latitude,
-                    longitude = longitude,
-                    pinId = pinId,
-                ),
-                onCreatedRecord = { record -> onCaptured(pinId, record) },
-                onResult = onResult,
-            )
+            pinRowNumber = placement?.pinRowNumber,
+            pinSide = placement?.pinSide,
+            alongRowDistanceM = placement?.alongRowDistanceM,
+            snappedLatitude = placement?.snappedLatitude,
+            snappedLongitude = placement?.snappedLongitude,
+            snapState = placement?.snapState?.name,
+            drivingRowNumber = placement?.drivingRowNumber,
+            headingDegrees = placement?.headingDegrees,
+            segments = segments.orEmpty().map {
+                com.rork.vinetrack.data.insights.PairedGrowthCaptureJournal.Segment(it.row, it.segment)
+            },
+            createdAtMillis = timestamp,
+            updatedAtMillis = timestamp,
+        )
+        val journal = pairedGrowthCoordinator.beginOrReuse(candidate)
+        if (journal == null) {
+            _ui.update { it.copy(growthError = "Could not save the pending Growth Stage capture.") }
+            onResult(false)
+            return
         }
+        resumePairedGrowthCapture(journal.operationId, onCaptured, onResult)
+    }
+
+    private fun pairedGrowthWriter() =
+        object : com.rork.vinetrack.data.insights.PairedGrowthCaptureCoordinator.Writer {
+            override fun hasPin(pinId: String): Boolean =
+                _ui.value.pins.any { it.id == pinId } || pendingWrites.list().any {
+                    it.entityType == com.rork.vinetrack.data.model.PendingEntityType.CUSTOM_PIN &&
+                        it.clientId == pinId && it.status != com.rork.vinetrack.data.model.PendingWriteStatus.SYNCED
+                }
+
+            override fun hasRecord(recordId: String): Boolean =
+                _ui.value.growthRecords.any { it.id == recordId } || pendingWrites.list().any {
+                    it.entityType == com.rork.vinetrack.data.model.PendingEntityType.GROWTH_RECORD &&
+                        it.clientId == recordId && it.status != com.rork.vinetrack.data.model.PendingWriteStatus.SYNCED
+                }
+
+            override fun savePin(journal: com.rork.vinetrack.data.insights.PairedGrowthCaptureJournal, completion: (Boolean) -> Unit) {
+                val placement = journal.snapState?.let { state ->
+                    runCatching {
+                        PinPlacementResult(
+                            latitude = journal.latitude, longitude = journal.longitude,
+                            paddockId = journal.paddockId, pinRowNumber = journal.pinRowNumber,
+                            pinSide = journal.pinSide, alongRowDistanceM = journal.alongRowDistanceM,
+                            snappedLatitude = journal.snappedLatitude, snappedLongitude = journal.snappedLongitude,
+                            snapState = com.rork.vinetrack.data.PinSnapState.valueOf(state),
+                            drivingRowNumber = journal.drivingRowNumber, headingDegrees = journal.headingDegrees,
+                        )
+                    }.getOrNull()
+                }
+                val title = UnifiedPinContract.growthStagePinTitle(journal.stageCode)
+                createPin(
+                    title = title, mode = "Growth", category = null, notes = journal.stageLabel,
+                    side = null, paddockId = journal.paddockId, rowNumber = journal.rowNumber,
+                    isCompleted = false, latitude = journal.latitude, longitude = journal.longitude,
+                    buttonName = title, buttonColor = UnifiedPinContract.GROWTH_STAGE_PIN_COLOR,
+                    placement = placement, locationScope = journal.locationScope,
+                    segments = journal.segments.map { com.rork.vinetrack.data.model.ManualIssueSegment(it.row, it.segment) },
+                    growthStageCode = journal.stageCode, pinId = journal.pinId, onResult = completion,
+                )
+            }
+
+            override fun saveRecord(journal: com.rork.vinetrack.data.insights.PairedGrowthCaptureJournal, completion: (Boolean) -> Unit) {
+                createGrowthStageRecord(
+                    input = GrowthStageRecordRepository.GrowthInput(
+                        paddockId = journal.paddockId, stageCode = journal.stageCode,
+                        stageLabel = journal.stageLabel, variety = journal.variety,
+                        observedAt = journal.observedAtIso, rowNumber = journal.rowNumber,
+                        notes = journal.notes, latitude = journal.latitude,
+                        longitude = journal.longitude, pinId = journal.pinId,
+                    ),
+                    recordId = journal.growthRecordId,
+                    onResult = completion,
+                )
+            }
+        }
+
+    private fun resumePairedGrowthCapture(
+        operationId: String,
+        onCaptured: (String, GrowthStageRecord) -> Unit = { _, _ -> },
+        onResult: (Boolean) -> Unit = {},
+    ) {
+        pairedGrowthCoordinator.resume(operationId, pairedGrowthWriter()) { complete, journal ->
+            if (complete && journal != null) {
+                _ui.value.growthRecords.firstOrNull { it.id == journal.growthRecordId }
+                    ?.let { onCaptured(journal.pinId, it) }
+            }
+            onResult(complete)
+        }
+    }
+
+    private fun resumePendingGrowthCaptures(vineyardId: String) {
+        pairedGrowthCoordinator.resumeAll(pairedGrowthWriter(), vineyardId)
     }
 
     /**
@@ -12922,10 +12984,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // second writer of its own. Defaulted, so existing callers are
         // unaffected.
         onCreatedRecord: (GrowthStageRecord) -> Unit = {},
+        recordId: String? = null,
         onResult: (Boolean) -> Unit,
     ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
-        val id = java.util.UUID.randomUUID().toString()
+        val id = recordId ?: java.util.UUID.randomUUID().toString()
         val now = java.time.Instant.now().toString()
         val optimistic = growthRepo.buildGrowthRecord(vineyardId, input, id, now)
         // Optimistic insert at the top — the operator sees the observation straight away.
@@ -15163,6 +15226,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 },
             )
         }
+        resumePendingGrowthCaptures(vineyardId)
         refreshCacheStatus()
         // Vineyard switch / manual refresh re-pulled picking records,
         // catalogues and yield settings above; kick the pruning tracker
