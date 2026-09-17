@@ -1314,6 +1314,29 @@ final class MigratedDataStore {
         onTripChanged?(tripId)
     }
 
+    /// End a trip, surfacing a disk-write failure instead of swallowing it.
+    ///
+    /// The non-throwing `endTrip` above cannot tell its caller that the final
+    /// state never reached disk, which would let the UI clear the active trip
+    /// and lose the whole recorded route. This variant mutates the in-memory
+    /// array only AFTER the write succeeds, so a failure leaves the trip
+    /// exactly as it was: still active, still holding its full route.
+    ///
+    /// `endTime` is the moment the operator confirmed, matching `endTrip`.
+    func endTripOrThrow(_ tripId: UUID) throws {
+        guard let vineyardId = selectedVineyardId,
+              let index = trips.firstIndex(where: { $0.id == tripId })
+        else { throw TripEndPersistenceError.tripUnavailable }
+        var next = trips
+        var trip = next[index]
+        trip.isActive = false
+        trip.endTime = Date()
+        next[index] = trip
+        try tripRepo.saveSliceOrThrow(next, for: vineyardId)
+        trips = next
+        onTripChanged?(tripId)
+    }
+
     func deleteTrip(_ tripId: UUID) {
         guard let vineyardId = selectedVineyardId else { return }
         // Clean up local links that depend on this trip BEFORE removing it so

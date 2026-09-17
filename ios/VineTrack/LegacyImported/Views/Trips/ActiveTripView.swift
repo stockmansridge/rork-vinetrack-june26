@@ -40,6 +40,12 @@ struct ActiveTripView: View {
     @State private var showTankMix: Bool = false
     @State private var showActualTankConfirmation: Bool = false
     @State private var showStartWithoutMixConfirmation: Bool = false
+    /// Explanation shown when an End Trip request could not complete.
+    ///
+    /// Without this the service set `errorMessage` and returned, and no view
+    /// in the trip stack ever read it — so a blocked End Trip looked like a
+    /// completely dead button with no way to discover the cause.
+    @State private var endTripBlockedMessage: String?
 
     /// Display-only trail segments. Recomputed on a 1Hz throttled timer rather
     /// than every GPS tick or every SwiftUI body invocation.
@@ -1840,13 +1846,31 @@ struct ActiveTripView: View {
             .tint(.red)
             .confirmationDialog("End Trip?", isPresented: $showEndConfirmation) {
                 Button("End Trip", role: .destructive) {
-                    ticker?.invalidate()
-                    ticker = nil
-                    tracking.endTrip()
+                    let outcome = tracking.endTrip()
+                    if outcome.isEnded {
+                        ticker?.invalidate()
+                        ticker = nil
+                    } else {
+                        // The trip is still running, so the ticker must keep
+                        // going and the operator must be told exactly why.
+                        endTripBlockedMessage = outcome.operatorMessage
+                    }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("This will stop tracking and finalise the trip.")
+            }
+            .alert(
+                "Can't end the trip yet",
+                isPresented: Binding(
+                    get: { endTripBlockedMessage != nil },
+                    set: { if !$0 { endTripBlockedMessage = nil } }
+                ),
+                presenting: endTripBlockedMessage
+            ) { _ in
+                Button("OK", role: .cancel) { endTripBlockedMessage = nil }
+            } message: { message in
+                Text(message)
             }
         }
         .padding(.horizontal, 12)

@@ -7934,9 +7934,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * still signs out.
      */
     fun endTrip(notes: String?, endEngineHours: Double? = null, onResult: (Boolean) -> Unit) {
-        val trip = _ui.value.activeTrip ?: run { onResult(false); return }
-        if (trip.activeTankNumber != null || trip.isFillingTank) {
-            _ui.update { it.copy(tripError = "End or stop the current tank before finishing this trip.") }
+        val trip = _ui.value.activeTrip ?: run {
+            _ui.update { it.copy(tripError = "This trip is no longer active.") }
+            onResult(false); return
+        }
+        // Only unfinished records that ending would corrupt may hold a trip
+        // open. The gate takes no planned-path input at all, so a Free Drive
+        // trip with no row sequence and 0% planned progress ends normally.
+        val endDecision = com.rork.vinetrack.data.TripEndGate.evaluate(
+            activeTankNumber = trip.activeTankNumber,
+            isFillingTank = trip.isFillingTank,
+            fillingTankNumber = trip.fillingTankNumber,
+        )
+        if (endDecision is com.rork.vinetrack.data.TripEndDecision.Blocked) {
+            _ui.update { it.copy(tripError = endDecision.blocker.message) }
             onResult(false)
             return
         }

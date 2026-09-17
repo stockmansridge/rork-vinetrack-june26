@@ -422,19 +422,34 @@ final class TripTrackingService {
 
     // MARK: - End
 
-    func endTrip() {
-        if let trip = activeTrip, trip.activeTankNumber != nil || trip.isFillingTank {
-            errorMessage = "End or stop the current tank before finishing this trip."
-            return
+    /// Manually end the active trip.
+    ///
+    /// Returns a `TripEndOutcome` rather than silently returning, so no caller
+    /// can present a dead button. The gate deliberately ignores planned-path
+    /// state entirely — see `TripEndGate` — so a Free Drive trip with no
+    /// planned path, an empty row sequence and 0% planned progress ends
+    /// exactly like any other trip.
+    @discardableResult
+    func endTrip() -> TripEndOutcome {
+        guard let gateTrip = activeTrip else { return .noActiveTrip }
+
+        // The ONLY legitimate blockers are unfinished records that ending
+        // would corrupt: an open tank session or a running fill timer. Both
+        // are clearable by the operator from the tank bar, and the outcome
+        // carries the exact action required.
+        if case let .blocked(blocker) = TripEndGate.evaluate(trip: gateTrip) {
+            errorMessage = blocker.message
+            return .blocked(blocker)
         }
         // Final completion pass — credit the current/last locked row if
         // it was clearly driven but never produced a normal row-end
         // transition (typical for the last planned row, where there is
         // no "next row" to trigger the advance). Safe to call even if
-        // the sheet already invoked it; idempotent.
+        // the sheet already invoked it; idempotent. No-ops on Free Drive,
+        // which has no planned sequence to finalise.
         finalizePendingRowsForReview()
 
-        guard var trip = activeTrip else { return }
+        guard var trip = activeTrip else { return .noActiveTrip }
         // Persist the manual-correction audit trail onto the trip so the
         // saved record (and the Trip Report) reflects every override that
         // happened during the live trip.
@@ -442,10 +457,25 @@ final class TripTrackingService {
             trip.manualCorrectionEvents = diagManualCorrectionEvents
             store?.updateTrip(trip)
         }
+
+        // Durably record the finished trip BEFORE tearing down tracking or
+        // clearing the active-trip state. If the device cannot write the
+        // final state, the trip must stay exactly as it was — still active,
+        // still recording, nothing lost — and the operator must be told.
+        // Reporting a trip as ended that was never saved would silently
+        // discard the whole route.
+        do {
+            try store?.endTripOrThrow(trip.id)
+        } catch {
+            let detail = (error as NSError).localizedDescription
+            errorMessage = TripEndOutcome.persistenceFailed(detail).operatorMessage
+            return .persistenceFailed(detail)
+        }
+
         Task { await SprayReportRepository.shared.captureUnavailableIfDue(for: trip, at: Date(), isFinal: true) }
         sprayWeatherTask?.cancel()
         sprayWeatherTask = nil
-        store?.endTrip(trip.id)
+        errorMessage = nil
         stopTrackingLoops(stopLocation: true)
         isTracking = false
         isPaused = false
@@ -506,6 +536,9 @@ final class TripTrackingService {
         diagFreeDriveDwellSamples = 0
         diagFreeDriveCompletedCount = 0
         breadcrumb("endTrip")
+        // The final state is already durably on disk (endTripOrThrow above),
+        // and only then was tracking torn down and the active trip cleared.
+        return .ended
     }
 
     // MARK: - Manual point

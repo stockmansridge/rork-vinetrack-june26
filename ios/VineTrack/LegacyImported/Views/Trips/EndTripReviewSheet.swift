@@ -25,6 +25,10 @@ struct EndTripReviewSheet: View {
     // expanded by default — it's the main purpose of this sheet.
     @State private var pinsExpanded: Bool = false
     @State private var seedingExpanded: Bool = false
+    /// Set when Finish could not complete. The sheet stays open so the
+    /// operator can act on it, rather than dismissing over a trip that is
+    /// in fact still running.
+    @State private var finishBlockedMessage: String?
 
     private struct DisplayRow: Identifiable {
         let id: Int
@@ -581,7 +585,14 @@ struct EndTripReviewSheet: View {
             }
         }
         tracking.recordManualCorrection("end_review_finalised")
-        tracking.endTrip()
-        dismiss()
+        // Only dismiss once the trip is genuinely ended. Dismissing on a
+        // blocked or failed end hid the cause and left the operator back on
+        // a still-active trip with no explanation.
+        let outcome = tracking.endTrip()
+        if outcome.isEnded {
+            dismiss()
+        } else {
+            finishBlockedMessage = outcome.operatorMessage
+        }
     }
 }

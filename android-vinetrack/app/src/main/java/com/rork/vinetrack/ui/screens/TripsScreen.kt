@@ -4385,6 +4385,10 @@ private fun EndTripSheet(vm: AppViewModel, trip: Trip, onDismiss: () -> Unit, on
     var notes by remember { mutableStateOf("") }
     var endEngineHoursText by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
+    // Why a Finish attempt did not complete. Without this the view model set
+    // tripError and returned, but tripError is only rendered on an empty trip
+    // list, so a blocked finish looked like a completely dead button.
+    var finishBlocked by remember { mutableStateOf<String?>(null) }
 
     val endEngineHours = endEngineHoursText.trim().replace(",", ".").toDoubleOrNull()
     // Block finishing only when both readings exist and the end reading is below
@@ -4463,14 +4467,33 @@ private fun EndTripSheet(vm: AppViewModel, trip: Trip, onDismiss: () -> Unit, on
                 )
             }
 
+            finishBlocked?.let { message ->
+                Text(
+                    message,
+                    fontSize = 13.sp,
+                    color = VineColors.Destructive,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+            }
+
             Spacer(Modifier.height(16.dp))
             Button(
                 onClick = {
                     saving = true
+                    finishBlocked = null
                     val extra = reviewCompletes.toList()
                     val savedEndHours = if (trip.shouldCaptureEndEngineHours) endEngineHours else null
                     vm.endTripWithRowReview(extra, notes.trim().ifBlank { null }, savedEndHours) { ok ->
-                        saving = false; if (ok) onEnded()
+                        saving = false
+                        if (ok) {
+                            onEnded()
+                        } else {
+                            // Keep the sheet open carrying the exact reason and
+                            // required action, rather than closing over a trip
+                            // that is in fact still running.
+                            finishBlocked = vm.ui.value.tripError
+                                ?: "Couldn't finish the trip. Please try again."
+                        }
                     }
                 },
                 enabled = !saving && !engineHoursInvalid,
