@@ -1,5 +1,4 @@
 import Foundation
-import Foundation
 import Testing
 @testable import VineTrack
 
@@ -13,7 +12,8 @@ struct PinQueryPolicyTests {
         row: Int? = nil,
         segments: [ManualIssueSegment]? = nil,
         vineyardId: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
-        blockId: UUID? = UUID(uuidString: "00000000-0000-0000-0000-000000000010")!
+        blockId: UUID? = UUID(uuidString: "00000000-0000-0000-0000-000000000010")!,
+        timestamp: Date = Date()
     ) -> VinePin {
         VinePin(
             id: id,
@@ -26,6 +26,7 @@ struct PinQueryPolicyTests {
             side: nil,
             mode: mode,
             paddockId: blockId,
+            timestamp: timestamp,
             isCompleted: completed,
             growthStageCode: stage,
             pinRowNumber: row,
@@ -151,6 +152,77 @@ struct PinQueryPolicyTests {
         #expect(result.pins.count == 2)
         #expect(PinQueryPolicy.currentELBlockLabels(selection: result, isActive: true) == [stages[0].paddockId!: "EL 21"])
         #expect(PinQueryPolicy.currentELBlockLabels(selection: result, isActive: false).isEmpty)
+    }
+
+    @Test func previousVintageEL43CannotSuppressCurrentVintageEL12() {
+        let currentWindow = SeasonWindow.window(vintage: 2026, seasonStartMonth: 7, seasonStartDay: 1, timeZone: .gmt)
+        let previous = pin(id: UUID(), name: "previous-43", mode: .growth, stage: "EL43", timestamp: currentWindow.start.addingTimeInterval(-86_400))
+        let current10 = pin(id: UUID(), name: "current-10", mode: .growth, stage: "EL10", timestamp: currentWindow.start.addingTimeInterval(86_400))
+        let current12 = pin(id: UUID(), name: "current-12", mode: .growth, stage: "EL12", timestamp: currentWindow.start.addingTimeInterval(172_800))
+        let pins = [previous, current10, current12]
+        let result = PinQueryPolicy.currentELSelection(from: pins, authoritativeELPinIds: Set(pins.map(\.id)), seasonWindow: currentWindow)
+        #expect(result.pins.map(\.id) == [current12.id])
+        #expect(result.stageByBlockId[current12.paddockId!] == 12)
+    }
+
+    @Test func historicalVintageSelectionCalculatesWithinThatVintage() {
+        let historicalWindow = SeasonWindow.window(vintage: 2025, seasonStartMonth: 7, seasonStartDay: 1, timeZone: .gmt)
+        let historical = pin(id: UUID(), name: "historical-43", mode: .growth, stage: "EL43", timestamp: historicalWindow.start.addingTimeInterval(86_400))
+        let current = pin(id: UUID(), name: "current-12", mode: .growth, stage: "EL12", timestamp: historicalWindow.endExclusive.addingTimeInterval(86_400))
+        let pins = [historical, current]
+        let result = PinQueryPolicy.currentELSelection(from: pins, authoritativeELPinIds: Set(pins.map(\.id)), seasonWindow: historicalWindow)
+        #expect(result.pins.map(\.id) == [historical.id])
+        #expect(result.stageByBlockId[historical.paddockId!] == 43)
+    }
+
+    @Test func allVintagesUsesConfiguredCurrentWindowForCurrentEL() {
+        let configuredCurrentWindow = SeasonWindow.window(vintage: 2026, seasonStartMonth: 7, seasonStartDay: 1, timeZone: .gmt)
+        let previous = pin(id: UUID(), name: "previous-43", mode: .growth, stage: "EL43", timestamp: configuredCurrentWindow.start.addingTimeInterval(-86_400))
+        let current = pin(id: UUID(), name: "current-12", mode: .growth, stage: "EL12", timestamp: configuredCurrentWindow.start.addingTimeInterval(86_400))
+        let result = PinQueryPolicy.currentELSelection(from: [previous, current], authoritativeELPinIds: [previous.id, current.id], seasonWindow: configuredCurrentWindow)
+        #expect(result.pins.map(\.id) == [current.id])
+    }
+
+    @Test func canonicalEL21OverridesStalePinEL18() {
+        let stale = pin(id: UUID(), mode: .growth, stage: "EL18")
+        let result = PinQueryPolicy.currentELSelection(from: [stale], authoritativeELPinIds: [stale.id], authoritativeStageCodeByPinId: [stale.id: "EL21"])
+        #expect(result.pins.first?.growthStageCode == "EL21")
+        #expect(result.stageByBlockId[stale.paddockId!] == 21)
+    }
+
+    @Test func canonicalBlockBOverridesStalePinBlockA() {
+        let blockA = UUID(uuidString: "00000000-0000-0000-0000-000000000010")!
+        let blockB = UUID(uuidString: "00000000-0000-0000-0000-000000000020")!
+        let stale = pin(id: UUID(), mode: .growth, stage: "EL21", blockId: blockA)
+        let result = PinQueryPolicy.currentELSelection(from: [stale], authoritativeELPinIds: [stale.id], authoritativeBlockIdByPinId: [stale.id: blockB])
+        #expect(result.pins.first?.paddockId == blockB)
+        #expect(result.stageByBlockId == [blockB: 21])
+    }
+
+    @Test func canonicalEL18CorrectionCannotBeatCanonicalEL21() {
+        let stale27 = pin(id: UUID(), name: "stale-27", mode: .growth, stage: "EL27")
+        let actual21 = pin(id: UUID(), name: "actual-21", mode: .growth, stage: "EL21")
+        let pins = [stale27, actual21]
+        let result = PinQueryPolicy.currentELSelection(from: pins, authoritativeELPinIds: Set(pins.map(\.id)), authoritativeStageCodeByPinId: [stale27.id: "EL18", actual21.id: "EL21"])
+        #expect(result.pins.map(\.id) == [actual21.id])
+        #expect(result.stageByBlockId[actual21.paddockId!] == 21)
+    }
+
+    @Test func tiedCanonicalMaximumRetainsBothPinsAndOneBlockLabel() {
+        let staleBlock = UUID(uuidString: "00000000-0000-0000-0000-000000000010")!
+        let canonicalBlock = UUID(uuidString: "00000000-0000-0000-0000-000000000020")!
+        let first = pin(id: UUID(), mode: .growth, stage: "EL18", blockId: staleBlock)
+        let second = pin(id: UUID(), mode: .growth, stage: "EL21", blockId: canonicalBlock)
+        let pins = [first, second]
+        let result = PinQueryPolicy.currentELSelection(
+            from: pins,
+            authoritativeELPinIds: Set(pins.map(\.id)),
+            authoritativeStageCodeByPinId: [first.id: "EL21", second.id: "EL21"],
+            authoritativeBlockIdByPinId: [first.id: canonicalBlock, second.id: canonicalBlock]
+        )
+        #expect(result.pins.map(\.id) == [first.id, second.id])
+        #expect(result.pins.allSatisfy { $0.paddockId == canonicalBlock && $0.growthStageCode == "EL21" })
+        #expect(PinQueryPolicy.currentELBlockLabels(selection: result, isActive: true) == [canonicalBlock: "EL 21"])
     }
 
     @Test func authoritativeELNamesStayOutOfIssueGrowthOptionsAndSelectionsAreCleaned() {

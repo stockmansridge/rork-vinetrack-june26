@@ -83,16 +83,21 @@ nonisolated enum PinQueryPolicy {
         from pins: [VinePin],
         authoritativeELPinIds: Set<UUID>,
         authoritativeStageCodeByPinId: [UUID: String] = [:],
-        authoritativeBlockIdByPinId: [UUID: UUID] = [:]
+        authoritativeBlockIdByPinId: [UUID: UUID] = [:],
+        seasonWindow: SeasonWindow? = nil
     ) -> CurrentELSelection {
         let valid = pins.compactMap { pin -> (pin: VinePin, blockId: UUID, stage: Int)? in
-            let stageCode = pin.growthStageCode ?? authoritativeStageCodeByPinId[pin.id]
-            let blockId = pin.paddockId ?? authoritativeBlockIdByPinId[pin.id]
+            guard seasonWindow?.contains(optional: pin.timestamp) ?? true else { return nil }
+            let stageCode = authoritativeStageCodeByPinId[pin.id] ?? pin.growthStageCode
+            let blockId = authoritativeBlockIdByPinId[pin.id] ?? pin.paddockId
             guard pin.mode == .growth,
                   (stageCode != nil || authoritativeELPinIds.contains(pin.id)),
                   let blockId,
                   let stage = elStageNumber(stageCode) else { return nil }
-            return (pin, blockId, stage)
+            var resolvedPin = pin
+            resolvedPin.growthStageCode = stageCode
+            resolvedPin.paddockId = blockId
+            return (resolvedPin, blockId, stage)
         }
         var stageByBlockId: [UUID: Int] = [:]
         for item in valid {

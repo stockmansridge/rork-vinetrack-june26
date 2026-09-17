@@ -20,6 +20,7 @@ class PinQueryPolicyTest {
         vineyardId: String = "vineyard",
         blockId: String? = "block-current",
         deletedAt: String? = null,
+        createdAt: String? = null,
     ): Pin = Pin(
         id = id,
         vineyardId = vineyardId,
@@ -31,6 +32,7 @@ class PinQueryPolicyTest {
         pinRowNumber = row,
         rowSegments = segments,
         deletedAt = deletedAt,
+        createdAt = createdAt,
     )
 
     @Test fun `default filter excludes EL and completed pins`() {
@@ -143,6 +145,81 @@ class PinQueryPolicyTest {
         assertEquals(2, result.pins.size)
         assertEquals(mapOf("block-current" to "EL 21"), PinQueryPolicy.currentElBlockLabels(result, true))
         assertTrue(PinQueryPolicy.currentElBlockLabels(result, false).isEmpty())
+    }
+
+    @Test fun `previous vintage EL43 cannot suppress current vintage EL12`() {
+        val window = SeasonWindow.forVintage(2026, 7, 1)
+        val pins = listOf(
+            pin("previous-43", mode = "Growth", stage = "EL43", createdAt = "2025-06-30T12:00:00Z"),
+            pin("current-10", mode = "Growth", stage = "EL10", createdAt = "2025-07-02T12:00:00Z"),
+            pin("current-12", mode = "Growth", stage = "EL12", createdAt = "2025-07-03T12:00:00Z"),
+        )
+        val result = PinQueryPolicy.currentElSelection(pins, pins.mapTo(HashSet()) { it.id }, seasonWindow = window, seasonZone = java.time.ZoneOffset.UTC)
+        assertEquals(listOf("current-12"), result.pins.map { it.id })
+        assertEquals(12, result.stageByBlockId["block-current"])
+    }
+
+    @Test fun `historical vintage selection calculates within that vintage`() {
+        val window = SeasonWindow.forVintage(2025, 7, 1)
+        val pins = listOf(
+            pin("historical-43", mode = "Growth", stage = "EL43", createdAt = "2024-07-02T12:00:00Z"),
+            pin("current-12", mode = "Growth", stage = "EL12", createdAt = "2025-07-02T12:00:00Z"),
+        )
+        val result = PinQueryPolicy.currentElSelection(pins, pins.mapTo(HashSet()) { it.id }, seasonWindow = window, seasonZone = java.time.ZoneOffset.UTC)
+        assertEquals(listOf("historical-43"), result.pins.map { it.id })
+        assertEquals(43, result.stageByBlockId["block-current"])
+    }
+
+    @Test fun `all vintages uses configured current window for Current EL`() {
+        val configuredCurrent = SeasonWindow.forVintage(2026, 7, 1)
+        val pins = listOf(
+            pin("previous-43", mode = "Growth", stage = "EL43", createdAt = "2025-06-30T12:00:00Z"),
+            pin("current-12", mode = "Growth", stage = "EL12", createdAt = "2025-07-02T12:00:00Z"),
+        )
+        val result = PinQueryPolicy.currentElSelection(pins, pins.mapTo(HashSet()) { it.id }, seasonWindow = configuredCurrent, seasonZone = java.time.ZoneOffset.UTC)
+        assertEquals(listOf("current-12"), result.pins.map { it.id })
+    }
+
+    @Test fun `canonical EL21 overrides stale pin EL18`() {
+        val stale = pin("stale", mode = "Growth", stage = "EL18")
+        val result = PinQueryPolicy.currentElSelection(listOf(stale), setOf(stale.id), authoritativeStageCodeByPinId = mapOf(stale.id to "EL21"))
+        assertEquals("EL21", result.pins.single().growthStageCode)
+        assertEquals(21, result.stageByBlockId["block-current"])
+    }
+
+    @Test fun `canonical Block B overrides stale pin Block A`() {
+        val stale = pin("stale", mode = "Growth", stage = "EL21", blockId = "block-a")
+        val result = PinQueryPolicy.currentElSelection(listOf(stale), setOf(stale.id), authoritativeBlockIdByPinId = mapOf(stale.id to "block-b"))
+        assertEquals("block-b", result.pins.single().paddockId)
+        assertEquals(mapOf("block-b" to 21), result.stageByBlockId)
+    }
+
+    @Test fun `canonical EL18 correction cannot beat canonical EL21`() {
+        val stale27 = pin("stale-27", mode = "Growth", stage = "EL27")
+        val actual21 = pin("actual-21", mode = "Growth", stage = "EL21")
+        val pins = listOf(stale27, actual21)
+        val result = PinQueryPolicy.currentElSelection(
+            pins,
+            pins.mapTo(HashSet()) { it.id },
+            authoritativeStageCodeByPinId = mapOf(stale27.id to "EL18", actual21.id to "EL21"),
+        )
+        assertEquals(listOf("actual-21"), result.pins.map { it.id })
+        assertEquals(21, result.stageByBlockId["block-current"])
+    }
+
+    @Test fun `tied canonical maximum retains both pins and one block label`() {
+        val first = pin("first", mode = "Growth", stage = "EL18", blockId = "block-a")
+        val second = pin("second", mode = "Growth", stage = "EL21", blockId = "block-b")
+        val pins = listOf(first, second)
+        val result = PinQueryPolicy.currentElSelection(
+            pins,
+            pins.mapTo(HashSet()) { it.id },
+            authoritativeStageCodeByPinId = mapOf(first.id to "EL21", second.id to "EL21"),
+            authoritativeBlockIdByPinId = mapOf(first.id to "block-b", second.id to "block-b"),
+        )
+        assertEquals(listOf("first", "second"), result.pins.map { it.id })
+        assertTrue(result.pins.all { it.paddockId == "block-b" && it.growthStageCode == "EL21" })
+        assertEquals(mapOf("block-b" to "EL 21"), PinQueryPolicy.currentElBlockLabels(result, true))
     }
 
     @Test fun `authoritative EL names stay out of issue growth options and stale selections are cleaned`() {

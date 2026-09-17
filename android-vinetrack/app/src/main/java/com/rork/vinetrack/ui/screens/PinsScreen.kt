@@ -319,17 +319,28 @@ fun PinsScreen(
             }
         }.toMap()
     }
+    val currentElWindow = remember(season) {
+        season.window ?: com.rork.vinetrack.data.SeasonWindow.forVintage(
+            season.currentVintage,
+            state.seasonStartMonth,
+            state.seasonStartDay,
+        )
+    }
     val currentElSelection = remember(
         sourcePins,
         authoritativeElPinIds,
         authoritativeElStageByPinId,
         authoritativeElBlockByPinId,
+        currentElWindow,
+        season.zone,
     ) {
         PinQueryPolicy.currentElSelection(
             pins = sourcePins,
             authoritativeElPinIds = authoritativeElPinIds,
             authoritativeStageCodeByPinId = authoritativeElStageByPinId,
             authoritativeBlockIdByPinId = authoritativeElBlockByPinId,
+            seasonWindow = currentElWindow,
+            seasonZone = season.zone,
         )
     }
     val visiblePins = remember(sourcePins, currentElSelection, modeFilter, includesCurrentElStage, includesElStages, selectedElStageCodes, statusFilter, selectedNames, selectedBlockIds, season) {
@@ -367,7 +378,6 @@ fun PinsScreen(
     val currentElBlockLabels = remember(
         visiblePins,
         currentElSelection,
-        authoritativeElBlockByPinId,
         includesCurrentElStage,
     ) {
         if (!includesCurrentElStage) {
@@ -376,7 +386,7 @@ fun PinsScreen(
             val visibleIds = visiblePins.mapTo(HashSet()) { it.id }
             currentElSelection.pins.mapNotNull { pin ->
                 if (pin.id !in visibleIds) return@mapNotNull null
-                val blockId = pin.paddockId ?: authoritativeElBlockByPinId[pin.id] ?: return@mapNotNull null
+                val blockId = pin.paddockId ?: return@mapNotNull null
                 currentElSelection.stageByBlockId[blockId]?.let { stage -> blockId to "EL $stage" }
             }.toMap()
         }

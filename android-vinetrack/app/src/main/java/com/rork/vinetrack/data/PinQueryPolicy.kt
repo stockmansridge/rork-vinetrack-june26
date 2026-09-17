@@ -42,19 +42,24 @@ object PinQueryPolicy {
         authoritativeElPinIds: Set<String>,
         authoritativeStageCodeByPinId: Map<String, String> = emptyMap(),
         authoritativeBlockIdByPinId: Map<String, String> = emptyMap(),
+        seasonWindow: SeasonWindow? = null,
+        seasonZone: java.time.ZoneId? = null,
     ): CurrentElSelection {
         data class Candidate(val pin: Pin, val blockId: String, val stage: Int)
 
         val valid = pins.mapNotNull { pin ->
+            if (seasonWindow != null && (seasonZone == null || !seasonWindow.containsIsoDate(pin.createdAt, seasonZone))) {
+                return@mapNotNull null
+            }
             if (pin.deletedAt != null || !pin.mode.equals("Growth", ignoreCase = true) ||
                 (pin.growthStageCode == null && pin.id !in authoritativeElPinIds)
             ) {
                 return@mapNotNull null
             }
-            val blockId = pin.paddockId ?: authoritativeBlockIdByPinId[pin.id] ?: return@mapNotNull null
-            val stageCode = pin.growthStageCode ?: authoritativeStageCodeByPinId[pin.id]
+            val blockId = authoritativeBlockIdByPinId[pin.id] ?: pin.paddockId ?: return@mapNotNull null
+            val stageCode = authoritativeStageCodeByPinId[pin.id] ?: pin.growthStageCode
             val stage = elStageNumber(stageCode) ?: return@mapNotNull null
-            Candidate(pin, blockId, stage)
+            Candidate(pin.copy(paddockId = blockId, growthStageCode = stageCode), blockId, stage)
         }
         val stageByBlockId = valid.groupingBy { it.blockId }
             .fold(Int.MIN_VALUE) { maximum, candidate -> maxOf(maximum, candidate.stage) }

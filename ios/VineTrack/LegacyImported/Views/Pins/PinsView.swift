@@ -103,6 +103,7 @@ struct PinsView: View {
     }
 
     private var currentELSelection: PinQueryPolicy.CurrentELSelection {
+        let currentELWindow = season.window ?? store.settings.seasonWindow(for: season.currentVintage)
         var stageCodeByPinId: [UUID: String] = [:]
         var blockIdByPinId: [UUID: UUID] = [:]
         for record in growthStageRecordSync.records {
@@ -114,7 +115,8 @@ struct PinsView: View {
             from: sourcePins,
             authoritativeELPinIds: Set(stageCodeByPinId.keys),
             authoritativeStageCodeByPinId: stageCodeByPinId,
-            authoritativeBlockIdByPinId: blockIdByPinId
+            authoritativeBlockIdByPinId: blockIdByPinId,
+            seasonWindow: currentELWindow
         )
     }
 
@@ -143,15 +145,9 @@ struct PinsView: View {
     private var currentELBlockLabels: [UUID: String] {
         guard showsCurrentELGrowthPins else { return [:] }
         let visibleIds = Set(filteredPins.map(\.id))
-        let recordBlockByPinId = Dictionary(
-            growthStageRecordSync.records.compactMap { record in
-                record.paddockId.map { ((record.pinId ?? record.id), $0) }
-            },
-            uniquingKeysWith: { first, _ in first }
-        )
         var labels: [UUID: String] = [:]
         for pin in currentELSelection.pins where visibleIds.contains(pin.id) {
-            guard let blockId = pin.paddockId ?? recordBlockByPinId[pin.id],
+            guard let blockId = pin.paddockId,
                   let stage = currentELSelection.stageByBlockId[blockId] else { continue }
             labels[blockId] = "EL \(stage)"
         }
