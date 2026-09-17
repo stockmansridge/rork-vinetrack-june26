@@ -19,6 +19,7 @@ class PinQueryPolicyTest {
         segments: List<PinRowSegmentValue>? = null,
         vineyardId: String = "vineyard",
         blockId: String? = "block-current",
+        deletedAt: String? = null,
     ): Pin = Pin(
         id = id,
         vineyardId = vineyardId,
@@ -29,6 +30,7 @@ class PinQueryPolicyTest {
         isCompleted = completed,
         pinRowNumber = row,
         rowSegments = segments,
+        deletedAt = deletedAt,
     )
 
     @Test fun `default filter excludes EL and completed pins`() {
@@ -64,6 +66,83 @@ class PinQueryPolicyTest {
         assertFalse(PinQueryPolicy.matches(unknown, PinQueryFilter(categories = setOf(PinCategoryFilter.GROWTH)), isElRecord = true))
         assertTrue(PinQueryPolicy.matches(unknown, PinQueryFilter(categories = setOf(PinCategoryFilter.GROWTH), includesElStages = true), isElRecord = true))
         assertFalse(PinQueryPolicy.matches(unknown, PinQueryFilter(categories = setOf(PinCategoryFilter.GROWTH), includesElStages = true, selectedElStageCodes = setOf("EL12")), isElRecord = true))
+    }
+
+    @Test fun `current EL selects the only stage in a block`() {
+        val stage = pin("a18", mode = "Growth", stage = "EL18")
+        val result = PinQueryPolicy.currentElSelection(listOf(stage), setOf(stage.id))
+        assertEquals(listOf("a18"), result.pins.map { it.id })
+        assertEquals(18, result.stageByBlockId["block-current"])
+    }
+
+    @Test fun `current EL selects only the highest numeric stage`() {
+        val stages = listOf(15, 18, 21).map { pin("a$it", mode = "Growth", stage = "EL$it") }
+        val result = PinQueryPolicy.currentElSelection(stages, stages.mapTo(HashSet()) { it.id })
+        assertEquals(listOf("a21"), result.pins.map { it.id })
+    }
+
+    @Test fun `current EL preserves every pin tied at the maximum`() {
+        val stages = listOf(
+            pin("a15", mode = "Growth", stage = "EL15"),
+            pin("a21-first", mode = "Growth", stage = "EL21"),
+            pin("a21-second", mode = "Growth", stage = "EL21"),
+        )
+        val result = PinQueryPolicy.currentElSelection(stages, stages.mapTo(HashSet()) { it.id })
+        assertEquals(listOf("a21-first", "a21-second"), result.pins.map { it.id })
+    }
+
+    @Test fun `current EL compares stage numbers numerically`() {
+        val stages = listOf(
+            pin("a9", mode = "Growth", stage = "EL9"),
+            pin("a10", mode = "Growth", stage = "EL10"),
+        )
+        val result = PinQueryPolicy.currentElSelection(stages, stages.mapTo(HashSet()) { it.id })
+        assertEquals(listOf("a10"), result.pins.map { it.id })
+        assertEquals(10, result.stageByBlockId["block-current"])
+    }
+
+    @Test fun `current EL calculates blocks independently`() {
+        val stages = listOf(
+            pin("a18", mode = "Growth", stage = "EL18", blockId = "block-a"),
+            pin("a21", mode = "Growth", stage = "EL21", blockId = "block-a"),
+            pin("b25", mode = "Growth", stage = "EL25", blockId = "block-b"),
+            pin("b27", mode = "Growth", stage = "EL27", blockId = "block-b"),
+        )
+        val result = PinQueryPolicy.currentElSelection(stages, stages.mapTo(HashSet()) { it.id })
+        assertEquals(listOf("a21", "b27"), result.pins.map { it.id })
+        assertEquals(mapOf("block-a" to 21, "block-b" to 27), result.stageByBlockId)
+    }
+
+    @Test fun `current EL ignores invalid unavailable and non growth records`() {
+        val stages = listOf(
+            pin("valid", mode = "Growth", stage = "EL18"),
+            pin("malformed", mode = "Growth", stage = "ELbanana"),
+            pin("missing", mode = "Growth", stage = null),
+            pin("unlinked", mode = "Growth", stage = "EL21", blockId = null),
+            pin("ordinary", mode = "Repairs", stage = "EL21"),
+            pin("deleted", mode = "Growth", stage = "EL27", deletedAt = "2026-09-17T00:00:00Z"),
+        )
+        val result = PinQueryPolicy.currentElSelection(stages, stages.mapTo(HashSet()) { it.id })
+        assertEquals(listOf("valid"), result.pins.map { it.id })
+    }
+
+    @Test fun `current EL returns nothing when a block has no EL stages`() {
+        val ordinary = pin("ordinary-growth", mode = "Growth", stage = null)
+        val result = PinQueryPolicy.currentElSelection(listOf(ordinary), emptySet())
+        assertTrue(result.pins.isEmpty())
+        assertTrue(result.stageByBlockId.isEmpty())
+    }
+
+    @Test fun `current EL map labels are unique and disappear when disabled`() {
+        val stages = listOf(
+            pin("a15", mode = "Growth", stage = "EL15"),
+            pin("a21-first", mode = "Growth", stage = "EL21"),
+            pin("a21-second", mode = "Growth", stage = "EL21"),
+        )
+        val result = PinQueryPolicy.currentElSelection(stages, stages.mapTo(HashSet()) { it.id })
+        assertEquals(2, result.pins.size)
+        assertEquals(mapOf("block-current" to "EL 21"), PinQueryPolicy.currentElBlockLabels(result, true))
+        assertTrue(PinQueryPolicy.currentElBlockLabels(result, false).isEmpty())
     }
 
     @Test fun `authoritative EL names stay out of issue growth options and stale selections are cleaned`() {

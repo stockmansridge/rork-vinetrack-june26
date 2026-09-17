@@ -26,6 +26,7 @@ struct PinsView: View {
     @State private var contextNow: Date = Date()
     @State private var displayedLiveContextTitle: String?
     /// E-L records remain explicitly excluded until enabled, even while All is selected.
+    @State private var showsCurrentELGrowthPins: Bool = false
     @State private var showsELGrowthPins: Bool = false
     @State private var selectedELStageCodes: Set<String> = []
     @State private var completionFilter: PinCompletionFilter = .notDone
@@ -101,16 +102,33 @@ struct PinsView: View {
         )
     }
 
+    private var currentELSelection: PinQueryPolicy.CurrentELSelection {
+        var stageCodeByPinId: [UUID: String] = [:]
+        var blockIdByPinId: [UUID: UUID] = [:]
+        for record in growthStageRecordSync.records {
+            let pinId = record.pinId ?? record.id
+            stageCodeByPinId[pinId] = record.stageCode
+            if let blockId = record.paddockId { blockIdByPinId[pinId] = blockId }
+        }
+        return PinQueryPolicy.currentELSelection(
+            from: sourcePins,
+            authoritativeELPinIds: Set(stageCodeByPinId.keys),
+            authoritativeStageCodeByPinId: stageCodeByPinId,
+            authoritativeBlockIdByPinId: blockIdByPinId
+        )
+    }
+
     private var filteredPins: [VinePin] {
         let season = season
         let authoritativeELPinIds = Set(growthStageRecordSync.records.map { $0.pinId ?? $0.id })
         let query = PinQueryFilter(
             categories: PinQueryPolicy.categories(for: selectedCategory),
-            includesELStages: showsELGrowthPins,
-            selectedELStageCodes: selectedELStageCodes,
+            includesELStages: showsCurrentELGrowthPins || showsELGrowthPins,
+            selectedELStageCodes: showsCurrentELGrowthPins ? [] : selectedELStageCodes,
             completion: completionFilter
         )
-        return sourcePins.filter { pin in
+        let filterSource = showsCurrentELGrowthPins ? currentELSelection.pins : sourcePins
+        return filterSource.filter { pin in
             let isELRecord = pin.growthStageCode != nil || authoritativeELPinIds.contains(pin.id)
             if !season.contains(pin.timestamp) || !query.matches(pin, isELRecord: isELRecord) { return false }
             if !isELRecord && !selectedNames.isEmpty && !selectedNames.contains(pin.buttonName) { return false }
@@ -120,6 +138,24 @@ struct PinsView: View {
         }
         // Newest first, mirroring the Android pin list ordering.
         .sorted { $0.timestamp > $1.timestamp }
+    }
+
+    private var currentELBlockLabels: [UUID: String] {
+        guard showsCurrentELGrowthPins else { return [:] }
+        let visibleIds = Set(filteredPins.map(\.id))
+        let recordBlockByPinId = Dictionary(
+            growthStageRecordSync.records.compactMap { record in
+                record.paddockId.map { ((record.pinId ?? record.id), $0) }
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var labels: [UUID: String] = [:]
+        for pin in currentELSelection.pins where visibleIds.contains(pin.id) {
+            guard let blockId = pin.paddockId ?? recordBlockByPinId[pin.id],
+                  let stage = currentELSelection.stageByBlockId[blockId] else { continue }
+            labels[blockId] = "EL \(stage)"
+        }
+        return labels
     }
 
     private var activeFilterCount: Int {
@@ -270,7 +306,7 @@ struct PinsView: View {
                 Group {
                     switch viewMode {
                     case .map:
-                        PinsMapView(pins: filteredPins)
+                        PinsMapView(pins: filteredPins, currentELBlockLabels: currentELBlockLabels)
                     case .list:
                         PinsListView(
                             pins: filteredPins,
@@ -382,6 +418,9 @@ struct PinsView: View {
                     FilterChip(title: category.label, isSelected: selectedCategory == category) {
                         selectedCategory = category
                     }
+                }
+                FilterChip(title: "Current EL Stage", isSelected: showsCurrentELGrowthPins) {
+                    showsCurrentELGrowthPins.toggle()
                 }
                 FilterChip(title: "EL Stages", isSelected: showsELGrowthPins) {
                     showsELGrowthPins.toggle()
@@ -691,6 +730,7 @@ struct FilterChip: View {
 
 struct PinsMapView: View {
     let pins: [VinePin]
+    let currentELBlockLabels: [UUID: String]
     @Environment(MigratedDataStore.self) private var store
     @Environment(LocationService.self) private var locationService
     @Environment(NetworkMonitor.self) private var network
@@ -858,7 +898,8 @@ struct PinsMapView: View {
                     rows: paddock.rows.map { [$0.startPoint.coordinate, $0.endPoint.coordinate] },
                     strokeColor: .orange,
                     fillColor: .orange.opacity(0.1),
-                    name: paddock.name
+                    name: paddock.name,
+                    currentELLabel: currentELBlockLabels[paddock.id]
                 )
             },
             pins: pins.map {
@@ -898,6 +939,10 @@ struct PinsMapView: View {
                             .font(.caption2.weight(.semibold))
                         Text("\(paddock.rows.count) rows")
                             .font(.system(size: 9, weight: .medium))
+                        if let currentEL = currentELBlockLabels[paddock.id] {
+                            Text(currentEL)
+                                .font(.system(size: 10, weight: .bold))
+                        }
                     }
                     .foregroundStyle(.white)
                     .padding(.horizontal, 8)

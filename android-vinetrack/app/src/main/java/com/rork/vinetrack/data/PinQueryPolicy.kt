@@ -21,6 +21,53 @@ object PinQueryPolicy {
         return code.takeIf { candidate -> com.rork.vinetrack.data.model.GrowthStage.allStages.any { it.code == candidate } }
     }
 
+    /** Numeric E-L value from the canonical `EL<number>` storage shape. */
+    fun elStageNumber(value: String?): Int? {
+        val code = value?.trim()?.uppercase() ?: return null
+        if (!code.matches(Regex("EL[0-9]+"))) return null
+        return code.removePrefix("EL").toIntOrNull()
+    }
+
+    data class CurrentElSelection(
+        val pins: List<Pin>,
+        val stageByBlockId: Map<String, Int>,
+    )
+
+    /**
+     * Retain every pin tied at the highest numeric E-L stage in each
+     * authoritatively linked block. Input order remains deterministic.
+     */
+    fun currentElSelection(
+        pins: List<Pin>,
+        authoritativeElPinIds: Set<String>,
+        authoritativeStageCodeByPinId: Map<String, String> = emptyMap(),
+        authoritativeBlockIdByPinId: Map<String, String> = emptyMap(),
+    ): CurrentElSelection {
+        data class Candidate(val pin: Pin, val blockId: String, val stage: Int)
+
+        val valid = pins.mapNotNull { pin ->
+            if (pin.deletedAt != null || !pin.mode.equals("Growth", ignoreCase = true) ||
+                (pin.growthStageCode == null && pin.id !in authoritativeElPinIds)
+            ) {
+                return@mapNotNull null
+            }
+            val blockId = pin.paddockId ?: authoritativeBlockIdByPinId[pin.id] ?: return@mapNotNull null
+            val stageCode = pin.growthStageCode ?: authoritativeStageCodeByPinId[pin.id]
+            val stage = elStageNumber(stageCode) ?: return@mapNotNull null
+            Candidate(pin, blockId, stage)
+        }
+        val stageByBlockId = valid.groupingBy { it.blockId }
+            .fold(Int.MIN_VALUE) { maximum, candidate -> maxOf(maximum, candidate.stage) }
+        return CurrentElSelection(
+            pins = valid.filter { stageByBlockId[it.blockId] == it.stage }.map { it.pin },
+            stageByBlockId = stageByBlockId,
+        )
+    }
+
+    /** Empty while inactive so normal block labels are restored without stale state. */
+    fun currentElBlockLabels(selection: CurrentElSelection, isActive: Boolean): Map<String, String> =
+        if (isActive) selection.stageByBlockId.mapValues { (_, stage) -> "EL $stage" } else emptyMap()
+
     fun matches(pin: Pin, filter: PinQueryFilter, isElRecord: Boolean = pin.growthStageCode != null): Boolean {
         if (isElRecord) {
             if (!filter.includesElStages) return false

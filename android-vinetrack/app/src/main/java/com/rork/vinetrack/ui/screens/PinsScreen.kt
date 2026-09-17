@@ -205,6 +205,7 @@ fun PinsScreen(
     var pinSort by rememberSaveable { mutableStateOf(PinSort.NEWEST) }
     // null = All; otherwise a PinMode raw value ("Repairs" / "Growth").
     var modeFilter by remember { mutableStateOf<String?>(initialMode) }
+    var includesCurrentElStage by rememberSaveable { mutableStateOf(false) }
     var includesElStages by rememberSaveable { mutableStateOf(false) }
     var selectedElStageCodes by rememberSaveable { mutableStateOf<Set<String>>(emptySet()) }
     // null = All statuses; true = Completed; false = Open. Defaults to Open
@@ -305,27 +306,51 @@ fun PinsScreen(
     val season = remember(sourcePins, seasonSelection, state.seasonStartMonth, state.seasonStartDay, state.seasonZone) {
         state.seasonScope(sourcePins.map { parseIsoMillis(it.createdAt) }, seasonSelection)
     }
-    val visiblePins = remember(sourcePins, state.growthRecords, modeFilter, includesElStages, selectedElStageCodes, statusFilter, selectedNames, selectedBlockIds, season) {
+    val authoritativeElPinIds = remember(state.growthRecords) {
+        state.growthRecords.mapTo(HashSet()) { it.pinId?.takeIf(String::isNotBlank) ?: it.id }
+    }
+    val authoritativeElStageByPinId = remember(state.growthRecords) {
+        state.growthRecords.associate { (it.pinId?.takeIf(String::isNotBlank) ?: it.id) to it.stageCode }
+    }
+    val authoritativeElBlockByPinId = remember(state.growthRecords) {
+        state.growthRecords.mapNotNull { record ->
+            record.paddockId?.let { blockId ->
+                (record.pinId?.takeIf(String::isNotBlank) ?: record.id) to blockId
+            }
+        }.toMap()
+    }
+    val currentElSelection = remember(
+        sourcePins,
+        authoritativeElPinIds,
+        authoritativeElStageByPinId,
+        authoritativeElBlockByPinId,
+    ) {
+        PinQueryPolicy.currentElSelection(
+            pins = sourcePins,
+            authoritativeElPinIds = authoritativeElPinIds,
+            authoritativeStageCodeByPinId = authoritativeElStageByPinId,
+            authoritativeBlockIdByPinId = authoritativeElBlockByPinId,
+        )
+    }
+    val visiblePins = remember(sourcePins, currentElSelection, modeFilter, includesCurrentElStage, includesElStages, selectedElStageCodes, statusFilter, selectedNames, selectedBlockIds, season) {
         val category = when (modeFilter) {
             "Repairs" -> PinCategoryFilter.REPAIRS
             "Growth" -> PinCategoryFilter.GROWTH
             "ManualIssue" -> PinCategoryFilter.MANUAL_ISSUES
             else -> null
         }
-        val authoritativeElPinIds = state.growthRecords.mapTo(HashSet()) {
-            it.pinId?.takeIf(String::isNotBlank) ?: it.id
-        }
         val query = PinQueryFilter(
             categories = PinQueryPolicy.categoriesFor(category),
-            includesElStages = includesElStages,
-            selectedElStageCodes = selectedElStageCodes,
+            includesElStages = includesCurrentElStage || includesElStages,
+            selectedElStageCodes = if (includesCurrentElStage) emptySet() else selectedElStageCodes,
             completion = when (statusFilter) {
                 true -> PinCompletionFilter.DONE
                 false -> PinCompletionFilter.NOT_DONE
                 null -> PinCompletionFilter.BOTH
             },
         )
-        sourcePins.filter { pin ->
+        val filterSource = if (includesCurrentElStage) currentElSelection.pins else sourcePins
+        filterSource.filter { pin ->
             val isElRecord = pin.growthStageCode != null || pin.id in authoritativeElPinIds
             season.contains(parseIsoMillis(pin.createdAt)) &&
                 PinQueryPolicy.matches(
@@ -339,10 +364,24 @@ fun PinsScreen(
             // Newest first, mirroring the iOS pin list ordering.
             .sortedByDescending { parseIsoMillis(it.createdAt) ?: Long.MIN_VALUE }
     }
-    // Options offered by the Filters sheet (iOS uniqueNames/uniquePaddocks parity).
-    val authoritativeElPinIds = remember(state.growthRecords) {
-        state.growthRecords.mapTo(HashSet()) { it.pinId?.takeIf(String::isNotBlank) ?: it.id }
+    val currentElBlockLabels = remember(
+        visiblePins,
+        currentElSelection,
+        authoritativeElBlockByPinId,
+        includesCurrentElStage,
+    ) {
+        if (!includesCurrentElStage) {
+            emptyMap()
+        } else {
+            val visibleIds = visiblePins.mapTo(HashSet()) { it.id }
+            currentElSelection.pins.mapNotNull { pin ->
+                if (pin.id !in visibleIds) return@mapNotNull null
+                val blockId = pin.paddockId ?: authoritativeElBlockByPinId[pin.id] ?: return@mapNotNull null
+                currentElSelection.stageByBlockId[blockId]?.let { stage -> blockId to "EL $stage" }
+            }.toMap()
+        }
     }
+    // Options offered by the Filters sheet (iOS uniqueNames/uniquePaddocks parity).
     val uniqueNames = remember(sourcePins, authoritativeElPinIds) {
         PinQueryPolicy.ordinaryFilterNames(sourcePins, authoritativeElPinIds)
     }
@@ -601,12 +640,14 @@ fun PinsScreen(
             }
             PinsFilterBar(
                 modeFilter = modeFilter,
+                includesCurrentElStage = includesCurrentElStage,
                 includesElStages = includesElStages,
                 statusFilter = statusFilter,
                 activeFilterCount = (if (selectedNames.isEmpty()) 0 else 1) +
                     (if (selectedBlockIds.isEmpty()) 0 else 1) +
                     (if (season.isAll) 0 else 1),
                 onModeFilter = { modeFilter = it },
+                onCurrentElStage = { includesCurrentElStage = !includesCurrentElStage },
                 onElStages = { includesElStages = !includesElStages },
                 onStatusFilter = { statusFilter = it },
                 onOpenFilters = { showFilterSheet = true },
@@ -615,6 +656,7 @@ fun PinsScreen(
                 PinsViewMode.Map -> VineyardMapContent(
                     state = state,
                     pins = visiblePins,
+                    currentElBlockLabels = currentElBlockLabels,
                     modifier = Modifier.fillMaxSize(),
                     onPinClick = { detailPinId = it.id },
                     onLocationMessage = { message ->
@@ -893,10 +935,12 @@ private fun PinsViewModeButton(icon: ImageVector, desc: String, selected: Boolea
 @Composable
 private fun PinsFilterBar(
     modeFilter: String?,
+    includesCurrentElStage: Boolean,
     includesElStages: Boolean,
     statusFilter: Boolean?,
     activeFilterCount: Int,
     onModeFilter: (String?) -> Unit,
+    onCurrentElStage: () -> Unit,
     onElStages: () -> Unit,
     onStatusFilter: (Boolean?) -> Unit,
     onOpenFilters: () -> Unit,
@@ -913,6 +957,7 @@ private fun PinsFilterBar(
         PinModeFilterChip("All", modeFilter == null) { onModeFilter(null) }
         PinModeFilterChip("Repairs", modeFilter == "Repairs") { onModeFilter("Repairs") }
         PinModeFilterChip("Growth", modeFilter == "Growth") { onModeFilter("Growth") }
+        PinModeFilterChip("Current EL Stage", includesCurrentElStage) { onCurrentElStage() }
         PinModeFilterChip("EL Stages", includesElStages) { onElStages() }
         PinModeFilterChip("Manual Issues", modeFilter == "ManualIssue") { onModeFilter("ManualIssue") }
         Box(Modifier.size(width = 1.dp, height = 22.dp).background(vine.textSecondary.copy(alpha = 0.3f)))

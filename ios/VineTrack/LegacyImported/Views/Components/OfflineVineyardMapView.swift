@@ -26,6 +26,8 @@ struct OfflineVineyardMapView: View {
         var strokeColor: Color = VineyardTheme.leafGreen.opacity(0.85)
         var fillColor: Color = VineyardTheme.leafGreen.opacity(0.18)
         var name: String? = nil
+        /// Optional Current EL Stage line, supplied only by the Pins filter.
+        var currentELLabel: String? = nil
     }
 
     struct Trail: Identifiable {
@@ -367,7 +369,8 @@ struct OfflineVineyardMapView: View {
                 longitude: centroid.longitude / Double(paddock.polygon.count)
             )
             let p = project(center)
-            let text = Text(name).font(.caption2.weight(.bold)).foregroundColor(.white)
+            let label = [name, paddock.currentELLabel].compactMap { $0 }.joined(separator: "\n")
+            let text = Text(label).font(.caption2.weight(.bold)).foregroundColor(.white)
             ctx.draw(text, at: p, anchor: .center)
         }
     }

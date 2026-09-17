@@ -62,6 +62,60 @@ nonisolated enum PinQueryPolicy {
         return code
     }
 
+    /// Numeric E-L value from the canonical `EL<number>` storage shape.
+    /// Missing, non-numeric, signed and otherwise malformed values are ignored.
+    static func elStageNumber(_ value: String?) -> Int? {
+        guard let code = value?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
+              code.hasPrefix("EL") else { return nil }
+        let numeric = code.dropFirst(2)
+        guard !numeric.isEmpty, numeric.allSatisfy(\.isNumber) else { return nil }
+        return Int(numeric)
+    }
+
+    struct CurrentELSelection: Equatable, Sendable {
+        let pins: [VinePin]
+        let stageByBlockId: [UUID: Int]
+    }
+
+    /// Select every pin tied at the highest numeric E-L stage in each
+    /// authoritatively linked block. Input order is preserved deterministically.
+    static func currentELSelection(
+        from pins: [VinePin],
+        authoritativeELPinIds: Set<UUID>,
+        authoritativeStageCodeByPinId: [UUID: String] = [:],
+        authoritativeBlockIdByPinId: [UUID: UUID] = [:]
+    ) -> CurrentELSelection {
+        let valid = pins.compactMap { pin -> (pin: VinePin, blockId: UUID, stage: Int)? in
+            let stageCode = pin.growthStageCode ?? authoritativeStageCodeByPinId[pin.id]
+            let blockId = pin.paddockId ?? authoritativeBlockIdByPinId[pin.id]
+            guard pin.mode == .growth,
+                  (stageCode != nil || authoritativeELPinIds.contains(pin.id)),
+                  let blockId,
+                  let stage = elStageNumber(stageCode) else { return nil }
+            return (pin, blockId, stage)
+        }
+        var stageByBlockId: [UUID: Int] = [:]
+        for item in valid {
+            stageByBlockId[item.blockId] = max(stageByBlockId[item.blockId] ?? item.stage, item.stage)
+        }
+        return CurrentELSelection(
+            pins: valid.compactMap { item in
+                stageByBlockId[item.blockId] == item.stage ? item.pin : nil
+            },
+            stageByBlockId: stageByBlockId
+        )
+    }
+
+    /// Map-only labels. Passing `false` guarantees the normal block treatment is
+    /// restored without retaining any Current EL annotation state.
+    static func currentELBlockLabels(
+        selection: CurrentELSelection,
+        isActive: Bool
+    ) -> [UUID: String] {
+        guard isActive else { return [:] }
+        return selection.stageByBlockId.mapValues { "EL \($0)" }
+    }
+
     static func usableRow(_ pin: VinePin) -> Double? {
         if let row = pin.pinRowNumber { return Double(row) }
         return pin.rowSegments?.map(\.row).min().map(Double.init)

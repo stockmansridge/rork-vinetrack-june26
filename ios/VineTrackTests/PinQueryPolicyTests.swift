@@ -86,6 +86,73 @@ struct PinQueryPolicyTests {
         #expect(both.matches(done, isELRecord: true))
     }
 
+    @Test func currentELSelectsTheOnlyStageInABlock() {
+        let stage = pin(name: "EL 18", mode: .growth, stage: "EL18")
+        let result = PinQueryPolicy.currentELSelection(from: [stage], authoritativeELPinIds: [stage.id])
+        #expect(result.pins.map(\.id) == [stage.id])
+        #expect(result.stageByBlockId[stage.paddockId!] == 18)
+    }
+
+    @Test func currentELSelectsOnlyTheHighestNumericStage() {
+        let stages = [15, 18, 21].map { pin(name: "EL \($0)", mode: .growth, stage: "EL\($0)") }
+        let result = PinQueryPolicy.currentELSelection(from: stages, authoritativeELPinIds: Set(stages.map(\.id)))
+        #expect(result.pins.map(\.growthStageCode) == ["EL21"])
+    }
+
+    @Test func currentELPreservesEveryPinTiedAtTheMaximum() {
+        let stages = [15, 21, 21].map { pin(name: "EL \($0)", mode: .growth, stage: "EL\($0)") }
+        let result = PinQueryPolicy.currentELSelection(from: stages, authoritativeELPinIds: Set(stages.map(\.id)))
+        #expect(result.pins.map(\.id) == Array(stages.suffix(2)).map(\.id))
+    }
+
+    @Test func currentELUsesNumericOrdering() {
+        let nine = pin(name: "EL 9", mode: .growth, stage: "EL9")
+        let ten = pin(name: "EL 10", mode: .growth, stage: "EL10")
+        let result = PinQueryPolicy.currentELSelection(from: [nine, ten], authoritativeELPinIds: [nine.id, ten.id])
+        #expect(result.pins.map(\.id) == [ten.id])
+        #expect(result.stageByBlockId[nine.paddockId!] == 10)
+    }
+
+    @Test func currentELCalculatesEachBlockIndependently() {
+        let blockA = UUID(uuidString: "00000000-0000-0000-0000-000000000010")!
+        let blockB = UUID(uuidString: "00000000-0000-0000-0000-000000000020")!
+        let stages = [
+            pin(name: "A18", mode: .growth, stage: "EL18", blockId: blockA),
+            pin(name: "A21", mode: .growth, stage: "EL21", blockId: blockA),
+            pin(name: "B25", mode: .growth, stage: "EL25", blockId: blockB),
+            pin(name: "B27", mode: .growth, stage: "EL27", blockId: blockB)
+        ]
+        let result = PinQueryPolicy.currentELSelection(from: stages, authoritativeELPinIds: Set(stages.map(\.id)))
+        #expect(result.pins.map(\.buttonName) == ["A21", "B27"])
+        #expect(result.stageByBlockId == [blockA: 21, blockB: 27])
+    }
+
+    @Test func currentELIgnoresMalformedUnlinkedAndNonGrowthPins() {
+        let valid = pin(name: "valid", mode: .growth, stage: "EL18")
+        let malformed = pin(name: "malformed", mode: .growth, stage: "ELbanana")
+        let missing = pin(name: "missing", mode: .growth, stage: nil)
+        let unlinked = pin(name: "unlinked", mode: .growth, stage: "EL21", blockId: nil)
+        let ordinary = pin(name: "ordinary", mode: .repairs, stage: "EL21")
+        let pins = [valid, malformed, missing, unlinked, ordinary]
+        let result = PinQueryPolicy.currentELSelection(from: pins, authoritativeELPinIds: Set(pins.map(\.id)))
+        #expect(result.pins.map(\.id) == [valid.id])
+    }
+
+    @Test func currentELReturnsNothingForBlocksWithoutValidELPins() {
+        let ordinary = pin(name: "Canopy check", mode: .growth, stage: nil)
+        let result = PinQueryPolicy.currentELSelection(from: [ordinary], authoritativeELPinIds: [])
+        #expect(result.pins.isEmpty)
+        #expect(result.stageByBlockId.isEmpty)
+    }
+
+    @Test func currentELMapLabelsAreUniquePerBlockAndDisappearWhenDisabled() {
+        let stages = [15, 21, 21].map { pin(name: "EL \($0)", mode: .growth, stage: "EL\($0)") }
+        let result = PinQueryPolicy.currentELSelection(from: stages, authoritativeELPinIds: Set(stages.map(\.id)))
+        #expect(result.pins.count == 2)
+        #expect(PinQueryPolicy.currentELBlockLabels(selection: result, isActive: true) == [stages[0].paddockId!: "EL 21"])
+        #expect(PinQueryPolicy.currentELBlockLabels(selection: result, isActive: false).isEmpty)
+    }
+
     @Test func authoritativeELNamesStayOutOfIssueGrowthOptionsAndSelectionsAreCleaned() {
         let elId = UUID(uuidString: "00000000-0000-0000-0000-000000000099")!
         let pins = [

@@ -343,6 +343,7 @@ fun SetupVineyardMapContent(
 fun VineyardMapContent(
     state: AppUiState,
     pins: List<Pin>,
+    currentElBlockLabels: Map<String, String> = emptyMap(),
     modifier: Modifier = Modifier,
     defaults: MapDefaults = MapDefaults.factory,
     onPinClick: ((Pin) -> Unit)? = null,
@@ -678,8 +679,14 @@ fun VineyardMapContent(
                     }
                     // Always-visible block-name chip (iOS parity). Tapping still
                     // surfaces the name + area/rows callout via title/snippet.
-                    if (showBlockLabels && labelsVisible) block.centroid()?.let { center ->
-                        BlockLabelMarker(block = block, position = center)
+                    if ((showBlockLabels || currentElBlockLabels[block.id] != null) && labelsVisible) {
+                        block.centroid()?.let { center ->
+                            BlockLabelMarker(
+                                block = block,
+                                position = center,
+                                currentElLabel = currentElBlockLabels[block.id],
+                            )
+                        }
                     }
                 }
 
@@ -893,11 +900,12 @@ private fun blockSubtitle(block: Paddock, fmt: RegionFormatter): String? {
 private fun BlockLabelMarker(
     block: Paddock,
     position: LatLng,
+    currentElLabel: String? = null,
     onClick: (() -> Boolean)? = null,
 ) {
     val markerState = remember(position) { MarkerState(position = position) }
     MarkerComposable(
-        keys = arrayOf(block.id, block.name, block.rowCount.toString()),
+        keys = arrayOf(block.id, block.name, block.rowCount.toString(), currentElLabel.orEmpty()),
         state = markerState,
         title = block.name,
         snippet = blockSubtitle(block, LocalRegionFormatter.current),
@@ -926,6 +934,15 @@ private fun BlockLabelMarker(
                     color = Color.White,
                     fontSize = 9.sp,
                     fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                )
+            }
+            currentElLabel?.let { label ->
+                Text(
+                    label,
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
                     maxLines = 1,
                 )
             }
