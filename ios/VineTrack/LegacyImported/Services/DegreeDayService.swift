@@ -94,6 +94,7 @@ class DegreeDayService {
     private let apiKey: String = AppConfig.wundergroundAPIKey
     private let baseTemp: Double = 10.0
     private let beddCap: Double = 19.0
+    private let calendar: Calendar
 
     private var cacheKey: String { "vinetrack_gdd_temps_cache_v2" }
     private let lastDailySyncKey = "vinetrack_gdd_last_daily_sync"
@@ -112,8 +113,16 @@ class DegreeDayService {
         return f
     }()
 
-    init() {
+    init(timeZone: TimeZone = .current) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        self.calendar = calendar
         loadCache()
+    }
+
+    private func compactKey(for date: Date) -> String {
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d%02d%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
     }
 
     private func loadCache() {
@@ -165,6 +174,15 @@ class DegreeDayService {
         hasUsableData(forKey: source.sourceKey)
     }
 
+    /// Installs normalized daily rows under one provider identity. Used by
+    /// durable restores and parity fixtures; replacing one source never touches
+    /// another provider's cache.
+    func installDailyTemps(_ values: [String: DailyTemp], for source: GDDSource) {
+        temps[source.sourceKey] = values
+        lastSource = source
+        saveCache()
+    }
+
     /// Same as `hasUsableData(for:)` but keyed directly by `sourceKey`.
     /// Ripeness surfaces that only have a cache key on hand (not a full
     /// `GDDSource`) use this to tell "no season fetch has completed yet
@@ -183,7 +201,7 @@ class DegreeDayService {
     func hasUsableData(forKey key: String, coveringFrom start: Date, to end: Date) -> Bool {
         guard let cached = temps[key], !cached.isEmpty else { return false }
         return dates(from: start, to: end).contains { day in
-            cached[Self.wuDateFormatter.string(from: day)] != nil
+            cached[compactKey(for: day)] != nil
         }
     }
 
@@ -195,12 +213,12 @@ class DegreeDayService {
         let requiredDates = dates(from: start, to: end)
         guard !requiredDates.isEmpty, let cached = temps[key] else { return false }
         return requiredDates.allSatisfy { day in
-            cached[Self.wuDateFormatter.string(from: day)] != nil
+            cached[compactKey(for: day)] != nil
         }
     }
 
     private func dates(from start: Date, to end: Date) -> [Date] {
-        let cal = Calendar.current
+        let cal = calendar
         let endDay = cal.startOfDay(for: end)
         var day = cal.startOfDay(for: start)
         var result: [Date] = []
@@ -329,6 +347,11 @@ class DegreeDayService {
             useBEDD: useBEDD
         )
 
+        if lastSource == nil,
+           let cachedSource = candidates.first(where: { hasUsableData(for: $0.source) })?.source {
+            lastSource = cachedSource
+        }
+
         if !forceRefresh,
            let last = lastSource,
            candidates.contains(where: { $0.source == last }),
@@ -411,7 +434,7 @@ class DegreeDayService {
             diagnostics.append("API key: \(String(apiKey.prefix(4)))… (\(apiKey.count) chars)")
         }
 
-        let cal = Calendar.current
+        let cal = calendar
         let today = cal.startOfDay(for: Date())
         let start = cal.startOfDay(for: seasonStart)
         guard start <= today else {
@@ -468,7 +491,7 @@ class DegreeDayService {
         // 2. Determine missing dates and fetch from Weather Underground.
         // WU PWS history allows ~1500/day on the free tier, so we can safely
         // pull an entire season in one pass.
-        let missingDates: [Date] = dates.filter { stationTemps[Self.wuDateFormatter.string(from: $0)] == nil }
+        let missingDates: [Date] = dates.filter { stationTemps[compactKey(for: $0)] == nil }
         let maxFetch = 500
         let toFetch = Array(missingDates.suffix(maxFetch))
         diagnostics.append("Season dates: \(dates.count) • missing: \(missingDates.count) • will fetch: \(toFetch.count)")
@@ -478,7 +501,7 @@ class DegreeDayService {
         var failureCounts: [String: Int] = [:]
         if !apiKey.isEmpty {
             for date in toFetch {
-                let dateStr = Self.wuDateFormatter.string(from: date)
+                let dateStr = compactKey(for: date)
                 lastFetchAttempted += 1
                 var outcome = await fetchDailyTemps(stationId: stationId, dateString: dateStr)
                 // Retry once after a brief pause if we hit a rate limit
@@ -574,7 +597,9 @@ class DegreeDayService {
                 errorMessage = "No temperature data returned for station \"\(stationId)\". Verify the PWS ID is correct and reporting."
             }
         }
-        diagnostics.append("Days with data: \(result.daysCovered) • GDD: \(Int(result.gdd))")
+        diagnostics.append("Requested: \(Self.dateFormatter.string(from: start))..<\(Self.dateFormatter.string(from: today))")
+        diagnostics.append("Coverage: \(result.firstDate.map(Self.dateFormatter.string(from:)) ?? "none")...\(result.lastDate.map(Self.dateFormatter.string(from:)) ?? "none")")
+        diagnostics.append("Rows: \(result.daysCovered)/\(result.expectedDays) • interpolated: \(result.interpolatedDays) • cumulative GDD: \(String(format: "%.2f", result.gdd))")
         lastDiagnostics = diagnostics.joined(separator: "\n")
         markDailyRefresh(for: stationId)
         isLoading = false
@@ -584,7 +609,7 @@ class DegreeDayService {
     /// Missing days are back-filled with the average of up to 3 reported entries on
     /// each side so the accumulation isn't undercounted by sensor gaps.
     func computeGDD(stationId: String, from start: Date, to end: Date, latitude: Double?, useBEDD: Bool) -> GDDComputeResult {
-        let cal = Calendar.current
+        let cal = calendar
         let startDay = cal.startOfDay(for: start)
         let endDay = cal.startOfDay(for: end)
         var allDays: [Date] = []
@@ -600,7 +625,7 @@ class DegreeDayService {
         }
 
         // Build aligned temp array — nil where missing.
-        var raw: [DailyTemp?] = allDays.map { stationTemps[Self.wuDateFormatter.string(from: $0)] }
+        var raw: [DailyTemp?] = allDays.map { stationTemps[compactKey(for: $0)] }
         let reportedCount = raw.compactMap { $0 }.count
 
         // Interpolate missing entries from up to 3 reported neighbours on each side.
@@ -645,7 +670,7 @@ class DegreeDayService {
 
     /// Returns per-day GDD values (with missing days interpolated) plus a running cumulative total.
     func dailyGDDSeries(stationId: String, from start: Date, to end: Date, latitude: Double?, useBEDD: Bool) -> [(date: Date, daily: Double, cumulative: Double, interpolated: Bool)] {
-        let cal = Calendar.current
+        let cal = calendar
         let startDay = cal.startOfDay(for: start)
         let endDay = cal.startOfDay(for: end)
         var allDays: [Date] = []
@@ -655,7 +680,7 @@ class DegreeDayService {
             d = cal.date(byAdding: .day, value: 1, to: d) ?? endDay
         }
         guard let stationTemps = temps[stationId] else { return [] }
-        var raw: [DailyTemp?] = allDays.map { stationTemps[Self.wuDateFormatter.string(from: $0)] }
+        var raw: [DailyTemp?] = allDays.map { stationTemps[compactKey(for: $0)] }
         var filled = raw
         var interpolatedFlags = Array(repeating: false, count: raw.count)
         for i in 0..<filled.count where filled[i] == nil {
@@ -706,7 +731,7 @@ class DegreeDayService {
 
     private func dayLengthFactor(latitude: Double?, date: Date) -> Double {
         guard let lat = latitude, abs(lat) <= 66 else { return 1.0 }
-        let cal = Calendar(identifier: .gregorian)
+        let cal = calendar
         let n = cal.ordinality(of: .day, in: .year, for: date) ?? 1
         let decl = 23.45 * sin((360.0 * Double(284 + n) / 365.0) * .pi / 180.0)
         let latRad = lat * .pi / 180.0
@@ -846,7 +871,7 @@ class DegreeDayService {
         }
         let source = GDDSource.davisWeatherLink(stationId: stationId)
         let key = source.sourceKey
-        let cal = Calendar.current
+        let cal = calendar
         let today = cal.startOfDay(for: Date())
         let start = cal.startOfDay(for: seasonStart)
 
@@ -877,7 +902,7 @@ class DegreeDayService {
             dates.append(d)
             d = cal.date(byAdding: .day, value: 1, to: d) ?? today
         }
-        let missing = dates.filter { stationTemps[Self.wuDateFormatter.string(from: $0)] == nil }
+        let missing = dates.filter { stationTemps[compactKey(for: $0)] == nil }
         diagnostics.append("Season dates: \(dates.count) \u{2022} missing: \(missing.count)")
 
         // Davis historic costs one API call per 24h chunk. To avoid
@@ -916,7 +941,7 @@ class DegreeDayService {
                     )
                 }
                 for (day, hi) in result.dailyHighC {
-                    let k = Self.wuDateFormatter.string(from: day)
+                    let k = compactKey(for: day)
                     let lo = result.dailyLowC[day] ?? hi
                     stationTemps[k] = DailyTemp(high: hi, low: lo)
                 }
@@ -966,7 +991,7 @@ class DegreeDayService {
     func fetchSeasonOpenMeteo(latitude: Double, longitude: Double, seasonStart: Date, useBEDD: Bool = true) async {
         let source = GDDSource.openMeteoArchive(latitude: latitude, longitude: longitude)
         let key = source.sourceKey
-        let cal = Calendar.current
+        let cal = calendar
         let today = cal.startOfDay(for: Date())
         let start = cal.startOfDay(for: seasonStart)
 
@@ -999,7 +1024,7 @@ class DegreeDayService {
             d = cal.date(byAdding: .day, value: 1, to: d) ?? today
         }
 
-        let missing = dates.filter { stationTemps[Self.wuDateFormatter.string(from: $0)] == nil }
+        let missing = dates.filter { stationTemps[compactKey(for: $0)] == nil }
         diagnostics.append("Season dates: \(dates.count) • missing: \(missing.count)")
 
         if !missing.isEmpty {
@@ -1037,7 +1062,7 @@ class DegreeDayService {
 
             // 2. Forecast endpoint with `past_days` to fill the recent
             //    days that the archive doesn't yet cover.
-            let stillMissing = dates.filter { stationTemps[Self.wuDateFormatter.string(from: $0)] == nil }
+            let stillMissing = dates.filter { stationTemps[compactKey(for: $0)] == nil }
             if !stillMissing.isEmpty {
                 let earliestStill = stillMissing.min() ?? today
                 let daysBack = max(1, min(92, (cal.dateComponents([.day], from: earliestStill, to: today).day ?? 1) + 1))
@@ -1101,10 +1126,13 @@ class DegreeDayService {
         let count = min(times.count, min(highs.count, lows.count))
         var written = 0
         for i in 0..<count {
-            guard let date = fmt.date(from: times[i]),
+            guard fmt.date(from: times[i]) != nil,
                   let high = parseDouble(highs[i]),
                   let low = parseDouble(lows[i]) else { continue }
-            let k = Self.wuDateFormatter.string(from: date)
+            // Open-Meteo daily dates are already local calendar dates. Parsing
+            // and formatting them through UTC can shift a vineyard day at the
+            // date line, so retain the provider's date identity verbatim.
+            let k = compactKey(fromISODate: times[i])
             stationTemps[k] = DailyTemp(high: high, low: low)
             written += 1
         }

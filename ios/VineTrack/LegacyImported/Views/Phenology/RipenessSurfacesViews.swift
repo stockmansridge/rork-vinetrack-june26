@@ -47,34 +47,35 @@ struct RipenessSourceCandidate: Hashable {
 }
 
 enum RipenessMath {
-    /// Ordered list of usable GDD sources for the current vineyard.
-    /// Priority: Davis WeatherLink (configured + station selected)
-    /// → Weather Underground PWS → Open-Meteo Archive (vineyard or
-    /// paddock centroid coordinates).
+    /// The vineyard's authoritative local-observation source. Cached rows from
+    /// another provider are deliberately excluded so they cannot satisfy this
+    /// provider's coverage or enter the same cumulative series.
     @MainActor
     static func candidates(store: MigratedDataStore) -> [RipenessSourceCandidate] {
-        var out: [RipenessSourceCandidate] = []
-        if let vid = store.selectedVineyardId {
-            let cfg = WeatherProviderStore.shared.config(for: vid)
-            if let sid = cfg.davisStationId, !sid.isEmpty {
-                let hasShared = cfg.davisIsVineyardShared && cfg.davisVineyardHasServerCredentials
-                let hasDirect = cfg.davisHasCredentials && cfg.davisConnectionTested
-                if hasShared {
-                    out.append(RipenessSourceCandidate(source: .davisWeatherLink(stationId: sid), usesProxy: true))
-                } else if hasDirect {
-                    out.append(RipenessSourceCandidate(source: .davisWeatherLink(stationId: sid), usesProxy: false))
-                }
-            }
-        }
-        if let id = store.settings.weatherStationId, !id.isEmpty {
-            out.append(RipenessSourceCandidate(source: .weatherUnderground(stationId: id), usesProxy: false))
-        }
         let lat = store.settings.vineyardLatitude ?? store.paddockCentroidLatitude
         let lon = store.settings.vineyardLongitude ?? store.paddockCentroidLongitude
-        if let lat, let lon {
-            out.append(RipenessSourceCandidate(source: .openMeteoArchive(latitude: lat, longitude: lon), usesProxy: false))
+        guard let vineyardId = store.selectedVineyardId else {
+            if let lat, let lon {
+                return [RipenessSourceCandidate(source: .openMeteoArchive(latitude: lat, longitude: lon), usesProxy: false)]
+            }
+            return []
         }
-        return out
+
+        let config = WeatherProviderStore.shared.config(for: vineyardId)
+        switch config.localObservationProvider {
+        case .davis:
+            guard let stationId = config.davisStationId, !stationId.isEmpty else { return [] }
+            let usesProxy = config.davisIsVineyardShared && config.davisVineyardHasServerCredentials
+            let hasDirect = config.davisHasCredentials && config.davisConnectionTested
+            guard usesProxy || hasDirect else { return [] }
+            return [RipenessSourceCandidate(source: .davisWeatherLink(stationId: stationId), usesProxy: usesProxy)]
+        case .wunderground:
+            guard let stationId = store.settings.weatherStationId, !stationId.isEmpty else { return [] }
+            return [RipenessSourceCandidate(source: .weatherUnderground(stationId: stationId), usesProxy: false)]
+        case .none:
+            guard let lat, let lon else { return [] }
+            return [RipenessSourceCandidate(source: .openMeteoArchive(latitude: lat, longitude: lon), usesProxy: false)]
+        }
     }
 
     /// Best-effort resolved state for surfaces that don't perform a
@@ -99,13 +100,13 @@ enum RipenessMath {
     /// dates can be up to a year back).
     @MainActor
     static func fetchRangeStart(settings: AppSettings) -> Date {
-        let cal = Calendar.current
+        let cal = settings.resolvedCalendar
         let oneYearAgo = cal.date(byAdding: .year, value: -1, to: Date()) ?? Date()
         return min(oneYearAgo, seasonStartDate(settings: settings))
     }
 
     static func seasonStartDate(settings: AppSettings) -> Date {
-        let cal = Calendar.current
+        let cal = settings.resolvedCalendar
         let now = Date()
         let month = settings.seasonStartMonth
         let day = settings.seasonStartDay
@@ -136,7 +137,7 @@ enum RipenessMath {
     ) -> BlockTotal? {
         guard !sourceKey.isEmpty else { return nil }
         let stationId = sourceKey
-        let cal = Calendar.current
+        let cal = store.settings.resolvedCalendar
         let now = Date()
         let oneYearAgo = cal.date(byAdding: .year, value: -1, to: now) ?? now
         let seasonStart = seasonStartDate(settings: store.settings)

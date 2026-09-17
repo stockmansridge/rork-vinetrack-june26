@@ -120,6 +120,7 @@ final class GrowthStageRecordSyncService {
         for pin in candidates {
             mirrorPinWithoutSync(pin)
         }
+        reconcileBudburstFromExistingObservations()
         persist()
         // Push the backfilled rows once at the end.
         scheduleEagerPush()
@@ -138,18 +139,7 @@ final class GrowthStageRecordSyncService {
         persist()
         // Auto-suggest budburst date when a Budburst (EL4) growth stage
         // is recorded against a paddock with no Budburst date yet.
-        if pin.growthStageCode == GrowthStage.budburstCode,
-           let paddockId = pin.paddockId,
-           let store,
-           let pIdx = store.paddocks.firstIndex(where: { $0.id == paddockId }),
-           store.paddocks[pIdx].budburstDate == nil {
-            var p = store.paddocks[pIdx]
-            p.budburstDate = pin.timestamp
-            store.updatePaddock(p)
-            #if DEBUG
-            print("[GrowthStageRecord] auto-set budburstDate=\(pin.timestamp) for paddock=\(paddockId) from EL4 pin=\(pin.id)")
-            #endif
-        }
+        establishBudburstIfNeeded(from: pin)
         // Best-effort: push (debounced) so the record is visible to other
         // devices / Lovable without waiting for the next sync cycle.
         scheduleEagerPush()
@@ -198,6 +188,33 @@ final class GrowthStageRecordSyncService {
             #endif
         }
         return true
+    }
+
+    /// Reconciles imported/offline EL4 observations after relaunch. Existing
+    /// manual dates always win; choosing the earliest EL4 makes repeated runs
+    /// deterministic and idempotent.
+    func reconcileBudburstFromExistingObservations() {
+        guard let store else { return }
+        let observations = store.pins
+            .filter { $0.mode == .growth && $0.growthStageCode?.uppercased() == GrowthStage.budburstCode && $0.paddockId != nil }
+            .sorted { $0.timestamp < $1.timestamp }
+        for observation in observations {
+            establishBudburstIfNeeded(from: observation)
+        }
+    }
+
+    private func establishBudburstIfNeeded(from pin: VinePin) {
+        guard pin.growthStageCode?.uppercased() == GrowthStage.budburstCode,
+              let paddockId = pin.paddockId,
+              let store,
+              let index = store.paddocks.firstIndex(where: { $0.id == paddockId }),
+              store.paddocks[index].budburstDate == nil else { return }
+        var paddock = store.paddocks[index]
+        paddock.budburstDate = pin.timestamp
+        store.updatePaddock(paddock)
+        #if DEBUG
+        print("[GrowthStageRecord] budburst source=growth_observation observation=\(pin.id) block=\(paddockId) date=\(pin.timestamp)")
+        #endif
     }
 
     private func variety(for paddockId: UUID?) -> String? {

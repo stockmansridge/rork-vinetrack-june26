@@ -40,7 +40,10 @@ data class GddPoint(
  * No API key is required. Temperatures are cached per location for the app
  * session; missing days are interpolated from neighbours, matching iOS.
  */
-class DegreeDayService {
+class DegreeDayService(
+    private val persistentCache: DailyWeatherCacheStore? = null,
+    private val timeZone: TimeZone = TimeZone.getDefault(),
+) {
 
     private val baseTemp: Double = 10.0
     private val beddCap: Double = 19.0
@@ -63,15 +66,15 @@ class DegreeDayService {
 
         fun davisKey(stationId: String): String = "davis:${stationId.trim()}"
 
-        private val compactFmt: SimpleDateFormat
-            get() = SimpleDateFormat("yyyyMMdd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+        private fun compactFormatter(timeZone: TimeZone): SimpleDateFormat =
+            SimpleDateFormat("yyyyMMdd", Locale.US).apply { this.timeZone = timeZone }
 
-        private val isoFmt: SimpleDateFormat
-            get() = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+        private fun isoFormatter(timeZone: TimeZone): SimpleDateFormat =
+            SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { this.timeZone = timeZone }
     }
 
     private fun startOfDay(time: Long): Long {
-        val cal = Calendar.getInstance()
+        val cal = Calendar.getInstance(timeZone)
         cal.timeInMillis = time
         cal.set(Calendar.HOUR_OF_DAY, 0)
         cal.set(Calendar.MINUTE, 0)
@@ -81,20 +84,39 @@ class DegreeDayService {
     }
 
     private fun addDays(time: Long, days: Int): Long {
-        val cal = Calendar.getInstance()
+        val cal = Calendar.getInstance(timeZone)
         cal.timeInMillis = time
         cal.add(Calendar.DAY_OF_YEAR, days)
         return cal.timeInMillis
     }
 
     /** True when at least one usable day is cached for a source. */
-    fun hasUsableData(sourceKey: String): Boolean = !tempsBySource[sourceKey].isNullOrEmpty()
+    fun hasUsableData(sourceKey: String): Boolean = sourceTemps(sourceKey).isNotEmpty()
+
+    private fun sourceTemps(sourceKey: String): MutableMap<String, DailyTemp> =
+        tempsBySource.getOrPut(sourceKey) { persistentCache?.load(sourceKey)?.toMutableMap() ?: mutableMapOf() }
+
+    /** Exact observed coverage, excluding interpolation. */
+    fun hasCompleteData(sourceKey: String, fromMs: Long, toMs: Long): Boolean {
+        val rows = sourceTemps(sourceKey)
+        var day = startOfDay(fromMs)
+        val end = startOfDay(toMs)
+        while (day < end) {
+            if (rows[compactFormatter(timeZone).format(Date(day))] == null) return false
+            day = addDays(day, 1)
+        }
+        return day > startOfDay(fromMs)
+    }
 
     /** Installs daily data fetched through the shared vineyard Davis integration. */
     fun installDailyTemps(sourceKey: String, temperatures: Map<String, DailyTemp>): Boolean {
-        tempsBySource[sourceKey] = temperatures.toMutableMap()
+        val merged = sourceTemps(sourceKey)
+        merged.putAll(temperatures)
         lastSourceKey = sourceKey
-        return temperatures.isNotEmpty()
+        if (temperatures.isNotEmpty()) {
+            persistentCache?.save(sourceKey, timeZone.id, sourceKey, merged)
+        }
+        return merged.isNotEmpty()
     }
 
     /**
@@ -112,11 +134,13 @@ class DegreeDayService {
                 lastSourceKey = key
                 return hasUsableData(key)
             }
-            val station = tempsBySource.getOrPut(key) { mutableMapOf() }
+            val station = sourceTemps(key)
             val dates = buildList {
                 var d = start
                 while (d < today) { add(d); d = addDays(d, 1) }
             }
+            val compactFmt = compactFormatter(timeZone)
+            val isoFmt = isoFormatter(timeZone)
             val missing = dates.filter { station[compactFmt.format(Date(it))] == null }
             if (missing.isNotEmpty()) {
                 val archiveCutoff = addDays(today, -6)
@@ -145,6 +169,9 @@ class DegreeDayService {
                 }
             }
             lastSourceKey = key
+            if (station.isNotEmpty()) {
+                persistentCache?.save(key, timeZone.id, key, station)
+            }
             return hasUsableData(key)
         } catch (_: Exception) {
             return hasUsableData(key)
@@ -170,10 +197,11 @@ class DegreeDayService {
         val count = minOf(times.size, highs.size, lows.size)
         var written = 0
         for (i in 0 until count) {
-            val date = isoFmt.parse(times[i].jsonPrimitive.content) ?: continue
+            val localDate = times[i].jsonPrimitive.content
+            if (localDate.length != 10) continue
             val high = highs[i].jsonPrimitive.doubleOrNull ?: continue
             val low = lows[i].jsonPrimitive.doubleOrNull ?: continue
-            into[compactFmt.format(date)] = DailyTemp(high, low)
+            into[localDate.replace("-", "")] = DailyTemp(high, low)
             written++
         }
         return written
@@ -191,13 +219,15 @@ class DegreeDayService {
         latitude: Double?,
         useBEDD: Boolean,
     ): List<GddPoint> {
-        val station = tempsBySource[sourceKey] ?: return emptyList()
+        val station = sourceTemps(sourceKey)
+        if (station.isEmpty()) return emptyList()
         val startDay = startOfDay(fromMs)
         val endDay = startOfDay(toMs)
         val allDays = buildList {
             var d = startDay
             while (d < endDay) { add(d); d = addDays(d, 1) }
         }
+        val compactFmt = compactFormatter(timeZone)
         val raw: List<DailyTemp?> = allDays.map { station[compactFmt.format(Date(it))] }
         val filled = raw.toMutableList()
         val interpolatedFlags = BooleanArray(raw.size)
@@ -244,7 +274,7 @@ class DegreeDayService {
     private fun dayLengthFactor(latitude: Double?, dayMs: Long): Double {
         val lat = latitude ?: return 1.0
         if (kotlin.math.abs(lat) > 66) return 1.0
-        val cal = Calendar.getInstance()
+        val cal = Calendar.getInstance(timeZone)
         cal.timeInMillis = dayMs
         val n = cal.get(Calendar.DAY_OF_YEAR)
         val decl = 23.45 * sin((360.0 * (284 + n) / 365.0) * Math.PI / 180.0)

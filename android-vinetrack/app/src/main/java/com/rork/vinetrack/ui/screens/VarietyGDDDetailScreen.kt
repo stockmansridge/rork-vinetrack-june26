@@ -102,7 +102,12 @@ fun VarietyGDDDetailScreen(
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
-    val service = remember { DegreeDayService() }
+    val service = remember(state.seasonZone) {
+        DegreeDayService(
+            persistentCache = com.rork.vinetrack.data.DailyWeatherCacheStore(context),
+            timeZone = java.util.TimeZone.getTimeZone(state.seasonZone),
+        )
+    }
     val gddSettings = remember { GddSettingsStore(context).load() }
 
     val target = remember(variety) {

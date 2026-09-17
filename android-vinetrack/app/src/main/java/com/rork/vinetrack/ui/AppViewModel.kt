@@ -12993,6 +12993,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val optimistic = growthRepo.buildGrowthRecord(vineyardId, input, id, now)
         // Optimistic insert at the top — the operator sees the observation straight away.
         _ui.update { it.copy(growthRecords = listOf(optimistic) + it.growthRecords, growthError = null) }
+        establishBudburstFromGrowthRecord(optimistic)
         // Reported before any network so an offline capture can still be linked
         // to its canonical id. The id is client-minted and final.
         onCreatedRecord(optimistic)
@@ -13241,6 +13242,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // MARK: - Paddock phenology write path
+
+    private fun establishBudburstFromGrowthRecord(record: GrowthStageRecord) {
+        val paddockId = record.paddockId ?: return
+        if (!record.stageCode.equals(GrowthStage.BUDBURST_CODE, ignoreCase = true)) return
+        val paddock = _ui.value.paddocks.firstOrNull { it.id == paddockId } ?: return
+        if (!paddock.budburstDate.isNullOrBlank()) return
+        val observedDate = record.observedAt?.takeIf { it.length >= 10 }?.substring(0, 10) ?: return
+        updatePaddockPhenologyDates(
+            paddockId,
+            PaddockRepository.PhenologyDates(
+                budburstDate = observedDate,
+                floweringDate = paddock.floweringDate,
+                veraisonDate = paddock.veraisonDate,
+                harvestDate = paddock.harvestDate,
+            ),
+        ) { }
+    }
+
+    private fun reconcileMissingBudburstFromGrowthRecords() {
+        val state = _ui.value
+        com.rork.vinetrack.data.insights.BudburstReconciler
+            .missingBudburstUpdates(state.paddocks, state.growthRecords)
+            .forEach { update ->
+                state.paddocks.firstOrNull { it.id == update.paddockId }?.let { paddock ->
+                    updatePaddockPhenologyDates(
+                        paddock.id,
+                        PaddockRepository.PhenologyDates(
+                            budburstDate = update.localDate,
+                            floweringDate = paddock.floweringDate,
+                            veraisonDate = paddock.veraisonDate,
+                            harvestDate = paddock.harvestDate,
+                        ),
+                    ) { }
+                }
+            }
+    }
 
     /**
      * PATCH only a block's phenology milestone dates (budburst/flowering/
@@ -15226,6 +15263,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 },
             )
         }
+        reconcileMissingBudburstFromGrowthRecords()
         resumePendingGrowthCaptures(vineyardId)
         refreshCacheStatus()
         // Vineyard switch / manual refresh re-pulled picking records,

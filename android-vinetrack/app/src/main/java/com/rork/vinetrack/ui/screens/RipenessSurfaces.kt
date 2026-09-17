@@ -139,7 +139,12 @@ private sealed interface RipenessTileResult {
 fun RipenessWatchTile(state: AppUiState, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
-    val service = remember { DegreeDayService() }
+    val service = remember(state.seasonZone) {
+        DegreeDayService(
+            persistentCache = com.rork.vinetrack.data.DailyWeatherCacheStore(context),
+            timeZone = java.util.TimeZone.getTimeZone(state.seasonZone),
+        )
+    }
     val gddSettings = remember { GddSettingsStore(context).load() }
     val coords = remember(state.selectedVineyardId, state.vineyards, state.paddocks) {
         resolveRipenessCoords(state)
@@ -301,7 +306,12 @@ private fun computeTopVariety(
 fun BlockRipenessChip(state: AppUiState, block: Paddock, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
-    val service = remember { DegreeDayService() }
+    val service = remember(state.seasonZone) {
+        DegreeDayService(
+            persistentCache = com.rork.vinetrack.data.DailyWeatherCacheStore(context),
+            timeZone = java.util.TimeZone.getTimeZone(state.seasonZone),
+        )
+    }
     val gddSettings = remember { GddSettingsStore(context).load() }
     val coords = remember(state.selectedVineyardId, state.vineyards, state.paddocks) {
         resolveRipenessCoords(state)

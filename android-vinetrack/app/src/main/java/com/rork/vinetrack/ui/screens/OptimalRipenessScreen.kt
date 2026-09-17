@@ -215,7 +215,12 @@ fun OptimalRipenessScreen(
 
     val vine = LocalVineColors.current
     val context = LocalContext.current
-    val service = remember { DegreeDayService() }
+    val service = remember(state.seasonZone) {
+        DegreeDayService(
+            persistentCache = com.rork.vinetrack.data.DailyWeatherCacheStore(context),
+            timeZone = java.util.TimeZone.getTimeZone(state.seasonZone),
+        )
+    }
     val session = remember { SessionStore(context) }
     val integrationRepository = remember { VineyardWeatherIntegrationRepository(session) }
     val davisRepository = remember { DavisWeatherLinkRepository(session) }
