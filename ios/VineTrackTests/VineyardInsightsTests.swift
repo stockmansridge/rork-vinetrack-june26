@@ -234,14 +234,14 @@ struct VineyardInsightsTests {
     }
 
     @Test("Notes alone can save, and a type alone can save")
-    func eitherHalfIsEnough() {
+    func eitherHalfIsEnough() throws {
         // Refusing either would push observers into picking an inaccurate type
         // just to get past validation.
         #expect(VintageNoteDraft(notes: "Heavy dew all week").canSave)
 
-        let frost = VintageNoteCatalog.systemType("frost")
-        #expect(frost != nil)
-        #expect(VintageNoteDraft(noteTypeID: frost?.code, noteTypeLabel: frost?.label).canSave)
+        let frost = try #require(VintageNoteCatalog.systemType("frost"))
+        let draft = VintageNoteDraft(noteTypeID: frost.code, noteTypeLabel: frost.label)
+        #expect(draft.canSave)
     }
 
     @Test("Whitespace-only notes with no type cannot save")
@@ -608,13 +608,19 @@ struct VineyardInsightsTests {
         let visit = startVisit(service)
         service.toggleBlock(visitID: visit.id, paddockID: blockA)
         let id = assessmentID(service, visit.id, blockA)
+        let pinID = UUID()
         let recordID = UUID()
 
         service.linkGrowthStageRecord(
-            visitID: visit.id, assessmentID: id, recordID: recordID, stageLabel: "E-L 23"
+            visitID: visit.id,
+            assessmentID: id,
+            pinID: pinID,
+            recordID: recordID,
+            stageLabel: "E-L 23"
         )
 
         let saved = service.visit(visit.id)?.assessment(paddockID: blockA)?.observation(.growthStage)
+        #expect(saved?.linkedPinID == pinID)
         #expect(saved?.linkedGrowthStageRecordID == recordID)
         #expect(saved?.valueCode == nil)
     }
