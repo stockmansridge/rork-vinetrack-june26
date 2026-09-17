@@ -334,8 +334,8 @@ struct VineyardInsightsTests {
         #expect(service.notes.count == 1)
     }
 
-    @Test("Deletion is a tombstone rather than an erasure")
-    func deletionIsTombstone() {
+    @Test("Deletion physically removes local note and queues durable erasure")
+    func deletionIsHardAndQueued() {
         let service = makeService()
         let saved = service.saveNote(
             draft: VintageNoteDraft(notes: "Wrong date"),
@@ -349,9 +349,7 @@ struct VineyardInsightsTests {
 
         service.deleteNote(saved!.id)
 
-        // Retained locally so sync can reconcile it, gone from every display.
-        #expect(service.notes.count == 1)
-        #expect(service.notes.first?.isDeleted == true)
+        #expect(service.notes.isEmpty)
         #expect(service.notes(vintageYear: saved!.vintageYear).isEmpty)
     }
 

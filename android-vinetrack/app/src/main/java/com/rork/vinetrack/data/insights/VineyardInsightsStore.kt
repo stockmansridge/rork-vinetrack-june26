@@ -494,6 +494,11 @@ class VineyardInsightsStore(
         return encodeAndWrite(KEY_NOTES, next)
     }
 
+    fun deleteNote(noteId: String): Boolean {
+        val next = decodeList<StoredNote>(KEY_NOTES).filterNot { it.id == noteId }
+        return encodeAndWrite(KEY_NOTES, next)
+    }
+
     fun saveCustomNoteType(vineyardId: String, type: VintageNoteType): Boolean {
         val existing = decodeList<StoredNoteType>(KEY_NOTE_TYPES)
         val next = existing.filterNot { it.vineyardId == vineyardId && it.code == type.code } +

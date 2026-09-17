@@ -149,15 +149,20 @@ class VineyardInsightsSyncRepository(
      * can take. Children are tombstoned explicitly rather than relying on the
      * cascade, which only fires on a real DELETE.
      */
-    override suspend fun softDeleteVisit(id: String, vineyardId: String, atIso: String) =
-        withContext(Dispatchers.IO) {
-            val patch = SoftDeletePatch(atIso, atIso)
-            patchRows(
-                "scout_visits?id=eq.$id&vineyard_id=eq.$vineyardId",
-                patch,
-            )
-            patchRows("scout_block_assessments?scout_visit_id=eq.$id", patch)
-        }
+    override suspend fun hardDeleteVisit(
+        id: String,
+        vineyardId: String,
+        operationId: String,
+        atIso: String,
+    ) = postHardDelete(
+        rpc = "hard_delete_scout_visit",
+        args = VineyardInsightsSyncApi.HardDeleteArgs(
+            vineyardId = vineyardId,
+            operationId = operationId,
+            deletedAt = atIso,
+            visitId = id,
+        ),
+    )
 
     override suspend fun softDeletePhoto(id: String, atIso: String) = withContext(Dispatchers.IO) {
         patchRows("scout_observation_photos?id=eq.$id", SoftDeletePatch(atIso, atIso))
@@ -249,15 +254,31 @@ class VineyardInsightsSyncRepository(
         }
     }
 
-    override suspend fun softDeleteNote(id: String) = withContext(Dispatchers.IO) {
+    override suspend fun hardDeleteNote(
+        id: String,
+        vineyardId: String,
+        operationId: String,
+        atIso: String,
+    ) = postHardDelete(
+        rpc = "hard_delete_vintage_note",
+        args = VineyardInsightsSyncApi.HardDeleteArgs(
+            vineyardId = vineyardId,
+            operationId = operationId,
+            deletedAt = atIso,
+            noteId = id,
+        ),
+    )
+
+    private suspend fun postHardDelete(
+        rpc: String,
+        args: VineyardInsightsSyncApi.HardDeleteArgs,
+    ) = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        val response = SupabaseClient.http.post(
-            SupabaseClient.rpcUrl("soft_delete_vintage_note"),
-        ) {
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl(rpc)) {
             authHeaders(token)
             contentType(ContentType.Application.Json)
-            setBody(SoftDeleteNoteArgs(id))
+            setBody(args)
         }
         checkWrite(response.status.value) { response.bodyAsText() }
     }

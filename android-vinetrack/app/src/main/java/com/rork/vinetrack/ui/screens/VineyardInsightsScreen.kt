@@ -310,6 +310,16 @@ private fun ScoutWorkspace(
     val writeFailed by insights.lastWriteFailed.collectAsStateWithLifecycle()
     val current = visits.firstOrNull { it.id == openId }
     var showReview by remember { mutableStateOf(false) }
+    var showAllVintages by remember { mutableStateOf(false) }
+    var visitPendingDeletion by remember { mutableStateOf<ScoutVisit?>(null) }
+    val currentVintage = VintageResolver.vintageYear(
+        LocalDate.now(),
+        state.seasonStartMonth,
+        state.seasonStartDay,
+    )
+    val historyVisits = state.selectedVineyardId?.let { vineyardId ->
+        insights.visitHistory(vineyardId, if (showAllVintages) null else currentVintage)
+    }.orEmpty()
 
     Scaffold(
         modifier = modifier,
@@ -383,14 +393,27 @@ private fun ScoutWorkspace(
                     }
                 }
                 item {
-                    ScoutList("Draft Scouts", insights.visits(ScoutStatus.DRAFT), state.paddocks) {
-                        insights.openVisit(it)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { showAllVintages = false }) {
+                            Text("Vintage $currentVintage")
+                        }
+                        OutlinedButton(onClick = { showAllVintages = true }) {
+                            Text("All vintages")
+                        }
                     }
                 }
                 item {
-                    ScoutList("Completed Scouts", insights.visits(ScoutStatus.COMPLETED), state.paddocks) {
-                        insights.openVisit(it)
-                    }
+                    ScoutList(
+                        title = "Scout history",
+                        visits = historyVisits,
+                        paddocks = state.paddocks,
+                        onOpen = { insights.openVisit(it) },
+                        onEdit = { visit ->
+                            if (!visit.isEditable) insights.reopenVisit(visit.id)
+                            insights.openVisit(visit.id)
+                        },
+                        onDelete = { visitPendingDeletion = it },
+                    )
                 }
             } else {
                 item { ScoutVisitHeader(vm, state, current) }
@@ -423,11 +446,28 @@ private fun ScoutWorkspace(
                         OutlinedButton(
                             onClick = { insights.reopenVisit(current.id) },
                             modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Return to Draft") }
+                        ) { Text("Reopen and edit") }
                     }
                 }
             }
         }
+    }
+
+    visitPendingDeletion?.let { visit ->
+        AlertDialog(
+            onDismissRequest = { visitPendingDeletion = null },
+            title = { Text("Permanently delete this Scout?") },
+            text = { Text("The visit, assessments, observations and Scout photos will be permanently removed.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    insights.deleteVisit(visit.id)
+                    visitPendingDeletion = null
+                }) { Text("Delete permanently", color = VineColors.Destructive) }
+            },
+            dismissButton = {
+                TextButton(onClick = { visitPendingDeletion = null }) { Text("Cancel") }
+            },
+        )
     }
 
     val reviewVisit = current
@@ -450,6 +490,8 @@ private fun ScoutList(
     visits: List<ScoutVisit>,
     paddocks: List<Paddock>,
     onOpen: (String) -> Unit,
+    onEdit: (ScoutVisit) -> Unit,
+    onDelete: (ScoutVisit) -> Unit,
 ) {
     val vine = LocalVineColors.current
     VineyardCard {
@@ -471,12 +513,32 @@ private fun ScoutList(
                 Column(Modifier.weight(1f)) {
                     Text(visit.scoutDateIso, fontSize = 14.sp, color = vine.textPrimary)
                     Text(
-                        if (names.isEmpty()) "No blocks yet" else names.joinToString(", "),
+                        "${visit.status.label} • ${visit.scoutNameSnapshot ?: "—"}",
                         fontSize = 12.sp,
                         color = vine.textSecondary,
                     )
+                    Text(
+                        if (names.isEmpty()) "No blocks yet" else "${names.joinToString(", ")} (${names.size})",
+                        fontSize = 12.sp,
+                        color = vine.textSecondary,
+                    )
+                    Text(
+                        "${visit.assessments.sumOf { it.attentionItems.size }} attention • " +
+                            "${visit.assessments.sumOf { it.photoCount }} photos",
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                    )
+                    visit.visitSummary?.let { Text(it, maxLines = 2, fontSize = 12.sp, color = vine.textPrimary) }
                 }
                 Text("Vintage ${visit.vintageYear}", fontSize = 12.sp, color = vine.textSecondary)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = { onEdit(visit) }) {
+                    Text(if (visit.isEditable) "Edit" else "Reopen and edit")
+                }
+                TextButton(onClick = { onDelete(visit) }) {
+                    Text("Delete", color = VineColors.Destructive)
+                }
             }
             HorizontalDivider(color = vine.cardBorder)
         }
@@ -1133,9 +1195,20 @@ private fun VintageNotesWorkspace(
     var draft by remember { mutableStateOf(VintageNoteDraft()) }
     var showPicker by remember { mutableStateOf(false) }
     var isEditing by remember { mutableStateOf(false) }
+    var isCreating by remember { mutableStateOf(false) }
+    var showAllVintages by remember { mutableStateOf(false) }
+    var notePendingDeletion by remember { mutableStateOf<com.rork.vinetrack.data.insights.VintageNote?>(null) }
 
-    val vintage = draft.resolvedVintage(state.seasonStartMonth, state.seasonStartDay)
-    val notes = remember(allNotes, vintage) { VintageNoteRules.forVintage(allNotes, vintage) }
+    val vintage = VintageResolver.vintageYear(
+        LocalDate.now(),
+        state.seasonStartMonth,
+        state.seasonStartDay,
+    )
+    val notes = remember(allNotes, vintage, showAllVintages, state.selectedVineyardId) {
+        state.selectedVineyardId?.let { vineyardId ->
+            VintageNoteRules.history(allNotes, vineyardId, if (showAllVintages) null else vintage)
+        }.orEmpty()
+    }
     val customTypes = remember(state.selectedVineyardId) {
         state.selectedVineyardId?.let { insights.customNoteTypes(it) }.orEmpty()
     }
@@ -1156,6 +1229,26 @@ private fun VintageNotesWorkspace(
         ) {
             item { PreviewBadge() }
             item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { showAllVintages = false }) { Text("Vintage $vintage") }
+                    OutlinedButton(onClick = { showAllVintages = true }) { Text("All vintages") }
+                }
+            }
+            if (!isCreating && !isEditing) {
+                item {
+                    Button(
+                        onClick = {
+                            draft = VintageNoteDraft()
+                            isCreating = true
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = null)
+                        Spacer(Modifier.size(6.dp))
+                        Text("New Note")
+                    }
+                }
+            } else item {
                 VineyardCard {
                     Text(
                         if (isEditing) "Edit Vintage Note" else "Add Vintage Note",
@@ -1230,6 +1323,7 @@ private fun VintageNotesWorkspace(
                                 )
                                 draft = VintageNoteDraft()
                                 isEditing = false
+                                isCreating = false
                             },
                             enabled = draft.canSave,
                             colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
@@ -1238,13 +1332,19 @@ private fun VintageNotesWorkspace(
                             OutlinedButton(onClick = {
                                 draft = VintageNoteDraft()
                                 isEditing = false
+                                isCreating = false
                             }) { Text("Cancel") }
                         }
                     }
                 }
             }
 
-            item { SectionHeader("Notes for Vintage $vintage", onLight = true) }
+            item {
+                SectionHeader(
+                    if (showAllVintages) "All Vintage Notes" else "Notes for Vintage $vintage",
+                    onLight = true,
+                )
+            }
 
             if (notes.isEmpty()) {
                 item {
@@ -1281,6 +1381,7 @@ private fun VintageNotesWorkspace(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = {
                             isEditing = true
+                            isCreating = false
                             draft = VintageNoteDraft(
                                 id = note.id,
                                 date = runCatching { LocalDate.parse(note.noteDateIso) }
@@ -1294,7 +1395,7 @@ private fun VintageNotesWorkspace(
                             Spacer(Modifier.size(4.dp))
                             Text("Edit")
                         }
-                        TextButton(onClick = { insights.deleteNote(note.id) }) {
+                        TextButton(onClick = { notePendingDeletion = note }) {
                             Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.size(4.dp))
                             Text("Delete")
@@ -1303,6 +1404,21 @@ private fun VintageNotesWorkspace(
                 }
             }
         }
+    }
+
+    notePendingDeletion?.let { note ->
+        AlertDialog(
+            onDismissRequest = { notePendingDeletion = null },
+            title = { Text("Permanently delete this Vintage Note?") },
+            text = { Text("This note will be permanently removed from every synced device.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    insights.deleteNote(note.id)
+                    notePendingDeletion = null
+                }) { Text("Delete permanently", color = VineColors.Destructive) }
+            },
+            dismissButton = { TextButton(onClick = { notePendingDeletion = null }) { Text("Cancel") } },
+        )
     }
 
     if (showPicker) {

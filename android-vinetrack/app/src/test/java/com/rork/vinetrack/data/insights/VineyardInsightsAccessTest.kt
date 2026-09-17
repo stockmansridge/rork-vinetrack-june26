@@ -1,6 +1,8 @@
 package com.rork.vinetrack.data.insights
 
 import com.rork.vinetrack.data.auth.SessionPhase
+import com.rork.vinetrack.data.OperationalToolLayout
+import com.rork.vinetrack.data.OperationalToolLayoutResolver
 import com.rork.vinetrack.ui.main.OperationalToolCatalog
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -121,6 +123,40 @@ class VineyardInsightsAccessTest {
     }
 
     // --- Catalogue integration -------------------------------------------
+
+    @Test
+    fun `existing eligible installation renders the newly authorised tile`() {
+        val decision = access()
+        val authorised = OperationalToolCatalog.authorisedIds(
+            canViewCosting = true,
+            canUseVineyardInsights = decision.isAllowed,
+        )
+        val preInsightsLayout = OperationalToolLayout(
+            visibleToolIds = OperationalToolCatalog.defaultOrder.filterNot {
+                it == VineyardInsightsCatalog.TOOL_ID
+            },
+            isReady = true,
+        )
+
+        val rendered = OperationalToolLayoutResolver.visibleToolIds(preInsightsLayout, authorised)
+
+        assertTrue(VineyardInsightsCatalog.TOOL_ID in rendered)
+        assertEquals(VineyardInsightsCatalog.TOOL_ID, rendered.last())
+    }
+
+    @Test
+    fun `owner without system admin and admin without membership never render the tile`() {
+        listOf(
+            access(isSystemAdmin = false, isMember = true),
+            access(isSystemAdmin = true, isMember = false),
+        ).forEach { decision ->
+            val authorised = OperationalToolCatalog.authorisedIds(
+                canViewCosting = true,
+                canUseVineyardInsights = decision.isAllowed,
+            )
+            assertFalse(VineyardInsightsCatalog.TOOL_ID in authorised)
+        }
+    }
 
     @Test
     fun `the tool is absent from the authorised catalogue for a non admin`() {

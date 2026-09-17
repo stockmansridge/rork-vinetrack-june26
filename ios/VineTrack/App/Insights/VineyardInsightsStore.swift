@@ -465,6 +465,13 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
     }
 
     @discardableResult
+    func deleteNote(id: UUID) -> Bool {
+        var all = decode([StoredNote].self, Key.notes) ?? []
+        all.removeAll { $0.id == id }
+        return encodeAndWrite(all, Key.notes)
+    }
+
+    @discardableResult
     func saveCustomNoteType(vineyardID: UUID, type: VintageNoteType) -> Bool {
         var all = decode([StoredNoteType].self, Key.noteTypes) ?? []
         all.removeAll { $0.vineyardID == vineyardID && $0.code == type.code }

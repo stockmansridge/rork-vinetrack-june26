@@ -113,4 +113,13 @@ object VintageNoteRules {
     /** Notes belonging to one vintage, newest first. */
     fun forVintage(notes: List<VintageNote>, vintageYear: Int): List<VintageNote> =
         sortedForDisplay(notes).filter { it.vintageYear == vintageYear }
+
+    /** Vineyard-scoped history; a null vintage means All vintages. */
+    fun history(
+        notes: List<VintageNote>,
+        vineyardId: String,
+        vintageYear: Int?,
+    ): List<VintageNote> = sortedForDisplay(notes)
+        .filter { it.vineyardId == vineyardId }
+        .filter { vintageYear == null || it.vintageYear == vintageYear }
 }

@@ -151,8 +151,24 @@ struct ScoutWorkspaceView: View {
     @Environment(VineyardInsightsService.self) private var insights
 
     @State private var showReview = false
+    @State private var showsAllVintages = false
+    @State private var visitPendingDeletion: ScoutVisit?
 
     private var openVisit: ScoutVisit? { insights.openVisit }
+    private var currentVintage: Int {
+        VintageResolver.vintageYear(
+            for: Date(),
+            seasonStartMonth: store.settings.seasonStartMonth,
+            seasonStartDay: store.settings.seasonStartDay
+        )
+    }
+    private var historyVisits: [ScoutVisit] {
+        guard let vineyardID = store.selectedVineyardId else { return [] }
+        return insights.visitHistory(
+            vineyardID: vineyardID,
+            vintageYear: showsAllVintages ? nil : currentVintage
+        )
+    }
 
     var body: some View {
         List {
@@ -186,6 +202,22 @@ struct ScoutWorkspaceView: View {
                     Button("Close") { insights.openVisit(nil) }
                 }
             }
+        }
+        .confirmationDialog(
+            "Permanently delete this Scout?",
+            isPresented: Binding(
+                get: { visitPendingDeletion != nil },
+                set: { if !$0 { visitPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete permanently", role: .destructive) {
+                if let visitPendingDeletion { _ = insights.deleteVisit(visitPendingDeletion.id) }
+                visitPendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { visitPendingDeletion = nil }
+        } message: {
+            Text("The visit, assessments, observations and Scout photos will be permanently removed.")
         }
         .sheet(isPresented: $showReview) {
             if let visit = openVisit {
@@ -222,8 +254,15 @@ struct ScoutWorkspaceView: View {
             )
         }
 
-        scoutListSection("Draft Scouts", visits: insights.visits(status: .draft))
-        scoutListSection("Completed Scouts", visits: insights.visits(status: .completed))
+        Section("Season") {
+            Picker("Vintage", selection: $showsAllVintages) {
+                Text("Vintage \(currentVintage)").tag(false)
+                Text("All vintages").tag(true)
+            }
+            .pickerStyle(.segmented)
+        }
+
+        scoutListSection("Scout history", visits: historyVisits)
     }
 
     private func scoutListSection(_ title: String, visits: [ScoutVisit]) -> some View {
@@ -237,16 +276,32 @@ struct ScoutWorkspaceView: View {
                 } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(visit.scoutDate, format: .dateTime.day().month().year())
+                            Text(visit.scoutDate, format: .dateTime.day().month().year().hour().minute())
                                 .foregroundStyle(.primary)
+                            Text("\(visit.status.label) • \(visit.scoutNameSnapshot ?? "—")")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                             Text(blockNames(visit))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                            Text("\(visit.assessments.reduce(0) { $0 + $1.attentionItems.count }) attention • \(visit.assessments.reduce(0) { $0 + $1.photoCount }) photos")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            if let summary = visit.visitSummary, !summary.isEmpty {
+                                Text(summary).font(.caption).lineLimit(2)
+                            }
                         }
                         Spacer()
                         Text("Vintage \(String(visit.vintageYear))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                }
+                .swipeActions {
+                    Button("Delete", role: .destructive) { visitPendingDeletion = visit }
+                    Button(visit.isEditable ? "Edit" : "Reopen and edit") {
+                        if !visit.isEditable { _ = insights.reopenVisit(visit.id) }
+                        insights.openVisit(visit.id)
                     }
                 }
             }
@@ -317,7 +372,7 @@ struct ScoutWorkspaceView: View {
         Section {
             Button(visit.isEditable ? "Review & complete" : "Review") { showReview = true }
             if !visit.isEditable {
-                Button("Return to Draft") { insights.reopenVisit(visit.id) }
+                Button("Reopen and edit") { insights.reopenVisit(visit.id) }
             }
         }
     }
@@ -838,7 +893,10 @@ struct VintageNotesWorkspaceView: View {
 
     @State private var draft = VintageNoteDraft()
     @State private var isEditing = false
+    @State private var isCreating = false
+    @State private var showsAllVintages = false
     @State private var showTypePicker = false
+    @State private var notePendingDeletion: VintageNote?
 
     private var vintage: Int {
         draft.resolvedVintage(
@@ -854,6 +912,24 @@ struct VintageNotesWorkspaceView: View {
 
     var body: some View {
         List {
+            Section("Season") {
+                Picker("Vintage", selection: $showsAllVintages) {
+                    Text("Vintage \(vintage)").tag(false)
+                    Text("All vintages").tag(true)
+                }
+                .pickerStyle(.segmented)
+            }
+
+            if !isCreating && !isEditing {
+                Section {
+                    Button {
+                        draft = VintageNoteDraft()
+                        isCreating = true
+                    } label: {
+                        Label("New Note", systemImage: "plus.circle.fill")
+                    }
+                }
+            } else {
             Section {
                 DatePicker("Date", selection: $draft.date, displayedComponents: .date)
 
@@ -896,8 +972,15 @@ struct VintageNotesWorkspaceView: View {
                 }
             }
 
-            Section("Notes for Vintage \(String(vintage))") {
-                let notes = insights.notes(vintageYear: vintage)
+            }
+
+            Section(showsAllVintages ? "All Vintage Notes" : "Notes for Vintage \(String(vintage))") {
+                let notes = store.selectedVineyardId.map {
+                    insights.noteHistory(
+                        vineyardID: $0,
+                        vintageYear: showsAllVintages ? nil : vintage
+                    )
+                } ?? []
                 if notes.isEmpty {
                     Text("No notes for this Vintage yet.")
                         .font(.caption)
@@ -922,14 +1005,32 @@ struct VintageNotesWorkspaceView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
+                    .contentShape(Rectangle())
+                    .onTapGesture { beginEdit(note) }
                     .swipeActions {
-                        Button("Delete", role: .destructive) { insights.deleteNote(note.id) }
+                        Button("Delete", role: .destructive) { notePendingDeletion = note }
                         Button("Edit") { beginEdit(note) }
                     }
                 }
             }
         }
         .navigationTitle("Vintage Notes")
+        .confirmationDialog(
+            "Permanently delete this Vintage Note?",
+            isPresented: Binding(
+                get: { notePendingDeletion != nil },
+                set: { if !$0 { notePendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete permanently", role: .destructive) {
+                if let notePendingDeletion { _ = insights.deleteNote(notePendingDeletion.id) }
+                notePendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { notePendingDeletion = nil }
+        } message: {
+            Text("This note will be permanently removed from every synced device.")
+        }
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showTypePicker) {
             VintageNoteTypePicker(customTypes: customTypes) { type in
@@ -952,10 +1053,12 @@ struct VintageNotesWorkspaceView: View {
         )
         draft = VintageNoteDraft()
         isEditing = false
+        isCreating = false
     }
 
     private func beginEdit(_ note: VintageNote) {
         isEditing = true
+        isCreating = false
         draft = VintageNoteDraft(
             id: note.id,
             date: note.noteDate,

@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rork.vinetrack.data.OperationalToolLayoutResolver
+import com.rork.vinetrack.data.insights.VineyardInsightsAccess
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
@@ -89,7 +90,15 @@ fun CustomiseToolsScreen(
     val layout by vm.operationalToolLayout.collectAsStateWithLifecycle()
 
     val canViewCosting = state.currentRole == "owner" || state.currentRole == "manager"
-    val authorised = remember(canViewCosting) { OperationalToolCatalog.authorised(canViewCosting) }
+    val canUseVineyardInsights = VineyardInsightsAccess.resolve(
+        sessionPhase = state.sessionPhase,
+        isSystemAdmin = state.isSystemAdmin,
+        selectedVineyardId = state.selectedVineyardId,
+        isMemberOfSelectedVineyard = state.currentRole != null,
+    ).isAllowed
+    val authorised = remember(canViewCosting, canUseVineyardInsights) {
+        OperationalToolCatalog.authorised(canViewCosting, canUseVineyardInsights)
+    }
     val authorisedIds = remember(authorised) { authorised.map { it.id } }
 
     var localVisible by remember { mutableStateOf(emptyList<String>()) }

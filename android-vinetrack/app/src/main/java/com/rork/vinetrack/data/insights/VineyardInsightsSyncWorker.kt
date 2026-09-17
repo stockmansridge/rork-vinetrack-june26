@@ -77,7 +77,12 @@ class VineyardInsightsSyncWorker(
 
     private suspend fun pushVisit(entry: VineyardInsightsStore.QueuedOperation) {
         if (entry.operation == VineyardInsightsStore.QueuedOperation.Operation.DELETE) {
-            repository.softDeleteVisit(entry.recordId, entry.vineyardId, entry.clientUpdatedAtIso)
+            repository.hardDeleteVisit(
+                entry.recordId,
+                entry.vineyardId,
+                entry.id,
+                entry.clientUpdatedAtIso,
+            )
             return
         }
         val visit = store.loadVisits().firstOrNull { it.id == entry.recordId } ?: return
@@ -147,7 +152,12 @@ class VineyardInsightsSyncWorker(
 
     private suspend fun pushNote(entry: VineyardInsightsStore.QueuedOperation) {
         if (entry.operation == VineyardInsightsStore.QueuedOperation.Operation.DELETE) {
-            repository.softDeleteNote(entry.recordId)
+            repository.hardDeleteNote(
+                entry.recordId,
+                entry.vineyardId,
+                entry.id,
+                entry.clientUpdatedAtIso,
+            )
             return
         }
         val note = store.loadNotes().firstOrNull { it.id == entry.recordId } ?: return

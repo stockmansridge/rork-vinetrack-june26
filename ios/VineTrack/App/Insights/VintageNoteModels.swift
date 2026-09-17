@@ -133,4 +133,15 @@ nonisolated enum VintageNoteRules {
     static func forVintage(_ notes: [VintageNote], vintageYear: Int) -> [VintageNote] {
         sortedForDisplay(notes).filter { $0.vintageYear == vintageYear }
     }
+
+    /// Vineyard-scoped history; nil means All vintages.
+    static func history(
+        _ notes: [VintageNote],
+        vineyardID: UUID,
+        vintageYear: Int?
+    ) -> [VintageNote] {
+        sortedForDisplay(notes)
+            .filter { $0.vineyardID == vineyardID }
+            .filter { vintageYear == nil || $0.vintageYear == vintageYear }
+    }
 }

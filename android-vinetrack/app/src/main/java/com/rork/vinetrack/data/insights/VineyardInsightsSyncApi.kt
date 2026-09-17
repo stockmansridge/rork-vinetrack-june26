@@ -204,6 +204,15 @@ interface VineyardInsightsSyncApi {
     )
 
     @Serializable
+    data class HardDeleteArgs(
+        @SerialName("p_vineyard_id") val vineyardId: String,
+        @SerialName("p_operation_id") val operationId: String,
+        @SerialName("p_deleted_at") val deletedAt: String,
+        @SerialName("p_visit_id") val visitId: String? = null,
+        @SerialName("p_note_id") val noteId: String? = null,
+    )
+
+    @Serializable
     data class UpsertNoteTypeArgs(
         @SerialName("p_id") val id: String,
         @SerialName("p_vineyard_id") val vineyardId: String,
@@ -237,7 +246,7 @@ interface VineyardInsightsSyncApi {
     /** Remove a storage object that no metadata row references. */
     suspend fun removePhotoObject(path: String)
 
-    suspend fun softDeleteVisit(id: String, vineyardId: String, atIso: String)
+    suspend fun hardDeleteVisit(id: String, vineyardId: String, operationId: String, atIso: String)
 
     suspend fun softDeletePhoto(id: String, atIso: String)
 
@@ -260,7 +269,7 @@ interface VineyardInsightsSyncApi {
 
     suspend fun upsertNote(args: UpsertNoteArgs): NoteRow?
 
-    suspend fun softDeleteNote(id: String)
+    suspend fun hardDeleteNote(id: String, vineyardId: String, operationId: String, atIso: String)
 
     suspend fun upsertNoteType(args: UpsertNoteTypeArgs)
 }

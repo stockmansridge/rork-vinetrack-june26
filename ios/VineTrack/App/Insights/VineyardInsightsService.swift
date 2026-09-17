@@ -90,6 +90,10 @@ final class VineyardInsightsService {
 
     var openVisit: ScoutVisit? { visit(openVisitID) }
 
+    func visitHistory(vineyardID: UUID, vintageYear: Int?) -> [ScoutVisit] {
+        ScoutHistoryPolicy.select(visits, vineyardID: vineyardID, vintageYear: vintageYear)
+    }
+
     func visits(status: ScoutStatus) -> [ScoutVisit] {
         visits.filter { $0.status == status }.sorted { $0.scoutDate > $1.scoutDate }
     }
@@ -404,7 +408,15 @@ final class VineyardInsightsService {
     func deleteVisit(_ visitID: UUID) -> [ScoutGrowthStageLink] {
         guard let visit = visit(visitID) else { return [] }
         let retained = ScoutGrowthStageLink.onScoutDeleted(visit)
+        let deletedAt = now()
         if record(store.deleteVisit(id: visitID)) {
+            store.enqueue(
+                recordID: visit.id,
+                vineyardID: visit.vineyardID,
+                entity: .scoutVisit,
+                operation: .delete,
+                clientUpdatedAt: deletedAt
+            )
             visits = store.loadVisits()
             if openVisitID == visitID { openVisitID = nil }
         }
@@ -430,6 +442,10 @@ final class VineyardInsightsService {
     }
 
     // MARK: - Vintage Notes
+
+    func noteHistory(vineyardID: UUID, vintageYear: Int?) -> [VintageNote] {
+        VintageNoteRules.history(notes, vineyardID: vineyardID, vintageYear: vintageYear)
+    }
 
     func notes(vintageYear: Int) -> [VintageNote] {
         VintageNoteRules.forVintage(notes, vintageYear: vintageYear)
@@ -475,9 +491,10 @@ final class VineyardInsightsService {
         guard draft.canSave else { return nil }
         let timestamp = now()
         let existing = notes.first { $0.id == draft.id }
+        guard existing == nil || existing?.vineyardID == vineyardID else { return nil }
         let note = VintageNote(
             id: draft.id,
-            vineyardID: vineyardID,
+            vineyardID: existing?.vineyardID ?? vineyardID,
             noteDate: draft.date,
             vintageYear: draft.resolvedVintage(
                 seasonStartMonth: seasonStartMonth,
@@ -509,15 +526,12 @@ final class VineyardInsightsService {
         return note
     }
 
-    /// Soft delete — the row is tombstoned locally so sync can reconcile it.
+    /// Hard-delete locally immediately and queue the durable server deletion.
     @discardableResult
     func deleteNote(_ noteID: UUID) -> Bool {
-        guard var note = notes.first(where: { $0.id == noteID }) else { return false }
+        guard let note = notes.first(where: { $0.id == noteID }) else { return false }
         let timestamp = now()
-        note.deletedAt = timestamp
-        note.updatedAt = timestamp
-        note.clientUpdatedAt = timestamp
-        guard record(store.saveNote(note)) else { return false }
+        guard record(store.deleteNote(id: noteID)) else { return false }
         notes = store.loadNotes()
         store.enqueue(
             recordID: note.id,
@@ -575,9 +589,10 @@ final class VineyardInsightsService {
 
     private func pushVisit(entry: VineyardInsightsStore.QueuedOperation) async throws {
         if entry.operation == .delete {
-            try await repository.softDeleteVisit(
+            try await repository.hardDeleteVisit(
                 id: entry.recordID,
                 vineyardID: entry.vineyardID,
+                operationID: entry.id,
                 at: entry.clientUpdatedAt
             )
             return
@@ -654,7 +669,12 @@ final class VineyardInsightsService {
 
     private func pushNote(entry: VineyardInsightsStore.QueuedOperation) async throws {
         if entry.operation == .delete {
-            try await repository.softDeleteNote(id: entry.recordID)
+            try await repository.hardDeleteNote(
+                id: entry.recordID,
+                vineyardID: entry.vineyardID,
+                operationID: entry.id,
+                at: entry.clientUpdatedAt
+            )
             return
         }
         guard let note = notes.first(where: { $0.id == entry.recordID }) else { return }

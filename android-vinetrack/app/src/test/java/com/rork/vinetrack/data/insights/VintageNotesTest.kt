@@ -295,17 +295,14 @@ class VintageNotesTest {
     }
 
     @Test
-    fun `deletion is a tombstone rather than an erasure`() {
+    fun `deletion physically removes the local note`() {
         val saved = save(VintageNoteDraft(notes = "Wrong date"))
         requireNotNull(saved)
         tick()
 
         controller.deleteNote(saved.id)
 
-        // Still present locally so sync can reconcile it across devices, but
-        // gone from every display path.
-        assertEquals(1, controller.notes.value.size)
-        assertTrue(controller.notes.value.single().isDeleted)
+        assertTrue(controller.notes.value.isEmpty())
         assertTrue(controller.notesForVintage(saved.vintageYear).isEmpty())
     }
 

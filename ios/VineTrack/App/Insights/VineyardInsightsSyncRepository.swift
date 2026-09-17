@@ -262,7 +262,7 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         _ = try await provider.client.storage.from(Self.photoBucket).remove(paths: [path])
     }
 
-    // MARK: - Soft deletion
+    // MARK: - Deletion
 
     struct SoftDeletePatch: Encodable, Sendable {
         let deleted_at: String
@@ -275,23 +275,29 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
     /// `for delete using (false)` policy), so this is the only shape a deletion
     /// can take. Children are tombstoned explicitly rather than relying on the
     /// cascade, because the cascade only fires on a real DELETE.
-    func softDeleteVisit(id: UUID, vineyardID: UUID, at date: Date) async throws {
+    struct HardDeleteVisitParams: Encodable, Sendable {
+        let p_vineyard_id: String
+        let p_visit_id: String
+        let p_operation_id: String
+        let p_deleted_at: String
+    }
+
+    func hardDeleteVisit(
+        id: UUID,
+        vineyardID: UUID,
+        operationID: UUID,
+        at date: Date
+    ) async throws {
         try requireConfigured()
-        let patch = SoftDeletePatch(
-            deleted_at: Self.timestamp(date),
-            client_updated_at: Self.timestamp(date)
-        )
-        try await provider.client
-            .from("scout_visits")
-            .update(patch)
-            .eq("id", value: id.uuidString)
-            .eq("vineyard_id", value: vineyardID.uuidString)
-            .execute()
-        try await provider.client
-            .from("scout_block_assessments")
-            .update(patch)
-            .eq("scout_visit_id", value: id.uuidString)
-            .execute()
+        try await provider.client.rpc(
+            "hard_delete_scout_visit",
+            params: HardDeleteVisitParams(
+                p_vineyard_id: vineyardID.uuidString,
+                p_visit_id: id.uuidString,
+                p_operation_id: operationID.uuidString,
+                p_deleted_at: Self.timestamp(date)
+            )
+        ).execute()
     }
 
     func softDeletePhoto(id: UUID, at date: Date) async throws {
@@ -379,8 +385,11 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let p_client_updated_at: String?
     }
 
-    struct SoftDeleteNoteParams: Encodable, Sendable {
-        let p_id: String
+    struct HardDeleteNoteParams: Encodable, Sendable {
+        let p_vineyard_id: String
+        let p_note_id: String
+        let p_operation_id: String
+        let p_deleted_at: String
     }
 
     struct UpsertNoteTypeParams: Encodable, Sendable {
@@ -402,11 +411,22 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         return rows.first
     }
 
-    func softDeleteNote(id: UUID) async throws {
+    func hardDeleteNote(
+        id: UUID,
+        vineyardID: UUID,
+        operationID: UUID,
+        at date: Date
+    ) async throws {
         try requireConfigured()
-        try await provider.client
-            .rpc("soft_delete_vintage_note", params: SoftDeleteNoteParams(p_id: id.uuidString))
-            .execute()
+        try await provider.client.rpc(
+            "hard_delete_vintage_note",
+            params: HardDeleteNoteParams(
+                p_vineyard_id: vineyardID.uuidString,
+                p_note_id: id.uuidString,
+                p_operation_id: operationID.uuidString,
+                p_deleted_at: Self.timestamp(date)
+            )
+        ).execute()
     }
 
     func upsertNoteType(_ params: UpsertNoteTypeParams) async throws {

@@ -451,3 +451,21 @@ nonisolated struct ScoutVisit: Identifiable, Equatable, Sendable {
         assessments[index] = updated
     }
 }
+
+/// Vineyard-scoped, deterministic Scout history used by list and navigation.
+nonisolated enum ScoutHistoryPolicy {
+    static func select(
+        _ visits: [ScoutVisit],
+        vineyardID: UUID,
+        vintageYear: Int?
+    ) -> [ScoutVisit] {
+        visits
+            .filter { $0.vineyardID == vineyardID }
+            .filter { vintageYear == nil || $0.vintageYear == vintageYear }
+            .sorted { lhs, rhs in
+                if lhs.scoutDate != rhs.scoutDate { return lhs.scoutDate > rhs.scoutDate }
+                if lhs.clientUpdatedAt != rhs.clientUpdatedAt { return lhs.clientUpdatedAt > rhs.clientUpdatedAt }
+                return lhs.id.uuidString > rhs.id.uuidString
+            }
+    }
+}

@@ -80,6 +80,9 @@ class VineyardInsightsController(
 
     val openVisit: ScoutVisit? get() = visit(_openVisitId.value)
 
+    fun visitHistory(vineyardId: String, vintageYear: Int?): List<ScoutVisit> =
+        ScoutHistoryPolicy.select(_visits.value, vineyardId, vintageYear)
+
     fun visits(status: ScoutStatus): List<ScoutVisit> =
         _visits.value.filter { it.status == status }
             .sortedByDescending { it.scoutDateIso }
@@ -404,7 +407,15 @@ class VineyardInsightsController(
     fun deleteVisit(visitId: String): List<ScoutGrowthStageLink.Unlink> {
         val visit = visit(visitId) ?: return emptyList()
         val retained = ScoutGrowthStageLink.onScoutDeleted(visit)
+        val deletedAt = nowIso()
         if (record(store.deleteVisit(visitId))) {
+            store.enqueue(
+                recordId = visit.id,
+                vineyardId = visit.vineyardId,
+                entity = VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT,
+                operation = VineyardInsightsStore.QueuedOperation.Operation.DELETE,
+                clientUpdatedAtIso = deletedAt,
+            )
             _visits.value = store.loadVisits()
             if (_openVisitId.value == visitId) _openVisitId.value = null
         }
@@ -428,6 +439,9 @@ class VineyardInsightsController(
     }
 
     // ------------------------------------------------------ Vintage Notes
+
+    fun noteHistory(vineyardId: String, vintageYear: Int?): List<VintageNote> =
+        VintageNoteRules.history(_notes.value, vineyardId, vintageYear)
 
     fun notesForVintage(vintageYear: Int): List<VintageNote> =
         VintageNoteRules.forVintage(_notes.value, vintageYear)
@@ -471,9 +485,10 @@ class VineyardInsightsController(
         if (!draft.canSave) return null
         val now = nowIso()
         val existing = _notes.value.firstOrNull { it.id == draft.id }
+        if (existing != null && existing.vineyardId != vineyardId) return null
         val note = VintageNote(
             id = draft.id,
-            vineyardId = vineyardId,
+            vineyardId = existing?.vineyardId ?: vineyardId,
             noteDateIso = draft.date.toString(),
             vintageYear = draft.resolvedVintage(seasonStartMonth, seasonStartDay),
             noteTypeId = draft.noteTypeId,
@@ -502,16 +517,11 @@ class VineyardInsightsController(
         return note
     }
 
-    /** Soft delete — the row is tombstoned locally so sync can reconcile it. */
+    /** Hard-delete locally immediately and queue the durable server deletion. */
     fun deleteNote(noteId: String): Boolean {
         val note = _notes.value.firstOrNull { it.id == noteId } ?: return false
         val now = nowIso()
-        val tombstoned = note.copy(
-            deletedAtIso = now,
-            updatedAtIso = now,
-            clientUpdatedAtIso = now,
-        )
-        if (!record(store.saveNote(tombstoned))) return false
+        if (!record(store.deleteNote(noteId))) return false
         _notes.value = store.loadNotes()
         store.enqueue(
             recordId = note.id,

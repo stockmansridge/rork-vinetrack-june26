@@ -12,11 +12,12 @@ import org.junit.Test
  */
 class OperationalToolLayoutTest {
 
-    /** Catalogue order used by the tests (matches the 12-tile grid). */
+    /** Current unrestricted catalogue order. */
     private val allIds = listOf(
         "work_tasks", "equipment_maintenance", "fuel_log", "irrigation_advisor",
         "disease_risk", "yield_records", "growth_stages", "optimal_ripeness",
         "cost_reports", "fertiliser_calculator", "pruning_tracker", "irrigation_records",
+        "resistance_planner", "vineyard_insights",
     )
 
     /** Operator-style catalogue: no costing permission. */
@@ -49,6 +50,40 @@ class OperationalToolLayoutTest {
         val visible = OperationalToolLayoutResolver.visibleToolIds(layout, allIds)
         assertEquals("irrigation_records", visible.last())
         assertEquals(allIds.size, visible.size)
+    }
+
+    @Test
+    fun `pre vineyard insights system admin layout gains the new eligible tool once`() {
+        val oldIds = allIds.filterNot { it == "vineyard_insights" }
+        val oldLayout = OperationalToolLayout(visibleToolIds = oldIds, isReady = true)
+
+        val firstResolution = OperationalToolLayoutResolver.visibleToolIds(oldLayout, allIds)
+        assertEquals(oldIds, firstResolution.dropLast(1))
+        assertEquals("vineyard_insights", firstResolution.last())
+        assertEquals(1, firstResolution.count { it == "vineyard_insights" })
+
+        val migrated = OperationalToolLayoutResolver.merge(
+            oldLayout,
+            firstResolution,
+            emptyList(),
+            allIds,
+        )
+        assertEquals(firstResolution, OperationalToolLayoutResolver.visibleToolIds(migrated, allIds))
+    }
+
+    @Test
+    fun `deliberately hidden vineyard insights is not re-added`() {
+        val layout = OperationalToolLayout(
+            visibleToolIds = allIds.filterNot { it == "vineyard_insights" },
+            hiddenToolIds = listOf("vineyard_insights"),
+            isReady = true,
+        )
+
+        assertTrue("vineyard_insights" !in OperationalToolLayoutResolver.visibleToolIds(layout, allIds))
+        assertEquals(
+            listOf("vineyard_insights"),
+            OperationalToolLayoutResolver.hiddenToolIds(layout, allIds),
+        )
     }
 
     @Test
@@ -125,9 +160,14 @@ class OperationalToolLayoutTest {
     @Test
     fun `moving a tool changes only its position`() {
         val layout = OperationalToolLayout(isReady = true)
-        val moved = OperationalToolLayoutResolver.move(layout, fromIndex = 11, toIndex = 0, authorisedIds = allIds)
+        val moved = OperationalToolLayoutResolver.move(
+            layout,
+            fromIndex = allIds.lastIndex,
+            toIndex = 0,
+            authorisedIds = allIds,
+        )
         val visible = OperationalToolLayoutResolver.visibleToolIds(moved, allIds)
-        assertEquals("irrigation_records", visible.first())
+        assertEquals("vineyard_insights", visible.first())
         assertEquals(allIds.size, visible.size)
         assertEquals(allIds.toSet(), visible.toSet())
     }

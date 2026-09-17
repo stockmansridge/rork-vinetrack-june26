@@ -104,6 +104,7 @@ import com.rork.vinetrack.data.dashboardWorkedBlockIds
 import com.rork.vinetrack.data.MapPrefsStore
 import com.rork.vinetrack.data.SeasonWindow
 import com.rork.vinetrack.data.auth.SessionStore
+import com.rork.vinetrack.data.insights.VineyardInsightsAccess
 import com.rork.vinetrack.data.model.AlertSeverity
 import com.rork.vinetrack.data.model.AlertType
 import com.rork.vinetrack.data.model.AlertWithStatus
@@ -1040,7 +1041,15 @@ private fun OperationalToolsSection(
     val vine = LocalVineColors.current
     val layout by vm.operationalToolLayout.collectAsStateWithLifecycle()
     val canViewCosting = state.currentRole == "owner" || state.currentRole == "manager"
-    val authorisedIds = remember(canViewCosting) { OperationalToolCatalog.authorisedIds(canViewCosting) }
+    val canUseVineyardInsights = VineyardInsightsAccess.resolve(
+        sessionPhase = state.sessionPhase,
+        isSystemAdmin = state.isSystemAdmin,
+        selectedVineyardId = state.selectedVineyardId,
+        isMemberOfSelectedVineyard = state.currentRole != null,
+    ).isAllowed
+    val authorisedIds = remember(canViewCosting, canUseVineyardInsights) {
+        OperationalToolCatalog.authorisedIds(canViewCosting, canUseVineyardInsights)
+    }
     val tools = remember(layout, authorisedIds) {
         OperationalToolLayoutResolver.visibleToolIds(layout, authorisedIds)
             .mapNotNull { OperationalToolCatalog.tool(it) }

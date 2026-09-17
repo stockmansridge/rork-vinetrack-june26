@@ -362,3 +362,21 @@ data class ScoutVisit(
         )
     }
 }
+
+/** Vineyard-scoped, deterministic Scout history used by list and navigation. */
+object ScoutHistoryPolicy {
+    fun select(
+        visits: List<ScoutVisit>,
+        vineyardId: String,
+        vintageYear: Int?,
+    ): List<ScoutVisit> = visits
+        .asSequence()
+        .filter { it.vineyardId == vineyardId }
+        .filter { vintageYear == null || it.vintageYear == vintageYear }
+        .sortedWith(
+            compareByDescending<ScoutVisit> { it.scoutDateIso }
+                .thenByDescending { it.clientUpdatedAtIso }
+                .thenByDescending { it.id },
+        )
+        .toList()
+}
