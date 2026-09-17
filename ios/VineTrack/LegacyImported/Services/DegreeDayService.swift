@@ -94,6 +94,7 @@ class DegreeDayService {
     private let apiKey: String = AppConfig.wundergroundAPIKey
     private let baseTemp: Double = 10.0
     private let beddCap: Double = 19.0
+    static let recentCompletedDayRefreshCount: Int = 3
     private let calendar: Calendar
 
     private var cacheKey: String { "vinetrack_gdd_temps_cache_v2" }
@@ -227,6 +228,35 @@ class DegreeDayService {
             day = cal.date(byAdding: .day, value: 1, to: day) ?? endDay
         }
         return result
+    }
+
+    /// Plans an incremental refresh for one provider cache. Historical cached
+    /// rows remain outside the request set; missing dates and the latest three
+    /// completed vineyard days are eligible for replacement.
+    func refreshDates(forKey key: String, coveringFrom start: Date, to end: Date) -> [Date] {
+        let requiredDates = dates(from: start, to: end)
+        guard !requiredDates.isEmpty else { return [] }
+        let cached = temps[key] ?? [:]
+        let recentDates = Set(requiredDates.suffix(Self.recentCompletedDayRefreshCount).map(compactKey(for:)))
+        return requiredDates.filter { day in
+            let dayKey = compactKey(for: day)
+            return cached[dayKey] == nil || recentDates.contains(dayKey)
+        }
+    }
+
+    /// Applies successful provider rows as an upsert. A failed refresh passes
+    /// `nil`, preserving the provider-specific cache and its current GDD.
+    func applyRefreshOutcome(_ fetched: [String: DailyTemp]?, for source: GDDSource) {
+        guard let fetched else { return }
+        var cached = temps[source.sourceKey] ?? [:]
+        cached.merge(fetched) { _, revised in revised }
+        temps[source.sourceKey] = cached
+        lastSource = source
+        saveCache()
+    }
+
+    func dailyTemp(forKey dayKey: String, source: GDDSource) -> DailyTemp? {
+        temps[source.sourceKey]?[dayKey]
     }
 
     /// Stable dedup key for every input that can affect a season load.
@@ -488,13 +518,11 @@ class DegreeDayService {
         diagnostics.append("Supabase not configured.")
         #endif
 
-        // 2. Determine missing dates and fetch from Weather Underground.
-        // WU PWS history allows ~1500/day on the free tier, so we can safely
-        // pull an entire season in one pass.
-        let missingDates: [Date] = dates.filter { stationTemps[compactKey(for: $0)] == nil }
+        // 2. Fetch genuinely missing dates plus a bounded recent overlap.
+        let refreshDates = refreshDates(forKey: stationId, coveringFrom: start, to: today)
         let maxFetch = 500
-        let toFetch = Array(missingDates.suffix(maxFetch))
-        diagnostics.append("Season dates: \(dates.count) • missing: \(missingDates.count) • will fetch: \(toFetch.count)")
+        let toFetch = Array(refreshDates.suffix(maxFetch))
+        diagnostics.append("Season dates: \(dates.count) • missing/recent refresh: \(refreshDates.count) • will fetch: \(toFetch.count)")
 
         var newRecords: [WeatherDailyGDDRecord] = []
         var firstStatusSample: String?
@@ -544,7 +572,7 @@ class DegreeDayService {
                     errorMessage = "Some missing days/records."
                 }
             }
-        } else if !missingDates.isEmpty {
+        } else if !refreshDates.isEmpty {
             errorMessage = "Weather Underground API key not configured."
         }
 
@@ -577,8 +605,7 @@ class DegreeDayService {
         }
         #endif
 
-        temps[stationId] = stationTemps
-        saveCache()
+        applyRefreshOutcome(stationTemps, for: .weatherUnderground(stationId: stationId))
 
         let result = computeGDD(stationId: stationId, from: start, to: today, latitude: latitude, useBEDD: useBEDD)
         seasonGDD = result.gdd
@@ -902,17 +929,18 @@ class DegreeDayService {
             dates.append(d)
             d = cal.date(byAdding: .day, value: 1, to: d) ?? today
         }
-        let missing = dates.filter { stationTemps[compactKey(for: $0)] == nil }
-        diagnostics.append("Season dates: \(dates.count) \u{2022} missing: \(missing.count)")
+        let refreshDates = refreshDates(forKey: key, coveringFrom: start, to: today)
+        diagnostics.append("Season dates: \(dates.count) \u{2022} missing/recent refresh: \(refreshDates.count)")
 
         // Davis historic costs one API call per 24h chunk. To avoid
         // hammering WeatherLink the first time, cap the per-fetch
         // window at 60 days; older days fall through to the
         // higher-priority chain (callers can then layer Open-Meteo in
         // for the long tail).
-        if !missing.isEmpty {
+        if !refreshDates.isEmpty {
             let maxDaysPerFetch = 60
-            let toFetch = Array(missing.suffix(maxDaysPerFetch))
+            let toFetch = Array(refreshDates.suffix(maxDaysPerFetch))
+            let requestedKeys = Set(toFetch.map(compactKey(for:)))
             let from = toFetch.first ?? start
             let to = (toFetch.last ?? today).addingTimeInterval(24 * 60 * 60)
             lastFetchAttempted = toFetch.count
@@ -942,6 +970,7 @@ class DegreeDayService {
                 }
                 for (day, hi) in result.dailyHighC {
                     let k = compactKey(for: day)
+                    guard requestedKeys.contains(k) else { continue }
                     let lo = result.dailyLowC[day] ?? hi
                     stationTemps[k] = DailyTemp(high: hi, low: lo)
                 }
@@ -959,8 +988,7 @@ class DegreeDayService {
             }
         }
 
-        temps[key] = stationTemps
-        saveCache()
+        applyRefreshOutcome(stationTemps, for: source)
 
         let result = computeGDD(stationId: key, from: start, to: today, latitude: latitude, useBEDD: useBEDD)
         seasonGDD = result.gdd
@@ -1024,10 +1052,11 @@ class DegreeDayService {
             d = cal.date(byAdding: .day, value: 1, to: d) ?? today
         }
 
-        let missing = dates.filter { stationTemps[compactKey(for: $0)] == nil }
-        diagnostics.append("Season dates: \(dates.count) • missing: \(missing.count)")
+        let refreshDates = refreshDates(forKey: key, coveringFrom: start, to: today)
+        let refreshKeys = Set(refreshDates.map(compactKey(for:)))
+        diagnostics.append("Season dates: \(dates.count) • missing/recent refresh: \(refreshDates.count)")
 
-        if !missing.isEmpty {
+        if !refreshDates.isEmpty {
             let fmt = DateFormatter()
             fmt.locale = Locale(identifier: "en_US_POSIX")
             fmt.timeZone = TimeZone(identifier: "UTC")
@@ -1035,9 +1064,8 @@ class DegreeDayService {
             let archiveCutoff = cal.date(byAdding: .day, value: -6, to: today) ?? today
 
             // 1. Archive endpoint for older dates (more authoritative).
-            let archiveStart = missing.min() ?? start
-            let archiveEnd = min(missing.max() ?? archiveCutoff, archiveCutoff)
-            if archiveStart <= archiveEnd {
+            let archiveDates = refreshDates.filter { $0 <= archiveCutoff }
+            if let archiveStart = archiveDates.min(), let archiveEnd = archiveDates.max() {
                 let startStr = fmt.string(from: archiveStart)
                 let endStr = fmt.string(from: archiveEnd)
                 let urlString = "https://archive-api.open-meteo.com/v1/archive?latitude=\(latitude)&longitude=\(longitude)&start_date=\(startStr)&end_date=\(endStr)&daily=temperature_2m_max,temperature_2m_min&timezone=auto"
@@ -1046,7 +1074,7 @@ class DegreeDayService {
                     do {
                         let (data, response) = try await URLSession.shared.data(from: url)
                         if let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
-                            let count = applyOpenMeteoDailyTemps(data: data, into: &stationTemps, fmt: fmt)
+                            let count = applyOpenMeteoDailyTemps(data: data, into: &stationTemps, fmt: fmt, allowedKeys: refreshKeys)
                             diagnostics.append("Archive rows: \(count)")
                             lastFetchSucceeded += 1
                         } else if let http = response as? HTTPURLResponse {
@@ -1062,9 +1090,11 @@ class DegreeDayService {
 
             // 2. Forecast endpoint with `past_days` to fill the recent
             //    days that the archive doesn't yet cover.
+            let recentRefresh = refreshDates.filter { $0 > archiveCutoff }
             let stillMissing = dates.filter { stationTemps[compactKey(for: $0)] == nil }
-            if !stillMissing.isEmpty {
-                let earliestStill = stillMissing.min() ?? today
+            let forecastDates = Array(Set(recentRefresh + stillMissing)).sorted()
+            if !forecastDates.isEmpty {
+                let earliestStill = forecastDates.min() ?? today
                 let daysBack = max(1, min(92, (cal.dateComponents([.day], from: earliestStill, to: today).day ?? 1) + 1))
                 let urlString = "https://api.open-meteo.com/v1/forecast?latitude=\(latitude)&longitude=\(longitude)&daily=temperature_2m_max,temperature_2m_min&past_days=\(daysBack)&forecast_days=1&timezone=auto"
                 if let url = URL(string: urlString) {
@@ -1072,7 +1102,7 @@ class DegreeDayService {
                     do {
                         let (data, response) = try await URLSession.shared.data(from: url)
                         if let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
-                            let count = applyOpenMeteoDailyTemps(data: data, into: &stationTemps, fmt: fmt)
+                            let count = applyOpenMeteoDailyTemps(data: data, into: &stationTemps, fmt: fmt, allowedKeys: refreshKeys)
                             diagnostics.append("Forecast past_days rows: \(count)")
                             lastFetchSucceeded += 1
                         } else if let http = response as? HTTPURLResponse {
@@ -1087,8 +1117,7 @@ class DegreeDayService {
             }
         }
 
-        temps[key] = stationTemps
-        saveCache()
+        applyRefreshOutcome(stationTemps, for: source)
 
         let result = computeGDD(stationId: key, from: start, to: today, latitude: latitude, useBEDD: useBEDD)
         seasonGDD = result.gdd
@@ -1114,7 +1143,8 @@ class DegreeDayService {
     private func applyOpenMeteoDailyTemps(
         data: Data,
         into stationTemps: inout [String: DailyTemp],
-        fmt: DateFormatter
+        fmt: DateFormatter,
+        allowedKeys: Set<String>
     ) -> Int {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let daily = json["daily"] as? [String: Any],
@@ -1133,6 +1163,7 @@ class DegreeDayService {
             // and formatting them through UTC can shift a vineyard day at the
             // date line, so retain the provider's date identity verbatim.
             let k = compactKey(fromISODate: times[i])
+            guard allowedKeys.contains(k) else { continue }
             stationTemps[k] = DailyTemp(high: high, low: low)
             written += 1
         }

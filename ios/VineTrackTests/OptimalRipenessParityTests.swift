@@ -46,4 +46,86 @@ final class OptimalRipenessParityTests: XCTestCase {
         XCTAssertFalse(service.hasCompleteData(forKey: davis.sourceKey, coveringFrom: start, to: end))
         XCTAssertFalse(service.hasCompleteData(forKey: source.sourceKey, coveringFrom: start, to: end))
     }
+
+    func testWarmCachePlansOnlyThreeRecentCompletedDays() throws {
+        let service = DegreeDayService(timeZone: TimeZone(identifier: "UTC")!)
+        let values = Dictionary(uniqueKeysWithValues: (1...10).map { day in
+            (String(format: "202609%02d", day), DailyTemp(high: 20, low: 10))
+        })
+        service.installDailyTemps(values, for: source)
+        let start = try date("2026-09-01T00:00:00Z")
+        let end = try date("2026-09-11T00:00:00Z")
+
+        let planned = service.refreshDates(forKey: source.sourceKey, coveringFrom: start, to: end)
+
+        XCTAssertEqual(planned.map(dayKey), ["20260908", "20260909", "20260910"])
+        XCTAssertEqual(planned.count, DegreeDayService.recentCompletedDayRefreshCount)
+    }
+
+    func testRefreshPlanIncludesMissingDateAndRecentOverlapWithoutHistoricalRows() throws {
+        let service = DegreeDayService(timeZone: TimeZone(identifier: "UTC")!)
+        var values = Dictionary(uniqueKeysWithValues: (1...10).map { day in
+            (String(format: "202609%02d", day), DailyTemp(high: 20, low: 10))
+        })
+        values.removeValue(forKey: "20260904")
+        service.installDailyTemps(values, for: source)
+        let start = try date("2026-09-01T00:00:00Z")
+        let end = try date("2026-09-11T00:00:00Z")
+
+        let planned = service.refreshDates(forKey: source.sourceKey, coveringFrom: start, to: end)
+
+        XCTAssertEqual(planned.map(dayKey), ["20260904", "20260908", "20260909", "20260910"])
+    }
+
+    func testRevisedRecentProviderRowReplacesCacheAndRecalculatesGDD() throws {
+        let service = DegreeDayService(timeZone: TimeZone(identifier: "UTC")!)
+        let davis = GDDSource.davisWeatherLink(stationId: "revision-isolation")
+        let values = Dictionary(uniqueKeysWithValues: (1...5).map { day in
+            (String(format: "202609%02d", day), DailyTemp(high: 20, low: 10))
+        })
+        service.installDailyTemps(values, for: source)
+        service.installDailyTemps(["20260905": DailyTemp(high: 12, low: 8)], for: davis)
+        let start = try date("2026-09-01T00:00:00Z")
+        let end = try date("2026-09-06T00:00:00Z")
+        let before = service.dailyGDDSeries(stationId: source.sourceKey, from: start, to: end, latitude: nil, useBEDD: false)
+
+        service.applyRefreshOutcome(["20260905": DailyTemp(high: 30, low: 20)], for: source)
+        let after = service.dailyGDDSeries(stationId: source.sourceKey, from: start, to: end, latitude: nil, useBEDD: false)
+
+        XCTAssertEqual(before.last?.cumulative, 25)
+        XCTAssertEqual(after.last?.cumulative, 35)
+        XCTAssertEqual(service.dailyTemp(forKey: "20260905", source: source)?.high, 30)
+        XCTAssertEqual(service.dailyTemp(forKey: "20260905", source: davis)?.high, 12)
+    }
+
+    func testFailedOverlapRefreshPreservesPreviousCalculation() throws {
+        let service = DegreeDayService(timeZone: TimeZone(identifier: "UTC")!)
+        let values = Dictionary(uniqueKeysWithValues: (1...5).map { day in
+            (String(format: "202609%02d", day), DailyTemp(high: 20, low: 10))
+        })
+        service.installDailyTemps(values, for: source)
+        let start = try date("2026-09-01T00:00:00Z")
+        let end = try date("2026-09-06T00:00:00Z")
+        let before = service.dailyGDDSeries(stationId: source.sourceKey, from: start, to: end, latitude: nil, useBEDD: false)
+
+        service.applyRefreshOutcome(nil, for: source)
+        let after = service.dailyGDDSeries(stationId: source.sourceKey, from: start, to: end, latitude: nil, useBEDD: false)
+
+        XCTAssertEqual(after.map(\.daily), before.map(\.daily))
+        XCTAssertEqual(after.last?.cumulative, 25)
+        XCTAssertEqual(service.dailyTemp(forKey: "20260905", source: source)?.high, 20)
+    }
+
+    private func date(_ value: String) throws -> Date {
+        try XCTUnwrap(ISO8601DateFormatter().date(from: value))
+    }
+
+    private func dayKey(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "yyyyMMdd"
+        return formatter.string(from: date)
+    }
 }
