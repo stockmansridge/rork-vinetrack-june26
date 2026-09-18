@@ -82,7 +82,10 @@ object SprayRegisteredUseRates {
         vineyardRates(chemical).filter { it.isSelectable }
 
     fun hasInvalidStructuredRates(chemical: SavedChemical): Boolean =
-        chemical.registeredUses.orEmpty().flatMap { it.rates }.any { ChemicalLabelRateNormalizer.normalize(it) == null }
+        chemical.registeredUses.orEmpty()
+            .filter { ChemicalManualEntry.isProductRateCarrier(it) || it.isViticultural }
+            .flatMap { it.rates }
+            .any { ChemicalLabelRateNormalizer.normalize(it) == null }
 
     fun availableBases(chemical: SavedChemical): List<SprayCalculator.RateBasis> =
         selectableVineyardRates(chemical).mapNotNull { it.basis }.distinct()

@@ -267,9 +267,10 @@ nonisolated enum SprayRegisteredUseRates {
     }
 
     static func hasInvalidStructuredRates(_ chemical: SavedChemical) -> Bool {
-        chemical.chemicalIntelligence?.registeredUses.flatMap(\.rates).contains {
-            ChemicalLabelRateNormalizer.normalize($0) == nil
-        } ?? false
+        chemical.chemicalIntelligence?.registeredUses
+            .filter { includes($0, scope: .vineyardOnly) }
+            .flatMap(\.rates)
+            .contains { ChemicalLabelRateNormalizer.normalize($0) == nil } ?? false
     }
 
     /// Whether this product states a vineyard registered use at all.
