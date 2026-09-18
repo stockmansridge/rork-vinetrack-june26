@@ -154,6 +154,8 @@ import com.rork.vinetrack.data.spray.SprayVineyardProfile
 import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.data.spray.SprayApplicationMode
 import com.rork.vinetrack.data.spray.SprayApplicationPlan
+import com.rork.vinetrack.data.spray.SprayCalculationReference
+import com.rork.vinetrack.data.spray.SprayCalculationReferenceBuilder
 import com.rork.vinetrack.data.spray.SprayGuidedTankBuilder
 import com.rork.vinetrack.data.spray.SprayProductLineResult
 import com.rork.vinetrack.ui.components.GuidedBlockerBanner
@@ -2313,6 +2315,16 @@ fun SprayCalculatorScreen(
                         }
                     }
 
+                    val calculationReference = SprayCalculationReferenceBuilder.make(guidedFlow)
+                    if (!calculationReference.isEmpty) {
+                        GuidedReviewGroup(
+                            title = "Calculation reference",
+                            accent = VineColors.Olive,
+                        ) {
+                            CalculationReferenceContent(calculationReference)
+                        }
+                    }
+
                     if (notes.isNotBlank()) {
                         GuidedReviewGroup(title = "Notes", accent = VineColors.Olive) {
                             Text(notes, fontSize = 13.sp, color = vine.textPrimary)
@@ -4025,6 +4037,11 @@ private fun SprayTankMixReview(
                     }
                 }
             }
+            if (result.totalTanks > 0) {
+                item {
+                    TankByTankMixCard(result = result)
+                }
+            }
             if (result.concentrationFactor != 1.0) {
                 item {
                     Row(
@@ -4183,6 +4200,18 @@ private fun SprayTankMixReview(
                 }
             }
 
+            item {
+                Text(
+                    "Weather data will be captured automatically at the start, every hour during the spray, and when the trip ends.",
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                    modifier = Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(VineColors.Indigo.copy(alpha = 0.08f))
+                        .padding(12.dp),
+                )
+            }
+
             errorMessage?.let { msg ->
                 item {
                     Text(
@@ -4226,6 +4255,116 @@ private fun SprayTankMixReview(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CalculationReferenceContent(
+    reference: SprayCalculationReference,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        CalculationReferenceSection("Canopy", reference.canopy)
+        CalculationReferenceSection("Spray volume", reference.volume)
+        CalculationReferenceSection("Water", reference.water)
+        reference.products.forEach { product ->
+            CalculationReferenceSection(product.name, product.lines)
+        }
+    }
+}
+
+@Composable
+private fun CalculationReferenceSection(
+    title: String,
+    lines: List<SprayCalculationReference.Line>,
+    modifier: Modifier = Modifier,
+) {
+    if (lines.isEmpty()) return
+    val vine = LocalVineColors.current
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            title.uppercase(),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            color = VineColors.Olive,
+        )
+        lines.forEach { line ->
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(line.label, fontSize = 12.sp, color = vine.textSecondary, modifier = Modifier.weight(1f))
+                    Text(
+                        line.value,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textPrimary,
+                        textAlign = TextAlign.End,
+                    )
+                }
+                line.workings?.let { workings ->
+                    Text(
+                        workings,
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.End,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TankByTankMixCard(
+    result: SprayCalculator.Result,
+    modifier: Modifier = Modifier,
+) {
+    val vine = LocalVineColors.current
+    VineyardCard(modifier = modifier) {
+        Text("Tank-by-Tank Mix", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+        Spacer8()
+        (1..result.totalTanks).forEach { tankNumber ->
+            val isLastTank = tankNumber == result.totalTanks && result.lastTankLitres > 0.0
+            val water = if (isLastTank) result.lastTankLitres else result.tankCapacityLitres
+            Text("Tank $tankNumber", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+            Spacer(Modifier.height(4.dp))
+            TankMixQuantityRow("Water", SprayGuidedFormat.litres(water))
+            result.chemicalResults.forEach { chemical ->
+                val amount = if (isLastTank) chemical.amountInLastTank else chemical.amountPerFullTank
+                TankMixQuantityRow(
+                    chemical.name,
+                    SprayGuidedFormat.quantity(amount, chemical.unit),
+                )
+            }
+            if (tankNumber < result.totalTanks) {
+                Spacer8()
+                HorizontalDivider(color = vine.cardBorder)
+                Spacer8()
+            }
+        }
+    }
+}
+
+@Composable
+private fun TankMixQuantityRow(
+    name: String,
+    amount: String,
+    modifier: Modifier = Modifier,
+) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = modifier.fillMaxWidth().padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(name, fontSize = 13.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
+        Text(
+            amount,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = vine.textPrimary,
+            textAlign = TextAlign.End,
+        )
     }
 }
 

@@ -2689,7 +2689,7 @@ struct SprayCalculatorView: View {
                     HStack(spacing: 10) {
                         Image(systemName: "cloud.sun.fill")
                             .foregroundStyle(.blue)
-                        Text("Weather data will be captured automatically at the start.")
+                        Text("Weather data will be captured automatically at the start, every hour during the spray, and when the trip ends.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()
