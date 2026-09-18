@@ -193,7 +193,7 @@ extension Array where Element == ChemicalActivityGroup {
     /// FRAC 3 and FRAC 11 always yields `["3", "11"]` in that order, whichever
     /// order the actives were entered, so two identical products never persist
     /// as two different-looking histories.
-    var canonicalised: [ChemicalActivityGroup] {
+    nonisolated var canonicalised: [ChemicalActivityGroup] {
         var seen = Set<String>()
         return filter { seen.insert($0.id).inserted }.sorted()
     }
@@ -202,13 +202,13 @@ extension Array where Element == ChemicalActivityGroup {
     ///
     /// NEVER `["3 + 11"]`. A mixture counts as every one of its groups
     /// independently.
-    var codes: [String] {
+    nonisolated var codes: [String] {
         canonicalised.filter(\.isResistanceRelevant).map(\.code)
     }
 
     /// Scheme-qualified identifiers, e.g. `["frac:3", "frac:11"]`, for cases
     /// where the bare code would be ambiguous across schemes.
-    var qualifiedCodes: [String] {
+    nonisolated var qualifiedCodes: [String] {
         canonicalised.filter(\.isResistanceRelevant).map(\.id)
     }
 
@@ -217,7 +217,7 @@ extension Array where Element == ChemicalActivityGroup {
     /// Derived FROM the structured groups for backwards compatibility with old
     /// app builds and the existing API surface. It is an output, never an
     /// input: nothing in VineTrack may calculate from this string.
-    var legacyGroupProjection: String {
+    nonisolated var legacyGroupProjection: String {
         codes.joined(separator: " + ")
     }
 }

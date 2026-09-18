@@ -564,10 +564,10 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
 
 extension Array where Element == ChemicalRegisteredUse {
     /// Uses registered on grapevines.
-    var viticultural: [ChemicalRegisteredUse] { filter(\.isViticultural) }
+    nonisolated var viticultural: [ChemicalRegisteredUse] { filter(\.isViticultural) }
 
     /// Every distinct label rate basis across all uses.
-    var rateBases: [ChemicalLabelRateBasis] {
+    nonisolated var rateBases: [ChemicalLabelRateBasis] {
         var seen = Set<String>()
         var out: [ChemicalLabelRateBasis] = []
         for use in self {
@@ -579,19 +579,19 @@ extension Array where Element == ChemicalRegisteredUse {
     }
 
     /// Typed targets this product is actually registered against on grapes.
-    var viticulturalTargets: [SprayTarget] {
+    nonisolated var viticulturalTargets: [SprayTarget] {
         var seen = Set<String>()
         return viticultural.compactMap(\.target).filter { seen.insert($0.rawValue).inserted }
     }
 
     /// Every /100 L rate across these uses, in order.
-    var allRatesPer100L: [ChemicalLabelRate] { flatMap(\.ratesPer100L) }
+    nonisolated var allRatesPer100L: [ChemicalLabelRate] { flatMap(\.ratesPer100L) }
 
     /// Every /hectare rate across these uses, in order.
-    var allRatesPerHectare: [ChemicalLabelRate] { flatMap(\.ratesPerHectare) }
+    nonisolated var allRatesPerHectare: [ChemicalLabelRate] { flatMap(\.ratesPerHectare) }
 
     /// True when at least one grapevine use states a rate a calculation can
     /// actually use. The save contract's "grapevine use but no usable rate"
     /// check reads this.
-    var hasUsableViticulturalRate: Bool { viticultural.contains { $0.hasUsableRate } }
+    nonisolated var hasUsableViticulturalRate: Bool { viticultural.contains { $0.hasUsableRate } }
 }

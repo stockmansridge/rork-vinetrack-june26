@@ -678,12 +678,12 @@ nonisolated enum ChemicalManualEntry {
 extension Array where Element == ChemicalRegisteredUse {
     /// Uses that state a real crop+target registration, excluding the carrier
     /// that only holds product-level label rates.
-    var statedUses: [ChemicalRegisteredUse] {
+    nonisolated var statedUses: [ChemicalRegisteredUse] {
         filter { !ChemicalManualEntry.isProductRateCarrier($0) }
     }
 
     /// Label rates recorded against the product rather than a specific use.
-    var productLevelRates: [ChemicalLabelRate] {
+    nonisolated var productLevelRates: [ChemicalLabelRate] {
         filter(ChemicalManualEntry.isProductRateCarrier).flatMap(\.rates)
     }
 }

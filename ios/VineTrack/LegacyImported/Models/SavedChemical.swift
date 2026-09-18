@@ -430,7 +430,7 @@ extension SavedChemical {
     /// The fallback is explicitly `.needsMatch` and sourced `.legacyRecord`, so
     /// it can populate the audit and pre-fill the verification screen while
     /// being structurally incapable of passing as verified.
-    var resolvedIntelligence: ChemicalIntelligence {
+    nonisolated var resolvedIntelligence: ChemicalIntelligence {
         if let chemicalIntelligence, !chemicalIntelligence.isEmpty {
             return chemicalIntelligence
         }
@@ -445,7 +445,7 @@ extension SavedChemical {
     }
 
     /// The trust level to DISPLAY for this chemical.
-    var verificationStatus: ChemicalVerificationStatus {
+    nonisolated var verificationStatus: ChemicalVerificationStatus {
         resolvedIntelligence.resolvedVerificationStatus
     }
 
@@ -485,7 +485,7 @@ extension SavedChemical {
     /// for old clients while never being the source of a calculation.
     /// Returns the existing values untouched when there is no intelligence, so
     /// a legacy chemical is never rewritten by the mere act of saving it.
-    var legacyProjection: (activeIngredient: String, chemicalGroup: String) {
+    nonisolated var legacyProjection: (activeIngredient: String, chemicalGroup: String) {
         guard let intel = chemicalIntelligence, !intel.isEmpty else {
             return (activeIngredient, chemicalGroup)
         }

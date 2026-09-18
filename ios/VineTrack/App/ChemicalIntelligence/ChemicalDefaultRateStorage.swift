@@ -286,7 +286,7 @@ extension StoredChemicalDefaultRate {
     ///   - labelVersion: provenance only; never part of the identity.
     ///   - source: `operator` once a human has confirmed. A recommendation that
     ///     has not been confirmed must not be persisted.
-    static func confirmed(
+    nonisolated static func confirmed(
         option: ChemicalDefaultRateOption,
         basis: ChemicalDefaultRateBasis,
         grapevineUses: [ChemicalRegisteredUse],
@@ -357,7 +357,7 @@ extension ChemicalDefaultRate {
     /// Server-minted ids only. A rate the server never identified contributes
     /// nothing rather than a device-minted substitute, because a locally
     /// invented identity would not match on any other client.
-    static func rateIDs(
+    nonisolated static func rateIDs(
         for option: ChemicalDefaultRateOption,
         from grapevineUses: [ChemicalRegisteredUse]
     ) -> [String] {
@@ -376,7 +376,7 @@ extension ChemicalDefaultRate {
 
 private extension Date {
     /// ISO-8601 with fractional seconds, matching the server's provenance format.
-    var iso8601DefaultRateTimestamp: String {
+    nonisolated var iso8601DefaultRateTimestamp: String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.string(from: self)

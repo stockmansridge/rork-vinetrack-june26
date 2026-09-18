@@ -242,7 +242,6 @@ enum ChemicalLabelIdentityOCR {
 @MainActor
 struct ChemicalSearchV2View: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(MigratedDataStore.self) private var store
 
     @State private var query: String = ""
     @State private var results: [MasterChemicalV2] = []
@@ -382,7 +381,11 @@ struct ChemicalSearchV2View: View {
         print("[ChemicalSearchV2] fallback_invoked=true type=label_lookup")
         Task {
             do {
-                let lookup = try await externalService.lookupStructured(trimmed, "AU", nil)
+                let lookup = try await externalService.lookupStructured(
+                    productName: trimmed,
+                    country: "AU",
+                    registrationNumber: nil
+                )
                 let intel = lookup.intelligence()
                 let viticultureRates = ViticultureRates.fromRegisteredUses(intel.registeredUses)
                 let rates = viticultureRates.all
@@ -502,7 +505,7 @@ private struct ChemicalSearchV2ReviewView: View {
                         }
                     }
                 }
-                Section("Operational Default Rate *") {
+                Section {
                     let rates = draft.viticultureRates.all
                     if rates.count > 1 {
                         Picker("Registered rate", selection: $draft.selectedRegisteredRateID) {
@@ -526,7 +529,11 @@ private struct ChemicalSearchV2ReviewView: View {
                     Picker("Product unit *", selection: $draft.unit) {
                         ForEach(ChemicalUnit.allCases, id: \.rawValue) { Text($0.rawValue).tag($0) }
                     }
-                } footer: { Text("Editable vineyard-level default. The Master Catalogue record is never changed.") }
+                } header: {
+                    Text("Operational Default Rate *")
+                } footer: {
+                    Text("Editable vineyard-level default. The Master Catalogue record is never changed.")
+                }
                 if let notice { Text(notice).foregroundStyle(.orange) }
                 ForEach(evaluation.violations, id: \.code) { Text($0.message).font(.caption).foregroundStyle(.red) }
             }
@@ -534,13 +541,13 @@ private struct ChemicalSearchV2ReviewView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save", action: save).disabled(!evaluation.canSave || isSaving) }
+                ToolbarItem(placement: .confirmationAction) { Button("Save", action: save).disabled(!evaluation.isSatisfied || isSaving) }
             }
         }
     }
 
     private func save() {
-        guard !isSaving, evaluation.canSave, let rate = parsedRate else { return }
+        guard !isSaving, evaluation.isSatisfied, let rate = parsedRate else { return }
         if let existing = ChemicalSearchV2Duplicate.existing(
             master: draft.master, intelligence: draft.intelligence, name: draft.productName,
             in: store.savedChemicals

@@ -2,7 +2,7 @@ import Foundation
 import Supabase
 
 final class SupabaseClientProvider: Sendable {
-    static let shared = SupabaseClientProvider()
+    nonisolated static let shared = SupabaseClientProvider()
 
     let client: SupabaseClient
     let supabaseURL: URL

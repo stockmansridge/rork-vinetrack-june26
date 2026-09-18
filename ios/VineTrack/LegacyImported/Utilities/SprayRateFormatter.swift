@@ -6,7 +6,7 @@ import Foundation
 /// whole-number rates still render cleanly ("200", not "200.000").
 enum SprayRateFormatter {
     /// "0.15" for 0.15, "2" for 2.0, "1.5" for 1.5, "0.125" for 0.125.
-    static func format(_ value: Double) -> String {
+    nonisolated static func format(_ value: Double) -> String {
         var formatted = String(format: "%.3f", value)
         while formatted.hasSuffix("0") {
             formatted.removeLast()

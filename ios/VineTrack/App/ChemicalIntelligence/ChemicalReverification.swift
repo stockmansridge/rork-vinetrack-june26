@@ -330,5 +330,5 @@ nonisolated enum ChemicalReverification {
 }
 
 private extension String {
-    var nilIfEmpty: String? { isEmpty ? nil : self }
+    nonisolated var nilIfEmpty: String? { isEmpty ? nil : self }
 }

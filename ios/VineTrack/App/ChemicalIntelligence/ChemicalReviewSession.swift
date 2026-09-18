@@ -1437,7 +1437,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
 
 extension String {
     /// The string, or `nil` when it is blank.
-    var trimmedNonEmpty: String? {
+    nonisolated var trimmedNonEmpty: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
@@ -1451,7 +1451,7 @@ extension ProductCategory {
     /// English ("Fungicide") and registers vary ("fungicides"). Matching only
     /// the exact raw value is why a product the resolver plainly categorised
     /// still showed as Uncategorised.
-    static func parse(_ raw: String) -> ProductCategory? {
+    nonisolated static func parse(_ raw: String) -> ProductCategory? {
         let cleaned = raw
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -1473,7 +1473,7 @@ extension ProductCategory {
 private extension Date {
     /// ISO-8601 with fractional seconds — the same provenance format a
     /// canonical default's `selected_at` is written in.
-    var iso8601ManualDefaultTimestamp: String {
+    nonisolated var iso8601ManualDefaultTimestamp: String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.string(from: self)

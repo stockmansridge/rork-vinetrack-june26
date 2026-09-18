@@ -90,17 +90,12 @@ nonisolated enum ChemicalDataSourceKind: String, Codable, Sendable, CaseIterable
 /// timestamp is never worth failing a chemical record over, so this decodes
 /// both forms and degrades to `nil` instead of throwing.
 nonisolated enum ChemicalWireDate {
-    nonisolated static let fractionalFormatter: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
-
-    nonisolated static let plainFormatter = ISO8601DateFormatter()
-
     /// Parses ISO-8601 with or without fractional seconds.
     static func parse(_ raw: String) -> Date? {
-        fractionalFormatter.date(from: raw) ?? plainFormatter.date(from: raw)
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractionalFormatter.date(from: raw) { return date }
+        return ISO8601DateFormatter().date(from: raw)
     }
 
     /// Decodes a timestamp key that may be an ISO-8601 string, a native date
@@ -169,10 +164,10 @@ nonisolated struct ChemicalDataSource: Codable, Sendable, Hashable, Identifiable
 
 extension Array where Element == ChemicalDataSource {
     /// Whether any cited source can support a Verified claim.
-    var containsAuthoritative: Bool { contains { $0.kind.isAuthoritative } }
+    nonisolated var containsAuthoritative: Bool { contains { $0.kind.isAuthoritative } }
 
     /// The strongest source cited.
-    var strongest: ChemicalDataSource? {
+    nonisolated var strongest: ChemicalDataSource? {
         self.max { $0.kind.precedence < $1.kind.precedence }
     }
 }
