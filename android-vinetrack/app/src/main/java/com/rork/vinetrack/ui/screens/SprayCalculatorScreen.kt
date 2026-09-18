@@ -32,7 +32,6 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Gesture
-import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LocalFlorist
 import androidx.compose.material.icons.filled.LowPriority
@@ -424,7 +423,6 @@ fun SprayCalculatorScreen(
     var sprayName by remember { mutableStateOf("") }
     var operationType by remember { mutableStateOf(sprayOperationTypes.first()) }
     val selectedPaddockIds = remember { mutableStateListOf<String>() }
-    var showBlockPicker by remember { mutableStateOf(false) }
 
     // Growth stage (informational selection, matching iOS — not persisted).
     var growthExpanded by remember { mutableStateOf(false) }
@@ -1320,28 +1318,22 @@ fun SprayCalculatorScreen(
                     doneAccent = VineColors.Olive,
                     onToggle = { toggleStep(SprayGuidedStep.BLOCKS) },
                 ) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    BlocksSummaryCard(
-                        selectedPaddocks = selectedPaddocks,
-                        anyConfigured = state.paddocks.isNotEmpty(),
-                        totalArea = totalArea,
-                        totalRows = totalRows,
-                        onClick = { showBlockPicker = true },
-                    )
-                    if (selectedPaddocks.isNotEmpty()) {
-                        VineyardCard {
-                            Row(Modifier.fillMaxWidth()) {
-                                // Canonical hectares converted to the vineyard's
-                                // unit; the caption follows that unit instead of
-                                // being hardcoded to "Hectares".
-                                val areaFmt = LocalRegionFormatter.current
-                                StatCell("${selectedPaddocks.size}", if (selectedPaddocks.size == 1) "Block" else "Blocks", Modifier.weight(1f))
-                                StatCell(fmtNum(areaFmt.areaValue(totalArea), 2), areaFmt.areaUnitName, Modifier.weight(1f))
-                                StatCell("$totalRows", "Rows", Modifier.weight(1f))
-                            }
-                        }
-                    }
-                }
+                InlineBlockSelector(
+                    paddocks = state.paddocks,
+                    selectedIds = selectedPaddockIds.toSet(),
+                    selectedPaddocks = selectedPaddocks,
+                    totalArea = totalArea,
+                    totalRows = totalRows,
+                    onToggle = { id ->
+                        if (selectedPaddockIds.contains(id)) selectedPaddockIds.remove(id) else selectedPaddockIds.add(id)
+                        result = null
+                    },
+                    onSelectAll = { all ->
+                        selectedPaddockIds.clear()
+                        if (all) selectedPaddockIds.addAll(state.paddocks.map { it.id })
+                        result = null
+                    },
+                )
                 }
             }
 
@@ -1478,7 +1470,7 @@ fun SprayCalculatorScreen(
                     guidedFlow.blocker(SprayGuidedStep.TARGET)?.let { blocker ->
                         GuidedBlockerBanner(
                             blocker = blocker,
-                            onFix = { showBlockPicker = true },
+                            onFix = { openedStepRaw = SprayGuidedStep.BLOCKS.raw },
                         )
                     }
                 }
@@ -1557,6 +1549,7 @@ fun SprayCalculatorScreen(
                     }
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Spray Unit", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                     EquipmentSummaryCard(
                         equipmentName = selectedEquipment?.displayName,
                         tankCapacity = selectedEquipment?.tankCapacityLitres,
@@ -1969,7 +1962,7 @@ fun SprayCalculatorScreen(
                 guidedFlow.blocker(SprayGuidedStep.CARRIER)?.let { blocker ->
                     GuidedBlockerBanner(
                         blocker = blocker,
-                        onFix = { showBlockPicker = true },
+                        onFix = { openedStepRaw = SprayGuidedStep.BLOCKS.raw },
                     )
                 }
                 }
@@ -2055,7 +2048,7 @@ fun SprayCalculatorScreen(
                 guidedFlow.blocker(SprayGuidedStep.PRODUCTS)?.let { blocker ->
                     GuidedBlockerBanner(
                         blocker = blocker,
-                        onFix = { showBlockPicker = true },
+                        onFix = { openedStepRaw = SprayGuidedStep.BLOCKS.raw },
                     )
                 }
 
@@ -2390,23 +2383,6 @@ fun SprayCalculatorScreen(
         }
     }
 
-    if (showBlockPicker) {
-        BlockPickerSheet(
-            paddocks = state.paddocks,
-            selectedIds = selectedPaddockIds.toSet(),
-            onToggle = { id ->
-                if (selectedPaddockIds.contains(id)) selectedPaddockIds.remove(id) else selectedPaddockIds.add(id)
-                result = null
-            },
-            onSelectAll = { all ->
-                selectedPaddockIds.clear()
-                if (all) selectedPaddockIds.addAll(state.paddocks.map { it.id })
-                result = null
-            },
-            onDismiss = { showBlockPicker = false },
-        )
-    }
-
     if (showExistingChemicalPicker) {
         ExistingChemicalPickerSheet(
             chemicals = state.savedChemicals,
@@ -2687,167 +2663,93 @@ private fun ExistingChemicalPickerSheet(
 
 // ── Blocks ────────────────────────────────────────────────────────────────────
 
-/** Contiguous row ranges, e.g. [1,2,3,5,6] → "Rows 1–3, 5–6" (iOS parity). */
-private fun rowRangeSummary(paddocks: List<Paddock>): String {
-    val nums = paddocks.flatMap { it.rows.orEmpty().map { r -> r.number } }.toSortedSet().toList()
-    if (nums.isEmpty()) return "Rows not set"
-    val ranges = mutableListOf<Pair<Int, Int>>()
-    var start = nums.first()
-    var prev = nums.first()
-    for (n in nums.drop(1)) {
-        if (n == prev + 1) { prev = n; continue }
-        ranges.add(start to prev)
-        start = n
-        prev = n
-    }
-    ranges.add(start to prev)
-    if (ranges.size == 1) {
-        val (lo, hi) = ranges[0]
-        return if (lo == hi) "Row $lo" else "Rows $lo\u2013$hi"
-    }
-    val joined = "Rows " + ranges.joinToString(", ") { (lo, hi) -> if (lo == hi) "$lo" else "$lo\u2013$hi" }
-    return if (joined.length <= 48) joined else "Multiple row ranges"
-}
-
 @Composable
-private fun BlocksSummaryCard(
-    selectedPaddocks: List<Paddock>,
-    anyConfigured: Boolean,
-    totalArea: Double,
-    totalRows: Int,
-    onClick: () -> Unit,
-) {
-    val vine = LocalVineColors.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(vine.cardBackground)
-            .clickable { onClick() }
-            .padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(VineColors.LeafGreen.copy(alpha = 0.15f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(Icons.Filled.GridView, contentDescription = null, tint = VineColors.LeafGreen, modifier = Modifier.size(22.dp))
-        }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            if (selectedPaddocks.isEmpty()) {
-                Text("No blocks selected", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                Text(
-                    if (anyConfigured) "Tap to choose one or more blocks" else "No blocks configured",
-                    fontSize = 12.sp,
-                    color = VineColors.Orange,
-                )
-            } else {
-                val n = selectedPaddocks.size
-                Text(
-                    "$n block${if (n == 1) "" else "s"} · ${LocalRegionFormatter.current.formatArea(totalArea)} · $totalRows row${if (totalRows == 1) "" else "s"} · ${rowRangeSummary(selectedPaddocks)}",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = vine.textPrimary,
-                    maxLines = 2,
-                )
-                Text(
-                    selectedPaddocks.joinToString(", ") { it.name },
-                    fontSize = 12.sp,
-                    color = vine.textSecondary,
-                    maxLines = 2,
-                )
-            }
-        }
-        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(20.dp))
-    }
-}
-
-/** Multi-select block picker, mirroring the iOS `SprayPaddockPickerSheet`. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun BlockPickerSheet(
+private fun InlineBlockSelector(
     paddocks: List<Paddock>,
     selectedIds: Set<String>,
+    selectedPaddocks: List<Paddock>,
+    totalArea: Double,
+    totalRows: Int,
     onToggle: (String) -> Unit,
     onSelectAll: (Boolean) -> Unit,
-    onDismiss: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var search by remember { mutableStateOf("") }
+    val areaFmt = LocalRegionFormatter.current
+    var search by rememberSaveable { mutableStateOf("") }
     val sorted = remember(paddocks) { paddocks.sortedBy { it.name.lowercase() } }
     val filtered = remember(sorted, search) {
         if (search.isBlank()) sorted else sorted.filter { it.name.contains(search.trim(), ignoreCase = true) }
     }
     val allSelected = paddocks.isNotEmpty() && selectedIds.size == paddocks.size
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        LazyColumn(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-            contentPadding = PaddingValues(bottom = 32.dp),
-        ) {
-            item {
-                Text("Select Blocks", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = search,
-                    onValueChange = { search = it },
-                    placeholder = { Text("Search blocks") },
-                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Select blocks", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+        if (paddocks.size >= 6) {
+            OutlinedTextField(
+                value = search,
+                onValueChange = { search = it },
+                placeholder = { Text("Search blocks") },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (paddocks.isEmpty()) {
+            Text("No blocks configured", fontSize = 13.sp, color = VineColors.Orange)
+        } else {
+            VineyardCard {
+                BlockSelectionRow(
+                    isSelected = allSelected,
+                    title = if (allSelected) "Deselect All" else "Select All",
+                    detail = "${selectedIds.size} of ${paddocks.size}",
+                    onClick = { onSelectAll(!allSelected) },
                 )
-                Spacer(Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(vine.cardBackground)
-                        .clickable { onSelectAll(!allSelected) }
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Icon(
-                        if (allSelected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
-                        contentDescription = null,
-                        tint = if (allSelected) VineColors.Olive else vine.textSecondary,
-                        modifier = Modifier.size(20.dp),
+                filtered.forEach { paddock ->
+                    HorizontalDivider(color = vine.cardBorder)
+                    BlockSelectionRow(
+                        isSelected = selectedIds.contains(paddock.id),
+                        title = paddock.name,
+                        detail = paddockMetaLine(paddock, areaFmt),
+                        onClick = { onToggle(paddock.id) },
                     )
-                    Text(if (allSelected) "Deselect All" else "Select All", fontSize = 14.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
-                    Text("${selectedIds.size} of ${paddocks.size}", fontSize = 12.sp, color = vine.textSecondary)
                 }
-                Spacer(Modifier.height(10.dp))
             }
-            items(filtered, key = { it.id }) { paddock ->
-                val isSelected = selectedIds.contains(paddock.id)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(vine.cardBackground)
-                        .clickable { onToggle(paddock.id) }
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Icon(
-                        if (isSelected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
-                        contentDescription = null,
-                        tint = if (isSelected) VineColors.Olive else vine.textSecondary,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(paddock.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                        Text(paddockMetaLine(paddock, LocalRegionFormatter.current), fontSize = 12.sp, color = vine.textSecondary)
-                    }
+        }
+        if (selectedPaddocks.isNotEmpty()) {
+            Text("Selected", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
+            VineyardCard {
+                Row(Modifier.fillMaxWidth()) {
+                    StatCell("${selectedPaddocks.size}", if (selectedPaddocks.size == 1) "Block" else "Blocks", Modifier.weight(1f))
+                    StatCell(fmtNum(areaFmt.areaValue(totalArea), 2), areaFmt.areaUnitName, Modifier.weight(1f))
+                    StatCell("$totalRows", "Rows", Modifier.weight(1f))
                 }
-                Spacer(Modifier.height(8.dp))
             }
+        }
+    }
+}
+
+@Composable
+private fun BlockSelectionRow(
+    isSelected: Boolean,
+    title: String,
+    detail: String,
+    onClick: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(
+            if (isSelected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
+            contentDescription = null,
+            tint = if (isSelected) VineColors.Olive else vine.textSecondary,
+            modifier = Modifier.size(20.dp),
+        )
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+            Text(detail, fontSize = 12.sp, color = vine.textSecondary)
         }
     }
 }
@@ -3130,6 +3032,67 @@ private fun EquipmentSummaryCard(
             tint = vine.textSecondary,
             modifier = Modifier.size(20.dp),
         )
+    }
+}
+
+@Composable
+private fun TractorSummaryCard(
+    tractorName: String,
+    isSet: Boolean,
+    onClick: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(vine.cardBackground)
+            .clickable { onClick() }
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(VineColors.Olive.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Filled.Agriculture, contentDescription = null, tint = VineColors.Olive, modifier = Modifier.size(20.dp))
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(tractorName, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, maxLines = 1)
+            if (!isSet) Text("Tap to choose tractor", fontSize = 12.sp, color = vine.textSecondary)
+        }
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = vine.textSecondary,
+            modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
+@Composable
+private fun SelectorOptionRow(
+    label: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(
+            if (isSelected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
+            contentDescription = null,
+            tint = if (isSelected) VineColors.Olive else vine.textSecondary,
+            modifier = Modifier.size(20.dp),
+        )
+        Text(label, fontSize = 14.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
     }
 }
 
@@ -3743,7 +3706,6 @@ private fun LegacyRatePickerRow(
 
 // ── Equipment setup ──────────────────────────────────────────────────────────
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EquipmentPathSetupContent(
     tractors: List<SprayJobTemplateRepository.SprayTractor>,
@@ -3756,22 +3718,37 @@ private fun EquipmentPathSetupContent(
     onConfirm: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    var tractorMenu by remember { mutableStateOf(false) }
+    var tractorExpanded by remember { mutableStateOf(false) }
     val selectedTractor = tractors.firstOrNull { it.id == tractorId }
 
     Text("Tractor", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-    ExposedDropdownMenuBox(expanded = tractorMenu, onExpandedChange = { tractorMenu = it }) {
-        OutlinedTextField(
-            value = selectedTractor?.displayName ?: if (tractorId == null) "Not Set" else "Unavailable tractor",
-            onValueChange = {}, readOnly = true, label = { Text("Tractor (optional)") },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(tractorMenu) },
-            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
-        )
-        ExposedDropdownMenu(expanded = tractorMenu, onDismissRequest = { tractorMenu = false }) {
-            DropdownMenuItem(text = { Text("Not Set") }, onClick = { onTractorChange(null); tractorMenu = false })
-            tractors.forEach { tractor ->
-                DropdownMenuItem(text = { Text(tractor.displayName) }, onClick = { onTractorChange(tractor.id); tractorMenu = false })
+    TractorSummaryCard(
+        tractorName = selectedTractor?.displayName ?: if (tractorId == null) "Not Set" else "Unavailable tractor",
+        isSet = selectedTractor != null,
+        onClick = { tractorExpanded = !tractorExpanded },
+    )
+    if (tractorExpanded) {
+        VineyardCard {
+            tractors.forEachIndexed { index, tractor ->
+                if (index > 0) HorizontalDivider(color = vine.cardBorder)
+                SelectorOptionRow(
+                    label = tractor.displayName,
+                    isSelected = tractor.id == tractorId,
+                    onClick = {
+                        onTractorChange(tractor.id)
+                        tractorExpanded = false
+                    },
+                )
             }
+            if (tractors.isNotEmpty()) HorizontalDivider(color = vine.cardBorder)
+            SelectorOptionRow(
+                label = "Not Set",
+                isSelected = tractorId == null,
+                onClick = {
+                    onTractorChange(null)
+                    tractorExpanded = false
+                },
+            )
         }
     }
     Text(
