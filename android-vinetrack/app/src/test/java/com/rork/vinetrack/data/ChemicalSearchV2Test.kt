@@ -7,6 +7,8 @@ import com.rork.vinetrack.data.chemical.ChemicalSaveContract
 import com.rork.vinetrack.data.chemical.ChemicalSearchV2Rank
 import com.rork.vinetrack.data.chemical.ChemicalSearchV2RequestGate
 import com.rork.vinetrack.data.chemical.MasterChemicalV2Repository
+import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
+import com.rork.vinetrack.data.chemical.ViticultureRates
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -33,6 +35,26 @@ class ChemicalSearchV2Test {
 
     @Test fun photoApvmaIdentityComesBeforeExternalFallback() {
         assertEquals("62764", ChemicalLabelIdentityOCR.apvmaNumber("APVMA Product No. 62764"))
+    }
+
+    @Test fun viticultureRatesKeepBothBasesAndSeparateOptions() {
+        val rates = ViticultureRates.fromRegisteredUses(listOf(
+            ChemicalRegisteredUse(crop = "ORCHARDS, PLANTATIONS AND VINEYARDS", rates = listOf(
+                ChemicalLabelRate(basis = ChemicalLabelRateBasis.RANGE_PER_HECTARE, minValue = 2.4, maxValue = 3.2, unit = "L"),
+                ChemicalLabelRate(basis = ChemicalLabelRateBasis.RANGE_PER_100_LITRES, minValue = 240.0, maxValue = 320.0, unit = "mL"),
+            )),
+            ChemicalRegisteredUse(crop = "Grapes", rates = listOf(
+                ChemicalLabelRate(basis = ChemicalLabelRateBasis.PER_100_LITRES, value = 40.0, unit = "mL"),
+            )),
+        ))
+        assertEquals(1, rates.perHectare.size)
+        assertEquals(2, rates.per100Litres.size)
+    }
+
+    @Test fun punctuationNormalisationFindsSpraySeed() {
+        val name = "SPRAY.SEED 250 HERBICIDE"
+        assertEquals(2, ChemicalSearchV2Rank.rank("Spray Seed 250", name, emptyList(), "46516", emptyList(), null))
+        assertEquals(2, ChemicalSearchV2Rank.rank("Spray.Seed 250", name, emptyList(), "46516", emptyList(), null))
     }
 
     @Test fun normalMasterSearchDoesNotInvokeAI() {

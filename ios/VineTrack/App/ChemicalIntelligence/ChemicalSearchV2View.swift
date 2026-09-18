@@ -3,6 +3,26 @@ import PhotosUI
 import Vision
 import Supabase
 
+nonisolated struct ViticultureRates: Codable, Sendable, Hashable {
+    let perHectare: [ChemicalLabelRate]
+    let per100Litres: [ChemicalLabelRate]
+
+    enum CodingKeys: String, CodingKey {
+        case perHectare = "per_hectare"
+        case per100Litres = "per_100_litres"
+    }
+
+    var all: [ChemicalLabelRate] { perHectare + per100Litres }
+
+    static func fromRegisteredUses(_ uses: [ChemicalRegisteredUse]) -> ViticultureRates {
+        let rates = uses.filter(\.isViticultural).flatMap(\.rates)
+        return ViticultureRates(
+            perHectare: rates.filter { $0.basis == .perHectare || $0.basis == .rangePerHectare },
+            per100Litres: rates.filter { $0.basis == .per100Litres || $0.basis == .rangePer100Litres }
+        )
+    }
+}
+
 nonisolated struct MasterChemicalV2: Codable, Identifiable, Sendable, Hashable {
     let id: UUID
     let registrationCountry: String
@@ -17,6 +37,8 @@ nonisolated struct MasterChemicalV2: Codable, Identifiable, Sendable, Hashable {
     let activityGroups: [String]
     let activityGroupScheme: String?
     let registeredUses: [ChemicalRegisteredUse]
+    let viticultureRates: ViticultureRates
+    let hasViticultureEvidence: Bool
     let labelRateBases: [String]
     let labelReference: String?
     let labelVersion: String?
@@ -37,7 +59,8 @@ nonisolated struct MasterChemicalV2: Codable, Identifiable, Sendable, Hashable {
         case id, registrant, commonNames = "common_names", productCategory = "product_category"
         case formType = "form_type", activeIngredients = "active_ingredients"
         case activityGroups = "activity_groups", activityGroupScheme = "activity_group_scheme"
-        case registeredUses = "registered_uses", labelRateBases = "label_rate_bases"
+        case registeredUses = "registered_uses", viticultureRates = "viticulture_rates"
+        case hasViticultureEvidence = "has_viticulture_evidence", labelRateBases = "label_rate_bases"
         case labelReference = "label_reference", labelVersion = "label_version"
         case verificationStatus = "verification_status", verificationSources = "verification_sources"
         case verificationConflicts = "verification_conflicts"
@@ -81,9 +104,7 @@ nonisolated struct MasterChemicalV2: Codable, Identifiable, Sendable, Hashable {
         )
     }
 
-    var grapevineRates: [ChemicalLabelRate] {
-        registeredUses.filter(\.isViticultural).flatMap(\.rates)
-    }
+    var grapevineRates: [ChemicalLabelRate] { viticultureRates.all }
 }
 
 nonisolated struct ChemicalSearchV2Diagnostics: Sendable, Hashable {
@@ -247,6 +268,7 @@ struct ChemicalSearchV2View: View {
         var productName: String
         var unit: ChemicalUnit
         var rate: ChemicalManualRateDraft
+        var viticultureRates: ViticultureRates
         var selectedRegisteredRateID: String?
     }
 
@@ -348,7 +370,7 @@ struct ChemicalSearchV2View: View {
         review = ReviewDraft(
             source: "VineTrack Master", master: master, intelligence: master.intelligence,
             formType: master.formType, productName: master.registeredProductName,
-            unit: unit(for: initial.unit), rate: initial,
+            unit: unit(for: initial.unit), rate: initial, viticultureRates: master.viticultureRates,
             selectedRegisteredRateID: rates.count == 1 ? rates[0].id : nil
         )
     }
@@ -362,11 +384,13 @@ struct ChemicalSearchV2View: View {
             do {
                 let lookup = try await externalService.lookupStructured(trimmed, "AU", nil)
                 let intel = lookup.intelligence()
-                let rates = intel.registeredUses.filter(\.isViticultural).flatMap(\.rates)
+                let viticultureRates = ViticultureRates.fromRegisteredUses(intel.registeredUses)
+                let rates = viticultureRates.all
                 let initial = rates.count == 1 ? draftRate(rates[0]) : ChemicalManualRateDraft()
                 review = ReviewDraft(
                     source: "Label lookup", master: nil, intelligence: intel, formType: lookup.formType,
                     productName: lookup.productName ?? trimmed, unit: unit(for: initial.unit), rate: initial,
+                    viticultureRates: viticultureRates,
                     selectedRegisteredRateID: rates.count == 1 ? rates[0].id : nil
                 )
                 diagnostics.externalLookupSucceeded = true
@@ -458,8 +482,28 @@ private struct ChemicalSearchV2ReviewView: View {
                     LabeledContent("Active ingredients", value: draft.intelligence.activeIngredients.map(\.name).joined(separator: ", ").ifEmpty("—"))
                     if !draft.intelligence.productCategory.isEmpty { LabeledContent("Category", value: draft.intelligence.productCategory.capitalized) }
                 }
+                Section("Registered vineyard rates") {
+                    if draft.viticultureRates.all.isEmpty {
+                        Text("No registered vineyard rate is currently recorded in VineTrack.")
+                            .foregroundStyle(.secondary)
+                    }
+                    if !draft.viticultureRates.perHectare.isEmpty {
+                        LabeledContent("Per hectare") {
+                            VStack(alignment: .trailing) {
+                                ForEach(draft.viticultureRates.perHectare) { Text($0.displayRate) }
+                            }
+                        }
+                    }
+                    if !draft.viticultureRates.per100Litres.isEmpty {
+                        LabeledContent("Per 100 L") {
+                            VStack(alignment: .trailing) {
+                                ForEach(draft.viticultureRates.per100Litres) { Text($0.displayRate) }
+                            }
+                        }
+                    }
+                }
                 Section("Operational Default Rate *") {
-                    let rates = draft.intelligence.registeredUses.filter(\.isViticultural).flatMap(\.rates)
+                    let rates = draft.viticultureRates.all
                     if rates.count > 1 {
                         Picker("Registered rate", selection: $draft.selectedRegisteredRateID) {
                             Text("Enter/edit manually").tag(String?.none)
@@ -483,9 +527,6 @@ private struct ChemicalSearchV2ReviewView: View {
                         ForEach(ChemicalUnit.allCases, id: \.rawValue) { Text($0.rawValue).tag($0) }
                     }
                 } footer: { Text("Editable vineyard-level default. The Master Catalogue record is never changed.") }
-                if !draft.intelligence.registeredUses.isEmpty {
-                    Section("Registered uses (Optional)") { Text("\(draft.intelligence.registeredUses.count) structured label use(s) will be preserved.") }
-                }
                 if let notice { Text(notice).foregroundStyle(.orange) }
                 ForEach(evaluation.violations, id: \.code) { Text($0.message).font(.caption).foregroundStyle(.red) }
             }

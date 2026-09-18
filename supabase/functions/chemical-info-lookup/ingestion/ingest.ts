@@ -48,7 +48,7 @@ import {
   CANDIDATE_EVIDENCE_MAX_AGE_MS,
   materialChanges,
 } from "./refresh.ts";
-import { projectGrapevineUses, selectLabelReferences } from "../grapevine_label.ts";
+import { deriveViticultureRates, projectGrapevineUses, selectLabelReferences } from "../grapevine_label.ts";
 
 // ---------------------------------------------------------------------------
 // Discovery entry point (jurisdiction fail-closed)
@@ -1049,6 +1049,7 @@ export function buildCandidatePayload(
     activity_groups: structured?.activity_groups ?? [],
     activity_group_scheme: structured?.activity_group_scheme ?? null,
     registered_uses: structured?.registered_uses ?? [],
+    viticulture_rates: deriveViticultureRates(structured?.registered_uses ?? []),
     label_rate_bases: structured?.label_rate_bases ?? [],
     label_reference: regBlock?.label_reference ?? null,
     label_version: regBlock?.label_version ?? null,
@@ -1109,6 +1110,7 @@ function contentPatch(payload: CandidateRowPayload, existing: MasterRow): Record
   // Never blank richer data with an emptier lookup.
   if (payload.registered_uses.length) {
     patch.registered_uses = payload.registered_uses;
+    patch.viticulture_rates = payload.viticulture_rates;
     patch.label_rate_bases = payload.label_rate_bases;
   }
   if (payload.label_reference) patch.label_reference = payload.label_reference;

@@ -14,10 +14,65 @@ values
    'System-Admin-only direct VineTrack Master Chemical Catalogue search.', false)
 on conflict (key) do nothing;
 
--- Search is intentionally separate from review_status. Approved rows are
--- searchable, plus the narrow AWRI Dog Book cohort whose identity and facts
--- were re-established from the live APVMA register by the no-AI seed pipeline.
-create or replace function public.search_master_chemicals_v2(
+-- V2 keeps complete registered_uses evidence but serves this small vineyard projection.
+alter table public.master_chemicals
+  add column if not exists viticulture_rates jsonb not null default
+    '{"per_hectare":[],"per_100_litres":[]}'::jsonb;
+
+comment on column public.master_chemicals.viticulture_rates is
+  'Deterministic registered vineyard label rates grouped by basis; separate from grower-owned saved_chemicals.default_rates.';
+
+alter table public.master_chemicals drop constraint if exists master_chemicals_viticulture_rates_check;
+alter table public.master_chemicals add constraint master_chemicals_viticulture_rates_check check (
+  jsonb_typeof(viticulture_rates) = 'object'
+  and jsonb_typeof(coalesce(viticulture_rates->'per_hectare', '[]'::jsonb)) = 'array'
+  and jsonb_typeof(coalesce(viticulture_rates->'per_100_litres', '[]'::jsonb)) = 'array'
+);
+
+-- Deterministically project existing label evidence. Each rate object stays
+-- separate; no min/max is calculated across directions and no basis is converted.
+update public.master_chemicals m
+set viticulture_rates = projected.value
+from lateral (
+  select jsonb_build_object(
+    'per_hectare', coalesce(jsonb_agg(rate.value order by use_row.ordinality, rate.ordinality)
+      filter (where rate.value->>'basis' in ('per_hectare','range_per_hectare')), '[]'::jsonb),
+    'per_100_litres', coalesce(jsonb_agg(rate.value order by use_row.ordinality, rate.ordinality)
+      filter (where rate.value->>'basis' in ('per_100_litres','range_per_100_litres')), '[]'::jsonb)
+  ) as value
+  from jsonb_array_elements(coalesce(m.registered_uses, '[]'::jsonb)) with ordinality use_row(value, ordinality)
+  cross join lateral jsonb_array_elements(coalesce(use_row.value->'rates', '[]'::jsonb)) with ordinality rate(value, ordinality)
+  where lower(coalesce(use_row.value->>'crop', '')) ~ '(^|[^a-z])(vineyards?|grapevines?|grapes?)([^a-z]|$)'
+) projected
+where projected.value <> '{"per_hectare":[],"per_100_litres":[]}'::jsonb
+  and m.viticulture_rates = '{"per_hectare":[],"per_100_litres":[]}'::jsonb;
+
+-- AWRI established identity/vineyard evidence, but its register-only seed never
+-- fetched a Directions-for-Use table. Correct the verified 46516 regression;
+-- registered_uses remains untouched.
+update public.master_chemicals
+set viticulture_rates = '{"per_hectare":[{"label":"","basis":"range_per_hectare","min_value":2.4,"max_value":3.2,"unit":"L","raw_text":"2.4–3.2 L/ha"}],"per_100_litres":[{"label":"","basis":"range_per_100_litres","min_value":240,"max_value":320,"unit":"mL","raw_text":"240–320 mL/100 L"}]}'::jsonb
+where registration_country = 'AU' and registration_scheme = 'apvma'
+  and registration_number = '46516';
+
+-- The existing canonical trigger runs first; this additive trigger increments
+-- only when viticulture_rates is the sole canonical change.
+create or replace function public.master_chemicals_v2_rate_revision()
+returns trigger language plpgsql as $$
+begin
+  if new.viticulture_rates is distinct from old.viticulture_rates
+     and new.catalogue_version = old.catalogue_version then
+    new.catalogue_version := old.catalogue_version + 1;
+  end if;
+  return new;
+end$$;
+drop trigger if exists zz_master_chemicals_v2_rate_revision on public.master_chemicals;
+create trigger zz_master_chemicals_v2_rate_revision before update on public.master_chemicals
+for each row execute function public.master_chemicals_v2_rate_revision();
+
+-- Search is intentionally separate from review_status and viticulture-only.
+drop function if exists public.search_master_chemicals_v2(text, integer);
+create function public.search_master_chemicals_v2(
   p_query text,
   p_limit integer default 25
 )
@@ -35,6 +90,8 @@ returns table (
   activity_groups text[],
   activity_group_scheme text,
   registered_uses jsonb,
+  viticulture_rates jsonb,
+  has_viticulture_evidence boolean,
   label_rate_bases text[],
   label_reference text,
   label_version text,
@@ -98,33 +155,49 @@ begin
                'https://www.awri.com.au/wp-content/uploads/agrochemical_booklet.pdf'
          )
        )
+  ), viticulture_eligible as (
+    select e.*, (
+      jsonb_array_length(coalesce(e.viticulture_rates->'per_hectare', '[]'::jsonb)) > 0
+      or jsonb_array_length(coalesce(e.viticulture_rates->'per_100_litres', '[]'::jsonb)) > 0
+      or exists (
+        select 1 from jsonb_array_elements(coalesce(e.registered_uses, '[]'::jsonb)) u
+        where lower(coalesce(u->>'crop', '')) ~ '(^|[^a-z])(vineyards?|grapevines?|grapes?)([^a-z]|$)'
+      )
+      or exists (
+        select 1 from jsonb_array_elements(coalesce(e.verification_sources, '[]'::jsonb)) s
+        where s->>'kind' = 'viticulture_reference'
+      )
+    ) as vineyard_evidence
+    from eligible e
   ), ranked as (
     select e.*,
       case
         when regexp_replace(lower(e.registered_product_name), '[^a-z0-9]+', '', 'g') = v_normal then 1
-        when lower(e.registered_product_name) like lower(v_query) || '%' then 2
+        when regexp_replace(lower(e.registered_product_name), '[^a-z0-9]+', '', 'g') like v_normal || '%' then 2
         when exists (
           select 1 from unnest(e.common_names) n
           where regexp_replace(lower(n), '[^a-z0-9]+', '', 'g') = v_normal
         ) then 3
-        when lower(e.registered_product_name) like '%' || lower(v_query) || '%' then 4
+        when regexp_replace(lower(e.registered_product_name), '[^a-z0-9]+', '', 'g') like '%' || v_normal || '%' then 4
         when v_digits <> '' and regexp_replace(e.registration_number, '[^0-9]+', '', 'g') = v_digits then 5
         when lower(coalesce(e.active_ingredients::text, '')) like '%' || lower(v_query) || '%'
           or lower(coalesce(e.registrant, '')) like '%' || lower(v_query) || '%' then 6
         else 99
       end as calculated_rank
-    from eligible e
+    from viticulture_eligible e
+    where e.vineyard_evidence
   )
   select r.id, r.registration_country, r.registration_scheme,
     r.registration_number, r.registrant, r.registered_product_name,
     r.common_names, r.product_category, r.form_type, r.active_ingredients,
     r.activity_groups, r.activity_group_scheme, r.registered_uses,
+    r.viticulture_rates, r.vineyard_evidence,
     r.label_rate_bases, r.label_reference, r.label_version,
     r.verification_status, r.verification_sources,
     r.verification_conflicts, r.verification_unresolved_fields,
     r.verified_at, r.source_kind, r.review_status, r.catalogue_version,
     r.manufacturer_label_url, r.manufacturer_product_url,
-    r.regulator_label_url, r.calculated_rank
+    r.label_reference, r.calculated_rank
   from ranked r
   where r.calculated_rank < 99
   order by r.calculated_rank,
@@ -228,3 +301,32 @@ for delete to authenticated using (
 );
 
 commit;
+
+-- Post-apply V2 cohort report (read-only). Run after this transaction commits.
+with cohort as (
+  select m.*,
+    (
+      jsonb_array_length(coalesce(m.viticulture_rates->'per_hectare', '[]'::jsonb)) > 0
+      or jsonb_array_length(coalesce(m.viticulture_rates->'per_100_litres', '[]'::jsonb)) > 0
+      or exists (select 1 from jsonb_array_elements(coalesce(m.registered_uses, '[]'::jsonb)) u
+        where lower(coalesce(u->>'crop', '')) ~ '(^|[^a-z])(vineyards?|grapevines?|grapes?)([^a-z]|$)')
+      or exists (select 1 from jsonb_array_elements(coalesce(m.verification_sources, '[]'::jsonb)) s
+        where s->>'kind' = 'viticulture_reference')
+    ) as has_vineyard_evidence
+  from public.master_chemicals m
+  where m.review_status = 'approved' or (
+    m.review_status = 'candidate' and m.registration_country = 'AU'
+    and m.registration_scheme = 'apvma' and m.source_kind = 'official_register'
+    and m.verification_status in ('verified','partially_verified')
+    and exists (select 1 from jsonb_array_elements(coalesce(m.verification_sources, '[]'::jsonb)) s where s->>'kind' = 'official_register')
+    and exists (select 1 from jsonb_array_elements(coalesce(m.verification_sources, '[]'::jsonb)) s where s->>'kind' = 'viticulture_reference')
+  )
+)
+select
+  count(*) filter (where has_vineyard_evidence) as v2_searchable_products,
+  count(*) filter (where has_vineyard_evidence) as vineyard_evidence_products,
+  count(*) filter (where jsonb_array_length(coalesce(viticulture_rates->'per_hectare','[]'::jsonb)) > 0) as per_hectare_products,
+  count(*) filter (where jsonb_array_length(coalesce(viticulture_rates->'per_100_litres','[]'::jsonb)) > 0) as per_100_litres_products,
+  count(*) filter (where jsonb_array_length(coalesce(viticulture_rates->'per_hectare','[]'::jsonb)) > 0 and jsonb_array_length(coalesce(viticulture_rates->'per_100_litres','[]'::jsonb)) > 0) as both_bases_products,
+  count(*) filter (where has_vineyard_evidence and jsonb_array_length(coalesce(viticulture_rates->'per_hectare','[]'::jsonb)) = 0 and jsonb_array_length(coalesce(viticulture_rates->'per_100_litres','[]'::jsonb)) = 0) as vineyard_evidence_without_rate
+from cohort;

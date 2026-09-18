@@ -489,6 +489,7 @@ export interface MasterRow {
   activity_groups: string[];
   activity_group_scheme: string | null;
   registered_uses: Jsonish[];
+  viticulture_rates?: { per_hectare: WireLabelRate[]; per_100_litres: WireLabelRate[] };
   label_rate_bases: string[];
   label_reference: string | null;
   label_version: string | null;
@@ -520,6 +521,7 @@ export interface CandidateRowPayload {
   activity_groups: string[];
   activity_group_scheme: string | null;
   registered_uses: Jsonish[];
+  viticulture_rates?: { per_hectare: WireLabelRate[]; per_100_litres: WireLabelRate[] };
   label_rate_bases: string[];
   label_reference: string | null;
   label_version: string | null;

@@ -50,6 +50,7 @@ import com.rork.vinetrack.data.chemical.ChemicalSearchV2Duplicate
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.MasterChemicalV2
 import com.rork.vinetrack.data.chemical.MasterChemicalV2Repository
+import com.rork.vinetrack.data.chemical.ViticultureRates
 import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_100L
 import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_HECTARE
 import com.rork.vinetrack.data.model.ChemicalRate
@@ -71,6 +72,7 @@ private data class ChemicalReviewV2Draft(
     val productName: String,
     val unit: String,
     val rate: ChemicalManualRateDraft,
+    val viticultureRates: ViticultureRates,
     val selectedRateId: String? = null,
 )
 
@@ -113,6 +115,7 @@ internal fun ChemicalSearchV2Sheet(
             source = "VineTrack Master", master = master, intelligence = master.intelligence,
             formType = master.formType, productName = master.registeredProductName,
             unit = initial.unit.toDisplayUnit(), rate = initial,
+            viticultureRates = master.viticultureRates,
             selectedRateId = rates.singleOrNull()?.id,
         )
     }
@@ -213,12 +216,14 @@ internal fun ChemicalSearchV2Sheet(
                             try {
                                 val lookup = externalService.lookupStructured(trimmed, "AU", null)
                                 val intel = lookup.intelligence()
-                                val rates = intel.registeredUses.filter { it.isViticultural }.flatMap { it.rates }
+                                val viticultureRates = ViticultureRates.fromRegisteredUses(intel.registeredUses)
+                                val rates = viticultureRates.all
                                 val initial = rates.singleOrNull()?.let(::draftRate) ?: ChemicalManualRateDraft()
                                 review = ChemicalReviewV2Draft(
                                     source = "Label lookup", master = null, intelligence = intel,
                                     formType = lookup.formType, productName = lookup.productName ?: trimmed,
                                     unit = initial.unit.toDisplayUnit(), rate = initial,
+                                    viticultureRates = viticultureRates,
                                     selectedRateId = rates.singleOrNull()?.id,
                                 )
                                 Log.d("ChemicalSearchV2", "external_lookup=success")
@@ -270,7 +275,7 @@ private fun ChemicalReviewV2(
     val evaluation = ChemicalSaveContract.evaluateMinimumOperational(
         draft.productName, draft.unit, parsedRate?.let(::listOf).orEmpty(),
     )
-    val registeredRates = draft.intelligence.registeredUses.filter { it.isViticultural }.flatMap { it.rates }
+    val registeredRates = draft.viticultureRates.all
 
     Text("Review Chemical", fontSize = 22.sp, fontWeight = FontWeight.Bold)
     Text("Source: ${draft.source}", fontWeight = FontWeight.SemiBold)
@@ -285,7 +290,19 @@ private fun ChemicalReviewV2(
     Text("Active ingredients: ${draft.intelligence.activeIngredients.joinToString { it.name }.ifBlank { "—" }}")
     draft.intelligence.productCategory.takeIf(String::isNotBlank)?.let { Text("Category: $it") }
 
-    if (registeredRates.size > 1) {
+    Text("Registered vineyard rates", fontWeight = FontWeight.Bold)
+    if (registeredRates.isEmpty()) {
+        Text("No registered vineyard rate is currently recorded in VineTrack.", fontSize = 13.sp)
+    }
+    if (draft.viticultureRates.perHectare.isNotEmpty()) {
+        Text("Per hectare", fontWeight = FontWeight.SemiBold)
+        draft.viticultureRates.perHectare.forEach { Text(it.displayRate) }
+    }
+    if (draft.viticultureRates.per100Litres.isNotEmpty()) {
+        Text("Per 100 L", fontWeight = FontWeight.SemiBold)
+        draft.viticultureRates.per100Litres.forEach { Text(it.displayRate) }
+    }
+    if (registeredRates.isNotEmpty()) {
         Text("Choose a registered rate, or edit the operational default below", fontWeight = FontWeight.SemiBold)
         registeredRates.forEach { rate ->
             OutlinedButton(onClick = {
@@ -361,7 +378,6 @@ private fun ChemicalReviewV2(
             }
         }
     }
-    Text("${draft.intelligence.registeredUses.size} structured registered use(s) will be preserved (Optional).", fontSize = 12.sp)
     evaluation.violations.forEach { Text(it.message, color = com.rork.vinetrack.ui.theme.VineColors.Warning, fontSize = 12.sp) }
     notice?.let { Text(it, color = com.rork.vinetrack.ui.theme.VineColors.Warning) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

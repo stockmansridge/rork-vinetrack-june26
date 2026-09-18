@@ -122,6 +122,42 @@ export function isPerHectare(rate: { basis?: string }): boolean {
   return PER_HA_BASES.has(String(rate?.basis ?? ""));
 }
 
+/** The deliberately small registered-rate contract consumed by Chemical Search V2. */
+export interface ViticultureRates {
+  per_hectare: WireLabelRate[];
+  per_100_litres: WireLabelRate[];
+}
+
+/**
+ * Project label evidence into V2's vineyard-only rate list.
+ *
+ * Every label option remains separate and verbatim. This never widens multiple
+ * directions into an artificial min/max range and never converts between bases.
+ */
+export function deriveViticultureRates(
+  uses: Array<{ crop?: string; rates?: WireLabelRate[] }>,
+): ViticultureRates {
+  const per_hectare: WireLabelRate[] = [];
+  const per_100_litres: WireLabelRate[] = [];
+  const seen = new Set<string>();
+  for (const use of uses ?? []) {
+    if (!isGrapevineCrop(String(use.crop ?? ""))) continue;
+    for (const rate of use.rates ?? []) {
+      const destination = isPerHectare(rate)
+        ? per_hectare
+        : isPer100L(rate)
+        ? per_100_litres
+        : null;
+      if (!destination) continue;
+      const key = JSON.stringify(rate);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      destination.push({ ...rate });
+    }
+  }
+  return { per_hectare, per_100_litres };
+}
+
 /**
  * Order rates for display: /100 L first, then /ha, then verbatim-only.
  *

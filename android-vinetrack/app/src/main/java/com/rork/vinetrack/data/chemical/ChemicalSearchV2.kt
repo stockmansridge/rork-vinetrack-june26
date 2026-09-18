@@ -29,6 +29,25 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 @Serializable
+data class ViticultureRates(
+    @SerialName("per_hectare") val perHectare: List<ChemicalLabelRate> = emptyList(),
+    @SerialName("per_100_litres") val per100Litres: List<ChemicalLabelRate> = emptyList(),
+) {
+    val all: List<ChemicalLabelRate> get() = perHectare + per100Litres
+    val hasEvidence: Boolean get() = all.isNotEmpty()
+
+    companion object {
+        fun fromRegisteredUses(uses: List<ChemicalRegisteredUse>): ViticultureRates {
+            val vineyard = uses.filter { it.isViticultural }.flatMap { it.rates }
+            return ViticultureRates(
+                perHectare = vineyard.filter { it.basis == ChemicalLabelRateBasis.PER_HECTARE || it.basis == ChemicalLabelRateBasis.RANGE_PER_HECTARE }.distinct(),
+                per100Litres = vineyard.filter { it.basis == ChemicalLabelRateBasis.PER_100_LITRES || it.basis == ChemicalLabelRateBasis.RANGE_PER_100_LITRES }.distinct(),
+            )
+        }
+    }
+}
+
+@Serializable
 data class MasterChemicalV2(
     val id: String,
     @SerialName("registration_country") val registrationCountry: String,
@@ -43,6 +62,8 @@ data class MasterChemicalV2(
     @SerialName("activity_groups") val activityGroups: List<String> = emptyList(),
     @SerialName("activity_group_scheme") val activityGroupScheme: String? = null,
     @SerialName("registered_uses") val registeredUses: List<ChemicalRegisteredUse> = emptyList(),
+    @SerialName("viticulture_rates") val viticultureRates: ViticultureRates = ViticultureRates(),
+    @SerialName("has_viticulture_evidence") val hasViticultureEvidence: Boolean = false,
     @SerialName("label_rate_bases") val labelRateBases: List<String> = emptyList(),
     @SerialName("label_reference") val labelReference: String? = null,
     @SerialName("label_version") val labelVersion: String? = null,
@@ -87,7 +108,7 @@ data class MasterChemicalV2(
         )
 
     val grapevineRates: List<ChemicalLabelRate>
-        get() = registeredUses.filter { it.isViticultural }.flatMap { it.rates }
+        get() = viticultureRates.all
 }
 
 object ChemicalSearchV2RequestGate {
