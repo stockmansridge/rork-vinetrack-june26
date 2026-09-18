@@ -64,6 +64,7 @@ enum class ChemicalResistanceState(val raw: String, val label: String) {
 /** Every way a chemical can fail the mandatory save contract. */
 enum class ChemicalSaveViolationCode(val raw: String) {
     PRODUCT_NAME_MISSING("product_name_missing"),
+    PRODUCT_UNIT_MISSING("product_unit_missing"),
     PRODUCT_CATEGORY_MISSING("product_category_missing"),
     ACTIVE_INGREDIENT_NAME_MISSING("active_ingredient_name_missing"),
     GRAPEVINE_USE_MISSING("grapevine_use_missing"),
@@ -255,6 +256,59 @@ object ChemicalSaveContract {
      */
     fun isAutoApplicable(rate: ChemicalLabelRate): Boolean =
         isUsable(rate) && rate.conditionAmbiguous != true
+
+    /**
+     * Evaluate the minimum operational contract used by simple manual entry
+     * and future Review Chemical flows. Optional registration, catalogue,
+     * chemistry and registered-use metadata never participates in this gate.
+     */
+    fun evaluateMinimumOperational(
+        productName: String,
+        productUnit: String,
+        rates: List<ChemicalLabelRate>,
+    ): ChemicalSaveEvaluation {
+        val violations = mutableListOf<ChemicalSaveViolation>()
+        if (productName.trim().isEmpty()) {
+            violations += ChemicalSaveViolation(
+                ChemicalSaveViolationCode.PRODUCT_NAME_MISSING,
+                "Enter the chemical / product name.",
+                "product_name",
+            )
+        }
+        if (productUnit.trim().isEmpty()) {
+            violations += ChemicalSaveViolation(
+                ChemicalSaveViolationCode.PRODUCT_UNIT_MISSING,
+                "Choose the product unit.",
+                "product_unit",
+            )
+        }
+        if (rates.isEmpty()) {
+            violations += ChemicalSaveViolation(
+                ChemicalSaveViolationCode.USABLE_RATE_MISSING,
+                "Enter a default rate.",
+                "rates",
+            )
+        } else {
+            violations += rateViolations(rates)
+            if (rates.none(::isUsable) && violations.none {
+                    it.code == ChemicalSaveViolationCode.RATE_VALUE_INVALID ||
+                        it.code == ChemicalSaveViolationCode.RATE_UNIT_MISSING
+                }
+            ) {
+                violations += ChemicalSaveViolation(
+                    ChemicalSaveViolationCode.RATE_BASIS_UNRECOGNISED,
+                    "Choose a supported rate basis.",
+                    "rates",
+                )
+            }
+        }
+        return ChemicalSaveEvaluation(
+            violations = violations.distinctBy { it.id },
+            resistanceState = ChemicalResistanceState.UNRESOLVED,
+            hasUsableViticulturalRate = rates.any(::isUsable),
+            requiresRateConditionChoice = false,
+        )
+    }
 
     /**
      * Evaluate a record against the contract.

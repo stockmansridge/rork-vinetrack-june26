@@ -210,6 +210,9 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// already on file.
     let isReviewingLookup: Bool
 
+    /// True only for the blank, manually authored create flow.
+    let isCreatingManual: Bool
+
     /// The save-contract violations the record ALREADY had when this session
     /// opened (task §11).
     ///
@@ -317,8 +320,11 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         serverDefaultRateOptions: ChemicalServerDefaultRateOptions? = nil
     ) -> ChemicalReviewSession {
         guard let source = prefill ?? chemical else {
+            var draft = ChemicalManualEntry.draft(from: nil, fallbackCountry: fallbackCountry)
+            draft.productRates = [ChemicalManualRateDraft()]
             return ChemicalReviewSession(
-                chemistryDraft: ChemicalManualEntry.draft(from: nil, fallbackCountry: fallbackCountry),
+                isCreatingManual: true,
+                chemistryDraft: draft,
                 jurisdiction: jurisdiction,
                 serverDefaultRateOptions: serverDefaultRateOptions
             )
@@ -611,6 +617,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
 
     init(
         isReviewingLookup: Bool = false,
+        isCreatingManual: Bool = false,
         chemistryDraft: ChemicalManualDraft = ChemicalManualDraft(),
         formType: ChemicalFormType = .liquid,
         unit: ChemicalUnit = .litres,
@@ -648,6 +655,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     ) {
         self.serverDefaultRateOptions = serverDefaultRateOptions
         self.isReviewingLookup = isReviewingLookup
+        self.isCreatingManual = isCreatingManual
         self.baselineViolationCodes = baselineViolationCodes
         self.chemistryDraft = chemistryDraft
         self.formType = formType
@@ -1070,6 +1078,31 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         return stored.isEmpty ? nil : stored
     }
 
+    /// Defaults written by Save. A valid manual create writes its sole typed
+    /// operational rate directly; no second confirmation or registered-use row
+    /// is required.
+    var defaultRatesForSave: StoredChemicalDefaultRates? {
+        if let storedDefaultRates { return storedDefaultRates }
+        guard isCreatingManual else { return nil }
+        let options = defaultRatePlan.groups.flatMap(\.options).filter(isManualDefaultOption)
+        guard options.count == 1, let option = options.first,
+              let basis = ChemicalDefaultRateBasis.of(option.rate.basis),
+              let slot = manualSlot(for: option, basis: basis)
+        else { return nil }
+        return StoredChemicalDefaultRates().withSlot(basis, slot)
+    }
+
+    /// Structured information written by Save. The transient product-level
+    /// carrier used to edit a manual default is removed so manual creation does
+    /// not fabricate a `registered_uses` row.
+    var intelligenceForSave: ChemicalIntelligence? {
+        guard var intelligence = intelligenceToPersist else { return nil }
+        if isCreatingManual {
+            intelligence.registeredUses.removeAll(where: ChemicalManualEntry.isProductRateCarrier)
+        }
+        return intelligence
+    }
+
     /// The persisted record of a confirmed MANUAL option (sql/222).
     ///
     /// Built through the ONE factory that hard-codes an empty identity, so
@@ -1257,7 +1290,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     }
 
     func legacyProjection() -> LegacyProjection {
-        let structured = intelligenceToPersist
+        let structured = intelligenceForSave
         let perHa = perHectareRateDisplay.flatMap(Double.init)
         let per100L = per100LitreRateDisplay.flatMap(Double.init)
 
@@ -1328,7 +1361,16 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// function's `save_contract.ts` so iOS and the Portal cannot disagree
     /// about what "ready to use" means.
     var saveEvaluation: ChemicalSaveEvaluation {
-        ChemicalSaveContract.evaluate(
+        if isCreatingManual {
+            return ChemicalSaveContract.evaluateMinimumOperational(
+                productName: name,
+                productUnit: unit.rawValue,
+                rates: proposedIntelligence.registeredUses
+                    .filter(ChemicalManualEntry.isProductRateCarrier)
+                    .flatMap(\.rates)
+            )
+        }
+        return ChemicalSaveContract.evaluate(
             productName: name,
             productCategory: chemistryDraft.productCategory,
             intelligence: proposedIntelligence,

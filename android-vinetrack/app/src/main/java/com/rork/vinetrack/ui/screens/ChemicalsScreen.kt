@@ -65,8 +65,10 @@ import com.rork.vinetrack.data.chemical.ChemicalEditOutcome
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
 import com.rork.vinetrack.data.chemical.ChemicalJurisdictionSuitability
+import com.rork.vinetrack.data.chemical.ChemicalLabelRateBasis
 import com.rork.vinetrack.data.chemical.ChemicalManualEntry
 import com.rork.vinetrack.data.chemical.ChemicalManualRateConfirmation
+import com.rork.vinetrack.data.chemical.ChemicalManualRateDraft
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalReverification
 import com.rork.vinetrack.data.chemical.ChemicalReverifyFlow
@@ -799,6 +801,7 @@ internal fun ChemicalFormSheet(
     val uriHandler = LocalUriHandler.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val isEdit = existing != null
+    val isCreatingManual = existing == null && pendingIntelligence == null
     // The record a re-verification is running against. Usually [existing], but
     // the register search can surface a DIFFERENT stored product with the same
     // name, and "check for updates" must then re-verify that one rather than
@@ -890,7 +893,11 @@ internal fun ChemicalFormSheet(
     // inside the editor sheet so the edits survive that sheet closing and are
     // written by this form's own Save, keeping one Save button for the product.
     var chemistryDraft by remember(existing?.id) {
-        mutableStateOf(ChemicalManualEntry.draft(existing, manualCountry))
+        val opened = ChemicalManualEntry.draft(existing, manualCountry)
+        mutableStateOf(
+            if (isCreatingManual) opened.copy(productRates = listOf(ChemicalManualRateDraft()))
+            else opened,
+        )
     }
 
     /**
@@ -974,19 +981,26 @@ internal fun ChemicalFormSheet(
         val unresolvedStaleBases = staleDefaultBases.filter {
             defaultRatesDraft?.slot(it) != null
         }
-        val gate = ChemicalSaveContract.evaluate(
-            productName = trimmedName,
-            productCategory = category,
-            // Vineyard-scoped, like the rendered evaluation: the contract must
-            // judge the grapevine record the operator was actually shown.
-            intelligence = ChemicalVineyardScope.scoped(
-                ChemicalManualEntry.proposedIntelligence(
-                    chemistryDraft,
-                    existing?.storedIntelligence,
-                ),
-            ),
-            staleDefaultBases = unresolvedStaleBases,
+        val proposed = ChemicalManualEntry.proposedIntelligence(
+            chemistryDraft,
+            existing?.storedIntelligence,
         )
+        val gate = if (isCreatingManual) {
+            ChemicalSaveContract.evaluateMinimumOperational(
+                productName = trimmedName,
+                productUnit = unit,
+                rates = proposed.registeredUses
+                    .filter(ChemicalManualEntry::isProductRateCarrier)
+                    .flatMap { it.rates },
+            )
+        } else {
+            ChemicalSaveContract.evaluate(
+                productName = trimmedName,
+                productCategory = category,
+                intelligence = ChemicalVineyardScope.scoped(proposed),
+                staleDefaultBases = unresolvedStaleBases,
+            )
+        }
         if (gate.violations.any { it.code !in baselineViolationCodes }) return
         saving = true
         val perHaDisplay = ratePerHa.toDoubleSafe() ?: 0.0
@@ -1044,6 +1058,14 @@ internal fun ChemicalFormSheet(
             ?: activeIngredient.trim().ifBlank { null }
         val legacyGroup = structured?.legacyChemicalGroup?.ifBlank { null }
             ?: chemicalGroup.trim().ifBlank { null }
+        val manualDefaults = if (isCreatingManual) {
+            ChemicalManualEntry.defaultRatesForManualSave(chemistryDraft)
+        } else null
+        val intelligenceToWrite = if (isCreatingManual) {
+            ChemicalManualEntry.intelligenceForManualSave(chemistryDraft)
+        } else {
+            ChemicalVineyardScope.scoped(editOutcome?.intelligence ?: pendingIntelligence ?: proposed)
+        }
         val input = SavedChemicalRepository.ChemicalInput(
             name = trimmedName,
             unit = unit,
@@ -1089,13 +1111,16 @@ internal fun ChemicalFormSheet(
             // form was opened on one. Without the fallback the editor's own
             // change test compares the draft against itself, finds nothing
             // moved, and omits the very columns the operator just accepted.
-            intelligence = (editOutcome?.intelligence ?: pendingIntelligence)
-                ?.let { ChemicalVineyardScope.scoped(it) },
+            intelligence = intelligenceToWrite,
             // Omitted from the write unless the operator actually changed it.
             // An ordinary edit — a price, a pack size, a note — must never
             // rewrite or erase a rate confirmation, including one made on
             // another device.
-            defaultRates = if (defaultRatesEdited) defaultRatesDraft else null,
+            defaultRates = when {
+                isCreatingManual -> manualDefaults
+                defaultRatesEdited -> defaultRatesDraft
+                else -> null
+            },
         )
         val cb: (Boolean) -> Unit = { ok -> saving = false; if (ok) onDismiss() }
         if (isEdit) {
@@ -1200,10 +1225,17 @@ internal fun ChemicalFormSheet(
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { Text("Chemical / product name") },
+                label = { Text("Chemical / product name *") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (isCreatingManual && name.trim().isEmpty()) {
+                Text(
+                    "Enter the chemical / product name.",
+                    fontSize = 12.sp,
+                    color = VineColors.Warning,
+                )
+            }
 
             // Re-verify Chemical, or an honest explanation of why it is not
             // available. Both the eligibility and the reason come from
@@ -1276,7 +1308,7 @@ internal fun ChemicalFormSheet(
                 }
             }
             UnitDropdown(
-                label = "Unit",
+                label = "Product unit *",
                 value = unit,
                 options = unitsForForm(formType),
                 expanded = unitMenu,
@@ -1284,6 +1316,7 @@ internal fun ChemicalFormSheet(
                 onSelect = { unit = it; unitMenu = false },
                 modifier = Modifier.fillMaxWidth(),
             )
+            Text("Optional details", fontSize = 11.sp, color = vine.textSecondary)
             CategoryDropdown(
                 value = category,
                 expanded = categoryMenu,
@@ -1570,16 +1603,28 @@ internal fun ChemicalFormSheet(
             }
             val saveEvaluation = remember(
                 name,
+                unit,
                 category,
                 displayIntelligence,
                 unresolvedStaleBases,
+                isCreatingManual,
             ) {
-                ChemicalSaveContract.evaluate(
-                    productName = name,
-                    productCategory = category,
-                    intelligence = displayIntelligence,
-                    staleDefaultBases = unresolvedStaleBases,
-                )
+                if (isCreatingManual) {
+                    ChemicalSaveContract.evaluateMinimumOperational(
+                        productName = name,
+                        productUnit = unit,
+                        rates = displayIntelligence.registeredUses
+                            .filter(ChemicalManualEntry::isProductRateCarrier)
+                            .flatMap { it.rates },
+                    )
+                } else {
+                    ChemicalSaveContract.evaluate(
+                        productName = name,
+                        productCategory = category,
+                        intelligence = displayIntelligence,
+                        staleDefaultBases = unresolvedStaleBases,
+                    )
+                }
             }
             // What THIS edit would add, versus what the record arrived with.
             val blockingViolations =
@@ -1707,6 +1752,23 @@ internal fun ChemicalFormSheet(
                 color = vine.textSecondary,
             )
 
+            if (isCreatingManual) {
+                SectionLabel("Default rate *")
+                SimpleManualRateEditor(
+                    rate = chemistryDraft.productRates.firstOrNull() ?: ChemicalManualRateDraft(),
+                    onChange = { updated ->
+                        chemistryDraft = chemistryDraft.copy(productRates = listOf(updated))
+                    },
+                )
+                blockingViolations.filter { it.field == "rates" }.forEach { issue ->
+                    Text(issue.message, fontSize = 12.sp, color = VineColors.Warning)
+                }
+                Text(
+                    "Required for spray calculations. Enter the rate from the bottle or label; no registered-use or verification step is required.",
+                    fontSize = 11.sp,
+                    color = vine.textSecondary,
+                )
+            } else {
             SectionLabel("Rates")
 
             // A STRUCTURED product's operational rate is its confirmed
@@ -1892,6 +1954,7 @@ internal fun ChemicalFormSheet(
                 fontSize = 11.sp,
                 color = vine.textSecondary,
             )
+            }
 
             if (canViewFinancials) {
                 SectionLabel("Purchase tracking")
@@ -2004,6 +2067,95 @@ internal fun ChemicalFormSheet(
                 showRegisterSearch = false
                 reverifyTarget = found
             },
+        )
+    }
+}
+
+@Composable
+private fun SimpleManualRateEditor(
+    rate: ChemicalManualRateDraft,
+    onChange: (ChemicalManualRateDraft) -> Unit,
+) {
+    val isRange = rate.basis == ChemicalLabelRateBasis.RANGE_PER_HECTARE ||
+        rate.basis == ChemicalLabelRateBasis.RANGE_PER_100_LITRES
+    val isPer100Litres = rate.basis == ChemicalLabelRateBasis.PER_100_LITRES ||
+        rate.basis == ChemicalLabelRateBasis.RANGE_PER_100_LITRES
+    var unitMenu by remember { mutableStateOf(false) }
+
+    Text("Rate type", fontSize = 12.sp, color = LocalVineColors.current.textSecondary)
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        listOf(false to "Single rate", true to "Range").forEachIndexed { index, choice ->
+            SegmentedButton(
+                selected = isRange == choice.first,
+                onClick = {
+                    onChange(rate.copy(basis = if (choice.first) {
+                        if (isPer100Litres) ChemicalLabelRateBasis.RANGE_PER_100_LITRES
+                        else ChemicalLabelRateBasis.RANGE_PER_HECTARE
+                    } else {
+                        if (isPer100Litres) ChemicalLabelRateBasis.PER_100_LITRES
+                        else ChemicalLabelRateBasis.PER_HECTARE
+                    }))
+                },
+                shape = SegmentedButtonDefaults.itemShape(index, 2),
+            ) { Text(choice.second) }
+        }
+    }
+
+    Text("Rate basis", fontSize = 12.sp, color = LocalVineColors.current.textSecondary)
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        listOf(false to "Per hectare", true to "Per 100 L").forEachIndexed { index, choice ->
+            SegmentedButton(
+                selected = isPer100Litres == choice.first,
+                onClick = {
+                    onChange(rate.copy(basis = if (isRange) {
+                        if (choice.first) ChemicalLabelRateBasis.RANGE_PER_100_LITRES
+                        else ChemicalLabelRateBasis.RANGE_PER_HECTARE
+                    } else {
+                        if (choice.first) ChemicalLabelRateBasis.PER_100_LITRES
+                        else ChemicalLabelRateBasis.PER_HECTARE
+                    }))
+                },
+                shape = SegmentedButtonDefaults.itemShape(index, 2),
+            ) { Text(choice.second) }
+        }
+    }
+
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (isRange) {
+            OutlinedTextField(
+                value = rate.minText,
+                onValueChange = { onChange(rate.copy(minText = it.numericFilter())) },
+                label = { Text("Minimum *") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedTextField(
+                value = rate.maxText,
+                onValueChange = { onChange(rate.copy(maxText = it.numericFilter())) },
+                label = { Text("Maximum *") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+        } else {
+            OutlinedTextField(
+                value = rate.valueText,
+                onValueChange = { onChange(rate.copy(valueText = it.numericFilter())) },
+                label = { Text("Rate *") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                modifier = Modifier.weight(2f),
+            )
+        }
+        UnitDropdown(
+            label = "Product unit *",
+            value = rate.unit,
+            options = listOf("L", "mL", "kg", "g"),
+            expanded = unitMenu,
+            onExpandedChange = { unitMenu = it },
+            onSelect = { onChange(rate.copy(unit = it)); unitMenu = false },
+            modifier = Modifier.weight(1f),
         )
     }
 }

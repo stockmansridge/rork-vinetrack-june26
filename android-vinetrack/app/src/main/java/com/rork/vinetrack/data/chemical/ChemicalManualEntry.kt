@@ -129,6 +129,33 @@ object ChemicalManualEntry {
 
     // ---- Draft → structured ----
 
+    /** Rates entered in the simple manual default-rate area. */
+    fun operationalRates(draft: ChemicalManualDraft): List<ChemicalLabelRate> =
+        proposedIntelligence(draft, null).registeredUses
+            .filter(::isProductRateCarrier)
+            .flatMap { it.rates }
+
+    /**
+     * Canonical structured payload for a new manual product. The rate editor's
+     * transient carrier is deliberately removed: operational rate data belongs
+     * in `default_rates`, not in a fabricated `registered_uses` claim.
+     */
+    fun intelligenceForManualSave(draft: ChemicalManualDraft): ChemicalIntelligence {
+        val intelligence = outcome(draft, existing = null).intelligence
+        return intelligence.copy(
+            registeredUses = intelligence.registeredUses.filterNot(::isProductRateCarrier),
+        )
+    }
+
+    /** The sole valid manual rate mapped to the existing default-rate contract. */
+    fun defaultRatesForManualSave(draft: ChemicalManualDraft): StoredChemicalDefaultRates? {
+        val candidate = ChemicalManualRateConfirmation.candidates(
+            proposedIntelligence(draft, null),
+        ).singleOrNull() ?: return null
+        return ChemicalManualRateConfirmation.confirm(null, candidate)
+    }
+
+
     /**
      * Build the intelligence the draft PROPOSES, without reconciling it.
      *

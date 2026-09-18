@@ -350,8 +350,12 @@ struct EditSavedChemicalSheet: View {
                 //
                 // 1. Product
                 productSection
-                // 2. Active Ingredients & Resistance
-                activeIngredientsSection
+                // 2. Optional chemistry details. A blank manual create stays
+                // intentionally short; existing and looked-up products retain
+                // all structured information and editing surfaces.
+                if !session.isCreatingManual {
+                    activeIngredientsSection
+                }
                 // 3. The registered rate.
                 //
                 // While ADDING a product to the Chemical Store this is a
@@ -371,18 +375,23 @@ struct EditSavedChemicalSheet: View {
                 // as this vineyard's rate — optionally — and it persists as a
                 // `manual` default rather than staying only in `registered_uses`.
                 // A lookup review stays read-only.
-                if offersDefaultRateDecision {
+                if session.isCreatingManual {
+                    manualDefaultRateSection
+                } else if offersDefaultRateDecision {
                     if isReviewingLookup {
                         registeredRateSection
                     } else {
                         defaultRatesSection
                     }
                 }
-                // 4. Grapevine Uses & Rates — the label evidence the decision
-                // above was made from, unedited.
-                registeredUsesSection
-                if showsProductRates {
-                    productRatesSection
+                // Structured registered uses remain intact for catalogue,
+                // lookup and existing records, but manual creation never asks
+                // the operator to recreate them.
+                if !session.isCreatingManual {
+                    registeredUsesSection
+                    if showsProductRates {
+                        productRatesSection
+                    }
                 }
                 if !session.hasStructuredUses {
                     legacyUseSection
@@ -536,7 +545,7 @@ struct EditSavedChemicalSheet: View {
 
     private var productSection: some View {
         Section {
-            LabeledField(label: "Chemical / Product Name") {
+            LabeledField(label: "Chemical / product name *") {
                 TextField("e.g. Synertrol Horti Oil", text: $session.name)
             }
             ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "product_name"))
@@ -566,7 +575,7 @@ struct EditSavedChemicalSheet: View {
                 ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "registration"))
             }
 
-            Picker("Category", selection: $session.productCategory) {
+            Picker("Category (Optional)", selection: $session.productCategory) {
                 Text("Uncategorised").tag(ProductCategory?.none)
                 ForEach(ProductCategory.allCases) { option in
                     Text(option.label).tag(ProductCategory?.some(option))
@@ -574,13 +583,13 @@ struct EditSavedChemicalSheet: View {
             }
             ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "product_category"))
 
-            Picker("Form", selection: $session.formType) {
+            Picker("Form (Optional)", selection: $session.formType) {
                 ForEach(ChemicalFormType.allCases) { f in
                     Text(f.rawValue).tag(f)
                 }
             }
             .pickerStyle(.segmented)
-            Picker("Unit", selection: $session.unit) {
+            Picker("Product unit *", selection: $session.unit) {
                 ForEach(session.formType.units, id: \.self) { u in
                     Text(u.rawValue).tag(u)
                 }
@@ -937,6 +946,27 @@ struct EditSavedChemicalSheet: View {
     /// no uses yet to hang a rate on.
     private var showsProductRates: Bool {
         !session.chemistryDraft.productRates.isEmpty || session.chemistryDraft.uses.isEmpty
+    }
+
+    private var manualDefaultRateSection: some View {
+        Section {
+            if session.chemistryDraft.productRates.isEmpty {
+                Button("Add required rate") {
+                    session.chemistryDraft.productRates = [ChemicalManualRateDraft()]
+                }
+            } else {
+                ChemicalManualRateEditor(
+                    rate: $session.chemistryDraft.productRates[0],
+                    allowsRemoval: false,
+                    onRemove: {}
+                )
+            }
+            ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "rates"))
+        } header: {
+            Text("Default rate *")
+        } footer: {
+            Text("Required for spray calculations. Enter the rate from the bottle or label; no registered-use or verification step is required.")
+        }
     }
 
     private var productRatesSection: some View {
@@ -1552,7 +1582,7 @@ struct EditSavedChemicalSheet: View {
             // (it rewrites the same value it read) while making the reviewed
             // lookup actually persist. Android's match flow always writes its
             // resolved intelligence; this is what brings iOS level with it.
-            if let persisted = session.intelligenceToPersist {
+            if let persisted = session.intelligenceForSave {
                 existing.chemicalIntelligence = persisted
             }
             // The confirmed operational default (sql/214). Written only when
@@ -1560,7 +1590,7 @@ struct EditSavedChemicalSheet: View {
             // stored default is left exactly as it was, so saving an unrelated
             // change can never erase a decision the operator made earlier or on
             // another device.
-            if let confirmed = session.storedDefaultRates {
+            if let confirmed = session.defaultRatesForSave {
                 existing.defaultRates = confirmed
             }
             store.updateSavedChemical(existing)
@@ -1605,7 +1635,7 @@ struct EditSavedChemicalSheet: View {
                 // NEW to reconcile — and without this the entire looked-up
                 // record would save as an empty shell, which is the original bug
                 // in a new place.
-                chemicalIntelligence: session.intelligenceToPersist,
+                chemicalIntelligence: session.intelligenceForSave,
                 // Only ever populated from an approved master match; nil for
                 // every other origin, which is valid forever.
                 masterChemicalId: session.masterChemicalId,
@@ -1614,7 +1644,7 @@ struct EditSavedChemicalSheet: View {
                 // operator confirmed nothing — a new chemical with no confirmed
                 // rate simply records none, which is honest and leaves the
                 // label evidence in `registered_uses` untouched.
-                defaultRates: session.storedDefaultRates
+                defaultRates: session.defaultRatesForSave
             )
             store.addSavedChemical(new)
             // The store stamps the vineyard onto its own copy, so read the

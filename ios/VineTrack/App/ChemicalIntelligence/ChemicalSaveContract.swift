@@ -60,6 +60,7 @@ nonisolated enum ChemicalResistanceState: String, Codable, Sendable, CaseIterabl
 /// Every way a chemical can fail the mandatory save contract.
 nonisolated enum ChemicalSaveViolationCode: String, Sendable, Hashable, CaseIterable {
     case productNameMissing = "product_name_missing"
+    case productUnitMissing = "product_unit_missing"
     case productCategoryMissing = "product_category_missing"
     case activeIngredientNameMissing = "active_ingredient_name_missing"
     case grapevineUseMissing = "grapevine_use_missing"
@@ -187,6 +188,56 @@ nonisolated enum ChemicalSaveContract {
     /// number. Preserving them is right; silently applying the first is not.
     static func isAutoApplicable(_ rate: ChemicalLabelRate) -> Bool {
         isUsable(rate) && !rate.conditionIsAmbiguous
+    }
+
+    /// Evaluate the minimum operational contract used by simple manual entry
+    /// and by future Review Chemical flows. Optional catalogue, registration,
+    /// chemistry and registered-use metadata never participates in this gate.
+    static func evaluateMinimumOperational(
+        productName: String,
+        productUnit: String,
+        rates: [ChemicalLabelRate]
+    ) -> ChemicalSaveEvaluation {
+        var violations: [ChemicalSaveViolation] = []
+        if productName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            violations.append(.init(
+                code: .productNameMissing,
+                message: "Enter the chemical / product name.",
+                field: "product_name"
+            ))
+        }
+        if productUnit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            violations.append(.init(
+                code: .productUnitMissing,
+                message: "Choose the product unit.",
+                field: "product_unit"
+            ))
+        }
+        if rates.isEmpty {
+            violations.append(.init(
+                code: .usableRateMissing,
+                message: "Enter a default rate.",
+                field: "rates"
+            ))
+        } else {
+            violations.append(contentsOf: rateViolations(rates))
+            if !rates.contains(where: isUsable),
+               !violations.contains(where: { $0.code == .rateValueInvalid || $0.code == .rateUnitMissing }) {
+                violations.append(.init(
+                    code: .rateBasisUnrecognised,
+                    message: "Choose a supported rate basis.",
+                    field: "rates"
+                ))
+            }
+        }
+        var seen = Set<String>()
+        let deduped = violations.filter { seen.insert($0.id).inserted }
+        return ChemicalSaveEvaluation(
+            violations: deduped,
+            resistanceState: .unresolved,
+            hasUsableViticulturalRate: rates.contains(where: isUsable),
+            requiresRateConditionChoice: false
+        )
     }
 
     /// Evaluate a record against the contract.

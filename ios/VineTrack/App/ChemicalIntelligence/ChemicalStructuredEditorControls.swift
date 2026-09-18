@@ -103,31 +103,60 @@ struct ChemicalManualActiveEditor: View {
 /// One label rate: a basis, then whichever value shape that basis needs.
 struct ChemicalManualRateEditor: View {
     @Binding var rate: ChemicalManualRateDraft
+    var allowsRemoval: Bool = true
     let onRemove: () -> Void
+
+    private var isRange: Bool {
+        rate.basis == .rangePerHectare || rate.basis == .rangePer100Litres
+    }
+
+    private var isPer100Litres: Bool {
+        rate.basis == .per100Litres || rate.basis == .rangePer100Litres
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Picker("Basis", selection: $rate.basis) {
-                    ForEach(ChemicalLabelRateBasis.allCases, id: \.self) { basis in
-                        Text(basis.label).tag(basis)
-                    }
+            Picker("Rate type", selection: Binding(
+                get: { isRange },
+                set: { wantsRange in
+                    rate.basis = wantsRange
+                        ? (isPer100Litres ? .rangePer100Litres : .rangePerHectare)
+                        : (isPer100Litres ? .per100Litres : .perHectare)
                 }
-                .labelsHidden()
+            )) {
+                Text("Single rate").tag(false)
+                Text("Range").tag(true)
+            }
+            .pickerStyle(.segmented)
+
+            HStack {
+                Picker("Rate basis", selection: Binding(
+                    get: { isPer100Litres },
+                    set: { per100 in
+                        rate.basis = isRange
+                            ? (per100 ? .rangePer100Litres : .rangePerHectare)
+                            : (per100 ? .per100Litres : .perHectare)
+                    }
+                )) {
+                    Text("Per hectare").tag(false)
+                    Text("Per 100 L").tag(true)
+                }
                 .pickerStyle(.menu)
                 .font(.subheadline)
                 Spacer()
-                Button(role: .destructive, action: onRemove) {
-                    Image(systemName: "minus.circle.fill")
+                if allowsRemoval {
+                    Button(role: .destructive, action: onRemove) {
+                        Image(systemName: "minus.circle.fill")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Remove label rate")
                 }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("Remove label rate")
             }
 
             switch rate.basis {
             case .perHectare, .per100Litres:
                 HStack(spacing: 8) {
-                    TextField("Rate", text: $rate.valueText)
+                    TextField("Rate *", text: $rate.valueText)
                         .keyboardType(.decimalPad)
                         .frame(maxWidth: 100)
                     unitField
@@ -137,11 +166,11 @@ struct ChemicalManualRateEditor: View {
                 }
             case .rangePerHectare, .rangePer100Litres:
                 HStack(spacing: 8) {
-                    TextField("Min", text: $rate.minText)
+                    TextField("Minimum *", text: $rate.minText)
                         .keyboardType(.decimalPad)
                         .frame(maxWidth: 74)
                     Text("–").foregroundStyle(.secondary)
-                    TextField("Max", text: $rate.maxText)
+                    TextField("Maximum *", text: $rate.maxText)
                         .keyboardType(.decimalPad)
                         .frame(maxWidth: 74)
                     unitField
@@ -162,7 +191,7 @@ struct ChemicalManualRateEditor: View {
     }
 
     private var unitField: some View {
-        Picker("Unit", selection: $rate.unit) {
+        Picker("Product unit *", selection: $rate.unit) {
             ForEach(["L", "mL", "kg", "g"], id: \.self) { unit in
                 Text(unit).tag(unit)
             }
