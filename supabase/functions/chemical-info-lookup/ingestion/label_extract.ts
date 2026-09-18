@@ -60,7 +60,7 @@ import {
 import { deriveLabelTargetWordings } from "./label_target_wording.ts";
 
 /** Bumped whenever the deterministic grammar changes (refresh comparability). */
-export const LABEL_PARSER_VERSION = 3;
+export const LABEL_PARSER_VERSION = 4;
 
 // ---------------------------------------------------------------------------
 // Default PDF text extractor (production) — unpdf, the serverless pdf.js
@@ -288,7 +288,7 @@ export type RateBasisHint = "per_100_litres" | "per_hectare" | null;
  * tank mix, not a rate this grammar may reduce to one number.
  */
 const BARE_QUANTITY_RE = new RegExp(
-  `^${NUM}(?:\\s*${RANGE_SEP}\\s*${NUM})?\\s*${UNIT_PATTERN}\\s*\\*?$`,
+  `^${NUM}(?:\\s*${RANGE_SEP}\\s*${NUM})?\\s*${UNIT_PATTERN}\\s*(?:(?:\\*|\\([a-z]\\))\\s*)?(?:see\\s+below)?$`,
   "i",
 );
 
@@ -577,8 +577,10 @@ type ColumnKind =
  * anchor has to exist before those continuations can be attached to it.
  */
 const HEADER_START: ReadonlyArray<RegExp> = [
-  /^(CROP|CROPS|SITUATION)$/i,
+  /^(CROP|CROPS|SITUATION)(?:\s*\/\s*SITUATION)?$/i,
   /^(DISEASE|DISEASES|PEST|PESTS|DISEASE\/PEST|DISEASES\/PESTS|WEED|WEEDS|INSECT|INSECTS)$/i,
+  /^WEEDS?\s+CONTROLLED$/i,
+  /^GROWTH\s+STAGE$/i,
   // Measured on CHATEAU 80647: the target column heads itself "WEEDS
   // CONTROLLED". `classifyHeader` already reads that as a target by prefix;
   // without this the heading is not even seeded, so the table has no target
@@ -596,7 +598,7 @@ const HEADER_START: ReadonlyArray<RegExp> = [
  * not the table's first row — nothing else is ever absorbed into a heading.
  */
 const HEADER_FRAGMENT =
-  /^(?:PER|PERIOD|PER\s+100\s*L|PER\s+HECTARE|100\s*L|100|L|HECTARE|HA|Harvest\s*\(H\)|Grazing\s*\(G\)|\(H\)|\(G\)|\(WHP\)|COMMENTS:?|USE\s+COMMENTS|(?:G|KG|ML|L)\s*\/\s*(?:HA|HECTARE)|(?:G|KG|ML|L)\s*\/\s*100\s*L)$/i;
+  /^(?:PER|PERIOD|PER\s+100\s*L|PER\s+HECTARE|100\s*L|100|L|HECTARE|HA|COMMON\s+NAME|BOTANICAL\s+NAME|Harvest\s*\(H\)|Grazing\s*\(G\)|\(H\)|\(G\)|\(WHP\)|COMMENTS:?|USE\s+COMMENTS|(?:G|KG|ML|L)\s*\/\s*(?:HA|HECTARE)|(?:G|KG|ML|L)\s*\/\s*100\s*L)$/i;
 
 /** Classify one FULLY ASSEMBLED heading. */
 function classifyHeader(raw: string): ColumnKind {
@@ -605,6 +607,7 @@ function classifyHeader(raw: string): ColumnKind {
   if (/^(DISEASE|DISEASES|PEST|PESTS|WEED|WEEDS|INSECT|INSECTS)\b/i.test(text)) {
     return "target";
   }
+  if (/^GROWTH\s+STAGE\b/i.test(text)) return "ignored";
   if (/^RATE\b/i.test(text)) {
     // The heading names its own basis. "RATE PER 100 L" and "RATE PER
     // HECTARE" are DIFFERENT columns and must never share a bucket — that
@@ -987,6 +990,131 @@ export interface DfuParse {
   rows: DfuRow[];
 }
 
+function textBetween(line: TextLine, left: number, right: number): string {
+  return line.items
+    .filter((item) => item.x >= left && item.x < right && item.str.trim().length > 0)
+    .map((item) => item.str)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Parse the APVMA's measured dual "Power Sprayer" layout.
+ *
+ * This layout prints one parent RATE heading above two child columns (/ha and
+ * /100 L). The ordinary header grammar cannot flatten that hierarchy without
+ * losing a column. Anchors still come exclusively from the printed header,
+ * and a body row starts only when crop, target and at least one numeric rate
+ * occupy their own measured columns. No rate is inferred or converted.
+ */
+export function parseDualPowerSprayerRows(lines: TextLine[]): DfuRow[] {
+  const rows: DfuRow[] = [];
+  for (let headerIndex = 0; headerIndex < lines.length; headerIndex++) {
+    const header = lines[headerIndex];
+    if (!/Crop\s*\/\s*Situation/i.test(header.text) || !/Power\s+Sprayer/i.test(header.text)) {
+      continue;
+    }
+    const page = header.page;
+    const windowEnd = Math.min(lines.length, headerIndex + 8);
+    const window = lines.slice(Math.max(0, headerIndex - 5), windowEnd)
+      .filter((line) => line.page === page);
+    const haLine = window.find((line) => /^\/\s*ha$/i.test(line.text));
+    const per100Line = window.find((line) => /^\/\s*100\s*L$/i.test(line.text));
+    const cropItem = header.items.find((item) => /Crop\s*\/\s*Situation/i.test(item.str));
+    const stateItem = header.items.find((item) => /^States?$/i.test(item.str.trim()));
+    const commentsItem = header.items.find((item) => /Critical\s+Comments/i.test(item.str));
+    const targetLine = window.find((line) => /^(?:Weeds?|Situation\s*\/\s*Weeds?)$/i.test(line.text));
+    const targetItem = targetLine?.items.find((item) => /Weeds?/i.test(item.str));
+    const haItem = haLine?.items.find((item) => /\/\s*ha/i.test(item.str));
+    const per100Item = per100Line?.items.find((item) => /\/\s*100\s*L/i.test(item.str));
+    if (!cropItem || !targetItem || !stateItem || !haItem || !per100Item || !commentsItem) {
+      continue;
+    }
+
+    const cropTarget = (cropItem.x + targetItem.x) / 2;
+    const targetState = (targetItem.x + stateItem.x) / 2;
+    const stateHa = (stateItem.x + haItem.x) / 2;
+    const haPer100 = (haItem.x + per100Item.x) / 2;
+    const haIndex = lines.indexOf(haLine as TextLine);
+    const per100Index = lines.indexOf(per100Line as TextLine);
+    let bodyStart = Math.max(headerIndex, haIndex, per100Index) + 1;
+    if (lines[bodyStart]?.page === page && /^\(Spot\s+Spray\)$/i.test(lines[bodyStart].text)) {
+      bodyStart++;
+    }
+    // Critical Comments headings are centred. The first complete body line
+    // gives the printed content edge, so use that measured x when available
+    // instead of letting comment prose leak into the /100 L cell.
+    const firstBody = lines.slice(bodyStart).find((candidate) =>
+      candidate.page === page && segmentCells(candidate).length >= 5 && /\d/.test(candidate.text)
+    );
+    const bodyCells = firstBody ? segmentCells(firstBody) : [];
+    const commentsContentX = bodyCells.length >= 5
+      ? bodyCells[bodyCells.length - 1].x
+      : commentsItem.x;
+    const per100Comments = (per100Item.x + commentsContentX) / 2;
+
+    type Acc = { crop: string[]; target: string[]; ha: string[]; per100: string[]; comments: string[] };
+    let acc: Acc | null = null;
+    const finish = (): void => {
+      if (!acc) return;
+      const crop = acc.crop.join(" ").replace(/\s+/g, " ").trim();
+      const target = acc.target.join(" ").replace(/\s+/g, " ").trim();
+      const ha = acc.ha.join(" ").replace(/\s+/g, " ").trim();
+      const per100 = acc.per100.join(" ").replace(/\s+/g, " ").trim();
+      if (crop && target && (ha || per100)) {
+        rows.push({
+          crop_text: crop,
+          target_lines: acc.target
+            .map((value) => value.replace(/\s+/g, " ").trim())
+            .filter((value) => value.length > 0),
+          rate_text: per100,
+          rate_basis: "per_100_litres",
+          rate_ha_text: ha,
+          whp_text: "",
+          comments_text: acc.comments.join(" ").replace(/\s+/g, " ").trim(),
+          rate_unit_hint: null,
+        });
+      }
+      acc = null;
+    };
+
+    for (let index = bodyStart; index < lines.length; index++) {
+      const line = lines[index];
+      if (line.page !== page || DFU_FOOTER.test(line.text)) break;
+      if (/Crop\s*\/\s*Situation/i.test(line.text)) break;
+      const crop = textBetween(line, Number.NEGATIVE_INFINITY, cropTarget);
+      const target = textBetween(line, cropTarget, targetState);
+      const ha = textBetween(line, stateHa, haPer100);
+      const per100 = textBetween(line, haPer100, per100Comments);
+      const comments = textBetween(line, per100Comments, Number.POSITIVE_INFINITY);
+      const quantity = /\d+(?:\.\d+)?(?:\s*(?:to|–|—|-)\s*\d+(?:\.\d+)?)?\s*(?:mL|ml|L|l|g|kg)\b/i;
+      const startsRow = Boolean(
+        crop && target &&
+        (
+          (quantity.test(ha) && (/^\d/.test(per100) || /^[-–—]+$/.test(per100))) ||
+          (/^[-–—]+$/.test(ha) && (quantity.test(per100) || /^[-–—]+$/.test(per100)))
+        )
+      );
+      if (startsRow) {
+        finish();
+        acc = { crop: [crop], target: [target], ha: ha ? [ha] : [], per100: per100 ? [per100] : [], comments: comments ? [comments] : [] };
+        continue;
+      }
+      if (!acc) continue;
+      if (crop) acc.crop.push(crop);
+      if (target) acc.target.push(target);
+      const hasStructured = (parts: string[], basis: RateBasisHint): boolean =>
+        parseRateCell(parts.join(" "), basis).some((rate) => rate.basis !== "other");
+      if (ha && !hasStructured(acc.ha, "per_hectare")) acc.ha.push(ha);
+      if (per100 && !hasStructured(acc.per100, "per_100_litres")) acc.per100.push(per100);
+      if (comments) acc.comments.push(comments);
+    }
+    finish();
+  }
+  return rows;
+}
+
 /**
  * Parse the document's Directions-for-Use section into verbatim rows.
  * Deterministic and bounded: rows exist only where a recognised column
@@ -1041,6 +1169,23 @@ export function parseDirectionsForUse(items: PdfTextItem[]): DfuParse {
     // ---- Header block: seed anchors, then absorb the wrapped heading ----
     const seeds = seedHeaderAnchors(line);
     if (seeds) {
+      // Wide APVMA herbicide tables print the merged target heading
+      // ("Weeds Controlled") on the baseline immediately ABOVE the rest of
+      // the header ("Crop/Situation | Growth Stage | Rate/ha | …"). Carry
+      // that measured anchor into this one header block; never search farther
+      // than the adjacent line and never invent a target column.
+      const prior = index > 0 && lines[index - 1].page === line.page
+        ? seedHeaderAnchors(lines[index - 1])
+        : null;
+      if (
+        !seeds.some((a) => classifyHeader(a.parts.join(" ")) === "target") &&
+        prior
+      ) {
+        for (const anchor of prior) {
+          if (classifyHeader(anchor.parts.join(" ")) === "target") seeds.push(anchor);
+        }
+        seeds.sort((a, b) => a.anchorX - b.anchorX);
+      }
       const commentsSeed = seeds.some((a) => /COMMENTS/i.test(a.parts[0]))
         ? null
         : synthesiseCommentsAnchor(line, seeds);
@@ -1134,6 +1279,16 @@ export function parseDirectionsForUse(items: PdfTextItem[]): DfuParse {
     place(acc.commentLines, "comments");
   }
   finishRow(acc, rows);
+  const dualRows = parseDualPowerSprayerRows(lines);
+  for (const row of dualRows) {
+    const duplicate = rows.some((existing) =>
+      existing.crop_text === row.crop_text &&
+      existing.target_lines.join(" ") === row.target_lines.join(" ") &&
+      existing.rate_text === row.rate_text &&
+      existing.rate_ha_text === row.rate_ha_text
+    );
+    if (!duplicate) rows.push(row);
+  }
   return { found: sawSection, rows };
 }
 
