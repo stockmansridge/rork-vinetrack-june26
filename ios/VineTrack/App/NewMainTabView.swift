@@ -54,6 +54,7 @@ struct NewMainTabView: View {
     @Environment(AppNoticeService.self) private var appNoticeService
     @Environment(SyncStatusCenter.self) private var syncStatusCenter
     @Environment(NetworkMonitor.self) private var network
+    @Environment(DegreeDayService.self) private var degreeDayService
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: Int = 0
     @State private var isSweeping: Bool = false
@@ -66,6 +67,23 @@ struct NewMainTabView: View {
     /// Used by the full sweep to pull vineyard-scoped organisation region
     /// settings (country/units/date format/terminology) from Supabase.
     private let vineyardRegionRepository: any VineyardRepositoryProtocol = SupabaseVineyardRepository()
+
+    /// Hydrates the app-wide durable weather cache without delaying app entry.
+    /// Equivalent surfaces join DegreeDayService's keyed in-flight task.
+    private func prefetchOptimalRipenessWeather() async {
+        guard store.selectedVineyardId != nil,
+              let requiredStart = RipenessMath.fetchRangeStart(
+                paddocks: store.orderedPaddocks,
+                settings: store.settings
+              ) else { return }
+        await degreeDayService.ensureSeasonLoaded(
+            candidates: RipenessMath.candidates(store: store),
+            vineyardId: store.selectedVineyardId,
+            latitude: store.settings.vineyardLatitude ?? store.paddockCentroidLatitude,
+            seasonStart: requiredStart,
+            useBEDD: store.settings.calculationMode.useBEDD
+        )
+    }
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -173,6 +191,7 @@ struct NewMainTabView: View {
             sprayJobTemplateService.loadCached(for: store.selectedVineyardId)
             await accessControl.refresh(for: store.selectedVineyardId, auth: auth)
             await runFullSweep(alertRefresh: .generate)
+            await prefetchOptimalRipenessWeather()
         }
         // Periodic active sync: every 3 minutes while the app is foregrounded
         // and a vineyard is selected. Task is cancelled automatically when
@@ -207,7 +226,10 @@ struct NewMainTabView: View {
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
-                Task { await runFullSweep(alertRefresh: .refresh) }
+                Task {
+                    await runFullSweep(alertRefresh: .refresh)
+                    await prefetchOptimalRipenessWeather()
+                }
                 Task { await appNoticeService.refresh() }
             }
         }
@@ -218,7 +240,10 @@ struct NewMainTabView: View {
                 syncStatusCenter.refreshPending(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes, failedUpserts: aggregateFailedUpserts, failedDeletes: aggregateFailedDeletes)
                 return
             }
-            Task { await runFullSweep(alertRefresh: .refresh) }
+            Task {
+                await runFullSweep(alertRefresh: .refresh)
+                await prefetchOptimalRipenessWeather()
+            }
         }
         // Manual "Sync now" requested from Sync settings or the status bar.
         .onChange(of: syncStatusCenter.manualSyncToken) { _, _ in

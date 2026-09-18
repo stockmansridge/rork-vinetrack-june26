@@ -99,6 +99,12 @@ class DegreeDayService(
     private fun sourceTemps(sourceKey: String): MutableMap<String, DailyTemp> =
         tempsBySource.getOrPut(sourceKey) { persistentCache?.load(sourceKey)?.toMutableMap() ?: mutableMapOf() }
 
+    /** Rehydrates revisions written by the app-wide coordinator into this reader. */
+    fun reloadPersistentSource(sourceKey: String) {
+        val durable = persistentCache?.load(sourceKey) ?: return
+        tempsBySource[sourceKey] = durable.toMutableMap()
+    }
+
     /** Exact observed coverage, excluding interpolation. */
     fun hasCompleteData(sourceKey: String, fromMs: Long, toMs: Long): Boolean {
         val rows = sourceTemps(sourceKey)

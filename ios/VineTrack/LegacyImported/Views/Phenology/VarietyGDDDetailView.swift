@@ -190,7 +190,7 @@ struct VarietyGDDDetailView: View {
                 candidates: RipenessMath.candidates(store: store),
                 vineyardId: store.selectedVineyardId,
                 latitude: effectiveLatitude,
-                seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+                seasonStart: RipenessMath.fetchRangeStart(paddocks: store.orderedPaddocks, settings: store.settings) ?? RipenessMath.seasonStartDate(settings: store.settings),
                 useBEDD: store.settings.calculationMode.useBEDD
             )
         }
@@ -205,7 +205,7 @@ struct VarietyGDDDetailView: View {
             candidates: candidates,
             vineyardId: store.selectedVineyardId,
             latitude: effectiveLatitude,
-            seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+            seasonStart: RipenessMath.fetchRangeStart(paddocks: store.orderedPaddocks, settings: store.settings) ?? RipenessMath.seasonStartDate(settings: store.settings),
             useBEDD: store.settings.calculationMode.useBEDD
         )
     }
@@ -217,7 +217,7 @@ struct VarietyGDDDetailView: View {
             candidates: candidates,
             vineyardId: store.selectedVineyardId,
             latitude: effectiveLatitude,
-            seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+            seasonStart: RipenessMath.fetchRangeStart(paddocks: store.orderedPaddocks, settings: store.settings) ?? RipenessMath.seasonStartDate(settings: store.settings),
             useBEDD: store.settings.calculationMode.useBEDD
         )
     }
@@ -229,7 +229,7 @@ struct VarietyGDDDetailView: View {
             candidates: candidates,
             vineyardId: store.selectedVineyardId,
             latitude: effectiveLatitude,
-            seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+            seasonStart: RipenessMath.fetchRangeStart(paddocks: store.orderedPaddocks, settings: store.settings) ?? RipenessMath.seasonStartDate(settings: store.settings),
             useBEDD: store.settings.calculationMode.useBEDD
         ) != nil else { return false }
         return !candidates.contains(where: { degreeDayService.hasUsableData(for: $0.source) })
@@ -238,8 +238,7 @@ struct VarietyGDDDetailView: View {
     private var emptyState: some View {
         VStack(spacing: 10) {
             if isFetching {
-                ProgressView()
-                Text("Fetching season weather\u{2026}")
+                Text("Syncing weather history…")
                     .font(.subheadline.weight(.semibold))
             } else if fetchFailed {
                 Image(systemName: "exclamationmark.triangle")
@@ -251,7 +250,7 @@ struct VarietyGDDDetailView: View {
                     candidates: candidates,
                     vineyardId: store.selectedVineyardId,
                     latitude: effectiveLatitude,
-                    seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+                    seasonStart: RipenessMath.fetchRangeStart(paddocks: store.orderedPaddocks, settings: store.settings) ?? RipenessMath.seasonStartDate(settings: store.settings),
                     useBEDD: store.settings.calculationMode.useBEDD
                 ) ?? "Check your connection and try again.")
                     .font(.caption)
@@ -263,7 +262,7 @@ struct VarietyGDDDetailView: View {
                             candidates: candidates,
                             vineyardId: store.selectedVineyardId,
                             latitude: effectiveLatitude,
-                            seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+                            seasonStart: RipenessMath.fetchRangeStart(paddocks: store.orderedPaddocks, settings: store.settings) ?? RipenessMath.seasonStartDate(settings: store.settings),
                             useBEDD: store.settings.calculationMode.useBEDD,
                             forceRefresh: true
                         )

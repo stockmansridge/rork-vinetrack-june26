@@ -434,7 +434,7 @@ class DegreeDayService {
         guard !stationId.isEmpty else { return false }
         let key = "\(lastDailySyncKey)_\(stationId)"
         guard let last = UserDefaults.standard.object(forKey: key) as? Date else { return true }
-        return !Calendar.current.isDateInToday(last)
+        return !calendar.isDateInToday(last)
     }
 
     private func markDailyRefresh(for stationId: String) {
@@ -932,14 +932,12 @@ class DegreeDayService {
         let refreshDates = refreshDates(forKey: key, coveringFrom: start, to: today)
         diagnostics.append("Season dates: \(dates.count) \u{2022} missing/recent refresh: \(refreshDates.count)")
 
-        // Davis historic costs one API call per 24h chunk. To avoid
-        // hammering WeatherLink the first time, cap the per-fetch
-        // window at 60 days; older days fall through to the
-        // higher-priority chain (callers can then layer Open-Meteo in
-        // for the long tail).
+        // Fetch the complete required range in this background pass. The direct
+        // client already splits it into 24-hour windows with bounded concurrency;
+        // the proxy path is deliberately serial to respect Davis limits. No other
+        // provider is used to fill gaps when Davis is authoritative.
         if !refreshDates.isEmpty {
-            let maxDaysPerFetch = 60
-            let toFetch = Array(refreshDates.suffix(maxDaysPerFetch))
+            let toFetch = refreshDates
             let requestedKeys = Set(toFetch.map(compactKey(for:)))
             let from = toFetch.first ?? start
             let to = (toFetch.last ?? today).addingTimeInterval(24 * 60 * 60)
@@ -974,6 +972,8 @@ class DegreeDayService {
                     let lo = result.dailyLowC[day] ?? hi
                     stationTemps[k] = DailyTemp(high: hi, low: lo)
                 }
+                temps[key] = stationTemps
+                saveCache()
                 lastFetchSucceeded = result.dailyHighC.count
                 diagnostics.append("Davis archive rows: \(result.recordCount), days written: \(result.dailyHighC.count)")
             } catch {

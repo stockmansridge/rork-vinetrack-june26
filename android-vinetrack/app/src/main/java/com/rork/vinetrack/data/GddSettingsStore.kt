@@ -2,6 +2,8 @@ package com.rork.vinetrack.data
 
 import android.content.Context
 import androidx.core.content.edit
+import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.model.parseIsoToEpochMs
 
 /**
  * Growing-degree-day calculation mode. Mirrors the iOS `GDDCalculationMode`:
@@ -22,8 +24,8 @@ enum class GddCalculationMode(val storageKey: String, val displayName: String, v
 
 /**
  * Point in the season where degree-day accumulation restarts. Mirrors the iOS
- * `GDDResetMode`. When a phenology date for the chosen stage is set on a block
- * it is used as the reset date; otherwise the season start is used.
+ * `GDDResetMode`. The selected reset point is authoritative: a missing
+ * phenology milestone stays missing and never falls back to Season Start.
  */
 enum class GddResetMode(val storageKey: String, val displayName: String) {
     SEASON_START("seasonStart", "Season Start"),
@@ -35,6 +37,24 @@ enum class GddResetMode(val storageKey: String, val displayName: String) {
         fun fromKey(key: String?): GddResetMode =
             entries.firstOrNull { it.storageKey == key } ?: BUDBURST
     }
+}
+
+/** Effective calculation mode; a valid per-block override wins over the vineyard default. */
+fun Paddock.effectiveCalculationMode(defaultMode: GddCalculationMode): GddCalculationMode =
+    calculationModeOverride?.trim()?.takeIf(String::isNotEmpty)
+        ?.let(GddCalculationMode::fromKey) ?: defaultMode
+
+/** Effective reset mode; a valid per-block override wins over the vineyard default. */
+fun Paddock.effectiveResetMode(defaultMode: GddResetMode): GddResetMode =
+    resetModeOverride?.trim()?.takeIf(String::isNotEmpty)
+        ?.let(GddResetMode::fromKey) ?: defaultMode
+
+/** Authoritative reset date for this block. Missing milestones remain missing. */
+fun Paddock.resetDateMs(mode: GddResetMode, seasonStartMs: Long): Long? = when (mode) {
+    GddResetMode.SEASON_START -> seasonStartMs
+    GddResetMode.BUDBURST -> parseIsoToEpochMs(budburstDate)
+    GddResetMode.FLOWERING -> parseIsoToEpochMs(floweringDate)
+    GddResetMode.VERAISON -> parseIsoToEpochMs(veraisonDate)
 }
 
 /**

@@ -4,6 +4,9 @@ import com.rork.vinetrack.data.insights.BudburstReconciler
 import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.ui.screens.computeRows
+import com.rork.vinetrack.ui.screens.earliestRequiredWeatherDate
+import com.rork.vinetrack.ui.screens.seasonStartDate
+import com.rork.vinetrack.ui.screens.startOfDayMs
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -79,6 +82,60 @@ class OptimalRipenessParityTest {
         assertTrue(row.hasGddValue)
         assertEquals(Instant.parse("2026-09-03T00:00:00Z").toEpochMilli(), row.resetDateMs)
         assertEquals(20.0, row.total, 0.0001)
+    }
+
+    @Test
+    fun `explicit Season Start uses vineyard start while missing Budburst never falls back`() {
+        val service = DegreeDayService(timeZone = utc)
+        val key = DegreeDayService.openMeteoKey(-33.28, 149.10)
+        service.installDailyTemps(key, (1..4).associate { day -> "2026090$day" to DailyTemp(30.0, 10.0) })
+        val seasonStart = Instant.parse("2026-09-01T00:00:00Z").toEpochMilli()
+        val blocks = listOf(
+            Paddock(id = "season", vineyardId = "v1", name = "Season", resetModeOverride = "seasonStart"),
+            Paddock(id = "budburst", vineyardId = "v1", name = "Budburst", resetModeOverride = "budburst"),
+        )
+
+        val rows = computeRows(
+            service, key, -33.28, blocks, emptyList(), false, end,
+            seasonStart, GddResetMode.BUDBURST, GddCalculationMode.GDD, utc,
+        ).rows.associateBy { it.block.id }
+
+        assertEquals(40.0, rows.getValue("season").total, 0.0001)
+        assertEquals(seasonStart, rows.getValue("season").resetDateMs)
+        assertNull(rows.getValue("budburst").resetDateMs)
+        assertFalse(rows.getValue("budburst").hasGddValue)
+        assertEquals(seasonStart, earliestRequiredWeatherDate(blocks, seasonStart, GddResetMode.BUDBURST))
+    }
+
+    @Test
+    fun `per-block calculation override wins over vineyard default`() {
+        val service = DegreeDayService(timeZone = utc)
+        val key = DegreeDayService.openMeteoKey(-33.28, 149.10)
+        service.installDailyTemps(key, (1..4).associate { day -> "2026090$day" to DailyTemp(30.0, 10.0) })
+        val blocks = listOf(
+            Paddock(id = "gdd", vineyardId = "v1", name = "GDD", budburstDate = "2026-09-01", calculationModeOverride = "gdd"),
+            Paddock(id = "bedd", vineyardId = "v1", name = "BEDD", budburstDate = "2026-09-01", calculationModeOverride = "bedd"),
+        )
+
+        val rows = computeRows(
+            service, key, -33.28, blocks, emptyList(), true, end,
+            start, GddResetMode.BUDBURST, GddCalculationMode.BEDD, utc,
+        ).rows.associateBy { it.block.id }
+
+        assertEquals(40.0, rows.getValue("gdd").total, 0.0001)
+        assertTrue(rows.getValue("bedd").total < rows.getValue("gdd").total)
+    }
+
+    @Test
+    fun `vineyard timezone controls season and day boundaries`() {
+        val auckland = TimeZone.getTimeZone("Pacific/Auckland")
+        val instant = Instant.parse("2026-09-01T11:30:00Z").toEpochMilli()
+        assertEquals(Instant.parse("2026-08-31T12:00:00Z").toEpochMilli(), startOfDayMs(instant, utc))
+        assertEquals(Instant.parse("2026-09-01T12:00:00Z").toEpochMilli(), startOfDayMs(instant, auckland))
+        assertEquals(
+            Instant.parse("2026-06-30T12:00:00Z").toEpochMilli(),
+            seasonStartDate(7, 1, auckland, Instant.parse("2026-09-01T00:00:00Z").toEpochMilli()),
+        )
     }
 
     @Test

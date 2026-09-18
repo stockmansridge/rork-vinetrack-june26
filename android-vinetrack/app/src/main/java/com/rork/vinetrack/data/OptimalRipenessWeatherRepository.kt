@@ -1,6 +1,7 @@
 package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.auth.SessionStore
+import kotlinx.coroutines.CompletableDeferred
 
 /** Authoritative weather source identity shared by every Optimal Ripeness surface. */
 sealed interface OptimalRipenessWeatherSource {
@@ -41,7 +42,63 @@ class OptimalRipenessWeatherRepository(
     private val integrationRepository: VineyardWeatherIntegrationRepository,
     private val davisRepository: DavisWeatherLinkRepository,
 ) {
+    companion object {
+        private const val REFRESH_THROTTLE_MS: Long = 15 * 60 * 1000L
+        private val lock = Any()
+        private val inFlight = mutableMapOf<String, CompletableDeferred<OptimalRipenessWeatherResult>>()
+        private val recent = mutableMapOf<String, Pair<Long, OptimalRipenessWeatherResult>>()
+    }
+
+    /** One in-flight provider refresh per vineyard/source/location request. */
     suspend fun refresh(
+        vineyardId: String,
+        latitude: Double,
+        longitude: Double,
+        fromEpochMs: Long,
+        toEpochMs: Long,
+        cachedSourceFingerprint: String?,
+    ): OptimalRipenessWeatherResult {
+        val requestKey = listOf(
+            vineyardId,
+            cachedSourceFingerprint.orEmpty(),
+            "%.4f".format(java.util.Locale.US, latitude),
+            "%.4f".format(java.util.Locale.US, longitude),
+            fromEpochMs.toString(),
+            toEpochMs.toString(),
+        ).joinToString("|")
+        val now = System.currentTimeMillis()
+        var owner = false
+        val task = synchronized(lock) {
+            recent[requestKey]?.takeIf { now - it.first < REFRESH_THROTTLE_MS }?.second?.let {
+                degreeDays.reloadPersistentSource(it.source.sourceKey)
+                return it
+            }
+            inFlight[requestKey] ?: CompletableDeferred<OptimalRipenessWeatherResult>().also {
+                inFlight[requestKey] = it
+                owner = true
+            }
+        }
+        if (!owner) {
+            val result = task.await()
+            degreeDays.reloadPersistentSource(result.source.sourceKey)
+            return result
+        }
+        return try {
+            val result = refreshUncoordinated(
+                vineyardId, latitude, longitude, fromEpochMs, toEpochMs, cachedSourceFingerprint,
+            )
+            synchronized(lock) { recent[requestKey] = System.currentTimeMillis() to result }
+            task.complete(result)
+            result
+        } catch (error: Throwable) {
+            task.completeExceptionally(error)
+            throw error
+        } finally {
+            synchronized(lock) { inFlight.remove(requestKey, task) }
+        }
+    }
+
+    private suspend fun refreshUncoordinated(
         vineyardId: String,
         latitude: Double,
         longitude: Double,

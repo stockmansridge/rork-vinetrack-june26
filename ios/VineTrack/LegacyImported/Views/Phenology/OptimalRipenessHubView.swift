@@ -55,7 +55,7 @@ struct OptimalRipenessHubView: View {
 
     private var blockRows: [BlockRow] {
         guard let source = activeSource else { return [] }
-        let cal = Calendar.current
+        let cal = store.settings.resolvedCalendar
         let now = Date()
         let oneYearAgo = cal.date(byAdding: .year, value: -1, to: now) ?? now
         let seasonStart = RipenessMath.seasonStartDate(settings: store.settings)
@@ -175,7 +175,9 @@ struct OptimalRipenessHubView: View {
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(.primary)
                                 if isFetching {
-                                    ProgressView().controlSize(.mini)
+                                    Text("Updating…")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
                                 }
                             }
                         }
@@ -215,7 +217,7 @@ struct OptimalRipenessHubView: View {
                 candidates: candidates,
                 vineyardId: store.selectedVineyardId,
                 latitude: store.settings.vineyardLatitude ?? store.paddockCentroidLatitude,
-                seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+                seasonStart: RipenessMath.fetchRangeStart(paddocks: store.orderedPaddocks, settings: store.settings) ?? RipenessMath.seasonStartDate(settings: store.settings),
                 useBEDD: store.settings.calculationMode.useBEDD
             )
         }
@@ -259,7 +261,7 @@ struct OptimalRipenessHubView: View {
             candidates: candidates,
             vineyardId: store.selectedVineyardId,
             latitude: store.settings.vineyardLatitude ?? store.paddockCentroidLatitude,
-            seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+            seasonStart: RipenessMath.fetchRangeStart(paddocks: store.orderedPaddocks, settings: store.settings) ?? RipenessMath.seasonStartDate(settings: store.settings),
             useBEDD: store.settings.calculationMode.useBEDD
         )
     }
@@ -271,7 +273,7 @@ struct OptimalRipenessHubView: View {
             candidates: candidates,
             vineyardId: store.selectedVineyardId,
             latitude: store.settings.vineyardLatitude ?? store.paddockCentroidLatitude,
-            seasonStart: RipenessMath.fetchRangeStart(settings: store.settings),
+            seasonStart: RipenessMath.fetchRangeStart(paddocks: store.orderedPaddocks, settings: store.settings) ?? RipenessMath.seasonStartDate(settings: store.settings),
             useBEDD: store.settings.calculationMode.useBEDD
         )
     }
@@ -290,6 +292,32 @@ private struct BlockRipenessRow: View {
     private var hasUnresolvedVariety: Bool {
         if case .unrecognised = row.resolution.status { return true }
         return false
+    }
+
+    private var allocationDescription: String {
+        var parts: [String] = []
+        if let variety = row.variety {
+            if variety.name.caseInsensitiveCompare(row.block.name) != .orderedSame { parts.append(variety.name) }
+        } else {
+            parts.append(hasUnresolvedVariety ? "Unrecognised variety" : "No variety")
+        }
+        if let allocation = row.allocation {
+            let clone = allocation.cloneKey == CloneRootstockSentinels.massSelectionKey
+                ? CloneRootstockSentinels.massSelectionDisplay
+                : allocation.clone?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let rootstock = allocation.rootstockKey == CloneRootstockSentinels.ownRootsKey
+                ? CloneRootstockSentinels.ownRootsDisplay
+                : allocation.rootstock?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let clone, !clone.isEmpty { parts.append("Clone \(clone)") }
+            if let rootstock, !rootstock.isEmpty { parts.append("Rootstock \(rootstock)") }
+            if row.allocationCount > 1 {
+                parts.append(allocation.percent > 0 && allocation.percent < 1 ? "<1%" : "\(Int(allocation.percent))%")
+            }
+        }
+        if let reset = row.resetDate {
+            parts.append("since \(reset.formatted(.dateTime.day().month(.abbreviated)))")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private var status: (label: String, color: Color, icon: String) {
@@ -311,7 +339,7 @@ private struct BlockRipenessRow: View {
             return ("No reset", .secondary, "calendar.badge.exclamationmark")
         }
         if !row.hasData {
-            return ("Fetching season weather…", .secondary, "arrow.triangle.2.circlepath")
+            return ("Syncing weather history…", .secondary, "arrow.triangle.2.circlepath")
         }
         if row.isIncomplete {
             return ("Incomplete weather data", .orange, "exclamationmark.triangle.fill")
@@ -346,34 +374,10 @@ private struct BlockRipenessRow: View {
                     Text(row.block.name)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
-                    HStack(spacing: 6) {
-                        if let variety = row.variety {
-                            if let alloc = row.allocation, row.allocationCount > 1 {
-                                Text("\(variety.name) • \(Int(alloc.percent))%")
-                                    .font(.caption2.weight(.medium))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            } else {
-                                Text(variety.name)
-                                    .font(.caption2.weight(.medium))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                        } else if hasUnresolvedVariety {
-                            Text("Unrecognised variety")
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(.orange)
-                        } else {
-                            Text("No variety")
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(.orange)
-                        }
-                        if let r = row.resetDate {
-                            Text("\u{2022} since \(r.formatted(.dateTime.day().month(.abbreviated)))")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                    Text(allocationDescription)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(hasUnresolvedVariety || row.variety == nil ? .orange : .secondary)
+                        .lineLimit(1)
                 }
                 Spacer()
                 if row.target > 0 {
@@ -387,11 +391,10 @@ private struct BlockRipenessRow: View {
                                     .font(.caption2.monospacedDigit())
                                     .foregroundStyle(.secondary)
                             }
-                            Text("\(Int(progress * 100))%")
+                            Text(progress > 0 && progress < 0.01 ? "<1%" : "\(Int(progress * 100))%")
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(progressColor)
                         } else {
-                            ProgressView().controlSize(.mini)
                             Text("Target \(Int(row.target))")
                                 .font(.caption2.monospacedDigit())
                                 .foregroundStyle(.secondary)

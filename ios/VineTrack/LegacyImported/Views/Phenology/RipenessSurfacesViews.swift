@@ -95,14 +95,15 @@ enum RipenessMath {
         return .notConfigured
     }
 
-    /// Earliest date the Optimal Ripeness surfaces might query. Used to
-    /// pre-fetch a comfortable temperature buffer (per-block reset
-    /// dates can be up to a year back).
+    /// Earliest valid reset date actually required by the tracked blocks.
+    /// Missing milestones are ignored and never expand the provider request.
     @MainActor
-    static func fetchRangeStart(settings: AppSettings) -> Date {
-        let cal = settings.resolvedCalendar
-        let oneYearAgo = cal.date(byAdding: .year, value: -1, to: Date()) ?? Date()
-        return min(oneYearAgo, seasonStartDate(settings: settings))
+    static func fetchRangeStart(paddocks: [Paddock], settings: AppSettings) -> Date? {
+        let seasonStart = seasonStartDate(settings: settings)
+        return paddocks.compactMap { block in
+            let mode = block.effectiveResetMode(defaultMode: settings.resetMode)
+            return block.resetDate(for: mode, seasonStart: seasonStart)
+        }.min()
     }
 
     static func seasonStartDate(settings: AppSettings) -> Date {
@@ -501,7 +502,7 @@ struct RipenessWatchTile: View {
     }
 
     private var seasonStart: Date {
-        RipenessMath.fetchRangeStart(settings: store.settings)
+        RipenessMath.fetchRangeStart(paddocks: store.orderedPaddocks, settings: store.settings) ?? RipenessMath.seasonStartDate(settings: store.settings)
     }
 
     private var useBEDD: Bool {

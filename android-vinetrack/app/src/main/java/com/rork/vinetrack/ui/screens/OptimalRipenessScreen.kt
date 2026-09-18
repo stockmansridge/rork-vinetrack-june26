@@ -82,7 +82,11 @@ import com.rork.vinetrack.data.VineyardWeatherIntegration
 import com.rork.vinetrack.data.VineyardWeatherIntegrationRepository
 import com.rork.vinetrack.data.WeatherIntegrationProvider
 import com.rork.vinetrack.data.auth.SessionStore
+import com.rork.vinetrack.data.GddCalculationMode
 import com.rork.vinetrack.data.GddResetMode
+import com.rork.vinetrack.data.effectiveCalculationMode
+import com.rork.vinetrack.data.effectiveResetMode
+import com.rork.vinetrack.data.resetDateMs
 import com.rork.vinetrack.data.PaddockRepository
 import com.rork.vinetrack.data.GddSettingsStore
 import com.rork.vinetrack.data.OperationPrefsStore
@@ -245,8 +249,9 @@ fun OptimalRipenessScreen(
         }
     }
 
-    val seasonStartMs = remember(state.seasonStartMonth, state.seasonStartDay) {
-        seasonStartDate(state.seasonStartMonth, state.seasonStartDay)
+    val vineyardTimeZone = remember(state.seasonZone) { java.util.TimeZone.getTimeZone(state.seasonZone) }
+    val seasonStartMs = remember(state.seasonStartMonth, state.seasonStartDay, vineyardTimeZone) {
+        seasonStartDate(state.seasonStartMonth, state.seasonStartDay, vineyardTimeZone)
     }
 
     val vineyardId = state.selectedVineyardId
@@ -263,6 +268,10 @@ fun OptimalRipenessScreen(
                 paddocks = state.paddocks,
                 grapeVarieties = state.grapeVarieties,
                 useBEDD = gddSettings.calculationMode.useBEDD,
+                seasonStartMs = seasonStartMs,
+                globalResetMode = gddSettings.resetMode,
+                globalCalculationMode = gddSettings.calculationMode,
+                timeZone = java.util.TimeZone.getTimeZone(state.seasonZone),
             ).copy(
                 sourceLabel = cachedSource.sourceLabel,
                 sourceFingerprint = sourceKey,
@@ -301,8 +310,13 @@ fun OptimalRipenessScreen(
             )
             return@produceState
         }
-        val earliestBudburst = state.paddocks.mapNotNull(::optimalRipenessBudburstMs).minOrNull()
-        if (earliestBudburst == null) {
+        val timeZone = java.util.TimeZone.getTimeZone(state.seasonZone)
+        val earliestRequiredDate = earliestRequiredWeatherDate(
+            paddocks = state.paddocks,
+            seasonStartMs = seasonStartMs,
+            globalResetMode = gddSettings.resetMode,
+        )
+        if (earliestRequiredDate == null) {
             value = value.copy(isUpdatingWeather = false)
             return@produceState
         }
@@ -310,7 +324,7 @@ fun OptimalRipenessScreen(
             vineyardId = id,
             latitude = c.first,
             longitude = c.second,
-            fromEpochMs = earliestBudburst,
+            fromEpochMs = earliestRequiredDate,
             toEpochMs = System.currentTimeMillis(),
             cachedSourceFingerprint = cachedSource?.sourceFingerprint,
         )
@@ -333,6 +347,10 @@ fun OptimalRipenessScreen(
             paddocks = state.paddocks,
             grapeVarieties = state.grapeVarieties,
             useBEDD = gddSettings.calculationMode.useBEDD,
+            seasonStartMs = seasonStartMs,
+            globalResetMode = gddSettings.resetMode,
+            globalCalculationMode = gddSettings.calculationMode,
+            timeZone = timeZone,
         ).copy(sourceLabel = weather.source.label, sourceFingerprint = weather.source.sourceKey)
         value = OptimalRipenessScreenState(result = fresh, isUpdatingWeather = false)
     }
@@ -451,15 +469,20 @@ private fun BlockRipenessCard(
             Row(verticalAlignment = Alignment.Top) {
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(row.block.name, color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                    val sub = buildString {
-                        when {
-                            row.varietyName != null && row.multiVariety && row.allocationPercent != null ->
-                                append("${row.varietyName} · ${row.allocationPercent.toInt()}%")
-                            row.varietyName != null -> append(row.varietyName)
-                            else -> append("No variety")
-                        }
-                        row.resetDateMs?.let { append(" · since ${shortDate(it)}") }
+                    val allocation = row.block.varietyAllocations.orEmpty().firstOrNull {
+                        canonicalVarietyName(it.displayName.orEmpty()) == canonicalVarietyName(row.varietyName.orEmpty()) &&
+                            it.displayPercent == row.allocationPercent
                     }
+                    val sub = buildList {
+                        val repeatsBlock = row.varietyName?.equals(row.block.name, ignoreCase = true) == true
+                        if (!repeatsBlock) add(row.varietyName ?: "No variety")
+                        allocation?.clone?.trim()?.takeIf(String::isNotEmpty)?.let { add("Clone $it") }
+                        allocation?.rootstock?.trim()?.takeIf(String::isNotEmpty)?.let { add("Rootstock $it") }
+                        if (row.multiVariety && row.allocationPercent != null) {
+                            add(if (row.allocationPercent > 0 && row.allocationPercent < 1) "<1%" else "${row.allocationPercent.toInt()}%")
+                        }
+                        row.resetDateMs?.let { add("since ${shortDate(it)}") }
+                    }.joinToString(" · ")
                     Text(
                         sub,
                         color = if (row.varietyName == null) VineColors.Orange else vine.textSecondary,
@@ -474,7 +497,7 @@ private fun BlockRipenessCard(
                                 Text("${row.total.toInt()}", color = status.color, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                                 Text("/ ${row.target.toInt()}", color = vine.textSecondary, fontSize = 11.sp)
                             }
-                            Text("${(row.progress * 100).toInt()}%", color = status.color, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            Text(if (row.progress > 0 && row.progress < 0.01) "<1%" else "${(row.progress * 100).toInt()}%", color = status.color, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                         } else {
                             Text("Updating…", color = vine.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             Text("Target ${row.target.toInt()}", color = vine.textSecondary, fontSize = 11.sp)
@@ -803,24 +826,30 @@ internal fun computeRows(
     grapeVarieties: List<com.rork.vinetrack.data.model.GrapeVarietyRow>,
     useBEDD: Boolean,
     nowMs: Long = System.currentTimeMillis(),
+    seasonStartMs: Long = nowMs,
+    globalResetMode: GddResetMode = GddResetMode.BUDBURST,
+    globalCalculationMode: GddCalculationMode = if (useBEDD) GddCalculationMode.BEDD else GddCalculationMode.GDD,
+    timeZone: java.util.TimeZone = java.util.TimeZone.getDefault(),
 ): RipenessResult {
     val now = nowMs
     val oneYearAgo = run {
-        val cal = Calendar.getInstance(); cal.timeInMillis = now; cal.add(Calendar.YEAR, -1); cal.timeInMillis
+        val cal = Calendar.getInstance(timeZone); cal.timeInMillis = now; cal.add(Calendar.YEAR, -1); cal.timeInMillis
     }
     val rows = mutableListOf<RipenessRow>()
 
     for (block in paddocks) {
-        val resetMs = optimalRipenessBudburstMs(block)
+        val resetMode = block.effectiveResetMode(globalResetMode)
+        val calculationMode = block.effectiveCalculationMode(globalCalculationMode)
+        val resetMs = block.resetDateMs(resetMode, seasonStartMs)
         var total = 0.0
         var perDay = 0.0
         if (resetMs != null && resetMs in oneYearAgo..now) {
             val series = service.dailyGddSeries(
                 sourceKey = sourceKey,
-                fromMs = startOfDayMs(resetMs),
-                toMs = startOfDayMs(now),
+                fromMs = startOfDayMs(resetMs, timeZone),
+                toMs = startOfDayMs(now, timeZone),
                 latitude = latitude,
-                useBEDD = useBEDD,
+                useBEDD = calculationMode.useBEDD,
             )
             total = series.lastOrNull()?.cumulative ?: 0.0
             perDay = recentDailyRate(series)
@@ -905,24 +934,40 @@ private fun ripenessStatus(row: RipenessRow): RipenessStatus {
     }
 }
 
-/** Authoritative Optimal Ripeness accumulation start; never substitutes season start. */
+/** Legacy Budburst accessor retained for migration tests and Budburst-only callers. */
 internal fun optimalRipenessBudburstMs(block: Paddock): Long? = parseIsoToEpochMs(block.budburstDate)
 
-internal fun startOfDayMs(time: Long): Long {
-    val cal = Calendar.getInstance()
+/** Earliest valid reset date actually required by tracked blocks. */
+internal fun earliestRequiredWeatherDate(
+    paddocks: List<Paddock>,
+    seasonStartMs: Long,
+    globalResetMode: GddResetMode,
+): Long? = paddocks.mapNotNull { block ->
+    val mode = block.effectiveResetMode(globalResetMode)
+    block.resetDateMs(mode, seasonStartMs)
+}.minOrNull()
+
+internal fun startOfDayMs(time: Long, timeZone: java.util.TimeZone = java.util.TimeZone.getDefault()): Long {
+    val cal = Calendar.getInstance(timeZone)
     cal.timeInMillis = time
     cal.set(Calendar.HOUR_OF_DAY, 0); cal.set(Calendar.MINUTE, 0); cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
     return cal.timeInMillis
 }
 
 /** Most recent occurrence of (month, day), this year or last, as start-of-day ms. */
-internal fun seasonStartDate(month: Int, day: Int): Long {
-    val now = Calendar.getInstance()
+internal fun seasonStartDate(
+    month: Int,
+    day: Int,
+    timeZone: java.util.TimeZone = java.util.TimeZone.getDefault(),
+    nowMs: Long = System.currentTimeMillis(),
+): Long {
+    val now = Calendar.getInstance(timeZone)
+    now.timeInMillis = nowMs
     val curMonth = now.get(Calendar.MONTH) + 1
     val curDay = now.get(Calendar.DAY_OF_MONTH)
     val year = now.get(Calendar.YEAR)
     val startYear = if (curMonth > month || (curMonth == month && curDay >= day)) year else year - 1
-    val cal = Calendar.getInstance()
+    val cal = Calendar.getInstance(timeZone)
     cal.clear()
     cal.set(startYear, month - 1, day, 0, 0, 0)
     return cal.timeInMillis
