@@ -35,6 +35,9 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         static let noteTypes = "vineyard_insights.custom_note_types"
         static let photoQueue = "vineyard_insights.pending_photos"
         static let lastPull = "vineyard_insights.last_pull"
+        static let deletionCursors = "vineyard_insights.deletion_cursors"
+        static let consumedDeletions = "vineyard_insights.consumed_deletions"
+        static let objectCleanup = "vineyard_insights.object_cleanup"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -104,6 +107,28 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
             if uploadedStoragePath != nil { return .objectUploaded }
             return .queued
         }
+    }
+
+    nonisolated struct DeletionCursor: Codable, Equatable, Sendable {
+        let deletedAt: Date
+        let ledgerID: UUID
+    }
+
+    nonisolated struct ConsumedDeletion: Codable, Equatable, Sendable {
+        let vineyardID: UUID
+        let entity: QueuedOperation.Entity
+        let entityID: UUID
+    }
+
+    nonisolated struct ObjectCleanup: Codable, Equatable, Sendable {
+        let vineyardID: UUID
+        let storagePath: String
+        var attemptCount: Int
+    }
+
+    private struct StoredDeletionCursor: Codable {
+        let vineyardID: UUID
+        let cursor: DeletionCursor
     }
 
     // MARK: - Codable DTOs
@@ -409,6 +434,29 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         decode([QueuedPhoto].self, Key.photoQueue) ?? []
     }
 
+    func deletionCursor(vineyardID: UUID) -> DeletionCursor? {
+        (decode([StoredDeletionCursor].self, Key.deletionCursors) ?? [])
+            .first { $0.vineyardID == vineyardID }?.cursor
+    }
+
+    @discardableResult
+    func setDeletionCursor(_ cursor: DeletionCursor, vineyardID: UUID) -> Bool {
+        var all = decode([StoredDeletionCursor].self, Key.deletionCursors) ?? []
+        all.removeAll { $0.vineyardID == vineyardID }
+        all.append(StoredDeletionCursor(vineyardID: vineyardID, cursor: cursor))
+        return encodeAndWrite(all, Key.deletionCursors)
+    }
+
+    func isDeleted(vineyardID: UUID, entity: QueuedOperation.Entity, entityID: UUID) -> Bool {
+        (decode([ConsumedDeletion].self, Key.consumedDeletions) ?? []).contains {
+            $0.vineyardID == vineyardID && $0.entity == entity && $0.entityID == entityID
+        }
+    }
+
+    func loadObjectCleanup() -> [ObjectCleanup] {
+        decode([ObjectCleanup].self, Key.objectCleanup) ?? []
+    }
+
     /// Delta cursor per vineyard, so a pull asks only for what changed.
     func lastPull(vineyardID: UUID) -> Date? {
         (decode([String: Date].self, Key.lastPull) ?? [:])[vineyardID.uuidString]
@@ -469,6 +517,56 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         var all = decode([StoredNote].self, Key.notes) ?? []
         all.removeAll { $0.id == id }
         return encodeAndWrite(all, Key.notes)
+    }
+
+    /// Permanently reconcile one authorised deletion marker. Safe to repeat.
+    @discardableResult
+    func consumeDeletion(vineyardID: UUID, entity: QueuedOperation.Entity, entityID: UUID) -> Bool {
+        var markers = decode([ConsumedDeletion].self, Key.consumedDeletions) ?? []
+        let marker = ConsumedDeletion(vineyardID: vineyardID, entity: entity, entityID: entityID)
+        if !markers.contains(marker) { markers.append(marker) }
+        guard encodeAndWrite(markers, Key.consumedDeletions) else { return false }
+
+        if entity == .scoutVisit {
+            let cleanup = loadPhotoQueue()
+                .filter { $0.vineyardID == vineyardID && $0.visitID == entityID }
+                .compactMap { entry in
+                    entry.uploadedStoragePath.map {
+                        ObjectCleanup(vineyardID: vineyardID, storagePath: $0, attemptCount: 0)
+                    }
+                }
+            var cleanupQueue = loadObjectCleanup()
+            for item in cleanup where !cleanupQueue.contains(where: { $0.storagePath == item.storagePath }) {
+                cleanupQueue.append(item)
+            }
+            guard encodeAndWrite(cleanupQueue, Key.objectCleanup) else { return false }
+            if loadVisits().contains(where: { $0.id == entityID && $0.vineyardID == vineyardID }),
+               !deleteVisit(id: entityID) { return false }
+            let remainingPhotos = loadPhotoQueue().filter {
+                !($0.vineyardID == vineyardID && $0.visitID == entityID)
+            }
+            guard encodeAndWrite(remainingPhotos, Key.photoQueue) else { return false }
+        } else {
+            if loadNotes().contains(where: { $0.id == entityID && $0.vineyardID == vineyardID }),
+               !deleteNote(id: entityID) { return false }
+        }
+        let remaining = loadQueue().filter {
+            !($0.vineyardID == vineyardID && $0.entity == entity && $0.recordID == entityID)
+        }
+        return encodeAndWrite(remaining, Key.queue)
+    }
+
+    @discardableResult
+    func acknowledgeObjectCleanup(storagePath: String) -> Bool {
+        encodeAndWrite(loadObjectCleanup().filter { $0.storagePath != storagePath }, Key.objectCleanup)
+    }
+
+    @discardableResult
+    func recordObjectCleanupFailure(storagePath: String) -> Bool {
+        var all = loadObjectCleanup()
+        guard let index = all.firstIndex(where: { $0.storagePath == storagePath }) else { return false }
+        all[index].attemptCount += 1
+        return encodeAndWrite(all, Key.objectCleanup)
     }
 
     @discardableResult
@@ -590,6 +688,9 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         defaults.removeObject(forKey: Key.noteTypes)
         defaults.removeObject(forKey: Key.photoQueue)
         defaults.removeObject(forKey: Key.lastPull)
+        defaults.removeObject(forKey: Key.deletionCursors)
+        defaults.removeObject(forKey: Key.consumedDeletions)
+        defaults.removeObject(forKey: Key.objectCleanup)
     }
 
     // MARK: - Plumbing

@@ -200,6 +200,26 @@ class VineyardInsightsStore(
     // ------------------------------------------------------------- Domain
 
     /** A queued, not-yet-synced change. */
+    @Serializable
+    data class DeletionCursor(
+        @SerialName("deleted_at") val deletedAt: String,
+        @SerialName("ledger_id") val ledgerId: String,
+    )
+
+    @Serializable
+    data class ConsumedDeletion(
+        @SerialName("vineyard_id") val vineyardId: String,
+        @SerialName("entity_type") val entityType: String,
+        @SerialName("entity_id") val entityId: String,
+    )
+
+    @Serializable
+    data class ObjectCleanup(
+        @SerialName("vineyard_id") val vineyardId: String,
+        @SerialName("storage_path") val storagePath: String,
+        @SerialName("attempt_count") val attemptCount: Int = 0,
+    )
+
     data class QueuedOperation(
         val id: String,
         val recordId: String,
@@ -416,6 +436,30 @@ class VineyardInsightsStore(
 
     fun loadPhotoQueue(): List<QueuedPhoto> = decodeList<QueuedPhoto>(KEY_PHOTO_QUEUE)
 
+    fun deletionCursor(vineyardId: String): DeletionCursor? =
+        decodeList<StoredDeletionCursor>(KEY_DELETION_CURSORS)
+            .firstOrNull { it.vineyardId == vineyardId }
+            ?.cursor
+
+    fun setDeletionCursor(vineyardId: String, cursor: DeletionCursor): Boolean {
+        val next = decodeList<StoredDeletionCursor>(KEY_DELETION_CURSORS)
+            .filterNot { it.vineyardId == vineyardId } + StoredDeletionCursor(vineyardId, cursor)
+        return encodeAndWrite(KEY_DELETION_CURSORS, next)
+    }
+
+    fun isDeleted(vineyardId: String, entityType: String, entityId: String): Boolean =
+        decodeList<ConsumedDeletion>(KEY_CONSUMED_DELETIONS).any {
+            it.vineyardId == vineyardId && it.entityType == entityType && it.entityId == entityId
+        }
+
+    fun loadObjectCleanup(): List<ObjectCleanup> = decodeList(KEY_OBJECT_CLEANUP)
+
+    @Serializable
+    private data class StoredDeletionCursor(
+        @SerialName("vineyard_id") val vineyardId: String,
+        val cursor: DeletionCursor,
+    )
+
     /** Delta cursor per vineyard, so a pull asks only for what changed. */
     fun lastPull(vineyardId: String): String? =
         decodeList<StoredPullCursor>(KEY_LAST_PULL)
@@ -498,6 +542,50 @@ class VineyardInsightsStore(
         val next = decodeList<StoredNote>(KEY_NOTES).filterNot { it.id == noteId }
         return encodeAndWrite(KEY_NOTES, next)
     }
+
+    /** Permanently reconcile one authorised ledger row. Safe to repeat after a partial failure. */
+    fun consumeDeletion(
+        vineyardId: String,
+        entityType: String,
+        entityId: String,
+    ): Boolean {
+        val marker = ConsumedDeletion(vineyardId, entityType, entityId)
+        val markers = decodeList<ConsumedDeletion>(KEY_CONSUMED_DELETIONS)
+        if (!encodeAndWrite(KEY_CONSUMED_DELETIONS, (markers + marker).distinct())) return false
+
+        if (entityType == QueuedOperation.Entity.SCOUT_VISIT.code) {
+            val ownedVisit = loadVisits().firstOrNull { it.id == entityId && it.vineyardId == vineyardId }
+            val queuedPhotos = loadPhotoQueue().filter { it.visitId == entityId && it.vineyardId == vineyardId }
+            val cleanup = queuedPhotos.mapNotNull { entry ->
+                entry.uploadedStoragePath?.let { ObjectCleanup(vineyardId, it) }
+            }
+            if (!encodeAndWrite(KEY_OBJECT_CLEANUP, (loadObjectCleanup() + cleanup).distinctBy { it.storagePath })) return false
+            if (ownedVisit != null && !deleteVisit(entityId)) return false
+            if (!encodeAndWrite(KEY_PHOTO_QUEUE, loadPhotoQueue().filterNot {
+                    it.visitId == entityId && it.vineyardId == vineyardId
+                })) return false
+        } else if (entityType == QueuedOperation.Entity.VINTAGE_NOTE.code) {
+            val ownedNote = loadNotes().firstOrNull { it.id == entityId && it.vineyardId == vineyardId }
+            if (ownedNote != null && !deleteNote(entityId)) return false
+        } else {
+            return false
+        }
+        return encodeAndWrite(KEY_QUEUE, decodeList<StoredQueueEntry>(KEY_QUEUE).filterNot {
+            it.recordId == entityId && it.vineyardId == vineyardId && it.entity == entityType
+        })
+    }
+
+    fun acknowledgeObjectCleanup(storagePath: String): Boolean = encodeAndWrite(
+        KEY_OBJECT_CLEANUP,
+        loadObjectCleanup().filterNot { it.storagePath == storagePath },
+    )
+
+    fun recordObjectCleanupFailure(storagePath: String): Boolean = encodeAndWrite(
+        KEY_OBJECT_CLEANUP,
+        loadObjectCleanup().map {
+            if (it.storagePath == storagePath) it.copy(attemptCount = it.attemptCount + 1) else it
+        },
+    )
 
     fun saveCustomNoteType(vineyardId: String, type: VintageNoteType): Boolean {
         val existing = decodeList<StoredNoteType>(KEY_NOTE_TYPES)
@@ -657,6 +745,9 @@ class VineyardInsightsStore(
             KEY_NOTE_TYPES,
             KEY_PHOTO_QUEUE,
             KEY_LAST_PULL,
+            KEY_DELETION_CURSORS,
+            KEY_CONSUMED_DELETIONS,
+            KEY_OBJECT_CLEANUP,
         ).forEach { key ->
             if (!raw.remove(key)) logger.warn("Sign-out clear did not remove $key")
         }
@@ -693,5 +784,8 @@ class VineyardInsightsStore(
         const val KEY_NOTE_TYPES = "custom_note_types"
         const val KEY_PHOTO_QUEUE = "pending_photos"
         const val KEY_LAST_PULL = "last_pull"
+        const val KEY_DELETION_CURSORS = "deletion_cursors"
+        const val KEY_CONSUMED_DELETIONS = "consumed_deletions"
+        const val KEY_OBJECT_CLEANUP = "object_cleanup"
     }
 }

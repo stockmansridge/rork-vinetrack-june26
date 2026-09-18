@@ -204,12 +204,38 @@ interface VineyardInsightsSyncApi {
     )
 
     @Serializable
-    data class HardDeleteArgs(
+    data class HardDeleteVisitArgs(
         @SerialName("p_vineyard_id") val vineyardId: String,
+        @SerialName("p_visit_id") val visitId: String,
         @SerialName("p_operation_id") val operationId: String,
         @SerialName("p_deleted_at") val deletedAt: String,
-        @SerialName("p_visit_id") val visitId: String? = null,
-        @SerialName("p_note_id") val noteId: String? = null,
+    )
+
+    @Serializable
+    data class HardDeleteNoteArgs(
+        @SerialName("p_vineyard_id") val vineyardId: String,
+        @SerialName("p_note_id") val noteId: String,
+        @SerialName("p_operation_id") val operationId: String,
+        @SerialName("p_deleted_at") val deletedAt: String,
+    )
+
+    @Serializable
+    data class DeletionRow(
+        val id: String,
+        @SerialName("vineyard_id") val vineyardId: String,
+        @SerialName("entity_type") val entityType: String,
+        @SerialName("entity_id") val entityId: String,
+        @SerialName("deleted_at") val deletedAt: String,
+    )
+
+    @Serializable
+    data class PhotoCleanupRow(
+        val id: String,
+        @SerialName("vineyard_id") val vineyardId: String,
+        @SerialName("scout_visit_id") val scoutVisitId: String,
+        @SerialName("photo_id") val photoId: String,
+        @SerialName("storage_path") val storagePath: String,
+        @SerialName("lease_token") val leaseToken: String,
     )
 
     @Serializable
@@ -264,6 +290,17 @@ interface VineyardInsightsSyncApi {
     suspend fun fetchPhotos(vineyardId: String, observationIds: List<String>): List<PhotoRow>
 
     suspend fun fetchNotes(vineyardId: String, sinceIso: String?): List<NoteRow>
+
+    suspend fun fetchDeletions(
+        vineyardId: String,
+        deletedAtIso: String?,
+    ): List<DeletionRow>
+
+    suspend fun claimPhotoCleanup(vineyardId: String, limit: Int = 20): List<PhotoCleanupRow>
+
+    suspend fun acknowledgePhotoCleanup(id: String, leaseToken: String)
+
+    suspend fun failPhotoCleanup(id: String, leaseToken: String, error: String)
 
     // ----------------------------------------------------------------- RPCs
 

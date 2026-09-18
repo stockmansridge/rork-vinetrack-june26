@@ -167,6 +167,23 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let deleted_at: String?
     }
 
+    struct DeletionRow: Decodable, Sendable {
+        let id: UUID
+        let vineyard_id: UUID
+        let entity_type: String
+        let entity_id: UUID
+        let deleted_at: String
+    }
+
+    struct PhotoCleanupRow: Decodable, Sendable {
+        let id: UUID
+        let vineyard_id: UUID
+        let scout_visit_id: UUID
+        let photo_id: UUID
+        let storage_path: String
+        let lease_token: UUID
+    }
+
     struct NoteRow: Decodable, Sendable {
         let id: UUID
         let vineyard_id: UUID
@@ -366,6 +383,66 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
             .in("observation_id", values: observationIDs.map { $0.uuidString })
             .execute()
             .value
+    }
+
+    // MARK: - Deletion feed and cleanup queue
+
+    func fetchDeletions(vineyardID: UUID, since: Date?) async throws -> [DeletionRow] {
+        try requireConfigured()
+        let query = provider.client.from("vineyard_insights_deletions")
+            .select()
+            .eq("vineyard_id", value: vineyardID.uuidString)
+        if let since {
+            return try await query.gte("deleted_at", value: Self.timestamp(since))
+                .order("deleted_at", ascending: true).order("id", ascending: true)
+                .execute().value
+        }
+        return try await query.order("deleted_at", ascending: true).order("id", ascending: true)
+            .execute().value
+    }
+
+    private struct ClaimCleanupParams: Encodable, Sendable {
+        let p_vineyard_id: String
+        let p_limit: Int
+    }
+
+    private struct CompleteCleanupParams: Encodable, Sendable {
+        let p_id: String
+        let p_lease_token: String
+    }
+
+    private struct FailCleanupParams: Encodable, Sendable {
+        let p_id: String
+        let p_lease_token: String
+        let p_error: String
+    }
+
+    func claimPhotoCleanup(vineyardID: UUID, limit: Int = 20) async throws -> [PhotoCleanupRow] {
+        try requireConfigured()
+        return try await provider.client.rpc(
+            "claim_scout_photo_cleanup",
+            params: ClaimCleanupParams(p_vineyard_id: vineyardID.uuidString, p_limit: limit)
+        ).execute().value
+    }
+
+    func acknowledgePhotoCleanup(id: UUID, leaseToken: UUID) async throws {
+        try requireConfigured()
+        try await provider.client.rpc(
+            "complete_scout_photo_cleanup",
+            params: CompleteCleanupParams(p_id: id.uuidString, p_lease_token: leaseToken.uuidString)
+        ).execute()
+    }
+
+    func failPhotoCleanup(id: UUID, leaseToken: UUID, error: String) async throws {
+        try requireConfigured()
+        try await provider.client.rpc(
+            "fail_scout_photo_cleanup",
+            params: FailCleanupParams(
+                p_id: id.uuidString,
+                p_lease_token: leaseToken.uuidString,
+                p_error: String(error.prefix(500))
+            )
+        ).execute()
     }
 
     // MARK: - Vintage Notes

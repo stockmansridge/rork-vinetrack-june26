@@ -36,6 +36,10 @@ struct VineyardInsightsView: View {
         }
         .navigationTitle(VineyardInsightsCatalog.toolTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: store.selectedVineyardId) {
+            guard access.isAllowed, let vineyardID = store.selectedVineyardId else { return }
+            await insights.sync(vineyardID: vineyardID)
+        }
     }
 
     /// Shown when access is refused while the screen is somehow open.

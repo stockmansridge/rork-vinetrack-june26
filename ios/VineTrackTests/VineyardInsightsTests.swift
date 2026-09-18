@@ -919,6 +919,87 @@ struct VineyardInsightsTests {
         #expect(review.generalRecommendations == 1)
     }
 
+    // MARK: - Hard-deletion reconciliation
+
+    @Test("Deletion markers remove only the exact note and cancel its stale upsert")
+    func deletionMarkerRemovesExactNote() {
+        let suite = "insights-deletion-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let store = VineyardInsightsStore(defaults: defaults)
+        let service = VineyardInsightsService(store: store)
+        let first = service.saveNote(
+            draft: VintageNoteDraft(date: Date(), noteTypeLabel: "Frost", notes: "first"),
+            vineyardID: vineyardID, observedByUserID: nil, observerName: nil,
+            seasonStartMonth: 7, seasonStartDay: 1
+        )!
+        let second = service.saveNote(
+            draft: VintageNoteDraft(date: Date(), noteTypeLabel: "Frost", notes: "second"),
+            vineyardID: vineyardID, observedByUserID: nil, observerName: nil,
+            seasonStartMonth: 7, seasonStartDay: 1
+        )!
+        #expect(store.consumeDeletion(vineyardID: vineyardID, entity: .vintageNote, entityID: first.id))
+        #expect(store.loadNotes().map(\.id) == [second.id])
+        #expect(!store.loadQueue().contains { $0.recordID == first.id })
+        #expect(store.isDeleted(vineyardID: vineyardID, entity: .vintageNote, entityID: first.id))
+    }
+
+    @Test("Repeated marker consumption is idempotent and survives restart")
+    func repeatedDeletionMarkerIsIdempotent() {
+        let suite = "insights-deletion-restart-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let id = UUID()
+        let store = VineyardInsightsStore(defaults: defaults)
+        #expect(store.consumeDeletion(vineyardID: vineyardID, entity: .scoutVisit, entityID: id))
+        #expect(store.consumeDeletion(vineyardID: vineyardID, entity: .scoutVisit, entityID: id))
+        #expect(VineyardInsightsStore(defaults: defaults).isDeleted(
+            vineyardID: vineyardID, entity: .scoutVisit, entityID: id
+        ))
+    }
+
+    @Test("Deletion cursors remain scoped to their originating vineyard")
+    func deletionCursorIsVineyardScoped() {
+        let suite = "insights-deletion-cursor-\(UUID().uuidString)"
+        let store = VineyardInsightsStore(defaults: UserDefaults(suiteName: suite)!)
+        let cursor = VineyardInsightsStore.DeletionCursor(deletedAt: Date(), ledgerID: UUID())
+        #expect(store.setDeletionCursor(cursor, vineyardID: vineyardID))
+        #expect(store.deletionCursor(vineyardID: vineyardID) == cursor)
+        #expect(store.deletionCursor(vineyardID: otherVineyardID) == nil)
+    }
+
+    @Test("A Scout marker cancels pending photo uploads and retains object cleanup across restart")
+    func scoutMarkerCancelsPhotoUpload() {
+        let suite = "insights-deletion-photo-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let store = VineyardInsightsStore(defaults: defaults)
+        let visitID = UUID()
+        let photoID = UUID()
+        #expect(store.enqueuePhoto(.init(
+            id: photoID, vineyardID: vineyardID, visitID: visitID, observationID: UUID(),
+            localPath: "local.jpg", uploadedStoragePath: "\(vineyardID)/obs/\(photoID).jpg",
+            rowCommitted: false, capturedAt: Date(), attemptCount: 0, lastError: nil
+        )))
+        #expect(store.consumeDeletion(vineyardID: vineyardID, entity: .scoutVisit, entityID: visitID))
+        let restarted = VineyardInsightsStore(defaults: defaults)
+        #expect(restarted.loadPhotoQueue().isEmpty)
+        #expect(restarted.loadObjectCleanup().map(\.storagePath) == ["\(vineyardID)/obs/\(photoID).jpg"])
+    }
+
+    @Test("A marker from one vineyard cannot delete the same id in another vineyard")
+    func deletionMarkerCannotCrossVineyards() {
+        let suite = "insights-deletion-cross-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let store = VineyardInsightsStore(defaults: defaults)
+        let service = VineyardInsightsService(store: store)
+        let note = service.saveNote(
+            draft: VintageNoteDraft(date: Date(), noteTypeLabel: "Frost", notes: "other"),
+            vineyardID: otherVineyardID, observedByUserID: nil, observerName: nil,
+            seasonStartMonth: 7, seasonStartDay: 1
+        )!
+        #expect(store.consumeDeletion(vineyardID: vineyardID, entity: .vintageNote, entityID: note.id))
+        #expect(store.loadNotes().contains { $0.id == note.id && $0.vineyardID == otherVineyardID })
+    }
+
     // MARK: - Round 1 report workspace
 
     @Test("The Round 1 report controls carry the exact required disabled message")

@@ -556,9 +556,12 @@ final class VineyardInsightsService {
         guard !isSyncing else { return }
         isSyncing = true
         defer { isSyncing = false }
+        await pullDeletions(vineyardID: vineyardID)
+        await processPhotoCleanup(vineyardID: vineyardID)
         await syncQueue()
         await syncPhotos(vineyardID: vineyardID)
         await pull(vineyardID: vineyardID)
+        await pullDeletions(vineyardID: vineyardID)
     }
 
     /// Replay every queued record operation.
@@ -595,6 +598,10 @@ final class VineyardInsightsService {
                 operationID: entry.id,
                 at: entry.clientUpdatedAt
             )
+            return
+        }
+        if store.isDeleted(vineyardID: entry.vineyardID, entity: .scoutVisit, entityID: entry.recordID) {
+            store.dequeue(queueID: entry.id)
             return
         }
         guard let visit = visits.first(where: { $0.id == entry.recordID }) else { return }
@@ -675,6 +682,10 @@ final class VineyardInsightsService {
                 operationID: entry.id,
                 at: entry.clientUpdatedAt
             )
+            return
+        }
+        if store.isDeleted(vineyardID: entry.vineyardID, entity: .vintageNote, entityID: entry.recordID) {
+            store.dequeue(queueID: entry.id)
             return
         }
         guard let note = notes.first(where: { $0.id == entry.recordID }) else { return }
@@ -820,6 +831,84 @@ final class VineyardInsightsService {
         }
     }
 
+    /// Consume the hard-deletion ledger before replay and after ordinary pulls.
+    func pullDeletions(vineyardID: UUID) async {
+        do {
+            let cursor = store.deletionCursor(vineyardID: vineyardID)
+            let rows = try await repository.fetchDeletions(vineyardID: vineyardID, since: cursor?.deletedAt)
+                .filter { row in
+                    guard row.vineyard_id == vineyardID,
+                          let deletedAt = VineyardInsightsSyncRepository.parseTimestamp(row.deleted_at)
+                    else { return false }
+                    guard let cursor else { return true }
+                    return deletedAt > cursor.deletedAt
+                        || (deletedAt == cursor.deletedAt
+                            && row.id.uuidString.lowercased() > cursor.ledgerID.uuidString.lowercased())
+                }
+                .sorted { lhs, rhs in
+                    let left = VineyardInsightsSyncRepository.parseTimestamp(lhs.deleted_at) ?? .distantPast
+                    let right = VineyardInsightsSyncRepository.parseTimestamp(rhs.deleted_at) ?? .distantPast
+                    return left == right
+                        ? lhs.id.uuidString.lowercased() < rhs.id.uuidString.lowercased()
+                        : left < right
+                }
+            for row in rows {
+                guard let entity = VineyardInsightsStore.QueuedOperation.Entity(rawValue: row.entity_type),
+                      let deletedAt = VineyardInsightsSyncRepository.parseTimestamp(row.deleted_at)
+                else { continue }
+                if entity == .scoutVisit {
+                    visits.first { $0.id == row.entity_id && $0.vineyardID == vineyardID }?
+                        .assessments.flatMap(\.observations).flatMap(\.photos)
+                        .compactMap(\.localPath).forEach { photoFiles.remove(relativePath: $0) }
+                    store.loadPhotoQueue().filter {
+                        $0.visitID == row.entity_id && $0.vineyardID == vineyardID
+                    }.forEach { photoFiles.remove(relativePath: $0.localPath) }
+                }
+                guard store.consumeDeletion(vineyardID: vineyardID, entity: entity, entityID: row.entity_id),
+                      store.setDeletionCursor(
+                        .init(deletedAt: deletedAt, ledgerID: row.id),
+                        vineyardID: vineyardID
+                      )
+                else { throw VineyardInsightsReconciliationError.localWriteFailed }
+                visits = store.loadVisits()
+                notes = store.loadNotes()
+                if openVisitID == row.entity_id { openVisitID = nil }
+            }
+        } catch {
+            lastSyncError = error.localizedDescription
+            logger.warning("Insights deletion pull deferred")
+        }
+    }
+
+    func processPhotoCleanup(vineyardID: UUID) async {
+        for item in store.loadObjectCleanup() where item.vineyardID == vineyardID {
+            do {
+                try await repository.removePhotoObject(path: item.storagePath)
+                store.acknowledgeObjectCleanup(storagePath: item.storagePath)
+            } catch {
+                store.recordObjectCleanupFailure(storagePath: item.storagePath)
+                lastSyncError = error.localizedDescription
+            }
+        }
+        do {
+            for item in try await repository.claimPhotoCleanup(vineyardID: vineyardID) {
+                do {
+                    try await repository.removePhotoObject(path: item.storage_path)
+                    try await repository.acknowledgePhotoCleanup(id: item.id, leaseToken: item.lease_token)
+                } catch {
+                    try? await repository.failPhotoCleanup(
+                        id: item.id,
+                        leaseToken: item.lease_token,
+                        error: error.localizedDescription
+                    )
+                    lastSyncError = error.localizedDescription
+                }
+            }
+        } catch {
+            lastSyncError = error.localizedDescription
+        }
+    }
+
     /// Pull the server's view so another device's or session's work appears.
     func pull(vineyardID: UUID) async {
         do {
@@ -867,7 +956,11 @@ final class VineyardInsightsService {
         let hasLocalPending = store.loadQueue().contains {
             $0.recordID == row.id && $0.entity == .vintageNote
         }
-        if hasLocalPending { return }
+        if hasLocalPending || store.isDeleted(
+            vineyardID: row.vineyard_id,
+            entity: .vintageNote,
+            entityID: row.id
+        ) { return }
 
         guard let noteDate = VineyardInsightsSyncRepository.parseDay(row.note_date) else { return }
         let deletedAt = VineyardInsightsSyncRepository.parseTimestamp(row.deleted_at)
@@ -903,7 +996,11 @@ final class VineyardInsightsService {
         let hasLocalPending = store.loadQueue().contains {
             $0.recordID == row.id && $0.entity == .scoutVisit
         }
-        if hasLocalPending { return }
+        if hasLocalPending || store.isDeleted(
+            vineyardID: row.vineyard_id,
+            entity: .scoutVisit,
+            entityID: row.id
+        ) { return }
 
         // A tombstoned visit is removed locally rather than shown as empty.
         if VineyardInsightsSyncRepository.parseTimestamp(row.deleted_at) != nil {
@@ -1043,5 +1140,13 @@ final class VineyardInsightsService {
         lastWriteFailed = false
         lastSyncError = nil
         pendingPhotoCount = 0
+    }
+}
+
+nonisolated enum VineyardInsightsReconciliationError: LocalizedError, Sendable {
+    case localWriteFailed
+
+    var errorDescription: String? {
+        "The deletion could not be saved safely on this device."
     }
 }

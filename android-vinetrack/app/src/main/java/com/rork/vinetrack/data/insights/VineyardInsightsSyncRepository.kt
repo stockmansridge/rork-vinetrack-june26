@@ -41,6 +41,25 @@ class VineyardInsightsSyncRepository(
     @Serializable
     private data class SoftDeleteNoteArgs(@SerialName("p_id") val id: String)
 
+    @Serializable
+    private data class ClaimCleanupArgs(
+        @SerialName("p_vineyard_id") val vineyardId: String,
+        @SerialName("p_limit") val limit: Int,
+    )
+
+    @Serializable
+    private data class CompleteCleanupArgs(
+        @SerialName("p_id") val id: String,
+        @SerialName("p_lease_token") val leaseToken: String,
+    )
+
+    @Serializable
+    private data class FailCleanupArgs(
+        @SerialName("p_id") val id: String,
+        @SerialName("p_lease_token") val leaseToken: String,
+        @SerialName("p_error") val error: String,
+    )
+
     // ----------------------------------------------------------- Scout push
     //
     // Parent-first, always: visit, then assessments, then observations, then
@@ -154,13 +173,13 @@ class VineyardInsightsSyncRepository(
         vineyardId: String,
         operationId: String,
         atIso: String,
-    ) = postHardDelete(
+    ) = postRpc(
         rpc = "hard_delete_scout_visit",
-        args = VineyardInsightsSyncApi.HardDeleteArgs(
+        args = VineyardInsightsSyncApi.HardDeleteVisitArgs(
             vineyardId = vineyardId,
+            visitId = id,
             operationId = operationId,
             deletedAt = atIso,
-            visitId = id,
         ),
     )
 
@@ -233,6 +252,33 @@ class VineyardInsightsSyncRepository(
             },
         )
 
+    override suspend fun fetchDeletions(
+        vineyardId: String,
+        deletedAtIso: String?,
+    ): List<VineyardInsightsSyncApi.DeletionRow> = select(
+        buildString {
+            append("vineyard_insights_deletions?vineyard_id=eq.$vineyardId")
+            if (deletedAtIso != null) append("&deleted_at=gte.$deletedAtIso")
+            append("&order=deleted_at.asc,id.asc")
+        },
+    )
+
+    override suspend fun claimPhotoCleanup(
+        vineyardId: String,
+        limit: Int,
+    ): List<VineyardInsightsSyncApi.PhotoCleanupRow> = postRpcForRows(
+        "claim_scout_photo_cleanup",
+        ClaimCleanupArgs(vineyardId, limit),
+    )
+
+    override suspend fun acknowledgePhotoCleanup(id: String, leaseToken: String) {
+        postRpc("complete_scout_photo_cleanup", CompleteCleanupArgs(id, leaseToken))
+    }
+
+    override suspend fun failPhotoCleanup(id: String, leaseToken: String, error: String) {
+        postRpc("fail_scout_photo_cleanup", FailCleanupArgs(id, leaseToken, error.take(500)))
+    }
+
     // ----------------------------------------------------------------- RPCs
 
     override suspend fun upsertNote(
@@ -259,19 +305,19 @@ class VineyardInsightsSyncRepository(
         vineyardId: String,
         operationId: String,
         atIso: String,
-    ) = postHardDelete(
+    ) = postRpc(
         rpc = "hard_delete_vintage_note",
-        args = VineyardInsightsSyncApi.HardDeleteArgs(
+        args = VineyardInsightsSyncApi.HardDeleteNoteArgs(
             vineyardId = vineyardId,
+            noteId = id,
             operationId = operationId,
             deletedAt = atIso,
-            noteId = id,
         ),
     )
 
-    private suspend fun postHardDelete(
+    private suspend inline fun <reified T> postRpc(
         rpc: String,
-        args: VineyardInsightsSyncApi.HardDeleteArgs,
+        args: T,
     ) = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -281,6 +327,25 @@ class VineyardInsightsSyncRepository(
             setBody(args)
         }
         checkWrite(response.status.value) { response.bodyAsText() }
+    }
+
+    private suspend inline fun <reified T, reified R> postRpcForRows(
+        rpc: String,
+        args: T,
+    ): List<R> = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl(rpc)) {
+            authHeaders(token)
+            contentType(ContentType.Application.Json)
+            setBody(args)
+        }
+        when {
+            response.status.isSuccess() -> response.body<List<R>>()
+            response.status.value == 401 || response.status.value == 403 ->
+                throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
     }
 
     override suspend fun upsertNoteType(args: VineyardInsightsSyncApi.UpsertNoteTypeArgs) =

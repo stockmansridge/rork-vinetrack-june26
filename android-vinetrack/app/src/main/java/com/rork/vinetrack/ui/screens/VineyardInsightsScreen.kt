@@ -48,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -128,6 +129,10 @@ fun VineyardInsightsScreen(
     }
 
     var pane by remember { mutableStateOf(InsightsPane.Hub) }
+
+    LaunchedEffect(state.selectedVineyardId) {
+        state.selectedVineyardId?.let { vm.syncVineyardInsights(it) }
+    }
 
     when (pane) {
         InsightsPane.Hub -> InsightsHub(modifier, onBack) { pane = it }

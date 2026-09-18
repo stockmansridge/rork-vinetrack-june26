@@ -40,16 +40,91 @@ class VineyardInsightsSyncWorker(
     )
 
     suspend fun sync(vineyardId: String): Outcome {
+        val deletionsBeforePush = pullDeletions(vineyardId)
+        val localCleanup = processLocalObjectCleanup(vineyardId)
+        val serverCleanup = processServerPhotoCleanup(vineyardId)
         val push = pushQueue()
         val photos = pushPhotos(vineyardId)
         val pull = pull(vineyardId)
+        val deletionsAfterPull = pullDeletions(vineyardId)
         return Outcome(
             pushed = push.pushed,
             photosUploaded = photos.photosUploaded,
             pulledVisits = pull.pulledVisits,
             pulledNotes = pull.pulledNotes,
-            error = push.error ?: photos.error ?: pull.error,
+            error = deletionsBeforePush.error ?: localCleanup.error ?: serverCleanup.error ?:
+                push.error ?: photos.error ?: pull.error ?: deletionsAfterPull.error,
         )
+    }
+
+    // ------------------------------------------------------------ Deletions
+
+    suspend fun pullDeletions(vineyardId: String): Outcome = try {
+        val cursor = store.deletionCursor(vineyardId)
+        val rows = repository.fetchDeletions(vineyardId, cursor?.deletedAt)
+            .filter { row ->
+                row.vineyardId == vineyardId && (cursor == null ||
+                    row.deletedAt > cursor.deletedAt ||
+                    (row.deletedAt == cursor.deletedAt && row.id > cursor.ledgerId))
+            }
+            .sortedWith(compareBy<VineyardInsightsSyncApi.DeletionRow> { it.deletedAt }.thenBy { it.id })
+        for (row in rows) {
+            if (row.entityType == VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT.code) {
+                store.loadVisits().firstOrNull {
+                    it.id == row.entityId && it.vineyardId == vineyardId
+                }?.assessments?.flatMap { it.observations }?.flatMap { it.photos }
+                    ?.mapNotNull { it.localPath }?.forEach { photoFiles?.remove(it) }
+                store.loadPhotoQueue().filter {
+                    it.visitId == row.entityId && it.vineyardId == vineyardId
+                }.forEach { photoFiles?.remove(it.localPath) }
+            }
+            if (!store.consumeDeletion(vineyardId, row.entityType, row.entityId)) {
+                return Outcome(error = "Could not reconcile a deletion on this device.")
+            }
+            if (!store.setDeletionCursor(
+                    vineyardId,
+                    VineyardInsightsStore.DeletionCursor(row.deletedAt, row.id),
+                )) return Outcome(error = "Could not save the deletion cursor.")
+        }
+        Outcome()
+    } catch (e: Exception) {
+        Outcome(error = e.message ?: "Could not refresh deletions yet.")
+    }
+
+    suspend fun processLocalObjectCleanup(vineyardId: String): Outcome {
+        var error: String? = null
+        store.loadObjectCleanup().filter { it.vineyardId == vineyardId }.forEach { item ->
+            try {
+                repository.removePhotoObject(item.storagePath)
+                store.acknowledgeObjectCleanup(item.storagePath)
+            } catch (e: Exception) {
+                store.recordObjectCleanupFailure(item.storagePath)
+                error = e.message ?: "Could not clean up a photograph yet."
+            }
+        }
+        return Outcome(error = error)
+    }
+
+    suspend fun processServerPhotoCleanup(vineyardId: String): Outcome = try {
+        var error: String? = null
+        repository.claimPhotoCleanup(vineyardId).forEach { item ->
+            try {
+                repository.removePhotoObject(item.storagePath)
+                repository.acknowledgePhotoCleanup(item.id, item.leaseToken)
+            } catch (e: Exception) {
+                runCatching {
+                    repository.failPhotoCleanup(
+                        item.id,
+                        item.leaseToken,
+                        e.message ?: "Transient storage removal failure",
+                    )
+                }
+                error = e.message ?: "Could not clean up a photograph yet."
+            }
+        }
+        Outcome(error = error)
+    } catch (e: Exception) {
+        Outcome(error = e.message ?: "Could not load photograph cleanup work yet.")
     }
 
     // ------------------------------------------------------------ Push
@@ -83,6 +158,10 @@ class VineyardInsightsSyncWorker(
                 entry.id,
                 entry.clientUpdatedAtIso,
             )
+            return
+        }
+        if (store.isDeleted(entry.vineyardId, entry.entity.code, entry.recordId)) {
+            store.dequeue(entry.id)
             return
         }
         val visit = store.loadVisits().firstOrNull { it.id == entry.recordId } ?: return
@@ -158,6 +237,10 @@ class VineyardInsightsSyncWorker(
                 entry.id,
                 entry.clientUpdatedAtIso,
             )
+            return
+        }
+        if (store.isDeleted(entry.vineyardId, entry.entity.code, entry.recordId)) {
+            store.dequeue(entry.id)
             return
         }
         val note = store.loadNotes().firstOrNull { it.id == entry.recordId } ?: return
@@ -401,7 +484,7 @@ class VineyardInsightsSyncWorker(
             it.recordId == row.id &&
                 it.entity == VineyardInsightsStore.QueuedOperation.Entity.VINTAGE_NOTE
         }
-        if (pending) return
+        if (pending || store.isDeleted(row.vineyardId, "vintage_note", row.id)) return
         store.saveNote(
             VintageNote(
                 id = row.id,
@@ -433,7 +516,7 @@ class VineyardInsightsSyncWorker(
             it.recordId == row.id &&
                 it.entity == VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT
         }
-        if (pending) return
+        if (pending || store.isDeleted(row.vineyardId, "scout_visit", row.id)) return
 
         // A tombstoned visit is removed locally rather than shown as empty.
         if (row.deletedAt != null) {
