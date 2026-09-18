@@ -1,7 +1,7 @@
 -- Rollback-only isolated verification for SQL 237.
 -- Run only in a disposable database after loading the normal schema, SQL 236,
 -- and then SQL 237 directly. Never run against a linked/live project.
-\set ON_ERROR_STOP on
+-- This file contains SQL only so it can run in the Supabase SQL Editor.
 begin;
 
 do $test$
