@@ -60,7 +60,7 @@ import {
 import { deriveLabelTargetWordings } from "./label_target_wording.ts";
 
 /** Bumped whenever the deterministic grammar changes (refresh comparability). */
-export const LABEL_PARSER_VERSION = 4;
+export const LABEL_PARSER_VERSION = 5;
 
 // ---------------------------------------------------------------------------
 // Default PDF text extractor (production) — unpdf, the serverless pdf.js
@@ -579,6 +579,7 @@ type ColumnKind =
 const HEADER_START: ReadonlyArray<RegExp> = [
   /^(CROP|CROPS|SITUATION)(?:\s*\/\s*SITUATION)?$/i,
   /^(DISEASE|DISEASES|PEST|PESTS|DISEASE\/PEST|DISEASES\/PESTS|WEED|WEEDS|INSECT|INSECTS)$/i,
+  /^(?:INSECT\s+PEST|TREE\s+AND)$/i,
   /^WEEDS?\s+CONTROLLED$/i,
   /^GROWTH\s+STAGE$/i,
   // Measured on CHATEAU 80647: the target column heads itself "WEEDS
@@ -598,12 +599,12 @@ const HEADER_START: ReadonlyArray<RegExp> = [
  * not the table's first row — nothing else is ever absorbed into a heading.
  */
 const HEADER_FRAGMENT =
-  /^(?:PER|PERIOD|PER\s+100\s*L|PER\s+HECTARE|100\s*L|100|L|HECTARE|HA|COMMON\s+NAME|BOTANICAL\s+NAME|Harvest\s*\(H\)|Grazing\s*\(G\)|\(H\)|\(G\)|\(WHP\)|COMMENTS:?|USE\s+COMMENTS|(?:G|KG|ML|L)\s*\/\s*(?:HA|HECTARE)|(?:G|KG|ML|L)\s*\/\s*100\s*L)$/i;
+  /^(?:PER|PERIOD|PER\s+100\s*L|PER\s+HECTARE|100\s*L|100|L|HECTARE|HA|VINE\s+CROPS|WATER|COMMON\s+NAME|BOTANICAL\s+NAME|Harvest\s*\(H\)|Grazing\s*\(G\)|\(H\)|\(G\)|\(WHP\)|COMMENTS:?|USE\s+COMMENTS|(?:G|KG|ML|L)\s*\/\s*(?:HA|HECTARE)|(?:G|KG|ML|L)\s*\/\s*100\s*L)$/i;
 
 /** Classify one FULLY ASSEMBLED heading. */
 function classifyHeader(raw: string): ColumnKind {
   const text = raw.replace(/\s+/g, " ").trim();
-  if (/^(CROP|CROPS|SITUATION)\b/i.test(text)) return "crop";
+  if (/^(CROP|CROPS|SITUATION|TREE\s+AND(?:\s+VINE\s+CROPS)?)\b/i.test(text)) return "crop";
   if (/^(DISEASE|DISEASES|PEST|PESTS|WEED|WEEDS|INSECT|INSECTS)\b/i.test(text)) {
     return "target";
   }
@@ -1140,6 +1141,17 @@ export function parseDirectionsForUse(items: PdfTextItem[]): DfuParse {
       if (DFU_HEADING.test(line.text)) {
         inSection = true;
         sawSection = true;
+        continue;
+      }
+      // Some APVMA wrappers state that Directions for Use are an attachment,
+      // close the summary section, then print the attached tables later under
+      // an explicit "Table N: ..." title (measured on 51547). Re-enter only
+      // after a DFU section was positively seen; a recognised target+rate
+      // header is still required before any row can exist.
+      const attachedTitle = sawSection ? TABLE_TITLE.exec(line.text) : null;
+      if (attachedTitle) {
+        inSection = true;
+        titleCrop = attachedTitle[1].trim();
       }
       continue;
     }
@@ -1329,6 +1341,13 @@ export function targetCandidates(row: DfuRow): TargetCandidate[] {
     // A wording offered as complete stays complete even if a later, weaker
     // derivation produces the same string.
     byText.set(text, (byText.get(text) ?? false) || complete);
+    const conjunctionStripped = text.replace(/^(?:and|or)\s+/i, "").trim();
+    if (conjunctionStripped && conjunctionStripped !== text) {
+      byText.set(
+        conjunctionStripped,
+        (byText.get(conjunctionStripped) ?? false) || complete,
+      );
+    }
     const stripped = text.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
     if (stripped && stripped !== text) {
       byText.set(stripped, (byText.get(stripped) ?? false) || complete);
@@ -1445,6 +1464,48 @@ const ROW_CONDITION_MAX_LENGTH = 80;
  * preserved verbatim in `unbound` and every affected gap stays listed.
  */
 export function bindDfuRows(rows: DfuRow[], claims: LabelUseClaim[]): DfuBinding {
+  interface RecoveredCropPrefix {
+    row: DfuRow;
+    matchedClaimIndexes: number[];
+  }
+
+  /**
+   * Recover a crop printed at the start of the target cell only when the
+   * authoritative register independently confirms BOTH sides of the split.
+   * Exactly one word-boundary split must work; otherwise the row stays
+   * unbound. This repairs measured eLabels such as 52518 without promoting a
+   * crop mention from comments or guessing which target a merged row means.
+   */
+  const recoverCropPrefix = (row: DfuRow): RecoveredCropPrefix | null => {
+    if (row.crop_text || row.target_lines.length === 0) return null;
+    const first = row.target_lines[0].trim();
+    const boundaries = [...first.matchAll(/\s+/g)].map((match) => match.index ?? -1)
+      .filter((index) => index > 0);
+    const recovered: RecoveredCropPrefix[] = [];
+    for (const boundary of boundaries) {
+      const cropText = first.slice(0, boundary).trim();
+      const targetText = first.slice(boundary).trim();
+      if (!cropText || !targetText) continue;
+      const candidateRow: DfuRow = {
+        ...row,
+        crop_text: cropText,
+        target_lines: [targetText, ...row.target_lines.slice(1)],
+      };
+      const candidates = targetCandidates(candidateRow);
+      const matchedClaimIndexes: number[] = [];
+      claims.forEach((claim, claimIndex) => {
+        if (
+          cropsCorrespond(cropText, claim.crop) &&
+          rowNamesTarget(candidates, claim.target_raw)
+        ) matchedClaimIndexes.push(claimIndex);
+      });
+      if (matchedClaimIndexes.length > 0) {
+        recovered.push({ row: candidateRow, matchedClaimIndexes });
+      }
+    }
+    return recovered.length === 1 ? recovered[0] : null;
+  };
+
   interface Contribution {
     rowIndex: number;
     rates: WireLabelRate[];
@@ -1457,17 +1518,21 @@ export function bindDfuRows(rows: DfuRow[], claims: LabelUseClaim[]): DfuBinding
   const conflictedRows = new Set<number>();
 
   rows.forEach((row, rowIndex) => {
-    if (!row.crop_text) {
+    const recovered = recoverCropPrefix(row);
+    if (!row.crop_text && !recovered) {
       unbound.push(toUnbound(row, "no_corresponding_claim"));
       return;
     }
-    const candidates = targetCandidates(row);
-    const matched: number[] = [];
-    claims.forEach((claim, claimIndex) => {
-      if (!cropsCorrespond(row.crop_text, claim.crop)) return;
-      if (!rowNamesTarget(candidates, claim.target_raw)) return;
-      matched.push(claimIndex);
-    });
+    const effectiveRow = recovered?.row ?? row;
+    const candidates = targetCandidates(effectiveRow);
+    const matched: number[] = recovered?.matchedClaimIndexes ?? [];
+    if (!recovered) {
+      claims.forEach((claim, claimIndex) => {
+        if (!cropsCorrespond(effectiveRow.crop_text, claim.crop)) return;
+        if (!rowNamesTarget(candidates, claim.target_raw)) return;
+        matched.push(claimIndex);
+      });
+    }
     if (!matched.length) {
       unbound.push(toUnbound(row, "no_corresponding_claim"));
       return;
@@ -1478,20 +1543,20 @@ export function bindDfuRows(rows: DfuRow[], claims: LabelUseClaim[]): DfuBinding
     // NOTHING and is preserved for review instead. A missing rate is a gap;
     // a corrupt rate is a lie.
     if (
-      rateCellCrossesColumns(row.rate_text) ||
-      rateCellCrossesColumns(row.rate_ha_text)
+      rateCellCrossesColumns(effectiveRow.rate_text) ||
+      rateCellCrossesColumns(effectiveRow.rate_ha_text)
     ) {
       unbound.push(toUnbound(row, "column_geometry_uncertain"));
       return;
     }
-    const rates = rowRates(row);
+    const rates = rowRates(effectiveRow);
     for (const claimIndex of matched) {
       const list = contributions.get(claimIndex) ?? [];
       list.push({
         rowIndex,
         rates,
-        comments: row.comments_text,
-        whpText: row.whp_text,
+        comments: effectiveRow.comments_text,
+        whpText: effectiveRow.whp_text,
       });
       contributions.set(claimIndex, list);
     }

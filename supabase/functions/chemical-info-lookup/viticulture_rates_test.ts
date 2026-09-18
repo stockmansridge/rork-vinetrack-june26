@@ -1,7 +1,13 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import { deriveViticultureRates, isGrapevineCrop } from "./grapevine_label.ts";
 import type { LabelUseClaim, WireLabelRate } from "./ingestion/contract.ts";
-import { bindDfuRows, parseDualPowerSprayerRows, type TextLine } from "./ingestion/label_extract.ts";
+import {
+  bindDfuRows,
+  type DfuRow,
+  parseDirectionsForUse,
+  parseDualPowerSprayerRows,
+  type TextLine,
+} from "./ingestion/label_extract.ts";
 
 const rate = (basis: WireLabelRate["basis"], unit: string, value?: number, min?: number, max?: number): WireLabelRate => ({
   label: "", basis, unit, raw_text: value === undefined ? `${min}–${max}` : `${value}`,
@@ -30,6 +36,98 @@ Deno.test("different vineyard directions remain separate options", () => {
   assertEquals(result.per_100_litres.length, 2);
   assertEquals(result.per_100_litres[0].value, 40);
   assertEquals([result.per_100_litres[1].min_value, result.per_100_litres[1].max_value], [80, 100]);
+});
+
+Deno.test("APVMA 52518 recovers a crop prefix only when the remaining fungicide target matches", () => {
+  const rows: DfuRow[] = [{
+    crop_text: "",
+    target_lines: [
+      "Grapes Downy mildew",
+      "Note: russeting (Plasmopara viticola)",
+      "of some table Bunch rot",
+      "grape varieties (Botrytis cinerea)",
+      "may occur",
+    ],
+    rate_text: "1.8 – 2.3 L/ha",
+    rate_basis: null,
+    rate_ha_text: "",
+    whp_text: "Dessert 7 Wine 14",
+    comments_text: "Spray at first appearance of the foliage disease.",
+    rate_unit_hint: null,
+  }];
+  const claims: LabelUseClaim[] = [{
+    crop: "GRAPEVINE",
+    target_raw: "DOWNY MILDEW ON GRAPE",
+    statements: [],
+  }];
+
+  const binding = bindDfuRows(rows, claims);
+  assertEquals(binding.ratesByClaim.get(0)?.map((item) => [
+    item.basis,
+    item.min_value,
+    item.max_value,
+    item.unit,
+  ]), [["range_per_hectare", 1.8, 2.3, "L"]]);
+  assertEquals(binding.unbound, []);
+});
+
+Deno.test("APVMA 52710 merged herbicide quantities remain unbound without a target", () => {
+  const rows: DfuRow[] = [{
+    crop_text: "",
+    target_lines: ["Vines established", "at least 3 years in", "Qld and for 12 months"],
+    rate_text: "1.3 to 2.5 kg 3.9 kg",
+    rate_basis: null,
+    rate_ha_text: "",
+    whp_text: "",
+    comments_text: "Use the higher rate on heavier soils.",
+    rate_unit_hint: null,
+  }];
+  const claims: LabelUseClaim[] = [{ crop: "VINE OVER 3 YEARS OLD", target_raw: "GERANIUM", statements: [] }];
+
+  const binding = bindDfuRows(rows, claims);
+  assertEquals(binding.ratesByClaim.size, 0);
+  assertEquals(binding.unbound.map((item) => item.reason), ["no_corresponding_claim"]);
+});
+
+Deno.test("APVMA 51547 tree-and-vine insecticide heading preserves its explicit 100 L basis", () => {
+  const item = (y: number, x: number, str: string) => ({
+    page: 1,
+    x,
+    y,
+    width: Math.max(str.length * 4, 2),
+    str,
+  });
+  const items = [
+    item(800, 20, "DIRECTIONS FOR USE"),
+    item(790, 20, "NOT TO BE USED FOR ANY PURPOSE"),
+    item(780, 20, "Table 1: Tree and Vine crops"),
+    item(760, 20, "TREE AND"),
+    item(760, 150, "INSECT PEST"),
+    item(760, 300, "RATE/ 100 L"),
+    item(760, 430, "CRITICAL COMMENTS"),
+    item(750, 20, "VINE CROPS"),
+    item(730, 20, "Grapes"),
+    item(730, 150, "Longtail mealybug"),
+    item(730, 300, "30 – 60 mL"),
+    item(730, 430, "Apply twice, 14-21 days apart."),
+    item(700, 20, "NOT TO BE USED FOR ANY PURPOSE"),
+  ];
+  const parsed = parseDirectionsForUse(items);
+  const binding = bindDfuRows(parsed.rows, [{
+    crop: "GRAPE",
+    target_raw: "LONGTAILED MEALY BUG",
+    statements: [],
+  }]);
+
+  assertEquals(parsed.rows.map((row) => [row.crop_text, row.rate_basis, row.rate_text]), [
+    ["Grapes", "per_100_litres", "30 – 60 mL"],
+  ]);
+  assertEquals(binding.ratesByClaim.get(0)?.map((rate) => [
+    rate.basis,
+    rate.min_value,
+    rate.max_value,
+    rate.unit,
+  ]), [["range_per_100_litres", 30, 60, "mL"]]);
 });
 
 Deno.test("APVMA dual Power Sprayer columns independently reproduce the 46516 fixture", () => {

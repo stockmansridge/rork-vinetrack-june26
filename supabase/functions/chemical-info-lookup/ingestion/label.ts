@@ -728,6 +728,14 @@ function cropTokens(raw: string): Set<string> {
  * "Grapes (winegrapes)" correspond; "GRAPEVINE" ↔ "ALMONDS" never do.
  */
 export function cropsCorrespond(a: string, b: string): boolean {
+  const grapeCrop = /\b(?:grapes?|grapevines?|vineyards?|vines?)\b/i;
+  const grapefruit = /\bgrapefruits?\b/i;
+  // "Grapefruit" is a citrus crop, never a grape/vine direction. The token
+  // normaliser must not let the embedded word "grape" bridge those crops.
+  if (
+    (grapeCrop.test(a) && grapefruit.test(b) && !grapeCrop.test(b)) ||
+    (grapeCrop.test(b) && grapefruit.test(a) && !grapeCrop.test(a))
+  ) return false;
   const ta = cropTokens(a);
   const tb = cropTokens(b);
   if (!ta.size || !tb.size) return false;
@@ -739,6 +747,8 @@ function targetNorm(raw: string): string {
   return String(raw)
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, " ")
+    .replace(/\bLONGTAILED\b/g, "LONGTAIL")
+    .replace(/\bMEALY\s+BUG\b/g, "MEALYBUG")
     .trim()
     // The register qualifies some pests with the crop ("DOWNY MILDEW ON
     // GRAPE"); the qualifier is crop context, not part of the target.
