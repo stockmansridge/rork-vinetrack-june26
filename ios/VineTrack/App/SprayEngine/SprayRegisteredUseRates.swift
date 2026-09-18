@@ -266,6 +266,12 @@ nonisolated enum SprayRegisteredUseRates {
         vineyardRates(for: chemical).filter(\.isSelectable)
     }
 
+    static func hasInvalidStructuredRates(_ chemical: SavedChemical) -> Bool {
+        chemical.chemicalIntelligence?.registeredUses.flatMap(\.rates).contains {
+            ChemicalLabelRateNormalizer.normalize($0) == nil
+        } ?? false
+    }
+
     /// Whether this product states a vineyard registered use at all.
     ///
     /// Distinguishes "this product is not registered on grapevines" from "it is,
@@ -537,8 +543,15 @@ nonisolated enum SprayRegisteredUseRates {
         use: ChemicalRegisteredUse,
         chemical: SavedChemical
     ) -> SpraySelectableRate {
-        let basis = sprayBasis(for: rate.basis)
-        let seed = self.seed(for: rate, chemical: chemical, hasBasis: basis != nil)
+        guard let normalized = ChemicalLabelRateNormalizer.normalize(rate) else {
+            return SpraySelectableRate(
+                id: stableIdentifier("invalid|\(use.id)|\(rate.id)"), origin: .registeredUse,
+                crop: use.crop, targetRaw: use.targetRaw, label: rate.label,
+                basis: nil, seed: .unresolved, displayText: "Invalid stored rate"
+            )
+        }
+        let basis = sprayBasis(for: normalized.basis)
+        let seed = self.seed(for: normalized, chemical: chemical, hasBasis: basis != nil)
         let range: ClosedRange<Double>? = {
             guard case let .range(minimum, maximum) = seed, maximum >= minimum else { return nil }
             return minimum...maximum
@@ -566,10 +579,10 @@ nonisolated enum SprayRegisteredUseRates {
             label: rate.label,
             basis: basis,
             seed: seed,
-            displayText: rate.displayRate,
-            labelUnit: rate.unit,
+            displayText: normalized.displayRate,
+            labelUnit: normalized.unit,
             labelRange: range,
-            labelRangeText: range == nil ? nil : rate.displayRate
+            labelRangeText: range == nil ? nil : normalized.displayRate
         )
     }
 

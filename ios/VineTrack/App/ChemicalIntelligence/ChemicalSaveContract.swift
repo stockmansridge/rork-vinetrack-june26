@@ -164,9 +164,7 @@ nonisolated enum ChemicalSaveContract {
     /// `rawText` as a rate is what let unusable chemicals into the store.
     static func isUsable(_ rate: ChemicalLabelRate) -> Bool {
         guard calculableBases.contains(rate.basis) else { return false }
-        guard !rate.unit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return false
-        }
+        guard ChemicalLabelRateNormalizer.normalize(rate) != nil else { return false }
         switch rate.basis {
         case .rangePer100Litres, .rangePerHectare:
             guard let low = rate.minValue, let high = rate.maxValue,
@@ -380,6 +378,12 @@ nonisolated enum ChemicalSaveContract {
                 out.append(.init(
                     code: .rateUnitMissing,
                     message: "Enter the unit for this rate (L, mL, kg or g).",
+                    field: "rates"
+                ))
+            } else if ChemicalLabelRateNormalizer.normalize(rate) == nil {
+                out.append(.init(
+                    code: .rateUnitMissing,
+                    message: "Use only L, mL, kg or g. The rate basis already contains /ha or /100 L.",
                     field: "rates"
                 ))
             }

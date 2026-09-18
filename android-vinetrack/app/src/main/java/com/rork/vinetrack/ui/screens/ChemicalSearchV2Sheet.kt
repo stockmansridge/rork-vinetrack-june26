@@ -41,6 +41,7 @@ import com.rork.vinetrack.data.chemical.ChemicalLabelAttachmentV2Repository
 import com.rork.vinetrack.data.chemical.ChemicalLabelIdentityOCR
 import com.rork.vinetrack.data.chemical.ChemicalLabelRate
 import com.rork.vinetrack.data.chemical.ChemicalLabelRateBasis
+import com.rork.vinetrack.data.chemical.ChemicalLabelRateNormalizer
 import com.rork.vinetrack.data.chemical.ChemicalManualDraft
 import com.rork.vinetrack.data.chemical.ChemicalManualEntry
 import com.rork.vinetrack.data.chemical.ChemicalManualRateDraft
@@ -395,14 +396,22 @@ private fun ChemicalReviewV2(
                 val isArea = rate.basis == ChemicalLabelRateBasis.PER_HECTARE || rate.basis == ChemicalLabelRateBasis.RANGE_PER_HECTARE
                 val display = rate.value ?: rate.minValue ?: 0.0
                 val manualDraft = ChemicalManualDraft(productName = draft.productName, productRates = listOf(draft.rate))
+                val canonicalIntelligence = ChemicalLabelRateNormalizer.normalize(draft.intelligence)
+                if (canonicalIntelligence == null) {
+                    saving = false
+                    notice = "Invalid stored rate. Correct the unit, amount and rate basis before saving."
+                    return@Button
+                }
                 val input = SavedChemicalRepository.ChemicalInput(
                     name = draft.productName.trim(), unit = draft.unit,
                     ratePerHa = if (isArea && rate.value != null) display else null,
-                    rates = listOf(ChemicalRate(
-                        id = UUID.randomUUID().toString(), label = rate.label,
-                        value = chemicalUnitToBase(draft.unit, display),
-                        basis = if (isArea) CHEMICAL_RATE_PER_HECTARE else CHEMICAL_RATE_PER_100L,
-                    )),
+                    rates = rate.value?.let { fixed ->
+                        listOf(ChemicalRate(
+                            id = UUID.randomUUID().toString(), label = rate.label,
+                            value = chemicalUnitToBase(draft.unit, fixed),
+                            basis = if (isArea) CHEMICAL_RATE_PER_HECTARE else CHEMICAL_RATE_PER_100L,
+                        ))
+                    }.orEmpty(),
                     activeIngredient = draft.intelligence.legacyActiveIngredient,
                     chemicalGroup = draft.intelligence.legacyChemicalGroup,
                     use = null, problem = null,
@@ -411,7 +420,7 @@ private fun ChemicalReviewV2(
                     labelUrl = draft.intelligence.registration?.labelReference,
                     productUrl = draft.intelligence.registration?.manufacturerProductUrl,
                     purchase = null, productCategory = draft.intelligence.productCategory,
-                    productForm = draft.formType.orEmpty(), intelligence = draft.intelligence,
+                    productForm = draft.formType.orEmpty(), intelligence = canonicalIntelligence,
                     masterChemicalId = draft.master?.id, masterSourceRevision = draft.master?.catalogueVersion,
                     defaultRates = ChemicalManualEntry.defaultRatesForManualSave(manualDraft),
                     entrySource = if (draft.master == null) "label_lookup_v2" else "master_catalogue_v2",

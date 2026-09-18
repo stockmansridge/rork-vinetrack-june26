@@ -583,26 +583,26 @@ nonisolated enum ChemicalManualEntry {
         switch draft.basis {
         case .perHectare, .per100Litres:
             guard let value = parseDouble(draft.valueText) else { return nil }
-            return ChemicalLabelRate(
+            return ChemicalLabelRateNormalizer.normalize(ChemicalLabelRate(
                 label: label,
                 basis: draft.basis,
                 value: value,
                 unit: unit,
                 conditionIsAmbiguous: stillAmbiguous
-            )
+            ))
         case .rangePerHectare, .rangePer100Litres:
             guard let low = parseDouble(draft.minText),
                   let high = parseDouble(draft.maxText) else { return nil }
             // Stored low-to-high whichever way round it was typed, so
             // `proposedValue` cannot hand a calculation the top of the band.
-            return ChemicalLabelRate(
+            return ChemicalLabelRateNormalizer.normalize(ChemicalLabelRate(
                 label: label,
                 basis: draft.basis,
                 minValue: min(low, high),
                 maxValue: max(low, high),
                 unit: unit,
                 conditionIsAmbiguous: stillAmbiguous
-            )
+            ))
         case .other:
             guard !raw.isEmpty else { return nil }
             return ChemicalLabelRate(

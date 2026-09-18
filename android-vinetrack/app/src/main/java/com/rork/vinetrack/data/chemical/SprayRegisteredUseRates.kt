@@ -81,6 +81,9 @@ object SprayRegisteredUseRates {
     fun selectableVineyardRates(chemical: SavedChemical): List<SpraySelectableRate> =
         vineyardRates(chemical).filter { it.isSelectable }
 
+    fun hasInvalidStructuredRates(chemical: SavedChemical): Boolean =
+        chemical.registeredUses.orEmpty().flatMap { it.rates }.any { ChemicalLabelRateNormalizer.normalize(it) == null }
+
     fun availableBases(chemical: SavedChemical): List<SprayCalculator.RateBasis> =
         selectableVineyardRates(chemical).mapNotNull { it.basis }.distinct()
 
@@ -153,19 +156,30 @@ object SprayRegisteredUseRates {
     }
 
     private fun selectable(rate: ChemicalLabelRate, use: ChemicalRegisteredUse): SpraySelectableRate? {
+        val normalized = ChemicalLabelRateNormalizer.normalize(rate) ?: return SpraySelectableRate(
+            id = rate.rateId ?: stableId("invalid|${use.id}|${rate.id}"),
+            origin = SprayRateOrigin.REGISTERED_USE,
+            registeredUseId = use.directionId ?: use.id,
+            crop = use.crop,
+            targetRaw = use.targetRaw,
+            label = rate.label,
+            condition = null,
+            basis = null,
+            amount = SprayRateAmount.Unresolved,
+            unit = "",
+            displayText = "Invalid stored rate",
+        )
         val basis = when {
-            rate.basis.isVolumeBased -> SprayCalculator.RateBasis.PER_100L
-            rate.basis.isAreaBased -> SprayCalculator.RateBasis.PER_HECTARE
+            normalized.basis.isVolumeBased -> SprayCalculator.RateBasis.PER_100L
+            normalized.basis.isAreaBased -> SprayCalculator.RateBasis.PER_HECTARE
             else -> null
         }
         val amount: SprayRateAmount = when {
             basis == null -> SprayRateAmount.ReferenceOnly
-            rate.minValue != null && rate.maxValue != null &&
-                rate.minValue.isFinite() && rate.maxValue.isFinite() &&
-                rate.minValue > 0.0 && rate.maxValue >= rate.minValue ->
-                SprayRateAmount.Range(rate.minValue, rate.maxValue)
-            rate.minValue != null || rate.maxValue != null -> SprayRateAmount.Unresolved
-            rate.value != null && rate.value.isFinite() && rate.value > 0.0 -> SprayRateAmount.Fixed(rate.value)
+            normalized.minValue != null && normalized.maxValue != null ->
+                SprayRateAmount.Range(normalized.minValue, normalized.maxValue)
+            normalized.minValue != null || normalized.maxValue != null -> SprayRateAmount.Unresolved
+            normalized.value != null -> SprayRateAmount.Fixed(normalized.value)
             else -> SprayRateAmount.Unresolved
         }
         val id = rate.rateId?.trim()?.takeIf { it.isNotEmpty() } ?: stableId(
@@ -183,10 +197,10 @@ object SprayRegisteredUseRates {
             condition = rate.label.trim().takeIf { it.isNotEmpty() },
             basis = basis,
             amount = amount,
-            unit = rate.unit,
-            displayText = rate.displayRate,
+            unit = normalized.unit,
+            displayText = normalized.displayRate,
             labelRange = range,
-            labelRangeText = range?.let { rate.displayRate },
+            labelRangeText = range?.let { normalized.displayRate },
         )
     }
 

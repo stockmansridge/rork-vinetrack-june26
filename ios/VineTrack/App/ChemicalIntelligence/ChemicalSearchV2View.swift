@@ -549,10 +549,16 @@ private struct ChemicalSearchV2ReviewView: View {
             return
         }
         guard let vineyardId = store.selectedVineyardId else { notice = "Select a vineyard first."; return }
+        guard let canonicalIntelligence = ChemicalLabelRateNormalizer.normalize(draft.intelligence) else {
+            notice = "Invalid stored rate. Correct the unit, amount and rate basis before saving."
+            return
+        }
         isSaving = true
         let basis: ChemicalRateBasis = rate.basis.isVolumeBased ? .per100Litres : .perHectare
         let display = rate.value ?? rate.minValue ?? 0
-        let legacyRate = ChemicalRate(label: rate.label, value: draft.unit.toBase(display), basis: basis)
+        let legacyRates: [ChemicalRate] = rate.value.map {
+            [ChemicalRate(label: rate.label, value: draft.unit.toBase($0), basis: basis)]
+        } ?? []
         let storedBasis: ChemicalDefaultRateBasis = basis == .perHectare ? .perHectare : .per100Litres
         let slot: StoredChemicalDefaultRate? = {
             if let min = rate.minValue, let max = rate.maxValue {
@@ -563,14 +569,15 @@ private struct ChemicalSearchV2ReviewView: View {
         }()
         let defaults = slot.map { StoredChemicalDefaultRates().withSlot(storedBasis, $0) }
         let chemical = SavedChemical(
-            vineyardId: vineyardId, name: draft.productName, ratePerHa: basis == .perHectare ? display : nil,
+            vineyardId: vineyardId, name: draft.productName,
+            ratePerHa: basis == .perHectare && rate.value != nil ? display : nil,
             unit: draft.unit, chemicalGroup: draft.intelligence.legacyChemicalGroup,
             manufacturer: draft.intelligence.registration?.registrant ?? "",
             activeIngredient: draft.intelligence.legacyActiveIngredient,
-            rates: [legacyRate], labelURL: draft.intelligence.registration?.labelReference ?? "",
+            rates: legacyRates, labelURL: draft.intelligence.registration?.labelReference ?? "",
             productURL: draft.intelligence.registration?.manufacturerProductURL ?? "",
             productCategory: draft.intelligence.productCategory,
-            productForm: draft.formType ?? "", chemicalIntelligence: draft.intelligence,
+            productForm: draft.formType ?? "", chemicalIntelligence: canonicalIntelligence,
             masterChemicalId: draft.master?.id, masterSourceRevision: draft.master?.catalogueVersion,
             defaultRates: defaults, entrySource: draft.master == nil ? "label_lookup_v2" : "master_catalogue_v2"
         )

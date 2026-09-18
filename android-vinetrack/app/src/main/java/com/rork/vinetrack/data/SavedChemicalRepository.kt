@@ -6,6 +6,7 @@ import com.rork.vinetrack.data.chemical.ChemicalDataSource
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateValidity
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
+import com.rork.vinetrack.data.chemical.ChemicalLabelRateNormalizer
 import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
 import com.rork.vinetrack.data.chemical.ChemicalVerificationConflict
 import com.rork.vinetrack.data.chemical.StoredChemicalDefaultRates
@@ -134,7 +135,12 @@ class SavedChemicalRepository(private val session: SessionStore) {
      * the evidence actually supports. Confidence can be lowered on write, never
      * raised.
      */
-    private class IntelFields(intel: ChemicalIntelligence?) {
+    private class IntelFields(rawIntel: ChemicalIntelligence?) {
+        private val intel: ChemicalIntelligence? = rawIntel?.let {
+            requireNotNull(ChemicalLabelRateNormalizer.normalize(it)) {
+                "Structured chemical rates must use a canonical unit, amount and basis."
+            }
+        }
         val activeIngredients = intel?.activeIngredients
         val activityGroups = intel?.activityGroupCodes
         val activityGroupScheme = intel?.activityGroups?.firstOrNull()?.scheme?.raw

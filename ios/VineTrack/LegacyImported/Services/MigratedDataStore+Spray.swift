@@ -34,6 +34,10 @@ extension MigratedDataStore {
     func addSavedChemical(_ chemical: SavedChemical) {
         guard let vineyardId = selectedVineyardId else { return }
         var item = chemical
+        if let intelligence = item.chemicalIntelligence {
+            guard let canonical = ChemicalLabelRateNormalizer.normalize(intelligence) else { return }
+            item.chemicalIntelligence = canonical
+        }
         item.vineyardId = vineyardId
         savedChemicals.append(item)
         sprayRepo.saveChemicalsSlice(savedChemicals, for: vineyardId)
@@ -43,9 +47,14 @@ extension MigratedDataStore {
     func updateSavedChemical(_ chemical: SavedChemical) {
         guard let vineyardId = selectedVineyardId else { return }
         guard let idx = savedChemicals.firstIndex(where: { $0.id == chemical.id }) else { return }
-        savedChemicals[idx] = chemical
+        var item = chemical
+        if let intelligence = item.chemicalIntelligence {
+            guard let canonical = ChemicalLabelRateNormalizer.normalize(intelligence) else { return }
+            item.chemicalIntelligence = canonical
+        }
+        savedChemicals[idx] = item
         sprayRepo.saveChemicalsSlice(savedChemicals, for: vineyardId)
-        onSavedChemicalChanged?(chemical.id)
+        onSavedChemicalChanged?(item.id)
     }
 
     func deleteSavedChemical(_ chemical: SavedChemical) {

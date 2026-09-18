@@ -226,7 +226,7 @@ object ChemicalSaveContract {
      */
     fun isUsable(rate: ChemicalLabelRate): Boolean {
         if (rate.basis !in calculableBases) return false
-        if (rate.unit.trim().isEmpty()) return false
+        if (ChemicalLabelRateNormalizer.normalize(rate) == null) return false
         return when (rate.basis) {
             ChemicalLabelRateBasis.RANGE_PER_100_LITRES,
             ChemicalLabelRateBasis.RANGE_PER_HECTARE,
@@ -562,6 +562,14 @@ object ChemicalSaveContract {
                     ChemicalSaveViolation(
                         code = ChemicalSaveViolationCode.RATE_UNIT_MISSING,
                         message = "Enter the unit for this rate (L, mL, kg or g).",
+                        field = "rates",
+                    ),
+                )
+            } else if (ChemicalLabelRateNormalizer.normalize(rate) == null) {
+                out.add(
+                    ChemicalSaveViolation(
+                        code = ChemicalSaveViolationCode.RATE_UNIT_MISSING,
+                        message = "Use only L, mL, kg or g. The rate basis already contains /ha or /100 L.",
                         field = "rates",
                     ),
                 )

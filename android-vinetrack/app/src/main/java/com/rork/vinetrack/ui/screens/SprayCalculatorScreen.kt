@@ -107,6 +107,7 @@ import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.chemical.ChemicalAddFromSprayRouting
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateDisplay
 import com.rork.vinetrack.data.chemical.ChemicalReverifyFlow
+import com.rork.vinetrack.data.chemical.ChemicalLabelRateNormalizer
 import com.rork.vinetrack.data.chemical.ChemicalSnapshotCapture
 import com.rork.vinetrack.data.chemical.ChemicalSprayDefaultHandoff
 import com.rork.vinetrack.data.chemical.ChemicalSprayPrefill
@@ -268,7 +269,12 @@ private fun basisOf(raw: String): SprayCalculator.RateBasis =
  * were quoted in the pack unit and remain the best answer available.
  */
 private fun lineRateUnit(chem: SavedChemical, line: CalcChemLine): String =
-    line.rateUnit ?: chem.unit
+    ChemicalLabelRateNormalizer.canonicalBareUnit(line.rateUnit)
+        ?: if (ChemicalSprayDefaultHandoff.isLegacyRateRecord(chem)) {
+            ChemicalLabelRateNormalizer.canonicalBareUnit(chem.unit).orEmpty()
+        } else {
+            ""
+        }
 
 /**
  * The line's recommended rate, expressed in [lineRateUnit].
@@ -307,6 +313,7 @@ private fun lineCostPerUnit(chem: SavedChemical, rateUnit: String): Double? =
 
 /** Effective rate: manual override (when valid) else the recommended rate. */
 private fun effectiveRateDisplay(chem: SavedChemical, line: CalcChemLine): Double {
+    if (SprayRegisteredUseRates.hasInvalidStructuredRates(chem)) return Double.NaN
     val selected = SprayRegisteredUseRates.rate(chem, line.selectedRateId)
     selected?.labelRange?.let {
         if (line.overrideText.isNotBlank()) {
@@ -3163,7 +3170,8 @@ private fun CalcChemicalLineCard(
     }
     // A structured product whose rate nobody confirmed. The line is genuinely
     // unresolved and says so, rather than showing a borrowed zero.
-    val needsRate = chem != null && recommended <= 0 && !isOverridden && confirmedRange == null
+    val hasInvalidStoredRate = chem?.let(SprayRegisteredUseRates::hasInvalidStructuredRates) == true
+    val needsRate = chem != null && !hasInvalidStoredRate && recommended <= 0 && !isOverridden && confirmedRange == null
 
     VineyardCard {
         // Header
@@ -3341,8 +3349,8 @@ private fun CalcChemicalLineCard(
                     onValueChange = { line.overrideText = it.filter { c -> c.isDigit() || c == '.' }; onChanged() },
                     placeholder = { Text(if (selectedRate?.requiresManualRate == true || confirmedRange != null) "Application rate" else fmtRate(recommended)) },
                     isError = rangeRejection != null,
-                    enabled = ChemicalSprayDefaultHandoff.isLegacyRateRecord(chem) ||
-                        selectedRate != null || line.rateAmount != null || confirmedRange != null,
+                    enabled = !hasInvalidStoredRate && (ChemicalSprayDefaultHandoff.isLegacyRateRecord(chem) ||
+                        selectedRate != null || line.rateAmount != null || confirmedRange != null),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier
@@ -3363,6 +3371,13 @@ private fun CalcChemicalLineCard(
                     modifier = Modifier
                         .padding(top = 4.dp)
                         .semantics { contentDescription = "applicationRateGuidance" },
+                )
+            } else if (hasInvalidStoredRate) {
+                Text(
+                    "Invalid stored rate\nReview this chemical in Chemical Store before calculating.",
+                    fontSize = 11.sp,
+                    color = VineColors.Orange,
+                    modifier = Modifier.padding(top = 4.dp),
                 )
             } else if (needsRate) {
                 Text(
@@ -3481,9 +3496,10 @@ private fun SuggestedRegisteredRatePickerRow(
 
 private fun applySuggestedRate(line: CalcChemLine, rate: SpraySelectableRate) {
     val basis = rate.basis ?: return
+    val unit = ChemicalLabelRateNormalizer.canonicalBareUnit(rate.unit) ?: return
     line.selectedRateId = rate.id
     line.basis = basis
-    line.rateUnit = rate.unit
+    line.rateUnit = unit
     line.rateAmount = (rate.amount as? SprayRateAmount.Fixed)?.value
     line.overrideText = ""
 }

@@ -475,7 +475,8 @@ struct SprayCalculatorView: View {
                 : (line.basis == .perHectare
                     ? chemical.ratePerHa.map { chemical.unit.toBase($0) }
                     : nil)
-            let rate = line.overrideRate ?? seededRate ?? legacyScalarRate ?? 0
+            let hasInvalidStoredRate = SprayRegisteredUseRates.hasInvalidStructuredRates(chemical)
+            let rate = hasInvalidStoredRate ? 0 : (line.overrideRate ?? seededRate ?? legacyScalarRate ?? 0)
             let chosenAreaBasis = productAreaBasis[line.id]
             let basis: SprayProductRateBasis = {
                 switch line.basis {
@@ -4429,6 +4430,10 @@ private struct CalcChemicalLineCard: View {
         offeredRates.first { $0.id == line.selectedRateId }
     }
 
+    private var hasInvalidStoredRate: Bool {
+        selectedChemical.map(SprayRegisteredUseRates.hasInvalidStructuredRates) ?? false
+    }
+
     // MARK: - P6 — rate basis as a primary control
 
     /// True when a GRAPEVINE registered use states a real per-100 L rate.
@@ -4639,7 +4644,7 @@ private struct CalcChemicalLineCard: View {
     /// express `175 g` as `0.175 Kg`, because the drum happens to be stocked
     /// in kilograms, is an invitation to enter a rate 1000× wrong.
     private var appliedRateUnit: String {
-        guard let chem = selectedChemical else { return "" }
+        guard let chem = selectedChemical, !hasInvalidStoredRate else { return "" }
         // A confirmed rate's own unit leads: the operator confirmed `2–3 L`
         // and must answer in litres.
         if let confirmed = confirmedResolution {
@@ -5055,6 +5060,7 @@ private struct CalcChemicalLineCard: View {
                 )
                 .accessibilityIdentifier("applicationRateField")
                 .keyboardType(.decimalPad)
+                .disabled(hasInvalidStoredRate)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .background(Color(.tertiarySystemGroupedBackground))
@@ -5135,7 +5141,10 @@ private struct CalcChemicalLineCard: View {
     /// (`basis:"other"`) entry says so in the label's own words.
     @ViewBuilder
     private func rateGuidanceText(chem: SavedChemical, basisLabel: String) -> some View {
-        if confirmedRange != nil {
+        if hasInvalidStoredRate {
+            Text("Invalid stored rate\nReview this chemical in Chemical Store before calculating.")
+                .foregroundStyle(.orange)
+        } else if confirmedRange != nil {
             Text("This product's confirmed rate is a range. Type the rate you are "
                  + "applying in \(appliedRateUnit)\(basisLabel) — it must fall within the range.")
         } else if let rate = selectedOfferedRate, rate.isRangePreset {

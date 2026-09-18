@@ -462,7 +462,9 @@ object ChemicalManualEntry {
         return when (draft.basis) {
             ChemicalLabelRateBasis.PER_HECTARE, ChemicalLabelRateBasis.PER_100_LITRES -> {
                 val value = parseDouble(draft.valueText) ?: return null
-                ChemicalLabelRate(label = label, basis = draft.basis, value = value, unit = unit)
+                ChemicalLabelRateNormalizer.normalize(
+                    ChemicalLabelRate(label = label, basis = draft.basis, value = value, unit = unit),
+                )
             }
 
             ChemicalLabelRateBasis.RANGE_PER_HECTARE,
@@ -472,12 +474,14 @@ object ChemicalManualEntry {
                 val high = parseDouble(draft.maxText) ?: return null
                 // Stored low-to-high whichever way round it was typed, so
                 // `proposedValue` cannot hand a calculation the top of the band.
-                ChemicalLabelRate(
-                    label = label,
-                    basis = draft.basis,
-                    minValue = minOf(low, high),
-                    maxValue = maxOf(low, high),
-                    unit = unit,
+                ChemicalLabelRateNormalizer.normalize(
+                    ChemicalLabelRate(
+                        label = label,
+                        basis = draft.basis,
+                        minValue = minOf(low, high),
+                        maxValue = maxOf(low, high),
+                        unit = unit,
+                    ),
                 )
             }
 
