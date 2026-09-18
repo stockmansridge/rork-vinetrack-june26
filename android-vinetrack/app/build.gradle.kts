@@ -214,6 +214,7 @@ if (providers.gradleProperty("optimalRipenessFocusedTests").orNull == "true") {
                 include("**/OptimalRipenessParityTest.kt")
                 include("**/OptimalRipenessLoadingRegressionTest.kt")
                 include("**/OptimalRipenessOfflineSourceResolutionTest.kt")
+                include("**/OptimalRipenessFinalParityTest.kt")
             })
         }
     }

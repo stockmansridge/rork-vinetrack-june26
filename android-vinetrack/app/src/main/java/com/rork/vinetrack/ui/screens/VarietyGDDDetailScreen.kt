@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.DegreeDayService
 import com.rork.vinetrack.data.GddPoint
 import com.rork.vinetrack.data.GddResetMode
+import com.rork.vinetrack.data.calculateOptimalRipenessBlock
 import com.rork.vinetrack.data.GddSettingsStore
 import com.rork.vinetrack.data.OperationPrefsStore
 import com.rork.vinetrack.data.DailyWeatherCacheStore
@@ -87,7 +88,7 @@ import kotlin.math.min
  * maths as the Optimal Ripeness hub so both surfaces agree exactly.
  */
 
-private data class BlockGddSeries(
+internal data class BlockGddSeries(
     val block: Paddock,
     val points: List<GddPoint>,
     val resetMs: Long,
@@ -110,20 +111,7 @@ fun VarietyGDDDetailScreen(
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
-    val service = remember(state.seasonZone) {
-        DegreeDayService(
-            persistentCache = com.rork.vinetrack.data.DailyWeatherCacheStore(context),
-            timeZone = java.util.TimeZone.getTimeZone(state.seasonZone),
-        )
-    }
     val gddSettings = remember { GddSettingsStore(context).load() }
-    val session = remember { SessionStore(context) }
-    val sourceStore = remember { OptimalRipenessSourceStore(context) }
-    val integrationRepository = remember { VineyardWeatherIntegrationRepository(session) }
-    val davisRepository = remember { DavisWeatherLinkRepository(session) }
-    val weatherRepository = remember(service, integrationRepository, davisRepository) {
-        OptimalRipenessWeatherRepository(service, integrationRepository, davisRepository)
-    }
 
     val target = remember(variety) {
         BuiltInGrapeVarietyGDD.resolveTarget(variety.optimalGddOverride, variety.varietyKey, variety.displayName)
@@ -140,51 +128,34 @@ fun VarietyGDDDetailScreen(
         }
     }
 
-    val coords: Pair<Double, Double>? = remember(state.selectedVineyardId, state.vineyards, state.paddocks) {
-        val v = state.selectedVineyard
-        val vLat = v?.latitude
-        val vLon = v?.longitude
-        if (vLat != null && vLon != null) vLat to vLon
-        else state.paddocks.firstNotNullOfOrNull { it.centroid }?.let { it.latitude to it.longitude }
+    val coords = resolveOptimalRipenessCoordinates(state)
+    val timeZone = remember(state.seasonZone) { java.util.TimeZone.getTimeZone(state.seasonZone) }
+    val seasonStartMs = remember(state.seasonStartMonth, state.seasonStartDay, timeZone) {
+        seasonStartDate(state.seasonStartMonth, state.seasonStartDay, timeZone)
     }
-
-    val seasonStartMs = remember(state.seasonStartMonth, state.seasonStartDay) {
-        seasonStartDateMs(state.seasonStartMonth, state.seasonStartDay)
-    }
-
-    val vineyardId = state.selectedVineyardId
-    val cachedSource = remember(vineyardId) { vineyardId?.let { sourceStore.load(session.userId, it) } }
-    val initialSourceKey = cachedSource?.sourceFingerprint
-    val initialResult = remember(initialSourceKey, allocatedBlocks, coords) {
-        if (initialSourceKey != null && service.hasUsableData(initialSourceKey)) {
-            VarietyGddResult(
-                sourceConfigured = true,
-                series = computeVarietySeries(service, initialSourceKey, coords?.first ?: 0.0, allocatedBlocks, gddSettings.calculationMode.useBEDD),
-                sourceLabel = cachedSource?.sourceLabel ?: "Cached weather",
-            )
-        } else null
-    }
-    val resultState = produceState<VarietyGddResult?>(
-        initialValue = initialResult,
-        vineyardId, coords, allocatedBlocks,
-    ) {
-        val c = coords
-        val id = vineyardId
-        if (c == null || id == null) {
-            value = VarietyGddResult(sourceConfigured = false, series = emptyList(), sourceLabel = "Weather source required")
-            return@produceState
-        }
-        val earliestBudburst = allocatedBlocks.mapNotNull(::optimalRipenessBudburstMs).minOrNull()
-        if (earliestBudburst == null) {
-            value = VarietyGddResult(sourceConfigured = true, series = emptyList(), sourceLabel = cachedSource?.sourceLabel ?: "Weather source")
-            return@produceState
-        }
-        val weather = weatherRepository.refresh(id, c.first, c.second, earliestBudburst, System.currentTimeMillis(), cachedSource?.sourceFingerprint)
-        sourceStore.save(OptimalRipenessSourceSelection(session.userId.orEmpty(), id, weather.source.sourceKey, weather.source.label))
-        value = VarietyGddResult(
+    val weather = state.optimalRipenessWeather
+    val service = weather.service
+    val sourceKey = weather.sourceKey
+    val result = if (service != null && sourceKey != null && weather.hasCachedData) {
+        VarietyGddResult(
             sourceConfigured = true,
-            series = computeVarietySeries(service, weather.source.sourceKey, weather.source.latitude, allocatedBlocks, gddSettings.calculationMode.useBEDD),
-            sourceLabel = weather.source.label,
+            series = computeVarietySeries(
+                service = service,
+                sourceKey = sourceKey,
+                latitude = coords?.first ?: 0.0,
+                blocks = allocatedBlocks,
+                seasonStartMs = seasonStartMs,
+                globalResetMode = gddSettings.resetMode,
+                globalCalculationMode = gddSettings.calculationMode,
+                timeZone = timeZone,
+            ),
+            sourceLabel = weather.sourceLabel,
+        )
+    } else {
+        VarietyGddResult(
+            sourceConfigured = coords != null,
+            series = emptyList(),
+            sourceLabel = weather.sourceLabel,
         )
     }
 
@@ -199,7 +170,6 @@ fun VarietyGDDDetailScreen(
             )
         },
     ) { padding ->
-        val result = resultState.value
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -209,25 +179,22 @@ fun VarietyGDDDetailScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Spacer(Modifier.height(4.dp))
-            val series = result?.series.orEmpty()
+            val series = result.series
             val averageTotal = if (series.isEmpty()) 0.0 else series.sumOf { it.total } / series.size
 
             VarietyHeaderCard(
                 averageTotal = averageTotal,
                 target = target,
                 series = series,
-                loading = result == null,
-                sourceConfigured = result?.sourceConfigured == true,
-                sourceLabel = result?.sourceLabel ?: cachedSource?.sourceLabel ?: "Weather source",
+                loading = weather.isUpdating && !weather.hasCachedData,
+                sourceConfigured = result.sourceConfigured,
+                sourceLabel = result.sourceLabel,
             )
 
             when {
-                result == null -> {
+                weather.isUpdating && !weather.hasCachedData -> {
                     Box(modifier = Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            CircularProgressIndicator(color = VineColors.Primary)
-                            Text("Fetching season weather…", color = vine.textSecondary, fontSize = 13.sp)
-                        }
+                        Text("Syncing weather history…", color = vine.textSecondary, fontSize = 13.sp)
                     }
                 }
                 series.isEmpty() -> {
@@ -504,30 +471,23 @@ private fun Milestone(label: String, iso: String?, modifier: Modifier = Modifier
 
 // MARK: - Computation
 
-private fun computeVarietySeries(
+internal fun computeVarietySeries(
     service: DegreeDayService,
     sourceKey: String,
     latitude: Double,
     blocks: List<Paddock>,
-    useBEDD: Boolean,
-): List<BlockGddSeries> {
-    val now = System.currentTimeMillis()
-    val oneYearAgo = run { val cal = Calendar.getInstance(); cal.timeInMillis = now; cal.add(Calendar.YEAR, -1); cal.timeInMillis }
-    val out = mutableListOf<BlockGddSeries>()
-    for (block in blocks) {
-        val resetMs = optimalRipenessBudburstMs(block) ?: continue
-        if (resetMs !in oneYearAgo..now) continue
-        val series = service.dailyGddSeries(
-            sourceKey = sourceKey,
-            fromMs = startOfDayMsLocal(resetMs),
-            toMs = startOfDayMsLocal(now),
-            latitude = latitude,
-            useBEDD = useBEDD,
-        )
-        if (series.isEmpty()) continue
-        out.add(BlockGddSeries(block, series, resetMs, series.last().cumulative))
-    }
-    return out
+    seasonStartMs: Long,
+    globalResetMode: com.rork.vinetrack.data.GddResetMode,
+    globalCalculationMode: com.rork.vinetrack.data.GddCalculationMode,
+    timeZone: java.util.TimeZone,
+    nowMs: Long = System.currentTimeMillis(),
+): List<BlockGddSeries> = blocks.mapNotNull { block ->
+    val calculation = calculateOptimalRipenessBlock(
+        service, sourceKey, latitude, block, seasonStartMs,
+        globalResetMode, globalCalculationMode, timeZone, nowMs,
+    )
+    if (!calculation.hasValue || calculation.points.isEmpty() || calculation.resetDateMs == null) null
+    else BlockGddSeries(block, calculation.points, calculation.resetDateMs, calculation.total)
 }
 
 /** Daily-aligned average cumulative across all block series (mirrors iOS unionPoints). */
@@ -586,25 +546,6 @@ private fun progressColorFor(progress: Double): Color = when {
     progress >= 0.9 -> VineColors.Orange
     progress >= 0.4 -> VineColors.Info
     else -> VineColors.Destructive
-}
-
-private fun startOfDayMsLocal(time: Long): Long {
-    val cal = Calendar.getInstance()
-    cal.timeInMillis = time
-    cal.set(Calendar.HOUR_OF_DAY, 0); cal.set(Calendar.MINUTE, 0); cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
-    return cal.timeInMillis
-}
-
-private fun seasonStartDateMs(month: Int, day: Int): Long {
-    val now = Calendar.getInstance()
-    val curMonth = now.get(Calendar.MONTH) + 1
-    val curDay = now.get(Calendar.DAY_OF_MONTH)
-    val year = now.get(Calendar.YEAR)
-    val startYear = if (curMonth > month || (curMonth == month && curDay >= day)) year else year - 1
-    val cal = Calendar.getInstance()
-    cal.clear()
-    cal.set(startYear, month - 1, day, 0, 0, 0)
-    return cal.timeInMillis
 }
 
 private fun shortDate(ms: Long): String = SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(ms))

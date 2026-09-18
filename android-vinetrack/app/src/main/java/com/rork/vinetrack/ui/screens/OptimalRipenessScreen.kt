@@ -87,6 +87,8 @@ import com.rork.vinetrack.data.GddResetMode
 import com.rork.vinetrack.data.effectiveCalculationMode
 import com.rork.vinetrack.data.effectiveResetMode
 import com.rork.vinetrack.data.resetDateMs
+import com.rork.vinetrack.data.calculateOptimalRipenessBlock
+import com.rork.vinetrack.data.optimalRipenessStartOfDay
 import com.rork.vinetrack.data.PaddockRepository
 import com.rork.vinetrack.data.GddSettingsStore
 import com.rork.vinetrack.data.OperationPrefsStore
@@ -222,128 +224,20 @@ fun OptimalRipenessScreen(
 
     val vine = LocalVineColors.current
     val context = LocalContext.current
-    val service = remember(state.seasonZone) {
-        DegreeDayService(
-            persistentCache = com.rork.vinetrack.data.DailyWeatherCacheStore(context),
-            timeZone = java.util.TimeZone.getTimeZone(state.seasonZone),
-        )
-    }
-    val session = remember { SessionStore(context) }
-    val integrationRepository = remember { VineyardWeatherIntegrationRepository(session) }
-    val davisRepository = remember { DavisWeatherLinkRepository(session) }
-    val weatherRepository = remember(service, integrationRepository, davisRepository) {
-        OptimalRipenessWeatherRepository(service, integrationRepository, davisRepository)
-    }
-    val sourceStore = remember { OptimalRipenessSourceStore(context) }
     val gddSettings = remember { GddSettingsStore(context).load() }
-
-    // Resolve GDD source coordinates: vineyard coords, else first mapped block centroid.
-    val coords: Pair<Double, Double>? = remember(state.selectedVineyardId, state.vineyards, state.paddocks) {
-        val v = state.selectedVineyard
-        val vLat = v?.latitude
-        val vLon = v?.longitude
-        if (vLat != null && vLon != null) {
-            vLat to vLon
-        } else {
-            state.paddocks.firstNotNullOfOrNull { it.centroid }?.let { it.latitude to it.longitude }
-        }
+    val coordinates = resolveOptimalRipenessCoordinates(state)
+    val timeZone = remember(state.seasonZone) { java.util.TimeZone.getTimeZone(state.seasonZone) }
+    val seasonStartMs = remember(state.seasonStartMonth, state.seasonStartDay, timeZone) {
+        seasonStartDate(state.seasonStartMonth, state.seasonStartDay, timeZone)
     }
-
-    val vineyardTimeZone = remember(state.seasonZone) { java.util.TimeZone.getTimeZone(state.seasonZone) }
-    val seasonStartMs = remember(state.seasonStartMonth, state.seasonStartDay, vineyardTimeZone) {
-        seasonStartDate(state.seasonStartMonth, state.seasonStartDay, vineyardTimeZone)
-    }
-
-    val vineyardId = state.selectedVineyardId
-    val cachedSource = remember(vineyardId) {
-        vineyardId?.let { sourceStore.load(session.userId, it) }
-    }
-    val immediateResult = remember(cachedSource, coords, state.paddocks, state.grapeVarieties, seasonStartMs) {
-        val sourceKey = cachedSource?.sourceFingerprint
-        val local = if (sourceKey != null && service.hasUsableData(sourceKey)) {
-            computeRows(
-                service = service,
-                sourceKey = sourceKey,
-                latitude = coords?.first ?: 0.0,
-                paddocks = state.paddocks,
-                grapeVarieties = state.grapeVarieties,
-                useBEDD = gddSettings.calculationMode.useBEDD,
-                seasonStartMs = seasonStartMs,
-                globalResetMode = gddSettings.resetMode,
-                globalCalculationMode = gddSettings.calculationMode,
-                timeZone = java.util.TimeZone.getTimeZone(state.seasonZone),
-            ).copy(
-                sourceLabel = cachedSource.sourceLabel,
-                sourceFingerprint = sourceKey,
-            )
-        } else null
-        local ?: buildImmediateRipenessResult(
-            paddocks = state.paddocks,
-            grapeVarieties = state.grapeVarieties,
-            seasonStartMs = seasonStartMs,
-            globalResetMode = gddSettings.resetMode,
-            cachedSnapshot = null,
-            fallbackSourceLabel = cachedSource?.sourceLabel ?: if (coords == null) "Weather source required" else "Checking weather source…",
-            sourceFingerprint = cachedSource?.sourceFingerprint.orEmpty(),
-        )
-    }
-
-    // Block identity and setup come from local vineyard state immediately. Weather
-    // only enriches those rows, so a slow refresh can never blank the operation UI.
-    val resultState = produceState(
-        initialValue = OptimalRipenessScreenState(
-            result = immediateResult,
-            isUpdatingWeather = coords != null,
-        ),
-        vineyardId,
-        coords,
-        state.paddocks,
-        state.grapeVarieties,
-        seasonStartMs,
-    ) {
-        val id = vineyardId ?: return@produceState
-        val c = coords
-        if (c == null) {
-            value = value.copy(
-                result = value.result.copy(sourceConfigured = false, sourceLabel = "Weather source required"),
-                isUpdatingWeather = false,
-            )
-            return@produceState
-        }
-        val timeZone = java.util.TimeZone.getTimeZone(state.seasonZone)
-        val earliestRequiredDate = earliestRequiredWeatherDate(
-            paddocks = state.paddocks,
-            seasonStartMs = seasonStartMs,
-            globalResetMode = gddSettings.resetMode,
-        )
-        if (earliestRequiredDate == null) {
-            value = value.copy(isUpdatingWeather = false)
-            return@produceState
-        }
-        val weather = weatherRepository.refresh(
-            vineyardId = id,
-            latitude = c.first,
-            longitude = c.second,
-            fromEpochMs = earliestRequiredDate,
-            toEpochMs = System.currentTimeMillis(),
-            cachedSourceFingerprint = cachedSource?.sourceFingerprint,
-        )
-        sourceStore.save(
-            OptimalRipenessSourceSelection(
-                ownerId = session.userId.orEmpty(),
-                vineyardId = id,
-                sourceFingerprint = weather.source.sourceKey,
-                sourceLabel = weather.source.label,
-            )
-        )
-        if (!weather.hasUsableData) {
-            value = value.copy(isUpdatingWeather = false)
-            return@produceState
-        }
-        val fresh = computeRows(
+    val weather = state.optimalRipenessWeather
+    val service = weather.service
+    val sourceKey = weather.sourceKey
+    val calculated = if (service != null && sourceKey != null && weather.hasCachedData) {
+        computeRows(
             service = service,
-            sourceKey = weather.source.sourceKey,
-            latitude = weather.source.latitude,
+            sourceKey = sourceKey,
+            latitude = coordinates?.first ?: 0.0,
             paddocks = state.paddocks,
             grapeVarieties = state.grapeVarieties,
             useBEDD = gddSettings.calculationMode.useBEDD,
@@ -351,9 +245,19 @@ fun OptimalRipenessScreen(
             globalResetMode = gddSettings.resetMode,
             globalCalculationMode = gddSettings.calculationMode,
             timeZone = timeZone,
-        ).copy(sourceLabel = weather.source.label, sourceFingerprint = weather.source.sourceKey)
-        value = OptimalRipenessScreenState(result = fresh, isUpdatingWeather = false)
+        ).copy(sourceLabel = weather.sourceLabel, sourceFingerprint = sourceKey)
+    } else {
+        buildImmediateRipenessResult(
+            paddocks = state.paddocks,
+            grapeVarieties = state.grapeVarieties,
+            seasonStartMs = seasonStartMs,
+            globalResetMode = gddSettings.resetMode,
+            cachedSnapshot = null,
+            fallbackSourceLabel = weather.sourceLabel,
+            sourceFingerprint = sourceKey.orEmpty(),
+        )
     }
+    val screenState = OptimalRipenessScreenState(calculated, weather.isUpdating)
 
     Scaffold(
         modifier = modifier,
@@ -366,7 +270,6 @@ fun OptimalRipenessScreen(
             )
         },
     ) { padding ->
-        val screenState = resultState.value
         val result = screenState.result
         when {
             state.paddocks.isEmpty() -> {
@@ -405,7 +308,7 @@ fun OptimalRipenessScreen(
                         }
                         BlockRipenessCard(
                             row = row,
-                            isUpdatingWeather = screenState.isUpdatingWeather,
+                            isUpdatingWeather = false,
                             onClick = if (varietyKey != null) ({ openVarietyKey = varietyKey }) else null,
                         )
                     }
@@ -832,29 +735,23 @@ internal fun computeRows(
     timeZone: java.util.TimeZone = java.util.TimeZone.getDefault(),
 ): RipenessResult {
     val now = nowMs
-    val oneYearAgo = run {
-        val cal = Calendar.getInstance(timeZone); cal.timeInMillis = now; cal.add(Calendar.YEAR, -1); cal.timeInMillis
-    }
     val rows = mutableListOf<RipenessRow>()
 
     for (block in paddocks) {
-        val resetMode = block.effectiveResetMode(globalResetMode)
-        val calculationMode = block.effectiveCalculationMode(globalCalculationMode)
-        val resetMs = block.resetDateMs(resetMode, seasonStartMs)
-        var total = 0.0
-        var perDay = 0.0
-        if (resetMs != null && resetMs in oneYearAgo..now) {
-            val series = service.dailyGddSeries(
-                sourceKey = sourceKey,
-                fromMs = startOfDayMs(resetMs, timeZone),
-                toMs = startOfDayMs(now, timeZone),
-                latitude = latitude,
-                useBEDD = calculationMode.useBEDD,
-            )
-            total = series.lastOrNull()?.cumulative ?: 0.0
-            perDay = recentDailyRate(series)
-        }
-        val resolvedReset = resetMs?.takeIf { it in oneYearAgo..now }
+        val calculation = calculateOptimalRipenessBlock(
+            service = service,
+            sourceKey = sourceKey,
+            latitude = latitude,
+            block = block,
+            seasonStartMs = seasonStartMs,
+            globalResetMode = globalResetMode,
+            globalCalculationMode = globalCalculationMode,
+            timeZone = timeZone,
+            nowMs = now,
+        )
+        val total = calculation.total
+        val perDay = recentDailyRate(calculation.points)
+        val resolvedReset = calculation.resetDateMs
 
         val allocations = block.varietyAllocations.orEmpty().sortedByDescending { it.displayPercent ?: 0.0 }
         if (allocations.isEmpty()) {
@@ -947,12 +844,8 @@ internal fun earliestRequiredWeatherDate(
     block.resetDateMs(mode, seasonStartMs)
 }.minOrNull()
 
-internal fun startOfDayMs(time: Long, timeZone: java.util.TimeZone = java.util.TimeZone.getDefault()): Long {
-    val cal = Calendar.getInstance(timeZone)
-    cal.timeInMillis = time
-    cal.set(Calendar.HOUR_OF_DAY, 0); cal.set(Calendar.MINUTE, 0); cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
-    return cal.timeInMillis
-}
+internal fun startOfDayMs(time: Long, timeZone: java.util.TimeZone = java.util.TimeZone.getDefault()): Long =
+    optimalRipenessStartOfDay(time, timeZone)
 
 /** Most recent occurrence of (month, day), this year or last, as start-of-day ms. */
 internal fun seasonStartDate(

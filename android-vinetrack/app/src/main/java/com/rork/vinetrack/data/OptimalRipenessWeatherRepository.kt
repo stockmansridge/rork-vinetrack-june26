@@ -57,14 +57,18 @@ class OptimalRipenessWeatherRepository(
         fromEpochMs: Long,
         toEpochMs: Long,
         cachedSourceFingerprint: String?,
+        timeZoneId: String = java.util.TimeZone.getDefault().id,
     ): OptimalRipenessWeatherResult {
+        val completedCalendarEnd = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone(timeZoneId)
+        }.format(java.util.Date(toEpochMs))
         val requestKey = listOf(
             vineyardId,
             cachedSourceFingerprint.orEmpty(),
             "%.4f".format(java.util.Locale.US, latitude),
             "%.4f".format(java.util.Locale.US, longitude),
-            fromEpochMs.toString(),
-            toEpochMs.toString(),
+            timeZoneId,
+            completedCalendarEnd,
         ).joinToString("|")
         val now = System.currentTimeMillis()
         var owner = false

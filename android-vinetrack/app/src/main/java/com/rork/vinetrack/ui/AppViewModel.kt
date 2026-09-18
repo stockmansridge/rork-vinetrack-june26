@@ -94,6 +94,10 @@ import com.rork.vinetrack.data.BillingGrantsRepository
 import com.rork.vinetrack.data.HomePrefsStore
 import com.rork.vinetrack.data.OnboardingStore
 import com.rork.vinetrack.data.OperationPrefsStore
+import com.rork.vinetrack.data.GddSettingsStore
+import com.rork.vinetrack.data.OptimalRipenessWeatherCoordinator
+import com.rork.vinetrack.data.OptimalRipenessWeatherRequest
+import com.rork.vinetrack.data.OptimalRipenessWeatherState
 import com.rork.vinetrack.data.PinCompletionSync
 import com.rork.vinetrack.data.PinCreateSync
 import com.rork.vinetrack.data.PinDeleteSync
@@ -493,6 +497,8 @@ data class AppUiState(
      */
     val seasonStartMonth: Int = 7,
     val seasonStartDay: Int = 1,
+    /** Application-scoped, cache-first weather state shared by every Optimal Ripeness surface. */
+    val optimalRipenessWeather: OptimalRipenessWeatherState = OptimalRipenessWeatherState(),
     /**
      * One-time reconciliation prompt shown when this device carries a legacy
      * local season value that differs from the shared vineyard value and the
@@ -1180,6 +1186,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val regionSettingsStore = RegionSettingsStore(app)
     private val regionSettingsRepo = RegionSettingsRepository(session)
     private val operationPrefsStore = OperationPrefsStore(app)
+    private val gddSettingsStore = GddSettingsStore(app)
+    private val optimalRipenessWeatherCoordinator = OptimalRipenessWeatherCoordinator(app, session, viewModelScope)
 
     /** Irrigation Records (SQL 125) — System Administrator gated during Phase 1. */
     val irrigationRepository = IrrigationRepository(session, app)
@@ -2221,6 +2229,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         observePendingWrites()
         observePendingPhotos()
         observeSprayTankActuals()
+        viewModelScope.launch {
+            optimalRipenessWeatherCoordinator.state.collect { weather ->
+                _ui.update { it.copy(optimalRipenessWeather = weather) }
+            }
+        }
         // Every server answer to an activity write reaches the UI, including the
         // quarters the server refused because another record already owns them.
         pruningSyncCoordinator.onActivityReconciled = { reconciliation ->
@@ -4200,6 +4213,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // pin creates, then queued completion toggles. No-op when the
                 // outbox is empty or no session yet.
                 if (online) {
+                    optimalRipenessWeatherCoordinator.refreshIfNeeded(isOnline = true)
                     replayPendingPinCreates()
                     replayPendingCustomPins()
                     replayPendingPinCompletions()
@@ -4559,6 +4573,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             reportClientTelemetry()
             // Pick up a layout change made on another device (throttled).
             operationalToolLayoutStore.refreshFromServer()
+            optimalRipenessWeatherCoordinator.refreshIfNeeded(isOnline = _ui.value.isOnline)
             if (_ui.value.isOnline) {
                 replayAllPendingWrites()
                 // Freshness parity (audit #1/#9/#11): re-pull remote snapshots
@@ -14706,6 +14721,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun prepareOptimalRipenessWeather(vineyardId: String) {
+        val state = _ui.value
+        if (state.selectedVineyardId != vineyardId) return
+        val vineyard = state.selectedVineyard ?: return
+        val coordinates = if (vineyard.latitude != null && vineyard.longitude != null) {
+            vineyard.latitude to vineyard.longitude
+        } else {
+            state.paddocks.firstNotNullOfOrNull { it.centroid }?.let { it.latitude to it.longitude }
+        } ?: return
+        val settings = gddSettingsStore.load()
+        val timeZone = java.util.TimeZone.getTimeZone(state.seasonZone)
+        optimalRipenessWeatherCoordinator.prepare(
+            request = OptimalRipenessWeatherRequest(
+                vineyardId = vineyardId,
+                latitude = coordinates.first,
+                longitude = coordinates.second,
+                timeZone = timeZone,
+                seasonStartMs = com.rork.vinetrack.ui.screens.seasonStartDate(
+                    state.seasonStartMonth,
+                    state.seasonStartDay,
+                    timeZone,
+                ),
+                paddocks = state.paddocks,
+                globalResetMode = settings.resetMode,
+            ),
+            isOnline = state.isOnline,
+        )
+    }
+
     private suspend fun loadVineyardData(vineyardId: String) {
         // Preserve the first local evidence before hydration/server reads can replace
         // caches and before the successful-load reconnect pipeline drains outboxes.
@@ -15264,6 +15308,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         reconcileMissingBudburstFromGrowthRecords()
+        prepareOptimalRipenessWeather(vineyardId)
         resumePendingGrowthCaptures(vineyardId)
         refreshCacheStatus()
         // Vineyard switch / manual refresh re-pulled picking records,
