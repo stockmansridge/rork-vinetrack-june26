@@ -5,6 +5,8 @@ import com.rork.vinetrack.data.chemical.ChemicalLabelRate
 import com.rork.vinetrack.data.chemical.ChemicalLabelRateBasis
 import com.rork.vinetrack.data.chemical.ChemicalSaveContract
 import com.rork.vinetrack.data.chemical.ChemicalSearchV2Rank
+import com.rork.vinetrack.data.chemical.ChemicalSearchV2OperationalDefaults
+import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
 import com.rork.vinetrack.data.chemical.ChemicalSearchV2RequestGate
 import com.rork.vinetrack.data.chemical.MasterChemicalV2Repository
 import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
@@ -49,6 +51,65 @@ class ChemicalSearchV2Test {
         ))
         assertEquals(1, rates.perHectare.size)
         assertEquals(2, rates.per100Litres.size)
+    }
+
+    @Test fun unambiguousPerHectareRateInitialisesAndEnablesSave() {
+        val rate = ChemicalLabelRate(basis = ChemicalLabelRateBasis.PER_HECTARE, value = 2.4, unit = "L")
+        val defaults = ChemicalSearchV2OperationalDefaults.unambiguousRates(
+            ViticultureRates(perHectare = listOf(rate)),
+        )
+        assertEquals(rate, defaults[ChemicalDefaultRateBasis.PER_HECTARE])
+        assertTrue(ChemicalSaveContract.evaluateMinimumOperational("Test", "Litres", defaults.values.toList()).isSatisfied)
+    }
+
+    @Test fun unambiguousPer100LitresRateInitialisesAndEnablesSave() {
+        val rate = ChemicalLabelRate(basis = ChemicalLabelRateBasis.PER_100_LITRES, value = 240.0, unit = "mL")
+        val defaults = ChemicalSearchV2OperationalDefaults.unambiguousRates(
+            ViticultureRates(per100Litres = listOf(rate)),
+        )
+        assertEquals(rate, defaults[ChemicalDefaultRateBasis.PER_100_LITRES])
+        assertTrue(ChemicalSaveContract.evaluateMinimumOperational("Test", "mL", defaults.values.toList()).isSatisfied)
+    }
+
+    @Test fun oneRatePerBasisPersistsBothWithoutChangingRangeOrUnit() {
+        val perHa = ChemicalLabelRate(
+            basis = ChemicalLabelRateBasis.RANGE_PER_HECTARE,
+            minValue = 2.4, maxValue = 3.2, unit = "L",
+        )
+        val per100 = ChemicalLabelRate(
+            basis = ChemicalLabelRateBasis.RANGE_PER_100_LITRES,
+            minValue = 240.0, maxValue = 320.0, unit = "mL",
+        )
+        val masterRates = ViticultureRates(listOf(perHa), listOf(per100))
+        val snapshot = masterRates.copy()
+        val initial = ChemicalSearchV2OperationalDefaults.unambiguousRates(masterRates)
+        val effective = ChemicalSearchV2OperationalDefaults.effectiveRates(initial, null)
+        val stored = ChemicalSearchV2OperationalDefaults.storedDefaults(effective, "2026-09-18T00:00:00Z")
+
+        assertEquals(2, effective.size)
+        assertEquals(null, stored?.perHectare?.value)
+        assertEquals(2.4, stored?.perHectare?.minValue)
+        assertEquals(3.2, stored?.perHectare?.maxValue)
+        assertEquals("L", stored?.perHectare?.unit)
+        assertEquals(null, stored?.per100Litres?.value)
+        assertEquals(240.0, stored?.per100Litres?.minValue)
+        assertEquals(320.0, stored?.per100Litres?.maxValue)
+        assertEquals("mL", stored?.per100Litres?.unit)
+        assertEquals(snapshot, masterRates)
+    }
+
+    @Test fun multipleAlternativesAreNotSelectedAndManualOverrideRemainsAvailable() {
+        val low = ChemicalLabelRate(basis = ChemicalLabelRateBasis.PER_HECTARE, value = 2.0, unit = "L")
+        val high = ChemicalLabelRate(basis = ChemicalLabelRateBasis.PER_HECTARE, value = 3.0, unit = "L")
+        val initial = ChemicalSearchV2OperationalDefaults.unambiguousRates(
+            ViticultureRates(perHectare = listOf(low, high)),
+        )
+        assertFalse(initial.containsKey(ChemicalDefaultRateBasis.PER_HECTARE))
+
+        val manual = ChemicalLabelRate(basis = ChemicalLabelRateBasis.PER_HECTARE, value = 2.5, unit = "L")
+        val effective = ChemicalSearchV2OperationalDefaults.effectiveRates(initial, manual)
+        assertEquals(listOf(manual), effective)
+        assertTrue(ChemicalSaveContract.evaluateMinimumOperational("Test", "Litres", effective).isSatisfied)
     }
 
     @Test fun punctuationNormalisationFindsSpraySeed() {

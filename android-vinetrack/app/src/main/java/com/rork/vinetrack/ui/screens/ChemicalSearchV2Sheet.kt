@@ -48,6 +48,8 @@ import com.rork.vinetrack.data.chemical.ChemicalManualRateDraft
 import com.rork.vinetrack.data.chemical.ChemicalSaveContract
 import com.rork.vinetrack.data.chemical.ChemicalStoreMatching
 import com.rork.vinetrack.data.chemical.ChemicalSearchV2Duplicate
+import com.rork.vinetrack.data.chemical.ChemicalSearchV2OperationalDefaults
+import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.MasterChemicalV2
 import com.rork.vinetrack.data.chemical.MasterChemicalV2Repository
@@ -75,6 +77,7 @@ private data class ChemicalReviewV2Draft(
     val rate: ChemicalManualRateDraft,
     val viticultureRates: ViticultureRates,
     val selectedRateId: String? = null,
+    val automaticRates: Map<ChemicalDefaultRateBasis, ChemicalLabelRate> = emptyMap(),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -110,14 +113,16 @@ internal fun ChemicalSearchV2Sheet(
     )
 
     fun openMaster(master: MasterChemicalV2) {
-        val rates = master.grapevineRates
-        val initial = rates.singleOrNull()?.let(::draftRate) ?: ChemicalManualRateDraft()
+        val automatic = ChemicalSearchV2OperationalDefaults.unambiguousRates(master.viticultureRates)
+        val selected = automatic[ChemicalDefaultRateBasis.PER_HECTARE]
+            ?: automatic[ChemicalDefaultRateBasis.PER_100_LITRES]
+        val initial = selected?.let(::draftRate) ?: ChemicalManualRateDraft()
         review = ChemicalReviewV2Draft(
             source = "VineTrack Master", master = master, intelligence = master.intelligence,
             formType = master.formType, productName = master.registeredProductName,
             unit = initial.unit.toDisplayUnit(), rate = initial,
             viticultureRates = master.viticultureRates,
-            selectedRateId = rates.singleOrNull()?.id,
+            selectedRateId = selected?.id, automaticRates = automatic,
         )
     }
 
@@ -218,14 +223,16 @@ internal fun ChemicalSearchV2Sheet(
                                 val lookup = externalService.lookupStructured(trimmed, "AU", null)
                                 val intel = lookup.intelligence()
                                 val viticultureRates = ViticultureRates.fromRegisteredUses(intel.registeredUses)
-                                val rates = viticultureRates.all
-                                val initial = rates.singleOrNull()?.let(::draftRate) ?: ChemicalManualRateDraft()
+                                val automatic = ChemicalSearchV2OperationalDefaults.unambiguousRates(viticultureRates)
+                                val selected = automatic[ChemicalDefaultRateBasis.PER_HECTARE]
+                                    ?: automatic[ChemicalDefaultRateBasis.PER_100_LITRES]
+                                val initial = selected?.let(::draftRate) ?: ChemicalManualRateDraft()
                                 review = ChemicalReviewV2Draft(
                                     source = "Label lookup", master = null, intelligence = intel,
                                     formType = lookup.formType, productName = lookup.productName ?: trimmed,
                                     unit = initial.unit.toDisplayUnit(), rate = initial,
                                     viticultureRates = viticultureRates,
-                                    selectedRateId = rates.singleOrNull()?.id,
+                                    selectedRateId = selected?.id, automaticRates = automatic,
                                 )
                                 Log.d("ChemicalSearchV2", "external_lookup=success")
                             } catch (error: Exception) {
@@ -273,8 +280,11 @@ private fun ChemicalReviewV2(
         )
     }
     val parsedRate = rateIntel.registeredUses.firstOrNull(ChemicalManualEntry::isProductRateCarrier)?.rates?.firstOrNull()
+    val effectiveRates = ChemicalSearchV2OperationalDefaults.effectiveRates(
+        draft.automaticRates, parsedRate,
+    )
     val evaluation = ChemicalSaveContract.evaluateMinimumOperational(
-        draft.productName, draft.unit, parsedRate?.let(::listOf).orEmpty(),
+        draft.productName, draft.unit, effectiveRates,
     )
     val registeredRates = draft.viticultureRates.all
 
@@ -307,6 +317,7 @@ private fun ChemicalReviewV2(
         Text("Choose a registered rate, or edit the operational default below", fontWeight = FontWeight.SemiBold)
         registeredRates.forEach { rate ->
             OutlinedButton(onClick = {
+                val basis = ChemicalDefaultRateBasis.of(rate.basis)
                 onDraft(draft.copy(
                     rate = ChemicalManualRateDraft(
                         label = rate.label, basis = rate.basis,
@@ -315,6 +326,8 @@ private fun ChemicalReviewV2(
                         unit = rate.unit.ifBlank { "L" }, rawText = rate.rawText.orEmpty(),
                     ),
                     unit = rate.unit.toDisplayUnit(), selectedRateId = rate.id,
+                    automaticRates = if (basis == null) draft.automaticRates
+                    else draft.automaticRates + (basis to rate),
                 ))
             }, modifier = Modifier.fillMaxWidth()) { Text(rate.displayRate) }
         }
@@ -391,11 +404,10 @@ private fun ChemicalReviewV2(
                 )
                 if (duplicate != null) { notice = "Already in Vineyard Chemicals: ${duplicate.displayName}"; return@Button }
                 val vineyardId = state.selectedVineyardId ?: run { notice = "Select a vineyard first."; return@Button }
-                val rate = parsedRate ?: return@Button
+                val rate = effectiveRates.firstOrNull() ?: return@Button
                 saving = true
                 val isArea = rate.basis == ChemicalLabelRateBasis.PER_HECTARE || rate.basis == ChemicalLabelRateBasis.RANGE_PER_HECTARE
                 val display = rate.value ?: rate.minValue ?: 0.0
-                val manualDraft = ChemicalManualDraft(productName = draft.productName, productRates = listOf(draft.rate))
                 val canonicalIntelligence = ChemicalLabelRateNormalizer.normalize(draft.intelligence)
                 if (canonicalIntelligence == null) {
                     saving = false
@@ -422,7 +434,9 @@ private fun ChemicalReviewV2(
                     purchase = null, productCategory = draft.intelligence.productCategory,
                     productForm = draft.formType.orEmpty(), intelligence = canonicalIntelligence,
                     masterChemicalId = draft.master?.id, masterSourceRevision = draft.master?.catalogueVersion,
-                    defaultRates = ChemicalManualEntry.defaultRatesForManualSave(manualDraft),
+                    defaultRates = ChemicalSearchV2OperationalDefaults.storedDefaults(
+                        effectiveRates, java.time.Instant.now().toString(),
+                    ),
                     entrySource = if (draft.master == null) "label_lookup_v2" else "master_catalogue_v2",
                 )
                 vm.createSavedChemical(input) { ok ->

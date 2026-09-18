@@ -23,6 +23,53 @@ nonisolated struct ViticultureRates: Codable, Sendable, Hashable {
     }
 }
 
+nonisolated enum ChemicalSearchV2OperationalDefaults {
+    static func unambiguousRates(from rates: ViticultureRates) -> [ChemicalDefaultRateBasis: ChemicalLabelRate] {
+        var result: [ChemicalDefaultRateBasis: ChemicalLabelRate] = [:]
+        let groups: [(ChemicalDefaultRateBasis, [ChemicalLabelRate])] = [
+            (.perHectare, rates.perHectare),
+            (.per100Litres, rates.per100Litres)
+        ]
+        for (basis, candidates) in groups {
+            var seen = Set<String>()
+            let usable = candidates.filter(ChemicalSaveContract.isAutoApplicable).filter {
+                seen.insert(ChemicalDefaultRate.distinctnessKey($0)).inserted
+            }
+            if usable.count == 1 { result[basis] = usable[0] }
+        }
+        return result
+    }
+
+    static func effectiveRates(
+        automatic: [ChemicalDefaultRateBasis: ChemicalLabelRate],
+        edited: ChemicalLabelRate?
+    ) -> [ChemicalLabelRate] {
+        var result = automatic
+        if let edited, let basis = ChemicalDefaultRateBasis.of(edited.basis) { result[basis] = edited }
+        return ChemicalDefaultRateBasis.allCases.compactMap { result[$0] }
+    }
+
+    static func storedDefaults(
+        rates: [ChemicalLabelRate],
+        selectedAt: String
+    ) -> StoredChemicalDefaultRates? {
+        var defaults = StoredChemicalDefaultRates()
+        for rate in rates {
+            guard let basis = ChemicalDefaultRateBasis.of(rate.basis) else { continue }
+            let slot: StoredChemicalDefaultRate?
+            if let min = rate.minValue, let max = rate.maxValue {
+                slot = .manual(basis: basis, unit: rate.unit, minValue: min, maxValue: max, selectedAt: selectedAt)
+            } else if let value = rate.value {
+                slot = .manual(basis: basis, unit: rate.unit, value: value, selectedAt: selectedAt)
+            } else {
+                slot = nil
+            }
+            if let slot { defaults = defaults.withSlot(basis, slot) }
+        }
+        return defaults.isEmpty ? nil : defaults
+    }
+}
+
 nonisolated struct MasterChemicalV2: Codable, Identifiable, Sendable, Hashable {
     let id: UUID
     let registrationCountry: String
@@ -269,6 +316,7 @@ struct ChemicalSearchV2View: View {
         var rate: ChemicalManualRateDraft
         var viticultureRates: ViticultureRates
         var selectedRegisteredRateID: String?
+        var automaticRates: [ChemicalDefaultRateBasis: ChemicalLabelRate]
     }
 
     var body: some View {
@@ -364,13 +412,14 @@ struct ChemicalSearchV2View: View {
     }
 
     private func openMaster(_ master: MasterChemicalV2) {
-        let rates = master.grapevineRates
-        let initial = rates.count == 1 ? draftRate(rates[0]) : ChemicalManualRateDraft()
+        let automatic = ChemicalSearchV2OperationalDefaults.unambiguousRates(from: master.viticultureRates)
+        let selected = automatic[.perHectare] ?? automatic[.per100Litres]
+        let initial = selected.map(draftRate) ?? ChemicalManualRateDraft()
         review = ReviewDraft(
             source: "VineTrack Master", master: master, intelligence: master.intelligence,
             formType: master.formType, productName: master.registeredProductName,
             unit: unit(for: initial.unit), rate: initial, viticultureRates: master.viticultureRates,
-            selectedRegisteredRateID: rates.count == 1 ? rates[0].id : nil
+            selectedRegisteredRateID: selected?.id, automaticRates: automatic
         )
     }
 
@@ -388,13 +437,14 @@ struct ChemicalSearchV2View: View {
                 )
                 let intel = lookup.intelligence()
                 let viticultureRates = ViticultureRates.fromRegisteredUses(intel.registeredUses)
-                let rates = viticultureRates.all
-                let initial = rates.count == 1 ? draftRate(rates[0]) : ChemicalManualRateDraft()
+                let automatic = ChemicalSearchV2OperationalDefaults.unambiguousRates(from: viticultureRates)
+                let selected = automatic[.perHectare] ?? automatic[.per100Litres]
+                let initial = selected.map(draftRate) ?? ChemicalManualRateDraft()
                 review = ReviewDraft(
                     source: "Label lookup", master: nil, intelligence: intel, formType: lookup.formType,
                     productName: lookup.productName ?? trimmed, unit: unit(for: initial.unit), rate: initial,
                     viticultureRates: viticultureRates,
-                    selectedRegisteredRateID: rates.count == 1 ? rates[0].id : nil
+                    selectedRegisteredRateID: selected?.id, automaticRates: automatic
                 )
                 diagnostics.externalLookupSucceeded = true
                 print("[ChemicalSearchV2] external_lookup=success")
@@ -467,10 +517,17 @@ private struct ChemicalSearchV2ReviewView: View {
             .registeredUses.first(where: ChemicalManualEntry.isProductRateCarrier)?.rates.first
     }
 
+    private var effectiveRates: [ChemicalLabelRate] {
+        ChemicalSearchV2OperationalDefaults.effectiveRates(
+            automatic: draft.automaticRates,
+            edited: parsedRate
+        )
+    }
+
     private var evaluation: ChemicalSaveEvaluation {
         ChemicalSaveContract.evaluateMinimumOperational(
             productName: draft.productName, productUnit: draft.unit.rawValue,
-            rates: parsedRate.map { [$0] } ?? []
+            rates: effectiveRates
         )
     }
 
@@ -513,16 +570,26 @@ private struct ChemicalSearchV2ReviewView: View {
                             ForEach(rates) { rate in Text(rate.displayRate).tag(Optional(rate.id)) }
                         }
                         .onChange(of: draft.selectedRegisteredRateID) { _, id in
-                            if let rate = rates.first(where: { $0.id == id }) {
-                                draft.rate = ChemicalManualRateDraft(
-                                    label: rate.label, basis: rate.basis,
-                                    valueText: rate.value.map(ChemicalReviewSession.formatRate) ?? "",
-                                    minText: rate.minValue.map(ChemicalReviewSession.formatRate) ?? "",
-                                    maxText: rate.maxValue.map(ChemicalReviewSession.formatRate) ?? "",
-                                    unit: rate.unit.isEmpty ? "L" : rate.unit
-                                )
-                                draft.unit = ChemicalUnit.fromLabelRateToken(draft.rate.unit) ?? draft.unit
+                            guard let rate = rates.first(where: { $0.id == id }) else {
+                                if let basis = ChemicalDefaultRateBasis.of(draft.rate.basis) {
+                                    draft.automaticRates.removeValue(forKey: basis)
+                                }
+                                draft.rate = ChemicalManualRateDraft()
+                                return
                             }
+                            if let basis = ChemicalDefaultRateBasis.of(rate.basis) {
+                                draft.automaticRates[basis] = rate
+                            }
+                            draft.rate = ChemicalManualRateDraft(
+                                label: rate.label, basis: rate.basis,
+                                valueText: rate.value.map(ChemicalReviewSession.formatRate) ?? "",
+                                minText: rate.minValue.map(ChemicalReviewSession.formatRate) ?? "",
+                                maxText: rate.maxValue.map(ChemicalReviewSession.formatRate) ?? "",
+                                unit: rate.unit.isEmpty ? "L" : rate.unit,
+                                rawText: rate.rawText ?? "",
+                                conditionIsAmbiguous: rate.conditionIsAmbiguous
+                            )
+                            draft.unit = ChemicalUnit.fromLabelRateToken(draft.rate.unit) ?? draft.unit
                         }
                     }
                     ChemicalManualRateEditor(rate: $draft.rate, allowsRemoval: false, onRemove: {})
@@ -547,7 +614,7 @@ private struct ChemicalSearchV2ReviewView: View {
     }
 
     private func save() {
-        guard !isSaving, evaluation.isSatisfied, let rate = parsedRate else { return }
+        guard !isSaving, evaluation.isSatisfied, let rate = effectiveRates.first else { return }
         if let existing = ChemicalSearchV2Duplicate.existing(
             master: draft.master, intelligence: draft.intelligence, name: draft.productName,
             in: store.savedChemicals
@@ -566,15 +633,10 @@ private struct ChemicalSearchV2ReviewView: View {
         let legacyRates: [ChemicalRate] = rate.value.map {
             [ChemicalRate(label: rate.label, value: draft.unit.toBase($0), basis: basis)]
         } ?? []
-        let storedBasis: ChemicalDefaultRateBasis = basis == .perHectare ? .perHectare : .per100Litres
-        let slot: StoredChemicalDefaultRate? = {
-            if let min = rate.minValue, let max = rate.maxValue {
-                return .manual(basis: storedBasis, unit: rate.unit, minValue: min, maxValue: max, selectedAt: Date().ISO8601Format())
-            }
-            guard let value = rate.value else { return nil }
-            return .manual(basis: storedBasis, unit: rate.unit, value: value, selectedAt: Date().ISO8601Format())
-        }()
-        let defaults = slot.map { StoredChemicalDefaultRates().withSlot(storedBasis, $0) }
+        let defaults = ChemicalSearchV2OperationalDefaults.storedDefaults(
+            rates: effectiveRates,
+            selectedAt: Date().ISO8601Format()
+        )
         let chemical = SavedChemical(
             vineyardId: vineyardId, name: draft.productName,
             ratePerHa: basis == .perHectare && rate.value != nil ? display : nil,

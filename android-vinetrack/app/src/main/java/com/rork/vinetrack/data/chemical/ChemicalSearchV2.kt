@@ -47,6 +47,49 @@ data class ViticultureRates(
     }
 }
 
+object ChemicalSearchV2OperationalDefaults {
+    fun unambiguousRates(rates: ViticultureRates): Map<ChemicalDefaultRateBasis, ChemicalLabelRate> = buildMap {
+        val groups = listOf(
+            ChemicalDefaultRateBasis.PER_HECTARE to rates.perHectare,
+            ChemicalDefaultRateBasis.PER_100_LITRES to rates.per100Litres,
+        )
+        groups.forEach { (basis, candidates) ->
+            val usable = candidates
+                .filter(ChemicalSaveContract::isAutoApplicable)
+                .distinctBy(ChemicalDefaultRate::distinctnessKey)
+            if (usable.size == 1) put(basis, usable.single())
+        }
+    }
+
+    fun effectiveRates(
+        automatic: Map<ChemicalDefaultRateBasis, ChemicalLabelRate>,
+        edited: ChemicalLabelRate?,
+    ): List<ChemicalLabelRate> {
+        val result = automatic.toMutableMap()
+        edited?.let { rate -> ChemicalDefaultRateBasis.of(rate.basis)?.let { result[it] = rate } }
+        return ChemicalDefaultRateBasis.entries.mapNotNull(result::get)
+    }
+
+    fun storedDefaults(rates: List<ChemicalLabelRate>, selectedAt: String): StoredChemicalDefaultRates? {
+        var defaults = StoredChemicalDefaultRates()
+        rates.forEach { rate ->
+            val basis = ChemicalDefaultRateBasis.of(rate.basis) ?: return@forEach
+            val slot = when {
+                rate.minValue != null && rate.maxValue != null -> StoredChemicalDefaultRate.manual(
+                    basis = basis, unit = rate.unit, minValue = rate.minValue,
+                    maxValue = rate.maxValue, selectedAt = selectedAt,
+                )
+                rate.value != null -> StoredChemicalDefaultRate.manual(
+                    basis = basis, unit = rate.unit, value = rate.value, selectedAt = selectedAt,
+                )
+                else -> null
+            }
+            if (slot != null) defaults = defaults.withSlot(basis, slot)
+        }
+        return defaults.takeIf { !it.isEmpty }
+    }
+}
+
 @Serializable
 data class MasterChemicalV2(
     val id: String,
