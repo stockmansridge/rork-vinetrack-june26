@@ -46,6 +46,7 @@ data class SprayVolumeDecision(
                     litresPer100Metres = customRate,
                     rowSpacingMetres = recommendation?.rowSpacingMetres,
                 )
+                SprayCarrierBasis.MANUAL_TOTAL_VOLUME -> null
             }
         }
 
@@ -59,6 +60,7 @@ data class SprayVolumeDecision(
                     litresPerHectare = customRate,
                     rowSpacingMetres = recommendation?.rowSpacingMetres,
                 )
+                SprayCarrierBasis.MANUAL_TOTAL_VOLUME -> null
             }
         }
 

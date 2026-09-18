@@ -99,8 +99,10 @@ struct SprayCalculatorView: View {
     /// states what it was for.
     @State private var customSprayTargets: [String] = []
     @State private var sprayHeadTarget: SprayHeadTarget?
+    @State private var groundTarget: SprayGroundTarget?
     @State private var bandWidthText: String = ""
     @State private var carrierBasisChoice: SprayCarrierBasis = .litresPerHectare
+    @State private var carrierAreaBasis: SprayCarrierAreaBasis = .treatedArea
     @State private var diluteLitresPer100mText: String = ""
     @State private var appliedLitresPer100mText: String = ""
     /// Whether the sprayer applies the canopy's recommended dilute volume, or
@@ -539,6 +541,7 @@ struct SprayCalculatorView: View {
         inputs.targets = sprayTargets
         inputs.customTargets = customSprayTargets
         inputs.sprayHeadTarget = sprayHeadTarget
+        inputs.groundTarget = groundTarget
         inputs.bandWidthTotalMetres = Double(bandWidthText)
         inputs.isGrowthStageResolved = isGrowthStageResolved
         inputs.isEquipmentSelected = selectedEquipmentId != nil
@@ -557,6 +560,7 @@ struct SprayCalculatorView: View {
         // as SWNZ keeps its explicit L/100 m input.
         inputs.customSprayerBasis = customSprayerInputBasis
         inputs.carrierBasis = carrierBasisChoice
+        inputs.carrierAreaBasis = carrierAreaBasis
         inputs.manualTotalLitres = Double(
             manualTotalLitresText.trimmingCharacters(in: .whitespaces)
         )
@@ -752,7 +756,7 @@ struct SprayCalculatorView: View {
                         guidedCard(.equipment, 5, summary: equipmentSummary) {
                             equipmentSelection
                             tractorSelection
-                            mixTripSetupSection
+                            mixEquipmentSettingsSection
                             equipmentConfirmation
                         }
                         guidedCard(.carrier, 6, summary: carrierSummary) {
@@ -1824,6 +1828,24 @@ struct SprayCalculatorView: View {
         }
     }
 
+    private var mixEquipmentSettingsSection: some View {
+        mixSectionContainer(title: "Equipment Settings", icon: "fan", tint: VineyardTheme.olive) {
+            HStack(spacing: 12) {
+                Image(systemName: "fan").foregroundStyle(VineyardTheme.olive).frame(width: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("No. Fans / Jets").font(.subheadline.weight(.semibold))
+                    Text("Optional — recorded for compliance").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                TextField("e.g. 6", text: $numberOfFansJets)
+                    .keyboardType(.numberPad).multilineTextAlignment(.trailing).frame(width: 80)
+            }
+            .padding(14)
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(.rect(cornerRadius: 12))
+        }
+    }
+
     /// Maintenance-style trip setup for the Spray Tank Mixing screen.
     /// Mirrors `StartTripSheet`: full-width pattern cards, Menu-based start
     /// row picker, segmented sequence direction, and a path sequence preview.
@@ -2797,7 +2819,8 @@ struct SprayCalculatorView: View {
             .map(\.label)
             .joined(separator: ", ")
         if operationType == .bandedSpray, let treated = flow.plan.treatedAreaHectares {
-            return "\(names) — \(SprayGuidedFormat.hectares(treated)) treated"
+            let location = groundTarget.map { " — \($0.label)" } ?? ""
+            return "\(names)\(location) — \(SprayGuidedFormat.hectares(treated)) treated"
         }
         if let head = sprayHeadTarget {
             return "\(names) — \(head.label)"
@@ -2999,7 +3022,16 @@ struct SprayCalculatorView: View {
             if flow.requiresBandWidth {
                 Divider()
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Total Treated Band Width")
+                    Text("Application location")
+                        .font(.subheadline.weight(.semibold))
+                    HStack(spacing: 8) {
+                        ForEach(SprayGroundTarget.allCases) { target in
+                            GuidedChip(label: target.label, icon: nil, isSelected: groundTarget == target) {
+                                groundTarget = target
+                            }
+                        }
+                    }
+                    Text("Treated band width per row")
                         .font(.subheadline.weight(.semibold))
                     HStack(spacing: 8) {
                         TextField("0.80", text: $bandWidthText)
@@ -3050,6 +3082,10 @@ struct SprayCalculatorView: View {
         VStack(alignment: .leading, spacing: 14) {
             // Only offer a choice when the vineyard profile genuinely allows one.
             // An NZ/SWNZ vineyard is locked to L/100 m and sees no L/ha option.
+            if flow.requiresBandWidth {
+                Text("What is your sprayer set to apply?")
+                    .font(.subheadline.weight(.semibold))
+            }
             VStack(alignment: .leading, spacing: 8) {
                 // "Spray volume", not "carrier volume" — and deliberately
                 // NOT "rate per 100 L" / "rate per ha". These are units of
@@ -3070,13 +3106,30 @@ struct SprayCalculatorView: View {
                 // The lock governs which calibrated canopy workflow the
                 // vineyard may use; it has no say over a knapsack job where the
                 // operator already knows the litres in the drum.
-                Picker("Spray volume basis", selection: $carrierBasisChoice) {
-                    ForEach(availableCarrierBases, id: \.self) { basis in
-                        Text(SprayGuidedFormat.volumeSourceLabel(basis)).tag(basis)
+                if !flow.requiresBandWidth {
+                    Picker("Spray volume basis", selection: $carrierBasisChoice) {
+                        ForEach(availableCarrierBases, id: \.self) { basis in
+                            Text(SprayGuidedFormat.volumeSourceLabel(basis)).tag(basis)
+                        }
                     }
+                    .pickerStyle(.segmented)
                 }
-                .pickerStyle(.segmented)
-                if flow.isCarrierBasisLocked {
+                if flow.requiresBandWidth && flow.effectiveCarrierBasis == .litresPerHectare {
+                    Text("Rate applies to:")
+                        .font(.caption.weight(.semibold))
+                    Picker("Rate applies to", selection: $carrierAreaBasis) {
+                        Text("Treated area").tag(SprayCarrierAreaBasis.treatedArea)
+                        Text("Whole block area").tag(SprayCarrierAreaBasis.wholeBlockArea)
+                    }
+                    .pickerStyle(.segmented)
+                }
+                if flow.requiresBandWidth {
+                    Picker("Spray volume", selection: $carrierBasisChoice) {
+                        Text("L/ha").tag(SprayCarrierBasis.litresPerHectare)
+                        Text("Manual total water").tag(SprayCarrierBasis.manualTotalVolume)
+                    }
+                    .pickerStyle(.segmented)
+                } else if flow.isCarrierBasisLocked {
                     Label(
                         "This vineyard records calibrated spray volume in "
                             + "\(SprayGuidedFormat.carrierBasisLabel(flow.profile.defaultCarrierBasis)).",
@@ -3338,6 +3391,7 @@ struct SprayCalculatorView: View {
     ///
     /// A locked vineyard still gets Manual — see `SprayCarrierVolumePolicy.allows`.
     private var availableCarrierBases: [SprayCarrierBasis] {
+        if flow.requiresBandWidth { return [.litresPerHectare, .manualTotalVolume] }
         if flow.isCarrierBasisLocked {
             return [flow.profile.defaultCarrierBasis, .manualTotalVolume]
         }
@@ -3398,9 +3452,13 @@ struct SprayCalculatorView: View {
                         // geometry is missing they simply do not appear.
                         if let perHectare = carrier.litresPerHectare {
                             GuidedCalculatedRow(
-                                label: "Works out to",
-                                value: SprayGuidedFormat.litresPerHectare(perHectare),
-                                caption: "Across the selected blocks — for reference"
+                                label: flow.requiresBandWidth ? "Sprayer application rate" : "Works out to",
+                                value: flow.requiresBandWidth && carrierAreaBasis == .treatedArea
+                                    ? "\(SprayGuidedFormat.number(perHectare)) L/treated ha"
+                                    : SprayGuidedFormat.litresPerHectare(perHectare),
+                                caption: flow.requiresBandWidth && carrierAreaBasis == .treatedArea
+                                    ? "Derived from treated band area"
+                                    : "Across the selected blocks — for reference"
                             )
                         }
                         if let per100m = carrier.appliedLitresPer100Metres {

@@ -75,6 +75,23 @@ nonisolated enum SprayTarget: String, Sendable, Codable, CaseIterable, Hashable,
     ]
 }
 
+/// The ground area receiving a banded application.
+///
+/// Kept separate from `SprayHeadTarget`, which remains foliar-only.
+nonisolated enum SprayGroundTarget: String, Sendable, Codable, CaseIterable, Hashable, Identifiable {
+    case undervine
+    case midrow
+
+    nonisolated var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .undervine: return "Undervine"
+        case .midrow: return "Midrow"
+        }
+    }
+}
+
 /// Where the spray head is aimed for a foliar application.
 ///
 /// Extensible on purpose: other Australian and New Zealand terminology will be

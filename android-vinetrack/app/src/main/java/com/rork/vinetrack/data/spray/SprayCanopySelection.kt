@@ -82,5 +82,6 @@ object SprayCanopyRequirement {
     fun usesSharedModel(carrierBasis: SprayCarrierBasis): Boolean = when (carrierBasis) {
         SprayCarrierBasis.LITRES_PER_100_METRES,
         SprayCarrierBasis.LITRES_PER_HECTARE -> true
+        SprayCarrierBasis.MANUAL_TOTAL_VOLUME -> false
     }
 }

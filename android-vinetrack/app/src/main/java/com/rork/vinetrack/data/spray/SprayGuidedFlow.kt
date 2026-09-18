@@ -57,6 +57,11 @@ sealed interface SprayGuidedBlocker {
         override val message: String get() = "Select what this spray is targeting."
     }
 
+    data object GroundTargetRequired : SprayGuidedBlocker {
+        override val title: String get() = "Choose Undervine or Midrow"
+        override val message: String get() = "Choose where this banded ground spray is being applied."
+    }
+
     data object SprayHeadTargetRequired : SprayGuidedBlocker {
         override val title: String get() = "Choose a spray head target"
         override val message: String get() = "Choose where the spray head is aimed."
@@ -88,7 +93,7 @@ sealed interface SprayGuidedBlocker {
 
     data object EquipmentConfirmationRequired : SprayGuidedBlocker {
         override val title: String get() = "Confirm equipment"
-        override val message: String get() = "Review the equipment and path, then tap Confirm equipment and path."
+        override val message: String get() = "Review the spray unit and tractor, then tap Confirm equipment."
     }
 
     data object CanopyConfirmationRequired : SprayGuidedBlocker {
@@ -185,6 +190,7 @@ data class SprayGuidedInputs(
      */
     val customTargets: List<String> = emptyList(),
     val sprayHeadTarget: SprayHeadTarget? = null,
+    val groundTarget: SprayGroundTarget? = null,
     /** Total treated band width per row, metres. Banded applications only. */
     val bandWidthTotalMetres: Double? = null,
     val isGrowthStageAssigned: Boolean = false,
@@ -193,6 +199,9 @@ data class SprayGuidedInputs(
     val isEquipmentConfirmed: Boolean = false,
     val tankCapacityLitres: Double = 0.0,
     val carrierBasis: SprayCarrierBasis = SprayCarrierBasis.LITRES_PER_HECTARE,
+    /** Water/carrier area basis; independent of each product's rate basis. */
+    val carrierAreaBasis: SprayCarrierAreaBasis = SprayCarrierAreaBasis.WHOLE_BLOCK_AREA,
+    val manualTotalLitres: Double? = null,
     /** Foliar canopy is a deliberate operator-confirmed answer, never a visual default. */
     val isCanopyConfirmed: Boolean = false,
     val canopy: SprayCanopySelection? = null,
@@ -268,9 +277,12 @@ data class SprayGuidedFlow(
     val requiresBandWidth: Boolean
         get() = inputs.operationType == SprayOperationType.BANDED_SPRAY
 
-    /** Existing visibility policy retained; confirmation itself is foliar-only. */
+    val requiresGroundTarget: Boolean
+        get() = inputs.operationType == SprayOperationType.BANDED_SPRAY
+
+    /** Canopy settings remain exclusive to the locked foliar path. */
     val supportsCanopySettings: Boolean
-        get() = inputs.operationType != SprayOperationType.SPREADER
+        get() = inputs.operationType == SprayOperationType.FOLIAR_SPRAY
 
     val requiresCanopyConfirmation: Boolean
         get() = SprayCanopyRequirement.requiresConfirmation(inputs.operationType)
@@ -346,6 +358,16 @@ data class SprayGuidedFlow(
 
     // region Carrier volume
 
+    /** Canonical hectares used by L/ha and manual rate references. */
+    private val carrierAreaHectares: Double?
+        get() {
+            if (mode != SprayApplicationMode.BANDED ||
+                inputs.carrierAreaBasis != SprayCarrierAreaBasis.TREATED_AREA
+            ) return geometry.grossAreaHectares
+            val width = bandWidth ?: return null
+            return SprayBandedAreaCalculator.banded(geometry, width).treatedAreaHectares
+        }
+
     /** The sole recommended/custom authority for foliar spray volume. */
     val volumeDecision: SprayVolumeDecision?
         get() {
@@ -392,17 +414,19 @@ data class SprayGuidedFlow(
                             geometry = geometry,
                         )
                     }
+                    SprayCarrierBasis.MANUAL_TOTAL_VOLUME -> return null
                 }
             }
 
             return when (effectiveCarrierBasis) {
                 SprayCarrierBasis.LITRES_PER_HECTARE -> {
                     val rate = positive(inputs.litresPerHectare) ?: return null
-                    val dilute = positive(inputs.diluteLitresPerHectare)
-                    val factor = if (dilute == null) 1.0 else maxOf(1.0, dilute / rate)
+                    val dilute = if (mode == SprayApplicationMode.BANDED) null else positive(inputs.diluteLitresPerHectare)
+                    val factor = if (mode == SprayApplicationMode.BANDED || dilute == null) 1.0 else maxOf(1.0, dilute / rate)
+                    val area = carrierAreaHectares ?: return null
                     SprayCarrierVolumeCalculator.perHectare(
                         litresPerHectare = rate,
-                        areaHectares = geometry.grossAreaHectares,
+                        areaHectares = area,
                         concentrationFactor = factor,
                         rowLengthMetres = geometry.totalRowLengthMetres,
                         rowSpacingMetres = geometry.uniformRowSpacingMetres,
@@ -412,10 +436,16 @@ data class SprayGuidedFlow(
                     val applied = positive(inputs.appliedLitresPer100Metres) ?: return null
                     SprayCarrierVolumeCalculator.per100Metres(
                         appliedLitresPer100Metres = applied,
-                        diluteLitresPer100Metres = positive(inputs.diluteLitresPer100Metres),
+                        diluteLitresPer100Metres = if (mode == SprayApplicationMode.BANDED) null else positive(inputs.diluteLitresPer100Metres),
                         geometry = geometry,
                     )
                 }
+                SprayCarrierBasis.MANUAL_TOTAL_VOLUME -> SprayCarrierVolumeCalculator.manual(
+                    totalLitres = inputs.manualTotalLitres ?: 0.0,
+                    areaHectares = carrierAreaHectares,
+                    rowLengthMetres = geometry.totalRowLengthMetres,
+                    rowSpacingMetres = geometry.uniformRowSpacingMetres,
+                )
             }
         }
 
@@ -517,6 +547,8 @@ data class SprayGuidedFlow(
             inputs.targets.isEmpty() -> SprayGuidedBlocker.NoTargetSelected
             requiresSprayHeadTarget && inputs.sprayHeadTarget == null ->
                 SprayGuidedBlocker.SprayHeadTargetRequired
+            requiresGroundTarget && inputs.groundTarget == null ->
+                SprayGuidedBlocker.GroundTargetRequired
             requiresBandWidth && bandWidth == null -> SprayGuidedBlocker.BandWidthRequired
             // Band width is valid but geometry still cannot produce a treated
             // area — say so instead of showing gross as treated.
@@ -552,6 +584,8 @@ data class SprayGuidedFlow(
                     effectiveCarrierBasis == SprayCarrierBasis.LITRES_PER_100_METRES &&
                         decision.actualLitresPer100Metres == null ->
                         SprayGuidedBlocker.CarrierConversionRequired
+                    effectiveCarrierBasis == SprayCarrierBasis.MANUAL_TOTAL_VOLUME ->
+                        SprayGuidedBlocker.CarrierRateRequired
                     !isCarrierResolved -> SprayGuidedBlocker.CarrierNotCalculable
                     else -> null
                 }
@@ -559,6 +593,7 @@ data class SprayGuidedFlow(
                 val entered = when (effectiveCarrierBasis) {
                     SprayCarrierBasis.LITRES_PER_HECTARE -> positive(inputs.litresPerHectare)
                     SprayCarrierBasis.LITRES_PER_100_METRES -> positive(inputs.appliedLitresPer100Metres)
+                    SprayCarrierBasis.MANUAL_TOTAL_VOLUME -> positive(inputs.manualTotalLitres)
                 }
                 when {
                     entered == null -> SprayGuidedBlocker.CarrierRateRequired

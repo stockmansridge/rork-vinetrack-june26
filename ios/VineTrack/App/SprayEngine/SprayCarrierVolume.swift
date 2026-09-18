@@ -31,6 +31,14 @@ nonisolated enum SprayCarrierBasis: String, Sendable, Codable, CaseIterable {
     var usesCanopyRecommendation: Bool { self != .manualTotalVolume }
 }
 
+/// Which hectares an entered or derived L/ha carrier rate describes.
+nonisolated enum SprayCarrierAreaBasis: String, Sendable, Codable, CaseIterable, Identifiable {
+    case treatedArea = "treated_area"
+    case wholeBlockArea = "whole_block_area"
+
+    nonisolated var id: String { rawValue }
+}
+
 /// A fully resolved carrier-volume calculation.
 ///
 /// Both modes populate `totalLitres` and `concentrationFactor`, so every

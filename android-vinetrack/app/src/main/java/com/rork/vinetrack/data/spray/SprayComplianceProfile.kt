@@ -31,10 +31,13 @@ enum class SprayCarrierVolumePolicy(val raw: String) {
     EITHER("either"),
     ;
 
-    fun allows(basis: SprayCarrierBasis): Boolean = when (this) {
+    fun allows(basis: SprayCarrierBasis): Boolean {
+        if (basis == SprayCarrierBasis.MANUAL_TOTAL_VOLUME) return true
+        return when (this) {
         EITHER -> true
         LITRES_PER_HECTARE_ONLY -> basis == SprayCarrierBasis.LITRES_PER_HECTARE
         LITRES_PER_100_METRES_ONLY -> basis == SprayCarrierBasis.LITRES_PER_100_METRES
+        }
     }
 
     /** The basis to present by default under this policy. */

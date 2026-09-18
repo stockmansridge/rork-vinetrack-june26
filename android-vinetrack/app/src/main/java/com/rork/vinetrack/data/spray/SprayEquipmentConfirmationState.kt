@@ -1,6 +1,6 @@
 package com.rork.vinetrack.data.spray
 
-/** Operator-controlled confirmation for the complete Equipment and path selection. */
+/** Operator-controlled confirmation for equipment only; trip path is confirmed at start. */
 data class SprayEquipmentConfirmationState(
     val confirmedSignature: String? = null,
 ) {
@@ -27,8 +27,5 @@ data class SprayEquipmentSelection(
             sprayEquipmentId.orEmpty(),
             tractorId.orEmpty(),
             fansJets.trim(),
-            trackingPattern,
-            startPath?.toString().orEmpty(),
-            directionHigherFirst?.toString().orEmpty(),
         ).joinToString("|")
 }

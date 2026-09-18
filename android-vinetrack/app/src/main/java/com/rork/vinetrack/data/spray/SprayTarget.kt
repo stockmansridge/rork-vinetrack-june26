@@ -76,6 +76,16 @@ enum class SprayTarget(val raw: String, val label: String) {
     }
 }
 
+/** The ground area receiving a banded application. Kept separate from foliar spray-head positions. */
+@Serializable
+enum class SprayGroundTarget(val raw: String, val label: String) {
+    @SerialName("undervine")
+    UNDERVINE("undervine", "Undervine"),
+
+    @SerialName("midrow")
+    MIDROW("midrow", "Midrow"),
+}
+
 /**
  * Where the spray head is aimed for a foliar application.
  *

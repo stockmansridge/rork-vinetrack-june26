@@ -538,6 +538,7 @@ object SprayGuidedFormat {
     fun carrierBasisLabel(basis: SprayCarrierBasis): String = when (basis) {
         SprayCarrierBasis.LITRES_PER_HECTARE -> "L/ha"
         SprayCarrierBasis.LITRES_PER_100_METRES -> "L/100 m"
+        SprayCarrierBasis.MANUAL_TOTAL_VOLUME -> "Manual total water"
     }
 
     /** The rate as written on the label, e.g. `2 L/ha` or `100 mL/100 L`. */

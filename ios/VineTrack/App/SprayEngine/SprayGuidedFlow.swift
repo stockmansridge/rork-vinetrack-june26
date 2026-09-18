@@ -66,6 +66,7 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
     case blockSetupRequired(message: String, blockIds: [String])
     case noTargetSelected
     case sprayHeadTargetRequired
+    case groundTargetRequired
     case bandWidthRequired
     /// Band width was entered but the geometry still cannot yield treated area.
     case treatedAreaUnavailable
@@ -104,6 +105,7 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
         case .blockSetupRequired: return "Block setup required"
         case .noTargetSelected: return "Choose a target"
         case .sprayHeadTargetRequired: return "Choose a spray head target"
+        case .groundTargetRequired: return "Choose Undervine or Midrow"
         case .bandWidthRequired: return "Enter treated band width"
         case .treatedAreaUnavailable: return "Treated area unavailable"
         case .growthStageRequired: return "Choose growth stage or Not Set"
@@ -133,6 +135,8 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
             return "Select what this spray is targeting."
         case .sprayHeadTargetRequired:
             return "Choose where the spray head is aimed."
+        case .groundTargetRequired:
+            return "Choose where this banded ground spray is being applied."
         case .bandWidthRequired:
             return "Enter the total treated band width per row, in metres."
         case .treatedAreaUnavailable:
@@ -200,6 +204,7 @@ nonisolated struct SprayGuidedInputs: Sendable {
     /// no stated target — or, worse, coerced onto a built-in target it is not.
     var customTargets: [String] = []
     var sprayHeadTarget: SprayHeadTarget?
+    var groundTarget: SprayGroundTarget?
     /// Total treated band width per row, metres. Banded applications only.
     var bandWidthTotalMetres: Double?
 
@@ -257,6 +262,8 @@ nonisolated struct SprayGuidedInputs: Sendable {
     var manualTotalLitres: Double?
 
     var carrierBasis: SprayCarrierBasis = .litresPerHectare
+    /// Which hectares the water/carrier L/ha rate describes. Independent of product bases.
+    var carrierAreaBasis: SprayCarrierAreaBasis = .wholeBlockArea
     /// L/ha mode: the rate the operator entered.
     var litresPerHectare: Double?
     /// L/ha mode: the dilute/runoff reference used for concentration, when the
@@ -323,8 +330,10 @@ nonisolated struct SprayGuidedFlow: Sendable {
     /// True when this application needs a treated band width (banded only).
     var requiresBandWidth: Bool { inputs.operationType == .bandedSpray }
 
-    /// True when canopy-specific settings apply. Spreader has no canopy.
-    var supportsCanopySettings: Bool { inputs.operationType != .spreader }
+    var requiresGroundTarget: Bool { inputs.operationType == .bandedSpray }
+
+    /// Canopy settings remain exclusive to the locked foliar path.
+    var supportsCanopySettings: Bool { inputs.operationType == .foliarSpray }
 
     /// True when this application may not proceed on an unconfirmed canopy.
     ///
@@ -451,6 +460,15 @@ nonisolated struct SprayGuidedFlow: Sendable {
 
     // MARK: - Carrier volume
 
+    /// Canonical hectares used by L/ha and manual rate references.
+    private var carrierAreaHectares: Double? {
+        guard mode == .banded, inputs.carrierAreaBasis == .treatedArea else {
+            return geometry.grossAreaHectares
+        }
+        guard let bandWidth else { return nil }
+        return SprayBandedAreaCalculator.banded(geometry: geometry, bandWidth: bandWidth).treatedAreaHectares
+    }
+
     /// The resolved carrier volume, or `nil` when it is not calculable yet.
     ///
     /// Built only by `SprayCarrierVolumeCalculator`; the flow never does the
@@ -504,11 +522,14 @@ nonisolated struct SprayGuidedFlow: Sendable {
             // ONE definition of concentration, shared with the row-length
             // branch. Computing it here — even identically — is how the two
             // bases drifted apart in the first place.
-            let dilute = Self.positive(inputs.diluteLitresPerHectare)
-            let factor = SprayCarrierConversion.concentrationFactor(dilute: dilute, actual: rate)
+            let dilute = mode == .banded ? nil : Self.positive(inputs.diluteLitresPerHectare)
+            let factor = mode == .banded
+                ? 1.0
+                : SprayCarrierConversion.concentrationFactor(dilute: dilute, actual: rate)
+            guard let carrierAreaHectares else { return nil }
             return SprayCarrierVolumeCalculator.perHectare(
                 litresPerHectare: rate,
-                areaHectares: geometry.grossAreaHectares,
+                areaHectares: carrierAreaHectares,
                 concentrationFactor: factor,
                 diluteLitresPerHectare: dilute,
                 rowLengthMetres: geometry.totalRowLengthMetres,
@@ -528,7 +549,7 @@ nonisolated struct SprayGuidedFlow: Sendable {
             // stops the calculation.
             return SprayCarrierVolumeCalculator.manual(
                 totalLitres: inputs.manualTotalLitres ?? 0,
-                areaHectares: geometry.grossAreaHectares,
+                areaHectares: carrierAreaHectares,
                 rowLengthMetres: geometry.totalRowLengthMetres,
                 rowSpacingMetres: geometry.uniformRowSpacingMetres
             )
@@ -621,6 +642,9 @@ nonisolated struct SprayGuidedFlow: Sendable {
             if inputs.targets.isEmpty { return .noTargetSelected }
             if requiresSprayHeadTarget, inputs.sprayHeadTarget == nil {
                 return .sprayHeadTargetRequired
+            }
+            if requiresGroundTarget, inputs.groundTarget == nil {
+                return .groundTargetRequired
             }
             if requiresBandWidth {
                 guard bandWidth != nil else { return .bandWidthRequired }

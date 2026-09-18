@@ -133,6 +133,7 @@ import com.rork.vinetrack.ui.components.SprayCanopySelector
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.data.spray.SprayCanopySelection
 import com.rork.vinetrack.data.spray.SprayCarrierBasis
+import com.rork.vinetrack.data.spray.SprayCarrierAreaBasis
 import com.rork.vinetrack.data.spray.SprayVolumeChoice
 import com.rork.vinetrack.data.spray.SprayVolumeHelp
 import com.rork.vinetrack.data.spray.SprayGuidedFlow
@@ -143,6 +144,7 @@ import com.rork.vinetrack.data.spray.SprayEquipmentConfirmationState
 import com.rork.vinetrack.data.spray.SprayEquipmentSelection
 import com.rork.vinetrack.data.spray.SprayTractorOptions
 import com.rork.vinetrack.data.spray.SprayHeadTarget
+import com.rork.vinetrack.data.spray.SprayGroundTarget
 import com.rork.vinetrack.data.spray.SprayOperationType
 import com.rork.vinetrack.data.spray.SprayProductLineInput
 import com.rork.vinetrack.data.spray.SprayProductRateBasis
@@ -470,8 +472,11 @@ fun SprayCalculatorScreen(
     // never coerced onto a built-in target. Mirrors iOS `customSprayTargets`.
     val customSprayTargets = remember { mutableStateListOf<String>() }
     var sprayHeadTarget by remember { mutableStateOf<SprayHeadTarget?>(null) }
+    var groundTarget by remember { mutableStateOf<SprayGroundTarget?>(null) }
     var bandWidthText by remember { mutableStateOf("") }
     var carrierBasisChoice by remember { mutableStateOf(SprayCarrierBasis.LITRES_PER_HECTARE) }
+    var carrierAreaBasis by rememberSaveable { mutableStateOf(SprayCarrierAreaBasis.TREATED_AREA) }
+    var manualTotalLitresText by rememberSaveable { mutableStateOf("") }
     var sprayVolumeChoice by rememberSaveable { mutableStateOf(SprayVolumeChoice.UNDECIDED) }
     var customSprayerRateText by rememberSaveable { mutableStateOf("") }
     var customSprayerBasis by rememberSaveable { mutableStateOf(SprayCarrierBasis.LITRES_PER_HECTARE) }
@@ -657,6 +662,7 @@ fun SprayCalculatorScreen(
             targets = sprayTargets.toSet(),
             customTargets = customSprayTargets.toList(),
             sprayHeadTarget = sprayHeadTarget,
+            groundTarget = groundTarget,
             bandWidthTotalMetres = bandWidthText.toDoubleOrNull(),
             isGrowthStageAssigned = if (growthModeSame) {
                 sharedStageCode != null && selectedPaddockIds.isNotEmpty()
@@ -668,6 +674,8 @@ fun SprayCalculatorScreen(
             isEquipmentConfirmed = isEquipmentConfirmed,
             tankCapacityLitres = tankCapacity,
             carrierBasis = carrierBasisChoice,
+            carrierAreaBasis = carrierAreaBasis,
+            manualTotalLitres = manualTotalLitresText.toDoubleOrNull(),
             isCanopyConfirmed = isCanopyConfirmed,
             canopy = canopySelection,
             canopyWaterRates = canopyRates,
@@ -751,6 +759,8 @@ fun SprayCalculatorScreen(
                 SprayGuidedFormat.litresPerHectare(carrier.litresPerHectare)
             SprayCarrierBasis.LITRES_PER_100_METRES ->
                 SprayGuidedFormat.litresPer100m(carrier.appliedLitresPer100Metres)
+            SprayCarrierBasis.MANUAL_TOTAL_VOLUME ->
+                "Manual"
         }
         "$entered \u2014 ${SprayGuidedFormat.litres(carrier.totalLitres)} total"
     }
@@ -1142,6 +1152,10 @@ fun SprayCalculatorScreen(
             directionHigherFirst = directionHigherFirst,
             orderedSelectedPaddocks = orderedSelectedPaddocks,
             pathSequence = pathSequence,
+            availablePaths = availablePaths,
+            onPatternChange = { trackingPattern = it },
+            onStartPathChange = { startPath = it },
+            onDirectionChange = { directionHigherFirst = it },
             errorMessage = errorMessage,
             saving = saving,
             hasActiveTrip = state.activeTrip != null,
@@ -1236,7 +1250,12 @@ fun SprayCalculatorScreen(
                                         // enforces the same rule for what gets
                                         // persisted.
                                         sprayHeadTarget = null
+                                        groundTarget = null
                                         bandWidthText = ""
+                                        if (op == SprayOperationType.BANDED_SPRAY.raw) {
+                                            carrierBasisChoice = SprayCarrierBasis.LITRES_PER_HECTARE
+                                            carrierAreaBasis = SprayCarrierAreaBasis.TREATED_AREA
+                                        }
                                         productAreaBasis.clear()
                                         result = null
                                     }
@@ -1361,8 +1380,20 @@ fun SprayCalculatorScreen(
                     }
 
                     if (guidedFlow.requiresBandWidth) {
+                        Text("Application location", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SprayGroundTarget.entries.forEach { target ->
+                                GuidedChip(
+                                    label = target.label,
+                                    isSelected = groundTarget == target,
+                                    accent = VineColors.Olive,
+                                    modifier = Modifier.weight(1f),
+                                    onClick = { groundTarget = target },
+                                )
+                            }
+                        }
                         Text(
-                            "Total Treated Band Width",
+                            "Treated band width per row",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = vine.textPrimary,
@@ -1576,18 +1607,41 @@ fun SprayCalculatorScreen(
                     doneAccent = VineColors.Olive,
                     onToggle = { toggleStep(SprayGuidedStep.CARRIER) },
                 ) {
+                if (guidedFlow.requiresBandWidth) {
+                    Text("What is your sprayer set to apply?", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        val bases = listOf(SprayCarrierBasis.LITRES_PER_HECTARE, SprayCarrierBasis.MANUAL_TOTAL_VOLUME)
+                        bases.forEachIndexed { index, basis ->
+                            SegmentedButton(
+                                selected = guidedFlow.effectiveCarrierBasis == basis,
+                                onClick = { carrierBasisChoice = basis; result = null },
+                                shape = SegmentedButtonDefaults.itemShape(index, bases.size),
+                            ) { Text(if (basis == SprayCarrierBasis.LITRES_PER_HECTARE) "L/ha" else "Manual total water", fontSize = 12.sp) }
+                        }
+                    }
+                    Text("Rate applies to:", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        SprayCarrierAreaBasis.entries.forEachIndexed { index, basis ->
+                            SegmentedButton(
+                                selected = carrierAreaBasis == basis,
+                                onClick = { carrierAreaBasis = basis; result = null },
+                                shape = SegmentedButtonDefaults.itemShape(index, SprayCarrierAreaBasis.entries.size),
+                            ) { Text(if (basis == SprayCarrierAreaBasis.TREATED_AREA) "Treated area" else "Whole block area", fontSize = 12.sp) }
+                        }
+                    }
+                }
                 // Only offer a choice when the vineyard profile genuinely allows
                 // one. An NZ/SWNZ vineyard is locked to L/100 m and never sees an
                 // L/ha option or an "allow either" selector, so a compliance
                 // spray cannot be switched onto the wrong basis by accident.
-                if (guidedFlow.isCarrierBasisLocked) {
+                if (!guidedFlow.requiresBandWidth && guidedFlow.isCarrierBasisLocked) {
                     Text(
                         "This vineyard records carrier volume in " +
                             "${SprayGuidedFormat.carrierBasisLabel(guidedFlow.effectiveCarrierBasis)}.",
                         fontSize = 12.sp,
                         color = vine.textSecondary,
                     )
-                } else {
+                } else if (!guidedFlow.requiresBandWidth) {
                     Text(
                         "Carrier volume basis",
                         fontSize = 14.sp,
@@ -1657,11 +1711,11 @@ fun SprayCalculatorScreen(
                         if (sprayVolumeChoice == SprayVolumeChoice.USE_CUSTOM_SPRAYER_RATE) {
                             Text("What is your sprayer set to apply?", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                                SprayCarrierBasis.entries.forEachIndexed { index, basis ->
+                                listOf(SprayCarrierBasis.LITRES_PER_HECTARE, SprayCarrierBasis.LITRES_PER_100_METRES).forEachIndexed { index, basis ->
                                     SegmentedButton(
                                         selected = customSprayerBasis == basis,
                                         onClick = { customSprayerBasis = basis; result = null },
-                                        shape = SegmentedButtonDefaults.itemShape(index, SprayCarrierBasis.entries.size),
+                                        shape = SegmentedButtonDefaults.itemShape(index, 2),
                                     ) { Text(SprayGuidedFormat.carrierBasisLabel(basis), fontSize = 13.sp) }
                                 }
                             }
@@ -1683,6 +1737,7 @@ fun SprayCalculatorScreen(
                                         value = when (guidedFlow.effectiveCarrierBasis) {
                                             SprayCarrierBasis.LITRES_PER_HECTARE -> decision.actualLitresPerHectare?.let { "${fmtNum(it, 2)} L/ha" } ?: "Unavailable"
                                             SprayCarrierBasis.LITRES_PER_100_METRES -> decision.actualLitresPer100Metres?.let { "${fmtNum(it, 2)} L/100 m" } ?: "Unavailable"
+                                            SprayCarrierBasis.MANUAL_TOTAL_VOLUME -> "Unavailable"
                                         },
                                         accent = VineColors.Olive,
                                         emphasis = true,
@@ -1692,6 +1747,7 @@ fun SprayCalculatorScreen(
                                         value = when (guidedFlow.effectiveCarrierBasis) {
                                             SprayCarrierBasis.LITRES_PER_HECTARE -> decision.actualLitresPer100Metres?.let { "${fmtNum(it, 2)} L/100 m" } ?: "Unavailable"
                                             SprayCarrierBasis.LITRES_PER_100_METRES -> decision.actualLitresPerHectare?.let { "${fmtNum(it, 2)} L/ha" } ?: "Unavailable"
+                                            SprayCarrierBasis.MANUAL_TOTAL_VOLUME -> "Unavailable"
                                         },
                                         accent = VineColors.Olive,
                                         caption = if (resolvedRowSpacing == null) SprayVolumeHelp.ROW_SPACING_REQUIRED else "Derived from matching row spacing",
@@ -1704,6 +1760,48 @@ fun SprayCalculatorScreen(
                                         emphasis = true,
                                     )
                                 }
+                            }
+                        }
+                    }
+                } else if (guidedFlow.requiresBandWidth && guidedFlow.effectiveCarrierBasis == SprayCarrierBasis.MANUAL_TOTAL_VOLUME) {
+                    OutlinedTextField(
+                        value = manualTotalLitresText,
+                        onValueChange = { manualTotalLitresText = it.filter { c -> c.isDigit() || c == '.' }; result = null },
+                        label = { Text("Total spray water (L)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (guidedFlow.isCarrierResolved) {
+                        GuidedCalculatedPanel(title = "Spray volume", accent = VineColors.Olive) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                GuidedCalculatedRow(label = "Total spray water", value = SprayGuidedFormat.litres(guidedPlan.carrier.totalLitres), accent = VineColors.Olive, emphasis = true)
+                                GuidedCalculatedRow(
+                                    label = "Sprayer application rate",
+                                    value = guidedPlan.carrier.litresPerHectare?.let { rate ->
+                                        if (carrierAreaBasis == SprayCarrierAreaBasis.TREATED_AREA) "${fmtNum(rate, 2)} L/treated ha" else "${fmtNum(rate, 2)} L/gross ha"
+                                    } ?: "Unavailable",
+                                    accent = VineColors.Olive,
+                                )
+                                GuidedCalculatedRow(label = "Concentration factor", value = "Not used", accent = VineColors.Olive)
+                            }
+                        }
+                    }
+                } else if (guidedFlow.requiresBandWidth) {
+                    OutlinedTextField(
+                        value = sprayRateText,
+                        onValueChange = { sprayRateText = it.filter { c -> c.isDigit() || c == '.' }; hasEditedSprayRate = true; result = null },
+                        label = { Text(if (carrierAreaBasis == SprayCarrierAreaBasis.TREATED_AREA) "Application rate (L/treated ha)" else "Application rate (L/gross ha)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (guidedFlow.isCarrierResolved) {
+                        GuidedCalculatedPanel(title = "Calculated spray water", accent = VineColors.Olive) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                GuidedCalculatedRow(label = "Application rate", value = "${fmtNum(guidedPlan.carrier.litresPerHectare ?: 0.0, 2)} L/${if (carrierAreaBasis == SprayCarrierAreaBasis.TREATED_AREA) "treated" else "gross"} ha", accent = VineColors.Olive)
+                                GuidedCalculatedRow(label = "Total spray water", value = SprayGuidedFormat.litres(guidedPlan.carrier.totalLitres), accent = VineColors.Olive, emphasis = true)
+                                GuidedCalculatedRow(label = "Concentration factor", value = "Not used", accent = VineColors.Olive)
                             }
                         }
                     }
@@ -2092,14 +2190,6 @@ fun SprayCalculatorScreen(
                                 "Tractor",
                                 selectedTractor?.displayName ?: if (tractorId == null) "Not Set" else "Unavailable tractor",
                             )
-                            GuidedReviewRow("Tracking pattern", trackingPattern.title)
-                            if (hasRowGeometry && trackingPattern != TrackingPattern.FREE_DRIVE) {
-                                GuidedReviewRow("Starting path", TripRowSequencePlanner.pathMenuLabel(startPath, orderedSelectedPaddocks))
-                                GuidedReviewRow("Direction", if (directionHigherFirst) "Lower to higher" else "Higher to lower")
-                                GuidedReviewRow("Proposed sequence", TripRowSequencePlanner.sequencePreviewText(pathSequence))
-                            } else {
-                                GuidedReviewRow("Proposed sequence", "Free Drive")
-                            }
                         }
                     }
 
@@ -2125,7 +2215,7 @@ fun SprayCalculatorScreen(
                             }
                             GuidedReviewRow(
                                 "Concentration",
-                                SprayGuidedFormat.factor(carrier.concentrationFactor),
+                                if (guidedFlow.requiresBandWidth) "Not used" else SprayGuidedFormat.factor(carrier.concentrationFactor),
                             )
                             GuidedReviewRow(
                                 "Total carrier",
@@ -3587,50 +3677,6 @@ private fun EquipmentPathSetupContent(
         singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         modifier = Modifier.fillMaxWidth(),
     )
-    Text("Tracking pattern", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-    ExposedDropdownMenuBox(expanded = patternMenu, onExpandedChange = { patternMenu = it }) {
-        OutlinedTextField(
-            value = trackingPattern.title, onValueChange = {}, readOnly = true, label = { Text("Tracking pattern") },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(patternMenu) },
-            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
-        )
-        ExposedDropdownMenu(expanded = patternMenu, onDismissRequest = { patternMenu = false }) {
-            TrackingPattern.entries.forEach { pattern ->
-                DropdownMenuItem(text = { Text(pattern.title) }, onClick = { onPatternChange(pattern); patternMenu = false })
-            }
-        }
-    }
-    if (hasRowGeometry && trackingPattern != TrackingPattern.FREE_DRIVE) {
-        ExposedDropdownMenuBox(expanded = pathMenu, onExpandedChange = { pathMenu = it }) {
-            OutlinedTextField(
-                value = TripRowSequencePlanner.pathMenuLabel(startPath, orderedSelectedPaddocks),
-                onValueChange = {}, readOnly = true, label = { Text("Starting path") },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(pathMenu) },
-                modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
-            )
-            ExposedDropdownMenu(expanded = pathMenu, onDismissRequest = { pathMenu = false }) {
-                availablePaths.forEach { path ->
-                    DropdownMenuItem(text = { Text(TripRowSequencePlanner.pathMenuLabel(path, orderedSelectedPaddocks)) }, onClick = { onStartPathChange(path); pathMenu = false })
-                }
-            }
-        }
-        Text("Direction", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            SegmentedButton(selected = !directionHigherFirst, onClick = { onDirectionChange(false) }, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Higher to lower", fontSize = 12.sp) }
-            SegmentedButton(selected = directionHigherFirst, onClick = { onDirectionChange(true) }, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Lower to higher", fontSize = 12.sp) }
-        }
-        Text("Proposed row/path sequence", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-        VineyardCard {
-            Text(TripRowSequencePlanner.sequencePreviewText(pathSequence), fontSize = 13.sp, color = vine.textPrimary)
-        }
-    } else {
-        Text(
-            if (trackingPattern == TrackingPattern.FREE_DRIVE) "Free Drive does not require a starting path."
-            else "Selected blocks have no usable row geometry; this trip will use Free Drive.",
-            fontSize = 12.sp, color = vine.textSecondary,
-        )
-        Text("Proposed row/path sequence: Free Drive", fontSize = 13.sp, color = vine.textPrimary)
-    }
     Button(
         onClick = onConfirm,
         enabled = canConfirm,
@@ -3638,7 +3684,73 @@ private fun EquipmentPathSetupContent(
         colors = ButtonDefaults.buttonColors(containerColor = VineColors.Olive),
     ) {
         Icon(Icons.Filled.CheckCircle, contentDescription = null)
-        Text(if (isConfirmed) "  Equipment and path confirmed" else "  Confirm equipment and path")
+        Text(if (isConfirmed) "  Equipment confirmed" else "  Confirm equipment")
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TrackingSetupContent(
+    trackingPattern: TrackingPattern,
+    onPatternChange: (TrackingPattern) -> Unit,
+    hasRowGeometry: Boolean,
+    availablePaths: List<Double>,
+    startPath: Double,
+    onStartPathChange: (Double) -> Unit,
+    directionHigherFirst: Boolean,
+    onDirectionChange: (Boolean) -> Unit,
+    orderedSelectedPaddocks: List<Paddock>,
+    pathSequence: List<Double>,
+) {
+    val vine = LocalVineColors.current
+    var patternMenu by remember { mutableStateOf(false) }
+    var pathMenu by remember { mutableStateOf(false) }
+    VineyardCard {
+        Text("Tracking pattern", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+        ExposedDropdownMenuBox(expanded = patternMenu, onExpandedChange = { patternMenu = it }) {
+            OutlinedTextField(
+                value = trackingPattern.title,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Tracking pattern") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(patternMenu) },
+                modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+            )
+            ExposedDropdownMenu(expanded = patternMenu, onDismissRequest = { patternMenu = false }) {
+                TrackingPattern.entries.forEach { pattern ->
+                    DropdownMenuItem(text = { Text(pattern.title) }, onClick = { onPatternChange(pattern); patternMenu = false })
+                }
+            }
+        }
+        if (hasRowGeometry && trackingPattern != TrackingPattern.FREE_DRIVE) {
+            ExposedDropdownMenuBox(expanded = pathMenu, onExpandedChange = { pathMenu = it }) {
+                OutlinedTextField(
+                    value = TripRowSequencePlanner.pathMenuLabel(startPath, orderedSelectedPaddocks),
+                    onValueChange = {}, readOnly = true, label = { Text("Starting path") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(pathMenu) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                )
+                ExposedDropdownMenu(expanded = pathMenu, onDismissRequest = { pathMenu = false }) {
+                    availablePaths.forEach { path ->
+                        DropdownMenuItem(text = { Text(TripRowSequencePlanner.pathMenuLabel(path, orderedSelectedPaddocks)) }, onClick = { onStartPathChange(path); pathMenu = false })
+                    }
+                }
+            }
+            Text("Sequence direction", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                SegmentedButton(selected = !directionHigherFirst, onClick = { onDirectionChange(false) }, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Higher to lower", fontSize = 12.sp) }
+                SegmentedButton(selected = directionHigherFirst, onClick = { onDirectionChange(true) }, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Lower to higher", fontSize = 12.sp) }
+            }
+            Text("Proposed row/path sequence", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+            Text(TripRowSequencePlanner.sequencePreviewText(pathSequence), fontSize = 13.sp, color = vine.textPrimary)
+        } else {
+            Text(
+                if (trackingPattern == TrackingPattern.FREE_DRIVE) "Free Drive does not require a starting path."
+                else "Selected blocks have no usable row geometry; this trip will use Free Drive.",
+                fontSize = 12.sp, color = vine.textSecondary,
+            )
+            Text("Proposed row/path sequence: Free Drive", fontSize = 13.sp, color = vine.textPrimary)
+        }
     }
 }
 
@@ -3677,6 +3789,10 @@ private fun SprayTankMixReview(
     directionHigherFirst: Boolean,
     orderedSelectedPaddocks: List<Paddock>,
     pathSequence: List<Double>,
+    availablePaths: List<Double>,
+    onPatternChange: (TrackingPattern) -> Unit,
+    onStartPathChange: (Double) -> Unit,
+    onDirectionChange: (Boolean) -> Unit,
     errorMessage: String?,
     saving: Boolean,
     hasActiveTrip: Boolean,
@@ -3686,10 +3802,6 @@ private fun SprayTankMixReview(
 ) {
     val vine = LocalVineColors.current
     val uriHandler = LocalUriHandler.current
-    val availablePaths: List<Double> = emptyList()
-    val onStartPathChange: (Double) -> Unit = {}
-    val onDirectionChange: (Boolean) -> Unit = {}
-
     Scaffold(
         modifier = modifier,
         containerColor = vine.appBackground,
@@ -3846,24 +3958,31 @@ private fun SprayTankMixReview(
                 item { CostingCard(result) }
             }
 
-            item { SectionHeader("Equipment & path", onLight = true) }
+            item { SectionHeader("Equipment", onLight = true) }
             item {
                 VineyardCard {
                     GuidedReviewRow("Spray unit", equipmentLabel)
                     GuidedReviewRow("Fans / jets", fansJets.ifBlank { "Not Set" })
-                    GuidedReviewRow("Tracking pattern", trackingPattern.title)
-                    if (hasRowGeometry && trackingPattern != TrackingPattern.FREE_DRIVE) {
-                        GuidedReviewRow("Starting path", TripRowSequencePlanner.pathMenuLabel(startPath, orderedSelectedPaddocks))
-                        GuidedReviewRow("Direction", if (directionHigherFirst) "Lower to higher" else "Higher to lower")
-                        GuidedReviewRow("Proposed sequence", TripRowSequencePlanner.sequencePreviewText(pathSequence))
-                    } else {
-                        GuidedReviewRow("Proposed sequence", "Free Drive")
-                    }
                 }
             }
 
 
-            // Path setup is owned by Step 5; Review keeps only the summary above.
+            item { SectionHeader("Tracking setup", onLight = true) }
+            item {
+                TrackingSetupContent(
+                    trackingPattern = trackingPattern,
+                    onPatternChange = onPatternChange,
+                    hasRowGeometry = hasRowGeometry,
+                    availablePaths = availablePaths,
+                    startPath = startPath,
+                    onStartPathChange = onStartPathChange,
+                    directionHigherFirst = directionHigherFirst,
+                    onDirectionChange = onDirectionChange,
+                    orderedSelectedPaddocks = orderedSelectedPaddocks,
+                    pathSequence = pathSequence,
+                )
+            }
+
             if (false && hasRowGeometry && trackingPattern != TrackingPattern.FREE_DRIVE) {
                 item { SectionHeader("Start Path & Direction", onLight = true) }
                 item {

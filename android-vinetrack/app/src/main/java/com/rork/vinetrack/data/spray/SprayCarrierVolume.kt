@@ -22,12 +22,26 @@ enum class SprayCarrierBasis(val raw: String) {
     /** Row-length-based carrier volume — authoritative for NZ/SWNZ workflows. */
     @SerialName("l_per_100m")
     LITRES_PER_100_METRES("l_per_100m"),
+
+    /** The operator states the total carrier water directly. */
+    @SerialName("manual")
+    MANUAL_TOTAL_VOLUME("manual"),
     ;
 
     companion object {
         fun from(raw: String?): SprayCarrierBasis? =
             entries.firstOrNull { it.raw == raw?.trim()?.lowercase() }
     }
+}
+
+/** Which hectares an entered or derived L/ha carrier rate describes. */
+@Serializable
+enum class SprayCarrierAreaBasis(val raw: String) {
+    @SerialName("treated_area")
+    TREATED_AREA("treated_area"),
+
+    @SerialName("whole_block_area")
+    WHOLE_BLOCK_AREA("whole_block_area"),
 }
 
 /**
@@ -101,6 +115,29 @@ object SprayCarrierVolumeCalculator {
             rowLengthMetres = rowLengthMetres,
             areaHectaresUsed = area,
             rowSpacingMetres = rowSpacingMetres,
+        )
+    }
+
+    /** Manual mode: total water is authoritative; L/ha is a derived reference only. */
+    fun manual(
+        totalLitres: Double,
+        areaHectares: Double? = null,
+        rowLengthMetres: Double? = null,
+        rowSpacingMetres: Double? = null,
+    ): SprayCarrierVolume? {
+        val total = positive(totalLitres) ?: return null
+        val area = positive(areaHectares)
+        val metres = positive(rowLengthMetres)
+        return SprayCarrierVolume(
+            basis = SprayCarrierBasis.MANUAL_TOTAL_VOLUME,
+            totalLitres = total,
+            litresPerHectare = area?.let { total / it },
+            diluteLitresPer100Metres = null,
+            appliedLitresPer100Metres = metres?.let { total / it * 100.0 },
+            concentrationFactor = 1.0,
+            rowLengthMetres = metres,
+            areaHectaresUsed = area,
+            rowSpacingMetres = positive(rowSpacingMetres),
         )
     }
 
