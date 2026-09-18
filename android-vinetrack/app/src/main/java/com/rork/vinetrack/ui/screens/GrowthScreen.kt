@@ -226,7 +226,7 @@ private fun GrowthRecordsViewSelector(
 ) {
     val options = listOf(
         GrowthRecordsViewMode.SUMMARY to "Summary",
-        GrowthRecordsViewMode.HEATMAP to "Ripeness Heatmap",
+        GrowthRecordsViewMode.HEATMAP to "Growth Stage Heatmap",
     )
     SingleChoiceSegmentedButtonRow(
         modifier = Modifier

@@ -15,7 +15,7 @@ struct GrowthStageRecordsListView: View {
     /// Which view of the same feed is on screen.
     private enum ViewMode: String, CaseIterable, Identifiable {
         case summary = "Summary"
-        case heatmap = "Ripeness Heatmap"
+        case heatmap = "Growth Stage Heatmap"
 
         var id: String { rawValue }
     }

@@ -97,7 +97,7 @@ struct ELRipenessHeatmapContent: View {
                 content
             }
         }
-        .navigationTitle("Ripeness Heatmap")
+        .navigationTitle("Growth Stage Heatmap")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
