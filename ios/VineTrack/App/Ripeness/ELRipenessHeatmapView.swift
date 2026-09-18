@@ -89,6 +89,8 @@ struct ELRipenessHeatmapContent: View {
                 unavailableOffline
             case .emptyVintage:
                 emptyVintage
+            case .emptyPhase:
+                emptyPhase
             case .failed(let message):
                 failure(message)
             case .ready:
@@ -134,7 +136,7 @@ struct ELRipenessHeatmapContent: View {
                     VStack(alignment: .leading, spacing: 14) {
                         controls
                         statusBlock
-                        ELRipenessLegendView()
+                        ELRipenessLegendView(phase: model.selectedPhase)
                     }
                     .padding(14)
                 }
@@ -164,7 +166,7 @@ struct ELRipenessHeatmapContent: View {
                         onStepForward: model.stepToNextObservation,
                         onTogglePlay: model.togglePlayback
                     )
-                    ELRipenessLegendView()
+                    ELRipenessLegendView(phase: model.selectedPhase)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 10)
@@ -240,6 +242,14 @@ struct ELRipenessHeatmapContent: View {
                 Text(verbatim: VintageYearText.label(vintage))
                     .font(.subheadline.weight(.semibold))
             }
+
+            Picker("Development phase", selection: phaseBinding) {
+                ForEach(ELRipeness.DevelopmentPhase.allCases) { phase in
+                    Text("\(phase.title) — \(phase.rangeLabel)").tag(phase)
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityLabel("Development phase")
 
             ScrollView(.horizontal) {
                 HStack(spacing: 8) {
@@ -389,6 +399,21 @@ struct ELRipenessHeatmapContent: View {
         }
     }
 
+    private var emptyPhase: some View {
+        VStack(spacing: 0) {
+            controls
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color(.systemGroupedBackground))
+            ContentUnavailableView {
+                Label("No observations in this development phase", systemImage: "map")
+            } description: {
+                Text("Choose another development phase or record an observation in \(model.selectedPhase.rangeLabel).")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
     private func failure(_ message: String) -> some View {
         ContentUnavailableView {
             Label("Could not load the heatmap", systemImage: "exclamationmark.triangle")
@@ -408,6 +433,13 @@ struct ELRipenessHeatmapContent: View {
         Binding(
             get: { model.selectedVintage ?? model.availableVintages.first ?? 0 },
             set: { model.selectedVintage = $0 }
+        )
+    }
+
+    private var phaseBinding: Binding<ELRipeness.DevelopmentPhase> {
+        Binding(
+            get: { model.selectedPhase },
+            set: { model.selectedPhase = $0 }
         )
     }
 
@@ -472,7 +504,8 @@ struct ELRipenessHeatmapContent: View {
             style: style,
             blockName: blockName(for: observation.paddockId),
             ageDays: age,
-            recencyWeight: ELRipeness.recencyWeight(ageDays: age)
+            recencyWeight: ELRipeness.recencyWeight(ageDays: age),
+            phase: model.selectedPhase
         )
     }
 

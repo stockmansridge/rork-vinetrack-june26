@@ -17,6 +17,7 @@ nonisolated final class ELRipenessObservationAnnotation: NSObject, MKAnnotation,
     let blockName: String?
     let ageDays: Int
     let recencyWeight: Double
+    let phase: ELRipeness.DevelopmentPhase
     let coordinate: CLLocationCoordinate2D
 
     var title: String? { ELRipeness.formatEl(observation.el) }
@@ -27,13 +28,15 @@ nonisolated final class ELRipenessObservationAnnotation: NSObject, MKAnnotation,
         style: Style,
         blockName: String?,
         ageDays: Int,
-        recencyWeight: Double
+        recencyWeight: Double,
+        phase: ELRipeness.DevelopmentPhase = .shoot
     ) {
         self.observation = observation
         self.style = style
         self.blockName = blockName
         self.ageDays = ageDays
         self.recencyWeight = recencyWeight
+        self.phase = phase
         self.coordinate = CLLocationCoordinate2D(latitude: observation.lat, longitude: observation.lng)
         super.init()
     }
@@ -259,7 +262,8 @@ struct ELRipenessMapView: UIViewRepresentable {
             view.zPriority = .max
             view.image = ELRipenessPinFactory.observationImage(
                 el: annotation.observation.el,
-                style: annotation.style
+                style: annotation.style,
+                phase: annotation.phase
             )
             view.accessibilityLabel = ELRipenessPinFactory.observationAccessibility(
                 el: annotation.observation.el,

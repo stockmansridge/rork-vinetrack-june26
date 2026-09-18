@@ -14,13 +14,13 @@ import Foundation
 ///   timezone conversion.
 /// * Distance in "cosine-corrected degrees" using the *cell* latitude, while
 ///   the bounding-box diagonal uses the box's `minLat`.
-/// * E-L 47 is excluded, never clamped to E-L 43.
+/// * E-L values are accepted through 47 and filtered by development phase.
 nonisolated enum ELRipeness {
 
     // MARK: - Constants (contract section 0)
 
     static let elMin: Double = 1
-    static let elMax: Double = 43
+    static let elMax: Double = 47
     static let recencyHalfLifeDays: Double = 21
     static let recencyMaxAgeDays: Double = 84
     static let recencyTaperDays: Double = 14
@@ -49,12 +49,72 @@ nonisolated enum ELRipeness {
     }
 
     static let colourStops: [ColourStop] = [
-        ColourStop(el: 1, rgb: RGB(r: 220, g: 38, b: 38), label: "EL 1 — dormant"),
-        ColourStop(el: 12, rgb: RGB(r: 234, g: 129, b: 24), label: "EL 12 — early development"),
-        ColourStop(el: 23, rgb: RGB(r: 234, g: 199, b: 24), label: "EL 23 — mid-season"),
-        ColourStop(el: 35, rgb: RGB(r: 132, g: 204, b: 22), label: "EL 35 — advanced"),
-        ColourStop(el: 43, rgb: RGB(r: 22, g: 143, b: 60), label: "EL 43 — harvest ripe"),
+        ColourStop(el: 1, rgb: RGB(r: 220, g: 38, b: 38), label: "E-L 1"),
+        ColourStop(el: 12.5, rgb: RGB(r: 234, g: 129, b: 24), label: "E-L 12.5"),
+        ColourStop(el: 24, rgb: RGB(r: 234, g: 199, b: 24), label: "E-L 24"),
+        ColourStop(el: 35.5, rgb: RGB(r: 132, g: 204, b: 22), label: "E-L 35.5"),
+        ColourStop(el: 47, rgb: RGB(r: 22, g: 143, b: 60), label: "E-L 47"),
     ]
+
+    nonisolated enum DevelopmentPhase: String, CaseIterable, Identifiable, Sendable {
+        case shoot
+        case flowering
+        case berryFormation
+        case berryRipening
+        case senescence
+
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .shoot: "Shoot and inflorescence development"
+            case .flowering: "Flowering"
+            case .berryFormation: "Berry formation"
+            case .berryRipening: "Berry ripening"
+            case .senescence: "Senescence"
+            }
+        }
+        var range: ClosedRange<Double> {
+            switch self {
+            case .shoot: 1...18
+            case .flowering: 19...26
+            case .berryFormation: 27...33
+            case .berryRipening: 34...39
+            case .senescence: 41...47
+            }
+        }
+        var rangeLabel: String { "E-L \(Int(range.lowerBound))–\(Int(range.upperBound))" }
+        func contains(_ el: Double) -> Bool { range.contains(el) }
+
+        static func containing(_ el: Double) -> Self? { allCases.first { $0.contains(el) } }
+        static func defaultPhase(for observations: [Observation]) -> Self {
+            observations
+                .filter { containing($0.el) != nil }
+                .max { lhs, rhs in
+                    let ld = dayKey(lhs.dateISO), rd = dayKey(rhs.dateISO)
+                    return ld == rd ? lhs.id < rhs.id : ld < rd
+                }
+                .flatMap { containing($0.el) } ?? .shoot
+        }
+    }
+
+    private static let phaseRamp: [RGB] = [
+        RGB(r: 220, g: 38, b: 38), RGB(r: 234, g: 129, b: 24),
+        RGB(r: 234, g: 199, b: 24), RGB(r: 132, g: 204, b: 22), RGB(r: 22, g: 143, b: 60)
+    ]
+
+    static func phaseColour(_ el: Double, phase: DevelopmentPhase) -> RGB {
+        let normalized = clamp((el - phase.range.lowerBound) / (phase.range.upperBound - phase.range.lowerBound), 0, 1)
+        let scaled = normalized * Double(phaseRamp.count - 1)
+        let lower = min(Int(floor(scaled)), phaseRamp.count - 1)
+        let upper = min(lower + 1, phaseRamp.count - 1)
+        let t = scaled - Double(lower)
+        let a = phaseRamp[lower], b = phaseRamp[upper]
+        return RGB(
+            r: Int(jsRound(Double(a.r) + Double(b.r - a.r) * t)),
+            g: Int(jsRound(Double(a.g) + Double(b.g - a.g) * t)),
+            b: Int(jsRound(Double(a.b) + Double(b.b - a.b) * t))
+        )
+    }
 
     /// ECMAScript `Math.round`: half-up toward +∞ (not away-from-zero).
     static func jsRound(_ value: Double) -> Double {
@@ -160,11 +220,7 @@ nonisolated enum ELRipeness {
         return i == chars.count
     }
 
-    /// Parses a stored growth-stage code to an E-L value in `[1, 43]`.
-    ///
-    /// **E-L 47 returns `nil`.** It is outside the ripeness heat surface and is
-    /// never clamped to E-L 43; it remains available to the Summary report,
-    /// which does not use this function.
+    /// Parses a stored growth-stage code to an E-L value in `[1, 47]`.
     static func parseElStage(_ code: String?) -> Double? {
         guard let code else { return nil }
         let s = code.trimmingCharacters(in: .whitespacesAndNewlines)

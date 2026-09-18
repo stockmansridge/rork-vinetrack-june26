@@ -41,13 +41,17 @@ nonisolated final class ELRipenessHeatOverlay: NSObject, MKOverlay, @unchecked S
     /// Drawing the bitmap edge-to-edge on those bounds would place pixel
     /// centres half a cell inboard and shift the whole surface. Expanding by
     /// half a cell re-aligns pixel centres with the sampled nodes.
-    static func make(from block: ELRipeness.BlockHeat) -> ELRipenessHeatOverlay? {
+    static func make(
+        from block: ELRipeness.BlockHeat,
+        phase: ELRipeness.DevelopmentPhase = .shoot
+    ) -> ELRipenessHeatOverlay? {
         guard let bounds = block.gridBounds,
               let grid = block.grid,
               let resolution = grid.first?.count,
               resolution > 1,
               grid.count > 1,
-              let image = ELRipenessHeatRaster.image(for: block) else { return nil }
+              let raster = ELRipenessHeatRaster.raster(for: block, phase: phase),
+              let image = ELRipenessHeatRaster.image(from: raster) else { return nil }
 
         let latStep = (bounds.maxLat - bounds.minLat) / Double(grid.count - 1)
         let lngStep = (bounds.maxLng - bounds.minLng) / Double(resolution - 1)

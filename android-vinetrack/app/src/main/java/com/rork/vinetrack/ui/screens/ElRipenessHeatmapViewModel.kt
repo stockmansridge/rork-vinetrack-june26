@@ -45,6 +45,9 @@ sealed interface ElRipenessLoadState {
     /** The vineyard has observations, but none in the selected Vintage. */
     data object EmptyVintage : ElRipenessLoadState
 
+    /** The Vintage has records, but none in the selected development phase. */
+    data object EmptyPhase : ElRipenessLoadState
+
     /** No network and nothing cached — there is genuinely nothing to draw. */
     data object UnavailableOffline : ElRipenessLoadState
     data class Failed(val message: String) : ElRipenessLoadState
@@ -89,6 +92,7 @@ data class ElRipenessUiState(
     val notices: List<ElRipenessNotice> = emptyList(),
     val availableVintages: List<Int> = emptyList(),
     val selectedVintage: Int? = null,
+    val selectedPhase: ElRipenessHeatmap.DevelopmentPhase = ElRipenessHeatmap.DevelopmentPhase.SHOOT,
     val selectedBlockId: String? = null,
     val blocks: List<ElRipenessHeatmap.BlockInput> = emptyList(),
     val timelineDays: List<CivilDate> = emptyList(),
@@ -129,6 +133,7 @@ class ElRipenessHeatmapViewModel(
 
     private var allObservations: List<ElRipenessHeatmap.Observation> = emptyList()
     private var vintageObservations: List<ElRipenessHeatmap.Observation> = emptyList()
+    private var phaseObservations: List<ElRipenessHeatmap.Observation> = emptyList()
     private var remoteSources: List<ElRipenessObservationAdapter.SourceRecord> = emptyList()
     private var pendingSources: List<ElRipenessObservationAdapter.SourceRecord> = emptyList()
     private var localRecordSources: List<ElRipenessObservationAdapter.SourceRecord> = emptyList()
@@ -332,6 +337,12 @@ class ElRipenessHeatmapViewModel(
         vintageDidChange()
     }
 
+    fun selectPhase(phase: ElRipenessHeatmap.DevelopmentPhase) {
+        if (_ui.value.selectedPhase == phase) return
+        _ui.value = _ui.value.copy(selectedPhase = phase, isPlaying = false)
+        phaseDidChange()
+    }
+
     fun selectBlock(blockId: String?) {
         if (_ui.value.selectedBlockId == blockId) return
         _ui.value = _ui.value.copy(selectedBlockId = blockId)
@@ -364,8 +375,28 @@ class ElRipenessHeatmapViewModel(
         }
         vintageObservations =
             ElRipenessSeason.filterToVintage(allObservations, vintage, seasonStartMonth, seasonStartDay)
+        val defaultPhase = ElRipenessHeatmap.DevelopmentPhase.defaultFor(vintageObservations)
+        _ui.value = _ui.value.copy(selectedPhase = defaultPhase)
+        phaseDidChange()
+    }
+
+    private fun phaseDidChange() {
+        val vintage = _ui.value.selectedVintage ?: return
+        phaseObservations = vintageObservations.filter { _ui.value.selectedPhase.contains(it.el) }
         rebuildTimeline(vintage)
-        scheduleRebuild()
+        if (phaseObservations.isEmpty()) {
+            renderJob?.cancel()
+            _ui.value = _ui.value.copy(
+                loadState = ElRipenessLoadState.EmptyPhase,
+                heatModel = null,
+                overlays = emptyList(),
+                statusCounts = ElRipenessStatusCounts(),
+                isRendering = false,
+            )
+        } else {
+            _ui.value = _ui.value.copy(loadState = ElRipenessLoadState.Ready)
+            scheduleRebuild()
+        }
     }
 
     private fun rebuildTimeline(vintage: Int) {
@@ -385,7 +416,7 @@ class ElRipenessHeatmapViewModel(
         }
         if (days.isEmpty()) days.add(start)
 
-        val observationKeys = vintageObservations.map { ElRipenessHeatmap.dayKey(it.dateIso) }.toSet()
+        val observationKeys = phaseObservations.map { ElRipenessHeatmap.dayKey(it.dateIso) }.toSet()
         val indices = days.indices.filter { observationKeys.contains(days[it].iso) }
 
         _ui.value = _ui.value.copy(
@@ -459,7 +490,7 @@ class ElRipenessHeatmapViewModel(
         val dateIso = state.currentDateIso ?: return
         val blocks = state.blocks
         val filter = state.selectedBlockId
-        val observations = vintageObservations
+        val observations = phaseObservations
 
         _ui.value = state.copy(isRendering = true)
         renderJob = viewModelScope.launch {
@@ -472,7 +503,7 @@ class ElRipenessHeatmapViewModel(
                 )
                 if (!isActive) return@withContext null
                 val overlays = model.blocks.mapNotNull { block ->
-                    val raster = ElRipenessHeatRaster.raster(block) ?: return@mapNotNull null
+                    val raster = ElRipenessHeatRaster.raster(block, state.selectedPhase) ?: return@mapNotNull null
                     val bounds = ElRipenessHeatRaster.drawBounds(block) ?: return@mapNotNull null
                     ElRipenessOverlay(block.paddockId, raster, bounds)
                 }
@@ -484,7 +515,7 @@ class ElRipenessHeatmapViewModel(
                 heatModel = model,
                 overlays = overlays,
                 isRendering = false,
-                loadState = if (vintageObservations.isEmpty()) ElRipenessLoadState.EmptyVintage
+                loadState = if (phaseObservations.isEmpty()) ElRipenessLoadState.EmptyPhase
                 else ElRipenessLoadState.Ready,
                 statusCounts = ElRipenessStatusCounts(
                     recorded = model.qualifying.size,

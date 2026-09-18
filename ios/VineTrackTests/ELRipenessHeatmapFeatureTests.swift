@@ -869,6 +869,29 @@ final class ELRipenessHeatmapFeatureTests: XCTestCase {
     /// Summary and Heatmap read one feed, so their counts are the same numbers.
     /// Mirrors the live Stockmans Ridge expectation: three records, all
     /// current, typical stage E-L 2, painted red.
+    func testDevelopmentPhasesIncludeEL47AndUseRequestedRanges() {
+        XCTAssertEqual(ELRipeness.parseElStage("E-L 47"), 47)
+        XCTAssertEqual(ELRipeness.DevelopmentPhase.containing(18), .shoot)
+        XCTAssertEqual(ELRipeness.DevelopmentPhase.containing(19), .flowering)
+        XCTAssertEqual(ELRipeness.DevelopmentPhase.containing(47), .senescence)
+        XCTAssertNil(ELRipeness.DevelopmentPhase.containing(40))
+    }
+
+    func testEveryDevelopmentPhaseRunsFromRedToGreen() {
+        for phase in ELRipeness.DevelopmentPhase.allCases {
+            XCTAssertEqual(ELRipeness.phaseColour(phase.range.lowerBound, phase: phase), ELRipeness.RGB(r: 220, g: 38, b: 38))
+            XCTAssertEqual(ELRipeness.phaseColour(phase.range.upperBound, phase: phase), ELRipeness.RGB(r: 22, g: 143, b: 60))
+        }
+    }
+
+    func testDefaultDevelopmentPhaseUsesMostRecentObservation() {
+        let observations = [
+            ELRipeness.Observation(id: "old", paddockId: "block-a", assigned: true, el: 35, lat: -34.5, lng: 138.5, dateISO: "2026-01-10"),
+            ELRipeness.Observation(id: "latest", paddockId: "block-a", assigned: true, el: 47, lat: -34.5, lng: 138.5, dateISO: "2026-02-10")
+        ]
+        XCTAssertEqual(ELRipeness.DevelopmentPhase.defaultPhase(for: observations), .senescence)
+    }
+
     func testSummaryAndHeatmapCountsComeFromTheSameMergedFeed() {
         let sources = ELRipenessObservationAdapter.localRecords(
             [

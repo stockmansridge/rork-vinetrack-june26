@@ -3,19 +3,20 @@ import SwiftUI
 /// The E-L colour ramp, drawn from the contract's own stops so the legend can
 /// never drift from the surface it describes.
 struct ELRipenessLegendView: View {
+    let phase: ELRipeness.DevelopmentPhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+    init(phase: ELRipeness.DevelopmentPhase = .shoot) {
+        self.phase = phase
+    }
+
     private var gradient: LinearGradient {
-        let span = ELRipeness.elMax - ELRipeness.elMin
-        let stops: [Gradient.Stop] = ELRipeness.colourStops.map { stop in
-            let rgb = stop.rgb
+        let stops: [Gradient.Stop] = [0.0, 0.25, 0.5, 0.75, 1.0].map { fraction in
+            let el = phase.range.lowerBound + (phase.range.upperBound - phase.range.lowerBound) * fraction
+            let rgb = ELRipeness.phaseColour(el, phase: phase)
             return Gradient.Stop(
-                color: Color(
-                    red: Double(rgb.r) / 255,
-                    green: Double(rgb.g) / 255,
-                    blue: Double(rgb.b) / 255
-                ),
-                location: span > 0 ? (stop.el - ELRipeness.elMin) / span : 0
+                color: Color(red: Double(rgb.r) / 255, green: Double(rgb.g) / 255, blue: Double(rgb.b) / 255),
+                location: fraction
             )
         }
         return LinearGradient(gradient: Gradient(stops: stops), startPoint: .leading, endPoint: .trailing)
@@ -30,24 +31,21 @@ struct ELRipenessLegendView: View {
 
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(ELRipeness.colourStops, id: \.el) { stop in
-                        Text(stop.label).font(.caption2)
-                    }
+                    Text("E-L \(Int(phase.range.lowerBound)) — red").font(.caption2)
+                    Text("E-L \(Int(phase.range.upperBound)) — green").font(.caption2)
                 }
             } else {
                 HStack {
-                    Text("E-L 1").font(.caption2)
+                    Text("E-L \(Int(phase.range.lowerBound))").font(.caption2)
                     Spacer()
-                    Text("E-L 23").font(.caption2)
-                    Spacer()
-                    Text("E-L 43").font(.caption2)
+                    Text("E-L \(Int(phase.range.upperBound))").font(.caption2)
                 }
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Colour scale from E-L 1 dormant, red, through E-L 23 mid-season, yellow, to E-L 43 harvest ripe, green")
+        .accessibilityLabel("Colour scale for \(phase.title), from E-L \(Int(phase.range.lowerBound)) red to E-L \(Int(phase.range.upperBound)) green")
     }
 }
 

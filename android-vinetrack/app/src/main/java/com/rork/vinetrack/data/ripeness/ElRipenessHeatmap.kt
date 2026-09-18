@@ -23,14 +23,14 @@ import kotlin.math.sqrt
  *   timezone conversion.
  * - Distance in "cosine-corrected degrees" using the *cell* latitude, while the
  *   bounding-box diagonal uses the box's `minLat`.
- * - E-L 47 is excluded, never clamped to E-L 43.
+ * - E-L values are accepted through 47 and filtered by the selected development phase.
  */
 object ElRipenessHeatmap {
 
     // ---- Constants (contract section 0) ----
 
     const val EL_MIN = 1.0
-    const val EL_MAX = 43.0
+    const val EL_MAX = 47.0
     const val RECENCY_HALF_LIFE_DAYS = 21.0
     const val RECENCY_MAX_AGE_DAYS = 84.0
     const val RECENCY_TAPER_DAYS = 14.0
@@ -54,12 +54,50 @@ object ElRipenessHeatmap {
     data class ColourStop(val el: Double, val rgb: Rgb, val label: String)
 
     val colourStops: List<ColourStop> = listOf(
-        ColourStop(1.0, Rgb(220, 38, 38), "EL 1 — dormant"),
-        ColourStop(12.0, Rgb(234, 129, 24), "EL 12 — early development"),
-        ColourStop(23.0, Rgb(234, 199, 24), "EL 23 — mid-season"),
-        ColourStop(35.0, Rgb(132, 204, 22), "EL 35 — advanced"),
-        ColourStop(43.0, Rgb(22, 143, 60), "EL 43 — harvest ripe"),
+        ColourStop(1.0, Rgb(220, 38, 38), "E-L 1"),
+        ColourStop(12.5, Rgb(234, 129, 24), "E-L 12.5"),
+        ColourStop(24.0, Rgb(234, 199, 24), "E-L 24"),
+        ColourStop(35.5, Rgb(132, 204, 22), "E-L 35.5"),
+        ColourStop(47.0, Rgb(22, 143, 60), "E-L 47"),
     )
+
+    enum class DevelopmentPhase(val title: String, val start: Double, val end: Double) {
+        SHOOT("Shoot and inflorescence development", 1.0, 18.0),
+        FLOWERING("Flowering", 19.0, 26.0),
+        BERRY_FORMATION("Berry formation", 27.0, 33.0),
+        BERRY_RIPENING("Berry ripening", 34.0, 39.0),
+        SENESCENCE("Senescence", 41.0, 47.0);
+
+        val rangeLabel: String get() = "E-L ${start.toInt()}–${end.toInt()}"
+        fun contains(el: Double): Boolean = el in start..end
+
+        companion object {
+            fun containing(el: Double): DevelopmentPhase? = entries.firstOrNull { it.contains(el) }
+            fun defaultFor(observations: List<Observation>): DevelopmentPhase = observations
+                .filter { containing(it.el) != null }
+                .maxWithOrNull(compareBy<Observation> { dayKey(it.dateIso) }.thenBy { it.id })
+                ?.let { containing(it.el) } ?: SHOOT
+        }
+    }
+
+    private val phaseRamp: List<Rgb> = listOf(
+        Rgb(220, 38, 38), Rgb(234, 129, 24), Rgb(234, 199, 24), Rgb(132, 204, 22), Rgb(22, 143, 60)
+    )
+
+    fun phaseColour(el: Double, phase: DevelopmentPhase): Rgb {
+        val normalized = clamp((el - phase.start) / (phase.end - phase.start), 0.0, 1.0)
+        val scaled = normalized * (phaseRamp.size - 1)
+        val lower = floor(scaled).toInt().coerceAtMost(phaseRamp.lastIndex)
+        val upper = (lower + 1).coerceAtMost(phaseRamp.lastIndex)
+        val t = scaled - lower
+        val a = phaseRamp[lower]
+        val b = phaseRamp[upper]
+        return Rgb(
+            jsRound(a.r + (b.r - a.r) * t).toInt(),
+            jsRound(a.g + (b.g - a.g) * t).toInt(),
+            jsRound(a.b + (b.b - a.b) * t).toInt(),
+        )
+    }
 
     /** ECMAScript `Math.round`: half-up toward +infinity (not away-from-zero). */
     fun jsRound(value: Double): Double = floor(value + 0.5)
@@ -159,11 +197,7 @@ object ElRipenessHeatmap {
     }
 
     /**
-     * Parses a stored growth-stage code to an E-L value in [1, 43].
-     *
-     * **E-L 47 returns null.** It is outside the ripeness heat surface and is
-     * never clamped to E-L 43; it remains available to the Summary report,
-     * which does not use this function.
+     * Parses a stored growth-stage code to an E-L value in [1, 47].
      */
     fun parseElStage(code: String?): Double? {
         if (code == null) return null

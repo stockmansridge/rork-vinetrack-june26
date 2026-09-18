@@ -24,6 +24,8 @@ final class ELRipenessHeatmapModel {
         case ready
         /// The Vintage has no observations at all, and we know that for certain.
         case emptyVintage
+        /// The Vintage has observations, but none in the selected phase.
+        case emptyPhase
         /// Offline and this Vintage was never cached — we genuinely do not know
         /// whether it has observations, which is not the same as it having none.
         case unavailableOffline
@@ -95,6 +97,10 @@ final class ELRipenessHeatmapModel {
         didSet { if oldValue != selectedVintage { vintageDidChange() } }
     }
 
+    var selectedPhase: ELRipeness.DevelopmentPhase = .shoot {
+        didSet { if oldValue != selectedPhase { phaseDidChange() } }
+    }
+
     /// `nil` means All Blocks.
     var selectedBlockId: String? {
         didSet { if oldValue != selectedBlockId { scheduleRebuild() } }
@@ -117,6 +123,7 @@ final class ELRipenessHeatmapModel {
 
     /// Observations for the selected Vintage only.
     private(set) var vintageObservations: [ELRipeness.Observation] = []
+    private(set) var phaseObservations: [ELRipeness.Observation] = []
 
     /// Full detail for observations that came from a local record or pin,
     /// registered under every id the feed might resolve them to.
@@ -313,8 +320,6 @@ final class ELRipenessHeatmapModel {
         }
 
         selectDefaultVintage()
-        loadState = .ready
-        scheduleRebuild()
     }
 
     /// Re-merges pending local pins without touching the network. Called when
@@ -359,10 +364,10 @@ final class ELRipenessHeatmapModel {
         rebuildObservationSet()
         if let previousVintage, availableVintages.contains(previousVintage) {
             selectedVintage = previousVintage
+            vintageDidChange()
         } else {
             selectDefaultVintage()
         }
-        scheduleRebuild()
     }
 
     /// Indexes full record detail under every id an observation might resolve
@@ -451,24 +456,35 @@ final class ELRipenessHeatmapModel {
             month: seasonStartMonth,
             day: seasonStartDay
         )
-        rebuildTimeline()
-
         if vintageObservations.isEmpty {
             overlays = []
             heatModel = nil
             loadState = coveredVintages.contains(vintage) ? .emptyVintage : .unavailableOffline
             return
         }
-        if loadState == .emptyVintage || loadState == .unavailableOffline {
+        selectedPhase = ELRipeness.DevelopmentPhase.defaultPhase(for: vintageObservations)
+        phaseDidChange()
+    }
+
+    private func phaseDidChange() {
+        phaseObservations = vintageObservations.filter { selectedPhase.contains($0.el) }
+        rebuildTimeline()
+        if phaseObservations.isEmpty {
+            renderTask?.cancel()
+            overlays = []
+            heatModel = nil
+            isRendering = false
+            loadState = .emptyPhase
+        } else {
             loadState = .ready
+            scheduleRebuild()
         }
-        scheduleRebuild()
     }
 
     private func rebuildTimeline() {
         // Keyed on the ISO day string so the contract core stays untouched —
         // `CivilDate` is deliberately only Equatable/Comparable there.
-        let dayKeys = Set(vintageObservations.map { ELRipeness.dayKey($0.dateISO) })
+        let dayKeys = Set(phaseObservations.map { ELRipeness.dayKey($0.dateISO) })
         let days = dayKeys.compactMap { CivilDate(dayKey: $0) }
         guard let first = days.min(), let last = days.max() else {
             timelineDays = []
@@ -550,9 +566,10 @@ final class ELRipenessHeatmapModel {
             return
         }
 
-        let observations = vintageObservations
+        let observations = phaseObservations
         let blockInputs = blocks
         let filter = selectedBlockId
+        let phase = selectedPhase
         isRendering = true
 
         renderTask = Task { [weak self] in
@@ -560,7 +577,8 @@ final class ELRipenessHeatmapModel {
                 observations: observations,
                 blocks: blockInputs,
                 dateISO: dateISO,
-                filter: filter
+                filter: filter,
+                phase: phase
             )
             if Task.isCancelled { return }
             await MainActor.run { [weak self] in
@@ -587,7 +605,8 @@ final class ELRipenessHeatmapModel {
         observations: [ELRipeness.Observation],
         blocks: [ELRipeness.BlockInput],
         dateISO: String,
-        filter: String?
+        filter: String?,
+        phase: ELRipeness.DevelopmentPhase
     ) async -> RenderResult? {
         await Task.detached(priority: .userInitiated) { () -> RenderResult? in
             let heat = ELRipeness.buildHeatModel(
@@ -602,7 +621,7 @@ final class ELRipenessHeatmapModel {
             overlays.reserveCapacity(heat.blocks.count)
             for block in heat.blocks {
                 if Task.isCancelled { return nil }
-                if let overlay = ELRipenessHeatOverlay.make(from: block) {
+                if let overlay = ELRipenessHeatOverlay.make(from: block, phase: phase) {
                     overlays.append(overlay)
                 }
             }

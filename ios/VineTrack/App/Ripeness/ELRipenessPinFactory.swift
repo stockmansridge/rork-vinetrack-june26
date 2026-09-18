@@ -7,8 +7,8 @@ import UIKit
 /// white outer ring to stay legible against both.
 nonisolated enum ELRipenessPinFactory {
 
-    static func uiColour(for el: Double) -> UIColor {
-        let rgb = ELRipeness.elColour(el)
+    static func uiColour(for el: Double, phase: ELRipeness.DevelopmentPhase? = nil) -> UIColor {
+        let rgb = phase.map { ELRipeness.phaseColour(el, phase: $0) } ?? ELRipeness.elColour(el)
         return UIColor(
             red: CGFloat(rgb.r) / 255,
             green: CGFloat(rgb.g) / 255,
@@ -23,14 +23,18 @@ nonisolated enum ELRipenessPinFactory {
     /// * `stale` — hollow ring in the E-L colour, present but not influencing.
     /// * `unassigned` — amber ring with a hollow centre and a gap, signalling
     ///   the record has no block and is excluded from every block's maths.
-    static func observationImage(el: Double, style: ELRipenessObservationAnnotation.Style) -> UIImage {
+    static func observationImage(
+        el: Double,
+        style: ELRipenessObservationAnnotation.Style,
+        phase: ELRipeness.DevelopmentPhase? = nil
+    ) -> UIImage {
         let diameter: CGFloat = style == .current ? 18 : 16
         let size = CGSize(width: diameter + 4, height: diameter + 4)
         let renderer = UIGraphicsImageRenderer(size: size)
         return renderer.image { context in
             let cg = context.cgContext
             let rect = CGRect(x: 2, y: 2, width: diameter, height: diameter)
-            let colour = uiColour(for: el)
+            let colour = uiColour(for: el, phase: phase)
 
             switch style {
             case .current:

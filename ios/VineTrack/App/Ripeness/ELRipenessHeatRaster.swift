@@ -39,7 +39,10 @@ nonisolated enum ELRipenessHeatRaster {
     ///
     /// - Returns: `nil` when the block paints nothing at all (`none`, `stale`
     ///   and `no_polygon` modes, which carry no grid).
-    static func raster(for block: ELRipeness.BlockHeat) -> Raster? {
+    static func raster(
+        for block: ELRipeness.BlockHeat,
+        phase: ELRipeness.DevelopmentPhase? = nil
+    ) -> Raster? {
         guard let grid = block.grid, let weights = block.weightGrid else { return nil }
         let height = grid.count
         guard height > 0, let width = grid.first?.count, width > 0 else { return nil }
@@ -60,7 +63,8 @@ nonisolated enum ELRipenessHeatRaster {
                 let alpha = ELRipeness.alpha255(value: value, cellWeight: weight)
                 guard alpha > 0 else { continue }
 
-                let colour = ELRipeness.elColour(value)
+                let colour = phase.map { ELRipeness.phaseColour(value, phase: $0) }
+                    ?? ELRipeness.elColour(value)
                 let offset = (row * width + column) * bytesPerPixel
                 let a = Double(alpha) / 255.0
                 // Premultiplied: CoreGraphics needs the colour scaled by alpha.

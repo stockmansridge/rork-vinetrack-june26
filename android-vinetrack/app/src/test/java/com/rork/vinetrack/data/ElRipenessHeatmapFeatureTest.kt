@@ -731,4 +731,33 @@ class ElRipenessHeatmapFeatureTest {
         val colour = ElRipenessHeatmap.elColour(2.0)
         assertTrue("expected red-dominant, got $colour", colour.r > 200 && colour.g < 90)
     }
+
+    @Test
+    fun `development phases cover requested ranges and include EL 47`() {
+        assertEquals(47.0, ElRipenessHeatmap.parseElStage("E-L 47")!!, 0.0)
+        assertEquals(ElRipenessHeatmap.DevelopmentPhase.SHOOT, ElRipenessHeatmap.DevelopmentPhase.containing(18.0))
+        assertEquals(ElRipenessHeatmap.DevelopmentPhase.FLOWERING, ElRipenessHeatmap.DevelopmentPhase.containing(19.0))
+        assertEquals(ElRipenessHeatmap.DevelopmentPhase.SENESCENCE, ElRipenessHeatmap.DevelopmentPhase.containing(47.0))
+        assertNull(ElRipenessHeatmap.DevelopmentPhase.containing(40.0))
+    }
+
+    @Test
+    fun `every development phase scales its first stage red and final stage green`() {
+        ElRipenessHeatmap.DevelopmentPhase.entries.forEach { phase ->
+            assertEquals(ElRipenessHeatmap.Rgb(220, 38, 38), ElRipenessHeatmap.phaseColour(phase.start, phase))
+            assertEquals(ElRipenessHeatmap.Rgb(22, 143, 60), ElRipenessHeatmap.phaseColour(phase.end, phase))
+        }
+    }
+
+    @Test
+    fun `default development phase follows the most recent observation`() {
+        val observations = listOf(
+            ElRipenessHeatmap.Observation("old", "blk-a", true, 35.0, -34.5, 138.5, "2026-01-10"),
+            ElRipenessHeatmap.Observation("latest", "blk-a", true, 47.0, -34.5, 138.5, "2026-02-10"),
+        )
+        assertEquals(
+            ElRipenessHeatmap.DevelopmentPhase.SENESCENCE,
+            ElRipenessHeatmap.DevelopmentPhase.defaultFor(observations),
+        )
+    }
 }

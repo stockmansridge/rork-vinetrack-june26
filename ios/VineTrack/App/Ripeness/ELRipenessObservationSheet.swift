@@ -24,7 +24,8 @@ struct ELRipenessObservationSheet: View {
     }
 
     private var stageColour: Color {
-        let rgb = ELRipeness.elColour(observation.el)
+        let phase = ELRipeness.DevelopmentPhase.containing(observation.el) ?? .shoot
+        let rgb = ELRipeness.phaseColour(observation.el, phase: phase)
         return Color(red: Double(rgb.r) / 255, green: Double(rgb.g) / 255, blue: Double(rgb.b) / 255)
     }
 

@@ -54,7 +54,10 @@ object ElRipenessHeatRaster {
      *   `no_polygon` modes, which carry no grid), or when every cell was
      *   transparent.
      */
-    fun raster(block: ElRipenessHeatmap.BlockHeat): Raster? {
+    fun raster(
+        block: ElRipenessHeatmap.BlockHeat,
+        phase: ElRipenessHeatmap.DevelopmentPhase? = null,
+    ): Raster? {
         val grid = block.grid ?: return null
         val weights = block.weightGrid ?: return null
         val height = grid.size
@@ -79,7 +82,8 @@ object ElRipenessHeatRaster {
                 val alpha = ElRipenessHeatmap.alpha255(value, weight)
                 if (alpha <= 0) continue
 
-                val rgb = ElRipenessHeatmap.elColour(value)
+                val rgb = phase?.let { ElRipenessHeatmap.phaseColour(value, it) }
+                    ?: ElRipenessHeatmap.elColour(value)
                 pixels[row * width + column] =
                     (alpha shl 24) or (rgb.r shl 16) or (rgb.g shl 8) or rgb.b
                 painted = true

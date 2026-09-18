@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -31,6 +32,10 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
@@ -233,6 +238,18 @@ fun ElRipenessHeatmapContent(
                 }
             }
 
+            is ElRipenessLoadState.EmptyPhase -> {
+                VintageBar(ui, model, vine.textPrimary)
+                DevelopmentPhaseBar(ui, model)
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    EmptyState(
+                        icon = Icons.Filled.Spa,
+                        title = "No observations in this development phase",
+                        message = "Choose another development phase or record an observation in ${ui.selectedPhase.rangeLabel}.",
+                    )
+                }
+            }
+
             is ElRipenessLoadState.EmptyVintage -> {
                 VintageBar(ui, model, vine.textPrimary)
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -247,18 +264,24 @@ fun ElRipenessHeatmapContent(
 
             is ElRipenessLoadState.Ready -> {
                 VintageBar(ui, model, vine.textPrimary)
+                DevelopmentPhaseBar(ui, model)
                 BlockFilterBar(ui, model)
                 HeatMap(
                     ui = ui,
-                    // GoogleMap is an Android view and must receive finite
-                    // constraints. Weight binds it to the remaining viewport.
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().height(320.dp),
                     onObservationTap = { sheetObservation = it },
                 )
-                NoticeStrip(ui.notices)
-                TimelineBar(ui, model)
-                StatusRow(ui, vine.textSecondary)
-                RipenessLegend()
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(bottom = 96.dp),
+                ) {
+                    NoticeStrip(ui.notices)
+                    TimelineBar(ui, model)
+                    StatusRow(ui, vine.textSecondary)
+                    RipenessLegend(ui.selectedPhase)
+                }
             }
         }
     }
@@ -307,6 +330,44 @@ private fun VintageBar(
                         contentDescription = "Vintage ${VintageYearText.format(vintage)}${if (selected) ", selected" else ""}"
                     },
                 )
+            }
+        }
+    }
+}
+
+// ---- Development phase ----
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DevelopmentPhaseBar(ui: ElRipenessUiState, model: ElRipenessHeatmapViewModel) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Text(
+            "Development phase",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = LocalVineColors.current.textSecondary,
+        )
+        Spacer(Modifier.height(6.dp))
+        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+            OutlinedTextField(
+                value = "${ui.selectedPhase.title} — ${ui.selectedPhase.rangeLabel}",
+                onValueChange = {},
+                readOnly = true,
+                singleLine = true,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+                modifier = Modifier.fillMaxWidth().menuAnchor(),
+            )
+            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                ElRipenessHeatmap.DevelopmentPhase.entries.forEach { phase ->
+                    DropdownMenuItem(
+                        text = { Text("${phase.title} — ${phase.rangeLabel}") },
+                        onClick = {
+                            expanded = false
+                            model.selectPhase(phase)
+                        },
+                    )
+                }
             }
         }
     }
@@ -410,10 +471,10 @@ private fun HeatMap(
 
             // Observation pins, above the surface.
             heat?.blocks?.forEach { block ->
-                block.influencing.forEach { ObservationPin(it, PinStyle.CURRENT, onObservationTap) }
-                block.stale.forEach { ObservationPin(it, PinStyle.STALE, onObservationTap) }
+                block.influencing.forEach { ObservationPin(it, PinStyle.CURRENT, ui.selectedPhase, onObservationTap) }
+                block.stale.forEach { ObservationPin(it, PinStyle.STALE, ui.selectedPhase, onObservationTap) }
             }
-            heat?.unassigned?.forEach { ObservationPin(it, PinStyle.UNASSIGNED, onObservationTap) }
+            heat?.unassigned?.forEach { ObservationPin(it, PinStyle.UNASSIGNED, ui.selectedPhase, onObservationTap) }
 
             // Block name plates carrying the influencing-only median.
             heat?.blocks?.forEach { block ->
@@ -446,10 +507,11 @@ private enum class PinStyle { CURRENT, STALE, UNASSIGNED }
 private fun ObservationPin(
     observation: ElRipenessHeatmap.Observation,
     style: PinStyle,
+    phase: ElRipenessHeatmap.DevelopmentPhase,
     onTap: (ElRipenessHeatmap.Observation) -> Unit,
 ) {
     val fill = when (style) {
-        PinStyle.CURRENT -> ElRipenessHeatmap.elColour(observation.el).compose()
+        PinStyle.CURRENT -> ElRipenessHeatmap.phaseColour(observation.el, phase).compose()
         PinStyle.STALE -> Color(0xFF8E8E93)
         PinStyle.UNASSIGNED -> Color(0xFFFF9500)
     }
@@ -463,7 +525,7 @@ private fun ObservationPin(
     MarkerComposable(
         keys = arrayOf<Any>(observation.id, style.name, label),
         state = rememberMarkerState(position = LatLng(observation.lat, observation.lng)),
-        title = "E-L $label",
+        title = label,
         zIndex = 3f,
         onClick = {
             onTap(observation)
@@ -472,17 +534,17 @@ private fun ObservationPin(
     ) {
         Box(
             Modifier
-                .size(30.dp)
+                .size(20.dp)
                 .clip(CircleShape)
                 .background(fill)
-                .border(2.dp, Color.White, CircleShape)
-                .semantics { contentDescription = "E-L $label, $styleWord" },
+                .border(1.5.dp, Color.White, CircleShape)
+                .semantics { contentDescription = "$label, $styleWord" },
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                label,
+                observation.el.toInt().toString(),
                 color = Color.White,
-                fontSize = 11.sp,
+                fontSize = 8.sp,
                 fontWeight = FontWeight.Bold,
             )
         }
@@ -497,7 +559,7 @@ private fun BlockLabel(
 ) {
     val median = block.medianEl
     val text = block.paddockName ?: "Block"
-    val medianText = if (median != null) "E-L ${ElRipenessHeatmap.formatEl(median)}" else "No current data"
+    val medianText = if (median != null) ElRipenessHeatmap.formatEl(median) else "No current data"
 
     MarkerComposable(
         keys = arrayOf<Any>(block.paddockId, medianText, text),
@@ -655,7 +717,7 @@ private fun StatusRow(ui: ElRipenessUiState, textColor: Color) {
         )
         if (median != null) {
             Text(
-                "Median E-L ${ElRipenessHeatmap.formatEl(median)}",
+                "Median ${ElRipenessHeatmap.formatEl(median)}",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = textColor,
@@ -665,31 +727,28 @@ private fun StatusRow(ui: ElRipenessUiState, textColor: Color) {
 }
 
 @Composable
-private fun RipenessLegend() {
-    val stops = ElRipenessHeatmap.colourStops
+private fun RipenessLegend(phase: ElRipenessHeatmap.DevelopmentPhase) {
+    val colours = listOf(0.0, 0.25, 0.5, 0.75, 1.0).map { fraction ->
+        ElRipenessHeatmap.phaseColour(phase.start + (phase.end - phase.start) * fraction, phase).compose()
+    }
     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
         Box(
             Modifier
                 .fillMaxWidth()
                 .height(10.dp)
                 .clip(RoundedCornerShape(5.dp))
-                .background(Brush.horizontalGradient(stops.map { it.rgb.compose() }))
+                .background(Brush.horizontalGradient(colours))
                 .semantics {
-                    contentDescription = "Colour scale from E-L 1 dormant to E-L 43 harvest ripe"
+                    contentDescription = "Colour scale from E-L ${phase.start.toInt()} red to E-L ${phase.end.toInt()} green"
                 },
         )
         Spacer(Modifier.height(4.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("E-L 1", fontSize = 10.sp, color = LocalVineColors.current.textSecondary)
-            Text("E-L 43", fontSize = 10.sp, color = LocalVineColors.current.textSecondary)
+            Text("E-L ${phase.start.toInt()}", fontSize = 10.sp, color = LocalVineColors.current.textSecondary)
+            Text("E-L ${phase.end.toInt()}", fontSize = 10.sp, color = LocalVineColors.current.textSecondary)
         }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "E-L 47 (berries harvest-ripe) is recorded but never plotted — it sits outside " +
-                "the 1–43 surface scale.",
-            fontSize = 10.sp,
-            color = LocalVineColors.current.textSecondary,
-        )
+        Spacer(Modifier.height(4.dp))
+        Text(phase.title, fontSize = 10.sp, color = LocalVineColors.current.textSecondary)
     }
 }
 
@@ -704,7 +763,7 @@ private fun ObservationSheetBody(
     val blockName = ui.blocks.firstOrNull { it.id == observation.paddockId }?.name
     Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
         Text(
-            "E-L ${ElRipenessHeatmap.formatEl(observation.el)}",
+            ElRipenessHeatmap.formatEl(observation.el),
             fontSize = 22.sp,
             fontWeight = FontWeight.Bold,
             color = vine.textPrimary,
