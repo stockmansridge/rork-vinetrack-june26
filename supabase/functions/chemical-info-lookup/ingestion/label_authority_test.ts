@@ -400,7 +400,7 @@ Deno.test("§12.7 + §12.13: identity, chemistry, label, WHP and parser version 
   assertEquals(merged.activity_groups, ["M3"]);
   assertEquals(merged.registration.label_reference, "https://elabels.apvma.gov.au/59688ELBL.pdf");
   assertEquals(merged.label_extraction.parser_version, LABEL_PARSER_VERSION);
-  assertEquals(LABEL_PARSER_VERSION, 5);
+  assertEquals(LABEL_PARSER_VERSION, 6);
 
   // Every grapevine use keeps the label's own 30-day withholding period,
   // rate or no rate.

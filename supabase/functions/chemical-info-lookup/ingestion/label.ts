@@ -729,6 +729,8 @@ function cropTokens(raw: string): Set<string> {
  */
 export function cropsCorrespond(a: string, b: string): boolean {
   const grapeCrop = /\b(?:grapes?|grapevines?|vineyards?|vines?)\b/i;
+  const standaloneVine = /^\s*vines?\s*$/i;
+  const genericVineHeading = /\b(?:tree|crops?)\b/i;
   const grapefruit = /\bgrapefruits?\b/i;
   // "Grapefruit" is a citrus crop, never a grape/vine direction. The token
   // normaliser must not let the embedded word "grape" bridge those crops.
@@ -736,6 +738,14 @@ export function cropsCorrespond(a: string, b: string): boolean {
     (grapeCrop.test(a) && grapefruit.test(b) && !grapeCrop.test(b)) ||
     (grapeCrop.test(b) && grapefruit.test(a) && !grapeCrop.test(a))
   ) return false;
+  // Register host tables sometimes name the crop only as VINE, while labels
+  // print Vines. VINE is otherwise deliberately generic, so grant this bridge
+  // only to a standalone word and a specific grape-family crop — never to a
+  // category heading such as TREE AND VINE CROPS.
+  if (
+    (standaloneVine.test(a) && grapeCrop.test(b) && !genericVineHeading.test(b)) ||
+    (standaloneVine.test(b) && grapeCrop.test(a) && !genericVineHeading.test(a))
+  ) return true;
   const ta = cropTokens(a);
   const tb = cropTokens(b);
   if (!ta.size || !tb.size) return false;
@@ -749,6 +759,9 @@ function targetNorm(raw: string): string {
     .replace(/[^A-Z0-9]+/g, " ")
     .replace(/\bLONGTAILED\b/g, "LONGTAIL")
     .replace(/\bMEALY\s+BUG\b/g, "MEALYBUG")
+    // Measured APVMA wording: label "Cutworms" versus register "CUTWORM -
+    // AGROTIS SPP.". This is the same pest noun, not a target inference.
+    .replace(/\bCUTWORMS\b/g, "CUTWORM")
     .trim()
     // The register qualifies some pests with the crop ("DOWNY MILDEW ON
     // GRAPE"); the qualifier is crop context, not part of the target.

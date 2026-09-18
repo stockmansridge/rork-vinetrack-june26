@@ -130,10 +130,9 @@ import com.rork.vinetrack.data.PinCaptureEvidenceStore
 import com.rork.vinetrack.data.PinLocationResult
 import com.rork.vinetrack.data.PinTapCaptureCoordinator
 import com.rork.vinetrack.data.QualifiedLocationFix
-import com.rork.vinetrack.data.PinCategoryFilter
 import com.rork.vinetrack.data.PinCompletionFilter
-import com.rork.vinetrack.data.PinQueryFilter
 import com.rork.vinetrack.data.PinQueryPolicy
+import com.rork.vinetrack.data.PinTypeFilter
 import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.PinPresentationTarget
 import com.rork.vinetrack.data.PhotoPresentation
@@ -203,11 +202,15 @@ fun PinsScreen(
     val scope = rememberCoroutineScope()
     // List ordering; survives view-mode switches and rotation.
     var pinSort by rememberSaveable { mutableStateOf(PinSort.NEWEST) }
-    // null = All; otherwise a PinMode raw value ("Repairs" / "Growth").
-    var modeFilter by remember { mutableStateOf<String?>(initialMode) }
-    var includesCurrentElStage by rememberSaveable { mutableStateOf(false) }
-    var includesElStages by rememberSaveable { mutableStateOf(false) }
+    // One source of truth for the six mutually exclusive top-level type chips.
+    var typeFilter by rememberSaveable { mutableStateOf(PinTypeFilter.fromLegacyMode(initialMode)) }
     var selectedElStageCodes by rememberSaveable { mutableStateOf<Set<String>>(emptySet()) }
+    val modeFilter = when (typeFilter) {
+        PinTypeFilter.REPAIRS -> "Repairs"
+        PinTypeFilter.GROWTH -> "Growth"
+        PinTypeFilter.MANUAL_ISSUES -> "ManualIssue"
+        else -> null
+    }
     // null = All statuses; true = Completed; false = Open. Defaults to Open
     // ("Not done"), mirroring the iOS shared completion filter.
     var statusFilter by remember { mutableStateOf<Boolean?>(false) }
@@ -343,24 +346,17 @@ fun PinsScreen(
             seasonZone = season.zone,
         )
     }
-    val visiblePins = remember(sourcePins, currentElSelection, modeFilter, includesCurrentElStage, includesElStages, selectedElStageCodes, statusFilter, selectedNames, selectedBlockIds, season) {
-        val category = when (modeFilter) {
-            "Repairs" -> PinCategoryFilter.REPAIRS
-            "Growth" -> PinCategoryFilter.GROWTH
-            "ManualIssue" -> PinCategoryFilter.MANUAL_ISSUES
-            else -> null
-        }
-        val query = PinQueryFilter(
-            categories = PinQueryPolicy.categoriesFor(category),
-            includesElStages = includesCurrentElStage || includesElStages,
-            selectedElStageCodes = if (includesCurrentElStage) emptySet() else selectedElStageCodes,
+    val visiblePins = remember(sourcePins, currentElSelection, typeFilter, selectedElStageCodes, statusFilter, selectedNames, selectedBlockIds, season) {
+        val query = PinQueryPolicy.filterFor(
+            type = typeFilter,
+            selectedElStageCodes = selectedElStageCodes,
             completion = when (statusFilter) {
                 true -> PinCompletionFilter.DONE
                 false -> PinCompletionFilter.NOT_DONE
                 null -> PinCompletionFilter.BOTH
             },
         )
-        val filterSource = if (includesCurrentElStage) currentElSelection.pins else sourcePins
+        val filterSource = if (typeFilter.isCurrentElStage) currentElSelection.pins else sourcePins
         filterSource.filter { pin ->
             val isElRecord = pin.growthStageCode != null || pin.id in authoritativeElPinIds
             season.contains(parseIsoMillis(pin.createdAt)) &&
@@ -378,9 +374,9 @@ fun PinsScreen(
     val currentElBlockLabels = remember(
         visiblePins,
         currentElSelection,
-        includesCurrentElStage,
+        typeFilter,
     ) {
-        if (!includesCurrentElStage) {
+        if (!typeFilter.isCurrentElStage) {
             emptyMap()
         } else {
             val visibleIds = visiblePins.mapTo(HashSet()) { it.id }
@@ -649,16 +645,17 @@ fun PinsScreen(
                 }
             }
             PinsFilterBar(
-                modeFilter = modeFilter,
-                includesCurrentElStage = includesCurrentElStage,
-                includesElStages = includesElStages,
+                typeFilter = typeFilter,
                 statusFilter = statusFilter,
                 activeFilterCount = (if (selectedNames.isEmpty()) 0 else 1) +
                     (if (selectedBlockIds.isEmpty()) 0 else 1) +
                     (if (season.isAll) 0 else 1),
-                onModeFilter = { modeFilter = it },
-                onCurrentElStage = { includesCurrentElStage = !includesCurrentElStage },
-                onElStages = { includesElStages = !includesElStages },
+                onTypeFilter = { selection ->
+                    typeFilter = typeFilter.selectionAfterTapping(selection)
+                    if (typeFilter == PinTypeFilter.ALL || typeFilter.ordinaryCategory != null) {
+                        selectedElStageCodes = emptySet()
+                    }
+                },
                 onStatusFilter = { statusFilter = it },
                 onOpenFilters = { showFilterSheet = true },
             )
@@ -827,12 +824,12 @@ fun PinsScreen(
             colorMap = colorMap,
             paddocks = uniquePaddocks,
             season = season,
-            includesElStages = includesElStages,
+            includesElStages = typeFilter == PinTypeFilter.EL_STAGES,
             selectedElStageCodes = selectedElStageCodes,
             onSeason = { seasonSelection = it },
             onElStages = { includes, stages ->
-                includesElStages = includes
-                selectedElStageCodes = stages
+                typeFilter = if (includes) PinTypeFilter.EL_STAGES else PinTypeFilter.ALL
+                selectedElStageCodes = if (includes) stages else emptySet()
             },
             onNames = { selectedNames = it },
             onPaddocks = { onSelectedBlockIdsChange(it) },
@@ -944,14 +941,10 @@ private fun PinsViewModeButton(icon: ImageVector, desc: String, selected: Boolea
 /** Shared mode + status filter bar shown above every Pins view mode (iOS parity). */
 @Composable
 private fun PinsFilterBar(
-    modeFilter: String?,
-    includesCurrentElStage: Boolean,
-    includesElStages: Boolean,
+    typeFilter: PinTypeFilter,
     statusFilter: Boolean?,
     activeFilterCount: Int,
-    onModeFilter: (String?) -> Unit,
-    onCurrentElStage: () -> Unit,
-    onElStages: () -> Unit,
+    onTypeFilter: (PinTypeFilter) -> Unit,
     onStatusFilter: (Boolean?) -> Unit,
     onOpenFilters: () -> Unit,
 ) {
@@ -964,12 +957,18 @@ private fun PinsFilterBar(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        PinModeFilterChip("All", modeFilter == null) { onModeFilter(null) }
-        PinModeFilterChip("Repairs", modeFilter == "Repairs") { onModeFilter("Repairs") }
-        PinModeFilterChip("Growth", modeFilter == "Growth") { onModeFilter("Growth") }
-        PinModeFilterChip("Current EL Stage", includesCurrentElStage) { onCurrentElStage() }
-        PinModeFilterChip("EL Stages", includesElStages) { onElStages() }
-        PinModeFilterChip("Manual Issues", modeFilter == "ManualIssue") { onModeFilter("ManualIssue") }
+        PinModeFilterChip("All", typeFilter == PinTypeFilter.ALL) { onTypeFilter(PinTypeFilter.ALL) }
+        PinModeFilterChip("Repairs", typeFilter == PinTypeFilter.REPAIRS) { onTypeFilter(PinTypeFilter.REPAIRS) }
+        PinModeFilterChip("Growth", typeFilter == PinTypeFilter.GROWTH) { onTypeFilter(PinTypeFilter.GROWTH) }
+        PinModeFilterChip("Current EL Stage", typeFilter == PinTypeFilter.CURRENT_EL_STAGE) {
+            onTypeFilter(PinTypeFilter.CURRENT_EL_STAGE)
+        }
+        PinModeFilterChip("EL Stages", typeFilter == PinTypeFilter.EL_STAGES) {
+            onTypeFilter(PinTypeFilter.EL_STAGES)
+        }
+        PinModeFilterChip("Manual Issues", typeFilter == PinTypeFilter.MANUAL_ISSUES) {
+            onTypeFilter(PinTypeFilter.MANUAL_ISSUES)
+        }
         Box(Modifier.size(width = 1.dp, height = 22.dp).background(vine.textSecondary.copy(alpha = 0.3f)))
         PinsFilterButton(activeFilterCount, onOpenFilters)
         Box(Modifier.size(width = 1.dp, height = 22.dp).background(vine.textSecondary.copy(alpha = 0.3f)))

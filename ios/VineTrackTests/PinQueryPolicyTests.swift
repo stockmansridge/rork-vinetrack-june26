@@ -51,6 +51,92 @@ struct PinQueryPolicyTests {
         #expect(!repairs.matches(pin(mode: .growth)))
     }
 
+    private func visiblePins(
+        _ pins: [VinePin],
+        type: PinTypeFilter,
+        selectedELStageCodes: Set<String> = []
+    ) -> [VinePin] {
+        let authoritativeELPinIds = Set(pins.compactMap { $0.growthStageCode == nil ? nil : $0.id })
+        let source = type.isCurrentELStage
+            ? PinQueryPolicy.currentELSelection(from: pins, authoritativeELPinIds: authoritativeELPinIds).pins
+            : pins
+        let query = PinQueryPolicy.filter(
+            for: type,
+            selectedELStageCodes: selectedELStageCodes,
+            completion: .both
+        )
+        return source.filter { pin in
+            query.matches(pin, isELRecord: authoritativeELPinIds.contains(pin.id))
+        }
+    }
+
+    private var mixedTypePins: [VinePin] {
+        [
+            pin(name: "Repair", mode: .repairs),
+            pin(name: "Ordinary Growth", mode: .growth),
+            pin(name: "Manual Issue", mode: .manualIssue),
+            pin(name: "EL12", mode: .growth, stage: "EL12"),
+            pin(name: "EL18", mode: .growth, stage: "EL18")
+        ]
+    }
+
+    @Test func allToELStagesReturnsOnlyELPinsAndDeselectsAll() {
+        let mode = PinTypeFilter.all.selection(afterTapping: .elStages)
+        #expect(mode == .elStages)
+        #expect(mode != .all)
+        #expect(visiblePins(mixedTypePins, type: mode).map(\.buttonName) == ["EL12", "EL18"])
+        #expect(PinQueryPolicy.filter(for: mode).categories.isEmpty)
+    }
+
+    @Test func allToCurrentELReturnsOnlyHighestELPinAndDeselectsAll() {
+        let mode = PinTypeFilter.all.selection(afterTapping: .currentELStage)
+        #expect(mode == .currentELStage)
+        #expect(mode != .all)
+        #expect(visiblePins(mixedTypePins, type: mode).map(\.buttonName) == ["EL18"])
+        #expect(PinQueryPolicy.filter(for: mode).categories.isEmpty)
+    }
+
+    @Test func elStagesToAllRestoresOrdinaryDataset() {
+        let mode = PinTypeFilter.elStages.selection(afterTapping: .all)
+        #expect(mode == .all)
+        #expect(visiblePins(mixedTypePins, type: mode).map(\.buttonName) == ["Repair", "Ordinary Growth", "Manual Issue"])
+        #expect(!PinQueryPolicy.filter(for: mode).includesELStages)
+    }
+
+    @Test func currentELToRepairsReturnsOnlyRepairPins() {
+        let mode = PinTypeFilter.currentELStage.selection(afterTapping: .repairs)
+        #expect(mode == .repairs)
+        #expect(!mode.includesELStages)
+        #expect(visiblePins(mixedTypePins, type: mode).map(\.buttonName) == ["Repair"])
+    }
+
+    @Test func elStagesToCurrentELDisablesAllOtherTypes() {
+        let mode = PinTypeFilter.elStages.selection(afterTapping: .currentELStage)
+        #expect(mode == .currentELStage)
+        #expect(mode != .all && mode != .elStages)
+        #expect(visiblePins(mixedTypePins, type: mode).map(\.buttonName) == ["EL18"])
+    }
+
+    @Test func filterSheetIndividualELStageActivatesELModeAndNarrowsStage() {
+        let mode = PinTypeFilter.repairs.selection(afterTapping: .elStages)
+        let query = PinQueryPolicy.filter(for: mode, selectedELStageCodes: ["EL18"], completion: .both)
+        #expect(mode == .elStages)
+        #expect(mode != .all && mode != .currentELStage)
+        #expect(query.categories.isEmpty)
+        #expect(visiblePins(mixedTypePins, type: mode, selectedELStageCodes: ["EL18"]).map(\.buttonName) == ["EL18"])
+    }
+
+    @Test func everyMainChipProducesExactlyOneTopLevelSelection() {
+        for current in PinTypeFilter.allCases {
+            for requested in PinTypeFilter.allCases {
+                let selected = current.selection(afterTapping: requested)
+                #expect(PinTypeFilter.allCases.filter { $0 == selected }.count == 1)
+            }
+        }
+        #expect(PinTypeFilter.elStages.selection(afterTapping: .elStages) == .all)
+        #expect(PinTypeFilter.currentELStage.selection(afterTapping: .currentELStage) == .all)
+    }
+
     @Test func selectedELStagesMatchExactRecognizedIdentity() {
         let filter = PinQueryFilter(
             categories: PinQueryPolicy.categories(for: .growth),

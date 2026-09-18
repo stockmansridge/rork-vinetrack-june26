@@ -22,12 +22,10 @@ struct PinsView: View {
         _viewMode = State(initialValue: initialViewMode)
     }
 
-    @State private var selectedCategory: PinCategoryFilter?
+    /// One source of truth for the six mutually exclusive top-level type chips.
+    @State private var typeFilter: PinTypeFilter = .all
     @State private var contextNow: Date = Date()
     @State private var displayedLiveContextTitle: String?
-    /// E-L records remain explicitly excluded until enabled, even while All is selected.
-    @State private var showsCurrentELGrowthPins: Bool = false
-    @State private var showsELGrowthPins: Bool = false
     @State private var selectedELStageCodes: Set<String> = []
     @State private var completionFilter: PinCompletionFilter = .notDone
     @State private var selectedNames: Set<String> = []
@@ -123,13 +121,12 @@ struct PinsView: View {
     private var filteredPins: [VinePin] {
         let season = season
         let authoritativeELPinIds = Set(growthStageRecordSync.records.map { $0.pinId ?? $0.id })
-        let query = PinQueryFilter(
-            categories: PinQueryPolicy.categories(for: selectedCategory),
-            includesELStages: showsCurrentELGrowthPins || showsELGrowthPins,
-            selectedELStageCodes: showsCurrentELGrowthPins ? [] : selectedELStageCodes,
+        let query = PinQueryPolicy.filter(
+            for: typeFilter,
+            selectedELStageCodes: selectedELStageCodes,
             completion: completionFilter
         )
-        let filterSource = showsCurrentELGrowthPins ? currentELSelection.pins : sourcePins
+        let filterSource = typeFilter.isCurrentELStage ? currentELSelection.pins : sourcePins
         return filterSource.filter { pin in
             let isELRecord = pin.growthStageCode != nil || authoritativeELPinIds.contains(pin.id)
             if !season.contains(pin.timestamp) || !query.matches(pin, isELRecord: isELRecord) { return false }
@@ -143,7 +140,7 @@ struct PinsView: View {
     }
 
     private var currentELBlockLabels: [UUID: String] {
-        guard showsCurrentELGrowthPins else { return [:] }
+        guard typeFilter.isCurrentELStage else { return [:] }
         let visibleIds = Set(filteredPins.map(\.id))
         var labels: [UUID: String] = [:]
         for pin in currentELSelection.pins where visibleIds.contains(pin.id) {
@@ -388,7 +385,16 @@ struct PinsView: View {
             .sheet(isPresented: $showFilterSheet) {
                 PinFilterSheet(
                     selectedNames: $selectedNames,
-                    showsELGrowthPins: $showsELGrowthPins,
+                    showsELGrowthPins: Binding(
+                        get: { typeFilter == .elStages },
+                        set: { isEnabled in
+                            if isEnabled {
+                                typeFilter = .elStages
+                            } else if typeFilter == .elStages {
+                                selectTypeFilter(.all)
+                            }
+                        }
+                    ),
                     selectedELStageCodes: $selectedELStageCodes,
                     selectedPaddockIds: $selectedPaddockIds,
                     seasonSelection: $seasonSelection,
@@ -404,22 +410,42 @@ struct PinsView: View {
         }
     }
 
+    private func selectTypeFilter(_ selection: PinTypeFilter) {
+        typeFilter = selection
+        if selection == .all || selection.ordinaryCategory != nil {
+            selectedELStageCodes = []
+        }
+    }
+
+    private func toggleELTypeFilter(_ selection: PinTypeFilter) {
+        let next = typeFilter.selection(afterTapping: selection)
+        if next == .all {
+            selectTypeFilter(.all)
+        } else {
+            typeFilter = next
+        }
+    }
+
     private var filterBar: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
-                FilterChip(title: "All", isSelected: selectedCategory == nil) {
-                    selectedCategory = nil
+                FilterChip(title: "All", isSelected: typeFilter == .all) {
+                    selectTypeFilter(.all)
                 }
-                ForEach(PinCategoryFilter.allCases, id: \.self) { category in
-                    FilterChip(title: category.label, isSelected: selectedCategory == category) {
-                        selectedCategory = category
-                    }
+                FilterChip(title: "Repairs", isSelected: typeFilter == .repairs) {
+                    selectTypeFilter(.repairs)
                 }
-                FilterChip(title: "Current EL Stage", isSelected: showsCurrentELGrowthPins) {
-                    showsCurrentELGrowthPins.toggle()
+                FilterChip(title: "Growth", isSelected: typeFilter == .growth) {
+                    selectTypeFilter(.growth)
                 }
-                FilterChip(title: "EL Stages", isSelected: showsELGrowthPins) {
-                    showsELGrowthPins.toggle()
+                FilterChip(title: "Current EL Stage", isSelected: typeFilter == .currentELStage) {
+                    toggleELTypeFilter(.currentELStage)
+                }
+                FilterChip(title: "EL Stages", isSelected: typeFilter == .elStages) {
+                    toggleELTypeFilter(.elStages)
+                }
+                FilterChip(title: "Manual Issues", isSelected: typeFilter == .manualIssues) {
+                    selectTypeFilter(.manualIssues)
                 }
 
                 Divider()

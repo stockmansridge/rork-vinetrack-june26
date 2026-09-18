@@ -60,7 +60,7 @@ import {
 import { deriveLabelTargetWordings } from "./label_target_wording.ts";
 
 /** Bumped whenever the deterministic grammar changes (refresh comparability). */
-export const LABEL_PARSER_VERSION = 5;
+export const LABEL_PARSER_VERSION = 6;
 
 // ---------------------------------------------------------------------------
 // Default PDF text extractor (production) — unpdf, the serverless pdf.js

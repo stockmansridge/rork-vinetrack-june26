@@ -14,6 +14,36 @@ nonisolated enum PinCategoryFilter: String, CaseIterable, Hashable, Sendable {
     }
 }
 
+/// The single mutually exclusive type selection shared by Pins map, list and summary.
+nonisolated enum PinTypeFilter: CaseIterable, Equatable, Sendable {
+    case all
+    case repairs
+    case growth
+    case currentELStage
+    case elStages
+    case manualIssues
+
+    var ordinaryCategory: PinCategoryFilter? {
+        switch self {
+        case .repairs: return .repairs
+        case .growth: return .growth
+        case .manualIssues: return .manualIssues
+        case .all, .currentELStage, .elStages: return nil
+        }
+    }
+
+    var includesELStages: Bool {
+        self == .currentELStage || self == .elStages
+    }
+
+    var isCurrentELStage: Bool { self == .currentELStage }
+
+    /// EL chips toggle back to All; every other tap selects its requested type.
+    func selection(afterTapping requested: PinTypeFilter) -> PinTypeFilter {
+        requested.includesELStages && self == requested ? .all : requested
+    }
+}
+
 nonisolated struct PinQueryFilter: Sendable {
     var categories: Set<PinCategoryFilter> = Set(PinCategoryFilter.allCases)
     var includesELStages: Bool = false
@@ -53,6 +83,30 @@ nonisolated struct PinQueryFilter: Sendable {
 nonisolated enum PinQueryPolicy {
     static func categories(for selection: PinCategoryFilter?) -> Set<PinCategoryFilter> {
         selection.map { [$0] } ?? Set(PinCategoryFilter.allCases)
+    }
+
+    /// Builds the type portion of the shared query. E-L modes defensively carry
+    /// no ordinary categories, so presentation state cannot leak ordinary pins.
+    static func filter(
+        for type: PinTypeFilter,
+        selectedELStageCodes: Set<String> = [],
+        completion: PinCompletionFilter = .notDone
+    ) -> PinQueryFilter {
+        let categories: Set<PinCategoryFilter>
+        switch type {
+        case .all:
+            categories = Set(PinCategoryFilter.allCases)
+        case .repairs, .growth, .manualIssues:
+            categories = type.ordinaryCategory.map { [$0] } ?? []
+        case .currentELStage, .elStages:
+            categories = []
+        }
+        return PinQueryFilter(
+            categories: categories,
+            includesELStages: type.includesELStages,
+            selectedELStageCodes: type.isCurrentELStage ? [] : selectedELStageCodes,
+            completion: completion
+        )
     }
 
     static func normalizedELCode(_ value: String?) -> String? {

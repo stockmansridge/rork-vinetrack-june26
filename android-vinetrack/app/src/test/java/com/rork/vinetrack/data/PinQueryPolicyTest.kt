@@ -52,6 +52,90 @@ class PinQueryPolicyTest {
         assertFalse(PinQueryPolicy.matches(pin("growth", mode = "Growth"), repairs))
     }
 
+    private fun visiblePins(
+        pins: List<Pin>,
+        type: PinTypeFilter,
+        selectedElStageCodes: Set<String> = emptySet(),
+    ): List<Pin> {
+        val authoritativeElPinIds = pins.mapNotNullTo(HashSet()) { candidate ->
+            candidate.id.takeIf { candidate.growthStageCode != null }
+        }
+        val source = if (type.isCurrentElStage) {
+            PinQueryPolicy.currentElSelection(pins, authoritativeElPinIds).pins
+        } else {
+            pins
+        }
+        val query = PinQueryPolicy.filterFor(type, selectedElStageCodes, PinCompletionFilter.BOTH)
+        return source.filter { candidate ->
+            PinQueryPolicy.matches(candidate, query, candidate.id in authoritativeElPinIds)
+        }
+    }
+
+    private fun mixedTypePins(): List<Pin> = listOf(
+        pin("repair", name = "Repair", mode = "Repairs"),
+        pin("growth", name = "Ordinary Growth", mode = "Growth"),
+        pin("manual", name = "Manual Issue", mode = "ManualIssue"),
+        pin("el12", name = "EL12", mode = "Growth", stage = "EL12"),
+        pin("el18", name = "EL18", mode = "Growth", stage = "EL18"),
+    )
+
+    @Test fun `All to EL Stages returns only EL pins and deselects All`() {
+        val mode = PinTypeFilter.ALL.selectionAfterTapping(PinTypeFilter.EL_STAGES)
+        assertEquals(PinTypeFilter.EL_STAGES, mode)
+        assertFalse(mode == PinTypeFilter.ALL)
+        assertEquals(listOf("EL12", "EL18"), visiblePins(mixedTypePins(), mode).map { it.displayTitle })
+        assertTrue(PinQueryPolicy.filterFor(mode).categories.isEmpty())
+    }
+
+    @Test fun `All to Current EL returns only highest EL pin and deselects All`() {
+        val mode = PinTypeFilter.ALL.selectionAfterTapping(PinTypeFilter.CURRENT_EL_STAGE)
+        assertEquals(PinTypeFilter.CURRENT_EL_STAGE, mode)
+        assertFalse(mode == PinTypeFilter.ALL)
+        assertEquals(listOf("EL18"), visiblePins(mixedTypePins(), mode).map { it.displayTitle })
+        assertTrue(PinQueryPolicy.filterFor(mode).categories.isEmpty())
+    }
+
+    @Test fun `EL Stages to All restores ordinary dataset`() {
+        val mode = PinTypeFilter.EL_STAGES.selectionAfterTapping(PinTypeFilter.ALL)
+        assertEquals(PinTypeFilter.ALL, mode)
+        assertEquals(listOf("Repair", "Ordinary Growth", "Manual Issue"), visiblePins(mixedTypePins(), mode).map { it.displayTitle })
+        assertFalse(PinQueryPolicy.filterFor(mode).includesElStages)
+    }
+
+    @Test fun `Current EL to Repairs returns only repair pins`() {
+        val mode = PinTypeFilter.CURRENT_EL_STAGE.selectionAfterTapping(PinTypeFilter.REPAIRS)
+        assertEquals(PinTypeFilter.REPAIRS, mode)
+        assertFalse(mode.includesElStages)
+        assertEquals(listOf("Repair"), visiblePins(mixedTypePins(), mode).map { it.displayTitle })
+    }
+
+    @Test fun `EL Stages to Current EL disables all other types`() {
+        val mode = PinTypeFilter.EL_STAGES.selectionAfterTapping(PinTypeFilter.CURRENT_EL_STAGE)
+        assertEquals(PinTypeFilter.CURRENT_EL_STAGE, mode)
+        assertFalse(mode == PinTypeFilter.ALL || mode == PinTypeFilter.EL_STAGES)
+        assertEquals(listOf("EL18"), visiblePins(mixedTypePins(), mode).map { it.displayTitle })
+    }
+
+    @Test fun `filter sheet individual EL stage activates EL mode and narrows stage`() {
+        val mode = PinTypeFilter.REPAIRS.selectionAfterTapping(PinTypeFilter.EL_STAGES)
+        val query = PinQueryPolicy.filterFor(mode, setOf("EL18"), PinCompletionFilter.BOTH)
+        assertEquals(PinTypeFilter.EL_STAGES, mode)
+        assertFalse(mode == PinTypeFilter.ALL || mode == PinTypeFilter.CURRENT_EL_STAGE)
+        assertTrue(query.categories.isEmpty())
+        assertEquals(listOf("EL18"), visiblePins(mixedTypePins(), mode, setOf("EL18")).map { it.displayTitle })
+    }
+
+    @Test fun `every main chip produces exactly one top level selection`() {
+        PinTypeFilter.entries.forEach { current ->
+            PinTypeFilter.entries.forEach { requested ->
+                val selected = current.selectionAfterTapping(requested)
+                assertEquals(1, PinTypeFilter.entries.count { it == selected })
+            }
+        }
+        assertEquals(PinTypeFilter.ALL, PinTypeFilter.EL_STAGES.selectionAfterTapping(PinTypeFilter.EL_STAGES))
+        assertEquals(PinTypeFilter.ALL, PinTypeFilter.CURRENT_EL_STAGE.selectionAfterTapping(PinTypeFilter.CURRENT_EL_STAGE))
+    }
+
     @Test fun `selected EL stages match exact recognized identity`() {
         val filter = PinQueryFilter(
             categories = PinQueryPolicy.categoriesFor(PinCategoryFilter.GROWTH),

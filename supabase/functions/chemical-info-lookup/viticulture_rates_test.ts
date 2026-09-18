@@ -71,6 +71,82 @@ Deno.test("APVMA 52518 recovers a crop prefix only when the remaining fungicide 
   assertEquals(binding.unbound, []);
 });
 
+Deno.test("standalone Vines rows bind explicit rates without treating category headings as crops", () => {
+  const fixtures = [
+    { raw: "250 g/100 L", basis: "per_100_litres", value: 250, min: undefined, max: undefined },
+    { raw: "95 to 135 g/ 100L", basis: "range_per_100_litres", value: undefined, min: 95, max: 135 },
+    { raw: "115 to 165g/ 100L", basis: "range_per_100_litres", value: undefined, min: 115, max: 165 },
+    { raw: "100 – 130 g/100 L", basis: "range_per_100_litres", value: undefined, min: 100, max: 130 },
+  ];
+  for (const fixture of fixtures) {
+    const row: DfuRow = {
+      crop_text: "Vines",
+      target_lines: ["Downy mildew", "(Plasmopara viticola)"],
+      rate_text: fixture.raw,
+      rate_basis: null,
+      rate_ha_text: "",
+      whp_text: "",
+      comments_text: "Apply as the registered direction states.",
+      rate_unit_hint: null,
+    };
+    const binding = bindDfuRows([row], [{
+      crop: "VINE",
+      target_raw: "DOWNY MILDEW ON GRAPE",
+      statements: [],
+    }]);
+    assertEquals(binding.ratesByClaim.get(0)?.map((item) => [
+      item.basis,
+      item.value,
+      item.min_value,
+      item.max_value,
+      item.unit,
+    ]), [[fixture.basis, fixture.value, fixture.min, fixture.max, "g"]]);
+    assertEquals(binding.unbound, []);
+  }
+
+  const categoryRow: DfuRow = {
+    crop_text: "TREE AND VINE CROPS",
+    target_lines: ["Downy mildew"],
+    rate_text: "250 g/100 L",
+    rate_basis: null,
+    rate_ha_text: "",
+    whp_text: "",
+    comments_text: "",
+    rate_unit_hint: null,
+  };
+  const categoryBinding = bindDfuRows([categoryRow], [{
+    crop: "VINE",
+    target_raw: "DOWNY MILDEW ON GRAPE",
+    statements: [],
+  }]);
+  assertEquals(categoryBinding.ratesByClaim.size, 0);
+});
+
+Deno.test("APVMA 40146 binds plural Cutworms to its explicit registered cutworm claim", () => {
+  const row: DfuRow = {
+    crop_text: "Grapes (butt treatments only)",
+    target_lines: ["Cutworms"],
+    rate_text: "160 to 200 mL/ 100 L water",
+    rate_basis: null,
+    rate_ha_text: "",
+    whp_text: "",
+    comments_text: "Use higher rate where high insect pressure occurs.",
+    rate_unit_hint: null,
+  };
+  const binding = bindDfuRows([row], [{
+    crop: "GRAPE",
+    target_raw: "CUTWORM - AGROTIS SPP.",
+    statements: [],
+  }]);
+  assertEquals(binding.ratesByClaim.get(0)?.map((item) => [
+    item.basis,
+    item.min_value,
+    item.max_value,
+    item.unit,
+  ]), [["range_per_100_litres", 160, 200, "mL"]]);
+  assertEquals(binding.unbound, []);
+});
+
 Deno.test("APVMA 52710 merged herbicide quantities remain unbound without a target", () => {
   const rows: DfuRow[] = [{
     crop_text: "",

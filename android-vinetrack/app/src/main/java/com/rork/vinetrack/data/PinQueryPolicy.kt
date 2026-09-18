@@ -5,6 +5,43 @@ import com.rork.vinetrack.data.model.Pin
 enum class PinCategoryFilter { REPAIRS, GROWTH, MANUAL_ISSUES }
 enum class PinCompletionFilter { NOT_DONE, DONE, BOTH }
 
+/** The single mutually exclusive type selection shared by Pins map, list and stats. */
+enum class PinTypeFilter {
+    ALL,
+    REPAIRS,
+    GROWTH,
+    CURRENT_EL_STAGE,
+    EL_STAGES,
+    MANUAL_ISSUES;
+
+    val ordinaryCategory: PinCategoryFilter?
+        get() = when (this) {
+            REPAIRS -> PinCategoryFilter.REPAIRS
+            GROWTH -> PinCategoryFilter.GROWTH
+            MANUAL_ISSUES -> PinCategoryFilter.MANUAL_ISSUES
+            ALL, CURRENT_EL_STAGE, EL_STAGES -> null
+        }
+
+    val includesElStages: Boolean
+        get() = this == CURRENT_EL_STAGE || this == EL_STAGES
+
+    val isCurrentElStage: Boolean
+        get() = this == CURRENT_EL_STAGE
+
+    /** EL chips toggle back to All; every other tap selects its requested type. */
+    fun selectionAfterTapping(requested: PinTypeFilter): PinTypeFilter =
+        if (requested.includesElStages && this == requested) ALL else requested
+
+    companion object {
+        fun fromLegacyMode(mode: String?): PinTypeFilter = when (mode) {
+            "Repairs" -> REPAIRS
+            "Growth" -> GROWTH
+            "ManualIssue" -> MANUAL_ISSUES
+            else -> ALL
+        }
+    }
+}
+
 data class PinQueryFilter(
     val categories: Set<PinCategoryFilter> = PinCategoryFilter.entries.toSet(),
     val includesElStages: Boolean = false,
@@ -15,6 +52,26 @@ data class PinQueryFilter(
 object PinQueryPolicy {
     fun categoriesFor(selection: PinCategoryFilter?): Set<PinCategoryFilter> =
         selection?.let(::setOf) ?: PinCategoryFilter.entries.toSet()
+
+    /** E-L modes defensively carry no ordinary categories. */
+    fun filterFor(
+        type: PinTypeFilter,
+        selectedElStageCodes: Set<String> = emptySet(),
+        completion: PinCompletionFilter = PinCompletionFilter.NOT_DONE,
+    ): PinQueryFilter {
+        val categories = when (type) {
+            PinTypeFilter.ALL -> PinCategoryFilter.entries.toSet()
+            PinTypeFilter.REPAIRS, PinTypeFilter.GROWTH, PinTypeFilter.MANUAL_ISSUES ->
+                type.ordinaryCategory?.let(::setOf).orEmpty()
+            PinTypeFilter.CURRENT_EL_STAGE, PinTypeFilter.EL_STAGES -> emptySet()
+        }
+        return PinQueryFilter(
+            categories = categories,
+            includesElStages = type.includesElStages,
+            selectedElStageCodes = if (type.isCurrentElStage) emptySet() else selectedElStageCodes,
+            completion = completion,
+        )
+    }
 
     fun normalizedElCode(value: String?): String? {
         val code = value?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: return null
