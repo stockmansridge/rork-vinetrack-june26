@@ -47,7 +47,9 @@ private enum ChemicalVerificationFilter: String, CaseIterable, Identifiable {
 struct ChemicalsManagementView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.accessControl) private var accessControl
+    @Environment(SystemAdminService.self) private var systemAdmin
     @State private var showAddSheet: Bool = false
+    @State private var showSearchV2: Bool = false
     @State private var editingChemical: SavedChemical?
     @State private var matchingChemical: SavedChemical?
     @State private var reverifyingChemical: SavedChemical?
@@ -212,10 +214,15 @@ struct ChemicalsManagementView: View {
         .toolbar {
             if canManageSetup {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showAddSheet = true
-                    } label: {
-                        Image(systemName: "plus")
+                    if systemAdmin.isSystemAdmin && systemAdmin.isEnabled(SystemFeatureFlagKey.chemicalSearchV2) {
+                        Menu {
+                            Button("Existing Chemical Search") { showAddSheet = true }
+                            Button("Chemical Search V2") { showSearchV2 = true }
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                    } else {
+                        Button { showAddSheet = true } label: { Image(systemName: "plus") }
                     }
                 }
             }
@@ -236,9 +243,11 @@ struct ChemicalsManagementView: View {
             }
         }
         .sheet(isPresented: $showAddSheet) {
-            // Adding starts with identification rather than a blank form: the
-            // structured record is only worth having if the product is known.
+            // Existing Chemical Search remains unchanged.
             ChemicalMatchFlowView()
+        }
+        .sheet(isPresented: $showSearchV2) {
+            ChemicalSearchV2View()
         }
         .sheet(item: $matchingChemical) { chem in
             ChemicalMatchFlowView(existing: chem, prefillQuery: chem.name)

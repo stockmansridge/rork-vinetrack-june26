@@ -247,6 +247,8 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
     /// A larger current master revision means “updated verified information
     /// available” via Re-verify; master updates never rewrite this record.
     var masterSourceRevision: Int?
+    /// Vineyard-level creation provenance. Nil for legacy records.
+    var entrySource: String?
 
     // MARK: Confirmed operational default (sql/214)
 
@@ -301,7 +303,8 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         chemicalIntelligence: ChemicalIntelligence? = nil,
         masterChemicalId: UUID? = nil,
         masterSourceRevision: Int? = nil,
-        defaultRates: StoredChemicalDefaultRates? = nil
+        defaultRates: StoredChemicalDefaultRates? = nil,
+        entrySource: String? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -340,6 +343,7 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         self.masterChemicalId = masterChemicalId
         self.masterSourceRevision = masterSourceRevision
         self.defaultRates = defaultRates
+        self.entrySource = entrySource
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -352,7 +356,7 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         case applicationNotes, isActive
         case chemicalIntelligence
         case masterChemicalId, masterSourceRevision
-        case defaultRates
+        case defaultRates, entrySource
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -413,6 +417,7 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         // either way, so nothing a calculation needs is ever lost here.
         defaultRates = try? container.decodeIfPresent(
             StoredChemicalDefaultRates.self, forKey: .defaultRates)
+        entrySource = try? container.decodeIfPresent(String.self, forKey: .entrySource)
     }
 }
 

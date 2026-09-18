@@ -716,6 +716,8 @@ data class AppUiState(
      * owner/manager roles do NOT grant this — mirrors iOS `SystemAdminService`.
      */
     val isSystemAdmin: Boolean = false,
+    /** Shared remote feature flags keyed by system_feature_flags.key. */
+    val systemFeatureFlags: Map<String, Boolean> = emptyMap(),
     /** Pending team invitations for the selected vineyard (Team & Access). */
     val pendingInvitations: List<Invitation> = emptyList(),
     /** True while a team mutation (invite/role/remove/transfer) is in flight. */
@@ -5564,8 +5566,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 Log.w(ADMIN_TAG, "System admin check failed twice — keeping current value (${_ui.value.isSystemAdmin})")
                 return@launch
             }
+            val flags = runCatching { systemAdminRepository.fetchFlags() }
+                .getOrDefault(emptyList())
+                .associate { it.key to it.isEnabled }
             Log.d(ADMIN_TAG, "System admin status resolved: $admin")
-            _ui.update { it.copy(isSystemAdmin = admin) }
+            _ui.update { it.copy(isSystemAdmin = admin, systemFeatureFlags = flags) }
         }
     }
 

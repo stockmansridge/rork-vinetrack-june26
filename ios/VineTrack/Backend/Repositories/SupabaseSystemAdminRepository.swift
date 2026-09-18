@@ -12,6 +12,7 @@ nonisolated enum SystemFeatureFlagKey {
     static let showRawJSONPanels      = "show_raw_json_panels"
     static let showCostingDiagnostics = "show_costing_diagnostics"
     static let enableBetaFeatures     = "enable_beta_features"
+    static let chemicalSearchV2       = "chemical_search_v2"
     /// Master switch for the soil-aware irrigation model + NSW SEED lookup
     /// button. Defaults to ON for system admins; falls back to enabled when
     /// the flag row is missing so existing Phase 1 manual soil profiles keep

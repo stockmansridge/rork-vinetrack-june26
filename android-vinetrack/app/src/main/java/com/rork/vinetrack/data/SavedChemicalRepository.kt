@@ -118,6 +118,7 @@ class SavedChemicalRepository(private val session: SessionStore) {
          * Only a path that actually captured a confirmation sets this.
          */
         val defaultRates: StoredChemicalDefaultRates? = null,
+        val entrySource: String? = null,
     )
 
     /**
@@ -237,6 +238,7 @@ class SavedChemicalRepository(private val session: SessionStore) {
         // --- Master Chemical Catalogue (sql/199) ---
         @SerialName("master_chemical_id") val masterChemicalId: String? = null,
         @SerialName("master_source_revision") val masterSourceRevision: Int? = null,
+        @SerialName("entry_source") val entrySource: String? = null,
     )
 
     @Serializable
@@ -311,6 +313,7 @@ class SavedChemicalRepository(private val session: SessionStore) {
         // --- Master Chemical Catalogue (sql/199) ---
         @SerialName("master_chemical_id") val masterChemicalId: String? = null,
         @SerialName("master_source_revision") val masterSourceRevision: Int? = null,
+        @SerialName("entry_source") val entrySource: String? = null,
     )
 
     @Serializable
@@ -428,6 +431,7 @@ class SavedChemicalRepository(private val session: SessionStore) {
                 intelligenceSchemaVersion = intel.intelligenceSchemaVersion,
                 masterChemicalId = input.masterChemicalId,
                 masterSourceRevision = input.masterSourceRevision,
+                entrySource = input.entrySource,
             )
             val response = SupabaseClient.http.post(SupabaseClient.restUrl("saved_chemicals")) {
                 authHeaders(token)
@@ -497,6 +501,7 @@ class SavedChemicalRepository(private val session: SessionStore) {
                 intelligenceSchemaVersion = intel.intelligenceSchemaVersion,
                 masterChemicalId = input.masterChemicalId,
                 masterSourceRevision = input.masterSourceRevision,
+                entrySource = input.entrySource,
             )
             val response = SupabaseClient.http.patch(SupabaseClient.restUrl("saved_chemicals?id=eq.$id")) {
                 authHeaders(token)

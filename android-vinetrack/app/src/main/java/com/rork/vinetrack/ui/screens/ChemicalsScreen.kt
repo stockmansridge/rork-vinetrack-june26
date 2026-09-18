@@ -155,6 +155,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
     var verificationFilter by remember { mutableStateOf<ChemicalStoreFilter?>(null) }
     /** Non-null when running the Search → Match → Verify → Confirm wizard. */
     var matchingNew by remember { mutableStateOf(false) }
+    var matchingV2 by remember { mutableStateOf(false) }
     var matching by remember { mutableStateOf<SavedChemical?>(null) }
     /** Non-null when re-checking an already-identified product. */
     var reverifying by remember { mutableStateOf<SavedChemical?>(null) }
@@ -219,6 +220,11 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
             TopAppBar(
                 title = { Text("Chemicals") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
+                actions = {
+                    if (canManage && state.isSystemAdmin && state.systemFeatureFlags["chemical_search_v2"] == true) {
+                        TextButton(onClick = { matchingV2 = true }) { Text("Search V2") }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },
@@ -380,6 +386,9 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
         }
     }
 
+    if (matchingV2) {
+        ChemicalSearchV2Sheet(vm = vm, state = state, onDismiss = { matchingV2 = false })
+    }
     if (matchingNew) {
         ChemicalMatchFlowSheet(
             vm = vm,

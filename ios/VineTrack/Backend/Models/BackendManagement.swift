@@ -64,6 +64,7 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
     // backend that has not yet had sql/199 applied still decodes.
     let masterChemicalId: UUID?
     let masterSourceRevision: Int?
+    let entrySource: String?
     let createdAt: Date?
     let updatedAt: Date?
     let deletedAt: Date?
@@ -125,6 +126,7 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         case intelligenceSchemaVersion = "intelligence_schema_version"
         case masterChemicalId = "master_chemical_id"
         case masterSourceRevision = "master_source_revision"
+        case entrySource = "entry_source"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
@@ -173,6 +175,7 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         self.inventoryUnit = try c.decodeIfPresent(String.self, forKey: .inventoryUnit)
         self.applicationNotes = try c.decodeIfPresent(String.self, forKey: .applicationNotes)
         self.isActive = try c.decodeIfPresent(Bool.self, forKey: .isActive)
+        self.entrySource = try? c.decodeIfPresent(String.self, forKey: .entrySource)
         // Chemical Intelligence columns were added in sql/194. Every one is
         // read with `try?` so a backend without the migration — or a payload
         // written by a newer build — degrades to nil instead of failing the
@@ -309,6 +312,7 @@ nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
     // catalogue can never blank out a link the portal or another device set.
     let masterChemicalId: UUID?
     let masterSourceRevision: Int?
+    let entrySource: String?
     let createdBy: UUID?
     let clientUpdatedAt: Date
 
@@ -368,6 +372,7 @@ nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
         case intelligenceSchemaVersion = "intelligence_schema_version"
         case masterChemicalId = "master_chemical_id"
         case masterSourceRevision = "master_source_revision"
+        case entrySource = "entry_source"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
     }
@@ -452,6 +457,7 @@ extension BackendSavedChemical {
             intelligenceSchemaVersion: intel?.schemaVersion ?? 0,
             masterChemicalId: c.masterChemicalId,
             masterSourceRevision: c.masterSourceRevision,
+            entrySource: c.entrySource,
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt
         )
@@ -540,7 +546,8 @@ extension BackendSavedChemical {
             chemicalIntelligence: decodedIntelligence(),
             masterChemicalId: masterChemicalId,
             masterSourceRevision: masterSourceRevision,
-            defaultRates: defaultRates
+            defaultRates: defaultRates,
+            entrySource: entrySource
         )
     }
 }
