@@ -111,6 +111,8 @@ export interface ResolvedRegistration {
    * register result — `label_reference` simply stays unresolved.
    */
   label_document?: LabelDocumentDiscovery | null;
+  /** Whether the fetched label PDF completed deterministic text-layer extraction. */
+  label_text_extracted?: boolean;
   /**
    * Gate D4A.3 — a CANDIDATE re-reading of the same authoritative label
    * document by the state-aware table parser, or null when the document

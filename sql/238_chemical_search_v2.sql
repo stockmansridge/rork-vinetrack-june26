@@ -63,7 +63,7 @@ returns boolean language sql stable as $$
     or exists (
       select 1 from jsonb_array_elements(coalesce(m.registered_uses, '[]'::jsonb)) u
       where lower(coalesce(u->>'crop', '')) ~
-        '(^|[^a-z])(vineyards?|grapevines?|grapes?)([^a-z]|$)'
+        '(^|[^a-z])(vines?|vineyards?|grapevines?|grapes?|wine[[:space:]-]*grapes?|table[[:space:]-]*grapes?|dried[[:space:]-]*grapes?)([^a-z]|$)'
     )
     or exists (
       select 1 from jsonb_array_elements(coalesce(m.verification_sources, '[]'::jsonb)) s
@@ -225,30 +225,42 @@ begin
   from ranked r
   cross join lateral (
     select
-      (select s->>'reference'
-         from jsonb_array_elements(coalesce(r.verification_sources, '[]'::jsonb)) s
-        where s->>'kind' = 'manufacturer_label'
-          and lower(coalesce(s->>'name','')) like '%label%'
-          and coalesce(s->>'reference','') ~ '^https?://'
-          and lower(s->>'reference') !~ '^https://([^/]+\\.)?(apvma\\.gov\\.au|[^/]+\\.gov\\.au)(/|$)'
-        order by s->>'retrieved_at' desc nulls last limit 1) as manufacturer_label_url,
+      coalesce(
+        (select s->>'reference'
+           from jsonb_array_elements(coalesce(r.verification_sources, '[]'::jsonb)) s
+          where s->>'kind' = 'manufacturer_label'
+            and lower(coalesce(s->>'name','')) like '%label%'
+            and coalesce(s->>'reference','') ~ '^https?://'
+            and lower(s->>'reference') !~ '^https?://([^/]+\.)?(apvma\.gov\.au|[^/]+\.gov\.au)(/|$)'
+          order by s->>'retrieved_at' desc nulls last limit 1),
+        case when r.source_kind = 'manufacturer_label'
+          and coalesce(r.source_reference,'') ~ '^https?://'
+          and lower(r.source_reference) !~ '^https?://([^/]+\.)?(apvma\.gov\.au|[^/]+\.gov\.au)(/|$)'
+          then r.source_reference end
+      ) as manufacturer_label_url,
       (select s->>'reference'
          from jsonb_array_elements(coalesce(r.verification_sources, '[]'::jsonb)) s
         where (s->>'kind' in ('manufacturer_product','manufacturer_product_page')
                or lower(coalesce(s->>'name','')) like '%product page%')
           and coalesce(s->>'reference','') ~ '^https?://'
-          and lower(s->>'reference') !~ '^https://([^/]+\\.)?(apvma\\.gov\\.au|[^/]+\\.gov\\.au)(/|$)'
+          and lower(s->>'reference') !~ '^https?://([^/]+\.)?(apvma\.gov\.au|[^/]+\.gov\.au)(/|$)'
         order by s->>'retrieved_at' desc nulls last limit 1) as manufacturer_product_url,
       case
         when coalesce(r.label_reference,'') ~ '^https?://'
-         and lower(r.label_reference) ~ '^https://([^/]+\\.)?(apvma\\.gov\\.au|[^/]+\\.gov\\.au)(/|$)'
+         and lower(r.label_reference) ~ '^https?://([^/]+\.)?(apvma\.gov\.au|[^/]+\.gov\.au)(/|$)'
           then r.label_reference
-        else (select s->>'reference'
-          from jsonb_array_elements(coalesce(r.verification_sources, '[]'::jsonb)) s
-          where lower(coalesce(s->>'name','')) like '%label%'
-            and coalesce(s->>'reference','') ~ '^https?://'
-            and lower(s->>'reference') ~ '^https://([^/]+\\.)?(apvma\\.gov\\.au|[^/]+\\.gov\\.au)(/|$)'
-          order by s->>'retrieved_at' desc nulls last limit 1)
+        else coalesce(
+          (select s->>'reference'
+             from jsonb_array_elements(coalesce(r.verification_sources, '[]'::jsonb)) s
+            where lower(coalesce(s->>'name','')) like '%label%'
+              and coalesce(s->>'reference','') ~ '^https?://'
+              and lower(s->>'reference') ~ '^https?://([^/]+\.)?(apvma\.gov\.au|[^/]+\.gov\.au)(/|$)'
+            order by s->>'retrieved_at' desc nulls last limit 1),
+          case when r.source_kind = 'manufacturer_label'
+            and coalesce(r.source_reference,'') ~ '^https?://'
+            and lower(r.source_reference) ~ '^https?://([^/]+\.)?(apvma\.gov\.au|[^/]+\.gov\.au)(/|$)'
+            then r.source_reference end
+        )
       end as regulator_label_url
   ) urls
   where r.calculated_rank < 99

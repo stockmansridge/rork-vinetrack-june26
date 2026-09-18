@@ -565,6 +565,7 @@ async function resolveDetails(
     match_mode: mode,
     label_evidence: labelEvidence,
     label_document: labelDocument,
+    label_text_extracted: labelDoc.items !== null,
     label_panel_uses: labelPanelUses,
   };
 }
