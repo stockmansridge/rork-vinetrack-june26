@@ -50,7 +50,13 @@ begin
        or not has_function_privilege('authenticated','public.'||function_name,'execute') then
       raise exception 'S3 FAIL: function grants incorrect for %', function_name;
     end if;
-    if position('pg_catalog, public' in pg_get_functiondef(('public.'||function_name)::regprocedure)) = 0 then
+    if not exists(
+      select 1
+      from pg_proc p
+      cross join lateral unnest(coalesce(p.proconfig, array[]::text[])) as config(setting)
+      where p.oid=('public.'||function_name)::regprocedure
+        and regexp_replace(lower(config.setting), '[[:space:]]', '', 'g') = 'search_path=pg_catalog,public'
+    ) then
       raise exception 'S4 FAIL: fixed safe search_path missing for %', function_name;
     end if;
   end loop;
