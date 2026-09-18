@@ -551,10 +551,19 @@ enum SprayGuidedFormat {
     static func productDerivedPerHectare(_ line: SprayProductLineResult) -> String? {
         guard line.basis == .per100Litres,
               let perHectare = line.derivedQuantityPerHectare else { return nil }
-        let value = line.unitDisplay.display(perHectare)
+        let value: Double
+        let unit: String
+        if let label = line.labelRate, line.rate > 0 {
+            // Preserve the product-rate unit in the equivalent. A manual
+            // 320 mL/100 L rate reads 640 mL/ha, not 0.64 inventory L/ha.
+            value = perHectare * label.value / line.rate
+            unit = label.unit
+        } else {
+            value = line.unitDisplay.display(perHectare)
+            unit = line.unitDisplay.displayUnit
+        }
         let decimals: Int = value < 10 ? 2 : (value < 100 ? 1 : 0)
-        return "Derived equivalent: \(number(value, decimals: decimals)) "
-            + "\(line.unitDisplay.displayUnit)/ha"
+        return "Derived equivalent: \(number(value, decimals: decimals)) \(unit)/ha"
     }
 
     /// The action that would make an unresolved line calculable, in the

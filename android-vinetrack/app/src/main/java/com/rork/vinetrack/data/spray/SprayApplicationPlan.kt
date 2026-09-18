@@ -73,6 +73,8 @@ data class SprayProductLineResult(
     val quantityPerFullTank: Double?,
     val quantityInLastTank: Double?,
     val costPerUnit: Double?,
+    /** Display-only equivalent requirement per gross hectare for per-100-L rates. */
+    val derivedQuantityPerHectare: Double? = null,
     /**
      * The MEASURED value this line's rate was multiplied against — gross
      * hectares, treated hectares, carrier litres or row metres, depending on
@@ -289,6 +291,14 @@ object SprayApplicationPlanner {
                 quantityPerFullTank = perFullTank,
                 quantityInLastTank = inLastTank,
                 costPerUnit = line.costPerUnit,
+                derivedQuantityPerHectare = if (
+                    line.basis == SprayProductRateBasis.PER_100_LITRES &&
+                    total != null && (carrier.areaHectaresUsed ?: 0.0) > 0
+                ) {
+                    total / (carrier.areaHectaresUsed ?: 1.0)
+                } else {
+                    null
+                },
                 basisInput = basisInput,
             )
         }

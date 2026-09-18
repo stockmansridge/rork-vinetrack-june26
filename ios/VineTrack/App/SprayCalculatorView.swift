@@ -498,7 +498,13 @@ struct SprayCalculatorView: View {
                 for: chemical,
                 id: line.selectedRateId
             )
-            let labelUnit = selectedRate?.labelUnit.trimmedNonEmpty ?? chemical.unit.rawValue
+            let confirmed = SprayConfirmedRateSeeding.resolution(for: chemical, basis: line.basis)
+            let confirmedUnit = confirmed?.prefill?.unit ?? confirmed?.rangeSelection?.unit
+            // A confirmed manual/default rate's amount, unit and basis are one
+            // contract. The inventory/pack unit must never replace its rate unit.
+            let labelUnit = selectedRate?.labelUnit.trimmedNonEmpty
+                ?? confirmedUnit?.trimmedNonEmpty
+                ?? chemical.unit.rawValue
             let labelRate: SprayLabelRateDescriptor? = {
                 guard rate > 0 else { return nil }
                 let shown = SprayRegisteredUseRates.displayValue(
@@ -565,16 +571,18 @@ struct SprayCalculatorView: View {
             manualTotalLitresText.trimmingCharacters(in: .whitespaces)
         )
         inputs.litresPerHectare = Double(sprayRateText)
-        // The canopy's dilute demand, stated per hectare. The SAME canopy
-        // answer the row-length branch reads per 100 m — one table, one
-        // requirement, two ways of writing it down.
-        inputs.diluteLitresPerHectare = waterRateEntry?.litresPerHa
-        // The canopy drives dilute in BOTH carrier bases. Before this, the
-        // row-length path had no canopy at all, so this stayed nil, the
-        // concentration factor fell back to 1.0, and every per-100 L product
-        // on an SWNZ job was dosed as though the spray were dilute.
-        inputs.diluteLitresPer100Metres = effectiveDiluteLitresPer100m
-        inputs.appliedLitresPer100Metres = Double(appliedLitresPer100mText)
+        // Ground spray is direct operator-entered water volume. It carries no
+        // canopy dilute reference and no L/100 m canopy value.
+        if operationType == .bandedSpray {
+            inputs.diluteLitresPerHectare = nil
+            inputs.diluteLitresPer100Metres = nil
+            inputs.appliedLitresPer100Metres = nil
+        } else {
+            // The canopy's dilute demand, stated in both supported units.
+            inputs.diluteLitresPerHectare = waterRateEntry?.litresPerHa
+            inputs.diluteLitresPer100Metres = effectiveDiluteLitresPer100m
+            inputs.appliedLitresPer100Metres = Double(appliedLitresPer100mText)
+        }
         inputs.products = guidedProductLines
         inputs.notes = notes
         return inputs
@@ -1038,16 +1046,14 @@ struct SprayCalculatorView: View {
                 let preferredOrder: [RateBasis] = explicitBasis.map { [$0] } ?? preferredRateBases
                 let preferredBasis: RateBasis = explicitBasis
                     ?? SprayRateBasisPreference.fallbackBasis(for: effectiveCarrierBasis)
-                // Structured registered-use rates first, legacy rates only when
-                // the record has none.
-                let selection = SprayRegisteredUseRates.defaultSelection(
-                    for: saved, preferring: preferredOrder
-                )
+                // Reopen through the same confirmed-default handoff as a newly
+                // selected product, so amount + unit + per-100-L basis remain
+                // one contract across save and reopen.
                 lines.append(
-                    ChemicalLine(
-                        chemicalId: saved.id,
-                        selectedRateId: selection?.id ?? UUID(),
-                        basis: selection?.basis ?? preferredBasis
+                    SprayConfirmedRateSeeding.seededLine(
+                        for: saved,
+                        preferring: preferredOrder,
+                        fallbackBasis: preferredBasis
                     )
                 )
             }
@@ -3155,11 +3161,11 @@ struct SprayCalculatorView: View {
                 // A foliar pass is the case the canopy governs, and it gets the
                 // canopy → recommendation → sprayer → concentration sequence.
                 canopyAndSprayVolumeFields
+            } else if flow.requiresBandWidth {
+                // Undervine/Midrow is direct ground application volume. Never
+                // route it through canopy size, density or recommendations.
+                groundSprayVolumeFields
             } else if flow.effectiveCarrierBasis == .litresPer100Metres {
-                // A spreader has no canopy at all and a banded pass is governed
-                // by its band width, so both keep the existing controls rather
-                // than being asked a question that cannot change their
-                // arithmetic.
                 litresPer100mFields
             } else {
                 waterRateSection
@@ -3400,6 +3406,59 @@ struct SprayCalculatorView: View {
             return [flow.profile.defaultCarrierBasis, .manualTotalVolume]
         }
         return [.litresPer100Metres, .litresPerHectare, .manualTotalVolume]
+    }
+
+    /// Direct L/ha ground-spray entry for Undervine/Midrow.
+    @ViewBuilder
+    private var groundSprayVolumeFields: some View {
+        let carrier = flow.isCarrierResolved ? flow.plan.carrier : nil
+        let areaLabel = carrierAreaBasis == .treatedArea ? "treated" : "gross"
+
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Application rate")
+                    .font(.subheadline.weight(.semibold))
+                HStack(spacing: 8) {
+                    TextField("200", text: $sprayRateText)
+                        .keyboardType(.decimalPad)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(Color(.tertiarySystemGroupedBackground))
+                        .clipShape(.rect(cornerRadius: 8))
+                        .onChange(of: sprayRateText) { _, _ in hasEditedSprayRate = true }
+                    Text("L/\(areaLabel) ha")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                Text("Your sprayer's direct ground application rate — not a canopy recommendation.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(12)
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(.rect(cornerRadius: 10))
+
+            if let carrier {
+                GuidedCalculatedPanel(title: "Calculated spray water") {
+                    VStack(spacing: 8) {
+                        GuidedCalculatedRow(
+                            label: "Application rate",
+                            value: "\(SprayGuidedFormat.number(carrier.litresPerHectare ?? 0, decimals: 2)) L/\(areaLabel) ha"
+                        )
+                        GuidedCalculatedRow(
+                            label: "Calculation area",
+                            value: SprayGuidedFormat.hectares(carrier.areaHectaresUsed)
+                        )
+                        GuidedCalculatedRow(
+                            label: "Total spray water",
+                            value: SprayGuidedFormat.litres(carrier.totalLitres),
+                            emphasis: true
+                        )
+                        GuidedCalculatedRow(label: "Concentration factor", value: "Not used")
+                    }
+                }
+            }
+        }
     }
 
     /// Manual mode — ONE question, and nothing else.
@@ -3879,9 +3938,14 @@ struct SprayCalculatorView: View {
         guard let lineId = inspectingChemicalLineId,
               let index = chemicalLines.firstIndex(where: { $0.id == lineId }),
               chemicalLines[index].chemicalId == saved.id else { return }
+        let line = chemicalLines[index]
         let stillResolves = SprayRegisteredUseRates.vineyardRates(for: saved)
-            .contains { $0.id == chemicalLines[index].selectedRateId }
-        if !stillResolves {
+            .contains { $0.id == line.selectedRateId }
+        let stillHasConfirmedRate = SprayConfirmedRateSeeding.resolution(
+            for: saved,
+            basis: line.basis
+        ) != nil
+        if !stillResolves && !stillHasConfirmedRate {
             chemicalLines[index].selectedRateId = UUID()
             chemicalLines[index].overrideRate = nil
         }
@@ -4377,10 +4441,19 @@ private struct CalcChemicalLineCard: View {
     /// regulator never approved.
     private var hasGenuinePer100LVineyardRate: Bool {
         offeredRates.contains { $0.isSelectable && $0.basis == .per100Litres }
+            || confirmedResolution(for: .per100Litres) != nil
     }
 
     private var hasGenuinePerHectareVineyardRate: Bool {
         offeredRates.contains { $0.isSelectable && $0.basis == .perHectare }
+            || confirmedResolution(for: .perHectare) != nil
+    }
+
+    private func confirmedResolution(
+        for basis: ChemicalRateBasis
+    ) -> ChemicalSprayRateHandoff.Resolution? {
+        guard let chem = selectedChemical else { return nil }
+        return SprayConfirmedRateSeeding.resolution(for: chem, basis: basis)
     }
 
     /// 100 m is recommended only where the label supports it.
@@ -4393,6 +4466,20 @@ private struct CalcChemicalLineCard: View {
     /// different denominator, which is exactly the cross-conversion this
     /// control exists to prevent.
     private func selectBasis(_ basis: ChemicalRateBasis) {
+        if let confirmed = confirmedResolution(for: basis), let chem = selectedChemical {
+            line.basis = basis
+            line.selectedRateId = UUID()
+            if let prefill = confirmed.prefill {
+                line.overrideRate = SprayRegisteredUseRates.baseValue(
+                    prefill.rate,
+                    labelUnit: prefill.unit,
+                    chemical: chem
+                )
+            } else {
+                line.overrideRate = nil
+            }
+            return
+        }
         guard let rate = offeredRates.first(where: { $0.isSelectable && $0.basis == basis })
         else { return }
         line.selectedRateId = rate.id
@@ -4427,7 +4514,7 @@ private struct CalcChemicalLineCard: View {
     private var rateBasisControl: some View {
         let current = selectedOfferedRate?.basis ?? line.basis
         VStack(alignment: .leading, spacing: 8) {
-            Text("Label rate basis")
+            Text("Rate basis")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
@@ -4448,8 +4535,8 @@ private struct CalcChemicalLineCard: View {
                 )
             }
 
-            Text("What the label's rate is measured against. Your water volume "
-                 + "basis is chosen in Carrier Volume and is not changed by this.")
+            Text("What this product rate is measured against. Your water volume "
+                 + "basis is chosen in Carrier / Spray Volume and is not changed by this.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -4749,7 +4836,9 @@ private struct CalcChemicalLineCard: View {
             .padding(.top, 10)
             .padding(.bottom, 4)
 
-            if !offeredRates.isEmpty {
+            if !offeredRates.isEmpty
+                || hasGenuinePer100LVineyardRate
+                || hasGenuinePerHectareVineyardRate {
                 Divider().padding(.leading, 14)
                 rateBasisControl
             }
@@ -4807,38 +4896,39 @@ private struct CalcChemicalLineCard: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
 
-            if let chem = selectedChemical, !offeredRates.isEmpty {
-                Divider().padding(.leading, 14)
+            if let chem = selectedChemical {
+                if !offeredRates.isEmpty {
+                    Divider().padding(.leading, 14)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Rate").font(.caption).foregroundStyle(.secondary)
-                    Menu {
-                        rateMenuItems(showsCheckmark: true)
-                    } label: {
-                        let label: String = selectedOfferedRate?.menuText ?? "Select rate"
-                        HStack(spacing: 8) {
-                            Text(label)
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                            Spacer()
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Rate").font(.caption).foregroundStyle(.secondary)
+                        Menu {
+                            rateMenuItems(showsCheckmark: true)
+                        } label: {
+                            let label: String = selectedOfferedRate?.menuText ?? "Select rate"
+                            HStack(spacing: 8) {
+                                Text(label)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                Spacer()
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(.tertiarySystemGroupedBackground))
+                            .clipShape(.rect(cornerRadius: 8))
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(.tertiarySystemGroupedBackground))
-                        .clipShape(.rect(cornerRadius: 8))
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
 
                 Divider().padding(.leading, 14)
-
                 overrideRateRow(chem: chem)
             }
         }
@@ -4847,9 +4937,9 @@ private struct CalcChemicalLineCard: View {
         .onAppear { syncOverrideText() }
         .onChange(of: line.overrideRate) { _, _ in syncOverrideText() }
         .onChange(of: line.selectedRateId) { _, _ in
-            // Switching the recommended rate clears any active override so
-            // the operator can re-confirm before applying a manual value.
-            if line.overrideRate != nil {
+            // A registered-rate selection clears an override. A synthetic id
+            // used by a confirmed manual/default rate must retain that rate.
+            if selectedOfferedRate != nil, line.overrideRate != nil {
                 line.overrideRate = nil
             }
         }
@@ -4872,7 +4962,9 @@ private struct CalcChemicalLineCard: View {
         let isOverridden = line.overrideRate != nil
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Applied label rate")
+                Text(confirmedResolution?.prefill?.isUserEntered == true
+                     ? "Confirmed manual rate"
+                     : "Applied label rate")
                     .font(.caption).foregroundStyle(.secondary)
                 if isOverridden {
                     Text("Manual")
@@ -4944,7 +5036,7 @@ private struct CalcChemicalLineCard: View {
                     Text("Confirmed rate: \(SprayRateFormatter.format(prefill.rate)) \(prefill.unit)\(basisLabel)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text(prefill.isUserEntered ? "User-confirmed" : "From label")
+                    Text(prefill.isUserEntered ? "Confirmed manual rate" : "Label rate")
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(prefill.isUserEntered ? Color.orange : VineyardTheme.leafGreen)
                 }

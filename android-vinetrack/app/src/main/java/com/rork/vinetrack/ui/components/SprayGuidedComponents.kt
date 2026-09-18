@@ -297,6 +297,13 @@ fun GuidedProductCalculationRow(
                 fontWeight = FontWeight.Bold,
                 color = accent,
             )
+            SprayGuidedFormat.productDerivedPerHectare(line)?.let { equivalent ->
+                Text(
+                    text = equivalent,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         } else {
             line.unresolvedReason?.let { reason ->
                 Text(
@@ -531,6 +538,10 @@ object SprayGuidedFormat {
      */
     fun quantity(value: Double?, unit: String): String {
         if (value == null || !value.isFinite()) return "Unavailable"
+        // Readability only: the canonical rate and persisted quantity remain mL.
+        if (unit.equals("mL", ignoreCase = true) && value >= 1000.0) {
+            return "${grouped(value / 1000.0, 2)} L"
+        }
         val decimals = if (value < 10) 2 else if (value < 100) 1 else 0
         return "${grouped(value, decimals)} $unit"
     }
@@ -571,6 +582,14 @@ object SprayGuidedFormat {
     fun productRequirement(line: SprayProductLineResult): String {
         val total = line.totalQuantity ?: return "Unavailable"
         return "${quantity(total, line.unit)} required"
+    }
+
+    /** Display-only per-hectare equivalent for a per-100-L product rate. */
+    fun productDerivedPerHectare(line: SprayProductLineResult): String? {
+        if (line.basis != SprayProductRateBasis.PER_100_LITRES) return null
+        val value = line.derivedQuantityPerHectare ?: return null
+        val decimals = if (value < 10) 2 else if (value < 100) 1 else 0
+        return "Derived equivalent: ${grouped(value, decimals)} ${line.unit}/ha"
     }
 
     /** User-facing wording for a product's label rate basis. */

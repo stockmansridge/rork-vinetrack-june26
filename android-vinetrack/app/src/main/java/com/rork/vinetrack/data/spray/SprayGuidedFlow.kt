@@ -18,7 +18,7 @@ enum class SprayGuidedStep(val raw: String, val title: String) {
     TARGET("target", "Target"),
     GROWTH_STAGE("growth_stage", "Growth Stage"),
     EQUIPMENT("equipment", "Equipment"),
-    CARRIER("carrier", "Carrier Volume"),
+    CARRIER("carrier", "Carrier / Spray Volume"),
     PRODUCTS("products", "Products"),
     REVIEW("review", "Review"),
     ;
@@ -119,8 +119,8 @@ sealed interface SprayGuidedBlocker {
     }
 
     data object CarrierRateRequired : SprayGuidedBlocker {
-        override val title: String get() = "Enter carrier volume"
-        override val message: String get() = "Enter the carrier volume for this application."
+        override val title: String get() = "Enter application rate"
+        override val message: String get() = "Enter the application rate for this ground spray."
     }
 
     data object CarrierNotCalculable : SprayGuidedBlocker {
@@ -326,10 +326,20 @@ data class SprayGuidedFlow(
      * either, otherwise whatever the profile mandates.
      */
     val effectiveCarrierBasis: SprayCarrierBasis
-        get() = if (carrierPolicy.allows(inputs.carrierBasis)) {
-            inputs.carrierBasis
-        } else {
-            carrierPolicy.defaultBasis
+        get() {
+            // Undervine/Midrow is a direct ground-volume workflow on every
+            // vineyard profile. It never inherits a canopy L/100 m policy.
+            if (mode == SprayApplicationMode.BANDED) {
+                return when (inputs.carrierBasis) {
+                    SprayCarrierBasis.MANUAL_TOTAL_VOLUME -> SprayCarrierBasis.MANUAL_TOTAL_VOLUME
+                    else -> SprayCarrierBasis.LITRES_PER_HECTARE
+                }
+            }
+            return if (carrierPolicy.allows(inputs.carrierBasis)) {
+                inputs.carrierBasis
+            } else {
+                carrierPolicy.defaultBasis
+            }
         }
 
     // endregion

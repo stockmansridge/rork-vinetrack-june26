@@ -32,7 +32,7 @@ nonisolated enum SprayGuidedStep: String, Sendable, CaseIterable, Identifiable, 
         case .target: return "Target"
         case .growthStage: return "Growth Stage"
         case .equipment: return "Equipment"
-        case .carrier: return "Canopy & Spray Volume"
+        case .carrier: return "Carrier / Spray Volume"
         case .products: return "Products"
         case .review: return "Review"
         }
@@ -114,7 +114,7 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
         case .canopyConfirmationRequired: return "Select canopy type, size and density"
         case .sprayVolumeChoiceRequired: return "Choose your spray volume"
         case .manualTotalWaterRequired: return "Enter total spray water"
-        case .carrierRateRequired: return "Enter carrier volume"
+        case .carrierRateRequired: return "Enter application rate"
         // "Spray volume", not "carrier" — the operator chose a "Spray volume
         // basis" three steps ago and should not have to translate the word.
         case .carrierNotCalculable: return "Spray volume unavailable"
@@ -158,7 +158,7 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
         case .manualTotalWaterRequired:
             return "Enter the total spray water you intend to mix or apply."
         case .carrierRateRequired:
-            return "Enter the carrier volume for this application."
+            return "Enter the application rate for this ground spray."
         case .carrierNotCalculable:
             return "Row spacing or vineyard row geometry is incomplete for this calculation."
         case .noProductsAdded:
@@ -434,7 +434,12 @@ nonisolated struct SprayGuidedFlow: Sendable {
     /// The basis actually in force: the operator's choice when the profile
     /// allows either, otherwise whatever the profile mandates.
     var effectiveCarrierBasis: SprayCarrierBasis {
-        carrierPolicy.allows(inputs.carrierBasis) ? inputs.carrierBasis : carrierPolicy.defaultBasis
+        // Undervine/Midrow is always a direct ground-volume workflow. A locked
+        // foliar L/100 m profile must never route a ground spray through canopy.
+        if mode == .banded {
+            return inputs.carrierBasis == .manualTotalVolume ? .manualTotalVolume : .litresPerHectare
+        }
+        return carrierPolicy.allows(inputs.carrierBasis) ? inputs.carrierBasis : carrierPolicy.defaultBasis
     }
 
     // MARK: - Geometry

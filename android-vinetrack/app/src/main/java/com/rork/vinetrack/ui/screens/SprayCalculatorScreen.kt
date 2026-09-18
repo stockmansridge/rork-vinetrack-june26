@@ -145,6 +145,7 @@ import com.rork.vinetrack.data.spray.SprayEquipmentSelection
 import com.rork.vinetrack.data.spray.SprayTractorOptions
 import com.rork.vinetrack.data.spray.SprayHeadTarget
 import com.rork.vinetrack.data.spray.SprayGroundTarget
+import com.rork.vinetrack.data.spray.SprayGrowthStageDecision
 import com.rork.vinetrack.data.spray.SprayOperationType
 import com.rork.vinetrack.data.spray.SprayProductLineInput
 import com.rork.vinetrack.data.spray.SprayProductRateBasis
@@ -421,8 +422,8 @@ fun SprayCalculatorScreen(
     // Growth stage (informational selection, matching iOS — not persisted).
     var growthExpanded by remember { mutableStateOf(false) }
     var growthModeSame by remember { mutableStateOf(true) }
-    var sharedStageCode by remember { mutableStateOf<String?>(null) }
-    val perBlockStages = remember { mutableStateMapOf<String, String>() }
+    var sharedStageDecision by remember { mutableStateOf<SprayGrowthStageDecision>(SprayGrowthStageDecision.Unresolved) }
+    val perBlockStageDecisions = remember { mutableStateMapOf<String, SprayGrowthStageDecision>() }
 
     // Equipment
     var sprayEquipmentId by remember { mutableStateOf<String?>(null) }
@@ -438,6 +439,7 @@ fun SprayCalculatorScreen(
     // Chemicals & notes
     val chemLines = remember { mutableStateListOf<CalcChemLine>() }
     var showAddChemicalToList by remember { mutableStateOf(false) }
+    var showExistingChemicalPicker by remember { mutableStateOf(false) }
     /** Manual fallback from the register flow, for a product the register lacks. */
     var showManualChemicalEntry by remember { mutableStateOf(false) }
     /**
@@ -529,8 +531,16 @@ fun SprayCalculatorScreen(
         SprayCalculator.CanopySize.MEDIUM,
         SprayCalculator.CanopyDensity.LOW,
     )
-    val legacyRecommendedRate = resolvedRowSpacing?.let { CanopyWaterRates.litresPerHa(legacyPer100m, it) }
-    val chosenRate = if (hasEditedSprayRate) {
+    val isGroundSpray = operationType == SprayOperationType.BANDED_SPRAY.raw
+    val legacyRecommendedRate = if (isGroundSpray) {
+        null
+    } else {
+        resolvedRowSpacing?.let { CanopyWaterRates.litresPerHa(legacyPer100m, it) }
+    }
+    val chosenRate = if (isGroundSpray) {
+        // No fallback: an unanswered ground application rate stays unresolved.
+        sprayRateText.toDoubleOrNull() ?: 0.0
+    } else if (hasEditedSprayRate) {
         sprayRateText.toDoubleOrNull() ?: (legacyRecommendedRate ?: 0.0)
     } else {
         legacyRecommendedRate ?: 0.0
@@ -665,10 +675,11 @@ fun SprayCalculatorScreen(
             groundTarget = groundTarget,
             bandWidthTotalMetres = bandWidthText.toDoubleOrNull(),
             isGrowthStageAssigned = if (growthModeSame) {
-                sharedStageCode != null && selectedPaddockIds.isNotEmpty()
+                sharedStageDecision.isResolved && selectedPaddockIds.isNotEmpty()
             } else {
-                selectedPaddockIds.isNotEmpty() &&
-                    selectedPaddockIds.all { perBlockStages[it] != null }
+                selectedPaddockIds.isNotEmpty() && selectedPaddockIds.all { blockId ->
+                    (perBlockStageDecisions[blockId] ?: SprayGrowthStageDecision.Unresolved).isResolved
+                }
             },
             isEquipmentSelected = selectedEquipment != null,
             isEquipmentConfirmed = isEquipmentConfirmed,
@@ -682,10 +693,16 @@ fun SprayCalculatorScreen(
             sprayVolumeChoice = sprayVolumeChoice,
             customSprayerRate = customSprayerRateText.toDoubleOrNull(),
             customSprayerBasis = customSprayerBasis,
-            litresPerHectare = chosenRate.takeIf { it > 0 },
-            diluteLitresPerHectare = legacyRecommendedRate,
-            diluteLitresPer100Metres = diluteLitresPer100mText.toDoubleOrNull(),
-            appliedLitresPer100Metres = appliedLitresPer100mText.toDoubleOrNull(),
+            // Ground carrier is direct operator input only. No canopy-derived
+            // fallback may enter a banded plan.
+            litresPerHectare = if (isGroundSpray) {
+                sprayRateText.toDoubleOrNull()
+            } else {
+                chosenRate.takeIf { it > 0 }
+            },
+            diluteLitresPerHectare = if (isGroundSpray) null else legacyRecommendedRate,
+            diluteLitresPer100Metres = if (isGroundSpray) null else diluteLitresPer100mText.toDoubleOrNull(),
+            appliedLitresPer100Metres = if (isGroundSpray) null else appliedLitresPer100mText.toDoubleOrNull(),
             products = guidedProducts,
             notes = notes,
         ),
@@ -741,10 +758,16 @@ fun SprayCalculatorScreen(
     }
     val growthStageSummary = when {
         selectedPaddocks.isEmpty() -> "Select blocks first"
-        growthModeSame -> GrowthStage.byCode(sharedStageCode)?.displayName ?: "Not set"
+        growthModeSame -> when (val decision = sharedStageDecision) {
+            SprayGrowthStageDecision.Unresolved -> "Choose a stage or Not Set"
+            SprayGrowthStageDecision.NotSet -> "Not Set"
+            is SprayGrowthStageDecision.Stage -> GrowthStage.byCode(decision.stageCode)?.displayName ?: "Not Set"
+        }
         else -> {
-            val assigned = selectedPaddocks.count { perBlockStages.containsKey(it.id) }
-            "Per block \u2014 $assigned/${selectedPaddocks.size} assigned"
+            val resolved = selectedPaddocks.count {
+                (perBlockStageDecisions[it.id] ?: SprayGrowthStageDecision.Unresolved).isResolved
+            }
+            "Per block \u2014 $resolved/${selectedPaddocks.size} decided"
         }
     }
     val equipmentSummary = selectedEquipment?.let { equipment ->
@@ -836,9 +859,9 @@ fun SprayCalculatorScreen(
             customSprayTargets.addAll(prefillCustomTargets)
         }
         r.templateGrowthStageCode?.let { code ->
-            if (sharedStageCode == null && GrowthStage.byCode(code) != null) {
+            if (!sharedStageDecision.isResolved && GrowthStage.byCode(code) != null) {
                 growthModeSame = true
-                sharedStageCode = code
+                sharedStageDecision = SprayGrowthStageDecision.Stage(code)
             }
         }
         if (prefillPaddockIds.isNotEmpty()) {
@@ -1049,7 +1072,9 @@ fun SprayCalculatorScreen(
             tanks = if (guidedFlow.mode == SprayApplicationMode.BANDED || operationType == "Foliar Spray") {
                 SprayGuidedTankBuilder.build(
                     plan = guidedPlan,
-                    chosenSprayRate = guidedFlow.volumeDecision?.actualLitresPerHectare ?: chosenRate,
+                    // The plan's carrier is the one water-rate authority for
+                    // review, products, tanks and persistence.
+                    chosenSprayRate = guidedPlan.carrier.litresPerHectare ?: 0.0,
                     snapshots = lineSnapshots,
                 )
             } else {
@@ -1475,21 +1500,27 @@ fun SprayCalculatorScreen(
                     onModeChange = { same ->
                         growthModeSame = same
                         if (same) {
-                            sharedStageCode?.let { code ->
-                                selectedPaddocks.forEach { perBlockStages[it.id] = code }
+                            val code = sharedStageDecision.stageCode
+                            if (code != null) {
+                                selectedPaddocks.forEach {
+                                    perBlockStageDecisions[it.id] = SprayGrowthStageDecision.Stage(code)
+                                }
                             }
                         }
                     },
-                    sharedStageCode = sharedStageCode,
-                    onSharedStageChange = { code ->
-                        sharedStageCode = code
+                    sharedDecision = sharedStageDecision,
+                    onSharedDecisionChange = { decision ->
+                        sharedStageDecision = decision
+                        val code = decision.stageCode
                         if (code == null) {
-                            selectedPaddocks.forEach { perBlockStages.remove(it.id) }
+                            selectedPaddocks.forEach { perBlockStageDecisions.remove(it.id) }
                         } else {
-                            selectedPaddocks.forEach { perBlockStages[it.id] = code }
+                            selectedPaddocks.forEach {
+                                perBlockStageDecisions[it.id] = SprayGrowthStageDecision.Stage(code)
+                            }
                         }
                     },
-                    perBlockStages = perBlockStages,
+                    perBlockDecisions = perBlockStageDecisions,
                 )
                 }
             }
@@ -1573,16 +1604,6 @@ fun SprayCalculatorScreen(
                         onTractorChange = { tractorId = SprayTractorOptions.selectedId(it, tractors) },
                         fansJets = fansJets,
                         onFansJetsChange = { fansJets = it },
-                        trackingPattern = trackingPattern,
-                        onPatternChange = { trackingPattern = it },
-                        hasRowGeometry = hasRowGeometry,
-                        availablePaths = availablePaths,
-                        startPath = startPath,
-                        onStartPathChange = { startPath = it },
-                        directionHigherFirst = directionHigherFirst,
-                        onDirectionChange = { directionHigherFirst = it },
-                        orderedSelectedPaddocks = orderedSelectedPaddocks,
-                        pathSequence = pathSequence,
                         canConfirm = selectedEquipment != null,
                         isConfirmed = isEquipmentConfirmed,
                         onConfirm = {
@@ -1612,7 +1633,17 @@ fun SprayCalculatorScreen(
                     onToggle = { toggleStep(SprayGuidedStep.CARRIER) },
                 ) {
                 if (guidedFlow.requiresBandWidth) {
-                    Text("What is your sprayer set to apply?", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    Text("Rate applies to", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        SprayCarrierAreaBasis.entries.forEachIndexed { index, basis ->
+                            SegmentedButton(
+                                selected = carrierAreaBasis == basis,
+                                onClick = { carrierAreaBasis = basis; result = null },
+                                shape = SegmentedButtonDefaults.itemShape(index, SprayCarrierAreaBasis.entries.size),
+                            ) { Text(if (basis == SprayCarrierAreaBasis.TREATED_AREA) "Treated area" else "Whole block area", fontSize = 12.sp) }
+                        }
+                    }
+                    Text("Spray volume", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                         val bases = listOf(SprayCarrierBasis.LITRES_PER_HECTARE, SprayCarrierBasis.MANUAL_TOTAL_VOLUME)
                         bases.forEachIndexed { index, basis ->
@@ -1621,16 +1652,6 @@ fun SprayCalculatorScreen(
                                 onClick = { carrierBasisChoice = basis; result = null },
                                 shape = SegmentedButtonDefaults.itemShape(index, bases.size),
                             ) { Text(if (basis == SprayCarrierBasis.LITRES_PER_HECTARE) "L/ha" else "Manual total water", fontSize = 12.sp) }
-                        }
-                    }
-                    Text("Rate applies to:", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                        SprayCarrierAreaBasis.entries.forEachIndexed { index, basis ->
-                            SegmentedButton(
-                                selected = carrierAreaBasis == basis,
-                                onClick = { carrierAreaBasis = basis; result = null },
-                                shape = SegmentedButtonDefaults.itemShape(index, SprayCarrierAreaBasis.entries.size),
-                            ) { Text(if (basis == SprayCarrierAreaBasis.TREATED_AREA) "Treated area" else "Whole block area", fontSize = 12.sp) }
                         }
                     }
                 }
@@ -1804,6 +1825,7 @@ fun SprayCalculatorScreen(
                         GuidedCalculatedPanel(title = "Calculated spray water", accent = VineColors.Olive) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 GuidedCalculatedRow(label = "Application rate", value = "${fmtNum(guidedPlan.carrier.litresPerHectare ?: 0.0, 2)} L/${if (carrierAreaBasis == SprayCarrierAreaBasis.TREATED_AREA) "treated" else "gross"} ha", accent = VineColors.Olive)
+                                GuidedCalculatedRow(label = "Calculation area", value = SprayGuidedFormat.hectares(guidedPlan.carrier.areaHectaresUsed), accent = VineColors.Olive)
                                 GuidedCalculatedRow(label = "Total spray water", value = SprayGuidedFormat.litres(guidedPlan.carrier.totalLitres), accent = VineColors.Olive, emphasis = true)
                                 GuidedCalculatedRow(label = "Concentration factor", value = "Not used", accent = VineColors.Olive)
                             }
@@ -2036,12 +2058,7 @@ fun SprayCalculatorScreen(
                 // chemical picker.
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
-                        onClick = {
-                            state.savedChemicals.firstOrNull()?.let {
-                                chemLines.add(newLineFor(it))
-                                result = null
-                            }
-                        },
+                        onClick = { showExistingChemicalPicker = true },
                         enabled = state.savedChemicals.isNotEmpty(),
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
@@ -2055,13 +2072,7 @@ fun SprayCalculatorScreen(
                         Text("  Add Chemical", fontWeight = FontWeight.Medium)
                     }
 
-                    // Retained ONLY for the empty store, and only because
-                    // "Add Chemical" is disabled there: with no products and
-                    // no lines, every picker-based route to a first product is
-                    // unreachable. Once one product exists this disappears and
-                    // creating happens from the picker.
-                    if (state.savedChemicals.isEmpty()) {
-                        Button(
+                    Button(
                             onClick = {
                                 chemicalIdsBeforeAdd =
                                     state.savedChemicals.map { it.id }.toSet()
@@ -2078,11 +2089,20 @@ fun SprayCalculatorScreen(
                             Icon(Icons.Filled.Science, contentDescription = null, modifier = Modifier.size(18.dp))
                             Text("  Add New Chemical to List", fontWeight = FontWeight.Medium)
                         }
+                    if (state.savedChemicals.isEmpty()) {
                         Text(
                             "No chemicals configured. Tap \u201CAdd New Chemical to List\u201D to create your first product.",
                             fontSize = 12.sp,
                             color = vine.textSecondary,
                         )
+                    }
+                    Button(
+                        onClick = { openedStepRaw = SprayGuidedStep.REVIEW.raw },
+                        enabled = guidedFlow.isComplete(SprayGuidedStep.PRODUCTS),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Olive),
+                    ) {
+                        Text("Continue", fontWeight = FontWeight.SemiBold)
                     }
                 }
                 }
@@ -2380,6 +2400,18 @@ fun SprayCalculatorScreen(
         )
     }
 
+    if (showExistingChemicalPicker) {
+        ExistingChemicalPickerSheet(
+            chemicals = state.savedChemicals,
+            onSelect = { chemical ->
+                chemLines.add(newLineFor(chemical))
+                result = null
+                showExistingChemicalPicker = false
+            },
+            onDismiss = { showExistingChemicalPicker = false },
+        )
+    }
+
     if (showAddEquipment) {
         // Full Settings form (Spray Rigs & Tanks) — includes Serial number and
         // VIN, matching iOS. Auto-select whatever rig appears while it's open.
@@ -2601,6 +2633,51 @@ private fun AddChemicalToSprayFlow(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ExistingChemicalPickerSheet(
+    chemicals: List<SavedChemical>,
+    onSelect: (SavedChemical) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var query by remember { mutableStateOf("") }
+    val matches = chemicals
+        .filter { query.isBlank() || it.displayName.contains(query.trim(), ignoreCase = true) }
+        .sortedBy { it.displayName.lowercase() }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Add Chemical", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+            Text("Choose an existing Chemical Store product for this spray.", fontSize = 13.sp, color = vine.textSecondary)
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Search Chemical Store") },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                singleLine = true,
+            )
+            LazyColumn(modifier = Modifier.height(360.dp)) {
+                items(matches, key = { it.id }) { chemical ->
+                    Column(
+                        modifier = Modifier.fillMaxWidth().clickable { onSelect(chemical) }.padding(vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        Text(chemical.displayName, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                        com.rork.vinetrack.ui.components.ChemicalPickerIntelligenceRow(chemical)
+                    }
+                    HorizontalDivider()
+                }
+            }
+        }
+    }
+}
+
 // ── Blocks ────────────────────────────────────────────────────────────────────
 
 /** Contiguous row ranges, e.g. [1,2,3,5,6] → "Rows 1–3, 5–6" (iOS parity). */
@@ -2793,18 +2870,24 @@ private fun GrowthStageSection(
     onToggleExpanded: () -> Unit,
     modeSame: Boolean,
     onModeChange: (Boolean) -> Unit,
-    sharedStageCode: String?,
-    onSharedStageChange: (String?) -> Unit,
-    perBlockStages: MutableMap<String, String>,
+    sharedDecision: SprayGrowthStageDecision,
+    onSharedDecisionChange: (SprayGrowthStageDecision) -> Unit,
+    perBlockDecisions: MutableMap<String, SprayGrowthStageDecision>,
 ) {
     val vine = LocalVineColors.current
     val paddocksMissing = selectedPaddocks.isEmpty()
     val summary = when {
         paddocksMissing -> "Select blocks first"
-        modeSame -> GrowthStage.byCode(sharedStageCode)?.displayName ?: "Not set"
+        modeSame -> when (sharedDecision) {
+            SprayGrowthStageDecision.Unresolved -> "Choose a stage or Not Set"
+            SprayGrowthStageDecision.NotSet -> "Not Set"
+            is SprayGrowthStageDecision.Stage -> GrowthStage.byCode(sharedDecision.stageCode)?.displayName ?: "Not Set"
+        }
         else -> {
-            val assigned = selectedPaddocks.count { perBlockStages.containsKey(it.id) }
-            "Per block \u2014 $assigned/${selectedPaddocks.size} assigned"
+            val resolved = selectedPaddocks.count {
+                (perBlockDecisions[it.id] ?: SprayGrowthStageDecision.Unresolved).isResolved
+            }
+            "Per block \u2014 $resolved/${selectedPaddocks.size} decided"
         }
     }
 
@@ -2871,16 +2954,16 @@ private fun GrowthStageSection(
                     GrowthStageRadioRow(
                         label = "Not Set",
                         code = null,
-                        selected = sharedStageCode == null,
-                        onClick = { onSharedStageChange(null) },
+                        selected = sharedDecision == SprayGrowthStageDecision.NotSet,
+                        onClick = { onSharedDecisionChange(SprayGrowthStageDecision.NotSet) },
                     )
                     GrowthStage.allStages.forEach { stage ->
                         Box(Modifier.fillMaxWidth().height(0.5.dp).background(vine.cardBorder))
                         GrowthStageRadioRow(
                             label = stage.description,
                             code = stage.code,
-                            selected = sharedStageCode == stage.code,
-                            onClick = { onSharedStageChange(stage.code) },
+                            selected = sharedDecision.stageCode == stage.code,
+                            onClick = { onSharedDecisionChange(SprayGrowthStageDecision.Stage(stage.code)) },
                         )
                     }
                 }
@@ -2895,8 +2978,11 @@ private fun GrowthStageSection(
                         ) {
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(paddock.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = vine.textPrimary)
-                                GrowthStage.byCode(perBlockStages[paddock.id])?.let { stage ->
-                                    Text("${stage.description} (${stage.code})", fontSize = 11.sp, color = VineColors.LeafGreen)
+                                val decision = perBlockDecisions[paddock.id] ?: SprayGrowthStageDecision.Unresolved
+                                val stage = GrowthStage.byCode(decision.stageCode)
+                                when {
+                                    stage != null -> Text("${stage.description} (${stage.code})", fontSize = 11.sp, color = VineColors.LeafGreen)
+                                    decision == SprayGrowthStageDecision.NotSet -> Text("Not Set", fontSize = 11.sp, color = vine.textSecondary)
                                 }
                             }
                             Box {
@@ -2910,7 +2996,11 @@ private fun GrowthStageSection(
                                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
                                     Text(
-                                        perBlockStages[paddock.id] ?: "Select",
+                                        when (val decision = perBlockDecisions[paddock.id] ?: SprayGrowthStageDecision.Unresolved) {
+                                            SprayGrowthStageDecision.Unresolved -> "Select"
+                                            SprayGrowthStageDecision.NotSet -> "Not Set"
+                                            is SprayGrowthStageDecision.Stage -> decision.stageCode
+                                        },
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = VineColors.Olive,
@@ -2925,12 +3015,18 @@ private fun GrowthStageSection(
                                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                                     DropdownMenuItem(
                                         text = { Text("Not Set") },
-                                        onClick = { perBlockStages.remove(paddock.id); menu = false },
+                                        onClick = {
+                                            perBlockDecisions[paddock.id] = SprayGrowthStageDecision.NotSet
+                                            menu = false
+                                        },
                                     )
                                     GrowthStage.allStages.forEach { stage ->
                                         DropdownMenuItem(
                                             text = { Text(stage.displayName, fontSize = 13.sp) },
-                                            onClick = { perBlockStages[paddock.id] = stage.code; menu = false },
+                                            onClick = {
+                                                perBlockDecisions[paddock.id] = SprayGrowthStageDecision.Stage(stage.code)
+                                                menu = false
+                                            },
                                         )
                                     }
                                 }
@@ -3639,24 +3735,12 @@ private fun EquipmentPathSetupContent(
     onTractorChange: (String?) -> Unit,
     fansJets: String,
     onFansJetsChange: (String) -> Unit,
-    trackingPattern: TrackingPattern,
-    onPatternChange: (TrackingPattern) -> Unit,
-    hasRowGeometry: Boolean,
-    availablePaths: List<Double>,
-    startPath: Double,
-    onStartPathChange: (Double) -> Unit,
-    directionHigherFirst: Boolean,
-    onDirectionChange: (Boolean) -> Unit,
-    orderedSelectedPaddocks: List<Paddock>,
-    pathSequence: List<Double>,
     canConfirm: Boolean,
     isConfirmed: Boolean,
     onConfirm: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     var tractorMenu by remember { mutableStateOf(false) }
-    var patternMenu by remember { mutableStateOf(false) }
-    var pathMenu by remember { mutableStateOf(false) }
     val selectedTractor = tractors.firstOrNull { it.id == tractorId }
 
     Text("Tractor", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
@@ -3674,13 +3758,32 @@ private fun EquipmentPathSetupContent(
             }
         }
     }
-    OutlinedTextField(
-        value = fansJets,
-        onValueChange = { onFansJetsChange(it.filter(Char::isDigit)) },
-        label = { Text("Fans / Jets") }, supportingText = { Text("Optional") },
-        singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        modifier = Modifier.fillMaxWidth(),
+    Text(
+        "EQUIPMENT SETTINGS",
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = vine.textSecondary,
     )
+    VineyardCard {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(Icons.Filled.Tune, contentDescription = null, tint = VineColors.Olive)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("No. Fans / Jets", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                Text("Optional \u2014 recorded for compliance", fontSize = 11.sp, color = vine.textSecondary)
+            }
+            OutlinedTextField(
+                value = fansJets,
+                onValueChange = { onFansJetsChange(it.filter(Char::isDigit)) },
+                placeholder = { Text("e.g. 6") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.width(96.dp),
+            )
+        }
+    }
     Button(
         onClick = onConfirm,
         enabled = canConfirm,
