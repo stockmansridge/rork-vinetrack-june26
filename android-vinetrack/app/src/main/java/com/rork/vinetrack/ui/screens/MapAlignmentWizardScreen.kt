@@ -1,6 +1,7 @@
 package com.rork.vinetrack.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,9 +38,11 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -57,6 +60,7 @@ import com.rork.vinetrack.data.PinLocationResult
 import com.rork.vinetrack.data.mapalignment.AndroidDisplayCoordinate
 import com.rork.vinetrack.data.mapalignment.CanonicalCoordinate
 import com.rork.vinetrack.data.mapalignment.MapAlignmentDraft
+import com.rork.vinetrack.data.mapalignment.MapAlignmentDraftPersistence
 import com.rork.vinetrack.data.mapalignment.MapAlignmentExitConfirmation
 import com.rork.vinetrack.data.mapalignment.MapAlignmentExitGuard
 import com.rork.vinetrack.data.mapalignment.MapAlignmentGpsEvidence
@@ -87,6 +91,15 @@ import com.rork.vinetrack.ui.theme.VineColors
 import kotlinx.coroutines.delay
 import java.util.Locale
 import java.util.UUID
+
+private data class MapAlignmentPersistenceWarningState(
+    val persistence: MapAlignmentDraftPersistence,
+    val hasPendingCheckpoint: Boolean,
+    val onRetry: () -> Unit,
+)
+
+private val LocalMapAlignmentPersistenceWarning =
+    compositionLocalOf<MapAlignmentPersistenceWarningState?> { null }
 
 /**
  * System Admin onsite calibration wizard for Android Map Alignment.
@@ -265,6 +278,16 @@ fun MapAlignmentWizard(
         return succeeded
     }
 
+    /**
+     * Retry by building a fresh stored document from the live wizard fields.
+     * Nothing is captured when the first write fails, so later edits, the
+     * pending checkpoint, current step and valid solved id are all included.
+     */
+    fun retryCurrentDraft(): Boolean = exitGuard.retrySave {
+        val latest = storableDraft(draft, step, pending, solvedAlignmentId)
+        latest != null && store.saveDraft(latest)
+    }
+
     /** Apply a draft change and autosave it in one place. */
     fun updateDraft(updated: MapAlignmentDraft) {
         draft = updated
@@ -375,6 +398,15 @@ fun MapAlignmentWizard(
     }
 
     val current = draft
+    CompositionLocalProvider(
+        LocalMapAlignmentPersistenceWarning provides current?.let {
+            MapAlignmentPersistenceWarningState(
+                persistence = exitGuard.persistence,
+                hasPendingCheckpoint = pending != null,
+                onRetry = { retryCurrentDraft() },
+            )
+        },
+    ) {
     when {
         // Resume offer comes before scope selection: re-choosing the vineyard
         // for a calibration that already has three points is exactly the
@@ -530,6 +562,7 @@ fun MapAlignmentWizard(
             onDiscardAndFinish = { exitGuard.requestExit(::leaveSession) },
         )
     }
+    }
 
     when (val stage = saveStage) {
         SaveStage.Idle, is SaveStage.Saved -> Unit
@@ -569,12 +602,7 @@ fun MapAlignmentWizard(
         MapAlignmentExitConfirmation.SaveFailed -> SaveProgressFailedDialog(
             message = exitGuard.saveFailedMessage(),
             onKeep = exitGuard::keepCalibrating,
-            onRetry = {
-                exitGuard.retrySave {
-                    val storable = storableDraft(draft, step, pending, solvedAlignmentId)
-                    storable != null && store.saveDraft(storable)
-                }
-            },
+            onRetry = { retryCurrentDraft() },
         )
     }
 
@@ -2540,7 +2568,70 @@ internal fun WizardScaffold(
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) { content() }
+    ) {
+        LocalMapAlignmentPersistenceWarning.current?.let { warning ->
+            MapAlignmentPersistenceWarning(
+                persistence = warning.persistence,
+                hasPendingCheckpoint = warning.hasPendingCheckpoint,
+                onRetry = warning.onRetry,
+            )
+        }
+        content()
+    }
+}
+
+/** Persistent, calibration-only warning for a draft write that did not reach disk. */
+@Composable
+internal fun MapAlignmentPersistenceWarning(
+    persistence: MapAlignmentDraftPersistence,
+    hasPendingCheckpoint: Boolean,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (persistence != MapAlignmentDraftPersistence.SaveFailed) return
+
+    val warningShape = RoundedCornerShape(12.dp)
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(warningShape)
+            .background(VineColors.Orange.copy(alpha = 0.12f))
+            .border(1.dp, VineColors.Orange.copy(alpha = 0.55f), warningShape)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                Icons.Filled.Warning,
+                contentDescription = null,
+                tint = VineColors.Orange,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(
+                "Latest progress not saved",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = LocalVineColors.current.textPrimary,
+            )
+        }
+        Text(
+            "VineTrack could not save your latest calibration progress on this Android device.\n\n" +
+                "Your work is still open in the app, but the latest changes may be lost if " +
+                "VineTrack closes." + if (hasPendingCheckpoint) {
+                    " This GPS capture may need to be repeated."
+                } else {
+                    ""
+                },
+            fontSize = 13.sp,
+            color = LocalVineColors.current.textSecondary,
+        )
+        TextButton(onClick = onRetry) {
+            Text(MapAlignmentExitGuard.RETRY_ACTION_LABEL)
+        }
+    }
 }
 
 @Composable
