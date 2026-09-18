@@ -71,6 +71,7 @@ class SprayBandedGroundCarrierTest {
         val carrier = banded(SprayCarrierBasis.MANUAL_TOTAL_VOLUME, SprayCarrierAreaBasis.TREATED_AREA, manualTotal = 600.0).plan.carrier
         assertEquals(200.0, carrier.litresPerHectare!!, tolerance)
         assertEquals(600.0, carrier.totalLitres, tolerance)
+        assertEquals(SprayCarrierBasis.LITRES_PER_HECTARE, carrier.basis)
     }
 
     @Test
@@ -97,6 +98,9 @@ class SprayBandedGroundCarrierTest {
         SprayGroundTarget.entries.forEach { target ->
             val flow = banded(SprayCarrierBasis.LITRES_PER_HECTARE, SprayCarrierAreaBasis.TREATED_AREA, 200.0, groundTarget = target)
             assertNull(flow.blocker(SprayGuidedStep.CARRIER))
+            assertEquals(target, flow.snapshot?.groundTarget)
+            assertEquals(SprayCarrierAreaBasis.TREATED_AREA, flow.snapshot?.carrierAreaBasis)
+            assertNull(flow.snapshot?.sprayHeadTarget)
         }
     }
 }

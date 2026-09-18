@@ -212,7 +212,10 @@ nonisolated enum SprayCarrierVolumeCalculator {
         let area = positive(areaHectares)
         let metres = positive(rowLengthMetres)
         return SprayCarrierVolume(
-            basis: .manualTotalVolume,
+            // Manual total is an entry method, not a persisted physical unit.
+            // Once resolved against its selected reference area the canonical
+            // carrier is L/ha, which is accepted by the existing DB contract.
+            basis: .litresPerHectare,
             totalLitres: total,
             litresPerHectare: area.map { total / $0 },
             diluteLitresPer100Metres: nil,

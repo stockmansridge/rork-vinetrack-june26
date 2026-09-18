@@ -112,6 +112,10 @@ data class SprayApplicationSnapshot(
      * spreader pass legitimately carries null.
      */
     val sprayHeadTarget: SprayHeadTarget? = null,
+    /** Ground application location; null for foliar and historical records. */
+    val groundTarget: SprayGroundTarget? = null,
+    /** Area denominator for an L/ha carrier rate; null when not recorded. */
+    val carrierAreaBasis: SprayCarrierAreaBasis? = null,
 
     // ------------------------------------------------ block attribution (195)
 
@@ -176,7 +180,7 @@ data class SprayApplicationSnapshot(
             carrierLitresPerHectare == null && diluteLitresPer100m == null &&
             appliedLitresPer100m == null && concentrationFactor == null &&
             targets == null && customTargets == null && sprayHeadTarget == null &&
-            blocks == null
+            groundTarget == null && carrierAreaBasis == null && blocks == null
 
     /**
      * True when the operator's target selection was genuinely recorded, so the
@@ -272,6 +276,8 @@ data class SprayApplicationSnapshot(
             targets = targets,
             customTargets = customTargets,
             sprayHeadTarget = sprayHeadTarget,
+            groundTarget = groundTarget,
+            carrierAreaBasis = carrierAreaBasis,
             // Block IDENTITY is reusable intent — "my powdery spray on the home
             // blocks" is exactly what a template is for — but the per-block AREAS
             // and ROW LENGTHS are outputs and must be recalculated, for the same
@@ -301,6 +307,8 @@ data class SprayApplicationSnapshot(
             targets: List<SprayTarget>? = null,
             sprayHeadTarget: SprayHeadTarget? = null,
             customTargets: List<String>? = null,
+            groundTarget: SprayGroundTarget? = null,
+            carrierAreaBasis: SprayCarrierAreaBasis? = null,
         ): SprayApplicationSnapshot =
             SprayApplicationSnapshot(
                 targets = targets?.let(::normalisedTargets),
@@ -309,6 +317,8 @@ data class SprayApplicationSnapshot(
                     ?.filter { it.isNotEmpty() }
                     ?.distinct(),
                 sprayHeadTarget = sprayHeadTarget,
+                groundTarget = groundTarget,
+                carrierAreaBasis = carrierAreaBasis,
                 grossAreaHa = nonNegative(plan.treatedArea.grossAreaHectares),
                 treatedAreaHa = nonNegative(plan.treatedArea.treatedAreaHectares),
                 applicationMode = plan.mode,
@@ -362,6 +372,8 @@ data class SprayApplicationSnapshot(
             concentrationFactor: Double?,
             targets: List<String>? = null,
             sprayHeadTarget: String? = null,
+            groundTarget: String? = null,
+            carrierAreaBasis: String? = null,
             blocks: List<SprayApplicationBlockSnapshot>? = null,
         ): SprayApplicationSnapshot? {
             val snapshot = SprayApplicationSnapshot(
@@ -377,6 +389,8 @@ data class SprayApplicationSnapshot(
                     ?.map { it.trim() }
                     ?.filter { it.isNotEmpty() && SprayTarget.from(it) == null },
                 sprayHeadTarget = SprayHeadTarget.from(sprayHeadTarget),
+                groundTarget = SprayGroundTarget.from(groundTarget),
+                carrierAreaBasis = SprayCarrierAreaBasis.from(carrierAreaBasis),
                 grossAreaHa = grossAreaHa,
                 treatedAreaHa = treatedAreaHa,
                 applicationMode = SprayApplicationMode.from(applicationMode),

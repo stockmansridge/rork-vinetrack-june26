@@ -862,6 +862,13 @@ fun SprayCalculatorScreen(
                 }
             }
         }
+        r.applicationGeometry?.let { geometry ->
+            sprayHeadTarget = geometry.sprayHeadTarget
+            groundTarget = geometry.groundTarget
+            geometry.carrierAreaBasis?.let { carrierAreaBasis = it }
+            if (geometry.groundTarget != null) operationType = SprayOperationType.BANDED_SPRAY.raw
+            else if (geometry.sprayHeadTarget != null) operationType = SprayOperationType.FOLIAR_SPRAY.raw
+        }
         // A banded job's band width rides back in from the persisted snapshot,
         // so reopening the job reproduces the SAME treated area it was saved
         // with instead of silently reverting to a whole-block calculation.
@@ -1353,45 +1360,42 @@ fun SprayCalculatorScreen(
                         }
                     }
 
-                    if (guidedFlow.requiresSprayHeadTarget) {
-                        Text(
-                            "Spray Head Target",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = vine.textPrimary,
-                        )
-                        SprayHeadTarget.entries.chunked(2).forEach { pair ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                pair.forEach { head ->
-                                    GuidedChip(
-                                        label = head.label,
-                                        isSelected = sprayHeadTarget == head,
-                                        accent = VineColors.Olive,
-                                        modifier = Modifier.weight(1f),
-                                        onClick = { sprayHeadTarget = head },
-                                    )
+                    if (operationType != SprayOperationType.SPREADER.raw) {
+                        Text("Application location", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                        (SprayHeadTarget.entries.map { it to null } + SprayGroundTarget.entries.map { null to it })
+                            .chunked(2).forEach { pair ->
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    pair.forEach { (head, ground) ->
+                                        GuidedChip(
+                                            label = head?.label ?: ground?.label.orEmpty(),
+                                            isSelected = head?.let { sprayHeadTarget == it && groundTarget == null }
+                                                ?: (groundTarget == ground && sprayHeadTarget == null),
+                                            accent = VineColors.Olive,
+                                            modifier = Modifier.weight(1f),
+                                            onClick = {
+                                                if (head != null) {
+                                                    operationType = SprayOperationType.FOLIAR_SPRAY.raw
+                                                    sprayHeadTarget = head
+                                                    groundTarget = null
+                                                    bandWidthText = ""
+                                                } else if (ground != null) {
+                                                    operationType = SprayOperationType.BANDED_SPRAY.raw
+                                                    groundTarget = ground
+                                                    sprayHeadTarget = null
+                                                    carrierBasisChoice = SprayCarrierBasis.LITRES_PER_HECTARE
+                                                    carrierAreaBasis = SprayCarrierAreaBasis.TREATED_AREA
+                                                }
+                                                result = null
+                                            },
+                                        )
+                                    }
+                                    if (pair.size == 1) Spacer(Modifier.weight(1f))
                                 }
-                                if (pair.size == 1) Spacer(Modifier.weight(1f))
                             }
-                        }
-                        sprayHeadTarget?.let { head ->
-                            Text(head.detail, fontSize = 11.sp, color = vine.textSecondary)
-                        }
+                        sprayHeadTarget?.let { head -> Text(head.detail, fontSize = 11.sp, color = vine.textSecondary) }
                     }
 
                     if (guidedFlow.requiresBandWidth) {
-                        Text("Application location", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            SprayGroundTarget.entries.forEach { target ->
-                                GuidedChip(
-                                    label = target.label,
-                                    isSelected = groundTarget == target,
-                                    accent = VineColors.Olive,
-                                    modifier = Modifier.weight(1f),
-                                    onClick = { groundTarget = target },
-                                )
-                            }
-                        }
                         Text(
                             "Treated band width per row",
                             fontSize = 14.sp,

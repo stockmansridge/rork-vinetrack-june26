@@ -33,6 +33,8 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
     let growthStageCode: String?
     let equipmentId: UUID?
     let tractorId: UUID?
+    let groundApplicationTarget: String?
+    let carrierAreaBasis: String?
     let createdBy: UUID?
 
     enum CodingKeys: String, CodingKey {
@@ -52,6 +54,8 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         case growthStageCode = "growth_stage_code"
         case equipmentId = "equipment_id"
         case tractorId = "tractor_id"
+        case groundApplicationTarget = "ground_application_target"
+        case carrierAreaBasis = "carrier_area_basis"
         case createdBy = "created_by"
     }
 
@@ -75,6 +79,8 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         growthStageCode: String? = nil,
         equipmentId: UUID? = nil,
         tractorId: UUID? = nil,
+        groundApplicationTarget: String? = nil,
+        carrierAreaBasis: String? = nil,
         createdBy: UUID? = nil
     ) {
         self.id = id
@@ -93,6 +99,8 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         self.growthStageCode = growthStageCode
         self.equipmentId = equipmentId
         self.tractorId = tractorId
+        self.groundApplicationTarget = groundApplicationTarget
+        self.carrierAreaBasis = carrierAreaBasis
         self.createdBy = createdBy
     }
 
@@ -115,6 +123,8 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         growthStageCode = try? container.decodeIfPresent(String.self, forKey: .growthStageCode)
         equipmentId = try? container.decodeIfPresent(UUID.self, forKey: .equipmentId)
         tractorId = try? container.decodeIfPresent(UUID.self, forKey: .tractorId)
+        groundApplicationTarget = try? container.decodeIfPresent(String.self, forKey: .groundApplicationTarget)
+        carrierAreaBasis = try? container.decodeIfPresent(String.self, forKey: .carrierAreaBasis)
         createdBy = try? container.decodeIfPresent(UUID.self, forKey: .createdBy)
     }
 
@@ -338,9 +348,19 @@ extension BackendSprayJobTemplate {
             // never reaches history. `blocks` stays nil, which reads as
             // "blocks not recorded", because a reusable step does not know
             // where it is going.
-            applicationGeometry: (mappedTargets.isEmpty && customTargets.isEmpty)
-                ? nil
-                : SprayApplicationSnapshot(targets: mappedTargets, customTargets: customTargets)
+            applicationGeometry: SprayApplicationSnapshot(
+                applicationMode: groundApplicationTarget == nil ? nil : .banded,
+                targets: mappedTargets.isEmpty ? nil : mappedTargets,
+                customTargets: customTargets.isEmpty ? nil : customTargets,
+                groundTarget: groundApplicationTarget.flatMap(SprayGroundTarget.init(rawValue:)),
+                carrierAreaBasis: carrierAreaBasis.flatMap(SprayCarrierAreaBasis.init(rawValue:))
+            ).isEmpty ? nil : SprayApplicationSnapshot(
+                applicationMode: groundApplicationTarget == nil ? nil : .banded,
+                targets: mappedTargets.isEmpty ? nil : mappedTargets,
+                customTargets: customTargets.isEmpty ? nil : customTargets,
+                groundTarget: groundApplicationTarget.flatMap(SprayGroundTarget.init(rawValue:)),
+                carrierAreaBasis: carrierAreaBasis.flatMap(SprayCarrierAreaBasis.init(rawValue:))
+            )
         )
     }
 }

@@ -57,6 +57,7 @@ final class SprayBandedGroundCarrierTests: XCTestCase {
         let carrier = banded(basis: .manualTotalVolume, areaBasis: .treatedArea, manualTotal: 600).plan.carrier
         XCTAssertEqual(carrier.litresPerHectare ?? 0, 200, accuracy: tolerance)
         XCTAssertEqual(carrier.totalLitres, 600, accuracy: tolerance)
+        XCTAssertEqual(carrier.basis, .litresPerHectare)
     }
 
     func testWholeBlockCarrier() {
@@ -80,6 +81,9 @@ final class SprayBandedGroundCarrierTests: XCTestCase {
         for target in SprayGroundTarget.allCases {
             let flow = banded(basis: .litresPerHectare, areaBasis: .treatedArea, rate: 200, groundTarget: target)
             XCTAssertNil(flow.blocker(for: .carrier))
+            XCTAssertEqual(flow.snapshot?.groundTarget, target)
+            XCTAssertEqual(flow.snapshot?.carrierAreaBasis, .treatedArea)
+            XCTAssertNil(flow.snapshot?.sprayHeadTarget)
         }
     }
 }

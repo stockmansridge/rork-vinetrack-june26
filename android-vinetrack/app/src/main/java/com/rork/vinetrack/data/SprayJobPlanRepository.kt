@@ -53,6 +53,8 @@ data class PlanSprayJob(
     @SerialName("resistance_position_id") val resistancePositionId: String? = null,
     @SerialName("resistance_position_snapshot") val resistancePositionSnapshot: JsonObject? = null,
     @SerialName("resistance_plan_source_revision") val resistancePlanSourceRevision: Long? = null,
+    @SerialName("ground_application_target") val groundApplicationTarget: String? = null,
+    @SerialName("carrier_area_basis") val carrierAreaBasis: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
@@ -124,6 +126,9 @@ data class PlanSprayJob(
         // Prefill semantics only (keeps the name verbatim, no "(Copy)");
         // the record actually saved is a new non-template.
         isTemplate = true,
+        operationType = if (groundApplicationTarget == null) "Foliar Spray" else "Banded Spray",
+        groundApplicationTarget = groundApplicationTarget,
+        carrierAreaBasis = carrierAreaBasis,
         tanks = listOf(
             SprayTank(
                 id = "$id-job-tank-1",
@@ -169,6 +174,8 @@ data class PlanSprayJobInsert(
     /** Frozen VERBATIM from the plan position at creation time (sql/196 shape). */
     @SerialName("resistance_position_snapshot") val resistancePositionSnapshot: JsonObject,
     @SerialName("resistance_plan_source_revision") val resistancePlanSourceRevision: Long? = null,
+    @SerialName("ground_application_target") val groundApplicationTarget: String? = null,
+    @SerialName("carrier_area_basis") val carrierAreaBasis: String? = null,
     @SerialName("created_by") val createdBy: String? = null,
 ) {
     /** Optimistic local row shown while the create is queued/in flight. */
@@ -184,6 +191,8 @@ data class PlanSprayJobInsert(
         resistancePositionId = resistancePositionId,
         resistancePositionSnapshot = resistancePositionSnapshot,
         resistancePlanSourceRevision = resistancePlanSourceRevision,
+        groundApplicationTarget = groundApplicationTarget,
+        carrierAreaBasis = carrierAreaBasis,
         createdAt = createdAt,
     )
 }

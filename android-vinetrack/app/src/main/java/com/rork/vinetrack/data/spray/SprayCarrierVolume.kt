@@ -42,6 +42,12 @@ enum class SprayCarrierAreaBasis(val raw: String) {
 
     @SerialName("whole_block_area")
     WHOLE_BLOCK_AREA("whole_block_area"),
+    ;
+
+    companion object {
+        fun from(raw: String?): SprayCarrierAreaBasis? =
+            entries.firstOrNull { it.raw == raw?.trim()?.lowercase() }
+    }
 }
 
 /**
@@ -129,7 +135,9 @@ object SprayCarrierVolumeCalculator {
         val area = positive(areaHectares)
         val metres = positive(rowLengthMetres)
         return SprayCarrierVolume(
-            basis = SprayCarrierBasis.MANUAL_TOTAL_VOLUME,
+            // Manual total is only the entry method. The resolved physical
+            // carrier rate is canonical L/ha for persistence and reporting.
+            basis = SprayCarrierBasis.LITRES_PER_HECTARE,
             totalLitres = total,
             litresPerHectare = area?.let { total / it },
             diluteLitresPer100Metres = null,

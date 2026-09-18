@@ -35,9 +35,39 @@ nonisolated struct BackendSprayJobTemplateUpdate: Encodable, Sendable, Equatable
     let growthStageCode: String?
     let equipmentId: UUID?
     let tractorId: UUID?
+    let groundApplicationTarget: String?
+    let carrierAreaBasis: String?
     /// The signed-in user, for the row's audit column. Never `created_by`:
     /// a portal-created step keeps its original author.
     let updatedBy: UUID?
+
+    init(
+        name: String,
+        chemicalLines: [SprayJobChemicalLine],
+        operationType: String,
+        targets: [String],
+        target: String?,
+        notes: String?,
+        growthStageCode: String?,
+        equipmentId: UUID?,
+        tractorId: UUID?,
+        groundApplicationTarget: String? = nil,
+        carrierAreaBasis: String? = nil,
+        updatedBy: UUID?
+    ) {
+        self.name = name
+        self.chemicalLines = chemicalLines
+        self.operationType = operationType
+        self.targets = targets
+        self.target = target
+        self.notes = notes
+        self.growthStageCode = growthStageCode
+        self.equipmentId = equipmentId
+        self.tractorId = tractorId
+        self.groundApplicationTarget = groundApplicationTarget
+        self.carrierAreaBasis = carrierAreaBasis
+        self.updatedBy = updatedBy
+    }
 
     enum CodingKeys: String, CodingKey {
         case name
@@ -49,6 +79,8 @@ nonisolated struct BackendSprayJobTemplateUpdate: Encodable, Sendable, Equatable
         case growthStageCode = "growth_stage_code"
         case equipmentId = "equipment_id"
         case tractorId = "tractor_id"
+        case groundApplicationTarget = "ground_application_target"
+        case carrierAreaBasis = "carrier_area_basis"
         case updatedBy = "updated_by"
     }
 
@@ -69,6 +101,8 @@ nonisolated struct BackendSprayJobTemplateUpdate: Encodable, Sendable, Equatable
         try container.encode(growthStageCode, forKey: .growthStageCode)
         try container.encode(equipmentId, forKey: .equipmentId)
         try container.encode(tractorId, forKey: .tractorId)
+        try container.encode(groundApplicationTarget, forKey: .groundApplicationTarget)
+        try container.encode(carrierAreaBasis, forKey: .carrierAreaBasis)
         try container.encode(updatedBy, forKey: .updatedBy)
     }
 }
@@ -115,6 +149,8 @@ extension BackendSprayJobTemplate {
             growthStageCode: update.growthStageCode,
             equipmentId: update.equipmentId,
             tractorId: update.tractorId,
+            groundApplicationTarget: update.groundApplicationTarget,
+            carrierAreaBasis: update.carrierAreaBasis,
             createdBy: createdBy
         )
     }

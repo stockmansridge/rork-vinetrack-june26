@@ -213,6 +213,8 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
     var operationType: OperationType
     var equipmentId: UUID?
     var tractorId: UUID?
+    var groundTarget: SprayGroundTarget?
+    var carrierAreaBasis: SprayCarrierAreaBasis?
     var notes: String
     var products: [SprayProgramProductDraft]
 
@@ -229,6 +231,8 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
         operationType = step.operationType
         equipmentId = step.record.sprayEquipmentId
         tractorId = step.record.tractorId
+        groundTarget = step.record.applicationGeometry?.groundTarget
+        carrierAreaBasis = step.record.applicationGeometry?.carrierAreaBasis
         notes = step.notes
 
         var lines: [SprayProgramProductDraft] = []
@@ -353,6 +357,8 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
             growthStageCode: growthStageCode,
             equipmentId: equipmentId,
             tractorId: tractorId,
+            groundApplicationTarget: groundTarget?.rawValue,
+            carrierAreaBasis: carrierAreaBasis?.rawValue,
             updatedBy: updatedBy
         )
     }
@@ -391,9 +397,14 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
         // step carries no geometry because it does not know where it is going.
         let typed = recognisedTargets
         let custom = SprayTargetVocabulary.customs(targets).map(\.identifier)
-        updated.applicationGeometry = (typed.isEmpty && custom.isEmpty)
-            ? nil
-            : SprayApplicationSnapshot(targets: typed, customTargets: custom)
+        let intent = SprayApplicationSnapshot(
+            applicationMode: groundTarget == nil ? nil : .banded,
+            targets: typed.isEmpty ? nil : typed,
+            customTargets: custom.isEmpty ? nil : custom,
+            groundTarget: groundTarget,
+            carrierAreaBasis: carrierAreaBasis
+        )
+        updated.applicationGeometry = intent.isEmpty ? nil : intent
         return updated
     }
 

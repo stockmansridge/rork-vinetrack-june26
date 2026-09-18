@@ -88,6 +88,8 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
         @SerialName("equipment_id") val equipmentId: String? = null,
         /** Portal-chosen tractor, carried through by identity. */
         @SerialName("tractor_id") val tractorId: String? = null,
+        @SerialName("ground_application_target") val groundApplicationTarget: String? = null,
+        @SerialName("carrier_area_basis") val carrierAreaBasis: String? = null,
         val notes: String? = null,
         /** Canonical E-L stage for the template (sql/034), e.g. "EL12". */
         @SerialName("growth_stage_code") val growthStageCode: String? = null,
@@ -114,6 +116,8 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
         val notes: String?,
         val equipmentId: String?,
         val tractorId: String?,
+        val groundApplicationTarget: String? = null,
+        val carrierAreaBasis: String? = null,
         val chemicalLines: JsonArray?,
     )
 
@@ -248,6 +252,8 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
         notes = notes?.takeIf { it.isNotBlank() },
         equipmentId = equipmentId,
         tractorId = tractorId,
+        groundApplicationTarget = groundApplicationTarget,
+        carrierAreaBasis = carrierAreaBasis,
         chemicalLines = chemicalLines,
     )
 
@@ -300,6 +306,8 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
             // vocabulary's stable order. Null when the step names none —
             // which reads as "not recorded", never as "explicitly none".
             targets = targetIdentifiers.takeIf { it.isNotEmpty() },
+            groundApplicationTarget = groundApplicationTarget,
+            carrierAreaBasis = carrierAreaBasis,
             createdAt = createdAt,
             templateGrowthStageCode = growthStageCode?.trim()?.takeIf { it.isNotEmpty() },
             prefillCanopy = prefillCanopy,

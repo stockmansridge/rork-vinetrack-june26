@@ -964,6 +964,14 @@ struct SprayCalculatorView: View {
         let recordCustomTargets = r.applicationGeometry?.customTargets ?? []
         customSprayTargets = programCustomTargets.isEmpty ? recordCustomTargets : programCustomTargets
 
+        if let geometry = r.applicationGeometry {
+            sprayHeadTarget = geometry.sprayHeadTarget
+            groundTarget = geometry.groundTarget
+            carrierAreaBasis = geometry.carrierAreaBasis ?? carrierAreaBasis
+            if geometry.groundTarget != nil { operationType = .bandedSpray }
+            else if geometry.sprayHeadTarget != nil { operationType = .foliarSpray }
+        }
+
         // Growth stage (guided Step 4) from the canonical `growth_stage_code`,
         // mapped onto the calculator's own stage state rather than appended to
         // notes. Compared as STAGE NUMBERS through the existing parser so
@@ -2993,44 +3001,40 @@ struct SprayCalculatorView: View {
                 }
             }
 
-            // The application-specific question. Foliar asks where the head is
-            // aimed; banded asks for the treated width; spreader asks neither.
-            if flow.requiresSprayHeadTarget {
-                Divider()
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Spray Head Target")
-                        .font(.subheadline.weight(.semibold))
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                        ForEach(SprayHeadTarget.allCases) { head in
-                            GuidedChip(
-                                label: head.label,
-                                icon: nil,
-                                isSelected: sprayHeadTarget == head
-                            ) {
-                                withAnimation(.snappy(duration: 0.2)) { sprayHeadTarget = head }
-                            }
-                        }
-                    }
-                    if let detail = sprayHeadTarget?.detail {
-                        Text(detail)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-            }
-
-            if flow.requiresBandWidth {
+            if operationType != .spreader {
                 Divider()
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Application location")
                         .font(.subheadline.weight(.semibold))
-                    HStack(spacing: 8) {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                        ForEach(SprayHeadTarget.allCases) { head in
+                            GuidedChip(label: head.label, icon: nil, isSelected: sprayHeadTarget == head && groundTarget == nil) {
+                                withAnimation(.snappy(duration: 0.2)) {
+                                    operationType = .foliarSpray
+                                    sprayHeadTarget = head
+                                    groundTarget = nil
+                                    bandWidthText = ""
+                                }
+                            }
+                        }
                         ForEach(SprayGroundTarget.allCases) { target in
-                            GuidedChip(label: target.label, icon: nil, isSelected: groundTarget == target) {
-                                groundTarget = target
+                            GuidedChip(label: target.label, icon: nil, isSelected: groundTarget == target && sprayHeadTarget == nil) {
+                                withAnimation(.snappy(duration: 0.2)) {
+                                    operationType = .bandedSpray
+                                    groundTarget = target
+                                    sprayHeadTarget = nil
+                                    carrierBasisChoice = .litresPerHectare
+                                    carrierAreaBasis = .treatedArea
+                                }
                             }
                         }
                     }
+                    if let detail = sprayHeadTarget?.detail { Text(detail).font(.caption2).foregroundStyle(.tertiary) }
+                }
+            }
+
+            if flow.requiresBandWidth {
+                VStack(alignment: .leading, spacing: 8) {
                     Text("Treated band width per row")
                         .font(.subheadline.weight(.semibold))
                     HStack(spacing: 8) {

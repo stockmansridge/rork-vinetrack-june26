@@ -721,6 +721,8 @@ object PendingWriteOverlay {
         isTemplate = isTemplate,
         operationType = operationType,
         tanks = tanks,
+        groundApplicationTarget = applicationGeometry?.groundTarget?.raw,
+        carrierAreaBasis = applicationGeometry?.carrierAreaBasis?.raw,
     )
 
     private fun SprayRecordUpdateSync.Payload.applyTo(row: SprayRecord): SprayRecord =
@@ -745,6 +747,8 @@ object PendingWriteOverlay {
             tripId = tripId,
             isTemplate = isTemplate,
             tanks = tanks,
+            groundApplicationTarget = applicationGeometry?.groundTarget?.raw,
+            carrierAreaBasis = applicationGeometry?.carrierAreaBasis?.raw,
         )
 
     private fun WorkTaskCreateSync.Payload.toRow(): WorkTask = WorkTask(

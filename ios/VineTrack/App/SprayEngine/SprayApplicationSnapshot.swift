@@ -123,6 +123,10 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
     /// Where the spray head was aimed. Foliar applications only — a banded or
     /// spreader pass legitimately carries `nil`.
     let sprayHeadTarget: SprayHeadTarget?
+    /// Ground application location. Nil for foliar and historical records.
+    let groundTarget: SprayGroundTarget?
+    /// Area denominator for an L/ha carrier rate. Nil when not recorded.
+    let carrierAreaBasis: SprayCarrierAreaBasis?
 
     /// True when no field carries a value — the shape a pre-sql/191 record
     /// decodes to. Callers persist `nil` rather than a row of NULLs so
@@ -137,7 +141,7 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
             && carrierLitresPerHectare == nil && diluteLitresPer100m == nil
             && appliedLitresPer100m == nil && concentrationFactor == nil
             && targets == nil && customTargets == nil && sprayHeadTarget == nil
-            && blocks == nil
+            && groundTarget == nil && carrierAreaBasis == nil && blocks == nil
     }
 
     /// Every selected target as the stable identifiers the `targets text[]`
@@ -228,6 +232,8 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
             targets: targets,
             customTargets: customTargets,
             sprayHeadTarget: sprayHeadTarget,
+            groundTarget: groundTarget,
+            carrierAreaBasis: carrierAreaBasis,
             // Block IDENTITY is reusable intent — "my powdery spray on the home
             // blocks" is exactly what a template is for — but the per-block
             // AREAS and ROW LENGTHS are outputs and must be recalculated, for
@@ -271,6 +277,8 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
             targets: targets,
             customTargets: customTargets,
             sprayHeadTarget: sprayHeadTarget,
+            groundTarget: groundTarget,
+            carrierAreaBasis: carrierAreaBasis,
             blocks: blocks
         )
         return updated.isEmpty ? nil : updated
@@ -292,11 +300,15 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         plan: SprayApplicationPlan,
         targets: [SprayTarget]? = nil,
         customTargets: [String]? = nil,
-        sprayHeadTarget: SprayHeadTarget? = nil
+        sprayHeadTarget: SprayHeadTarget? = nil,
+        groundTarget: SprayGroundTarget? = nil,
+        carrierAreaBasis: SprayCarrierAreaBasis? = nil
     ) {
         self.targets = targets.map(Self.normalisedTargets)
         self.customTargets = Self.normalisedCustomTargets(customTargets)
         self.sprayHeadTarget = sprayHeadTarget
+        self.groundTarget = groundTarget
+        self.carrierAreaBasis = carrierAreaBasis
         self.grossAreaHa = Self.nonNegative(plan.treatedArea.grossAreaHectares)
         self.treatedAreaHa = Self.nonNegative(plan.treatedArea.treatedAreaHectares)
         self.applicationMode = plan.mode
@@ -348,11 +360,15 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         targets: [SprayTarget]? = nil,
         customTargets: [String]? = nil,
         sprayHeadTarget: SprayHeadTarget? = nil,
+        groundTarget: SprayGroundTarget? = nil,
+        carrierAreaBasis: SprayCarrierAreaBasis? = nil,
         blocks: [SprayApplicationBlockSnapshot]? = nil
     ) {
         self.targets = targets.map(Self.normalisedTargets)
         self.customTargets = Self.normalisedCustomTargets(customTargets)
         self.sprayHeadTarget = sprayHeadTarget
+        self.groundTarget = groundTarget
+        self.carrierAreaBasis = carrierAreaBasis
         self.blocks = SprayApplicationBlockSnapshot.normalised(blocks)
         self.grossAreaHa = grossAreaHa
         self.treatedAreaHa = treatedAreaHa
@@ -423,7 +439,7 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         case canonicalRowLengthMetres, rowSpacingMetres, geometrySource, geometryQuality
         case carrierVolumeBasis, totalCarrierLitres, carrierLitresPerHectare
         case diluteLitresPer100m, appliedLitresPer100m, concentrationFactor
-        case targets, customTargets, sprayHeadTarget
+        case targets, customTargets, sprayHeadTarget, groundTarget, carrierAreaBasis
         case blocks
     }
 
@@ -471,6 +487,12 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         )
         sprayHeadTarget = SprayHeadTarget.from(
             try? container.decodeIfPresent(String.self, forKey: .sprayHeadTarget)
+        )
+        groundTarget = SprayGroundTarget(rawValue:
+            (try? container.decodeIfPresent(String.self, forKey: .groundTarget)) ?? ""
+        )
+        carrierAreaBasis = SprayCarrierAreaBasis(rawValue:
+            (try? container.decodeIfPresent(String.self, forKey: .carrierAreaBasis)) ?? ""
         )
 
         // Block attribution (sql/195). Absent ⇒ nil ⇒ "blocks not recorded",

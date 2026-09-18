@@ -84,6 +84,12 @@ enum class SprayGroundTarget(val raw: String, val label: String) {
 
     @SerialName("midrow")
     MIDROW("midrow", "Midrow"),
+    ;
+
+    companion object {
+        fun from(raw: String?): SprayGroundTarget? =
+            entries.firstOrNull { it.raw == raw?.trim()?.lowercase() }
+    }
 }
 
 /**

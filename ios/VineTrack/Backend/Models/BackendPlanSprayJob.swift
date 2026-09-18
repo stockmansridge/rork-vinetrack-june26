@@ -21,6 +21,8 @@ nonisolated struct BackendPlanSprayJob: Codable, Sendable, Identifiable {
     /// planned"; never the current plan position (which may have been edited).
     let resistancePositionSnapshot: ResistancePlannedPosition?
     let resistancePlanSourceRevision: Int64?
+    let groundApplicationTarget: String?
+    let carrierAreaBasis: String?
     let createdAt: Date?
     let deletedAt: Date?
 
@@ -36,6 +38,8 @@ nonisolated struct BackendPlanSprayJob: Codable, Sendable, Identifiable {
         case resistancePositionId = "resistance_position_id"
         case resistancePositionSnapshot = "resistance_position_snapshot"
         case resistancePlanSourceRevision = "resistance_plan_source_revision"
+        case groundApplicationTarget = "ground_application_target"
+        case carrierAreaBasis = "carrier_area_basis"
         case createdAt = "created_at"
         case deletedAt = "deleted_at"
     }
@@ -52,6 +56,8 @@ nonisolated struct BackendPlanSprayJob: Codable, Sendable, Identifiable {
         resistancePositionId: String?,
         resistancePositionSnapshot: ResistancePlannedPosition?,
         resistancePlanSourceRevision: Int64?,
+        groundApplicationTarget: String? = nil,
+        carrierAreaBasis: String? = nil,
         createdAt: Date?,
         deletedAt: Date?
     ) {
@@ -66,6 +72,8 @@ nonisolated struct BackendPlanSprayJob: Codable, Sendable, Identifiable {
         self.resistancePositionId = resistancePositionId
         self.resistancePositionSnapshot = resistancePositionSnapshot
         self.resistancePlanSourceRevision = resistancePlanSourceRevision
+        self.groundApplicationTarget = groundApplicationTarget
+        self.carrierAreaBasis = carrierAreaBasis
         self.createdAt = createdAt
         self.deletedAt = deletedAt
     }
@@ -86,6 +94,8 @@ nonisolated struct BackendPlanSprayJob: Codable, Sendable, Identifiable {
             ResistancePlannedPosition.self, forKey: .resistancePositionSnapshot
         )
         resistancePlanSourceRevision = try? container.decodeIfPresent(Int64.self, forKey: .resistancePlanSourceRevision)
+        groundApplicationTarget = try? container.decodeIfPresent(String.self, forKey: .groundApplicationTarget)
+        carrierAreaBasis = try? container.decodeIfPresent(String.self, forKey: .carrierAreaBasis)
         createdAt = try? container.decodeIfPresent(Date.self, forKey: .createdAt)
         deletedAt = try? container.decodeIfPresent(Date.self, forKey: .deletedAt)
     }
@@ -178,7 +188,12 @@ nonisolated struct BackendPlanSprayJob: Codable, Sendable, Identifiable {
             // Prefill semantics only (keeps the name verbatim, no "(Copy)");
             // the record the calculator actually saves is a new non-template.
             isTemplate: true,
-            operationType: .foliarSpray
+            operationType: groundApplicationTarget == nil ? .foliarSpray : .bandedSpray,
+            applicationGeometry: SprayApplicationSnapshot(
+                applicationMode: groundApplicationTarget == nil ? nil : .banded,
+                groundTarget: groundApplicationTarget.flatMap(SprayGroundTarget.init(rawValue:)),
+                carrierAreaBasis: carrierAreaBasis.flatMap(SprayCarrierAreaBasis.init(rawValue:))
+            )
         )
     }
 }
@@ -208,6 +223,8 @@ nonisolated struct BackendPlanSprayJobInsert: Codable, Sendable {
     /// Frozen VERBATIM from the plan position at creation time (sql/196 shape).
     let resistancePositionSnapshot: ResistancePlannedPosition
     let resistancePlanSourceRevision: Int64?
+    let groundApplicationTarget: String? = nil
+    let carrierAreaBasis: String? = nil
     let createdBy: UUID?
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -223,6 +240,8 @@ nonisolated struct BackendPlanSprayJobInsert: Codable, Sendable {
         case resistancePositionId = "resistance_position_id"
         case resistancePositionSnapshot = "resistance_position_snapshot"
         case resistancePlanSourceRevision = "resistance_plan_source_revision"
+        case groundApplicationTarget = "ground_application_target"
+        case carrierAreaBasis = "carrier_area_basis"
         case createdBy = "created_by"
     }
 
@@ -240,6 +259,8 @@ nonisolated struct BackendPlanSprayJobInsert: Codable, Sendable {
             resistancePositionId: resistancePositionId,
             resistancePositionSnapshot: resistancePositionSnapshot,
             resistancePlanSourceRevision: resistancePlanSourceRevision,
+            groundApplicationTarget: groundApplicationTarget,
+            carrierAreaBasis: carrierAreaBasis,
             createdAt: createdAt,
             deletedAt: nil
         )

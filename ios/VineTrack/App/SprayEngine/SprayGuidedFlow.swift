@@ -614,7 +614,9 @@ nonisolated struct SprayGuidedFlow: Sendable {
             plan: plan,
             targets: orderedTargets,
             customTargets: inputs.customTargets,
-            sprayHeadTarget: effectiveSprayHeadTarget
+            sprayHeadTarget: effectiveSprayHeadTarget,
+            groundTarget: requiresGroundTarget ? inputs.groundTarget : nil,
+            carrierAreaBasis: requiresGroundTarget ? inputs.carrierAreaBasis : nil
         )
         return snapshot.isEmpty ? nil : snapshot
     }

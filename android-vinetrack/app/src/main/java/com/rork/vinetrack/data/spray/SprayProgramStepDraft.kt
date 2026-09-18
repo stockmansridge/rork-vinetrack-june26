@@ -231,6 +231,8 @@ data class SprayProgramStepDraft(
     val operationType: String? = null,
     val equipmentId: String? = null,
     val tractorId: String? = null,
+    val groundTarget: SprayGroundTarget? = null,
+    val carrierAreaBasis: SprayCarrierAreaBasis? = null,
     val notes: String = "",
     val products: List<SprayProgramProductDraft> = emptyList(),
 ) {
@@ -304,6 +306,8 @@ data class SprayProgramStepDraft(
         put("growth_stage_code", growthStageCode?.let(::JsonPrimitive) ?: JsonNull)
         put("equipment_id", equipmentId?.let(::JsonPrimitive) ?: JsonNull)
         put("tractor_id", tractorId?.let(::JsonPrimitive) ?: JsonNull)
+        put("ground_application_target", groundTarget?.raw?.let(::JsonPrimitive) ?: JsonNull)
+        put("carrier_area_basis", carrierAreaBasis?.raw?.let(::JsonPrimitive) ?: JsonNull)
         // The signed-in user, for the row's audit column. Never `created_by`.
         put("updated_by", updatedById?.let(::JsonPrimitive) ?: JsonNull)
     }
@@ -329,14 +333,13 @@ data class SprayProgramStepDraft(
     fun toLocalInput(existing: SprayRecord): SprayRecordRepository.SprayInput {
         val typed = SprayTargetVocabulary.builtIns(targets)
         val custom = SprayTargetVocabulary.customs(targets).map { it.identifier }
-        val snapshot = if (typed.isEmpty() && custom.isEmpty()) {
-            null
-        } else {
-            SprayApplicationSnapshot(
-                targets = typed.takeIf { it.isNotEmpty() },
-                customTargets = custom.takeIf { it.isNotEmpty() },
-            )
-        }
+        val snapshot = SprayApplicationSnapshot(
+            applicationMode = groundTarget?.let { SprayApplicationMode.BANDED },
+            targets = typed.takeIf { it.isNotEmpty() },
+            customTargets = custom.takeIf { it.isNotEmpty() },
+            groundTarget = groundTarget,
+            carrierAreaBasis = carrierAreaBasis,
+        ).takeUnless { it.isEmpty }
         return SprayRecordRepository.SprayInput(
             date = existing.date ?: existing.startTime ?: existing.createdAt.orEmpty(),
             startTime = existing.startTime ?: existing.date ?: existing.createdAt.orEmpty(),
@@ -419,6 +422,8 @@ data class SprayProgramStepDraft(
                 operationType = record.operationType,
                 equipmentId = record.sprayEquipmentId,
                 tractorId = record.tractorId,
+                groundTarget = record.applicationGeometry?.groundTarget,
+                carrierAreaBasis = record.applicationGeometry?.carrierAreaBasis,
                 notes = record.notes.orEmpty(),
                 products = products,
             )
@@ -445,6 +450,8 @@ data class SprayProgramStepDraft(
             operationType = row.operationType,
             equipmentId = row.equipmentId,
             tractorId = row.tractorId,
+            groundTarget = SprayGroundTarget.from(row.groundApplicationTarget),
+            carrierAreaBasis = SprayCarrierAreaBasis.from(row.carrierAreaBasis),
             notes = row.notes.orEmpty(),
             products = row.chemicalLines.orEmpty().mapIndexedNotNull { index, element ->
                 (element as? JsonObject)?.let { SprayProgramProductDraft.fromWireLine(index, it) }

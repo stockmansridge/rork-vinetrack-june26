@@ -10010,6 +10010,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             isTemplate = input.isTemplate,
             operationType = input.operationType,
             tanks = input.tanks,
+            groundApplicationTarget = input.applicationGeometry?.groundTarget?.raw,
+            carrierAreaBasis = input.applicationGeometry?.carrierAreaBasis?.raw,
         )
         // Optimistic insert at the top — the operator sees the record straight away.
         _ui.update { it.copy(sprayRecords = listOf(optimistic) + it.sprayRecords, sprayError = null) }
@@ -10759,6 +10761,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         isTemplate = input.isTemplate,
                         operationType = input.operationType,
                         tanks = input.tanks,
+                        groundApplicationTarget = input.applicationGeometry?.groundTarget?.raw,
+                        carrierAreaBasis = input.applicationGeometry?.carrierAreaBasis?.raw,
                     ) else it
                 },
                 sprayError = null,

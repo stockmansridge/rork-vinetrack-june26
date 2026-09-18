@@ -1726,6 +1726,8 @@ data class SprayRecord(
     // explicitly none. NEVER inferred from the products in the tank.
     @SerialName("targets") val targets: List<String>? = null,
     @SerialName("spray_head_target") val sprayHeadTarget: String? = null,
+    @SerialName("ground_application_target") val groundApplicationTarget: String? = null,
+    @SerialName("carrier_area_basis") val carrierAreaBasis: String? = null,
     // sql/195 block attribution — WHICH blocks this application actually treated.
     //
     // [applicationBlocks] is the authoritative structured snapshot and the only
@@ -1786,6 +1788,8 @@ data class SprayRecord(
             concentrationFactor = concentrationFactor,
             targets = targets,
             sprayHeadTarget = sprayHeadTarget,
+            groundTarget = groundApplicationTarget,
+            carrierAreaBasis = carrierAreaBasis,
             blocks = applicationBlocks,
         )
 

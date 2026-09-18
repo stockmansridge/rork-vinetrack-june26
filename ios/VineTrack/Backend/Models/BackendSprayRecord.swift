@@ -48,6 +48,8 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
     // record predates the migration, [] means the operator recorded none.
     let targets: [String]?
     let sprayHeadTarget: String?
+    let groundApplicationTarget: String?
+    let carrierAreaBasis: String?
     // sql/195 block attribution — WHICH blocks this application treated.
     //
     // `applicationBlocks` is the authoritative structured snapshot and the only
@@ -116,6 +118,8 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
         case concentrationFactor = "concentration_factor"
         case targets
         case sprayHeadTarget = "spray_head_target"
+        case groundApplicationTarget = "ground_application_target"
+        case carrierAreaBasis = "carrier_area_basis"
         case applicationBlocks = "application_blocks"
         case blockIds = "block_ids"
         case sprayJobId = "spray_job_id"
@@ -184,6 +188,8 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
     /// instead of leaving a stale claim on the record.
     let targets: [String]?
     let sprayHeadTarget: String?
+    let groundApplicationTarget: String?
+    let carrierAreaBasis: String?
     /// sql/195 block attribution. Encoded even when nil so correcting a spray's
     /// selection actually clears the previous attribution rather than leaving a
     /// block on the record that the operator has since removed.
@@ -243,6 +249,8 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
         case concentrationFactor = "concentration_factor"
         case targets
         case sprayHeadTarget = "spray_head_target"
+        case groundApplicationTarget = "ground_application_target"
+        case carrierAreaBasis = "carrier_area_basis"
         case applicationBlocks = "application_blocks"
         case sprayJobId = "spray_job_id"
         case createdBy = "created_by"
@@ -311,6 +319,8 @@ extension BackendSprayRecord {
             // target needs neither a column of its own nor a migration.
             targets: geometry?.targetIdentifiers,
             sprayHeadTarget: geometry?.sprayHeadTarget?.rawValue,
+            groundApplicationTarget: geometry?.groundTarget?.rawValue,
+            carrierAreaBasis: geometry?.carrierAreaBasis?.rawValue,
             // Templates keep block IDENTITY (reusable intent) and lose the
             // per-block geometry outputs — `templateConfiguration()` above has
             // already applied that rule, so this is a straight read.
@@ -392,6 +402,8 @@ extension BackendSprayRecord {
             // "Phomopsis" from a spray that was for Phomopsis.
             customTargets: targets.map { raw in raw.filter { SprayTarget.from($0) == nil } },
             sprayHeadTarget: SprayHeadTarget.from(sprayHeadTarget),
+            groundTarget: groundApplicationTarget.flatMap(SprayGroundTarget.init(rawValue:)),
+            carrierAreaBasis: carrierAreaBasis.flatMap(SprayCarrierAreaBasis.init(rawValue:)),
             // Read back VERBATIM. A record whose attribution is null stays null
             // — it must never acquire the vineyard's current blocks, which is
             // precisely the guess that would make "blocks not recorded" look
