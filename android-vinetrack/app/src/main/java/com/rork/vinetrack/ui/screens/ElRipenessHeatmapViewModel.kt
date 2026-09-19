@@ -16,12 +16,13 @@ import com.rork.vinetrack.data.ripeness.ElRipenessObservationAdapter
 import com.rork.vinetrack.data.ripeness.ElRipenessObservationCaching
 import com.rork.vinetrack.data.ripeness.ElRipenessSeason
 import com.rork.vinetrack.data.ripeness.RipenessObservationRepositoryProtocol
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar
@@ -494,37 +495,58 @@ class ElRipenessHeatmapViewModel(
 
         _ui.value = state.copy(isRendering = true)
         renderJob = viewModelScope.launch {
-            val result = withContext(Dispatchers.Default) {
-                val model = ElRipenessHeatmap.buildHeatModel(
-                    observations = observations,
-                    blocks = blocks,
-                    atDateIso = dateIso,
-                    blockFilter = filter,
-                )
-                if (!isActive) return@withContext null
-                val overlays = model.blocks.mapNotNull { block ->
-                    val raster = ElRipenessHeatRaster.raster(block, state.selectedPhase) ?: return@mapNotNull null
-                    val bounds = ElRipenessHeatRaster.drawBounds(block) ?: return@mapNotNull null
-                    ElRipenessOverlay(block.paddockId, raster, bounds)
+            try {
+                val result = withContext(Dispatchers.Default) {
+                    val model = ElRipenessHeatmap.buildHeatModel(
+                        observations = observations,
+                        blocks = blocks,
+                        atDateIso = dateIso,
+                        blockFilter = filter,
+                    )
+                    ensureActive()
+                    val overlays = model.blocks.mapNotNull { block ->
+                        val raster = ElRipenessHeatRaster.raster(block, state.selectedPhase)
+                            ?: return@mapNotNull null
+                        val bounds = ElRipenessHeatRaster.drawBounds(block)
+                            ?: return@mapNotNull null
+                        ElRipenessOverlay(block.paddockId, raster, bounds)
+                    }
+                    model to overlays
                 }
-                model to overlays
-            } ?: return@launch
 
-            val (model, overlays) = result
-            _ui.value = _ui.value.copy(
-                heatModel = model,
-                overlays = overlays,
-                isRendering = false,
-                loadState = if (phaseObservations.isEmpty()) ElRipenessLoadState.EmptyPhase
-                else ElRipenessLoadState.Ready,
-                statusCounts = ElRipenessStatusCounts(
-                    recorded = model.qualifying.size,
-                    influencing = model.influencing.size,
-                    stale = model.stale.size,
-                    unassigned = model.unassigned.size,
-                ),
-                notices = recomputeNotices(model),
-            )
+                val (model, overlays) = result
+                _ui.value = _ui.value.copy(
+                    heatModel = model,
+                    overlays = overlays,
+                    isRendering = false,
+                    loadState = if (phaseObservations.isEmpty()) ElRipenessLoadState.EmptyPhase
+                    else ElRipenessLoadState.Ready,
+                    statusCounts = ElRipenessStatusCounts(
+                        recorded = model.qualifying.size,
+                        influencing = model.influencing.size,
+                        stale = model.stale.size,
+                        unassigned = model.unassigned.size,
+                    ),
+                    notices = recomputeNotices(model),
+                )
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Exception) {
+                Log.e(
+                    "VineTrackRipeness",
+                    "Heatmap render failed: ${error::class.simpleName ?: "Unknown error"}",
+                )
+                _ui.value = _ui.value.copy(
+                    loadState = ElRipenessLoadState.Failed(
+                        "The heatmap couldn't be rendered. Try opening it again.",
+                    ),
+                    heatModel = null,
+                    overlays = emptyList(),
+                    statusCounts = ElRipenessStatusCounts(),
+                    isPlaying = false,
+                    isRendering = false,
+                )
+            }
         }
     }
 

@@ -18,21 +18,57 @@ class ElRipenessHeatmapCrashRegressionTest {
     }
 
     @Test
-    fun `Google Map is measured inside the bounded viewport rather than a vertical scroller`() {
+    fun `Google Map has a finite viewport with scrolling content below it`() {
         val screen = source(
             "src/main/java/com/rork/vinetrack/ui/screens/ElRipenessHeatmapScreen.kt"
         )
         val readyBranch = screen.substringAfter("is ElRipenessLoadState.Ready -> {")
             .substringBefore("sheetObservation?.let")
+        val mapCall = readyBranch.indexOf("HeatMap(")
+        val scrollingSibling = readyBranch.indexOf(".verticalScroll(rememberScrollState())")
 
+        assertTrue("The map viewport must have a finite height", readyBranch.contains(".height(320.dp)"))
+        assertTrue("Scrolling detail must remain below the map", mapCall >= 0 && scrollingSibling > mapCall)
         assertFalse(
-            "Android GoogleMap must not be hosted by an unbounded verticalScroll",
-            readyBranch.contains("verticalScroll("),
+            "The map call itself must not be wrapped by verticalScroll",
+            readyBranch.substring(0, mapCall).contains("verticalScroll("),
         )
-        assertTrue(
-            "The map must consume a finite share of the parent viewport",
-            readyBranch.contains("Modifier.weight(1f).fillMaxWidth()"),
+    }
+
+    @Test
+    fun `native map content waits for a loaded and measured map`() {
+        val screen = source(
+            "src/main/java/com/rork/vinetrack/ui/screens/ElRipenessHeatmapScreen.kt"
         )
+        val map = screen.substringAfter("private fun HeatMap(")
+            .substringBefore("private enum class PinStyle")
+
+        assertTrue(map.contains("onSizeChanged { mapViewportSize = it }"))
+        assertTrue(map.contains("onMapLoaded = { mapLoaded = true }"))
+        assertTrue(map.contains("mapLoaded && mapViewportSize.width > 0 && mapViewportSize.height > 0"))
+        assertTrue(map.contains("if (mapReady) {"))
+        assertTrue(map.contains("LaunchedEffect(mapReady, allPoints)"))
+        assertTrue(map.contains("if (mapReady && allPoints.isNotEmpty())"))
+        assertTrue(map.substringAfter("if (mapReady) {").contains("GroundOverlay("))
+        assertTrue(map.substringAfter("if (mapReady) {").contains("Polygon("))
+        assertTrue(map.substringAfter("if (mapReady) {").contains("ObservationPin("))
+        assertTrue(map.substringAfter("if (mapReady) {").contains("BlockLabel("))
+    }
+
+    @Test
+    fun `ground overlays retain stable native objects across recomposition`() {
+        val screen = source(
+            "src/main/java/com/rork/vinetrack/ui/screens/ElRipenessHeatmapScreen.kt"
+        )
+        val map = screen.substringAfter("private fun HeatMap(")
+            .substringBefore("private enum class PinStyle")
+
+        assertTrue(map.contains("remember(stableBitmap) { BitmapDescriptorFactory.fromBitmap(stableBitmap) }"))
+        assertTrue(map.contains("overlay.bounds.south,"))
+        assertTrue(map.contains("overlay.bounds.west,"))
+        assertTrue(map.contains("overlay.bounds.north,"))
+        assertTrue(map.contains("overlay.bounds.east,"))
+        assertTrue(map.contains("groundOverlayPositionOrNull(overlay.bounds)"))
     }
 
     @Test

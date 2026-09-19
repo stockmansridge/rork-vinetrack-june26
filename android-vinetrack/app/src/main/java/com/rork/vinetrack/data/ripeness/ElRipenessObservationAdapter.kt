@@ -266,19 +266,25 @@ object ElRipenessObservationAdapter {
     // ---- Blocks ----
 
     /**
-     * Block polygons for the heat surface. Blocks with fewer than three points
-     * are still returned — the contract renders them in `no_polygon` mode
-     * rather than hiding them, so the operator can see the block exists but has
-     * no boundary.
+     * Block polygons for the heat surface. Invalid display coordinates are
+     * discarded without changing the stored boundary. A boundary with fewer
+     * than three usable points remains present in `no_polygon` mode.
      */
     fun blockInputs(paddocks: List<Paddock>): List<ElRipenessHeatmap.BlockInput> =
         paddocks.map { paddock ->
+            val usablePolygon = (paddock.polygonPoints ?: emptyList())
+                .filter { point -> isUsableCoordinate(point.latitude, point.longitude) }
+                .map { point -> ElRipenessHeatmap.LatLng(point.latitude, point.longitude) }
+                .let { points -> if (points.size >= 3) points else emptyList() }
             ElRipenessHeatmap.BlockInput(
                 id = paddock.id.lowercase(),
                 name = paddock.name,
-                polygon = (paddock.polygonPoints ?: emptyList()).map {
-                    ElRipenessHeatmap.LatLng(it.latitude, it.longitude)
-                },
+                polygon = usablePolygon,
             )
         }
+
+    private fun isUsableCoordinate(latitude: Double, longitude: Double): Boolean =
+        latitude.isFinite() && longitude.isFinite() &&
+            latitude in -90.0..90.0 && longitude in -180.0..180.0 &&
+            !(latitude == 0.0 && longitude == 0.0)
 }

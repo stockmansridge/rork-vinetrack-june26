@@ -54,10 +54,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelProvider
@@ -409,78 +411,103 @@ private fun HeatMap(
 ) {
     val cameraPositionState = rememberCameraPositionState()
     val heat = ui.heatModel
+    var mapLoaded by remember { mutableStateOf(false) }
+    var mapViewportSize by remember { mutableStateOf(IntSize.Zero) }
+    val mapReady = mapLoaded && mapViewportSize.width > 0 && mapViewportSize.height > 0
 
     val allPoints = remember(ui.blocks, ui.selectedBlockId) {
         val wanted = ui.selectedBlockId?.let { id -> ui.blocks.filter { it.id == id } } ?: ui.blocks
-        wanted.flatMap { block -> block.polygon.map { LatLng(it.lat, it.lng) } }
+        wanted.flatMap { block -> usablePolygon(block.polygon).map { LatLng(it.lat, it.lng) } }
     }
 
-    LaunchedEffect(allPoints) {
-        if (allPoints.isNotEmpty()) {
+    LaunchedEffect(mapReady, allPoints) {
+        if (mapReady && allPoints.isNotEmpty()) {
             cameraPositionState.fitToContent(points = allPoints, paddingPx = 120)
         }
     }
 
-    Box(modifier) {
+    Box(modifier.onSizeChanged { mapViewportSize = it }) {
         GoogleMap(
             modifier = Modifier.fillMaxSize(),
             cameraPositionState = cameraPositionState,
             properties = MapProperties(mapType = MapType.HYBRID),
             uiSettings = MapUiSettings(zoomControlsEnabled = false, mapToolbarEnabled = false),
+            onMapLoaded = { mapLoaded = true },
         ) {
-            // Heat surfaces, one ground overlay per block.
-            ui.overlays.forEach { overlay ->
-                val block = heat?.blocks?.firstOrNull { it.paddockId == overlay.paddockId }
-                val bitmap = remember(overlay, block?.polygon) {
-                    ElRipenessOverlayBitmap.build(
-                        raster = overlay.raster,
-                        bounds = overlay.bounds,
-                        polygon = block?.polygon ?: emptyList(),
-                    )
+            if (mapReady) {
+                // Heat surfaces, one ground overlay per block.
+                ui.overlays.forEach { overlay ->
+                    val block = heat?.blocks?.firstOrNull { it.paddockId == overlay.paddockId }
+                    val polygon = usablePolygon(block?.polygon ?: emptyList())
+                    val position = remember(
+                        overlay.bounds.south,
+                        overlay.bounds.west,
+                        overlay.bounds.north,
+                        overlay.bounds.east,
+                    ) {
+                        groundOverlayPositionOrNull(overlay.bounds)
+                    }
+                    val bitmap = if (position != null) {
+                        remember(overlay, polygon) {
+                            ElRipenessOverlayBitmap.build(
+                                raster = overlay.raster,
+                                bounds = overlay.bounds,
+                                polygon = polygon,
+                            )
+                        }
+                    } else {
+                        null
+                    }
+                    val descriptor = bitmap?.let { stableBitmap ->
+                        remember(stableBitmap) { BitmapDescriptorFactory.fromBitmap(stableBitmap) }
+                    }
+                    if (descriptor != null && position != null) {
+                        GroundOverlay(
+                            position = position,
+                            image = descriptor,
+                            zIndex = 1f,
+                        )
+                    }
                 }
-                if (bitmap != null) {
-                    GroundOverlay(
-                        position = GroundOverlayPosition.create(
-                            latLngBounds = LatLngBounds(
-                                LatLng(overlay.bounds.south, overlay.bounds.west),
-                                LatLng(overlay.bounds.north, overlay.bounds.east),
-                            ),
-                        ),
-                        image = BitmapDescriptorFactory.fromBitmap(bitmap),
-                        zIndex = 1f,
-                    )
+
+                // Outline every active block, including those with no
+                // observations, so the operator sees the whole vineyard rather
+                // than only the parts that happen to carry data. Keyed on paddock
+                // id, never name — two blocks may share a name.
+                ui.blocks.forEach { block ->
+                    val polygon = usablePolygon(block.polygon)
+                    if (polygon.size >= 3) {
+                        val selected = block.id == ui.selectedBlockId
+                        Polygon(
+                            points = polygon.map { LatLng(it.lat, it.lng) },
+                            fillColor = Color.Transparent,
+                            strokeColor = Color.White.copy(alpha = if (selected) 0.95f else 0.55f),
+                            strokeWidth = if (selected) 5f else 3f,
+                            zIndex = 2f,
+                        )
+                    }
                 }
-            }
 
-            // Outline every active block, including those with no
-            // observations, so the operator sees the whole vineyard rather
-            // than only the parts that happen to carry data. Keyed on paddock
-            // id, never name — two blocks may share a name.
-            ui.blocks.forEach { block ->
-                if (block.polygon.size >= 3) {
-                    val selected = block.id == ui.selectedBlockId
-                    Polygon(
-                        points = block.polygon.map { LatLng(it.lat, it.lng) },
-                        fillColor = Color.Transparent,
-                        strokeColor = Color.White.copy(alpha = if (selected) 0.95f else 0.55f),
-                        strokeWidth = if (selected) 5f else 3f,
-                        zIndex = 2f,
-                    )
+                // Observation pins, above the surface.
+                heat?.blocks?.forEach { block ->
+                    block.influencing.filter(::hasUsableMapCoordinate).forEach {
+                        ObservationPin(it, PinStyle.CURRENT, ui.selectedPhase, onObservationTap)
+                    }
+                    block.stale.filter(::hasUsableMapCoordinate).forEach {
+                        ObservationPin(it, PinStyle.STALE, ui.selectedPhase, onObservationTap)
+                    }
                 }
-            }
+                heat?.unassigned?.filter(::hasUsableMapCoordinate)?.forEach {
+                    ObservationPin(it, PinStyle.UNASSIGNED, ui.selectedPhase, onObservationTap)
+                }
 
-            // Observation pins, above the surface.
-            heat?.blocks?.forEach { block ->
-                block.influencing.forEach { ObservationPin(it, PinStyle.CURRENT, ui.selectedPhase, onObservationTap) }
-                block.stale.forEach { ObservationPin(it, PinStyle.STALE, ui.selectedPhase, onObservationTap) }
-            }
-            heat?.unassigned?.forEach { ObservationPin(it, PinStyle.UNASSIGNED, ui.selectedPhase, onObservationTap) }
-
-            // Block name plates carrying the influencing-only median.
-            heat?.blocks?.forEach { block ->
-                val centroid = ElRipenessGeometry.centroid(block.polygon)
-                if (centroid != null && block.polygon.size >= 3) {
-                    BlockLabel(block, centroid)
+                // Block name plates carrying the influencing-only median.
+                heat?.blocks?.forEach { block ->
+                    val polygon = usablePolygon(block.polygon)
+                    val centroid = ElRipenessGeometry.centroid(polygon)
+                    if (centroid != null && polygon.size >= 3 && isUsableMapCoordinate(centroid.lat, centroid.lng)) {
+                        BlockLabel(block, centroid)
+                    }
                 }
             }
         }
@@ -498,6 +525,40 @@ private fun HeatMap(
             }
         }
     }
+}
+
+private fun isUsableMapCoordinate(latitude: Double, longitude: Double): Boolean =
+    latitude.isFinite() && longitude.isFinite() &&
+        latitude in -90.0..90.0 && longitude in -180.0..180.0 &&
+        !(latitude == 0.0 && longitude == 0.0)
+
+private fun hasUsableMapCoordinate(observation: ElRipenessHeatmap.Observation): Boolean =
+    isUsableMapCoordinate(observation.lat, observation.lng)
+
+private fun usablePolygon(points: List<ElRipenessHeatmap.LatLng>): List<ElRipenessHeatmap.LatLng> {
+    val usable = points.filter { isUsableMapCoordinate(it.lat, it.lng) }
+    return if (usable.size >= 3) usable else emptyList()
+}
+
+private fun groundOverlayPositionOrNull(
+    bounds: ElRipenessHeatRaster.DrawBounds,
+): GroundOverlayPosition? {
+    val south = bounds.south
+    val west = bounds.west
+    val north = bounds.north
+    val east = bounds.east
+    val isUsable = south.isFinite() && west.isFinite() && north.isFinite() && east.isFinite() &&
+        south in -90.0..90.0 && north in -90.0..90.0 &&
+        west in -180.0..180.0 && east in -180.0..180.0 &&
+        south < north && west < east
+    if (!isUsable) return null
+
+    return GroundOverlayPosition.create(
+        latLngBounds = LatLngBounds(
+            LatLng(south, west),
+            LatLng(north, east),
+        ),
+    )
 }
 
 private enum class PinStyle { CURRENT, STALE, UNASSIGNED }
