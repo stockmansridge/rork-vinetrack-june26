@@ -51,6 +51,7 @@ import com.rork.vinetrack.data.ManualIssueRepository
 import com.rork.vinetrack.data.ManualIssueSync
 import com.rork.vinetrack.data.PinPhotoImageUtil
 import com.rork.vinetrack.data.PinPhotoRepository
+import com.rork.vinetrack.data.VineyardLogoCache
 import com.rork.vinetrack.data.VineyardLogoRepository
 import com.rork.vinetrack.data.GrowthRecordCreateSync
 import com.rork.vinetrack.data.GrowthRecordDeleteSync
@@ -164,6 +165,8 @@ import com.rork.vinetrack.data.spray.SprayTargetTag
 import com.rork.vinetrack.data.spray.SprayTargetVocabulary
 import com.rork.vinetrack.data.spray.VineyardSprayTarget
 import com.rork.vinetrack.data.spray.VineyardSprayTargetCreateParams
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import com.rork.vinetrack.data.resistance.ResistancePlan
 import com.rork.vinetrack.data.resistance.ResistancePlannedPosition
@@ -626,9 +629,9 @@ data class AppUiState(
     val pinPhotoBusy: Boolean = false,
     val vineyardLogoBusy: Boolean = false,
     /**
-     * Decoded logo bitmap for the currently selected vineyard, cached so the
-     * dashboard header/overview and exported PDFs can render it. `null` when the
-     * vineyard has no logo or it hasn't loaded yet. Mirrors iOS `logoData`.
+     * Decoded logo bitmap for the currently selected vineyard, hydrated from
+     * the durable local JPEG mirror before any optional network refresh. `null`
+     * when the vineyard has no logo or no local/remote image has loaded yet.
      */
     val selectedVineyardLogo: Bitmap? = null,
     /**
@@ -1145,6 +1148,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val pinEvidenceStore = com.rork.vinetrack.data.PinCaptureEvidenceStore(app)
     private val pinPhotoRepo = PinPhotoRepository(session)
     private val vineyardLogoRepo = VineyardLogoRepository(session)
+    private val vineyardLogoCache = VineyardLogoCache(app)
     private val tripRepo = TripRepository(session)
     private val workTaskRepo = WorkTaskRepository(session)
     private val workTaskLineRepo = WorkTaskLineRepository(session)
@@ -5619,6 +5623,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun loadVineyards() {
         val epoch = vineyardSelectionEpoch
+        hydrateSelectedVineyardLogoBeforeNetwork()
         try {
             loadAdminStatus()
             refreshProfileDisplayName()
@@ -5687,6 +5692,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(
                     vineyards = vineyards,
                     selectedVineyardId = selected,
+                    selectedVineyardLogo = if (it.selectedVineyardId == selected) {
+                        it.selectedVineyardLogo
+                    } else {
+                        null
+                    },
                     defaultVineyardId = defaultId,
                     // Apply cached region settings instantly for the restored vineyard.
                     regionSettings = if (selected != null) regionSettingsStore.load(selected) else RegionSettings.defaults,
@@ -5797,6 +5807,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Hydrates the last selected logo from app-private storage before server reads begin. */
+    private suspend fun hydrateSelectedVineyardLogoBeforeNetwork() {
+        val vineyardId = session.selectedVineyardId ?: return
+        val cachedVineyard = domainCache.loadVineyards(session.userId)
+            ?.firstOrNull { it.id == vineyardId }
+            ?: return
+        if (cachedVineyard.logoPath.isNullOrBlank()) return
+        val bitmap = withContext(Dispatchers.IO) {
+            vineyardLogoCache.load(vineyardId)?.jpeg?.let { bytes ->
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }
+        } ?: return
+        if (session.selectedVineyardId == vineyardId) {
+            _ui.update {
+                it.copy(
+                    selectedVineyardId = vineyardId,
+                    selectedVineyardLogo = bitmap,
+                )
+            }
+        }
+    }
+
     /**
      * Cached vineyard-list fallback for a cold offline launch (Stage 6B). Only
      * fires when no vineyards are in memory and the local cache holds an
@@ -5843,6 +5875,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (selected != null && !offlineAccess) refreshPaywall()
         if (selected != null) {
+            refreshSelectedVineyardLogo()
             loadVineyardData(selected)
             applyCachedSeasonSettings(selected)
         }
@@ -7486,8 +7519,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
                 runCatching { domainCache.saveVineyards(session.userId, _ui.value.vineyards) }
-                // Refresh the cached bitmap from the just-uploaded bytes so the
-                // dashboard and PDFs reflect the new logo immediately.
+                withContext(Dispatchers.IO) {
+                    vineyardLogoCache.save(vineyardId, jpeg, path, updatedAt)
+                }
+                // Use the bytes this device just uploaded; no redundant download.
                 if (vineyardId == _ui.value.selectedVineyardId) {
                     val bitmap = runCatching { BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) }.getOrNull()
                     loadedLogoKey = "$path|${updatedAt ?: ""}"
@@ -7524,6 +7559,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
                 runCatching { domainCache.saveVineyards(session.userId, _ui.value.vineyards) }
+                withContext(Dispatchers.IO) { vineyardLogoCache.remove(vineyardId) }
                 if (vineyardId == _ui.value.selectedVineyardId) {
                     loadedLogoKey = null
                     _ui.update { it.copy(selectedVineyardLogo = null) }
@@ -7555,34 +7591,60 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var loadedLogoKey: String? = null
 
     /**
-     * Keep [AppUiState.selectedVineyardLogo] in sync with the selected vineyard.
-     * Downloads + decodes the private logo once per (path, updatedAt) and caches
-     * it for the dashboard and PDF exports; clears it when there's no logo.
-     * Mirrors how iOS hydrates `logoData` for the selected vineyard.
+     * Hydrates the selected vineyard from durable local JPEG bytes first, then
+     * downloads only when the cached path/timestamp identity is stale.
      */
     private fun refreshSelectedVineyardLogo() {
         val vineyard = _ui.value.selectedVineyard
+        val vineyardId = vineyard?.id
         val path = vineyard?.logoPath
-        if (path.isNullOrBlank()) {
+        if (vineyardId == null || path.isNullOrBlank()) {
             loadedLogoKey = null
             if (_ui.value.selectedVineyardLogo != null) {
                 _ui.update { it.copy(selectedVineyardLogo = null) }
             }
+            if (vineyardId != null) {
+                viewModelScope.launch(Dispatchers.IO) { vineyardLogoCache.remove(vineyardId) }
+            }
             return
         }
-        val key = "$path|${vineyard.logoUpdatedAt ?: ""}"
+        val updatedAt = vineyard.logoUpdatedAt
+        val key = "$path|${updatedAt ?: ""}"
         if (key == loadedLogoKey && _ui.value.selectedVineyardLogo != null) return
+
         viewModelScope.launch {
+            val cached = withContext(Dispatchers.IO) { vineyardLogoCache.load(vineyardId) }
+            val cachedBitmap = cached?.jpeg?.let { bytes ->
+                runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }.getOrNull()
+            }
+            if (cachedBitmap != null && _ui.value.selectedVineyardId == vineyardId) {
+                _ui.update { it.copy(selectedVineyardLogo = cachedBitmap) }
+            }
+            if (cachedBitmap != null && cached?.isCurrent(path, updatedAt) == true) {
+                if (_ui.value.selectedVineyardId == vineyardId) loadedLogoKey = key
+                return@launch
+            }
+
             try {
                 val bytes = vineyardLogoRepo.download(path)
-                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                if (bitmap != null && _ui.value.selectedVineyard?.logoPath == path) {
+                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return@launch
+                val currentVineyard = _ui.value.vineyards.firstOrNull { it.id == vineyardId }
+                if (currentVineyard == null ||
+                    currentVineyard.logoPath != path ||
+                    currentVineyard.logoUpdatedAt != updatedAt
+                ) {
+                    return@launch
+                }
+                withContext(Dispatchers.IO) {
+                    vineyardLogoCache.save(vineyardId, bytes, path, updatedAt)
+                }
+                val selected = _ui.value.selectedVineyard
+                if (selected?.id == vineyardId && selected.logoPath == path && selected.logoUpdatedAt == updatedAt) {
                     loadedLogoKey = key
                     _ui.update { it.copy(selectedVineyardLogo = bitmap) }
                 }
-            } catch (e: Exception) {
-                // Keep any previously cached logo; the dashboard falls back to the
-                // placeholder mark and PDFs simply omit the logo.
+            } catch (_: Exception) {
+                // A failed refresh never removes or replaces the durable cached logo.
             }
         }
     }

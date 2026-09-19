@@ -12,6 +12,7 @@ on:
           - davis-proxy
           - wunderground-proxy
           - open-meteo-proxy
+          - tractor-fuel-lookup
           - send-invitation-email
           - support-request
           - test-resend-email
@@ -64,6 +65,14 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           supabase functions deploy open-meteo-proxy \
+            --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Deploy tractor-fuel-lookup
+        if: ${{ github.event.inputs.function == 'tractor-fuel-lookup' }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          supabase functions deploy tractor-fuel-lookup \
             --project-ref "$SUPABASE_PROJECT_REF"
 
       - name: Deploy single email function
