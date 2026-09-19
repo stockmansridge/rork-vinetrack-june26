@@ -81,6 +81,7 @@ import com.google.maps.android.compose.rememberMarkerState
 import com.rork.vinetrack.data.SupabaseClient
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.ripeness.ElRipenessGeometry
+import com.rork.vinetrack.data.ripeness.ElRipenessHeatRaster
 import com.rork.vinetrack.data.ripeness.ElRipenessHeatmap
 import com.rork.vinetrack.data.ripeness.ElRipenessObservationCache
 import com.rork.vinetrack.data.ripeness.RipenessObservationRepository
