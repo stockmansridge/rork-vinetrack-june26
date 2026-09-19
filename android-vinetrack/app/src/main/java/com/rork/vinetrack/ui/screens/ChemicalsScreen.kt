@@ -387,7 +387,15 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
     }
 
     if (matchingV2) {
-        ChemicalSearchV2Sheet(vm = vm, state = state, onDismiss = { matchingV2 = false })
+        ChemicalSearchV2Sheet(
+            vm = vm,
+            state = state,
+            onDismiss = { matchingV2 = false },
+            onOpenExisting = { existing ->
+                matchingV2 = false
+                editing = existing
+            },
+        )
     }
     if (matchingNew) {
         ChemicalMatchFlowSheet(

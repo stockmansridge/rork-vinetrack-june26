@@ -108,4 +108,55 @@ struct ChemicalSearchV2Tests {
     @Test func normalMasterSearchHasNoAIPath() {
         #expect(MasterChemicalV2Repository.invokesAI == false)
     }
+
+    @Test func manualEntryPrefillsTypedSearchAndStaysVineyardOnly() {
+        #expect(ChemicalSearchV2ManualPrefill.productName(from: "  My Local Sulphur  ") == "My Local Sulphur")
+        let rate = ChemicalManualRateDraft(basis: .per100Litres, minText: "200", maxText: "400", unit: "g")
+        let details = ChemicalSearchV2ManualDetails(
+            manufacturer: "Local supplier",
+            registrationNumber: "",
+            productCategory: "fungicide",
+            activeIngredient: "Sulphur",
+            activityGroupScheme: .frac,
+            activityGroupCode: "M02",
+            notes: "Optional note"
+        )
+        let intelligence = details.intelligence(productName: "My Local Sulphur", rate: rate)
+
+        #expect(intelligence.registeredUses.isEmpty)
+        #expect(intelligence.resolvedVerificationStatus == .unverified)
+        #expect(intelligence.activeIngredients.map(\.name) == ["Sulphur"])
+    }
+
+    @Test func manualSingleAndRangePersistToExactDefaultRateBasis() throws {
+        let single = ChemicalLabelRate(basis: .perHectare, value: 2, unit: "L")
+        let range = ChemicalLabelRate(basis: .rangePer100Litres, minValue: 200, maxValue: 400, unit: "g")
+        let area = try #require(ChemicalSearchV2OperationalDefaults.storedDefaults(rates: [single], selectedAt: "2026-09-19T00:00:00Z")?.perHectare)
+        let volume = try #require(ChemicalSearchV2OperationalDefaults.storedDefaults(rates: [range], selectedAt: "2026-09-19T00:00:00Z")?.per100Litres)
+
+        #expect(area.value == 2 && area.unit == "L")
+        #expect(volume.minValue == 200 && volume.maxValue == 400 && volume.unit == "g")
+        #expect(area.entryMethod == "manual" && volume.entryMethod == "manual")
+    }
+
+    @Test func optionalDetailsAndRegisteredUsesDoNotBlockManualSave() {
+        let rate = ChemicalLabelRate(basis: .per100Litres, value: 200, unit: "g")
+        let evaluation = ChemicalSaveContract.evaluateMinimumOperational(
+            productName: "Wettable Sulphur", productUnit: "g", rates: [rate]
+        )
+        #expect(evaluation.isSatisfied)
+        #expect(!evaluation.violations.contains { $0.code == .grapevineUseMissing })
+        #expect(!evaluation.violations.contains { $0.code == .productCategoryMissing })
+    }
+
+    @Test func manualDuplicateUsesExactNormalisedVineyardNameOnly() {
+        let existing = SavedChemical(name: "Wettable Sulphur")
+        let intelligence = ChemicalIntelligence(verification: .manual())
+        #expect(ChemicalSearchV2Duplicate.existing(
+            master: nil, intelligence: intelligence, name: "wettable-sulphur", in: [existing]
+        )?.id == existing.id)
+        #expect(ChemicalSearchV2Duplicate.existing(
+            master: nil, intelligence: intelligence, name: "Wettable Sulphur Plus", in: [existing]
+        ) == nil)
+    }
 }

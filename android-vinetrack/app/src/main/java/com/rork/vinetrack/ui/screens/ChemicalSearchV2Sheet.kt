@@ -21,6 +21,8 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,6 +44,7 @@ import com.rork.vinetrack.data.chemical.ChemicalLabelIdentityOCR
 import com.rork.vinetrack.data.chemical.ChemicalLabelRate
 import com.rork.vinetrack.data.chemical.ChemicalLabelRateBasis
 import com.rork.vinetrack.data.chemical.ChemicalLabelRateNormalizer
+import com.rork.vinetrack.data.chemical.ChemicalManualActiveDraft
 import com.rork.vinetrack.data.chemical.ChemicalManualDraft
 import com.rork.vinetrack.data.chemical.ChemicalManualEntry
 import com.rork.vinetrack.data.chemical.ChemicalManualRateDraft
@@ -50,13 +53,17 @@ import com.rork.vinetrack.data.chemical.ChemicalStoreMatching
 import com.rork.vinetrack.data.chemical.ChemicalSearchV2Duplicate
 import com.rork.vinetrack.data.chemical.ChemicalSearchV2OperationalDefaults
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
+import com.rork.vinetrack.data.chemical.ChemicalActivityGroupScheme
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
+import com.rork.vinetrack.data.chemical.ChemicalRegistrationScheme
 import com.rork.vinetrack.data.chemical.MasterChemicalV2
 import com.rork.vinetrack.data.chemical.MasterChemicalV2Repository
 import com.rork.vinetrack.data.chemical.ViticultureRates
 import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_100L
 import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_HECTARE
+import com.rork.vinetrack.data.model.ChemicalPurchase
 import com.rork.vinetrack.data.model.ChemicalRate
+import com.rork.vinetrack.data.model.SavedChemical
 import com.rork.vinetrack.data.model.chemicalUnitToBase
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
@@ -66,6 +73,58 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.util.UUID
+
+internal object ChemicalSearchV2ManualPrefill {
+    fun productName(searchText: String): String = searchText.trim()
+}
+
+internal data class ChemicalSearchV2ManualDetails(
+    val manufacturer: String = "",
+    val registrationNumber: String = "",
+    val productCategory: String = "",
+    val productForm: String = "",
+    val activeIngredient: String = "",
+    val activityGroupScheme: ChemicalActivityGroupScheme? = null,
+    val activityGroupCode: String = "",
+    val labelUrl: String = "",
+    val productUrl: String = "",
+    val notes: String = "",
+    val packSize: String = "",
+    val packUnit: String = "",
+    val pricePerPack: String = "",
+    val inventoryQuantity: String = "",
+    val inventoryUnit: String = "",
+) {
+    fun intelligence(productName: String, rate: ChemicalManualRateDraft): ChemicalIntelligence {
+        val names = activeIngredient.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        val actives = names.mapIndexed { index, name ->
+            ChemicalManualActiveDraft(
+                name = name,
+                scheme = if (index == 0) activityGroupScheme else null,
+                groupCode = if (index == 0) activityGroupCode else "",
+            )
+        }
+        val hasRegistration = manufacturer.isNotBlank() || registrationNumber.isNotBlank() ||
+            labelUrl.isNotBlank() || productUrl.isNotBlank()
+        val draft = ChemicalManualDraft(
+            productName = productName,
+            countryCode = if (hasRegistration) "AU" else "",
+            productCategory = productCategory,
+            registrant = manufacturer,
+            registrationScheme = if (hasRegistration) ChemicalRegistrationScheme.APVMA else null,
+            registrationNumber = registrationNumber,
+            actives = actives,
+            productRates = listOf(rate),
+        )
+        val base = ChemicalManualEntry.outcome(draft, existing = null).intelligence
+        val registration = base.registration?.copy(
+            labelReference = labelUrl.trim().takeIf { it.isNotEmpty() },
+            regulatorLabelUrl = labelUrl.trim().takeIf { it.isNotEmpty() },
+            manufacturerProductUrl = productUrl.trim().takeIf { it.isNotEmpty() },
+        )
+        return base.copy(registration = registration, registeredUses = emptyList())
+    }
+}
 
 private data class ChemicalReviewV2Draft(
     val source: String,
@@ -78,6 +137,8 @@ private data class ChemicalReviewV2Draft(
     val viticultureRates: ViticultureRates,
     val selectedRateId: String? = null,
     val automaticRates: Map<ChemicalDefaultRateBasis, ChemicalLabelRate> = emptyMap(),
+    val isManual: Boolean = false,
+    val manualDetails: ChemicalSearchV2ManualDetails = ChemicalSearchV2ManualDetails(),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -86,6 +147,7 @@ internal fun ChemicalSearchV2Sheet(
     vm: AppViewModel,
     state: AppUiState,
     onDismiss: () -> Unit,
+    onOpenExisting: (SavedChemical) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -123,6 +185,20 @@ internal fun ChemicalSearchV2Sheet(
             unit = initial.unit.toDisplayUnit(), rate = initial,
             viticultureRates = master.viticultureRates,
             selectedRateId = selected?.id, automaticRates = automatic,
+        )
+    }
+
+    fun openManual() {
+        review = ChemicalReviewV2Draft(
+            source = "Manual — this vineyard",
+            master = null,
+            intelligence = ChemicalIntelligence(),
+            formType = null,
+            productName = ChemicalSearchV2ManualPrefill.productName(query),
+            unit = "L",
+            rate = ChemicalManualRateDraft(),
+            viticultureRates = ViticultureRates(),
+            isManual = true,
         )
     }
 
@@ -200,6 +276,9 @@ internal fun ChemicalSearchV2Sheet(
                 Button(onClick = { runSearch() }, enabled = query.trim().length >= 2 && !searching, modifier = Modifier.fillMaxWidth()) {
                     if (searching) CircularProgressIndicator() else Text("Search VineTrack Master")
                 }
+                OutlinedButton(onClick = ::openManual, modifier = Modifier.fillMaxWidth()) {
+                    Text("+ Add manually")
+                }
                 Text("Master Catalogue only. No AI or external lookup runs during normal search.", fontSize = 12.sp)
                 message?.let { Text(it, fontSize = 13.sp) }
                 results.forEach { result ->
@@ -255,6 +334,7 @@ internal fun ChemicalSearchV2Sheet(
                     onDraft = { review = it },
                     onBack = { review = null },
                     onDone = onDismiss,
+                    onOpenExisting = onOpenExisting,
                 )
             }
         }
@@ -270,10 +350,13 @@ private fun ChemicalReviewV2(
     onDraft: (ChemicalReviewV2Draft) -> Unit,
     onBack: () -> Unit,
     onDone: () -> Unit,
+    onOpenExisting: (SavedChemical) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var saving by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
+    var duplicate by remember { mutableStateOf<SavedChemical?>(null) }
+    var optionalExpanded by remember { mutableStateOf(false) }
     val rateIntel = remember(draft.rate, draft.productName) {
         ChemicalManualEntry.proposedIntelligence(
             ChemicalManualDraft(productName = draft.productName, productRates = listOf(draft.rate)), null,
@@ -288,32 +371,36 @@ private fun ChemicalReviewV2(
     )
     val registeredRates = draft.viticultureRates.all
 
-    Text("Review Chemical", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-    Text("Source: ${draft.source}", fontWeight = FontWeight.SemiBold)
+    Text(if (draft.isManual) "Add Chemical Manually" else "Review Chemical", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+    Text(if (draft.isManual) "REQUIRED" else "Source: ${draft.source}", fontWeight = FontWeight.SemiBold)
     OutlinedTextField(
         value = draft.productName,
         onValueChange = { onDraft(draft.copy(productName = it)) },
         label = { Text("Chemical / product name *") },
         modifier = Modifier.fillMaxWidth(),
     )
-    Text("Registrant: ${draft.intelligence.registration?.registrant ?: "—"}")
-    Text("APVMA: ${draft.intelligence.registration?.registrationNumber ?: "—"}")
-    Text("Active ingredients: ${draft.intelligence.activeIngredients.joinToString { it.name }.ifBlank { "—" }}")
-    draft.intelligence.productCategory.takeIf(String::isNotBlank)?.let { Text("Category: $it") }
+    if (draft.isManual) {
+        Text("Manual vineyard chemical · Unverified", fontSize = 12.sp)
+    } else {
+        Text("Registrant: ${draft.intelligence.registration?.registrant ?: "—"}")
+        Text("APVMA: ${draft.intelligence.registration?.registrationNumber ?: "—"}")
+        Text("Active ingredients: ${draft.intelligence.activeIngredients.joinToString { it.name }.ifBlank { "—" }}")
+        draft.intelligence.productCategory.takeIf(String::isNotBlank)?.let { Text("Category: $it") }
 
-    Text("Registered vineyard rates", fontWeight = FontWeight.Bold)
-    if (registeredRates.isEmpty()) {
-        Text("No registered vineyard rate is currently recorded in VineTrack.", fontSize = 13.sp)
+        Text("Registered vineyard rates", fontWeight = FontWeight.Bold)
+        if (registeredRates.isEmpty()) {
+            Text("No registered vineyard rate is currently recorded in VineTrack.", fontSize = 13.sp)
+        }
+        if (draft.viticultureRates.perHectare.isNotEmpty()) {
+            Text("Per hectare", fontWeight = FontWeight.SemiBold)
+            draft.viticultureRates.perHectare.forEach { Text(it.displayRate) }
+        }
+        if (draft.viticultureRates.per100Litres.isNotEmpty()) {
+            Text("Per 100 L", fontWeight = FontWeight.SemiBold)
+            draft.viticultureRates.per100Litres.forEach { Text(it.displayRate) }
+        }
     }
-    if (draft.viticultureRates.perHectare.isNotEmpty()) {
-        Text("Per hectare", fontWeight = FontWeight.SemiBold)
-        draft.viticultureRates.perHectare.forEach { Text(it.displayRate) }
-    }
-    if (draft.viticultureRates.per100Litres.isNotEmpty()) {
-        Text("Per 100 L", fontWeight = FontWeight.SemiBold)
-        draft.viticultureRates.per100Litres.forEach { Text(it.displayRate) }
-    }
-    if (registeredRates.isNotEmpty()) {
+    if (!draft.isManual && registeredRates.isNotEmpty()) {
         Text("Choose a registered rate, or edit the operational default below", fontWeight = FontWeight.SemiBold)
         registeredRates.forEach { rate ->
             OutlinedButton(onClick = {
@@ -388,32 +475,68 @@ private fun ChemicalReviewV2(
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         listOf("L", "mL", "Kg", "g").forEach { unit ->
             OutlinedButton(onClick = { onDraft(draft.copy(unit = unit, rate = draft.rate.copy(unit = unit.toRateToken()))) }) {
-                Text(if (draft.unit == unit) "✓ $unit" else unit)
+                val label = if (unit == "Kg") "kg" else unit
+                Text(if (draft.unit == unit) "✓ $label" else label)
             }
         }
     }
+    Text("Rate bases are stored exactly as entered and are never converted.", fontSize = 12.sp)
+    if (draft.isManual) {
+        TextButton(onClick = { optionalExpanded = !optionalExpanded }, modifier = Modifier.fillMaxWidth()) {
+            Text(if (optionalExpanded) "Hide optional details" else "Optional details")
+        }
+        if (optionalExpanded) {
+            ChemicalManualOptionalDetails(
+                details = draft.manualDetails,
+                onDetails = { onDraft(draft.copy(manualDetails = it)) },
+            )
+        }
+    }
     evaluation.violations.forEach { Text(it.message, color = com.rork.vinetrack.ui.theme.VineColors.Warning, fontSize = 12.sp) }
+    duplicate?.let { existing ->
+        Text("${existing.displayName} already exists in this vineyard.", color = com.rork.vinetrack.ui.theme.VineColors.Warning)
+        OutlinedButton(onClick = { onOpenExisting(existing) }, modifier = Modifier.fillMaxWidth()) { Text("Open existing record") }
+    }
     notice?.let { Text(it, color = com.rork.vinetrack.ui.theme.VineColors.Warning) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back") }
         Button(
             enabled = evaluation.isSatisfied && !saving,
             onClick = {
-                val duplicate = ChemicalSearchV2Duplicate.existing(
-                    draft.master, draft.intelligence, draft.productName, state.savedChemicals,
+                val saveIntelligence = if (draft.isManual) {
+                    draft.manualDetails.intelligence(draft.productName, draft.rate)
+                } else {
+                    draft.intelligence
+                }
+                val existing = ChemicalSearchV2Duplicate.existing(
+                    draft.master, saveIntelligence, draft.productName, state.savedChemicals,
                 )
-                if (duplicate != null) { notice = "Already in Vineyard Chemicals: ${duplicate.displayName}"; return@Button }
+                if (existing != null) { duplicate = existing; notice = null; return@Button }
                 val vineyardId = state.selectedVineyardId ?: run { notice = "Select a vineyard first."; return@Button }
                 val rate = effectiveRates.firstOrNull() ?: return@Button
                 saving = true
                 val isArea = rate.basis == ChemicalLabelRateBasis.PER_HECTARE || rate.basis == ChemicalLabelRateBasis.RANGE_PER_HECTARE
                 val display = rate.value ?: rate.minValue ?: 0.0
-                val canonicalIntelligence = ChemicalLabelRateNormalizer.normalize(draft.intelligence)
+                val canonicalIntelligence = ChemicalLabelRateNormalizer.normalize(saveIntelligence)
                 if (canonicalIntelligence == null) {
                     saving = false
                     notice = "Invalid stored rate. Correct the unit, amount and rate basis before saving."
                     return@Button
                 }
+                val details = draft.manualDetails
+                val packSize = details.packSize.toDoubleOrNull()
+                val pricePerPack = details.pricePerPack.toDoubleOrNull()
+                val purchase = if (draft.isManual && (packSize != null || pricePerPack != null)) {
+                    ChemicalPurchase(
+                        brand = details.manufacturer.trim(),
+                        activeIngredient = details.activeIngredient.trim(),
+                        chemicalGroup = details.activityGroupCode.trim(),
+                        labelUrl = details.labelUrl.trim(),
+                        costDollars = pricePerPack ?: 0.0,
+                        containerSizeML = packSize ?: 0.0,
+                        containerUnit = draft.unit,
+                    )
+                } else null
                 val input = SavedChemicalRepository.ChemicalInput(
                     name = draft.productName.trim(), unit = draft.unit,
                     ratePerHa = if (isArea && rate.value != null) display else null,
@@ -424,20 +547,27 @@ private fun ChemicalReviewV2(
                             basis = if (isArea) CHEMICAL_RATE_PER_HECTARE else CHEMICAL_RATE_PER_100L,
                         ))
                     }.orEmpty(),
-                    activeIngredient = draft.intelligence.legacyActiveIngredient,
-                    chemicalGroup = draft.intelligence.legacyChemicalGroup,
+                    activeIngredient = canonicalIntelligence.legacyActiveIngredient,
+                    chemicalGroup = canonicalIntelligence.legacyChemicalGroup,
                     use = null, problem = null,
-                    manufacturer = draft.intelligence.registration?.registrant,
-                    notes = null, modeOfAction = null,
-                    labelUrl = draft.intelligence.registration?.labelReference,
-                    productUrl = draft.intelligence.registration?.manufacturerProductUrl,
-                    purchase = null, productCategory = draft.intelligence.productCategory,
-                    productForm = draft.formType.orEmpty(), intelligence = canonicalIntelligence,
+                    manufacturer = if (draft.isManual) details.manufacturer else draft.intelligence.registration?.registrant,
+                    notes = if (draft.isManual) details.notes else null, modeOfAction = null,
+                    labelUrl = if (draft.isManual) details.labelUrl else draft.intelligence.registration?.labelReference,
+                    productUrl = if (draft.isManual) details.productUrl else draft.intelligence.registration?.manufacturerProductUrl,
+                    purchase = purchase,
+                    productCategory = if (draft.isManual) details.productCategory else draft.intelligence.productCategory,
+                    productForm = if (draft.isManual) details.productForm else draft.formType.orEmpty(),
+                    packSize = if (draft.isManual) packSize else null,
+                    packUnit = if (draft.isManual) details.packUnit else "",
+                    pricePerPack = if (draft.isManual) pricePerPack else null,
+                    inventoryQuantity = if (draft.isManual) details.inventoryQuantity.toDoubleOrNull() else null,
+                    inventoryUnit = if (draft.isManual) details.inventoryUnit else "",
+                    intelligence = canonicalIntelligence,
                     masterChemicalId = draft.master?.id, masterSourceRevision = draft.master?.catalogueVersion,
                     defaultRates = ChemicalSearchV2OperationalDefaults.storedDefaults(
                         effectiveRates, java.time.Instant.now().toString(),
                     ),
-                    entrySource = if (draft.master == null) "label_lookup_v2" else "master_catalogue_v2",
+                    entrySource = if (draft.isManual) "manual_v2" else if (draft.master == null) "label_lookup_v2" else "master_catalogue_v2",
                 )
                 vm.createSavedChemical(input) { ok ->
                     saving = false
@@ -462,6 +592,45 @@ private fun ChemicalReviewV2(
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Save") }
     }
+}
+
+@Composable
+private fun ChemicalManualOptionalDetails(
+    details: ChemicalSearchV2ManualDetails,
+    onDetails: (ChemicalSearchV2ManualDetails) -> Unit,
+) {
+    var groupMenuExpanded by remember { mutableStateOf(false) }
+    OutlinedTextField(details.manufacturer, { onDetails(details.copy(manufacturer = it)) }, label = { Text("Manufacturer / registrant") }, modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(details.registrationNumber, { onDetails(details.copy(registrationNumber = it)) }, label = { Text("APVMA registration number") }, modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(details.productCategory, { onDetails(details.copy(productCategory = it)) }, label = { Text("Category") }, modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(details.productForm, { onDetails(details.copy(productForm = it)) }, label = { Text("Product form") }, modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(details.activeIngredient, { onDetails(details.copy(activeIngredient = it)) }, label = { Text("Active ingredient(s), comma separated") }, modifier = Modifier.fillMaxWidth())
+    TextButton(onClick = { groupMenuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+        Text("Activity group: ${details.activityGroupScheme?.label ?: "Not specified"}")
+    }
+    DropdownMenu(expanded = groupMenuExpanded, onDismissRequest = { groupMenuExpanded = false }) {
+        DropdownMenuItem(text = { Text("Not specified") }, onClick = {
+            onDetails(details.copy(activityGroupScheme = null, activityGroupCode = ""))
+            groupMenuExpanded = false
+        })
+        ChemicalActivityGroupScheme.entries.forEach { scheme ->
+            DropdownMenuItem(text = { Text(scheme.label) }, onClick = {
+                onDetails(details.copy(activityGroupScheme = scheme))
+                groupMenuExpanded = false
+            })
+        }
+    }
+    if (details.activityGroupScheme != null) {
+        OutlinedTextField(details.activityGroupCode, { onDetails(details.copy(activityGroupCode = it)) }, label = { Text("Group code") }, modifier = Modifier.fillMaxWidth())
+    }
+    OutlinedTextField(details.labelUrl, { onDetails(details.copy(labelUrl = it)) }, label = { Text("Label URL") }, modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(details.productUrl, { onDetails(details.copy(productUrl = it)) }, label = { Text("Product URL") }, modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(details.notes, { onDetails(details.copy(notes = it)) }, label = { Text("Notes") }, modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(details.packSize, { onDetails(details.copy(packSize = it.filterRateChars())) }, label = { Text("Pack size") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(details.packUnit, { onDetails(details.copy(packUnit = it)) }, label = { Text("Pack unit") }, modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(details.pricePerPack, { onDetails(details.copy(pricePerPack = it.filterRateChars())) }, label = { Text("Price per pack") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(details.inventoryQuantity, { onDetails(details.copy(inventoryQuantity = it.filterRateChars())) }, label = { Text("Inventory quantity") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(details.inventoryUnit, { onDetails(details.copy(inventoryUnit = it)) }, label = { Text("Inventory unit") }, modifier = Modifier.fillMaxWidth())
 }
 
 private fun String.filterRateChars(): String = filter { it.isDigit() || it == '.' || it == ',' }.replace(',', '.')

@@ -196,6 +196,62 @@ nonisolated enum ChemicalSearchV2Duplicate {
     }
 }
 
+nonisolated enum ChemicalSearchV2ManualPrefill {
+    static func productName(from searchText: String) -> String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+nonisolated struct ChemicalSearchV2ManualDetails: Sendable, Hashable {
+    var manufacturer: String = ""
+    var registrationNumber: String = ""
+    var productCategory: String = ""
+    var productForm: String = ""
+    var activeIngredient: String = ""
+    var activityGroupScheme: ChemicalActivityGroupScheme?
+    var activityGroupCode: String = ""
+    var labelURL: String = ""
+    var productURL: String = ""
+    var notes: String = ""
+    var packSize: String = ""
+    var packUnit: String = ""
+    var pricePerPack: String = ""
+    var inventoryQuantity: String = ""
+    var inventoryUnit: String = ""
+
+    func intelligence(productName: String, rate: ChemicalManualRateDraft) -> ChemicalIntelligence {
+        let activeNames = activeIngredient.split(separator: ",").map {
+            String($0).trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }
+        let actives = activeNames.enumerated().map { index, name in
+            ChemicalManualActiveDraft(
+                name: name,
+                scheme: index == 0 ? activityGroupScheme : nil,
+                groupCode: index == 0 ? activityGroupCode : ""
+            )
+        }
+        let hasRegistration = !manufacturer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !registrationNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !labelURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !productURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let draft = ChemicalManualDraft(
+            productName: productName,
+            countryCode: hasRegistration ? "AU" : "",
+            productCategory: productCategory,
+            registrant: manufacturer,
+            registrationScheme: hasRegistration ? .apvma : nil,
+            registrationNumber: registrationNumber,
+            labelReference: labelURL,
+            productReference: productURL,
+            actives: actives,
+            productRates: [rate]
+        )
+        var intelligence = ChemicalManualEntry.outcome(for: draft, existing: nil).intelligence
+        intelligence.registeredUses = []
+        return intelligence
+    }
+}
+
 @MainActor
 struct MasterChemicalV2Repository: Sendable {
     static let invokesAI = false
@@ -290,6 +346,12 @@ enum ChemicalLabelIdentityOCR {
 struct ChemicalSearchV2View: View {
     @Environment(\.dismiss) private var dismiss
 
+    let onOpenExisting: (SavedChemical) -> Void
+
+    init(onOpenExisting: @escaping (SavedChemical) -> Void = { _ in }) {
+        self.onOpenExisting = onOpenExisting
+    }
+
     @State private var query: String = ""
     @State private var results: [MasterChemicalV2] = []
     @State private var isSearching: Bool = false
@@ -317,6 +379,8 @@ struct ChemicalSearchV2View: View {
         var viticultureRates: ViticultureRates
         var selectedRegisteredRateID: String?
         var automaticRates: [ChemicalDefaultRateBasis: ChemicalLabelRate]
+        var isManual: Bool = false
+        var manualDetails = ChemicalSearchV2ManualDetails()
     }
 
     var body: some View {
@@ -332,6 +396,10 @@ struct ChemicalSearchV2View: View {
                         else { Label("Search VineTrack Master", systemImage: "magnifyingglass").frame(maxWidth: .infinity) }
                     }
                     .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || isSearching)
+                    Button(action: openManual) {
+                        Label("Add manually", systemImage: "plus").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
                 } footer: {
                     Text("Master Catalogue only. No AI, web search or label lookup runs while you type or search here.")
                 }
@@ -369,10 +437,18 @@ struct ChemicalSearchV2View: View {
                 CameraImagePicker { data in if let data { acceptPhoto(data) } }
             }
             .sheet(item: $review) { draft in
-                ChemicalSearchV2ReviewView(draft: draft, photoData: photoData) { outcome in
+                ChemicalSearchV2ReviewView(
+                    draft: draft,
+                    photoData: draft.isManual ? nil : photoData,
+                    onOpenExisting: { existing in
+                        review = nil
+                        dismiss()
+                        onOpenExisting(existing)
+                    }
+                ) { outcome in
                     message = outcome
                     review = nil
-                    if outcome.hasPrefix("Saved") || outcome.hasPrefix("Already") { dismiss() }
+                    if outcome.hasPrefix("Saved") { dismiss() }
                 }
             }
             .onChange(of: photoItem) { _, item in
@@ -420,6 +496,22 @@ struct ChemicalSearchV2View: View {
             formType: master.formType, productName: master.registeredProductName,
             unit: unit(for: initial.unit), rate: initial, viticultureRates: master.viticultureRates,
             selectedRegisteredRateID: selected?.id, automaticRates: automatic
+        )
+    }
+
+    private func openManual() {
+        review = ReviewDraft(
+            source: "Manual — this vineyard",
+            master: nil,
+            intelligence: ChemicalIntelligence(verification: .manual()),
+            formType: nil,
+            productName: ChemicalSearchV2ManualPrefill.productName(from: query),
+            unit: .litres,
+            rate: ChemicalManualRateDraft(),
+            viticultureRates: ViticultureRates(perHectare: [], per100Litres: []),
+            selectedRegisteredRateID: nil,
+            automaticRates: [:],
+            isManual: true
         )
     }
 
@@ -504,11 +596,22 @@ private struct ChemicalSearchV2ReviewView: View {
     @State private var draft: ChemicalSearchV2View.ReviewDraft
     @State private var notice: String?
     @State private var isSaving: Bool = false
+    @State private var isOptionalDetailsExpanded: Bool = false
+    @State private var duplicate: SavedChemical?
     let photoData: Data?
+    let onOpenExisting: (SavedChemical) -> Void
     let onComplete: (String) -> Void
 
-    init(draft: ChemicalSearchV2View.ReviewDraft, photoData: Data?, onComplete: @escaping (String) -> Void) {
-        _draft = State(initialValue: draft); self.photoData = photoData; self.onComplete = onComplete
+    init(
+        draft: ChemicalSearchV2View.ReviewDraft,
+        photoData: Data?,
+        onOpenExisting: @escaping (SavedChemical) -> Void,
+        onComplete: @escaping (String) -> Void
+    ) {
+        _draft = State(initialValue: draft)
+        self.photoData = photoData
+        self.onOpenExisting = onOpenExisting
+        self.onComplete = onComplete
     }
 
     private var parsedRate: ChemicalLabelRate? {
@@ -534,30 +637,39 @@ private struct ChemicalSearchV2ReviewView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Source") { Label(draft.source, systemImage: "checkmark.seal") }
-                Section("Product") {
-                    TextField("Chemical / product name *", text: $draft.productName)
-                    LabeledContent("Registrant", value: draft.intelligence.registration?.registrant ?? "—")
-                    LabeledContent("APVMA", value: draft.intelligence.registration?.registrationNumber ?? "—")
-                    LabeledContent("Active ingredients", value: draft.intelligence.activeIngredients.map(\.name).joined(separator: ", ").ifEmpty("—"))
-                    if !draft.intelligence.productCategory.isEmpty { LabeledContent("Category", value: draft.intelligence.productCategory.capitalized) }
-                }
-                Section("Registered vineyard rates") {
-                    if draft.viticultureRates.all.isEmpty {
-                        Text("No registered vineyard rate is currently recorded in VineTrack.")
+                if draft.isManual {
+                    Section("Required") {
+                        TextField("Chemical / product name *", text: $draft.productName)
+                        Label("Manual vineyard chemical · Unverified", systemImage: "info.circle")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    if !draft.viticultureRates.perHectare.isEmpty {
-                        LabeledContent("Per hectare") {
-                            VStack(alignment: .trailing) {
-                                ForEach(draft.viticultureRates.perHectare) { Text($0.displayRate) }
+                } else {
+                    Section("Source") { Label(draft.source, systemImage: "checkmark.seal") }
+                    Section("Product") {
+                        TextField("Chemical / product name *", text: $draft.productName)
+                        LabeledContent("Registrant", value: draft.intelligence.registration?.registrant ?? "—")
+                        LabeledContent("APVMA", value: draft.intelligence.registration?.registrationNumber ?? "—")
+                        LabeledContent("Active ingredients", value: draft.intelligence.activeIngredients.map(\.name).joined(separator: ", ").ifEmpty("—"))
+                        if !draft.intelligence.productCategory.isEmpty { LabeledContent("Category", value: draft.intelligence.productCategory.capitalized) }
+                    }
+                    Section("Registered vineyard rates") {
+                        if draft.viticultureRates.all.isEmpty {
+                            Text("No registered vineyard rate is currently recorded in VineTrack.")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !draft.viticultureRates.perHectare.isEmpty {
+                            LabeledContent("Per hectare") {
+                                VStack(alignment: .trailing) {
+                                    ForEach(draft.viticultureRates.perHectare) { Text($0.displayRate) }
+                                }
                             }
                         }
-                    }
-                    if !draft.viticultureRates.per100Litres.isEmpty {
-                        LabeledContent("Per 100 L") {
-                            VStack(alignment: .trailing) {
-                                ForEach(draft.viticultureRates.per100Litres) { Text($0.displayRate) }
+                        if !draft.viticultureRates.per100Litres.isEmpty {
+                            LabeledContent("Per 100 L") {
+                                VStack(alignment: .trailing) {
+                                    ForEach(draft.viticultureRates.per100Litres) { Text($0.displayRate) }
+                                }
                             }
                         }
                     }
@@ -599,12 +711,55 @@ private struct ChemicalSearchV2ReviewView: View {
                 } header: {
                     Text("Operational Default Rate *")
                 } footer: {
-                    Text("Editable vineyard-level default. The Master Catalogue record is never changed.")
+                    Text("Editable vineyard-level default. Rate bases are stored exactly as entered and are never converted.")
+                }
+                if draft.isManual {
+                    Section {
+                        DisclosureGroup("Optional details", isExpanded: $isOptionalDetailsExpanded) {
+                            TextField("Manufacturer / registrant", text: $draft.manualDetails.manufacturer)
+                            TextField("APVMA registration number", text: $draft.manualDetails.registrationNumber)
+                                .keyboardType(.numberPad)
+                            TextField("Category", text: $draft.manualDetails.productCategory)
+                            TextField("Product form", text: $draft.manualDetails.productForm)
+                            TextField("Active ingredient(s), comma separated", text: $draft.manualDetails.activeIngredient)
+                            Picker("Activity group", selection: $draft.manualDetails.activityGroupScheme) {
+                                Text("Not specified").tag(ChemicalActivityGroupScheme?.none)
+                                ForEach(ChemicalActivityGroupScheme.allCases, id: \.rawValue) {
+                                    Text($0.label).tag(Optional($0))
+                                }
+                            }
+                            if draft.manualDetails.activityGroupScheme != nil {
+                                TextField("Group code", text: $draft.manualDetails.activityGroupCode)
+                            }
+                            TextField("Label URL", text: $draft.manualDetails.labelURL)
+                                .textInputAutocapitalization(.never)
+                                .keyboardType(.URL)
+                            TextField("Product URL", text: $draft.manualDetails.productURL)
+                                .textInputAutocapitalization(.never)
+                                .keyboardType(.URL)
+                            TextField("Notes", text: $draft.manualDetails.notes, axis: .vertical)
+                            TextField("Pack size", text: $draft.manualDetails.packSize)
+                                .keyboardType(.decimalPad)
+                            TextField("Pack unit", text: $draft.manualDetails.packUnit)
+                            TextField("Price per pack", text: $draft.manualDetails.pricePerPack)
+                                .keyboardType(.decimalPad)
+                            TextField("Inventory quantity", text: $draft.manualDetails.inventoryQuantity)
+                                .keyboardType(.decimalPad)
+                            TextField("Inventory unit", text: $draft.manualDetails.inventoryUnit)
+                        }
+                    }
+                }
+                if let duplicate {
+                    Section {
+                        Text("\(duplicate.name) already exists in this vineyard.")
+                            .foregroundStyle(.orange)
+                        Button("Open existing record") { onOpenExisting(duplicate) }
+                    }
                 }
                 if let notice { Text(notice).foregroundStyle(.orange) }
                 ForEach(evaluation.violations, id: \.code) { Text($0.message).font(.caption).foregroundStyle(.red) }
             }
-            .navigationTitle("Review Chemical")
+            .navigationTitle(draft.isManual ? "Add Chemical Manually" : "Review Chemical")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -615,15 +770,19 @@ private struct ChemicalSearchV2ReviewView: View {
 
     private func save() {
         guard !isSaving, evaluation.isSatisfied, let rate = effectiveRates.first else { return }
+        let intelligence = draft.isManual
+            ? draft.manualDetails.intelligence(productName: draft.productName, rate: draft.rate)
+            : draft.intelligence
         if let existing = ChemicalSearchV2Duplicate.existing(
-            master: draft.master, intelligence: draft.intelligence, name: draft.productName,
+            master: draft.master, intelligence: intelligence, name: draft.productName,
             in: store.savedChemicals
         ) {
-            onComplete("Already in Vineyard Chemicals: \(existing.name)")
+            duplicate = existing
+            notice = nil
             return
         }
         guard let vineyardId = store.selectedVineyardId else { notice = "Select a vineyard first."; return }
-        guard let canonicalIntelligence = ChemicalLabelRateNormalizer.normalize(draft.intelligence) else {
+        guard let canonicalIntelligence = ChemicalLabelRateNormalizer.normalize(intelligence) else {
             notice = "Invalid stored rate. Correct the unit, amount and rate basis before saving."
             return
         }
@@ -637,18 +796,45 @@ private struct ChemicalSearchV2ReviewView: View {
             rates: effectiveRates,
             selectedAt: Date().ISO8601Format()
         )
+        let parseOptional: (String) -> Double? = {
+            Double($0.replacingOccurrences(of: ",", with: "."))
+        }
+        let details = draft.manualDetails
+        let packSize = parseOptional(details.packSize)
+        let pricePerPack = parseOptional(details.pricePerPack)
+        let purchase: ChemicalPurchase? = draft.isManual && (packSize != nil || pricePerPack != nil)
+            ? ChemicalPurchase(
+                brand: details.manufacturer,
+                activeIngredient: details.activeIngredient,
+                chemicalGroup: details.activityGroupCode,
+                labelURL: details.labelURL,
+                costDollars: pricePerPack ?? 0,
+                containerSizeML: packSize ?? 0,
+                containerUnit: draft.unit
+            )
+            : nil
         let chemical = SavedChemical(
             vineyardId: vineyardId, name: draft.productName,
             ratePerHa: basis == .perHectare && rate.value != nil ? display : nil,
-            unit: draft.unit, chemicalGroup: draft.intelligence.legacyChemicalGroup,
-            manufacturer: draft.intelligence.registration?.registrant ?? "",
-            activeIngredient: draft.intelligence.legacyActiveIngredient,
-            rates: legacyRates, labelURL: draft.intelligence.registration?.labelReference ?? "",
-            productURL: draft.intelligence.registration?.manufacturerProductURL ?? "",
-            productCategory: draft.intelligence.productCategory,
-            productForm: draft.formType ?? "", chemicalIntelligence: canonicalIntelligence,
+            unit: draft.unit, chemicalGroup: canonicalIntelligence.legacyChemicalGroup,
+            manufacturer: draft.isManual ? details.manufacturer : (draft.intelligence.registration?.registrant ?? ""),
+            notes: draft.isManual ? details.notes : "",
+            activeIngredient: canonicalIntelligence.legacyActiveIngredient,
+            rates: legacyRates,
+            purchase: purchase,
+            labelURL: draft.isManual ? details.labelURL : (draft.intelligence.registration?.labelReference ?? ""),
+            productURL: draft.isManual ? details.productURL : (draft.intelligence.registration?.manufacturerProductURL ?? ""),
+            productCategory: draft.isManual ? details.productCategory : draft.intelligence.productCategory,
+            productForm: draft.isManual ? details.productForm : (draft.formType ?? ""),
+            packSize: draft.isManual ? packSize : nil,
+            packUnit: draft.isManual ? details.packUnit : "",
+            pricePerPack: draft.isManual ? pricePerPack : nil,
+            inventoryQuantity: draft.isManual ? parseOptional(details.inventoryQuantity) : nil,
+            inventoryUnit: draft.isManual ? details.inventoryUnit : "",
+            chemicalIntelligence: canonicalIntelligence,
             masterChemicalId: draft.master?.id, masterSourceRevision: draft.master?.catalogueVersion,
-            defaultRates: defaults, entrySource: draft.master == nil ? "label_lookup_v2" : "master_catalogue_v2"
+            defaultRates: defaults,
+            entrySource: draft.isManual ? "manual_v2" : (draft.master == nil ? "label_lookup_v2" : "master_catalogue_v2")
         )
         store.addSavedChemical(chemical)
         guard let photoData else { onComplete("Saved \(chemical.name)"); return }

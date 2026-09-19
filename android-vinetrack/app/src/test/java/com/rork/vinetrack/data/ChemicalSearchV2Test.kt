@@ -10,10 +10,16 @@ import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
 import com.rork.vinetrack.data.chemical.ChemicalSearchV2RequestGate
 import com.rork.vinetrack.data.chemical.MasterChemicalV2Repository
 import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
+import com.rork.vinetrack.data.chemical.ChemicalSearchV2Duplicate
+import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
+import com.rork.vinetrack.data.model.SavedChemical
+import com.rork.vinetrack.ui.screens.ChemicalSearchV2ManualDetails
+import com.rork.vinetrack.ui.screens.ChemicalSearchV2ManualPrefill
 import com.rork.vinetrack.data.chemical.ViticultureRates
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ChemicalSearchV2Test {
@@ -120,5 +126,58 @@ class ChemicalSearchV2Test {
 
     @Test fun normalMasterSearchDoesNotInvokeAI() {
         assertFalse(MasterChemicalV2Repository.INVOKES_AI)
+    }
+
+    @Test fun manualEntryPrefillsTypedSearchAndStaysVineyardOnly() {
+        assertEquals("My Local Sulphur", ChemicalSearchV2ManualPrefill.productName("  My Local Sulphur  "))
+        val details = ChemicalSearchV2ManualDetails(
+            manufacturer = "Local supplier",
+            productCategory = "fungicide",
+            activeIngredient = "Sulphur",
+            activityGroupScheme = com.rork.vinetrack.data.chemical.ChemicalActivityGroupScheme.FRAC,
+            activityGroupCode = "M02",
+            notes = "Optional note",
+        )
+        val intelligence = details.intelligence(
+            "My Local Sulphur",
+            com.rork.vinetrack.data.chemical.ChemicalManualRateDraft(
+                basis = ChemicalLabelRateBasis.RANGE_PER_100_LITRES,
+                minText = "200", maxText = "400", unit = "g",
+            ),
+        )
+
+        assertTrue(intelligence.registeredUses.isEmpty())
+        assertEquals(ChemicalVerificationStatus.UNVERIFIED, intelligence.resolvedVerificationStatus)
+        assertEquals(listOf("Sulphur"), intelligence.activeIngredients.map { it.name })
+    }
+
+    @Test fun manualSingleAndRangePersistToExactDefaultRateBasis() {
+        val single = ChemicalLabelRate(basis = ChemicalLabelRateBasis.PER_HECTARE, value = 2.0, unit = "L")
+        val range = ChemicalLabelRate(basis = ChemicalLabelRateBasis.RANGE_PER_100_LITRES, minValue = 200.0, maxValue = 400.0, unit = "g")
+        val area = ChemicalSearchV2OperationalDefaults.storedDefaults(listOf(single), "2026-09-19T00:00:00Z")!!.perHectare!!
+        val volume = ChemicalSearchV2OperationalDefaults.storedDefaults(listOf(range), "2026-09-19T00:00:00Z")!!.per100Litres!!
+
+        assertEquals(2.0, area.value!!, 0.0)
+        assertEquals("L", area.unit)
+        assertEquals(200.0, volume.minValue!!, 0.0)
+        assertEquals(400.0, volume.maxValue!!, 0.0)
+        assertEquals("g", volume.unit)
+        assertEquals("manual", area.entryMethod)
+        assertEquals("manual", volume.entryMethod)
+    }
+
+    @Test fun optionalDetailsAndRegisteredUsesDoNotBlockManualSave() {
+        val rate = ChemicalLabelRate(basis = ChemicalLabelRateBasis.PER_100_LITRES, value = 200.0, unit = "g")
+        val evaluation = ChemicalSaveContract.evaluateMinimumOperational("Wettable Sulphur", "g", listOf(rate))
+        assertTrue(evaluation.violations.toString(), evaluation.isSatisfied)
+    }
+
+    @Test fun manualDuplicateUsesExactNormalisedVineyardNameOnly() {
+        val existing = SavedChemical(id = "existing", vineyardId = "vineyard", name = "Wettable Sulphur")
+        val intelligence = com.rork.vinetrack.data.chemical.ChemicalIntelligence(
+            verification = com.rork.vinetrack.data.chemical.ChemicalVerification.manual(),
+        )
+        assertEquals(existing, ChemicalSearchV2Duplicate.existing(null, intelligence, "wettable-sulphur", listOf(existing)))
+        assertNull(ChemicalSearchV2Duplicate.existing(null, intelligence, "Wettable Sulphur Plus", listOf(existing)))
     }
 }

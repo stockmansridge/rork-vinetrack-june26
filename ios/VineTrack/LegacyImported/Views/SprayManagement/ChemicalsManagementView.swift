@@ -247,7 +247,10 @@ struct ChemicalsManagementView: View {
             ChemicalMatchFlowView()
         }
         .sheet(isPresented: $showSearchV2) {
-            ChemicalSearchV2View()
+            ChemicalSearchV2View { existing in
+                showSearchV2 = false
+                editingChemical = existing
+            }
         }
         .sheet(item: $matchingChemical) { chem in
             ChemicalMatchFlowView(existing: chem, prefillQuery: chem.name)
