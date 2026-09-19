@@ -79,17 +79,21 @@ class OptimalRipenessWeatherCoordinator(
             coverageStartMs = earliest,
             completedEndMs = completedEnd,
             hasCachedData = hasCache,
-            isUpdating = false,
+            isUpdating = existing.isUpdating && existing.vineyardId == request.vineyardId,
             lastRefreshMs = existing.lastRefreshMs.takeIf { existing.vineyardId == request.vineyardId },
-            error = null,
+            error = existing.error.takeIf { existing.vineyardId == request.vineyardId },
         )
         if (!isOnline || earliest == null) return
-        val identity = refreshIdentity(request, cachedSource?.sourceFingerprint, completedEnd)
+        val identity = refreshIdentity(request, cachedSource?.sourceFingerprint, earliest, completedEnd)
         val isFresh = !force && requestIdentity == identity &&
             existing.lastRefreshMs?.let { System.currentTimeMillis() - it < REFRESH_THROTTLE_MS } == true
-        if (isFresh || refreshJob?.isActive == true) return
+        if (isFresh) return
+        if (refreshJob?.isActive == true) {
+            if (requestIdentity == identity) return
+            refreshJob?.cancel()
+        }
         requestIdentity = identity
-        refreshJob = scope.launch { refresh(request, service, cachedSource, earliest, completedEnd) }
+        refreshJob = scope.launch { refresh(request, service, cachedSource, earliest, completedEnd, identity) }
     }
 
     fun refreshIfNeeded(isOnline: Boolean) {
@@ -103,6 +107,7 @@ class OptimalRipenessWeatherCoordinator(
         cachedSource: OptimalRipenessSourceSelection?,
         earliest: Long,
         completedEnd: Long,
+        identity: String,
     ) {
         _state.value = _state.value.copy(isUpdating = true, error = null)
         val result = runCatching {
@@ -116,7 +121,7 @@ class OptimalRipenessWeatherCoordinator(
                 timeZoneId = request.timeZone.id,
             )
         }
-        if (currentRequest?.vineyardId != request.vineyardId) return
+        if (requestIdentity != identity || currentRequest != request) return
         result.onSuccess { weather ->
             sourceStore.save(OptimalRipenessSourceSelection(
                 ownerId = session.userId.orEmpty(),
@@ -130,7 +135,7 @@ class OptimalRipenessWeatherCoordinator(
                 hasCachedData = weather.hasUsableData,
                 isUpdating = false,
                 lastRefreshMs = System.currentTimeMillis(),
-                error = null,
+                error = if (weather.hasUsableData) null else "Weather history could not be updated.",
             )
         }.onFailure {
             _state.value = _state.value.copy(
@@ -150,6 +155,7 @@ class OptimalRipenessWeatherCoordinator(
         fun refreshIdentity(
             request: OptimalRipenessWeatherRequest,
             sourceFingerprint: String?,
+            earliestRequiredMs: Long,
             completedEndMs: Long,
         ): String = listOf(
             request.vineyardId,
@@ -157,6 +163,7 @@ class OptimalRipenessWeatherCoordinator(
             "%.4f".format(java.util.Locale.US, request.latitude),
             "%.4f".format(java.util.Locale.US, request.longitude),
             request.timeZone.id,
+            optimalRipenessStartOfDay(earliestRequiredMs, request.timeZone),
             completedCalendarDayStart(completedEndMs, request.timeZone),
         ).joinToString("|")
     }

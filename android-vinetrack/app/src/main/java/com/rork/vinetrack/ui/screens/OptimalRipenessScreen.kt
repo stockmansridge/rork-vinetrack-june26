@@ -139,6 +139,7 @@ internal data class RipenessRow(
     val target: Double,
     val daysToTarget: Int?,
     val hasGddValue: Boolean = true,
+    val isIncomplete: Boolean = false,
 ) {
     val progress: Double get() = if (target > 0) min(1.0, max(0.0, total / target)) else 0.0
 }
@@ -233,12 +234,15 @@ fun OptimalRipenessScreen(
     val weather = state.optimalRipenessWeather
     val service = weather.service
     val sourceKey = weather.sourceKey
+    val paddocks = remember(state.paddocks, state.selectedVineyardId) {
+        selectedOptimalRipenessPaddocks(state)
+    }
     val calculated = if (service != null && sourceKey != null && weather.hasCachedData) {
         computeRows(
             service = service,
             sourceKey = sourceKey,
             latitude = coordinates?.first ?: 0.0,
-            paddocks = state.paddocks,
+            paddocks = paddocks,
             grapeVarieties = state.grapeVarieties,
             useBEDD = gddSettings.calculationMode.useBEDD,
             seasonStartMs = seasonStartMs,
@@ -248,7 +252,7 @@ fun OptimalRipenessScreen(
         ).copy(sourceLabel = weather.sourceLabel, sourceFingerprint = sourceKey)
     } else {
         buildImmediateRipenessResult(
-            paddocks = state.paddocks,
+            paddocks = paddocks,
             grapeVarieties = state.grapeVarieties,
             seasonStartMs = seasonStartMs,
             globalResetMode = gddSettings.resetMode,
@@ -272,7 +276,7 @@ fun OptimalRipenessScreen(
     ) { padding ->
         val result = screenState.result
         when {
-            state.paddocks.isEmpty() -> {
+            paddocks.isEmpty() -> {
                 Column(modifier = Modifier.fillMaxSize().padding(padding), verticalArrangement = Arrangement.Center) {
                     EmptyState(
                         icon = Icons.Filled.Spa,
@@ -308,7 +312,8 @@ fun OptimalRipenessScreen(
                         }
                         BlockRipenessCard(
                             row = row,
-                            isUpdatingWeather = false,
+                            isUpdatingWeather = screenState.isUpdatingWeather,
+                            weatherError = weather.error,
                             onClick = if (varietyKey != null) ({ openVarietyKey = varietyKey }) else null,
                         )
                     }
@@ -363,10 +368,17 @@ private fun GddSourceCard(sourceLabel: String, isUpdatingWeather: Boolean) {
 private fun BlockRipenessCard(
     row: RipenessRow,
     isUpdatingWeather: Boolean,
+    weatherError: String?,
     onClick: (() -> Unit)? = null,
 ) {
     val vine = LocalVineColors.current
-    val status = ripenessStatus(row)
+    val status = when {
+        !row.hasGddValue && isUpdatingWeather -> RipenessStatus("Syncing weather history…", vine.textSecondary, Icons.Filled.WbSunny)
+        !row.hasGddValue && weatherError != null -> RipenessStatus("Weather history couldn't be updated", VineColors.Orange, Icons.Filled.ErrorOutline)
+        !row.hasGddValue -> RipenessStatus("Weather history unavailable", vine.textSecondary, Icons.Filled.ErrorOutline)
+        row.isIncomplete -> RipenessStatus("Incomplete weather data", VineColors.Orange, Icons.Filled.ErrorOutline)
+        else -> ripenessStatus(row)
+    }
     VineyardCard(modifier = if (onClick != null) Modifier.clickable { onClick() } else Modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.Top) {
@@ -427,9 +439,8 @@ private fun BlockRipenessCard(
             }
 
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                val visibleStatus = if (!row.hasGddValue && isUpdatingWeather) "Waiting for season weather" else status.label
                 Icon(status.icon, contentDescription = null, tint = status.color, modifier = Modifier.size(14.dp))
-                Text(visibleStatus, color = status.color, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(status.label, color = status.color, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 val days = row.daysToTarget
                 if (days != null && days > 0) {
                     Icon(Icons.Filled.CalendarMonth, contentDescription = null, tint = VineColors.Orange, modifier = Modifier.size(13.dp))
@@ -457,7 +468,14 @@ private fun SetupChecklistCard(
     val vine = LocalVineColors.current
     var expanded by remember { mutableStateOf(false) }
 
-    val items = remember(state.paddocks, state.grapeVarieties, state.selectedVineyardId, seasonStartMonth, seasonStartDay) {
+    val items = remember(
+        state.paddocks,
+        state.grapeVarieties,
+        state.grapeVarietyReferenceLoading,
+        state.selectedVineyardId,
+        seasonStartMonth,
+        seasonStartDay,
+    ) {
         buildChecklist(state, seasonStartMonth, seasonStartDay)
     }
     val pending = items.count { !it.ok }
@@ -538,10 +556,11 @@ private data class ChecklistItem(
 
 private fun buildChecklist(state: AppUiState, seasonStartMonth: Int, seasonStartDay: Int): List<ChecklistItem> {
     val out = mutableListOf<ChecklistItem>()
+    val paddocks = selectedOptimalRipenessPaddocks(state)
 
     val v = state.selectedVineyard
     val hasCoords = (v?.latitude != null && v.longitude != null) ||
-        state.paddocks.any { it.centroid != null }
+        paddocks.any { it.centroid != null }
     out.add(
         ChecklistItem(
             "Weather source",
@@ -555,18 +574,20 @@ private fun buildChecklist(state: AppUiState, seasonStartMonth: Int, seasonStart
     // to the managed catalog (mirrors iOS `RipenessVarietyResolver` — an
     // unrecognised variety is just as broken as a missing one). Tapping opens
     // the inline Fix Block Varieties sheet rather than the full Blocks editor.
-    val blocksNeedingVariety = state.paddocks.count { !blockVarietyRecognised(it, state.grapeVarieties) }
-    out.add(
-        ChecklistItem(
-            "Block varieties",
-            if (state.paddocks.isEmpty()) "Add blocks first"
-            else if (blocksNeedingVariety == 0) "All blocks have a recognised variety"
-            else "$blocksNeedingVariety block${if (blocksNeedingVariety == 1) "" else "s"} need a variety — tap to fix",
-            state.paddocks.isNotEmpty() && blocksNeedingVariety == 0,
-            route = null,
-            opensFixVarieties = true,
+    if (!state.grapeVarietyReferenceLoading) {
+        val blocksNeedingVariety = paddocks.count { !blockVarietyRecognised(it, state.grapeVarieties) }
+        out.add(
+            ChecklistItem(
+                "Block varieties",
+                if (paddocks.isEmpty()) "Add blocks first"
+                else if (blocksNeedingVariety == 0) "All blocks have a recognised variety"
+                else "$blocksNeedingVariety block${if (blocksNeedingVariety == 1) "" else "s"} need a variety — tap to fix",
+                paddocks.isNotEmpty() && blocksNeedingVariety == 0,
+                route = null,
+                opensFixVarieties = true,
+            )
         )
-    )
+    }
 
     // Season start date (always satisfied — informational, deep-links to prefs).
     val monthName = monthSymbol(seasonStartMonth)
@@ -580,9 +601,9 @@ private fun buildChecklist(state: AppUiState, seasonStartMonth: Int, seasonStart
     )
 
     // GDD targets for varieties currently in use.
-    val targetsMissing = state.paddocks.flatMap { it.varietyAllocations.orEmpty() }
+    val targetsMissing = paddocks.flatMap { it.varietyAllocations.orEmpty() }
         .mapNotNull { alloc ->
-            val target = resolveTargetForAllocation(alloc.varietyKey, alloc.displayName, state)
+            val target = resolveTargetForAllocation(alloc.varietyKey, alloc.varietyId, alloc.displayName, state)
             if (target <= 0) (alloc.displayName ?: "Unknown") else null
         }.distinct()
     out.add(
@@ -597,8 +618,8 @@ private fun buildChecklist(state: AppUiState, seasonStartMonth: Int, seasonStart
 
     // Budburst dates — surfaced when any block has a budburst date in play, so
     // the reset used for GDD accumulation is accurate.
-    val blocksWithBudburst = state.paddocks.count { !it.budburstDate.isNullOrBlank() }
-    if (state.paddocks.isNotEmpty()) {
+    val blocksWithBudburst = paddocks.count { !it.budburstDate.isNullOrBlank() }
+    if (paddocks.isNotEmpty()) {
         out.add(
             ChecklistItem(
                 "Budburst dates",
@@ -648,6 +669,7 @@ private fun OptimalRipenessSnapshot.toRipenessResult(paddocks: List<Paddock>): R
                 target = cached.target,
                 daysToTarget = cached.daysToTarget,
                 hasGddValue = true,
+                isIncomplete = false,
             )
         },
     )
@@ -667,7 +689,7 @@ internal fun buildImmediateRipenessResult(
         val allocations = block.varietyAllocations.orEmpty().sortedByDescending { it.displayPercent ?: 0.0 }
         val rowInputs = if (allocations.isEmpty()) listOf<PaddockVarietyAllocation?>(null) else allocations
         rowInputs.map { allocation ->
-            val varietyName = allocation?.displayName
+            val varietyName = allocation?.let { resolvedRipenessVarietyName(it, grapeVarieties) }
             val cached = resetMs?.let { authoritativeStart ->
                 cachedSnapshot?.rows?.firstOrNull { cachedRow ->
                     cachedRow.blockId.equals(block.id, ignoreCase = true) &&
@@ -683,10 +705,11 @@ internal fun buildImmediateRipenessResult(
                 resetDateMs = resetMs,
                 total = cached?.total ?: 0.0,
                 target = allocation?.let {
-                    resolveTargetForAllocationList(it.varietyKey, it.displayName, grapeVarieties)
+                    resolveTargetForAllocationList(it.varietyKey, it.displayName, grapeVarieties, it.varietyId)
                 } ?: 0.0,
                 daysToTarget = cached?.daysToTarget,
                 hasGddValue = cached != null,
+                isIncomplete = false,
             )
         }
     }
@@ -755,22 +778,30 @@ internal fun computeRows(
 
         val allocations = block.varietyAllocations.orEmpty().sortedByDescending { it.displayPercent ?: 0.0 }
         if (allocations.isEmpty()) {
-            rows.add(RipenessRow(block, null, null, false, resolvedReset, total, 0.0, null, hasGddValue = resolvedReset != null))
+            rows.add(
+                RipenessRow(
+                    block, null, null, false, resolvedReset, total, 0.0, null,
+                    hasGddValue = calculation.hasValue,
+                    isIncomplete = calculation.isIncomplete,
+                )
+            )
         } else {
             for (alloc in allocations) {
-                val target = resolveTargetForAllocationList(alloc.varietyKey, alloc.displayName, grapeVarieties)
-                val days = daysToTarget(total, target, perDay)
+                val varietyName = resolvedRipenessVarietyName(alloc, grapeVarieties)
+                val target = resolveTargetForAllocationList(alloc.varietyKey, varietyName, grapeVarieties, alloc.varietyId)
+                val days = if (calculation.isIncomplete) null else daysToTarget(total, target, perDay)
                 rows.add(
                     RipenessRow(
                         block = block,
-                        varietyName = alloc.displayName,
+                        varietyName = varietyName,
                         allocationPercent = alloc.displayPercent,
                         multiVariety = allocations.size > 1,
                         resetDateMs = resolvedReset,
                         total = total,
                         target = target,
                         daysToTarget = days,
-                        hasGddValue = resolvedReset != null,
+                        hasGddValue = calculation.hasValue,
+                        isIncomplete = calculation.isIncomplete,
                     )
                 )
             }
@@ -798,17 +829,23 @@ internal fun daysToTarget(total: Double, target: Double, perDay: Double): Int? {
     return kotlin.math.ceil((target - total) / perDay).toInt()
 }
 
-private fun resolveTargetForAllocation(varietyKey: String?, displayName: String?, state: AppUiState): Double =
-    resolveTargetForAllocationList(varietyKey, displayName, state.grapeVarieties)
+private fun resolveTargetForAllocation(
+    varietyKey: String?,
+    varietyId: String?,
+    displayName: String?,
+    state: AppUiState,
+): Double = resolveTargetForAllocationList(varietyKey, displayName, state.grapeVarieties, varietyId)
 
 internal fun resolveTargetForAllocationList(
     varietyKey: String?,
     displayName: String?,
     grapeVarieties: List<com.rork.vinetrack.data.model.GrapeVarietyRow>,
+    varietyId: String? = null,
 ): Double {
     val canonical = displayName?.let { canonicalVarietyName(it) }
     val match = grapeVarieties.firstOrNull { row ->
-        (varietyKey != null && row.varietyKey == varietyKey) ||
+        (varietyId != null && row.id.equals(varietyId, ignoreCase = true)) ||
+            (varietyKey != null && row.varietyKey == varietyKey) ||
             (canonical != null && row.canonicalName == canonical)
     }
     return BuiltInGrapeVarietyGDD.resolveTarget(match?.optimalGddOverride, varietyKey ?: match?.varietyKey, displayName ?: match?.displayName)
@@ -877,17 +914,19 @@ private fun shortDate(ms: Long): String =
  * — a block with no allocation OR with an allocation whose variety can't be
  * matched is treated as not-ready.
  */
+internal fun resolvedRipenessVarietyName(
+    allocation: PaddockVarietyAllocation,
+    grapeVarieties: List<GrapeVarietyRow>,
+): String? = VineyardVarietyPresentation.resolve(allocation, grapeVarieties).name
+
 internal fun blockVarietyRecognised(block: Paddock, grapeVarieties: List<GrapeVarietyRow>): Boolean {
     val primary = block.varietyAllocations.orEmpty().maxByOrNull { it.displayPercent ?: 0.0 } ?: return false
-    return matchVariety(primary, grapeVarieties) != null
+    return VineyardVarietyPresentation.resolve(primary, grapeVarieties).isResolved
 }
 
-private fun matchVariety(alloc: PaddockVarietyAllocation, grapeVarieties: List<GrapeVarietyRow>): GrapeVarietyRow? {
-    val canonical = alloc.displayName?.let { canonicalVarietyName(it) }
-    return grapeVarieties.firstOrNull { row ->
-        (alloc.varietyKey != null && row.varietyKey == alloc.varietyKey) ||
-            (canonical != null && row.canonicalName == canonical)
-    }
+private fun selectedOptimalRipenessPaddocks(state: AppUiState): List<Paddock> {
+    val vineyardId = state.selectedVineyardId ?: return emptyList()
+    return state.paddocks.filter { it.vineyardId.equals(vineyardId, ignoreCase = true) }
 }
 
 /**
@@ -916,8 +955,9 @@ private fun FixBlockVarietiesSheet(
             .sortedBy { it.displayName.lowercase() }
     }
 
-    val problemBlocks = state.paddocks.filter { !blockVarietyRecognised(it, state.grapeVarieties) }
-    val resolvedBlocks = state.paddocks.filter { blockVarietyRecognised(it, state.grapeVarieties) }
+    val vineyardBlocks = selectedOptimalRipenessPaddocks(state)
+    val problemBlocks = vineyardBlocks.filter { !blockVarietyRecognised(it, state.grapeVarieties) }
+    val resolvedBlocks = vineyardBlocks.filter { blockVarietyRecognised(it, state.grapeVarieties) }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(

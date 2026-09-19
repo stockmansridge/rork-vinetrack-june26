@@ -1,7 +1,10 @@
 package com.rork.vinetrack.data
 
+import com.rork.vinetrack.data.model.GrapeVarietyRow
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.model.PaddockVarietyAllocation
 import com.rork.vinetrack.ui.screens.blockGddTotal
+import com.rork.vinetrack.ui.screens.blockVarietyRecognised
 import com.rork.vinetrack.ui.screens.computeRows
 import com.rork.vinetrack.ui.screens.computeVarietySeries
 import org.junit.Assert.assertEquals
@@ -85,10 +88,57 @@ class OptimalRipenessFinalParityTest {
             ),
             GddResetMode.BUDBURST,
         )
-        val first = OptimalRipenessWeatherCoordinator.refreshIdentity(request, "davis:s1", end + 1)
-        val second = OptimalRipenessWeatherCoordinator.refreshIdentity(request, "davis:s1", end + 999)
+        val first = OptimalRipenessWeatherCoordinator.refreshIdentity(request, "davis:s1", start, end + 1)
+        val second = OptimalRipenessWeatherCoordinator.refreshIdentity(request, "davis:s1", start, end + 999)
+        val earlierSeason = OptimalRipenessWeatherCoordinator.refreshIdentity(request, "davis:s1", start - 86_400_000L, end + 999)
         assertEquals(first, second)
+        assertFalse(first == earlierSeason)
         assertEquals(start, request.paddocks.mapNotNull { it.resetDateMs(it.effectiveResetMode(request.globalResetMode), request.seasonStartMs) }.minOrNull())
+    }
+
+    @Test
+    fun `allocation snapshots resolve through the same presentation contract as Block Details`() {
+        val builtIn = PaddockVarietyAllocation(varietyKey = "chardonnay", percent = 100.0)
+        val named = PaddockVarietyAllocation(name = "Shiraz", percent = 100.0)
+        val idOnly = PaddockVarietyAllocation(varietyId = "variety-1", percent = 100.0)
+        val catalog = listOf(GrapeVarietyRow("variety-1", "v1", "pinot_noir", "Pinot Noir"))
+
+        assertTrue(blockVarietyRecognised(Paddock("b1", "v1", "North", varietyAllocations = listOf(builtIn)), emptyList()))
+        assertTrue(blockVarietyRecognised(Paddock("b2", "v1", "South", varietyAllocations = listOf(named)), emptyList()))
+        assertTrue(blockVarietyRecognised(Paddock("b3", "v1", "East", varietyAllocations = listOf(idOnly)), catalog))
+    }
+
+    @Test
+    fun `unrelated cached weather is unavailable rather than a genuine zero`() {
+        val service = DegreeDayService(timeZone = utc)
+        val key = DegreeDayService.openMeteoKey(-33.28, 149.10)
+        service.installDailyTemps(key, mapOf("20260801" to DailyTemp(20.0, 10.0)))
+        val block = Paddock("b1", "v1", "North", budburstDate = "2026-09-01")
+
+        val calculation = calculateOptimalRipenessBlock(
+            service, key, -33.28, block, start, GddResetMode.BUDBURST,
+            GddCalculationMode.GDD, utc, end,
+        )
+
+        assertFalse(calculation.hasValue)
+        assertEquals(0.0, calculation.total, 0.0)
+    }
+
+    @Test
+    fun `partial in-window weather remains calculable and is marked incomplete`() {
+        val service = DegreeDayService(timeZone = utc)
+        val key = DegreeDayService.openMeteoKey(-33.28, 149.10)
+        service.installDailyTemps(key, mapOf("20260903" to DailyTemp(20.0, 10.0)))
+        val block = Paddock("b1", "v1", "North", budburstDate = "2026-09-01")
+
+        val calculation = calculateOptimalRipenessBlock(
+            service, key, -33.28, block, start, GddResetMode.BUDBURST,
+            GddCalculationMode.GDD, utc, end,
+        )
+
+        assertTrue(calculation.hasValue)
+        assertTrue(calculation.isIncomplete)
+        assertTrue(calculation.total > 0.0)
     }
 
     @Test

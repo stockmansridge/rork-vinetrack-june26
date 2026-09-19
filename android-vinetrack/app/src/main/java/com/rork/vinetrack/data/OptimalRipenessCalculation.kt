@@ -10,6 +10,7 @@ data class OptimalRipenessBlockCalculation(
     val points: List<GddPoint>,
     val total: Double,
     val hasValue: Boolean,
+    val isIncomplete: Boolean,
 )
 
 /**
@@ -36,16 +37,26 @@ fun calculateOptimalRipenessBlock(
         timeInMillis
     }
     if (resetMs == null || resetMs !in oneYearAgo..nowMs) {
-        return OptimalRipenessBlockCalculation(resetMs?.takeIf { it in oneYearAgo..nowMs }, emptyList(), 0.0, false)
+        return OptimalRipenessBlockCalculation(
+            resetMs?.takeIf { it in oneYearAgo..nowMs }, emptyList(), 0.0, false, false,
+        )
+    }
+    val fromMs = optimalRipenessStartOfDay(resetMs, timeZone)
+    val toMs = optimalRipenessStartOfDay(nowMs, timeZone)
+    if (!service.hasUsableData(sourceKey, fromMs, toMs)) {
+        return OptimalRipenessBlockCalculation(resetMs, emptyList(), 0.0, false, false)
     }
     val points = service.dailyGddSeries(
         sourceKey = sourceKey,
-        fromMs = optimalRipenessStartOfDay(resetMs, timeZone),
-        toMs = optimalRipenessStartOfDay(nowMs, timeZone),
+        fromMs = fromMs,
+        toMs = toMs,
         latitude = latitude,
         useBEDD = calculationMode.useBEDD,
     )
-    return OptimalRipenessBlockCalculation(resetMs, points, points.lastOrNull()?.cumulative ?: 0.0, true)
+    val isIncomplete = !service.hasCompleteData(sourceKey, fromMs, toMs) || points.any { it.interpolated }
+    return OptimalRipenessBlockCalculation(
+        resetMs, points, points.lastOrNull()?.cumulative ?: 0.0, true, isIncomplete,
+    )
 }
 
 /** Vineyard-local start-of-day boundary used by weather planning and calculation. */

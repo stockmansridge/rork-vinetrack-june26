@@ -122,7 +122,8 @@ fun VarietyGDDDetailScreen(
         val canonical = variety.canonicalName
         state.paddocks.filter { paddock ->
             paddock.varietyAllocations.orEmpty().any { a ->
-                (a.varietyKey != null && a.varietyKey == variety.varietyKey) ||
+                (a.varietyId != null && a.varietyId.equals(variety.id, ignoreCase = true)) ||
+                    (a.varietyKey != null && a.varietyKey == variety.varietyKey) ||
                     (a.displayName != null && canonicalVarietyName(a.displayName!!) == canonical)
             }
         }

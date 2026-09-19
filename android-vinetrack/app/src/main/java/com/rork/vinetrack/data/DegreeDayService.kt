@@ -96,6 +96,23 @@ class DegreeDayService(
     /** True when at least one usable day is cached for a source. */
     fun hasUsableData(sourceKey: String): Boolean = sourceTemps(sourceKey).isNotEmpty()
 
+    /**
+     * True when this source has at least one observed day inside the requested
+     * accumulation window. Partial coverage remains usable and is reported as
+     * incomplete by the Optimal Ripeness calculation.
+     */
+    fun hasUsableData(sourceKey: String, fromMs: Long, toMs: Long): Boolean {
+        val rows = sourceTemps(sourceKey)
+        var day = startOfDay(fromMs)
+        val end = startOfDay(toMs)
+        val formatter = compactFormatter(timeZone)
+        while (day < end) {
+            if (rows[formatter.format(Date(day))] != null) return true
+            day = addDays(day, 1)
+        }
+        return false
+    }
+
     private fun sourceTemps(sourceKey: String): MutableMap<String, DailyTemp> =
         tempsBySource.getOrPut(sourceKey) { persistentCache?.load(sourceKey)?.toMutableMap() ?: mutableMapOf() }
 

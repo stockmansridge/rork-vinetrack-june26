@@ -68,6 +68,9 @@ class OptimalRipenessWeatherRepository(
             "%.4f".format(java.util.Locale.US, latitude),
             "%.4f".format(java.util.Locale.US, longitude),
             timeZoneId,
+            java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).apply {
+                timeZone = java.util.TimeZone.getTimeZone(timeZoneId)
+            }.format(java.util.Date(fromEpochMs)),
             completedCalendarEnd,
         ).joinToString("|")
         val now = System.currentTimeMillis()

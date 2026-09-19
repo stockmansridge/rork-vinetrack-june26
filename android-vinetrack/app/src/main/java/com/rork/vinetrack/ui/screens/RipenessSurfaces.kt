@@ -249,9 +249,9 @@ private fun computeTopVariety(
             blockGddTotal(service, sourceKey, latitude, block, seasonStartMs, resetMode, calculationMode, timeZone, nowMs)
         } ?: continue
         for (alloc in allocations) {
-            val target = resolveTargetForAllocationList(alloc.varietyKey, alloc.displayName, state.grapeVarieties)
+            val name = resolvedRipenessVarietyName(alloc, state.grapeVarieties) ?: continue
+            val target = resolveTargetForAllocationList(alloc.varietyKey, name, state.grapeVarieties, alloc.varietyId)
             if (target <= 0) continue
-            val name = alloc.displayName ?: alloc.varietyKey ?: continue
             val key = alloc.varietyKey ?: canonicalVarietyName(name)
             groups.getOrPut(key) { Acc(name, target, mutableListOf()) }.totals.add(bt)
         }
@@ -292,7 +292,14 @@ fun BlockRipenessChip(state: AppUiState, block: Paddock, modifier: Modifier = Mo
     }
 
     val target = remember(primary, state.grapeVarieties) {
-        primary?.let { resolveTargetForAllocationList(it.varietyKey, it.displayName, state.grapeVarieties) } ?: 0.0
+        primary?.let {
+            resolveTargetForAllocationList(
+                it.varietyKey,
+                resolvedRipenessVarietyName(it, state.grapeVarieties),
+                state.grapeVarieties,
+                it.varietyId,
+            )
+        } ?: 0.0
     }
 
     val result: RipenessChipState = when {
@@ -313,7 +320,7 @@ fun BlockRipenessChip(state: AppUiState, block: Paddock, modifier: Modifier = Mo
             } else {
                 val progress = min(1.0, max(0.0, total.first / target))
                 RipenessChipState.Ready(
-                    primary.displayName ?: primary.varietyKey ?: "Variety",
+                    resolvedRipenessVarietyName(primary, state.grapeVarieties) ?: "Variety",
                     total.first, target, progress,
                     daysToTarget(total.first, target, recentDailyRate(total.second)),
                 )

@@ -14814,10 +14814,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     state.seasonStartDay,
                     timeZone,
                 ),
-                paddocks = state.paddocks,
+                paddocks = state.paddocks.filter { it.vineyardId.equals(vineyardId, ignoreCase = true) },
                 globalResetMode = settings.resetMode,
             ),
             isOnline = state.isOnline,
+            force = true,
         )
     }
 
