@@ -1107,7 +1107,7 @@ private fun AllocationEditorRow(
 ) {
     val vine = LocalVineColors.current
     var menuOpen by remember { mutableStateOf(false) }
-    val recognised = matchVariety(alloc, managedVarieties) != null
+    val recognised = VineyardVarietyPresentation.resolve(alloc, managedVarieties).isResolved
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(modifier = Modifier.weight(1f)) {
             OutlinedButton(onClick = { menuOpen = true }, modifier = Modifier.fillMaxWidth()) {
