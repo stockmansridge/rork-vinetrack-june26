@@ -139,6 +139,7 @@ private val chemicalUnits: List<String> = listOf("Litres", "mL", "Kg", "g")
 fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
     val vine = LocalVineColors.current
     val canManage = state.currentRole == "owner" || state.currentRole == "manager"
+    val usesChemicalSearchV2 = state.systemFeatureFlags["chemical_search_v2"] == true
     // Cost editing/visibility mirrors the spray form's canViewFinancials gate.
     val canViewFinancials = canManage
 
@@ -220,11 +221,6 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
             TopAppBar(
                 title = { Text("Chemicals") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
-                actions = {
-                    if (canManage && state.isSystemAdmin && state.systemFeatureFlags["chemical_search_v2"] == true) {
-                        TextButton(onClick = { matchingV2 = true }) { Text("Search V2") }
-                    }
-                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },
@@ -235,7 +231,9 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
                     // product rather than with a blank form, so structured
                     // intelligence is the default path and manual entry the
                     // deliberate fallback.
-                    onClick = { matchingNew = true },
+                    onClick = {
+                        if (usesChemicalSearchV2) matchingV2 = true else matchingNew = true
+                    },
                     containerColor = ChemTint,
                     contentColor = Color.White,
                 ) { Icon(Icons.Filled.Add, contentDescription = "Add chemical") }
@@ -252,7 +250,9 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
                     "The vineyard owner or manager hasn't added any saved chemicals yet."
                 },
                 actionLabel = if (canManage) "Add chemical" else null,
-                onAction = if (canManage) ({ matchingNew = true }) else null,
+                onAction = if (canManage) ({
+                    if (usesChemicalSearchV2) matchingV2 = true else matchingNew = true
+                }) else null,
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
         } else {

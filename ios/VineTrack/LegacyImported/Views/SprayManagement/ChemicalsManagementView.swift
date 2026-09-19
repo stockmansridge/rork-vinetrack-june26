@@ -214,15 +214,14 @@ struct ChemicalsManagementView: View {
         .toolbar {
             if canManageSetup {
                 ToolbarItem(placement: .topBarTrailing) {
-                    if systemAdmin.isSystemAdmin && systemAdmin.isEnabled(SystemFeatureFlagKey.chemicalSearchV2) {
-                        Menu {
-                            Button("Existing Chemical Search") { showAddSheet = true }
-                            Button("Chemical Search V2") { showSearchV2 = true }
-                        } label: {
-                            Image(systemName: "plus")
+                    Button {
+                        if systemAdmin.isEnabled(SystemFeatureFlagKey.chemicalSearchV2) {
+                            showSearchV2 = true
+                        } else {
+                            showAddSheet = true
                         }
-                    } else {
-                        Button { showAddSheet = true } label: { Image(systemName: "plus") }
+                    } label: {
+                        Image(systemName: "plus")
                     }
                 }
             }
