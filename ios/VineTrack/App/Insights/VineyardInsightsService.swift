@@ -582,23 +582,23 @@ final class VineyardInsightsService {
     // The replay worker. Local state is already durable before any of this
     // runs, so every failure path here is "try again later", never data loss.
 
-    private struct SyncFlight {
-        var isRunning = false
-        var needsAnotherPass = false
-    }
-
     private var scheduledSyncs: [UUID: Task<Void, Never>] = [:]
-    private var syncFlights: [UUID: SyncFlight] = [:]
+    private let syncCoordinator = VineyardInsightsSingleFlightCoordinator()
+    private var syncGeneration = 0
 
     private func scheduleSync(vineyardID: UUID) {
+        let generation = syncGeneration
         scheduledSyncs[vineyardID]?.cancel()
         scheduledSyncs[vineyardID] = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(650))
-            guard !Task.isCancelled, let self else { return }
+            guard !Task.isCancelled, let self, generation == self.syncGeneration else { return }
             self.scheduledSyncs[vineyardID] = nil
             // Once the debounce expires, the full pass has an independent task;
             // cancelling a later timer cannot cancel an active network pass.
-            Task { await self.sync(vineyardID: vineyardID) }
+            Task {
+                guard generation == self.syncGeneration else { return }
+                await self.sync(vineyardID: vineyardID)
+            }
         }
     }
 
@@ -607,31 +607,36 @@ final class VineyardInsightsService {
     /// The vineyard is passed in rather than read from the current selection
     /// because queue entries carry their OWN vineyard id — see `syncQueue`.
     func sync(vineyardID: UUID) async {
-        if syncFlights[vineyardID]?.isRunning == true {
-            syncFlights[vineyardID]?.needsAnotherPass = true
-            return
+        let generation = syncGeneration
+        await syncCoordinator.request(vineyardID: vineyardID) { [weak self] in
+            guard let self, generation == self.syncGeneration else { return }
+            self.isSyncing = true
+            self.processLocalFileCleanup(vineyardID: vineyardID)
+            await self.pullDeletions(vineyardID: vineyardID, generation: generation)
+            guard generation == self.syncGeneration else { return }
+            await self.processPhotoCleanup(vineyardID: vineyardID)
+            guard generation == self.syncGeneration else { return }
+            await self.pullNoteTypes(vineyardID: vineyardID, generation: generation)
+            guard generation == self.syncGeneration else { return }
+            await self.syncNoteTypes(vineyardID: vineyardID)
+            guard generation == self.syncGeneration else { return }
+            await self.syncQueue()
+            guard generation == self.syncGeneration else { return }
+            await self.syncPhotos(vineyardID: vineyardID)
+            guard generation == self.syncGeneration else { return }
+            await self.pull(vineyardID: vineyardID, generation: generation)
+            guard generation == self.syncGeneration else { return }
+            await self.pullDeletions(vineyardID: vineyardID, generation: generation)
         }
-        syncFlights[vineyardID] = SyncFlight(isRunning: true, needsAnotherPass: false)
-        repeat {
-            syncFlights[vineyardID]?.needsAnotherPass = false
-            isSyncing = true
-            processLocalFileCleanup(vineyardID: vineyardID)
-            await pullDeletions(vineyardID: vineyardID)
-            await processPhotoCleanup(vineyardID: vineyardID)
-            await pullNoteTypes(vineyardID: vineyardID)
-            await syncNoteTypes(vineyardID: vineyardID)
-            await syncQueue()
-            await syncPhotos(vineyardID: vineyardID)
-            await pull(vineyardID: vineyardID)
-            await pullDeletions(vineyardID: vineyardID)
-        } while syncFlights[vineyardID]?.needsAnotherPass == true
-        syncFlights[vineyardID] = nil
-        isSyncing = syncFlights.values.contains { $0.isRunning }
+        guard generation == syncGeneration else { return }
+        isSyncing = syncCoordinator.hasRunningPass
     }
 
-    private func pullNoteTypes(vineyardID: UUID) async {
+    private func pullNoteTypes(vineyardID: UUID, generation: Int? = nil) async {
+        let expectedGeneration = generation ?? syncGeneration
         do {
             let rows = try await repository.fetchNoteTypes(vineyardID: vineyardID)
+            guard expectedGeneration == syncGeneration else { return }
             let types = rows.compactMap { row -> VintageNoteType? in
                 guard VineyardInsightsSyncRepository.parseTimestamp(row.deleted_at) == nil,
                       let group = VintageNoteGroup.byCode(row.group_code) else { return nil }
@@ -932,11 +937,13 @@ final class VineyardInsightsService {
     }
 
     /// Consume the hard-deletion ledger before replay and after ordinary pulls.
-    func pullDeletions(vineyardID: UUID) async {
+    func pullDeletions(vineyardID: UUID, generation: Int? = nil) async {
+        let expectedGeneration = generation ?? syncGeneration
         do {
             let cursor = store.deletionCursor(vineyardID: vineyardID)
-            let rows = try await repository.fetchDeletions(vineyardID: vineyardID, since: cursor?.deletedAt)
-                .filter { row in
+            let fetchedRows = try await repository.fetchDeletions(vineyardID: vineyardID, since: cursor?.deletedAt)
+            guard expectedGeneration == syncGeneration else { return }
+            let rows = fetchedRows.filter { row in
                     guard row.vineyard_id == vineyardID,
                           let deletedAt = VineyardInsightsSyncRepository.parseTimestamp(row.deleted_at)
                     else { return false }
@@ -1026,30 +1033,37 @@ final class VineyardInsightsService {
     }
 
     /// Pull the server's view so another device's or session's work appears.
-    func pull(vineyardID: UUID) async {
+    func pull(vineyardID: UUID, generation: Int? = nil) async {
+        let expectedGeneration = generation ?? syncGeneration
         do {
             // Round 1 preview pulls the complete active graph. No client clock
             // can skip a row, and changed children are discovered even when the
             // parent visit's updated_at did not move.
-            await pullNoteTypes(vineyardID: vineyardID)
+            await pullNoteTypes(vineyardID: vineyardID, generation: expectedGeneration)
+            guard expectedGeneration == syncGeneration else { return }
 
             let noteRows = try await repository.fetchNotes(vineyardID: vineyardID, since: nil)
+            guard expectedGeneration == syncGeneration else { return }
             for row in noteRows { apply(noteRow: row) }
 
             let visitRows = try await repository.fetchVisits(vineyardID: vineyardID, since: nil)
+            guard expectedGeneration == syncGeneration else { return }
             if !visitRows.isEmpty {
                 let assessmentRows = try await repository.fetchAssessments(
                     vineyardID: vineyardID,
                     visitIDs: visitRows.map(\.id)
                 )
+                guard expectedGeneration == syncGeneration else { return }
                 let observationRows = try await repository.fetchObservations(
                     vineyardID: vineyardID,
                     assessmentIDs: assessmentRows.map(\.id)
                 )
+                guard expectedGeneration == syncGeneration else { return }
                 let photoRows = try await repository.fetchPhotos(
                     vineyardID: vineyardID,
                     observationIDs: observationRows.map(\.id)
                 )
+                guard expectedGeneration == syncGeneration else { return }
                 var failedDownloads: Set<UUID> = []
                 for photo in photoRows where VineyardInsightsSyncRepository.parseTimestamp(photo.deleted_at) == nil {
                     let relative = ScoutPhotoFileStore.relativePath(vineyardID: photo.vineyard_id,
@@ -1057,12 +1071,14 @@ final class VineyardInsightsService {
                     guard !photoFiles.exists(atRelativePath: relative) else { continue }
                     do {
                         let data = try await repository.downloadPhotoBytes(path: photo.storage_path)
+                        guard expectedGeneration == syncGeneration else { return }
                         _ = try photoFiles.write(data: data, vineyardID: photo.vineyard_id,
                             observationID: photo.observation_id, photoID: photo.id)
                     } catch {
                         failedDownloads.insert(photo.id)
                     }
                 }
+                guard expectedGeneration == syncGeneration else { return }
                 for row in visitRows {
                     apply(
                         visitRow: row,
@@ -1267,10 +1283,16 @@ final class VineyardInsightsService {
 
     /// Drop every locally held preview record on sign-out.
     func clearOnSignOut() {
+        syncGeneration += 1
+        scheduledSyncs.values.forEach { $0.cancel() }
+        scheduledSyncs.removeAll()
+        syncCoordinator.invalidateAll()
+        isSyncing = false
         store.clearForSignOut()
         photoFiles.clearForSignOut()
         visits = []
         notes = []
+        noteTypesByVineyard = [:]
         openVisitID = nil
         lastWriteFailed = false
         lastSyncError = nil

@@ -28,6 +28,7 @@ class VineyardInsightsSyncWorker(
     private val photoFiles: ScoutPhotoFiles?,
     private val repository: VineyardInsightsSyncApi,
     private val nowIso: () -> String,
+    private val canApplyServerResults: () -> Boolean = { true },
 ) {
 
     /** What one sync attempt did, for the caller to surface. */
@@ -142,8 +143,9 @@ class VineyardInsightsSyncWorker(
     // ------------------------------------------------------------ Push
 
     suspend fun pullNoteTypes(vineyardId: String): Outcome = try {
-        val types = repository.fetchNoteTypes(vineyardId)
-            .filter { it.deletedAt == null }
+        val rows = repository.fetchNoteTypes(vineyardId)
+        if (!canApplyServerResults()) return Outcome()
+        val types = rows.filter { it.deletedAt == null }
             .mapNotNull { row ->
                 VintageNoteGroup.byCode(row.groupCode)?.let { group ->
                     VintageNoteType(row.id, row.code, group, row.label, row.sortOrder,
@@ -505,14 +507,19 @@ class VineyardInsightsSyncWorker(
             if (typeOutcome.error != null) return typeOutcome
 
             val noteRows = repository.fetchNotes(vineyardId, null)
+            if (!canApplyServerResults()) return Outcome()
             noteRows.forEach { applyNoteRow(it) }
 
             val visitRows = repository.fetchVisits(vineyardId, null)
+            if (!canApplyServerResults()) return Outcome()
             if (visitRows.isNotEmpty()) {
                 val assessmentRows = repository.fetchAssessments(vineyardId, visitRows.map { it.id })
+                if (!canApplyServerResults()) return Outcome()
                 val observationRows =
                     repository.fetchObservations(vineyardId, assessmentRows.map { it.id })
+                if (!canApplyServerResults()) return Outcome()
                 val photoRows = repository.fetchPhotos(vineyardId, observationRows.map { it.id })
+                if (!canApplyServerResults()) return Outcome()
                 val failedDownloads = mutableSetOf<String>()
                 photoRows.filter { it.deletedAt == null && it.storagePath.isNotBlank() }.forEach { photo ->
                     val files = photoFiles
@@ -520,6 +527,7 @@ class VineyardInsightsSyncWorker(
                     if (files != null && localPath != null && !files.exists(localPath)) {
                         runCatching { repository.downloadPhotoBytes(photo.storagePath) }
                             .onSuccess { bytes ->
+                                if (!canApplyServerResults()) return@onSuccess
                                 if (files.write(bytes, photo.vineyardId, photo.observationId, photo.id) == null) {
                                     failedDownloads += photo.id
                                 }
@@ -527,6 +535,7 @@ class VineyardInsightsSyncWorker(
                             .onFailure { failedDownloads += photo.id }
                     }
                 }
+                if (!canApplyServerResults()) return Outcome()
                 visitRows.forEach { row ->
                     applyVisitRow(
                         row,

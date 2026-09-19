@@ -1435,7 +1435,10 @@ private fun VintageNotesWorkspace(
                 state.selectedVineyardId?.let { insights.addCustomNoteType(it, label) }
             },
         ) { type ->
-            draft = draft.copy(noteTypeId = type.databaseId, noteTypeLabel = type.label)
+            draft = draft.copy(
+                noteTypeId = type.persistedIdentity,
+                noteTypeLabel = type.label,
+            )
             showPicker = false
         }
     }

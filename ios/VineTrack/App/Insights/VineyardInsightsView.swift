@@ -1038,7 +1038,7 @@ struct VintageNotesWorkspaceView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showTypePicker) {
             VintageNoteTypePicker(customTypes: customTypes) { type in
-                draft.noteTypeID = type.databaseID?.uuidString
+                draft.noteTypeID = type.persistedIdentity
                 draft.noteTypeLabel = type.label
                 showTypePicker = false
             }

@@ -700,7 +700,7 @@ class ScoutCaptureTest {
     }
 
     @Test
-    fun `sign out removes every locally held visit`() {
+    fun `sign out removes every locally held visit`() = kotlinx.coroutines.test.runTest {
         startVisit()
         assertEquals(1, controller.visits.value.size)
 

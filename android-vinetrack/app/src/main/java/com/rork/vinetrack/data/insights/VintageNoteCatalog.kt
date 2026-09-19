@@ -60,7 +60,10 @@ data class VintageNoteType(
     val isActive: Boolean = true,
     val vineyardId: String? = null,
     val isSystem: Boolean = false,
-)
+) {
+    /** UUID when reconciled; stable catalogue code during first-use offline bootstrap. */
+    val persistedIdentity: String get() = databaseId ?: code
+}
 
 object VintageNoteCatalog {
 

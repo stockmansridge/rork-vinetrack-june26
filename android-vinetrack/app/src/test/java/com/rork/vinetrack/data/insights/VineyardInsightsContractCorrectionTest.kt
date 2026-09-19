@@ -4,6 +4,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -45,6 +46,22 @@ class VineyardInsightsContractCorrectionTest {
         assertTrue(runCatching { java.util.UUID.fromString(type.databaseId) }.isSuccess)
         assertEquals(type.databaseId, store.pendingNoteTypes("vineyard").single().databaseId)
         assertEquals(type.databaseId, controller.noteTypesByVineyard.value["vineyard"]?.single()?.databaseId)
+    }
+
+    @Test fun `bootstrap Frost selection creates saveable type only offline draft`() {
+        val frost = VintageNoteCatalog.systemTypes.single { it.code == "frost" }
+        val draft = VintageNoteDraft(
+            date = LocalDate.of(2026, 9, 19),
+            noteTypeId = frost.persistedIdentity,
+            noteTypeLabel = frost.label,
+        )
+        assertEquals("frost", draft.noteTypeId)
+        assertEquals("Frost", draft.noteTypeLabel)
+        assertTrue(draft.canSave)
+        val controller = VineyardInsightsController(VineyardInsightsStore(MemoryStore()))
+        val saved = assertNotNull(controller.saveNote(draft, "vineyard", null, "Scout", 7, 1))
+        assertEquals("frost", saved.noteTypeId)
+        assertEquals("Frost", saved.noteTypeLabelSnapshot)
     }
 
     @Test fun `legacy frost code resolves to real UUID before pending note push`() {
@@ -89,6 +106,43 @@ class VineyardInsightsContractCorrectionTest {
         first.join()
         assertEquals(2, passes)
         assertEquals(1, maxActive)
+    }
+
+    @Test fun `Android sign out removes local file cleanup journal`() {
+        val raw = MemoryStore()
+        val store = VineyardInsightsStore(raw)
+        assertTrue(store.queueLocalFileCleanup("vineyard", listOf("v/o/p.jpg")))
+        store.clearForSignOut()
+        assertTrue(VineyardInsightsStore(raw).loadLocalFileCleanup().isEmpty())
+    }
+
+    @Test fun `pending debounce cannot start after sign out cancellation`() = runTest {
+        var starts = 0
+        val debouncer = VineyardInsightsDebouncer(this, delayMillis = 650) { starts += 1 }
+        debouncer.schedule("vineyard")
+        debouncer.cancelAll()
+        advanceTimeBy(1_000)
+        assertEquals(0, starts)
+    }
+
+    @Test fun `single flight invalidation discards retained follow up`() = runTest {
+        val coordinator = VineyardInsightsSingleFlightCoordinator()
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var passes = 0
+        val first = launch {
+            coordinator.request("vineyard") {
+                passes += 1
+                started.complete(Unit)
+                release.await()
+            }
+        }
+        started.await()
+        coordinator.request("vineyard") { error("must remain coalesced") }
+        coordinator.invalidateAll()
+        release.complete(Unit)
+        first.join()
+        assertEquals(1, passes)
     }
 
     @Test fun `object cleanup and local file obligations survive store restart`() {

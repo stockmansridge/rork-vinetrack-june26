@@ -1219,17 +1219,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * this view model: the feature is unreleased, so it must be removable
      * without unpicking anything else.
      */
-    private val vineyardInsightsDebounceJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
-
-    private fun scheduleVineyardInsightsSync(vineyardId: String) {
-        vineyardInsightsDebounceJobs.remove(vineyardId)?.cancel()
-        vineyardInsightsDebounceJobs[vineyardId] = viewModelScope.launch {
-            kotlinx.coroutines.delay(650)
-            vineyardInsightsDebounceJobs.remove(vineyardId)
+    private val vineyardInsightsDebouncer by lazy {
+        com.rork.vinetrack.data.insights.VineyardInsightsDebouncer(viewModelScope) { vineyardId ->
             // The full pass has its own single-flight lifecycle. Once started it
             // is not a child of the cancellable debounce timer.
             viewModelScope.launch { runCatching { vineyardInsights.sync(vineyardId) } }
         }
+    }
+
+    private fun scheduleVineyardInsightsSync(vineyardId: String) {
+        vineyardInsightsDebouncer.schedule(vineyardId)
     }
 
     val vineyardInsights = com.rork.vinetrack.data.insights.VineyardInsightsController(
@@ -4530,6 +4529,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Drop the in-memory tool layout so the next account starts from
             // its own cached/served layout (the per-user cache stays on disk).
             runCatching { operationalToolLayoutStore.signOut() }
+            // Cancel every not-yet-started Insights debounce before invalidating
+            // active sync generations and clearing local preview data.
+            vineyardInsightsDebouncer.cancelAll()
             // Unreleased preview data is System Admin-only and must not be
             // visible to whoever signs in on this device next.
             runCatching { vineyardInsights.clearForSignOut() }

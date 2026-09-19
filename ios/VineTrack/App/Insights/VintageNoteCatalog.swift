@@ -77,6 +77,9 @@ nonisolated struct VintageNoteType: Identifiable, Equatable, Sendable {
 
     var id: String { databaseID?.uuidString ?? code }
 
+    /// UUID when reconciled; stable catalogue code during first-use offline bootstrap.
+    var persistedIdentity: String { databaseID?.uuidString ?? code }
+
     init(
         databaseID: UUID? = nil,
         code: String,

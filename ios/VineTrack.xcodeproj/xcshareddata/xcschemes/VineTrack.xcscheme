@@ -45,16 +45,6 @@
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "105FC5882E9EAD3200EA8BCF"
-               BuildableName = "VineTrackTests.xctest"
-               BlueprintName = "VineTrackTests"
-               ReferencedContainer = "container:VineTrack.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
-         <TestableReference
-            skipped = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
                BlueprintIdentifier = "9F0000060000000000000006"
                BuildableName = "VineTrackInsightsTests.xctest"
                BlueprintName = "VineTrackInsightsTests"

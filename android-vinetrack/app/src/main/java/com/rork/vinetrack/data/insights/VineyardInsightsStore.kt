@@ -818,6 +818,7 @@ class VineyardInsightsStore(
             KEY_DELETION_CURSORS,
             KEY_CONSUMED_DELETIONS,
             KEY_OBJECT_CLEANUP,
+            KEY_LOCAL_FILE_CLEANUP,
         ).forEach { key ->
             if (!raw.remove(key)) logger.warn("Sign-out clear did not remove $key")
         }

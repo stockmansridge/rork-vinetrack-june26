@@ -567,8 +567,13 @@ class VineyardInsightsController(
 
     // --------------------------------------------------------------- Sync
 
-    private val worker: VineyardInsightsSyncWorker? = repository?.let {
-        VineyardInsightsSyncWorker(store, photoFiles, it) { nowIso() }
+    @Volatile
+    private var syncGeneration: Long = 0
+
+    private fun worker(generation: Long): VineyardInsightsSyncWorker? = repository?.let {
+        VineyardInsightsSyncWorker(store, photoFiles, it, { nowIso() }) {
+            generation == syncGeneration
+        }
     }
     private val syncCoordinator = VineyardInsightsSingleFlightCoordinator()
 
@@ -580,11 +585,14 @@ class VineyardInsightsController(
      * end so pulled work becomes visible.
      */
     suspend fun sync(vineyardId: String) {
-        val worker = this.worker ?: return
+        val requestGeneration = syncGeneration
+        val worker = worker(requestGeneration) ?: return
         syncCoordinator.request(vineyardId) {
+            if (requestGeneration != syncGeneration) return@request
             processLocalFileCleanup(vineyardId)
             flushPhotoDeletions(worker)
             val outcome = worker.sync(vineyardId)
+            if (requestGeneration != syncGeneration) return@request
             _visits.value = store.loadVisits()
             _notes.value = store.loadNotes()
             _noteTypesByVineyard.value = _noteTypesByVineyard.value + (vineyardId to store.noteTypes(vineyardId))
@@ -603,7 +611,7 @@ class VineyardInsightsController(
 
     /** Retry failed photograph uploads. The local bytes were never discarded. */
     suspend fun retryPhotoUploads(vineyardId: String) {
-        val worker = this.worker ?: return
+        val worker = worker(syncGeneration) ?: return
         flushPhotoDeletions(worker)
         val outcome = worker.pushPhotos(vineyardId)
         _visits.value = store.loadVisits()
@@ -630,7 +638,9 @@ class VineyardInsightsController(
     // ------------------------------------------------------------ Session
 
     /** Drop every locally held preview record on sign-out. */
-    fun clearForSignOut() {
+    suspend fun clearForSignOut() {
+        syncGeneration += 1
+        syncCoordinator.invalidateAll()
         store.clearForSignOut()
         photoFiles?.clearForSignOut()
         _visits.value = emptyList()

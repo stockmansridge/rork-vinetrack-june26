@@ -264,7 +264,7 @@ class ScoutPhotoDurabilityTest {
     // --- Sign-out ----------------------------------------------------------
 
     @Test
-    fun `sign out removes the photographs as well as the records`() {
+    fun `sign out removes the photographs as well as the records`() = kotlinx.coroutines.test.runTest {
         // This is unreleased System Admin data and the next person to sign in
         // on the handset may be someone else entirely.
         val visit = startVisit()

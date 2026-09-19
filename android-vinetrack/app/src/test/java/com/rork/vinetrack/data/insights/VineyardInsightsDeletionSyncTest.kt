@@ -1,5 +1,7 @@
 package com.rork.vinetrack.data.insights
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -32,6 +34,9 @@ class VineyardInsightsDeletionSyncTest {
         val completed = mutableListOf<String>()
         val failed = mutableListOf<String>()
         var failRemoval = false
+        var blockedNoteRows: List<VineyardInsightsSyncApi.NoteRow>? = null
+        val notesFetchStarted = CompletableDeferred<Unit>()
+        val releaseNotesFetch = CompletableDeferred<Unit>()
         override suspend fun fetchDeletions(vineyardId: String, deletedAtIso: String?) = deletions.filter { it.vineyardId == vineyardId }
         override suspend fun claimPhotoCleanup(vineyardId: String, limit: Int) = cleanup.filter { it.vineyardId == vineyardId }
         override suspend fun acknowledgePhotoCleanup(id: String, leaseToken: String) { completed += id }
@@ -46,10 +51,37 @@ class VineyardInsightsDeletionSyncTest {
         override suspend fun fetchAssessments(vineyardId: String, visitIds: List<String>) = emptyList<VineyardInsightsSyncApi.AssessmentRow>()
         override suspend fun fetchObservations(vineyardId: String, assessmentIds: List<String>) = emptyList<VineyardInsightsSyncApi.ObservationRow>()
         override suspend fun fetchPhotos(vineyardId: String, observationIds: List<String>) = emptyList<VineyardInsightsSyncApi.PhotoRow>()
-        override suspend fun fetchNotes(vineyardId: String, sinceIso: String?) = emptyList<VineyardInsightsSyncApi.NoteRow>()
+        override suspend fun fetchNotes(vineyardId: String, sinceIso: String?): List<VineyardInsightsSyncApi.NoteRow> {
+            val rows = blockedNoteRows ?: return emptyList()
+            notesFetchStarted.complete(Unit)
+            releaseNotesFetch.await()
+            return rows
+        }
         override suspend fun upsertNote(args: VineyardInsightsSyncApi.UpsertNoteArgs) = null
         override suspend fun hardDeleteNote(id: String, vineyardId: String, operationId: String, atIso: String) = Unit
         override suspend fun upsertNoteType(args: VineyardInsightsSyncApi.UpsertNoteTypeArgs) = Unit
+    }
+
+    @Test fun `blocked pull completing after generation invalidation cannot repopulate records`() = runBlocking {
+        val store = VineyardInsightsStore(MemoryStore())
+        val api = Api()
+        api.blockedNoteRows = listOf(
+            VineyardInsightsSyncApi.NoteRow(
+                id = "late", vineyardId = "v1", noteDate = "2026-09-19",
+                vintageYear = 2027, noteTypeId = "00000000-0000-0000-0000-000000000240",
+                noteTypeLabel = "Frost",
+            ),
+        )
+        var generationIsCurrent = true
+        val worker = VineyardInsightsSyncWorker(store, Files(), api, { "now" }) { generationIsCurrent }
+        val pull = launch { worker.pull("v1") }
+        api.notesFetchStarted.await()
+        generationIsCurrent = false
+        store.clearForSignOut()
+        api.releaseNotesFetch.complete(Unit)
+        pull.join()
+        assertTrue(store.loadNotes().isEmpty())
+        assertTrue(store.loadVisits().isEmpty())
     }
 
     private fun note(id: String, vineyard: String) = VintageNote(

@@ -320,7 +320,7 @@ class VintageNotesTest {
     }
 
     @Test
-    fun `sign out removes every locally held note`() {
+    fun `sign out removes every locally held note`() = kotlinx.coroutines.test.runTest {
         save(VintageNoteDraft(notes = "Preview data"))
         assertEquals(1, controller.notes.value.size)
 
