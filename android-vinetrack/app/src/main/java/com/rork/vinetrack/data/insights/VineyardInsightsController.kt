@@ -33,6 +33,7 @@ class VineyardInsightsController(
     /** Null in tests and whenever the backend is unreachable. */
     private val repository: VineyardInsightsSyncApi? = null,
     private val clock: () -> Instant = { Instant.now() },
+    private val onMutation: (String) -> Unit = {},
 ) {
 
     private val _visits = MutableStateFlow(store.loadVisits())
@@ -246,6 +247,7 @@ class VineyardInsightsController(
             ),
         )
         _pendingPhotoCount.value = store.loadPhotoQueue().size
+        onMutation(visit.vineyardId)
         return photo
     }
 
@@ -308,6 +310,7 @@ class VineyardInsightsController(
                 pendingPhotoTombstones.add(photoId)
             }
         }
+        onMutation(visit.vineyardId)
         return photo
     }
 
@@ -408,6 +411,10 @@ class VineyardInsightsController(
         val visit = visit(visitId) ?: return emptyList()
         val retained = ScoutGrowthStageLink.onScoutDeleted(visit)
         val deletedAt = nowIso()
+        val localPaths = visit.assessments.flatMap { it.observations }.flatMap { it.photos }.mapNotNull { it.localPath }
+        val queued = store.loadPhotoQueue().filter { it.visitId == visitId }
+        (localPaths + queued.map { it.localPath }).distinct().forEach { photoFiles?.remove(it) }
+        queued.forEach { store.dequeuePhoto(it.id) }
         if (record(store.deleteVisit(visitId))) {
             store.enqueue(
                 recordId = visit.id,
@@ -418,6 +425,7 @@ class VineyardInsightsController(
             )
             _visits.value = store.loadVisits()
             if (_openVisitId.value == visitId) _openVisitId.value = null
+            onMutation(visit.vineyardId)
         }
         return retained
     }
@@ -434,6 +442,7 @@ class VineyardInsightsController(
                 operation = VineyardInsightsStore.QueuedOperation.Operation.UPSERT,
                 clientUpdatedAtIso = stamped.clientUpdatedAtIso,
             )
+            onMutation(stamped.vineyardId)
         }
         return record(saved)
     }
@@ -457,13 +466,18 @@ class VineyardInsightsController(
         val trimmed = label.trim()
         if (trimmed.isEmpty()) return null
         val type = VintageNoteType(
+            databaseId = UUID.randomUUID().toString(),
             code = "custom_${UUID.randomUUID().toString().take(8)}",
             group = group,
             label = trimmed,
             sortOrder = 1_000,
             isCustom = true,
+            vineyardId = vineyardId,
         )
-        return if (record(store.saveCustomNoteType(vineyardId, type))) type else null
+        return if (record(store.saveCustomNoteType(vineyardId, type))) {
+            onMutation(vineyardId)
+            type
+        } else null
     }
 
     /**
@@ -514,6 +528,7 @@ class VineyardInsightsController(
             operation = VineyardInsightsStore.QueuedOperation.Operation.UPSERT,
             clientUpdatedAtIso = note.clientUpdatedAtIso,
         )
+        onMutation(note.vineyardId)
         return note
     }
 
@@ -530,6 +545,7 @@ class VineyardInsightsController(
             operation = VineyardInsightsStore.QueuedOperation.Operation.DELETE,
             clientUpdatedAtIso = now,
         )
+        onMutation(note.vineyardId)
         return true
     }
 

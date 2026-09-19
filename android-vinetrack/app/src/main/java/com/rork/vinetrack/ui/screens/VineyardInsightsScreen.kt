@@ -1205,7 +1205,7 @@ private fun VintageNotesWorkspace(
     var notePendingDeletion by remember { mutableStateOf<com.rork.vinetrack.data.insights.VintageNote?>(null) }
 
     val vintage = VintageResolver.vintageYear(
-        LocalDate.now(),
+        draft.date,
         state.seasonStartMonth,
         state.seasonStartDay,
     )
@@ -1430,8 +1430,11 @@ private fun VintageNotesWorkspace(
         NoteTypePicker(
             customTypes = customTypes,
             onDismiss = { showPicker = false },
+            onAddCustom = { label ->
+                state.selectedVineyardId?.let { insights.addCustomNoteType(it, label) }
+            },
         ) { type ->
-            draft = draft.copy(noteTypeId = type.code, noteTypeLabel = type.label)
+            draft = draft.copy(noteTypeId = type.databaseId, noteTypeLabel = type.label)
             showPicker = false
         }
     }
@@ -1441,9 +1444,12 @@ private fun VintageNotesWorkspace(
 private fun NoteTypePicker(
     customTypes: List<VintageNoteType>,
     onDismiss: () -> Unit,
+    onAddCustom: (String) -> VintageNoteType?,
     onSelect: (VintageNoteType) -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
+    var showCustom by remember { mutableStateOf(false) }
+    var customLabel by remember { mutableStateOf("") }
     val results = remember(query, customTypes) { VintageNoteCatalog.search(query, customTypes) }
 
     AlertDialog(
@@ -1459,6 +1465,7 @@ private fun NoteTypePicker(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(8.dp))
+                TextButton(onClick = { showCustom = true }) { Text("Add custom note type") }
                 LazyColumn(modifier = Modifier.height(320.dp)) {
                     // Grouped, weather first — see VintageNoteCatalog ordering.
                     VintageNoteCatalog.grouped(customTypes).forEach { (group, types) ->
@@ -1490,6 +1497,27 @@ private fun NoteTypePicker(
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
     )
+    if (showCustom) {
+        AlertDialog(
+            onDismissRequest = { showCustom = false },
+            title = { Text("Add custom note type") },
+            text = {
+                OutlinedTextField(
+                    value = customLabel,
+                    onValueChange = { customLabel = it },
+                    label = { Text("Label") },
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onAddCustom(customLabel)?.let { onSelect(it) }
+                    customLabel = ""
+                    showCustom = false
+                }) { Text("Add") }
+            },
+            dismissButton = { TextButton(onClick = { showCustom = false }) { Text("Cancel") } },
+        )
+    }
 }
 
 // ----------------------------------------------------------- Vintage Report

@@ -1219,6 +1219,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * this view model: the feature is unreleased, so it must be removable
      * without unpicking anything else.
      */
+    private val vineyardInsightsSyncJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
+
+    private fun scheduleVineyardInsightsSync(vineyardId: String) {
+        vineyardInsightsSyncJobs.remove(vineyardId)?.cancel()
+        vineyardInsightsSyncJobs[vineyardId] = viewModelScope.launch {
+            kotlinx.coroutines.delay(650)
+            runCatching { vineyardInsights.sync(vineyardId) }
+            vineyardInsightsSyncJobs.remove(vineyardId)
+        }
+    }
+
     val vineyardInsights = com.rork.vinetrack.data.insights.VineyardInsightsController(
         com.rork.vinetrack.data.insights.VineyardInsightsStore(
             com.rork.vinetrack.data.insights.SharedPreferencesKeyValueStore(
@@ -1231,6 +1242,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         ),
         com.rork.vinetrack.data.insights.ScoutPhotoFileStore(app),
         com.rork.vinetrack.data.insights.VineyardInsightsSyncRepository(session),
+        onMutation = ::scheduleVineyardInsightsSync,
     )
 
     /**

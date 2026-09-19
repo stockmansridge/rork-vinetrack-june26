@@ -41,6 +41,8 @@ enum class VintageNoteGroup(
 
 /** One selectable note type. */
 data class VintageNoteType(
+    /** Database UUID. Codes are catalogue keys, never database identities. */
+    val databaseId: String? = null,
     /** Stable stored code. Null-safe identity across platforms and renames. */
     val code: String,
     val group: VintageNoteGroup,
@@ -56,6 +58,8 @@ data class VintageNoteType(
      * new ones — retiring is never a deletion.
      */
     val isActive: Boolean = true,
+    val vineyardId: String? = null,
+    val isSystem: Boolean = false,
 )
 
 object VintageNoteCatalog {
@@ -72,7 +76,7 @@ object VintageNoteCatalog {
      */
     val systemTypes: List<VintageNoteType> = buildList {
         fun add(group: VintageNoteGroup, code: String, label: String, order: Int) {
-            add(VintageNoteType(code = code, group = group, label = label, sortOrder = order))
+            add(VintageNoteType(code = code, group = group, label = label, sortOrder = order, isSystem = true))
         }
 
         // Weather and hazards — the most commonly recorded events lead.
@@ -136,7 +140,7 @@ object VintageNoteCatalog {
      * code for display of existing notes.
      */
     fun selectable(customTypes: List<VintageNoteType>): List<VintageNoteType> =
-        (systemTypes + customTypes)
+        ((if (customTypes.any { it.isSystem }) emptyList() else systemTypes) + customTypes)
             .filter { it.isActive }
             .sortedWith(compareBy({ it.group.sortOrder }, { it.sortOrder }, { it.label }))
 

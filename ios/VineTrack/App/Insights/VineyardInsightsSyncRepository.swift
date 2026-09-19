@@ -122,7 +122,7 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let value_label: String?
         let notes: String?
         let linked_pin_id: String?
-        let linked_growth_stage_record_id: String?
+        let linked_growth_record_id: String?
         let client_updated_at: String
     }
 
@@ -135,7 +135,7 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let value_label: String?
         let notes: String?
         let linked_pin_id: UUID?
-        let linked_growth_stage_record_id: UUID?
+        let linked_growth_record_id: UUID?
         let deleted_at: String?
     }
 
@@ -182,6 +182,18 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let photo_id: UUID
         let storage_path: String
         let lease_token: UUID
+    }
+
+    struct NoteTypeRow: Decodable, Sendable {
+        let id: UUID
+        let vineyard_id: UUID?
+        let code: String
+        let group_code: String
+        let label: String
+        let sort_order: Int
+        let is_system: Bool
+        let is_active: Bool
+        let deleted_at: String?
     }
 
     struct NoteRow: Decodable, Sendable {
@@ -511,6 +523,18 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         try await provider.client
             .rpc("upsert_vintage_note_type", params: params)
             .execute()
+    }
+
+    func fetchNoteTypes(vineyardID: UUID) async throws -> [NoteTypeRow] {
+        try requireConfigured()
+        return try await provider.client
+            .from("vintage_note_types")
+            .select("id,vineyard_id,code,group_code,label,sort_order,is_system,is_active,deleted_at")
+            .or("vineyard_id.is.null,vineyard_id.eq.\(vineyardID.uuidString)")
+            .order("group_code", ascending: true)
+            .order("sort_order", ascending: true)
+            .execute()
+            .value
     }
 
     func fetchNotes(vineyardID: UUID, since: Date?) async throws -> [NoteRow] {

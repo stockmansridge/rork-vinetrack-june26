@@ -1038,7 +1038,7 @@ struct VintageNotesWorkspaceView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showTypePicker) {
             VintageNoteTypePicker(customTypes: customTypes) { type in
-                draft.noteTypeID = type.code
+                draft.noteTypeID = type.databaseID?.uuidString
                 draft.noteTypeLabel = type.label
                 showTypePicker = false
             }
@@ -1075,15 +1075,22 @@ struct VintageNotesWorkspaceView: View {
 
 private struct VintageNoteTypePicker: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(MigratedDataStore.self) private var store
+    @Environment(VineyardInsightsService.self) private var insights
 
     let customTypes: [VintageNoteType]
     let onSelect: (VintageNoteType) -> Void
 
     @State private var query = ""
+    @State private var isAddingCustom = false
+    @State private var customLabel = ""
 
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    Button("Add custom note type") { isAddingCustom = true }
+                }
                 // Grouped, weather first — see VintageNoteCatalog ordering.
                 ForEach(VintageNoteCatalog.grouped(customTypes: customTypes), id: \.group) { entry in
                     let matches = entry.types.filter { type in
@@ -1103,6 +1110,16 @@ private struct VintageNoteTypePicker: View {
             .searchable(text: $query, prompt: "Search note types")
             .navigationTitle("Note type")
             .navigationBarTitleDisplayMode(.inline)
+            .alert("Add custom note type", isPresented: $isAddingCustom) {
+                TextField("Label", text: $customLabel)
+                Button("Add") {
+                    guard let vineyardID = store.selectedVineyardId,
+                          let type = insights.addCustomNoteType(vineyardID: vineyardID, label: customLabel) else { return }
+                    customLabel = ""
+                    onSelect(type)
+                }
+                Button("Cancel", role: .cancel) { customLabel = "" }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close") { dismiss() }

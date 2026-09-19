@@ -59,6 +59,8 @@ nonisolated enum VintageNoteGroup: String, CaseIterable, Identifiable, Sendable 
 
 /// One selectable note type.
 nonisolated struct VintageNoteType: Identifiable, Equatable, Sendable {
+    /// Database UUID. Codes are catalogue keys, never database identities.
+    let databaseID: UUID?
     /// Stable stored code. Identity across platforms and renames.
     let code: String
     let group: VintageNoteGroup
@@ -70,23 +72,31 @@ nonisolated struct VintageNoteType: Identifiable, Equatable, Sendable {
     /// Retired types stay readable on historical notes but are not offered for
     /// new ones — retiring is never a deletion.
     let isActive: Bool
+    let vineyardID: UUID?
+    let isSystem: Bool
 
-    var id: String { code }
+    var id: String { databaseID?.uuidString ?? code }
 
     init(
+        databaseID: UUID? = nil,
         code: String,
         group: VintageNoteGroup,
         label: String,
         sortOrder: Int,
         isCustom: Bool = false,
-        isActive: Bool = true
+        isActive: Bool = true,
+        vineyardID: UUID? = nil,
+        isSystem: Bool = false
     ) {
+        self.databaseID = databaseID
         self.code = code
         self.group = group
         self.label = label
         self.sortOrder = sortOrder
         self.isCustom = isCustom
         self.isActive = isActive
+        self.vineyardID = vineyardID
+        self.isSystem = isSystem
     }
 }
 
@@ -102,7 +112,7 @@ nonisolated enum VintageNoteCatalog {
     /// and therefore without a client and a server briefly disagreeing on order.
     static let systemTypes: [VintageNoteType] = {
         func make(_ group: VintageNoteGroup, _ code: String, _ label: String, _ order: Int) -> VintageNoteType {
-            VintageNoteType(code: code, group: group, label: label, sortOrder: order)
+            VintageNoteType(code: code, group: group, label: label, sortOrder: order, isSystem: true)
         }
         return [
             // Weather and hazards — the most commonly recorded events lead.
@@ -166,7 +176,7 @@ nonisolated enum VintageNoteCatalog {
     /// Retired types are excluded from NEW selection but remain resolvable by
     /// code for display of existing notes.
     static func selectable(customTypes: [VintageNoteType]) -> [VintageNoteType] {
-        (systemTypes + customTypes)
+        ((customTypes.contains { $0.isSystem } ? [] : systemTypes) + customTypes)
             .filter(\.isActive)
             .sorted { lhs, rhs in
                 if lhs.group.sortOrder != rhs.group.sortOrder {

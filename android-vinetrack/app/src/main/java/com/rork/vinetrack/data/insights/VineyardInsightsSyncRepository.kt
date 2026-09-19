@@ -142,6 +142,19 @@ class VineyardInsightsSyncRepository(
      * never hard-deleted here — its row is tombstoned and the object retained as
      * evidence.
      */
+    override suspend fun downloadPhotoBytes(path: String): ByteArray = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.get(SupabaseClient.storageUrl("object/authenticated/$PHOTO_BUCKET/$path")) {
+            authHeaders(token)
+        }
+        when {
+            response.status.isSuccess() -> response.body<ByteArray>()
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
+
     override suspend fun removePhotoObject(path: String) = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -239,6 +252,12 @@ class VineyardInsightsSyncRepository(
                     "&observation_id=in.(${observationIds.joinToString(",")})",
             )
         }
+
+    override suspend fun fetchNoteTypes(vineyardId: String): List<VineyardInsightsSyncApi.NoteTypeRow> =
+        select(
+            "vintage_note_types?select=id,vineyard_id,code,group_code,label,sort_order,is_system,is_active,deleted_at" +
+                "&or=(vineyard_id.is.null,vineyard_id.eq.$vineyardId)&order=group_code.asc,sort_order.asc",
+        )
 
     override suspend fun fetchNotes(
         vineyardId: String,

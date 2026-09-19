@@ -272,7 +272,7 @@ final class VineyardInsightsService {
         )
         pendingPhotoCount = store.loadPhotoQueue().count
 
-        Task { await syncPhotos(vineyardID: visit.vineyardID) }
+        scheduleSync(vineyardID: visit.vineyardID)
         return photo
     }
 
@@ -311,6 +311,7 @@ final class VineyardInsightsService {
                 try? await repository.softDeletePhoto(id: photoID, at: deletedAt)
             }
         }
+        scheduleSync(vineyardID: visit.vineyardID)
         return true
     }
 
@@ -409,6 +410,10 @@ final class VineyardInsightsService {
         guard let visit = visit(visitID) else { return [] }
         let retained = ScoutGrowthStageLink.onScoutDeleted(visit)
         let deletedAt = now()
+        let localPaths = visit.assessments.flatMap(\.observations).flatMap(\.photos).compactMap(\.localPath)
+        let queuedPaths = store.loadPhotoQueue().filter { $0.visitID == visitID }.map(\.localPath)
+        (localPaths + queuedPaths).forEach { photoFiles.remove(relativePath: $0) }
+        store.loadPhotoQueue().filter { $0.visitID == visitID }.forEach { store.dequeuePhoto(photoID: $0.id) }
         if record(store.deleteVisit(id: visitID)) {
             store.enqueue(
                 recordID: visit.id,
@@ -419,6 +424,7 @@ final class VineyardInsightsService {
             )
             visits = store.loadVisits()
             if openVisitID == visitID { openVisitID = nil }
+            scheduleSync(vineyardID: visit.vineyardID)
         }
         return retained
     }
@@ -437,6 +443,7 @@ final class VineyardInsightsService {
                 operation: .upsert,
                 clientUpdatedAt: stamped.clientUpdatedAt
             )
+            scheduleSync(vineyardID: stamped.vineyardID)
         }
         return record(saved)
     }
@@ -464,13 +471,17 @@ final class VineyardInsightsService {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let type = VintageNoteType(
+            databaseID: UUID(),
             code: "custom_\(UUID().uuidString.prefix(8).lowercased())",
             group: group,
             label: trimmed,
             sortOrder: 1_000,
-            isCustom: true
+            isCustom: true,
+            vineyardID: vineyardID
         )
-        return record(store.saveCustomNoteType(vineyardID: vineyardID, type: type)) ? type : nil
+        guard record(store.saveCustomNoteType(vineyardID: vineyardID, type: type)) else { return nil }
+        scheduleSync(vineyardID: vineyardID)
+        return type
     }
 
     /// Create or update a note from the form draft.
@@ -523,6 +534,7 @@ final class VineyardInsightsService {
             operation: .upsert,
             clientUpdatedAt: note.clientUpdatedAt
         )
+        scheduleSync(vineyardID: note.vineyardID)
         return note
     }
 
@@ -540,6 +552,7 @@ final class VineyardInsightsService {
             operation: .delete,
             clientUpdatedAt: timestamp
         )
+        scheduleSync(vineyardID: note.vineyardID)
         return true
     }
 
@@ -547,6 +560,18 @@ final class VineyardInsightsService {
     //
     // The replay worker. Local state is already durable before any of this
     // runs, so every failure path here is "try again later", never data loss.
+
+    private var scheduledSyncs: [UUID: Task<Void, Never>] = [:]
+
+    private func scheduleSync(vineyardID: UUID) {
+        scheduledSyncs[vineyardID]?.cancel()
+        scheduledSyncs[vineyardID] = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(650))
+            guard !Task.isCancelled else { return }
+            await self?.sync(vineyardID: vineyardID)
+            self?.scheduledSyncs[vineyardID] = nil
+        }
+    }
 
     /// Push queued work then pull the server's view for one vineyard.
     ///
@@ -558,10 +583,28 @@ final class VineyardInsightsService {
         defer { isSyncing = false }
         await pullDeletions(vineyardID: vineyardID)
         await processPhotoCleanup(vineyardID: vineyardID)
+        await syncNoteTypes(vineyardID: vineyardID)
         await syncQueue()
         await syncPhotos(vineyardID: vineyardID)
         await pull(vineyardID: vineyardID)
         await pullDeletions(vineyardID: vineyardID)
+    }
+
+    private func syncNoteTypes(vineyardID: UUID) async {
+        for type in store.pendingNoteTypes(vineyardID: vineyardID) {
+            guard let id = type.databaseID else { continue }
+            do {
+                try await repository.upsertNoteType(
+                    .init(p_id: id.uuidString, p_vineyard_id: vineyardID.uuidString,
+                        p_code: type.code, p_group_code: type.group.code,
+                        p_label: type.label, p_sort_order: type.sortOrder,
+                        p_is_active: type.isActive)
+                )
+                _ = store.markNoteTypeSynced(id)
+            } catch {
+                lastSyncError = error.localizedDescription
+            }
+        }
     }
 
     /// Replay every queued record operation.
@@ -646,11 +689,10 @@ final class VineyardInsightsService {
             )
         }
 
-        // Only observations carrying content are sent. An untouched defaulted
-        // row is not evidence and would pad the report with "not assessed"
-        // entries the scout never actually considered.
+        // Stable rows are sent even when cleared so nulls replace stale remote
+        // content. Report selection still ignores hasContent=false.
         let observations = visit.assessments.flatMap { assessment in
-            assessment.observations.filter(\.hasContent).map { observation in
+            assessment.observations.map { observation in
                 VineyardInsightsSyncRepository.ObservationUpsert(
                     id: observation.id.uuidString,
                     assessment_id: assessment.id.uuidString,
@@ -660,7 +702,7 @@ final class VineyardInsightsService {
                     value_label: observation.valueLabel,
                     notes: observation.notes,
                     linked_pin_id: observation.linkedPinID?.uuidString,
-                    linked_growth_stage_record_id: observation.linkedGrowthStageRecordID?.uuidString,
+                    linked_growth_record_id: observation.linkedGrowthStageRecordID?.uuidString,
                     client_updated_at: VineyardInsightsSyncRepository.timestamp(visit.clientUpdatedAt)
                 )
             }
@@ -912,11 +954,23 @@ final class VineyardInsightsService {
     /// Pull the server's view so another device's or session's work appears.
     func pull(vineyardID: UUID) async {
         do {
-            let since = store.lastPull(vineyardID: vineyardID)
-            let noteRows = try await repository.fetchNotes(vineyardID: vineyardID, since: since)
+            // Round 1 preview pulls the complete active graph. No client clock
+            // can skip a row, and changed children are discovered even when the
+            // parent visit's updated_at did not move.
+            let typeRows = try await repository.fetchNoteTypes(vineyardID: vineyardID)
+            let types = typeRows.compactMap { row -> VintageNoteType? in
+                guard VineyardInsightsSyncRepository.parseTimestamp(row.deleted_at) == nil,
+                      let group = VintageNoteGroup.byCode(row.group_code) else { return nil }
+                return VintageNoteType(databaseID: row.id, code: row.code, group: group,
+                    label: row.label, sortOrder: row.sort_order, isCustom: !row.is_system,
+                    isActive: row.is_active, vineyardID: row.vineyard_id, isSystem: row.is_system)
+            }
+            _ = store.reconcileNoteTypes(types, vineyardID: vineyardID)
+
+            let noteRows = try await repository.fetchNotes(vineyardID: vineyardID, since: nil)
             for row in noteRows { apply(noteRow: row) }
 
-            let visitRows = try await repository.fetchVisits(vineyardID: vineyardID, since: since)
+            let visitRows = try await repository.fetchVisits(vineyardID: vineyardID, since: nil)
             if !visitRows.isEmpty {
                 let assessmentRows = try await repository.fetchAssessments(
                     vineyardID: vineyardID,
@@ -930,16 +984,29 @@ final class VineyardInsightsService {
                     vineyardID: vineyardID,
                     observationIDs: observationRows.map(\.id)
                 )
+                var failedDownloads: Set<UUID> = []
+                for photo in photoRows where VineyardInsightsSyncRepository.parseTimestamp(photo.deleted_at) == nil {
+                    let relative = ScoutPhotoFileStore.relativePath(vineyardID: photo.vineyard_id,
+                        observationID: photo.observation_id, photoID: photo.id)
+                    guard !photoFiles.exists(atRelativePath: relative) else { continue }
+                    do {
+                        let data = try await repository.downloadPhotoBytes(path: photo.storage_path)
+                        _ = try photoFiles.write(data: data, vineyardID: photo.vineyard_id,
+                            observationID: photo.observation_id, photoID: photo.id)
+                    } catch {
+                        failedDownloads.insert(photo.id)
+                    }
+                }
                 for row in visitRows {
                     apply(
                         visitRow: row,
                         assessments: assessmentRows.filter { $0.scout_visit_id == row.id },
                         observations: observationRows,
-                        photos: photoRows
+                        photos: photoRows,
+                        failedPhotoDownloads: failedDownloads
                     )
                 }
             }
-            store.setLastPull(now(), vineyardID: vineyardID)
             lastSyncError = nil
         } catch {
             lastSyncError = error.localizedDescription
@@ -991,7 +1058,8 @@ final class VineyardInsightsService {
         visitRow row: VineyardInsightsSyncRepository.VisitRow,
         assessments: [VineyardInsightsSyncRepository.AssessmentRow],
         observations: [VineyardInsightsSyncRepository.ObservationRow],
-        photos: [VineyardInsightsSyncRepository.PhotoRow]
+        photos: [VineyardInsightsSyncRepository.PhotoRow],
+        failedPhotoDownloads: Set<UUID> = []
     ) {
         let hasLocalPending = store.loadQueue().contains {
             $0.recordID == row.id && $0.entity == .scoutVisit
@@ -1057,7 +1125,8 @@ final class VineyardInsightsService {
                                     longitude: longitude,
                                     accuracyMetres: photoRow.horizontal_accuracy ?? 0,
                                     id: photoRow.id,
-                                    storagePath: photoRow.storage_path
+                                    storagePath: photoRow.storage_path,
+                                    uploadFailed: failedPhotoDownloads.contains(photoRow.id)
                                 )
                             }
                             return ScoutPhoto.blockOnly(
@@ -1078,7 +1147,7 @@ final class VineyardInsightsService {
                         notes: observationRow.notes,
                         photos: ownPhotos,
                         linkedPinID: observationRow.linked_pin_id,
-                        linkedGrowthStageRecordID: observationRow.linked_growth_stage_record_id
+                        linkedGrowthStageRecordID: observationRow.linked_growth_record_id
                     )
                 }
                 // Items absent server-side are re-created as defaulted rows so

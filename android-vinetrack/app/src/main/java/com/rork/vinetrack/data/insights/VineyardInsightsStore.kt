@@ -3,6 +3,7 @@ package com.rork.vinetrack.data.insights
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.util.UUID
 
 /**
  * Durable local storage for Scout visits, Vintage Notes and their pending
@@ -496,23 +497,29 @@ class VineyardInsightsStore(
     fun loadCustomNoteTypes(): List<VintageNoteType> =
         decodeList<StoredNoteType>(KEY_NOTE_TYPES).map {
             VintageNoteType(
+                databaseId = it.id,
                 code = it.code,
                 group = VintageNoteGroup.byCode(it.groupCode) ?: VintageNoteGroup.OTHER,
                 label = it.label,
                 sortOrder = it.sortOrder,
-                isCustom = true,
+                isCustom = !it.isSystem,
                 isActive = it.isActive,
+                vineyardId = it.vineyardId,
+                isSystem = it.isSystem,
             )
         }
 
     @Serializable
     private data class StoredNoteType(
+        val id: String? = null,
         val code: String,
         @SerialName("group_code") val groupCode: String,
         val label: String,
         @SerialName("sort_order") val sortOrder: Int = 0,
         @SerialName("is_active") val isActive: Boolean = true,
-        @SerialName("vineyard_id") val vineyardId: String,
+        @SerialName("vineyard_id") val vineyardId: String? = null,
+        @SerialName("is_system") val isSystem: Boolean = false,
+        @SerialName("is_pending") val isPending: Boolean = false,
     )
 
     // ------------------------------------------------------------ Writes
@@ -591,12 +598,15 @@ class VineyardInsightsStore(
         val existing = decodeList<StoredNoteType>(KEY_NOTE_TYPES)
         val next = existing.filterNot { it.vineyardId == vineyardId && it.code == type.code } +
             StoredNoteType(
+                id = type.databaseId,
                 code = type.code,
                 groupCode = type.group.code,
                 label = type.label,
                 sortOrder = type.sortOrder,
                 isActive = type.isActive,
                 vineyardId = vineyardId,
+                isSystem = false,
+                isPending = true,
             )
         return encodeAndWrite(KEY_NOTE_TYPES, next)
     }
@@ -604,17 +614,53 @@ class VineyardInsightsStore(
     /** Custom types belonging to one vineyard. Never another's. */
     fun customNoteTypes(vineyardId: String): List<VintageNoteType> =
         decodeList<StoredNoteType>(KEY_NOTE_TYPES)
-            .filter { it.vineyardId == vineyardId }
+            .filter { it.isSystem || it.vineyardId == vineyardId }
             .map {
                 VintageNoteType(
+                    databaseId = it.id,
                     code = it.code,
                     group = VintageNoteGroup.byCode(it.groupCode) ?: VintageNoteGroup.OTHER,
                     label = it.label,
                     sortOrder = it.sortOrder,
-                    isCustom = true,
+                    isCustom = !it.isSystem,
                     isActive = it.isActive,
+                    vineyardId = it.vineyardId,
+                    isSystem = it.isSystem,
                 )
             }
+
+    fun pendingNoteTypes(vineyardId: String): List<VintageNoteType> =
+        decodeList<StoredNoteType>(KEY_NOTE_TYPES)
+            .filter { it.vineyardId == vineyardId && it.isPending }
+            .map {
+                VintageNoteType(it.id, it.code, VintageNoteGroup.byCode(it.groupCode) ?: VintageNoteGroup.OTHER,
+                    it.label, it.sortOrder, true, it.isActive, vineyardId, false)
+            }
+
+    fun reconcileNoteTypes(vineyardId: String, types: List<VintageNoteType>): Boolean {
+        val existing = decodeList<StoredNoteType>(KEY_NOTE_TYPES)
+        val pending = existing.filter { it.vineyardId == vineyardId && it.isPending }
+        val retained = existing.filterNot { it.isSystem || it.vineyardId == vineyardId }
+        val server = types.map {
+            StoredNoteType(it.databaseId, it.code, it.group.code, it.label, it.sortOrder,
+                it.isActive, it.vineyardId, it.isSystem, false)
+        }
+        val merged = retained + server + pending.filterNot { p -> server.any { it.id == p.id } }
+        if (!encodeAndWrite(KEY_NOTE_TYPES, merged)) return false
+        val byCode = types.mapNotNull { type -> type.databaseId?.let { type.code to it } }.toMap()
+        val notes = loadNotes().map { note ->
+            val legacyCode = note.noteTypeId?.takeIf { runCatching { UUID.fromString(it) }.isFailure }
+            if (legacyCode != null) byCode[legacyCode]?.let { note.copy(noteTypeId = it) } ?: note else note
+        }
+        return encodeAndWrite(KEY_NOTES, notes.map { it.toStored() })
+    }
+
+    fun markNoteTypeSynced(id: String): Boolean {
+        val rows = decodeList<StoredNoteType>(KEY_NOTE_TYPES).map {
+            if (it.id == id) it.copy(isPending = false) else it
+        }
+        return encodeAndWrite(KEY_NOTE_TYPES, rows)
+    }
 
     /**
      * Queue an operation for replay, collapsing any earlier pending entry for

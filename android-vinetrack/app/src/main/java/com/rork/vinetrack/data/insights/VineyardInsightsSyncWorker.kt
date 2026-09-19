@@ -43,6 +43,7 @@ class VineyardInsightsSyncWorker(
         val deletionsBeforePush = pullDeletions(vineyardId)
         val localCleanup = processLocalObjectCleanup(vineyardId)
         val serverCleanup = processServerPhotoCleanup(vineyardId)
+        val typePush = pushNoteTypes(vineyardId)
         val push = pushQueue()
         val photos = pushPhotos(vineyardId)
         val pull = pull(vineyardId)
@@ -53,7 +54,7 @@ class VineyardInsightsSyncWorker(
             pulledVisits = pull.pulledVisits,
             pulledNotes = pull.pulledNotes,
             error = deletionsBeforePush.error ?: localCleanup.error ?: serverCleanup.error ?:
-                push.error ?: photos.error ?: pull.error ?: deletionsAfterPull.error,
+                typePush.error ?: push.error ?: photos.error ?: pull.error ?: deletionsAfterPull.error,
         )
     }
 
@@ -129,6 +130,28 @@ class VineyardInsightsSyncWorker(
 
     // ------------------------------------------------------------ Push
 
+    suspend fun pushNoteTypes(vineyardId: String): Outcome {
+        var pushed = 0
+        var error: String? = null
+        for (type in store.pendingNoteTypes(vineyardId)) {
+            val id = type.databaseId ?: continue
+            try {
+                repository.upsertNoteType(
+                    VineyardInsightsSyncApi.UpsertNoteTypeArgs(
+                        id = id, vineyardId = vineyardId, code = type.code,
+                        groupCode = type.group.code, label = type.label,
+                        sortOrder = type.sortOrder, isActive = type.isActive,
+                    ),
+                )
+                store.markNoteTypeSynced(id)
+                pushed += 1
+            } catch (e: Exception) {
+                error = e.message ?: "Could not sync a custom note type yet."
+            }
+        }
+        return Outcome(pushed = pushed, error = error)
+    }
+
     suspend fun pushQueue(): Outcome {
         var pushed = 0
         var error: String? = null
@@ -203,11 +226,11 @@ class VineyardInsightsSyncWorker(
             )
         }
 
-        // Only observations carrying content are sent. An untouched defaulted
-        // row is not evidence, and sending it would pad a future report with
-        // "not assessed" entries the scout never actually considered.
+        // Stable observation rows are sent even when cleared. Reports continue
+        // to ignore hasContent=false, while peers receive explicit nulls rather
+        // than retaining stale server content.
         val observations = visit.assessments.flatMap { assessment ->
-            assessment.observations.filter { it.hasContent }.map {
+            assessment.observations.map {
                 VineyardInsightsSyncApi.ObservationUpsert(
                     id = it.id,
                     assessmentId = assessment.id,
@@ -446,26 +469,51 @@ class VineyardInsightsSyncWorker(
     /** Pull the server's view so another device's or session's work appears. */
     suspend fun pull(vineyardId: String): Outcome {
         return try {
-            val since = store.lastPull(vineyardId)
-            val noteRows = repository.fetchNotes(vineyardId, since)
+            // System Admin preview uses a complete active-graph pull. This is
+            // server-authoritative and cannot miss a changed child because its
+            // parent row did not change or because a client clock was skewed.
+            val typeRows = repository.fetchNoteTypes(vineyardId)
+            val types = typeRows.filter { it.deletedAt == null }.mapNotNull { row ->
+                VintageNoteGroup.byCode(row.groupCode)?.let { group ->
+                    VintageNoteType(row.id, row.code, group, row.label, row.sortOrder,
+                        !row.isSystem, row.isActive, row.vineyardId, row.isSystem)
+                }
+            }
+            store.reconcileNoteTypes(vineyardId, types)
+
+            val noteRows = repository.fetchNotes(vineyardId, null)
             noteRows.forEach { applyNoteRow(it) }
 
-            val visitRows = repository.fetchVisits(vineyardId, since)
+            val visitRows = repository.fetchVisits(vineyardId, null)
             if (visitRows.isNotEmpty()) {
                 val assessmentRows = repository.fetchAssessments(vineyardId, visitRows.map { it.id })
                 val observationRows =
                     repository.fetchObservations(vineyardId, assessmentRows.map { it.id })
                 val photoRows = repository.fetchPhotos(vineyardId, observationRows.map { it.id })
+                val failedDownloads = mutableSetOf<String>()
+                photoRows.filter { it.deletedAt == null && it.storagePath.isNotBlank() }.forEach { photo ->
+                    val files = photoFiles
+                    val localPath = files?.relativePath(photo.vineyardId, photo.observationId, photo.id)
+                    if (files != null && localPath != null && !files.exists(localPath)) {
+                        runCatching { repository.downloadPhotoBytes(photo.storagePath) }
+                            .onSuccess { bytes ->
+                                if (files.write(bytes, photo.vineyardId, photo.observationId, photo.id) == null) {
+                                    failedDownloads += photo.id
+                                }
+                            }
+                            .onFailure { failedDownloads += photo.id }
+                    }
+                }
                 visitRows.forEach { row ->
                     applyVisitRow(
                         row,
                         assessmentRows.filter { it.scoutVisitId == row.id },
                         observationRows,
                         photoRows,
+                        failedDownloads,
                     )
                 }
             }
-            store.setLastPull(vineyardId, nowIso())
             Outcome(pulledVisits = visitRows.size, pulledNotes = noteRows.size)
         } catch (e: Exception) {
             Outcome(error = e.message ?: "Could not refresh yet.")
@@ -511,6 +559,7 @@ class VineyardInsightsSyncWorker(
         assessments: List<VineyardInsightsSyncApi.AssessmentRow>,
         observations: List<VineyardInsightsSyncApi.ObservationRow>,
         photos: List<VineyardInsightsSyncApi.PhotoRow>,
+        failedPhotoDownloads: Set<String> = emptySet(),
     ) {
         val pending = store.loadQueue().any {
             it.recordId == row.id &&
@@ -543,7 +592,7 @@ class VineyardInsightsSyncWorker(
                                 .filter {
                                     it.observationId == observationRow.id && it.deletedAt == null
                                 }
-                                .map { photoRow -> photoRow.toDomain() },
+                                .map { photoRow -> photoRow.toDomain(photoRow.id in failedPhotoDownloads) },
                             linkedPinId = observationRow.linkedPinId,
                             linkedGrowthStageRecordId =
                             observationRow.linkedGrowthStageRecordId,
@@ -601,7 +650,7 @@ class VineyardInsightsSyncWorker(
      * Local bytes are retained when this device already holds them, so a pulled
      * row never blanks a preview that is already on screen.
      */
-    private fun VineyardInsightsSyncApi.PhotoRow.toDomain(): ScoutPhoto {
+    private fun VineyardInsightsSyncApi.PhotoRow.toDomain(downloadFailed: Boolean = false): ScoutPhoto {
         val relative = photoFiles?.relativePath(vineyardId, observationId, id)
         val localPath = relative?.takeIf { photoFiles?.exists(it) == true }
         return if (
@@ -618,6 +667,7 @@ class VineyardInsightsSyncWorker(
                 accuracyMetres = horizontalAccuracy ?: 0.0,
                 id = id,
                 storagePath = storagePath,
+                uploadFailed = downloadFailed,
             )
         } else {
             // Normalised DOWN to block-only: presenting an unverified position
@@ -629,6 +679,7 @@ class VineyardInsightsSyncWorker(
                 capturedByUserId = capturedBy,
                 id = id,
                 storagePath = storagePath,
+                uploadFailed = downloadFailed,
             )
         }
     }

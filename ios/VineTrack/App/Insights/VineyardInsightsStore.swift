@@ -216,12 +216,15 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
     }
 
     private struct StoredNoteType: Codable {
+        let id: UUID?
         let code: String
         let groupCode: String
         let label: String
         let sortOrder: Int
         let isActive: Bool
-        let vineyardID: UUID
+        let vineyardID: UUID?
+        let isSystem: Bool?
+        let isPending: Bool?
     }
 
     // MARK: - Mapping
@@ -472,15 +475,18 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
     /// Custom types belonging to one vineyard. Never another's.
     func customNoteTypes(vineyardID: UUID) -> [VintageNoteType] {
         (decode([StoredNoteType].self, Key.noteTypes) ?? [])
-            .filter { $0.vineyardID == vineyardID }
+            .filter { $0.isSystem == true || $0.vineyardID == vineyardID }
             .map {
                 VintageNoteType(
+                    databaseID: $0.id,
                     code: $0.code,
                     group: VintageNoteGroup.byCode($0.groupCode) ?? .other,
                     label: $0.label,
                     sortOrder: $0.sortOrder,
-                    isCustom: true,
-                    isActive: $0.isActive
+                    isCustom: !($0.isSystem ?? false),
+                    isActive: $0.isActive,
+                    vineyardID: $0.vineyardID,
+                    isSystem: $0.isSystem ?? false
                 )
             }
     }
@@ -575,14 +581,64 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         all.removeAll { $0.vineyardID == vineyardID && $0.code == type.code }
         all.append(
             StoredNoteType(
+                id: type.databaseID,
                 code: type.code,
                 groupCode: type.group.code,
                 label: type.label,
                 sortOrder: type.sortOrder,
                 isActive: type.isActive,
-                vineyardID: vineyardID
+                vineyardID: vineyardID,
+                isSystem: false,
+                isPending: true
             )
         )
+        return encodeAndWrite(all, Key.noteTypes)
+    }
+
+    func pendingNoteTypes(vineyardID: UUID) -> [VintageNoteType] {
+        let rows = decode([StoredNoteType].self, Key.noteTypes) ?? []
+        return rows.filter { $0.vineyardID == vineyardID && $0.isPending == true }.map {
+            VintageNoteType(databaseID: $0.id, code: $0.code,
+                group: VintageNoteGroup.byCode($0.groupCode) ?? .other, label: $0.label,
+                sortOrder: $0.sortOrder, isCustom: true, isActive: $0.isActive,
+                vineyardID: vineyardID)
+        }
+    }
+
+    @discardableResult
+    func reconcileNoteTypes(_ types: [VintageNoteType], vineyardID: UUID) -> Bool {
+        var all = decode([StoredNoteType].self, Key.noteTypes) ?? []
+        let pending = all.filter { $0.vineyardID == vineyardID && $0.isPending == true }
+        all.removeAll { $0.isSystem == true || $0.vineyardID == vineyardID }
+        all += types.map { type in
+            StoredNoteType(id: type.databaseID, code: type.code, groupCode: type.group.code,
+                label: type.label, sortOrder: type.sortOrder, isActive: type.isActive,
+                vineyardID: type.vineyardID, isSystem: type.isSystem, isPending: false)
+        }
+        for row in pending where !all.contains(where: { $0.id == row.id }) { all.append(row) }
+        guard encodeAndWrite(all, Key.noteTypes) else { return false }
+        let byCode = Dictionary(uniqueKeysWithValues: types.compactMap { type in
+            type.databaseID.map { (type.code, $0.uuidString) }
+        })
+        var notes = loadNotes()
+        var changed = false
+        for index in notes.indices where UUID(uuidString: notes[index].noteTypeID ?? "") == nil {
+            if let legacy = notes[index].noteTypeID, let resolved = byCode[legacy] {
+                notes[index].noteTypeID = resolved
+                changed = true
+            }
+        }
+        return !changed || encodeAndWrite(notes.map { stored($0) }, Key.notes)
+    }
+
+    @discardableResult
+    func markNoteTypeSynced(_ id: UUID) -> Bool {
+        var all = decode([StoredNoteType].self, Key.noteTypes) ?? []
+        guard let index = all.firstIndex(where: { $0.id == id }) else { return false }
+        let row = all[index]
+        all[index] = StoredNoteType(id: row.id, code: row.code, groupCode: row.groupCode,
+            label: row.label, sortOrder: row.sortOrder, isActive: row.isActive,
+            vineyardID: row.vineyardID, isSystem: row.isSystem, isPending: false)
         return encodeAndWrite(all, Key.noteTypes)
     }
 
