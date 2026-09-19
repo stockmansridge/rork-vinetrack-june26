@@ -42,6 +42,9 @@ class VineyardInsightsController(
     private val _notes = MutableStateFlow(store.loadNotes())
     val notes: StateFlow<List<VintageNote>> = _notes.asStateFlow()
 
+    private val _noteTypesByVineyard = MutableStateFlow<Map<String, List<VintageNoteType>>>(emptyMap())
+    val noteTypesByVineyard: StateFlow<Map<String, List<VintageNoteType>>> = _noteTypesByVineyard.asStateFlow()
+
     /** The visit currently open for editing, if any. */
     private val _openVisitId = MutableStateFlow<String?>(null)
     val openVisitId: StateFlow<String?> = _openVisitId.asStateFlow()
@@ -412,18 +415,30 @@ class VineyardInsightsController(
         val retained = ScoutGrowthStageLink.onScoutDeleted(visit)
         val deletedAt = nowIso()
         val localPaths = visit.assessments.flatMap { it.observations }.flatMap { it.photos }.mapNotNull { it.localPath }
-        val queued = store.loadPhotoQueue().filter { it.visitId == visitId }
-        (localPaths + queued.map { it.localPath }).distinct().forEach { photoFiles?.remove(it) }
-        queued.forEach { store.dequeuePhoto(it.id) }
-        if (record(store.deleteVisit(visitId))) {
-            store.enqueue(
-                recordId = visit.id,
-                vineyardId = visit.vineyardId,
-                entity = VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT,
-                operation = VineyardInsightsStore.QueuedOperation.Operation.DELETE,
-                clientUpdatedAtIso = deletedAt,
-            )
+        val queued = store.loadPhotoQueue().filter { it.visitId == visitId && it.vineyardId == visit.vineyardId }
+        val cleanupPaths = queued.filterNot { it.rowCommitted }.map { entry ->
+            entry.uploadedStoragePath
+                ?: photoFiles?.storagePath(entry.vineyardId, entry.observationId, entry.id)
+                ?: "${entry.vineyardId.lowercase()}/${entry.observationId.lowercase()}/${entry.id.lowercase()}.jpg"
+        }.distinct()
+        val pathsToRemove = (localPaths + queued.map { it.localPath }).distinct()
+        val localCleanupPersisted = store.queueLocalFileCleanup(visit.vineyardId, pathsToRemove)
+        val cleanupPersisted = localCleanupPersisted && cleanupPaths.all {
+            store.queueObjectCleanup(visit.vineyardId, it)
+        }
+        val deleteQueued = cleanupPersisted && store.enqueue(
+            recordId = visit.id,
+            vineyardId = visit.vineyardId,
+            entity = VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT,
+            operation = VineyardInsightsStore.QueuedOperation.Operation.DELETE,
+            clientUpdatedAtIso = deletedAt,
+        )
+        val visitDeleted = deleteQueued && store.deleteVisit(visitId)
+        val uploadsInvalidated = visitDeleted && queued.all { store.dequeuePhoto(it.id) }
+        if (record(uploadsInvalidated)) {
+            processLocalFileCleanup(visit.vineyardId)
             _visits.value = store.loadVisits()
+            _pendingPhotoCount.value = store.loadPhotoQueue().size
             if (_openVisitId.value == visitId) _openVisitId.value = null
             onMutation(visit.vineyardId)
         }
@@ -455,8 +470,8 @@ class VineyardInsightsController(
     fun notesForVintage(vintageYear: Int): List<VintageNote> =
         VintageNoteRules.forVintage(_notes.value, vintageYear)
 
-    fun customNoteTypes(vineyardId: String): List<VintageNoteType> =
-        store.customNoteTypes(vineyardId)
+    fun noteTypes(vineyardId: String): List<VintageNoteType> =
+        _noteTypesByVineyard.value[vineyardId] ?: store.noteTypes(vineyardId)
 
     fun addCustomNoteType(
         vineyardId: String,
@@ -475,6 +490,7 @@ class VineyardInsightsController(
             vineyardId = vineyardId,
         )
         return if (record(store.saveCustomNoteType(vineyardId, type))) {
+            _noteTypesByVineyard.value = _noteTypesByVineyard.value + (vineyardId to store.noteTypes(vineyardId))
             onMutation(vineyardId)
             type
         } else null
@@ -554,6 +570,7 @@ class VineyardInsightsController(
     private val worker: VineyardInsightsSyncWorker? = repository?.let {
         VineyardInsightsSyncWorker(store, photoFiles, it) { nowIso() }
     }
+    private val syncCoordinator = VineyardInsightsSingleFlightCoordinator()
 
     /**
      * Push queued work then pull the server's view for one vineyard.
@@ -564,12 +581,24 @@ class VineyardInsightsController(
      */
     suspend fun sync(vineyardId: String) {
         val worker = this.worker ?: return
-        flushPhotoDeletions(worker)
-        val outcome = worker.sync(vineyardId)
-        _visits.value = store.loadVisits()
-        _notes.value = store.loadNotes()
-        _pendingPhotoCount.value = store.loadPhotoQueue().size
-        _lastSyncError.value = outcome.error
+        syncCoordinator.request(vineyardId) {
+            processLocalFileCleanup(vineyardId)
+            flushPhotoDeletions(worker)
+            val outcome = worker.sync(vineyardId)
+            _visits.value = store.loadVisits()
+            _notes.value = store.loadNotes()
+            _noteTypesByVineyard.value = _noteTypesByVineyard.value + (vineyardId to store.noteTypes(vineyardId))
+            _pendingPhotoCount.value = store.loadPhotoQueue().size
+            _lastSyncError.value = outcome.error
+        }
+    }
+
+    private fun processLocalFileCleanup(vineyardId: String) {
+        val files = photoFiles ?: return
+        store.loadLocalFileCleanup().filter { it.vineyardId == vineyardId }.forEach { item ->
+            files.remove(item.relativePath)
+            if (!files.exists(item.relativePath)) store.acknowledgeLocalFileCleanup(item.relativePath)
+        }
     }
 
     /** Retry failed photograph uploads. The local bytes were never discarded. */
@@ -606,6 +635,7 @@ class VineyardInsightsController(
         photoFiles?.clearForSignOut()
         _visits.value = emptyList()
         _notes.value = emptyList()
+        _noteTypesByVineyard.value = emptyMap()
         _openVisitId.value = null
         _lastWriteFailed.value = false
         _lastSyncError.value = null

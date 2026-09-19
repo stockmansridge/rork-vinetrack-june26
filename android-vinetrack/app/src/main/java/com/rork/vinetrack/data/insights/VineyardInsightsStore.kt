@@ -221,6 +221,12 @@ class VineyardInsightsStore(
         @SerialName("attempt_count") val attemptCount: Int = 0,
     )
 
+    @Serializable
+    data class LocalFileCleanup(
+        @SerialName("vineyard_id") val vineyardId: String,
+        @SerialName("relative_path") val relativePath: String,
+    )
+
     data class QueuedOperation(
         val id: String,
         val recordId: String,
@@ -455,6 +461,8 @@ class VineyardInsightsStore(
 
     fun loadObjectCleanup(): List<ObjectCleanup> = decodeList(KEY_OBJECT_CLEANUP)
 
+    fun loadLocalFileCleanup(): List<LocalFileCleanup> = decodeList(KEY_LOCAL_FILE_CLEANUP)
+
     @Serializable
     private data class StoredDeletionCursor(
         @SerialName("vineyard_id") val vineyardId: String,
@@ -582,6 +590,22 @@ class VineyardInsightsStore(
         })
     }
 
+    fun queueLocalFileCleanup(vineyardId: String, relativePaths: List<String>): Boolean = encodeAndWrite(
+        KEY_LOCAL_FILE_CLEANUP,
+        (loadLocalFileCleanup() + relativePaths.map { LocalFileCleanup(vineyardId, it) })
+            .distinctBy { it.relativePath },
+    )
+
+    fun acknowledgeLocalFileCleanup(relativePath: String): Boolean = encodeAndWrite(
+        KEY_LOCAL_FILE_CLEANUP,
+        loadLocalFileCleanup().filterNot { it.relativePath == relativePath },
+    )
+
+    fun queueObjectCleanup(vineyardId: String, storagePath: String): Boolean = encodeAndWrite(
+        KEY_OBJECT_CLEANUP,
+        (loadObjectCleanup() + ObjectCleanup(vineyardId, storagePath)).distinctBy { it.storagePath },
+    )
+
     fun acknowledgeObjectCleanup(storagePath: String): Boolean = encodeAndWrite(
         KEY_OBJECT_CLEANUP,
         loadObjectCleanup().filterNot { it.storagePath == storagePath },
@@ -612,7 +636,7 @@ class VineyardInsightsStore(
     }
 
     /** Custom types belonging to one vineyard. Never another's. */
-    fun customNoteTypes(vineyardId: String): List<VintageNoteType> =
+    fun noteTypes(vineyardId: String): List<VintageNoteType> =
         decodeList<StoredNoteType>(KEY_NOTE_TYPES)
             .filter { it.isSystem || it.vineyardId == vineyardId }
             .map {
@@ -833,5 +857,6 @@ class VineyardInsightsStore(
         const val KEY_DELETION_CURSORS = "deletion_cursors"
         const val KEY_CONSUMED_DELETIONS = "consumed_deletions"
         const val KEY_OBJECT_CLEANUP = "object_cleanup"
+        const val KEY_LOCAL_FILE_CLEANUP = "local_file_cleanup"
     }
 }

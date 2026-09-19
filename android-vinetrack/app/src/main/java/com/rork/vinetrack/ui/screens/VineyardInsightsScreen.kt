@@ -1197,6 +1197,7 @@ private fun VintageNotesWorkspace(
     val vine = LocalVineColors.current
     val insights = vm.vineyardInsights
     val allNotes by insights.notes.collectAsStateWithLifecycle()
+    val noteTypesByVineyard by insights.noteTypesByVineyard.collectAsStateWithLifecycle()
     var draft by remember { mutableStateOf(VintageNoteDraft()) }
     var showPicker by remember { mutableStateOf(false) }
     var isEditing by remember { mutableStateOf(false) }
@@ -1214,9 +1215,9 @@ private fun VintageNotesWorkspace(
             VintageNoteRules.history(allNotes, vineyardId, if (showAllVintages) null else vintage)
         }.orEmpty()
     }
-    val customTypes = remember(state.selectedVineyardId) {
-        state.selectedVineyardId?.let { insights.customNoteTypes(it) }.orEmpty()
-    }
+    val customTypes = state.selectedVineyardId?.let { vineyardId ->
+        noteTypesByVineyard[vineyardId] ?: insights.noteTypes(vineyardId)
+    }.orEmpty()
 
     Scaffold(
         modifier = modifier,

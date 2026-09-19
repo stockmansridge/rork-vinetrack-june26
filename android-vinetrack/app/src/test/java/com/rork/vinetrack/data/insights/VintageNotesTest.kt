@@ -224,10 +224,10 @@ class VintageNotesTest {
     fun `a custom type stays scoped to its own vineyard`() {
         controller.addCustomNoteType(vineyardId, "Creek crossing washed out")
 
-        assertEquals(1, controller.customNoteTypes(vineyardId).size)
+        assertEquals(1, controller.noteTypes(vineyardId).size)
         assertTrue(
             "another vineyard must never see it",
-            controller.customNoteTypes(otherVineyardId).isEmpty(),
+            controller.noteTypes(otherVineyardId).isEmpty(),
         )
     }
 

@@ -43,6 +43,7 @@ class VineyardInsightsSyncWorker(
         val deletionsBeforePush = pullDeletions(vineyardId)
         val localCleanup = processLocalObjectCleanup(vineyardId)
         val serverCleanup = processServerPhotoCleanup(vineyardId)
+        val typePull = pullNoteTypes(vineyardId)
         val typePush = pushNoteTypes(vineyardId)
         val push = pushQueue()
         val photos = pushPhotos(vineyardId)
@@ -54,7 +55,7 @@ class VineyardInsightsSyncWorker(
             pulledVisits = pull.pulledVisits,
             pulledNotes = pull.pulledNotes,
             error = deletionsBeforePush.error ?: localCleanup.error ?: serverCleanup.error ?:
-                typePush.error ?: push.error ?: photos.error ?: pull.error ?: deletionsAfterPull.error,
+                typePull.error ?: typePush.error ?: push.error ?: photos.error ?: pull.error ?: deletionsAfterPull.error,
         )
     }
 
@@ -70,14 +71,20 @@ class VineyardInsightsSyncWorker(
             }
             .sortedWith(compareBy<VineyardInsightsSyncApi.DeletionRow> { it.deletedAt }.thenBy { it.id })
         for (row in rows) {
-            if (row.entityType == VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT.code) {
-                store.loadVisits().firstOrNull {
+            val localPaths = if (row.entityType == VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT.code) {
+                val visitPaths = store.loadVisits().firstOrNull {
                     it.id == row.entityId && it.vineyardId == vineyardId
                 }?.assessments?.flatMap { it.observations }?.flatMap { it.photos }
-                    ?.mapNotNull { it.localPath }?.forEach { photoFiles?.remove(it) }
-                store.loadPhotoQueue().filter {
+                    ?.mapNotNull { it.localPath }.orEmpty()
+                val queuedPaths = store.loadPhotoQueue().filter {
                     it.visitId == row.entityId && it.vineyardId == vineyardId
-                }.forEach { photoFiles?.remove(it.localPath) }
+                }.map { it.localPath }
+                (visitPaths + queuedPaths).distinct()
+            } else {
+                emptyList()
+            }
+            if (!store.queueLocalFileCleanup(vineyardId, localPaths)) {
+                return Outcome(error = "Could not preserve local photograph cleanup work.")
             }
             if (!store.consumeDeletion(vineyardId, row.entityType, row.entityId)) {
                 return Outcome(error = "Could not reconcile a deletion on this device.")
@@ -86,6 +93,10 @@ class VineyardInsightsSyncWorker(
                     vineyardId,
                     VineyardInsightsStore.DeletionCursor(row.deletedAt, row.id),
                 )) return Outcome(error = "Could not save the deletion cursor.")
+            localPaths.forEach { path ->
+                photoFiles?.remove(path)
+                if (photoFiles?.exists(path) == false) store.acknowledgeLocalFileCleanup(path)
+            }
         }
         Outcome()
     } catch (e: Exception) {
@@ -129,6 +140,24 @@ class VineyardInsightsSyncWorker(
     }
 
     // ------------------------------------------------------------ Push
+
+    suspend fun pullNoteTypes(vineyardId: String): Outcome = try {
+        val types = repository.fetchNoteTypes(vineyardId)
+            .filter { it.deletedAt == null }
+            .mapNotNull { row ->
+                VintageNoteGroup.byCode(row.groupCode)?.let { group ->
+                    VintageNoteType(row.id, row.code, group, row.label, row.sortOrder,
+                        !row.isSystem, row.isActive, row.vineyardId, row.isSystem)
+                }
+            }
+        if (!store.reconcileNoteTypes(vineyardId, types)) {
+            Outcome(error = "Could not cache note types on this device.")
+        } else {
+            Outcome()
+        }
+    } catch (e: Exception) {
+        Outcome(error = e.message ?: "Could not load note types yet.")
+    }
 
     suspend fun pushNoteTypes(vineyardId: String): Outcome {
         var pushed = 0
@@ -472,14 +501,8 @@ class VineyardInsightsSyncWorker(
             // System Admin preview uses a complete active-graph pull. This is
             // server-authoritative and cannot miss a changed child because its
             // parent row did not change or because a client clock was skewed.
-            val typeRows = repository.fetchNoteTypes(vineyardId)
-            val types = typeRows.filter { it.deletedAt == null }.mapNotNull { row ->
-                VintageNoteGroup.byCode(row.groupCode)?.let { group ->
-                    VintageNoteType(row.id, row.code, group, row.label, row.sortOrder,
-                        !row.isSystem, row.isActive, row.vineyardId, row.isSystem)
-                }
-            }
-            store.reconcileNoteTypes(vineyardId, types)
+            val typeOutcome = pullNoteTypes(vineyardId)
+            if (typeOutcome.error != null) return typeOutcome
 
             val noteRows = repository.fetchNotes(vineyardId, null)
             noteRows.forEach { applyNoteRow(it) }

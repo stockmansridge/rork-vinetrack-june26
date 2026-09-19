@@ -38,6 +38,7 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         static let deletionCursors = "vineyard_insights.deletion_cursors"
         static let consumedDeletions = "vineyard_insights.consumed_deletions"
         static let objectCleanup = "vineyard_insights.object_cleanup"
+        static let localFileCleanup = "vineyard_insights.local_file_cleanup"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -124,6 +125,11 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         let vineyardID: UUID
         let storagePath: String
         var attemptCount: Int
+    }
+
+    nonisolated struct LocalFileCleanup: Codable, Equatable, Sendable {
+        let vineyardID: UUID
+        let relativePath: String
     }
 
     private struct StoredDeletionCursor: Codable {
@@ -460,6 +466,10 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         decode([ObjectCleanup].self, Key.objectCleanup) ?? []
     }
 
+    func loadLocalFileCleanup() -> [LocalFileCleanup] {
+        decode([LocalFileCleanup].self, Key.localFileCleanup) ?? []
+    }
+
     /// Delta cursor per vineyard, so a pull asks only for what changed.
     func lastPull(vineyardID: UUID) -> Date? {
         (decode([String: Date].self, Key.lastPull) ?? [:])[vineyardID.uuidString]
@@ -560,6 +570,29 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
             !($0.vineyardID == vineyardID && $0.entity == entity && $0.recordID == entityID)
         }
         return encodeAndWrite(remaining, Key.queue)
+    }
+
+    @discardableResult
+    func queueLocalFileCleanup(vineyardID: UUID, relativePaths: [String]) -> Bool {
+        let additions = relativePaths.map { LocalFileCleanup(vineyardID: vineyardID, relativePath: $0) }
+        let all = (loadLocalFileCleanup() + additions).reduce(into: [LocalFileCleanup]()) { result, item in
+            if !result.contains(where: { $0.relativePath == item.relativePath }) { result.append(item) }
+        }
+        return encodeAndWrite(all, Key.localFileCleanup)
+    }
+
+    @discardableResult
+    func acknowledgeLocalFileCleanup(relativePath: String) -> Bool {
+        encodeAndWrite(loadLocalFileCleanup().filter { $0.relativePath != relativePath }, Key.localFileCleanup)
+    }
+
+    @discardableResult
+    func queueObjectCleanup(vineyardID: UUID, storagePath: String) -> Bool {
+        var all = loadObjectCleanup()
+        if !all.contains(where: { $0.storagePath == storagePath }) {
+            all.append(ObjectCleanup(vineyardID: vineyardID, storagePath: storagePath, attemptCount: 0))
+        }
+        return encodeAndWrite(all, Key.objectCleanup)
     }
 
     @discardableResult
@@ -747,6 +780,7 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         defaults.removeObject(forKey: Key.deletionCursors)
         defaults.removeObject(forKey: Key.consumedDeletions)
         defaults.removeObject(forKey: Key.objectCleanup)
+        defaults.removeObject(forKey: Key.localFileCleanup)
     }
 
     // MARK: - Plumbing

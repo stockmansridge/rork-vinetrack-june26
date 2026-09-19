@@ -1,5 +1,10 @@
 package com.rork.vinetrack.data.insights
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -9,6 +14,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import java.time.LocalDate
 
 class VineyardInsightsContractCorrectionTest {
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
@@ -31,13 +37,68 @@ class VineyardInsightsContractCorrectionTest {
         assertEquals("growth", row.linkedGrowthStageRecordId)
     }
 
-    @Test fun `custom note type has stable UUID and legacy code reconciles without losing label`() {
+    @Test fun `custom note type has stable UUID and picker catalogue refreshes immediately`() {
         val raw = MemoryStore()
         val store = VineyardInsightsStore(raw)
         val controller = VineyardInsightsController(store)
         val type = assertNotNull(controller.addCustomNoteType("vineyard", "Wind damage"))
         assertTrue(runCatching { java.util.UUID.fromString(type.databaseId) }.isSuccess)
         assertEquals(type.databaseId, store.pendingNoteTypes("vineyard").single().databaseId)
+        assertEquals(type.databaseId, controller.noteTypesByVineyard.value["vineyard"]?.single()?.databaseId)
+    }
+
+    @Test fun `legacy frost code resolves to real UUID before pending note push`() {
+        val store = VineyardInsightsStore(MemoryStore())
+        val controller = VineyardInsightsController(store)
+        val draft = VintageNoteDraft(
+            date = LocalDate.of(2026, 9, 19),
+            noteTypeId = "frost",
+            noteTypeLabel = "Frost",
+        )
+        val note = assertNotNull(controller.saveNote(draft, "vineyard", null, "Scout", 7, 1))
+        val frostId = "00000000-0000-0000-0000-000000000240"
+        assertTrue(store.reconcileNoteTypes("vineyard", listOf(
+            VintageNoteType(frostId, "frost", VintageNoteGroup.WEATHER, "Frost", 1, false, true, null, true),
+        )))
+        assertEquals(frostId, store.loadNotes().single { it.id == note.id }.noteTypeId)
+        assertEquals("Frost", store.loadNotes().single { it.id == note.id }.noteTypeLabelSnapshot)
+    }
+
+    @Test fun `single flight collapses rapid requests and never overlaps processors`() = runTest {
+        val coordinator = VineyardInsightsSingleFlightCoordinator()
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var passes = 0
+        var active = 0
+        var maxActive = 0
+        val first = launch {
+            coordinator.request("vineyard") {
+                passes += 1
+                active += 1
+                maxActive = maxOf(maxActive, active)
+                if (passes == 1) {
+                    started.complete(Unit)
+                    release.await()
+                }
+                active -= 1
+            }
+        }
+        started.await()
+        (1..10).map { async { coordinator.request("vineyard") { error("active pass closure is reused") } } }.awaitAll()
+        release.complete(Unit)
+        first.join()
+        assertEquals(2, passes)
+        assertEquals(1, maxActive)
+    }
+
+    @Test fun `object cleanup and local file obligations survive store restart`() {
+        val raw = MemoryStore()
+        val first = VineyardInsightsStore(raw)
+        assertTrue(first.queueObjectCleanup("vineyard", "vineyard/observation/photo.jpg"))
+        assertTrue(first.queueLocalFileCleanup("vineyard", listOf("vineyard/observation/photo.jpg")))
+        val restarted = VineyardInsightsStore(raw)
+        assertEquals("vineyard/observation/photo.jpg", restarted.loadObjectCleanup().single().storagePath)
+        assertEquals("vineyard/observation/photo.jpg", restarted.loadLocalFileCleanup().single().relativePath)
     }
 
     private class MemoryStore : InsightsKeyValueStore {

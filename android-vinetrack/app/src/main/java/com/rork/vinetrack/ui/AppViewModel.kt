@@ -1219,14 +1219,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * this view model: the feature is unreleased, so it must be removable
      * without unpicking anything else.
      */
-    private val vineyardInsightsSyncJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
+    private val vineyardInsightsDebounceJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
 
     private fun scheduleVineyardInsightsSync(vineyardId: String) {
-        vineyardInsightsSyncJobs.remove(vineyardId)?.cancel()
-        vineyardInsightsSyncJobs[vineyardId] = viewModelScope.launch {
+        vineyardInsightsDebounceJobs.remove(vineyardId)?.cancel()
+        vineyardInsightsDebounceJobs[vineyardId] = viewModelScope.launch {
             kotlinx.coroutines.delay(650)
-            runCatching { vineyardInsights.sync(vineyardId) }
-            vineyardInsightsSyncJobs.remove(vineyardId)
+            vineyardInsightsDebounceJobs.remove(vineyardId)
+            // The full pass has its own single-flight lifecycle. Once started it
+            // is not a child of the cancellable debounce timer.
+            viewModelScope.launch { runCatching { vineyardInsights.sync(vineyardId) } }
         }
     }
 

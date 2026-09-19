@@ -37,6 +37,7 @@ final class VineyardInsightsService {
     private(set) var isSyncing = false
     private(set) var lastSyncError: String?
     private(set) var pendingPhotoCount = 0
+    private(set) var noteTypesByVineyard: [UUID: [VintageNoteType]] = [:]
 
     /// True when the most recent local write failed to reach disk.
     ///
@@ -411,18 +412,37 @@ final class VineyardInsightsService {
         let retained = ScoutGrowthStageLink.onScoutDeleted(visit)
         let deletedAt = now()
         let localPaths = visit.assessments.flatMap(\.observations).flatMap(\.photos).compactMap(\.localPath)
-        let queuedPaths = store.loadPhotoQueue().filter { $0.visitID == visitID }.map(\.localPath)
-        (localPaths + queuedPaths).forEach { photoFiles.remove(relativePath: $0) }
-        store.loadPhotoQueue().filter { $0.visitID == visitID }.forEach { store.dequeuePhoto(photoID: $0.id) }
-        if record(store.deleteVisit(id: visitID)) {
-            store.enqueue(
-                recordID: visit.id,
-                vineyardID: visit.vineyardID,
-                entity: .scoutVisit,
-                operation: .delete,
-                clientUpdatedAt: deletedAt
+        let queued = store.loadPhotoQueue().filter {
+            $0.visitID == visitID && $0.vineyardID == visit.vineyardID
+        }
+        let cleanupPaths = Set(queued.filter { $0.rowCommitted != true }.map { entry in
+            entry.uploadedStoragePath ?? ScoutPhotoFileStore.storagePath(
+                vineyardID: entry.vineyardID,
+                observationID: entry.observationID,
+                photoID: entry.id
             )
+        })
+        let pathsToRemove = Array(Set(localPaths + queued.map(\.localPath)))
+        let localCleanupPersisted = store.queueLocalFileCleanup(
+            vineyardID: visit.vineyardID,
+            relativePaths: pathsToRemove
+        )
+        let cleanupPersisted = localCleanupPersisted && cleanupPaths.allSatisfy {
+            store.queueObjectCleanup(vineyardID: visit.vineyardID, storagePath: $0)
+        }
+        let deleteQueued = cleanupPersisted && store.enqueue(
+            recordID: visit.id,
+            vineyardID: visit.vineyardID,
+            entity: .scoutVisit,
+            operation: .delete,
+            clientUpdatedAt: deletedAt
+        )
+        let visitDeleted = deleteQueued && store.deleteVisit(id: visitID)
+        let uploadsInvalidated = visitDeleted && queued.allSatisfy { store.dequeuePhoto(photoID: $0.id) }
+        if record(uploadsInvalidated) {
+            processLocalFileCleanup(vineyardID: visit.vineyardID)
             visits = store.loadVisits()
+            pendingPhotoCount = store.loadPhotoQueue().count
             if openVisitID == visitID { openVisitID = nil }
             scheduleSync(vineyardID: visit.vineyardID)
         }
@@ -459,7 +479,7 @@ final class VineyardInsightsService {
     }
 
     func customNoteTypes(vineyardID: UUID) -> [VintageNoteType] {
-        store.customNoteTypes(vineyardID: vineyardID)
+        noteTypesByVineyard[vineyardID] ?? store.customNoteTypes(vineyardID: vineyardID)
     }
 
     @discardableResult
@@ -480,6 +500,7 @@ final class VineyardInsightsService {
             vineyardID: vineyardID
         )
         guard record(store.saveCustomNoteType(vineyardID: vineyardID, type: type)) else { return nil }
+        noteTypesByVineyard[vineyardID] = store.customNoteTypes(vineyardID: vineyardID)
         scheduleSync(vineyardID: vineyardID)
         return type
     }
@@ -561,15 +582,23 @@ final class VineyardInsightsService {
     // The replay worker. Local state is already durable before any of this
     // runs, so every failure path here is "try again later", never data loss.
 
+    private struct SyncFlight {
+        var isRunning = false
+        var needsAnotherPass = false
+    }
+
     private var scheduledSyncs: [UUID: Task<Void, Never>] = [:]
+    private var syncFlights: [UUID: SyncFlight] = [:]
 
     private func scheduleSync(vineyardID: UUID) {
         scheduledSyncs[vineyardID]?.cancel()
         scheduledSyncs[vineyardID] = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(650))
-            guard !Task.isCancelled else { return }
-            await self?.sync(vineyardID: vineyardID)
-            self?.scheduledSyncs[vineyardID] = nil
+            guard !Task.isCancelled, let self else { return }
+            self.scheduledSyncs[vineyardID] = nil
+            // Once the debounce expires, the full pass has an independent task;
+            // cancelling a later timer cannot cancel an active network pass.
+            Task { await self.sync(vineyardID: vineyardID) }
         }
     }
 
@@ -578,16 +607,45 @@ final class VineyardInsightsService {
     /// The vineyard is passed in rather than read from the current selection
     /// because queue entries carry their OWN vineyard id — see `syncQueue`.
     func sync(vineyardID: UUID) async {
-        guard !isSyncing else { return }
-        isSyncing = true
-        defer { isSyncing = false }
-        await pullDeletions(vineyardID: vineyardID)
-        await processPhotoCleanup(vineyardID: vineyardID)
-        await syncNoteTypes(vineyardID: vineyardID)
-        await syncQueue()
-        await syncPhotos(vineyardID: vineyardID)
-        await pull(vineyardID: vineyardID)
-        await pullDeletions(vineyardID: vineyardID)
+        if syncFlights[vineyardID]?.isRunning == true {
+            syncFlights[vineyardID]?.needsAnotherPass = true
+            return
+        }
+        syncFlights[vineyardID] = SyncFlight(isRunning: true, needsAnotherPass: false)
+        repeat {
+            syncFlights[vineyardID]?.needsAnotherPass = false
+            isSyncing = true
+            processLocalFileCleanup(vineyardID: vineyardID)
+            await pullDeletions(vineyardID: vineyardID)
+            await processPhotoCleanup(vineyardID: vineyardID)
+            await pullNoteTypes(vineyardID: vineyardID)
+            await syncNoteTypes(vineyardID: vineyardID)
+            await syncQueue()
+            await syncPhotos(vineyardID: vineyardID)
+            await pull(vineyardID: vineyardID)
+            await pullDeletions(vineyardID: vineyardID)
+        } while syncFlights[vineyardID]?.needsAnotherPass == true
+        syncFlights[vineyardID] = nil
+        isSyncing = syncFlights.values.contains { $0.isRunning }
+    }
+
+    private func pullNoteTypes(vineyardID: UUID) async {
+        do {
+            let rows = try await repository.fetchNoteTypes(vineyardID: vineyardID)
+            let types = rows.compactMap { row -> VintageNoteType? in
+                guard VineyardInsightsSyncRepository.parseTimestamp(row.deleted_at) == nil,
+                      let group = VintageNoteGroup.byCode(row.group_code) else { return nil }
+                return VintageNoteType(databaseID: row.id, code: row.code, group: group,
+                    label: row.label, sortOrder: row.sort_order, isCustom: !row.is_system,
+                    isActive: row.is_active, vineyardID: row.vineyard_id, isSystem: row.is_system)
+            }
+            guard store.reconcileNoteTypes(types, vineyardID: vineyardID) else {
+                throw VineyardInsightsReconciliationError.localWriteFailed
+            }
+            noteTypesByVineyard[vineyardID] = store.customNoteTypes(vineyardID: vineyardID)
+        } catch {
+            lastSyncError = error.localizedDescription
+        }
     }
 
     private func syncNoteTypes(vineyardID: UUID) async {
@@ -898,13 +956,19 @@ final class VineyardInsightsService {
                 guard let entity = VineyardInsightsStore.QueuedOperation.Entity(rawValue: row.entity_type),
                       let deletedAt = VineyardInsightsSyncRepository.parseTimestamp(row.deleted_at)
                 else { continue }
+                let localPaths: [String]
                 if entity == .scoutVisit {
-                    visits.first { $0.id == row.entity_id && $0.vineyardID == vineyardID }?
-                        .assessments.flatMap(\.observations).flatMap(\.photos)
-                        .compactMap(\.localPath).forEach { photoFiles.remove(relativePath: $0) }
-                    store.loadPhotoQueue().filter {
+                    let visitPaths = visits.first { $0.id == row.entity_id && $0.vineyardID == vineyardID }?
+                        .assessments.flatMap(\.observations).flatMap(\.photos).compactMap(\.localPath) ?? []
+                    let queuedPaths = store.loadPhotoQueue().filter {
                         $0.visitID == row.entity_id && $0.vineyardID == vineyardID
-                    }.forEach { photoFiles.remove(relativePath: $0.localPath) }
+                    }.map(\.localPath)
+                    localPaths = Array(Set(visitPaths + queuedPaths))
+                    guard store.queueLocalFileCleanup(vineyardID: vineyardID, relativePaths: localPaths) else {
+                        throw VineyardInsightsReconciliationError.localWriteFailed
+                    }
+                } else {
+                    localPaths = []
                 }
                 guard store.consumeDeletion(vineyardID: vineyardID, entity: entity, entityID: row.entity_id),
                       store.setDeletionCursor(
@@ -912,6 +976,7 @@ final class VineyardInsightsService {
                         vineyardID: vineyardID
                       )
                 else { throw VineyardInsightsReconciliationError.localWriteFailed }
+                processLocalFileCleanup(vineyardID: vineyardID)
                 visits = store.loadVisits()
                 notes = store.loadNotes()
                 if openVisitID == row.entity_id { openVisitID = nil }
@@ -919,6 +984,15 @@ final class VineyardInsightsService {
         } catch {
             lastSyncError = error.localizedDescription
             logger.warning("Insights deletion pull deferred")
+        }
+    }
+
+    private func processLocalFileCleanup(vineyardID: UUID) {
+        for item in store.loadLocalFileCleanup() where item.vineyardID == vineyardID {
+            photoFiles.remove(relativePath: item.relativePath)
+            if !photoFiles.exists(atRelativePath: item.relativePath) {
+                _ = store.acknowledgeLocalFileCleanup(relativePath: item.relativePath)
+            }
         }
     }
 
@@ -957,15 +1031,7 @@ final class VineyardInsightsService {
             // Round 1 preview pulls the complete active graph. No client clock
             // can skip a row, and changed children are discovered even when the
             // parent visit's updated_at did not move.
-            let typeRows = try await repository.fetchNoteTypes(vineyardID: vineyardID)
-            let types = typeRows.compactMap { row -> VintageNoteType? in
-                guard VineyardInsightsSyncRepository.parseTimestamp(row.deleted_at) == nil,
-                      let group = VintageNoteGroup.byCode(row.group_code) else { return nil }
-                return VintageNoteType(databaseID: row.id, code: row.code, group: group,
-                    label: row.label, sortOrder: row.sort_order, isCustom: !row.is_system,
-                    isActive: row.is_active, vineyardID: row.vineyard_id, isSystem: row.is_system)
-            }
-            _ = store.reconcileNoteTypes(types, vineyardID: vineyardID)
+            await pullNoteTypes(vineyardID: vineyardID)
 
             let noteRows = try await repository.fetchNotes(vineyardID: vineyardID, since: nil)
             for row in noteRows { apply(noteRow: row) }
