@@ -39,10 +39,23 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         static let consumedDeletions = "vineyard_insights.consumed_deletions"
         static let objectCleanup = "vineyard_insights.object_cleanup"
         static let localFileCleanup = "vineyard_insights.local_file_cleanup"
+        static let accountOwner = "vineyard_insights.account_owner"
     }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+    }
+
+    // MARK: - Account isolation
+
+    func accountOwnerID() -> UUID? {
+        defaults.string(forKey: Key.accountOwner).flatMap(UUID.init(uuidString:))
+    }
+
+    @discardableResult
+    func claimAccount(_ accountID: UUID) -> Bool {
+        defaults.set(accountID.uuidString, forKey: Key.accountOwner)
+        return defaults.string(forKey: Key.accountOwner) == accountID.uuidString
     }
 
     // MARK: - Queue
@@ -781,6 +794,7 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         defaults.removeObject(forKey: Key.consumedDeletions)
         defaults.removeObject(forKey: Key.objectCleanup)
         defaults.removeObject(forKey: Key.localFileCleanup)
+        defaults.removeObject(forKey: Key.accountOwner)
     }
 
     // MARK: - Plumbing

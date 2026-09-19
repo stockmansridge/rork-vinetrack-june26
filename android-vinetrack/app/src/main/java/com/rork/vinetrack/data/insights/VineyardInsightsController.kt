@@ -140,6 +140,7 @@ class VineyardInsightsController(
 
     fun setWeather(visitId: String, weather: ScoutWeatherSnapshot) {
         val visit = visit(visitId) ?: return
+        if (!visit.isEditable) return
         persist(visit.copy(weather = weather))
     }
 
@@ -239,7 +240,7 @@ class VineyardInsightsController(
             }
         if (!persist(visit.withAssessment(nextAssessment))) return null
 
-        store.enqueuePhoto(
+        val photoQueued = store.enqueuePhoto(
             VineyardInsightsStore.QueuedPhoto(
                 id = photoId,
                 vineyardId = visit.vineyardId,
@@ -250,6 +251,10 @@ class VineyardInsightsController(
             ),
         )
         _pendingPhotoCount.value = store.loadPhotoQueue().size
+        if (!photoQueued) {
+            record(false)
+            return null
+        }
         onMutation(visit.vineyardId)
         return photo
     }
@@ -296,7 +301,9 @@ class VineyardInsightsController(
 
         val nextAssessment = assessment.withObservation(
             observation.copy(photos = observation.photos.filterNot { it.id == photoId }),
-        )
+        ).let {
+            it.copy(status = if (it.isComplete) ScoutAssessmentStatus.COMPLETE else ScoutAssessmentStatus.IN_PROGRESS)
+        }
         if (!persist(visit.withAssessment(nextAssessment))) return null
 
         when (plan) {
@@ -450,16 +457,17 @@ class VineyardInsightsController(
         val saved = store.saveVisit(stamped)
         if (saved) {
             _visits.value = store.loadVisits()
-            store.enqueue(
+            val queued = store.enqueue(
                 recordId = stamped.id,
                 vineyardId = stamped.vineyardId,
                 entity = VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT,
                 operation = VineyardInsightsStore.QueuedOperation.Operation.UPSERT,
                 clientUpdatedAtIso = stamped.clientUpdatedAtIso,
             )
-            onMutation(stamped.vineyardId)
+            if (queued) onMutation(stamped.vineyardId)
+            return record(queued)
         }
-        return record(saved)
+        return record(false)
     }
 
     // ------------------------------------------------------ Vintage Notes
@@ -537,13 +545,14 @@ class VineyardInsightsController(
         )
         if (!record(store.saveNote(note))) return null
         _notes.value = store.loadNotes()
-        store.enqueue(
+        val queued = store.enqueue(
             recordId = note.id,
             vineyardId = note.vineyardId,
             entity = VineyardInsightsStore.QueuedOperation.Entity.VINTAGE_NOTE,
             operation = VineyardInsightsStore.QueuedOperation.Operation.UPSERT,
             clientUpdatedAtIso = note.clientUpdatedAtIso,
         )
+        if (!record(queued)) return null
         onMutation(note.vineyardId)
         return note
     }
@@ -552,15 +561,16 @@ class VineyardInsightsController(
     fun deleteNote(noteId: String): Boolean {
         val note = _notes.value.firstOrNull { it.id == noteId } ?: return false
         val now = nowIso()
-        if (!record(store.deleteNote(noteId))) return false
-        _notes.value = store.loadNotes()
-        store.enqueue(
+        val queued = store.enqueue(
             recordId = note.id,
             vineyardId = note.vineyardId,
             entity = VineyardInsightsStore.QueuedOperation.Entity.VINTAGE_NOTE,
             operation = VineyardInsightsStore.QueuedOperation.Operation.DELETE,
             clientUpdatedAtIso = now,
         )
+        if (!record(queued)) return false
+        if (!record(store.deleteNote(noteId))) return false
+        _notes.value = store.loadNotes()
         onMutation(note.vineyardId)
         return true
     }
@@ -641,6 +651,8 @@ class VineyardInsightsController(
     suspend fun clearForSignOut() {
         syncGeneration += 1
         syncCoordinator.invalidateAll()
+        pendingOrphanedObjects.clear()
+        pendingPhotoTombstones.clear()
         store.clearForSignOut()
         photoFiles?.clearForSignOut()
         _visits.value = emptyList()

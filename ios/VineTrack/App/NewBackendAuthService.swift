@@ -15,6 +15,9 @@ final class NewBackendAuthService {
     var isInPasswordRecovery: Bool = false
     var passwordResetSuccessMessage: String?
     var defaultVineyardId: UUID?
+    /// Advances only when the app completes an explicit sign-out operation.
+    /// Startup restoration and transient session checks never change this value.
+    private(set) var completedSignOutSequence: Int = 0
 
     private let authRepository: any AuthRepository
     private let profileRepository: any ProfileRepositoryProtocol
@@ -138,6 +141,7 @@ final class NewBackendAuthService {
             errorMessage = error.localizedDescription
         }
         applyUser(nil)
+        completedSignOutSequence += 1
         pendingInvitations = []
         defaultVineyardId = nil
         // Queue diagnostics are per-user: never let one account's stuck-record

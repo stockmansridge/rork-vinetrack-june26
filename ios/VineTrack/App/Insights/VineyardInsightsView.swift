@@ -157,6 +157,7 @@ struct ScoutWorkspaceView: View {
     @State private var showReview = false
     @State private var showsAllVintages = false
     @State private var visitPendingDeletion: ScoutVisit?
+    @State private var completionError: String?
 
     private var openVisit: ScoutVisit? { insights.openVisit }
     private var currentVintage: Int {
@@ -227,10 +228,16 @@ struct ScoutWorkspaceView: View {
             if let visit = openVisit {
                 ScoutReviewSheet(
                     review: ScoutReview.of(visit),
-                    isEditable: visit.isEditable
+                    isEditable: visit.isEditable,
+                    completionError: completionError
                 ) {
-                    insights.completeVisit(visit.id)
-                    showReview = false
+                    if insights.completeVisit(visit.id) {
+                        completionError = nil
+                        showReview = false
+                        insights.openVisit(nil)
+                    } else {
+                        completionError = "The completed Scout could not be saved with its sync obligation. Your field data remains on this device; try Complete again."
+                    }
                 }
             }
         }
@@ -241,13 +248,14 @@ struct ScoutWorkspaceView: View {
         Section {
             Button {
                 guard let vineyardID = store.selectedVineyardId else { return }
-                insights.startVisit(
+                let visit = insights.startVisit(
                     vineyardID: vineyardID,
                     scoutUserID: auth.userId,
                     scoutName: auth.userName,
                     seasonStartMonth: store.settings.seasonStartMonth,
                     seasonStartDay: store.settings.seasonStartDay
                 )
+                Task { await insights.captureWeather(visitID: visit.id) }
             } label: {
                 Label("New Scout", systemImage: "plus.circle.fill")
             }
@@ -285,6 +293,9 @@ struct ScoutWorkspaceView: View {
                             Text("\(visit.status.label) • \(visit.scoutNameSnapshot ?? "—")")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                            Text(insights.syncStatus(for: visit))
+                                .font(.caption)
+                                .foregroundStyle(insights.syncStatus(for: visit) == "Synced" ? .green : .orange)
                             Text(blockNames(visit))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -332,6 +343,11 @@ struct ScoutWorkspaceView: View {
             // reading is held the record says so rather than leaving a
             // confident blank.
             Text(weatherLine(visit)).font(.caption).foregroundStyle(.secondary)
+            if visit.isEditable && (visit.weather == nil || visit.weather?.isUnavailable == true) {
+                Button("Retry weather") {
+                    Task { await insights.captureWeather(visitID: visit.id) }
+                }
+            }
             TextField(
                 "Visit summary (optional)",
                 text: Binding(
@@ -382,9 +398,8 @@ struct ScoutWorkspaceView: View {
     }
 
     private func weatherLine(_ visit: ScoutVisit) -> String {
-        guard let weather = visit.weather else { return "Weather  not captured" }
-        if weather.isUnavailable { return "Weather  unavailable at capture time" }
-        if weather.isStale { return "Weather  last reading may be out of date" }
+        guard let weather = visit.weather else { return "Weather not captured" }
+        if weather.isUnavailable { return "Weather unavailable at capture time • retry available" }
         var parts: [String] = []
         if let temperature = weather.temperatureCelsius {
             parts.append("\(Int(temperature.rounded()))°C")
@@ -395,7 +410,12 @@ struct ScoutWorkspaceView: View {
         if let wind = weather.windSpeedKph {
             parts.append("wind \(Int(wind.rounded())) km/h")
         }
-        return parts.isEmpty ? "Weather  not captured" : "Weather  " + parts.joined(separator: "  ")
+        if let source = weather.source { parts.append(source) }
+        if let observedAt = weather.observedAt {
+            parts.append("observed \(observedAt.formatted(date: .abbreviated, time: .shortened))")
+        }
+        if weather.isStale { parts.append("stale") }
+        return parts.isEmpty ? "Weather not captured" : "Weather • " + parts.joined(separator: " • ")
     }
 }
 
@@ -855,6 +875,7 @@ private struct ScoutReviewSheet: View {
 
     let review: ScoutReview
     let isEditable: Bool
+    let completionError: String?
     let onComplete: () -> Void
 
     var body: some View {
@@ -872,6 +893,11 @@ private struct ScoutReviewSheet: View {
                     Text(review.blockedReason() ?? ScoutReview.completionHint)
                 }
 
+                if let completionError {
+                    Section {
+                        Text(completionError).foregroundStyle(.red)
+                    }
+                }
                 Section {
                     Button("Complete Scout", action: onComplete)
                         .disabled(!isEditable || !review.canComplete)

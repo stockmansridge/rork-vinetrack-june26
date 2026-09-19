@@ -128,6 +128,7 @@ struct NewBackendRootView: View {
                 // because `isSignedIn` flipped while `didAttemptRestore`
                 // was still false (and was guarded out).
                 if auth.isSignedIn, let userId = auth.userId {
+                    vineyardInsights.activateAccount(userId)
                     entitlementGate.login(userId: userId)
                     await subscription.login(userId: userId, userCreatedAt: auth.userCreatedAt)
                     await entitlementGate.refresh(force: true)
@@ -170,6 +171,7 @@ struct NewBackendRootView: View {
             guard didAttemptRestore else { return }
             if auth.isSignedIn {
                 if let userId = auth.userId {
+                    vineyardInsights.activateAccount(userId)
                     entitlementGate.login(userId: userId)
                     await subscription.login(userId: userId, userCreatedAt: auth.userCreatedAt)
                     await entitlementGate.refresh(force: true)
@@ -236,15 +238,19 @@ struct NewBackendRootView: View {
                 // internally; never blocks sign-in or normal use.
                 await ClientTelemetryService.shared.reportActivity(vineyardId: store.selectedVineyardId)
             } else {
-                systemAdmin.clearOnSignOut()
-                // Unreleased preview data is System Admin-only and must not be
-                // visible to whoever signs in on this device next.
-                vineyardInsights.clearOnSignOut()
+                // A false auth value here may be startup restoration, an offline
+                // refresh failure, or another unresolved transition. Destructive
+                // Insights cleanup is driven only by completedSignOutSequence.
                 // Clear only the user-linked throttle cache — the random
                 // installation ID is kept (a new account creates its own
                 // separate user/client association server-side).
                 ClientTelemetryService.shared.clearUserCache()
             }
+        }
+        .task(id: auth.completedSignOutSequence) {
+            guard didAttemptRestore, auth.completedSignOutSequence > 0 else { return }
+            systemAdmin.clearOnSignOut()
+            vineyardInsights.clearOnSignOut()
         }
         .onChange(of: scenePhase) { _, newPhase in
             // Re-arm the biometric lock only when returning from a true

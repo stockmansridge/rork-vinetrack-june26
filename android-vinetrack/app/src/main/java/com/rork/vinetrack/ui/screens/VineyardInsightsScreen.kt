@@ -52,6 +52,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -400,7 +401,7 @@ private fun ScoutWorkspace(
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = { showAllVintages = false }) {
-                            Text("Vintage $currentVintage")
+                            Text("Vintage ${VintageYearText.format(currentVintage)}")
                         }
                         OutlinedButton(onClick = { showAllVintages = true }) {
                             Text("All vintages")
@@ -482,8 +483,10 @@ private fun ScoutWorkspace(
             editable = reviewVisit.isEditable,
             onDismiss = { showReview = false },
             onComplete = {
-                insights.completeVisit(reviewVisit.id)
-                showReview = false
+                if (insights.completeVisit(reviewVisit.id)) {
+                    showReview = false
+                    insights.openVisit(null)
+                }
             },
         )
     }
@@ -535,7 +538,7 @@ private fun ScoutList(
                     )
                     visit.visitSummary?.let { Text(it, maxLines = 2, fontSize = 12.sp, color = vine.textPrimary) }
                 }
-                Text("Vintage ${visit.vintageYear}", fontSize = 12.sp, color = vine.textSecondary)
+                Text("Vintage ${VintageYearText.format(visit.vintageYear)}", fontSize = 12.sp, color = vine.textSecondary)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 TextButton(onClick = { onEdit(visit) }) {
@@ -566,7 +569,7 @@ private fun ScoutVisitHeader(vm: AppViewModel, state: AppUiState, visit: ScoutVi
         }
         Spacer(Modifier.height(8.dp))
         Text("Date  ${visit.scoutDateIso}", fontSize = 13.sp, color = vine.textSecondary)
-        Text("Vintage  ${visit.vintageYear}", fontSize = 13.sp, color = vine.textSecondary)
+        Text("Vintage ${VintageYearText.format(visit.vintageYear)}", fontSize = 13.sp, color = vine.textSecondary)
         Text(
             "Scout  ${visit.scoutNameSnapshot ?: state.userDisplayName ?: "\u2014"}",
             fontSize = 13.sp,
@@ -578,8 +581,8 @@ private fun ScoutVisitHeader(vm: AppViewModel, state: AppUiState, visit: ScoutVi
         val weather = visit.weather
         Text(
             when {
-                weather == null -> "Weather  not captured"
-                weather.isUnavailable -> "Weather  unavailable at capture time"
+                weather == null -> "Weather not captured"
+                weather.isUnavailable -> "Weather unavailable at capture time"
                 weather.isStale -> "Weather  last reading may be out of date"
                 else -> buildString {
                     append("Weather  ")
@@ -641,7 +644,7 @@ private fun ScoutBlockPicker(
 
 /** Existing block facts, displayed rather than re-asked. */
 private fun blockDetailLine(paddock: Paddock?, vintageYear: Int): String {
-    if (paddock == null) return "Vintage $vintageYear"
+    if (paddock == null) return "Vintage ${VintageYearText.format(vintageYear)}"
     val parts = mutableListOf<String>()
     paddock.varietyAllocations
         ?.mapNotNull { allocation -> allocation.displayName?.takeIf { it.isNotBlank() } }
@@ -649,7 +652,7 @@ private fun blockDetailLine(paddock: Paddock?, vintageYear: Int): String {
         ?.takeIf { it.isNotEmpty() }
         ?.let { parts += it.joinToString(", ") }
     paddock.rows?.size?.takeIf { it > 0 }?.let { parts += "$it rows" }
-    parts += "Vintage $vintageYear"
+    parts += "Vintage ${VintageYearText.format(vintageYear)}"
     return parts.joinToString("  \u2022  ")
 }
 
@@ -669,7 +672,8 @@ private fun ScoutBlockAssessmentCard(
 
     // Which item a pending camera belongs to, held in state so a recomposition
     // while the camera is open cannot attach the photograph to the wrong item.
-    var photoItem by remember { mutableStateOf<ScoutItem?>(null) }
+    var photoItemCode by rememberSaveable { mutableStateOf<String?>(null) }
+    val photoItem = photoItemCode?.let(ScoutItem::byCode)
     var showStagePicker by remember { mutableStateOf(false) }
     var confirmUnlink by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -678,7 +682,7 @@ private fun ScoutBlockAssessmentCard(
     val camera = rememberPhotoCaptureCoordinator(
         onPhoto = { uri ->
             val item = photoItem
-            photoItem = null
+            photoItemCode = null
             if (uri != null && item != null) {
                 vm.captureScoutPhoto(visitId, assessmentId, item, uri) { ok ->
                     message = if (ok) {
@@ -691,7 +695,7 @@ private fun ScoutBlockAssessmentCard(
             }
         },
         onError = {
-            photoItem = null
+            photoItemCode = null
             message = it
             messageIsError = true
         },
@@ -816,7 +820,7 @@ private fun ScoutBlockAssessmentCard(
                 enabled = enabled,
                 bytesFor = { insights.photoBytes(it) },
                 onAdd = {
-                    photoItem = item
+                    photoItemCode = item.code
                     camera.takePhoto()
                 },
                 onDelete = { photo ->

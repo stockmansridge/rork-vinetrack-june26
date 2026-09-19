@@ -147,9 +147,43 @@ final class VineyardInsightsService {
     }
 
     func setWeather(visitID: UUID, weather: ScoutWeatherSnapshot) {
-        guard var visit = visit(visitID) else { return }
+        guard var visit = visit(visitID), visit.isEditable else { return }
         visit.weather = weather
         persist(visit)
+    }
+
+    /// Capture the configured vineyard weather without blocking local Scout saving.
+    func captureWeather(visitID: UUID) async {
+        guard let current = visit(visitID), current.isEditable else { return }
+        let capturedAt = now()
+        do {
+            guard let snapshot = try await WeatherCurrentService().fetchCachedCurrent(vineyardId: current.vineyardID),
+                  snapshot.status == "ok" else {
+                setWeather(visitID: visitID, weather: .unavailable(capturedAt: capturedAt, source: "Configured vineyard weather source"))
+                return
+            }
+            setWeather(visitID: visitID, weather: ScoutWeatherSnapshot(
+                observedAt: snapshot.observedAt,
+                capturedAt: capturedAt,
+                source: snapshot.stationName.map { "\(snapshot.source) — \($0)" } ?? snapshot.source,
+                temperatureCelsius: snapshot.temperatureC,
+                humidityPercent: snapshot.humidityPct,
+                windSpeedKph: snapshot.windSpeedKmh,
+                windGustKph: nil,
+                recentRainfallMm: snapshot.rainTodayMm,
+                isStale: snapshot.isStale,
+                isUnavailable: false
+            ))
+        } catch {
+            setWeather(visitID: visitID, weather: .unavailable(capturedAt: capturedAt, source: "Configured vineyard weather source"))
+        }
+    }
+
+    func syncStatus(for visit: ScoutVisit) -> String {
+        let isQueued = store.loadQueue().contains { $0.entity == .scoutVisit && $0.recordID == visit.id }
+        let hasQueuedPhoto = store.loadPhotoQueue().contains { $0.visitID == visit.id }
+        if isQueued || hasQueuedPhoto { return "Sync pending" }
+        return visit.syncVersion > 0 ? "Synced" : "Saved on this device"
     }
 
     func setObservationValue(
@@ -257,7 +291,7 @@ final class VineyardInsightsService {
         nextVisit.setAssessment(assessment)
         guard persist(nextVisit) else { return nil }
 
-        store.enqueuePhoto(
+        let photoQueued = store.enqueuePhoto(
             VineyardInsightsStore.QueuedPhoto(
                 id: photoID,
                 vineyardID: visit.vineyardID,
@@ -272,6 +306,7 @@ final class VineyardInsightsService {
             )
         )
         pendingPhotoCount = store.loadPhotoQueue().count
+        guard record(photoQueued) else { return nil }
 
         scheduleSync(vineyardID: visit.vineyardID)
         return photo
@@ -456,16 +491,17 @@ final class VineyardInsightsService {
         let saved = store.saveVisit(stamped)
         if saved {
             visits = store.loadVisits()
-            store.enqueue(
+            let queued = store.enqueue(
                 recordID: stamped.id,
                 vineyardID: stamped.vineyardID,
                 entity: .scoutVisit,
                 operation: .upsert,
                 clientUpdatedAt: stamped.clientUpdatedAt
             )
-            scheduleSync(vineyardID: stamped.vineyardID)
+            if queued { scheduleSync(vineyardID: stamped.vineyardID) }
+            return record(queued)
         }
-        return record(saved)
+        return record(false)
     }
 
     // MARK: - Vintage Notes
@@ -548,13 +584,14 @@ final class VineyardInsightsService {
         )
         guard record(store.saveNote(note)) else { return nil }
         notes = store.loadNotes()
-        store.enqueue(
+        let queued = store.enqueue(
             recordID: note.id,
             vineyardID: note.vineyardID,
             entity: .vintageNote,
             operation: .upsert,
             clientUpdatedAt: note.clientUpdatedAt
         )
+        guard record(queued) else { return nil }
         scheduleSync(vineyardID: note.vineyardID)
         return note
     }
@@ -564,15 +601,16 @@ final class VineyardInsightsService {
     func deleteNote(_ noteID: UUID) -> Bool {
         guard let note = notes.first(where: { $0.id == noteID }) else { return false }
         let timestamp = now()
-        guard record(store.deleteNote(id: noteID)) else { return false }
-        notes = store.loadNotes()
-        store.enqueue(
+        let queued = store.enqueue(
             recordID: note.id,
             vineyardID: note.vineyardID,
             entity: .vintageNote,
             operation: .delete,
             clientUpdatedAt: timestamp
         )
+        guard record(queued) else { return false }
+        guard record(store.deleteNote(id: noteID)) else { return false }
+        notes = store.loadNotes()
         scheduleSync(vineyardID: note.vineyardID)
         return true
     }
@@ -1281,7 +1319,26 @@ final class VineyardInsightsService {
 
     // MARK: - Session
 
-    /// Drop every locally held preview record on sign-out.
+    /// Claim retained data for the restored account. If another account owns
+    /// it, invalidate that session before removing its local records.
+    func activateAccount(_ accountID: UUID) {
+        if let owner = store.accountOwnerID(), owner != accountID {
+            clearOnSignOut()
+        }
+        guard store.claimAccount(accountID) else {
+            visits = []
+            notes = []
+            noteTypesByVineyard = [:]
+            openVisitID = nil
+            lastWriteFailed = true
+            return
+        }
+        visits = store.loadVisits()
+        notes = store.loadNotes()
+        pendingPhotoCount = store.loadPhotoQueue().count
+    }
+
+    /// Drop every locally held preview record on explicit sign-out.
     func clearOnSignOut() {
         syncGeneration += 1
         scheduledSyncs.values.forEach { $0.cancel() }

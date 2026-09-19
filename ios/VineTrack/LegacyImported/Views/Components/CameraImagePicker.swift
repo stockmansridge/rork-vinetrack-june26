@@ -6,18 +6,44 @@ struct CameraImagePicker: UIViewControllerRepresentable {
     @Environment(\.dismiss) private var dismiss
     let onImageCaptured: (Data?) -> Void
 
-    func makeUIViewController(context: Context) -> UIImagePickerController {
+    func makeUIViewController(context: Context) -> UIViewController {
+        guard AVCaptureDevice.authorizationStatus(for: .video) != .denied,
+              AVCaptureDevice.authorizationStatus(for: .video) != .restricted else {
+            let denied = UIAlertController(
+                title: "Camera access denied",
+                message: "Allow camera access in Settings to capture field evidence.",
+                preferredStyle: .alert
+            )
+            denied.addAction(UIAlertAction(title: "Close", style: .cancel) { _ in
+                onImageCaptured(nil)
+                dismiss()
+            })
+            denied.addAction(UIAlertAction(title: "Open Settings", style: .default) { _ in
+                if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                onImageCaptured(nil)
+                dismiss()
+            })
+            return denied
+        }
+        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            let unavailable = UIAlertController(
+                title: "Camera unavailable",
+                message: "This device does not have an available camera. No library image will be substituted for field evidence.",
+                preferredStyle: .alert
+            )
+            unavailable.addAction(UIAlertAction(title: "Close", style: .default) { _ in
+                onImageCaptured(nil)
+                dismiss()
+            })
+            return unavailable
+        }
         let picker = UIImagePickerController()
         picker.delegate = context.coordinator
-        if UIImagePickerController.isSourceTypeAvailable(.camera) {
-            picker.sourceType = .camera
-        } else {
-            picker.sourceType = .photoLibrary
-        }
+        picker.sourceType = .camera
         return picker
     }
 
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onImageCaptured: onImageCaptured, dismiss: dismiss)
