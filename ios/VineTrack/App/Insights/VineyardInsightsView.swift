@@ -274,7 +274,10 @@ struct ScoutWorkspaceView: View {
                     review: ScoutReview.of(visit),
                     completionCanRetry: visit.isEditable || insights.completionNeedsRetry(visit.id),
                     completionError: completionError,
-                    onViewReport: { reportVisit = visit }
+                    onViewReport: {
+                        showReview = false
+                        DispatchQueue.main.async { reportVisit = visit }
+                    }
                 ) {
                     if insights.completeVisit(visit.id) {
                         completionError = nil

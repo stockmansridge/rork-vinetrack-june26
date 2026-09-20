@@ -34,6 +34,7 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         static let queue = "vineyard_insights.pending_operations"
         static let noteTypes = "vineyard_insights.custom_note_types"
         static let photoQueue = "vineyard_insights.pending_photos"
+        static let photoDeletionIntents = "vineyard_insights.photo_deletion_intents"
         static let lastPull = "vineyard_insights.last_pull"
         static let deletionCursors = "vineyard_insights.deletion_cursors"
         static let consumedDeletions = "vineyard_insights.consumed_deletions"
@@ -704,13 +705,10 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         return encodeAndWrite(all, Key.noteTypes)
     }
 
-    /// Queue an operation for replay, collapsing any earlier pending entry for
-    /// the same record.
-    ///
-    /// Collapsing is what makes replay idempotent in practice: editing a note
-    /// five times offline must produce one upsert carrying the latest state,
-    /// not five that race each other into a different final answer. A delete
-    /// always supersedes a pending upsert for the same record.
+    /// Queue the latest operation for a record. DELETE keeps its identity so a
+    /// retry is idempotent. Every changed UPSERT revision receives a fresh queue
+    /// identity, preventing an older in-flight completion from acknowledging a
+    /// newer unsent revision. A delete always supersedes pending upserts.
     @discardableResult
     func enqueue(
         recordID: UUID,
@@ -726,9 +724,11 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         }), operation == .upsert {
             return true
         }
-        let preservedID = all.first(where: {
-            $0.recordID == recordID && $0.entity == entity && $0.operation == operation
-        })?.id ?? queueID
+        let preservedID = operation == .delete
+            ? (all.first(where: {
+                $0.recordID == recordID && $0.entity == entity && $0.operation == .delete
+            })?.id ?? queueID)
+            : queueID
         all.removeAll { $0.recordID == recordID && $0.entity == entity }
         all.append(
             QueuedOperation(
@@ -853,6 +853,20 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         return encodeAndWrite(all, Key.photoQueue)
     }
 
+    func photoDeletionIntents() -> Set<UUID> {
+        Set(decode([UUID].self, Key.photoDeletionIntents) ?? [])
+    }
+
+    @discardableResult
+    func markPhotoDeletionIntent(_ photoID: UUID) -> Bool {
+        encodeAndWrite(Array(photoDeletionIntents().union([photoID])), Key.photoDeletionIntents)
+    }
+
+    @discardableResult
+    func clearPhotoDeletionIntents(_ photoIDs: Set<UUID>) -> Bool {
+        encodeAndWrite(Array(photoDeletionIntents().subtracting(photoIDs)), Key.photoDeletionIntents)
+    }
+
     /// Remove a photo entry once BOTH the bytes and the row are stored, or when
     /// the operator deleted the photograph before it ever uploaded.
     @discardableResult
@@ -872,6 +886,7 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         defaults.removeObject(forKey: Key.queue)
         defaults.removeObject(forKey: Key.noteTypes)
         defaults.removeObject(forKey: Key.photoQueue)
+        defaults.removeObject(forKey: Key.photoDeletionIntents)
         defaults.removeObject(forKey: Key.lastPull)
         defaults.removeObject(forKey: Key.deletionCursors)
         defaults.removeObject(forKey: Key.consumedDeletions)

@@ -467,6 +467,7 @@ private fun ScoutWorkspace(
                         visit = current,
                         blocks = current.assessments.mapNotNull { assessment -> state.paddocks.firstOrNull { it.id == assessment.paddockId } },
                         pins = state.pins,
+                        photoBytes = { id -> current.assessments.flatMap { it.observations }.flatMap { it.photos }.firstOrNull { it.id == id }?.let(vm.vineyardInsights::photoBytes) },
                     )
                 }
                 item {

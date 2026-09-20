@@ -339,6 +339,7 @@ class VineyardInsightsController(
 
         // Cancelled before anything else, so an in-flight upload cannot revive it.
         store.dequeuePhoto(photoId)
+        if (!store.markPhotoDeletionIntent(photoId)) return null
         _pendingPhotoCount.value = store.loadPhotoQueue().size
 
         val nextAssessment = assessment.withObservation(

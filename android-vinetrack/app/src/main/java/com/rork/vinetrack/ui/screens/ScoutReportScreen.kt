@@ -27,7 +27,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -45,7 +47,6 @@ import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.Polygon
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.rork.vinetrack.data.ScoutReportPdfExporter
-import com.rork.vinetrack.data.VintageYearText
 import com.rork.vinetrack.data.insights.PhotoLocationStatus
 import com.rork.vinetrack.data.insights.ScoutItem
 import com.rork.vinetrack.data.insights.ScoutStatus
@@ -59,7 +60,7 @@ import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 
-private data class ScoutMapMarker(val id: String, val title: String, val subtitle: String, val point: LatLng)
+private data class ScoutMapMarker(val id: String, val title: String, val subtitle: String, val point: LatLng, val photoId: String? = null)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -80,6 +81,9 @@ fun ScoutReportScreen(vm: AppViewModel, state: AppUiState, visit: ScoutVisit, on
         ) {
             item {
                 VineyardCard {
+                    state.selectedVineyardLogo?.let { logo ->
+                        androidx.compose.foundation.Image(bitmap = logo.asImageBitmap(), contentDescription = "Vineyard logo", modifier = Modifier.size(64.dp), contentScale = ContentScale.Fit)
+                    }
                     Text(vineyard?.name ?: "Vineyard", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
                     Text(if (visit.status == ScoutStatus.DRAFT) "DRAFT SCOUT REPORT" else "SCOUT REPORT",
                         color = if (visit.status == ScoutStatus.DRAFT) VineColors.Warning else VineColors.LeafGreen,
@@ -138,18 +142,22 @@ fun ScoutReportScreen(vm: AppViewModel, state: AppUiState, visit: ScoutVisit, on
             item { VineyardCard { Text("Visit summary", fontWeight = FontWeight.Bold); Text(visit.visitSummary ?: "Not assessed") } }
             item {
                 Button(onClick = {
-                    ScoutReportPdfExporter.exportAndShare(
+                    val shared = ScoutReportPdfExporter.exportAndShare(
                         context, visit, vineyard, blocks,
                         photoBytes = { id -> visit.assessments.flatMap { it.observations }.flatMap { it.photos }.firstOrNull { it.id == id }?.let(vm.vineyardInsights::photoBytes) },
                         logo = state.selectedVineyardLogo,
+                        growthRecords = liveState.growthRecords,
+                        pins = state.pins,
                     )
+                    if (!shared) Toast.makeText(context, "The Scout PDF could not be created or shared. Check device storage and try again.", Toast.LENGTH_LONG).show()
                 }, modifier = Modifier.fillMaxWidth()) { Text("Export PDF / Share") }
             }
         }
     }
     selected?.let { marker ->
         androidx.compose.material3.AlertDialog(onDismissRequest = { selected = null }, title = { Text(marker.title) },
-            text = { Text(marker.subtitle) }, confirmButton = { androidx.compose.material3.TextButton(onClick = { selected = null }) { Text("Done") } })
+            text = { Column { Text(marker.subtitle); marker.photoId?.let { id -> val photo = visit.assessments.flatMap { it.observations }.flatMap { it.photos }.firstOrNull { it.id == id }; val bytes = photo?.let(vm.vineyardInsights::photoBytes); if (bytes != null) AsyncImage(model = bytes, contentDescription = marker.title, modifier = Modifier.fillMaxWidth().height(180.dp), contentScale = ContentScale.Fit) else Text("Saved photograph unavailable on this device") } ?: Text("Linked E-L observation") } },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { selected = null }) { Text("Done") } })
     }
 }
 
@@ -171,12 +179,13 @@ private fun WeatherReportCard(visit: ScoutVisit) {
 }
 
 @Composable
-fun ScoutWorkspaceMap(visit: ScoutVisit, blocks: List<Paddock>, pins: List<Pin>) {
+fun ScoutWorkspaceMap(visit: ScoutVisit, blocks: List<Paddock>, pins: List<Pin>, photoBytes: (String) -> ByteArray?) {
     var selected by remember { mutableStateOf<ScoutMapMarker?>(null) }
     ScoutVisitMap(blocks, reportMarkers(visit, blocks, pins)) { selected = it }
     selected?.let { marker ->
         androidx.compose.material3.AlertDialog(onDismissRequest = { selected = null }, title = { Text(marker.title) },
-            text = { Text(marker.subtitle) }, confirmButton = { androidx.compose.material3.TextButton(onClick = { selected = null }) { Text("Done") } })
+            text = { Column { Text(marker.subtitle); marker.photoId?.let { id -> val bytes = photoBytes(id); if (bytes != null) AsyncImage(model = bytes, contentDescription = marker.title, modifier = Modifier.fillMaxWidth().height(180.dp), contentScale = ContentScale.Fit) else Text("Saved photograph unavailable on this device") } ?: Text("Linked E-L observation") } },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { selected = null }) { Text("Done") } })
     }
 }
 
@@ -201,10 +210,10 @@ private fun reportMarkers(visit: ScoutVisit, blocks: List<Paddock>, pins: List<P
     assessment.observations.flatMap { observation ->
         val photos = observation.photos.mapNotNull { photo ->
             if (photo.locationStatus == PhotoLocationStatus.GPS_CONFIRMED && photo.latitude != null && photo.longitude != null)
-                ScoutMapMarker(photo.id, observation.item.label, blockName, LatLng(photo.latitude, photo.longitude)) else null
+                ScoutMapMarker(photo.id, observation.item.label, "$blockName • ${observation.item.label}", LatLng(photo.latitude, photo.longitude), photo.id) else null
         }.toMutableList()
         if (observation.item == ScoutItem.GROWTH_STAGE) observation.linkedPinId?.let { id -> pins.firstOrNull { it.id == id } }?.let { pin ->
-            if (pin.latitude != null && pin.longitude != null) photos += ScoutMapMarker(observation.id, observation.valueLabel ?: "E-L observation", blockName, LatLng(pin.latitude, pin.longitude))
+            if (pin.latitude != null && pin.longitude != null) photos += ScoutMapMarker(observation.id, observation.valueLabel ?: "E-L observation", "$blockName • ${observation.item.label}", LatLng(pin.latitude, pin.longitude))
         }
         photos
     }

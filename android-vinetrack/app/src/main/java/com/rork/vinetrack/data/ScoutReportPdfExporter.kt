@@ -14,6 +14,8 @@ import com.rork.vinetrack.data.insights.ScoutStatus
 import com.rork.vinetrack.data.insights.ScoutVisit
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Vineyard
+import com.rork.vinetrack.data.model.GrowthStageRecord
+import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.ui.screens.VintageYearText
 import java.io.File
 
@@ -30,21 +32,28 @@ object ScoutReportPdfExporter {
         blocks: List<Paddock>,
         photoBytes: (String) -> ByteArray?,
         logo: android.graphics.Bitmap?,
+        growthRecords: List<GrowthStageRecord>,
+        pins: List<Pin>,
     ): Boolean = runCatching {
         val document = PdfDocument()
         val state = PageState(document)
-        logo?.let { state.canvas.drawBitmap(it, null, android.graphics.RectF(490f, 38f, 554f, 102f), null) }
+        logo?.let {
+            val scale = minOf(64f / it.width, 64f / it.height)
+            val width = it.width * scale; val height = it.height * scale
+            state.canvas.drawBitmap(it, null, android.graphics.RectF(554f - width, 38f, 554f, 38f + height), null)
+        }
         state.text(vineyard?.name ?: "Vineyard", 22f, true)
         state.text(if (visit.status == ScoutStatus.DRAFT) "DRAFT SCOUT REPORT" else "SCOUT REPORT", 12f, true,
             if (visit.status == ScoutStatus.DRAFT) Color.rgb(230, 126, 34) else Color.rgb(52, 125, 60))
         state.text("Visit: ${visit.scoutDateIso}   Vintage: ${VintageYearText.format(visit.vintageYear)}")
         state.text("Observer: ${visit.scoutNameSnapshot ?: "Unavailable"}   Status: ${visit.status.label}")
+        state.y = maxOf(state.y, 108f)
         state.heading("Weather")
         state.text(weatherText(visit))
         state.heading("Visit summary")
         state.text(visit.visitSummary ?: "Not assessed")
         state.ensure(190f)
-        drawDiagram(state, blocks, visit)
+        drawDiagram(state, blocks, visit, growthRecords, pins)
         state.y += 190f
         visit.assessments.forEach { assessment ->
             val block = blocks.firstOrNull { it.id == assessment.paddockId }
@@ -55,7 +64,7 @@ object ScoutReportPdfExporter {
                 val observation = assessment.observation(item)
                 state.text(item.label, 11f, true)
                 val value = when {
-                    item == ScoutItem.GROWTH_STAGE -> observation?.valueLabel
+                    item == ScoutItem.GROWTH_STAGE -> observation?.linkedGrowthStageRecordId?.let { id -> growthRecords.firstOrNull { it.id == id }?.displayStage } ?: observation?.valueLabel?.let { "$it (saved snapshot)" }
                     item.isFreeText -> observation?.notes
                     else -> observation?.valueLabel
                 }
@@ -66,7 +75,11 @@ object ScoutReportPdfExporter {
                     val bytes = photoBytes(photo.id)
                     val bitmap = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
                     if (bitmap == null) state.text("Photograph not downloaded to this device", color = Color.DKGRAY)
-                    else { state.canvas.drawBitmap(bitmap, null, android.graphics.RectF(MARGIN, state.y, MARGIN + 160f, state.y + 110f), null); state.y += 118f }
+                    else {
+                        val scale = minOf(160f / bitmap.width, 110f / bitmap.height)
+                        val width = bitmap.width * scale; val height = bitmap.height * scale
+                        state.canvas.drawBitmap(bitmap, null, android.graphics.RectF(MARGIN, state.y, MARGIN + width, state.y + height), null); state.y += maxOf(height, 110f) + 8f
+                    }
                 }
             }
         }
@@ -111,13 +124,12 @@ object ScoutReportPdfExporter {
             val lines = mutableListOf<String>()
             words.forEach { word -> val candidate = if (line.isEmpty()) word else "$line $word"; if (word == "\n" || paint.measureText(candidate) > WIDTH - MARGIN * 2) { lines += line; line = if (word == "\n") "" else word } else line = candidate }
             if (line.isNotEmpty()) lines += line
-            ensure(lines.size * (size + 3f) + 5f)
-            lines.forEach { canvas.drawText(it, MARGIN, y + size, paint); y += size + 3f }
+            lines.forEach { line -> ensure(size + 3f); canvas.drawText(line, MARGIN, y + size, paint); y += size + 3f }
             y += 5f
         }
     }
 
-    private fun drawDiagram(state: PageState, blocks: List<Paddock>, visit: ScoutVisit) {
+    private fun drawDiagram(state: PageState, blocks: List<Paddock>, visit: ScoutVisit, growthRecords: List<GrowthStageRecord>, pins: List<Pin>) {
         val points = blocks.flatMap { it.polygonPoints.orEmpty() }
         val rect = android.graphics.RectF(MARGIN, state.y, WIDTH - MARGIN, state.y + 180f)
         state.canvas.drawColor(Color.TRANSPARENT)
@@ -136,8 +148,25 @@ object ScoutReportPdfExporter {
         val markerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(88, 86, 214); style = Paint.Style.FILL }
         fun x(lon: Double) = rect.left + ((lon - minLon) / (maxLon - minLon) * rect.width()).toFloat()
         fun y(lat: Double) = rect.bottom - ((lat - minLat) / (maxLat - minLat) * rect.height()).toFloat()
-        visit.assessments.flatMap { it.observations }.flatMap { it.photos }.forEach { photo ->
-            if (photo.latitude != null && photo.longitude != null) state.canvas.drawCircle(x(photo.longitude), y(photo.latitude), 4f, markerPaint)
+        visit.assessments.forEach { assessment ->
+            val blockName = blocks.firstOrNull { it.id == assessment.paddockId }?.name ?: "Block"
+            assessment.observations.forEach { observation ->
+                observation.photos.forEach { photo ->
+                    if (photo.latitude != null && photo.longitude != null) {
+                        state.canvas.drawCircle(x(photo.longitude), y(photo.latitude), 4f, markerPaint)
+                        state.canvas.drawText("$blockName • ${observation.item.label}", x(photo.longitude) + 6f, y(photo.latitude), Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = 7f })
+                    }
+                }
+                if (observation.item == ScoutItem.GROWTH_STAGE) {
+                    val record = observation.linkedGrowthStageRecordId?.let { id -> growthRecords.firstOrNull { it.id == id } }
+                    val pin = observation.linkedPinId?.let { id -> pins.firstOrNull { it.id == id } }
+                    val latitude = record?.latitude ?: pin?.latitude; val longitude = record?.longitude ?: pin?.longitude
+                    if (latitude != null && longitude != null) {
+                        state.canvas.drawCircle(x(longitude), y(latitude), 4f, markerPaint)
+                        state.canvas.drawText("$blockName • ${observation.item.label}", x(longitude) + 6f, y(latitude), Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = 7f })
+                    }
+                }
+            }
         }
     }
 }

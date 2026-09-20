@@ -10,6 +10,7 @@ struct ScoutReportView: View {
     let visit: ScoutVisit
     @State private var shareItem: ScoutReportShareItem?
     @State private var selectedMarker: ScoutReportMarker?
+    @State private var exportError: String?
 
     private var vineyard: Vineyard? { store.vineyards.first { $0.id == visit.vineyardID } }
     private var blocks: [Paddock] {
@@ -59,17 +60,10 @@ struct ScoutReportView: View {
                 }
             }
             .sheet(item: $shareItem) { item in ScoutReportShareSheet(items: [item.url]) }
-            .sheet(item: $selectedMarker) { marker in
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(marker.title).font(.headline)
-                    Text(marker.subtitle).foregroundStyle(.secondary)
-                    if let photo = marker.photo, let image = insights.localImage(photo) {
-                        Image(uiImage: image).resizable().scaledToFit().clipShape(.rect(cornerRadius: 12))
-                    }
-                    Text(marker.coordinate.latitude.formatted() + ", " + marker.coordinate.longitude.formatted())
-                        .font(.caption).foregroundStyle(.secondary)
-                }.padding()
-            }
+            .sheet(item: $selectedMarker) { marker in ScoutMarkerDetail(marker: marker) }
+            .alert("Could not create report", isPresented: Binding(
+                get: { exportError != nil }, set: { if !$0 { exportError = nil } }
+            )) { Button("OK") { exportError = nil } } message: { Text(exportError ?? "Please try again.") }
         }
     }
 
@@ -134,7 +128,7 @@ struct ScoutReportView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.label).font(.subheadline.bold())
                     Text(observationValue(observation)).foregroundStyle(.primary)
-                    if let notes = observation?.notes, !notes.isEmpty { Text(notes).font(.callout) }
+                    if !item.isFreeText, let notes = observation?.notes, !notes.isEmpty { Text(notes).font(.callout) }
                     if let photos = observation?.photos, !photos.isEmpty {
                         ScrollView(.horizontal) {
                             HStack {
@@ -172,8 +166,11 @@ struct ScoutReportView: View {
         let images = Dictionary(uniqueKeysWithValues: visit.assessments.flatMap(\.observations).flatMap(\.photos).compactMap { photo in
             insights.localImage(photo).map { (photo.id, $0) }
         })
-        shareItem = ScoutReportPDFService.export(visit: visit, vineyard: vineyard, blocks: blocks, images: images)
-            .map(ScoutReportShareItem.init(url:))
+        guard let url = ScoutReportPDFService.export(visit: visit, vineyard: vineyard, blocks: blocks, images: images) else {
+            exportError = "The PDF could not be written to this device. Check available storage and try again."
+            return
+        }
+        shareItem = ScoutReportShareItem(url: url)
     }
 }
 
@@ -210,6 +207,30 @@ struct ScoutWorkspaceMap: View {
         }
         ScoutReportMap(blocks: blocks, markers: markers, selectedMarker: $selectedMarker)
             .frame(height: 240).clipShape(.rect(cornerRadius: 14))
+            .sheet(item: $selectedMarker) { marker in ScoutMarkerDetail(marker: marker) }
+    }
+}
+
+private struct ScoutMarkerDetail: View {
+    @Environment(VineyardInsightsService.self) private var insights
+    let marker: ScoutReportMarker
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(marker.title).font(.headline)
+            Text(marker.subtitle).foregroundStyle(.secondary)
+            if let photo = marker.photo {
+                if let image = insights.localImage(photo) {
+                    Image(uiImage: image).resizable().scaledToFit().clipShape(.rect(cornerRadius: 12))
+                } else {
+                    ContentUnavailableView("Photograph unavailable", systemImage: "photo", description: Text("The saved photograph is not available on this device."))
+                }
+            } else {
+                Label("Linked E-L observation", systemImage: "leaf.fill")
+            }
+            Text(marker.coordinate.latitude.formatted() + ", " + marker.coordinate.longitude.formatted())
+                .font(.caption).foregroundStyle(.secondary)
+        }.padding()
     }
 }
 
@@ -257,24 +278,38 @@ enum ScoutReportPDFService {
         let data = renderer.pdfData { context in
             var y: CGFloat = 42
             func page(_ needed: CGFloat) { if y + needed > 800 { context.beginPage(); y = 42 } }
-            func text(_ value: String, font: UIFont = .systemFont(ofSize: 10), color: UIColor = .label, gap: CGFloat = 6) {
-                let style = NSMutableParagraphStyle(); style.lineBreakMode = .byWordWrapping
-                let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: style]
-                let rect = (value as NSString).boundingRect(with: CGSize(width: 511, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attrs, context: nil)
-                page(rect.height + gap); (value as NSString).draw(in: CGRect(x: 42, y: y, width: 511, height: rect.height + 2), withAttributes: attrs); y += rect.height + gap
+            func text(_ value: String, font: UIFont = .systemFont(ofSize: 10), color: UIColor = .black, gap: CGFloat = 6) {
+                let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+                let lineHeight = font.lineHeight + 2
+                var line = ""
+                func drawLine(_ content: String) {
+                    page(lineHeight); (content as NSString).draw(at: CGPoint(x: 42, y: y), withAttributes: attrs); y += lineHeight
+                }
+                for word in value.replacingOccurrences(of: "\n", with: " \n ").split(separator: " ").map(String.init) {
+                    if word == "\n" { drawLine(line); line = ""; continue }
+                    let candidate = line.isEmpty ? word : line + " " + word
+                    if (candidate as NSString).size(withAttributes: attrs).width > 511, !line.isEmpty { drawLine(line); line = word }
+                    else { line = candidate }
+                }
+                if !line.isEmpty { drawLine(line) }
+                y += gap
             }
             context.beginPage()
-            if let logo = vineyard?.logoData.flatMap(UIImage.init(data:)) { logo.draw(in: CGRect(x: 489, y: 38, width: 64, height: 64)) }
-            text(vineyard?.name ?? "Vineyard", font: .boldSystemFont(ofSize: 22))
+            if let logo = vineyard?.logoData.flatMap(UIImage.init(data:)) {
+                let scale = min(64 / logo.size.width, 64 / logo.size.height)
+                let size = CGSize(width: logo.size.width * scale, height: logo.size.height * scale)
+                logo.draw(in: CGRect(x: 553 - size.width, y: 38, width: size.width, height: size.height))
+            }
+            text(vineyard?.name ?? "Vineyard", font: .boldSystemFont(ofSize: 22)); y = max(y, 108)
             text(visit.status == .draft ? "DRAFT SCOUT REPORT" : "SCOUT REPORT", font: .boldSystemFont(ofSize: 12), color: visit.status == .draft ? .systemOrange : .systemGreen)
             text("Visit: \(visit.scoutDate.formatted(date: .long, time: .omitted))   Vintage: \(VintageYearText.format(visit.vintageYear))   Observer: \(visit.scoutNameSnapshot ?? "Unavailable")")
             text(weatherText(visit.weather)); text("Visit summary", font: .boldSystemFont(ofSize: 14)); text(visit.visitSummary ?? "Not assessed")
-            drawDiagram(blocks: blocks, visit: visit, context: context.cgContext, rect: CGRect(x: 42, y: y, width: 511, height: 180)); y += 192
+            page(192); drawDiagram(blocks: blocks, visit: visit, context: context.cgContext, rect: CGRect(x: 42, y: y, width: 511, height: 180)); y += 192
             for assessment in visit.assessments {
                 let block = blocks.first { $0.id == assessment.paddockID }
                 text(block?.name ?? "Block", font: .boldSystemFont(ofSize: 16))
                 let varieties = block?.varietyAllocations.compactMap(\.name).filter { !$0.isEmpty } ?? []
-                text(varieties.isEmpty ? "Variety details unavailable" : varieties.joined(separator: ", "), color: .secondaryLabel)
+                text(varieties.isEmpty ? "Variety details unavailable" : varieties.joined(separator: ", "), color: .darkGray)
                 for item in ScoutItem.allCases {
                     let observation = assessment.observation(item)
                     text(item.label, font: .boldSystemFont(ofSize: 11))
@@ -283,8 +318,12 @@ enum ScoutReportPDFService {
                     if !item.isFreeText, let notes = observation?.notes, !notes.isEmpty { text(notes) }
                     for photo in observation?.photos ?? [] {
                         page(126)
-                        if let image = images[photo.id] { image.draw(in: CGRect(x: 42, y: y, width: 160, height: 110)) }
-                        else { text("Photograph not downloaded to this device", color: .secondaryLabel); continue }
+                        if let image = images[photo.id] {
+                            let scale = min(160 / image.size.width, 110 / image.size.height)
+                            let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+                            image.draw(in: CGRect(x: 42, y: y, width: size.width, height: size.height))
+                        }
+                        else { text("Photograph not downloaded to this device", color: .darkGray); continue }
                         y += 118
                     }
                 }
@@ -310,11 +349,11 @@ enum ScoutReportPDFService {
 
     private static func drawDiagram(blocks: [Paddock], visit: ScoutVisit, context: CGContext, rect: CGRect) {
         context.saveGState(); defer { context.restoreGState() }
-        context.setFillColor(UIColor.secondarySystemBackground.cgColor); context.fill(rect)
+        context.setFillColor(UIColor(white: 0.95, alpha: 1).cgColor); context.fill(rect)
         let points = blocks.flatMap(\.polygonPoints)
         guard let minLat = points.map(\.latitude).min(), let maxLat = points.map(\.latitude).max(),
               let minLon = points.map(\.longitude).min(), let maxLon = points.map(\.longitude).max(), maxLat > minLat, maxLon > minLon else {
-            ("Map imagery unavailable — no mapped block boundaries" as NSString).draw(at: CGPoint(x: rect.minX + 12, y: rect.midY), withAttributes: [.font: UIFont.systemFont(ofSize: 10), .foregroundColor: UIColor.secondaryLabel]); return
+            ("Map imagery unavailable — no mapped block boundaries" as NSString).draw(at: CGPoint(x: rect.minX + 12, y: rect.midY), withAttributes: [.font: UIFont.systemFont(ofSize: 10), .foregroundColor: UIColor.darkGray]); return
         }
         func point(_ coordinate: CoordinatePoint) -> CGPoint { CGPoint(x: rect.minX + CGFloat((coordinate.longitude - minLon) / (maxLon - minLon)) * rect.width, y: rect.maxY - CGFloat((coordinate.latitude - minLat) / (maxLat - minLat)) * rect.height) }
         context.setStrokeColor(UIColor.systemGreen.cgColor); context.setFillColor(UIColor.systemGreen.withAlphaComponent(0.15).cgColor); context.setLineWidth(1.5)

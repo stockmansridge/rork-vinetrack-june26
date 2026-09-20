@@ -697,13 +697,10 @@ class VineyardInsightsStore(
     }
 
     /**
-     * Queue an operation for replay, collapsing any earlier pending entry for
-     * the same record.
-     *
-     * Collapsing is what makes replay idempotent in practice: editing a note
-     * five times offline must produce one upsert carrying the latest state,
-     * not five that race each other into a different final answer. A DELETE
-     * always supersedes a pending UPSERT for the same record.
+     * Queue the latest operation for a record. DELETE keeps its identity so a
+     * retry is idempotent. Every changed UPSERT revision receives a fresh queue
+     * identity, preventing an older in-flight completion from acknowledging a
+     * newer unsent revision. A delete always supersedes pending upserts.
      */
     fun enqueue(
         recordId: String,
@@ -718,9 +715,14 @@ class VineyardInsightsStore(
                 it.recordId == recordId && it.entity == entity.code &&
                     it.operation == QueuedOperation.Operation.DELETE.code
             }) return true
-        val preservedId = all.firstOrNull {
-            it.recordId == recordId && it.entity == entity.code && it.operation == operation.code
-        }?.id ?: queueId
+        val preservedId = if (operation == QueuedOperation.Operation.DELETE) {
+            all.firstOrNull {
+                it.recordId == recordId && it.entity == entity.code &&
+                    it.operation == QueuedOperation.Operation.DELETE.code
+            }?.id ?: queueId
+        } else {
+            queueId
+        }
         val existing = all.filterNot { it.recordId == recordId && it.entity == entity.code }
         val next = existing + StoredQueueEntry(
             id = preservedId,
@@ -872,6 +874,14 @@ class VineyardInsightsStore(
         return encodeAndWrite(KEY_PHOTO_QUEUE, next)
     }
 
+    fun photoDeletionIntents(): Set<String> = decodeList<String>(KEY_PHOTO_DELETION_INTENTS).toSet()
+
+    fun markPhotoDeletionIntent(photoId: String): Boolean =
+        encodeAndWrite(KEY_PHOTO_DELETION_INTENTS, (photoDeletionIntents() + photoId).toList())
+
+    fun clearPhotoDeletionIntents(photoIds: Set<String>): Boolean =
+        encodeAndWrite(KEY_PHOTO_DELETION_INTENTS, (photoDeletionIntents() - photoIds).toList())
+
     /**
      * Remove a photo entry once BOTH the bytes and the row are stored, or when
      * the operator deleted the photograph before it ever uploaded.
@@ -901,6 +911,7 @@ class VineyardInsightsStore(
             KEY_QUEUE,
             KEY_NOTE_TYPES,
             KEY_PHOTO_QUEUE,
+            KEY_PHOTO_DELETION_INTENTS,
             KEY_LAST_PULL,
             KEY_DELETION_CURSORS,
             KEY_CONSUMED_DELETIONS,
@@ -941,6 +952,7 @@ class VineyardInsightsStore(
         const val KEY_QUEUE = "pending_operations"
         const val KEY_NOTE_TYPES = "custom_note_types"
         const val KEY_PHOTO_QUEUE = "pending_photos"
+        const val KEY_PHOTO_DELETION_INTENTS = "photo_deletion_intents"
         const val KEY_LAST_PULL = "last_pull"
         const val KEY_DELETION_CURSORS = "deletion_cursors"
         const val KEY_CONSUMED_DELETIONS = "consumed_deletions"

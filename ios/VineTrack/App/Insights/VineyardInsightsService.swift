@@ -342,6 +342,7 @@ final class VineyardInsightsService {
 
         let queued = store.loadPhotoQueue().first { $0.id == photoID }
         store.dequeuePhoto(photoID: photoID)
+        guard store.markPhotoDeletionIntent(photoID) else { return false }
         pendingPhotoCount = store.loadPhotoQueue().count
 
         observation.photos.removeAll { $0.id == photoID }
@@ -1245,10 +1246,18 @@ final class VineyardInsightsService {
                 }
                 let built: [ScoutObservation] = rows.compactMap { observationRow in
                     guard let item = ScoutItem.byCode(observationRow.item_kind) else { return nil }
+                    let deletedPhotoIDs = Set(photos.filter {
+                        $0.observation_id == observationRow.id
+                            && VineyardInsightsSyncRepository.parseTimestamp($0.deleted_at) != nil
+                    }.map(\.id))
+                    let deletionIntents = store.photoDeletionIntents()
+                    _ = store.clearPhotoDeletionIntents(deletedPhotoIDs)
+                    let pendingPhotoIDs = Set(store.loadPhotoQueue().map(\.id))
                     var ownPhotos: [ScoutPhoto] = photos
                         .filter {
                             $0.observation_id == observationRow.id
                                 && VineyardInsightsSyncRepository.parseTimestamp($0.deleted_at) == nil
+                                && !deletionIntents.contains($0.id)
                         }
                         .compactMap { photoRow in
                             let capturedAt = VineyardInsightsSyncRepository
@@ -1297,9 +1306,15 @@ final class VineyardInsightsService {
                         .first(where: { $0.id == assessmentRow.id })?
                         .observations.first(where: { $0.id == observationRow.id }) {
                         let localByID = Dictionary(uniqueKeysWithValues: localObservation.photos.map { ($0.id, $0) })
-                        ownPhotos = ownPhotos.map { localByID[$0.id] ?? $0 }
+                        ownPhotos = ownPhotos.map { serverPhoto in
+                            guard let localPhoto = localByID[serverPhoto.id] else { return serverPhoto }
+                            if pendingPhotoIDs.contains(serverPhoto.id) { return localPhoto }
+                            return mergedAcknowledgedPhoto(server: serverPhoto, local: localPhoto)
+                        }
                         let serverIDs = Set(ownPhotos.map(\.id))
-                        ownPhotos.append(contentsOf: localObservation.photos.filter { !serverIDs.contains($0.id) })
+                        ownPhotos.append(contentsOf: localObservation.photos.filter {
+                            !serverIDs.contains($0.id) && !deletedPhotoIDs.contains($0.id) && !deletionIntents.contains($0.id)
+                        })
                     }
                     return ScoutObservation(
                         id: observationRow.id,
@@ -1380,6 +1395,20 @@ final class VineyardInsightsService {
         visits = store.loadVisits()
         notes = store.loadNotes()
         pendingPhotoCount = store.loadPhotoQueue().count
+    }
+
+    private func mergedAcknowledgedPhoto(server: ScoutPhoto, local: ScoutPhoto) -> ScoutPhoto {
+        let localPath = local.localPath.flatMap { photoFiles.exists(atRelativePath: $0) ? $0 : nil }
+        if server.locationStatus == .gpsConfirmed,
+           let latitude = server.latitude, let longitude = server.longitude {
+            return .gpsConfirmed(observationID: server.observationID, localPath: localPath,
+                capturedAt: server.capturedAt, capturedByUserID: server.capturedByUserID,
+                latitude: latitude, longitude: longitude, accuracyMetres: server.accuracyMetres ?? 0,
+                id: server.id, storagePath: server.storagePath, uploadFailed: server.uploadFailed)
+        }
+        return .blockOnly(observationID: server.observationID, localPath: localPath,
+            capturedAt: server.capturedAt, capturedByUserID: server.capturedByUserID,
+            id: server.id, storagePath: server.storagePath, uploadFailed: server.uploadFailed)
     }
 
     /// Drop every locally held preview record on explicit sign-out.

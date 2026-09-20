@@ -627,10 +627,11 @@ class VineyardInsightsSyncWorker(
                             notes = observationRow.notes,
                             photos = mergePhotos(
                                 server = photos
-                                    .filter {
-                                        it.observationId == observationRow.id && it.deletedAt == null
-                                    }
+                                    .filter { it.observationId == observationRow.id && it.deletedAt == null }
                                     .map { photoRow -> photoRow.toDomain(photoRow.id in failedPhotoDownloads) },
+                                explicitlyDeletedIds = photos
+                                    .filter { it.observationId == observationRow.id && it.deletedAt != null }
+                                    .mapTo(mutableSetOf()) { it.id },
                                 local = localVisit?.assessments
                                     ?.firstOrNull { it.id == assessmentRow.id }
                                     ?.observations
@@ -691,11 +692,27 @@ class VineyardInsightsSyncWorker(
         )
     }
 
-    private fun mergePhotos(server: List<ScoutPhoto>, local: List<ScoutPhoto>): List<ScoutPhoto> {
+    private fun mergePhotos(
+        server: List<ScoutPhoto>,
+        local: List<ScoutPhoto>,
+        explicitlyDeletedIds: Set<String>,
+    ): List<ScoutPhoto> {
+        store.clearPhotoDeletionIntents(explicitlyDeletedIds)
+        val deletionIntents = store.photoDeletionIntents()
+        val pendingIds = store.loadPhotoQueue().mapTo(mutableSetOf()) { it.id }
         val localById = local.associateBy { it.id }
-        val merged = server.map { localById[it.id] ?: it }.toMutableList()
+        val merged = server.filterNot { it.id in deletionIntents }.map { serverPhoto ->
+            val localPhoto = localById[serverPhoto.id]
+            when {
+                localPhoto == null -> serverPhoto
+                serverPhoto.id in pendingIds -> localPhoto
+                else -> serverPhoto.copy(localPath = localPhoto.localPath?.takeIf { photoFiles?.exists(it) == true })
+            }
+        }.toMutableList()
         val serverIds = merged.mapTo(mutableSetOf()) { it.id }
-        merged += local.filterNot { it.id in serverIds }
+        merged += local.filterNot {
+            it.id in serverIds || it.id in explicitlyDeletedIds || it.id in deletionIntents
+        }
         return merged
     }
 
