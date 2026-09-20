@@ -40,10 +40,13 @@ struct SprayRecordDetailView: View {
     }
 
     var body: some View {
+        lifecycleContent
+    }
+
+    private var detailContent: some View {
         ScrollView {
             VStack(spacing: 16) {
                 headerCard
-
                 templateCard
 
                 if let trip = tripForRecord, trip.pathPoints.count > 1 {
@@ -76,78 +79,147 @@ struct SprayRecordDetailView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
         }
-        .background(Color(.systemGroupedBackground))
-        .navigationTitle("Spray Record")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                if !record.isTemplate && (accessControl?.canEnterPricing == true || accessControl?.canViewFinancials == true) {
-                    Button {
-                        Task { await openCorrectionEditor() }
-                    } label: {
-                        if isLoadingCorrection { ProgressView() } else { Image(systemName: "fuelpump") }
+    }
+
+    private var navigationContent: some View {
+        detailContent
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("Spray Record")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { detailToolbar }
+    }
+
+    private var exportPresentationContent: some View {
+        navigationContent
+            .sheet(item: $sharePDFURL) { wrapper in
+                ShareSheet(items: [wrapper.url])
+            }
+            .alert("Export Failed", isPresented: Binding(
+                get: { exportError != nil },
+                set: { if !$0 { exportError = nil } }
+            )) {
+                Button("OK", role: .cancel) { exportError = nil }
+            } message: {
+                Text(exportError ?? "")
+            }
+    }
+
+    private var editPresentationContent: some View {
+        exportPresentationContent
+            .sheet(isPresented: $showEditSheet) {
+                if record.isManualEntry, let trip = tripForRecord {
+                    NavigationStack {
+                        ManualSprayEntryView(
+                            vineyardId: record.vineyardId,
+                            timeZone: store.settings.resolvedTimeZone,
+                            existingRecord: currentRecord,
+                            existingTrip: trip
+                        )
                     }
-                    .disabled(isLoadingCorrection || tripForRecord == nil)
-                    .accessibilityLabel("Correct equipment and fuel")
+                } else {
+                    SprayRecordFormView(
+                        tripId: record.tripId,
+                        paddockIds: paddockIdsForTrip,
+                        existingRecord: record
+                    )
                 }
-                if record.isManualEntry && accessControl?.canManageManualSprays == true {
-                    Button(role: .destructive) { isConfirmingManualDelete = true } label: { Image(systemName: "trash") }
-                        .accessibilityLabel("Delete manual spray")
-                }
-                Button("Done") { dismiss() }.font(.headline)
             }
-        }
-        .sheet(item: $sharePDFURL) { wrapper in
-            ShareSheet(items: [wrapper.url])
-        }
-        .alert("Export Failed", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
-            Button("OK", role: .cancel) { exportError = nil }
-        } message: {
-            Text(exportError ?? "")
-        }
-        .sheet(isPresented: $showEditSheet) {
-            if record.isManualEntry, let trip = tripForRecord {
-                NavigationStack {
-                    ManualSprayEntryView(vineyardId: record.vineyardId, timeZone: store.settings.resolvedTimeZone, existingRecord: currentRecord, existingTrip: trip)
-                }
-            } else {
-                SprayRecordFormView(tripId: record.tripId, paddockIds: paddockIdsForTrip, existingRecord: record)
+    }
+
+    private var correctionPresentationContent: some View {
+        editPresentationContent
+            .sheet(isPresented: $showCorrectionEditor) {
+                correctionEditorContent
             }
-        }
-        .sheet(isPresented: $showCorrectionEditor) {
-            if let trip = tripForRecord, let canonicalReport {
-                SprayTripCorrectionEditor(
-                    tripId: trip.id,
-                    report: canonicalReport,
-                    machines: store.currentVineyardMachines,
-                    tractors: store.currentTractors,
-                    sprayEquipment: store.sprayEquipment
-                ) { correction in
-                    applyCorrectionImmediately(correction)
-                    Task {
-                        if let refreshed = try? await SprayReportRepository.shared.fetch(tripId: trip.id) {
-                            canonicalReport = refreshed
-                        }
+            .alert("Correction unavailable", isPresented: Binding(
+                get: { correctionError != nil },
+                set: { if !$0 { correctionError = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(correctionError ?? "")
+            }
+    }
+
+    @ViewBuilder
+    private var correctionEditorContent: some View {
+        if let trip = tripForRecord, let report = canonicalReport {
+            SprayTripCorrectionEditor(
+                tripId: trip.id,
+                report: report,
+                machines: store.currentVineyardMachines,
+                tractors: store.currentTractors,
+                sprayEquipment: store.sprayEquipment
+            ) { correction in
+                applyCorrectionImmediately(correction)
+                Task {
+                    if let refreshed = try? await SprayReportRepository.shared.fetch(tripId: trip.id) {
+                        self.canonicalReport = refreshed
                     }
                 }
             }
         }
-        .alert("Correction unavailable", isPresented: Binding(get: { correctionError != nil }, set: { if !$0 { correctionError = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: { Text(correctionError ?? "") }
-        .alert("Delete manual spray?", isPresented: $isConfirmingManualDelete) {
-            Button("Delete", role: .destructive) { Task { await deleteManualRecord() } }
-            Button("Cancel", role: .cancel) {}
-        } message: { Text("This deletes the manual application, its backing trip and its exclusively owned actual tank records.") }
-        .alert("Delete unavailable", isPresented: Binding(get: { manualDeleteError != nil }, set: { if !$0 { manualDeleteError = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: { Text(manualDeleteError ?? "") }
-        .onAppear {
-            includeCostingsInExport = canViewFinancials
-            refreshDisplayTrail()
-        }
-        .onChange(of: tripForRecord?.pathPoints) { _, _ in
-            refreshDisplayTrail()
+    }
+
+    private var deletionPresentationContent: some View {
+        correctionPresentationContent
+            .alert("Delete manual spray?", isPresented: $isConfirmingManualDelete) {
+                Button("Delete", role: .destructive) {
+                    Task { await deleteManualRecord() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This deletes the manual application, its backing trip and its exclusively owned actual tank records.")
+            }
+            .alert("Delete unavailable", isPresented: Binding(
+                get: { manualDeleteError != nil },
+                set: { if !$0 { manualDeleteError = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(manualDeleteError ?? "")
+            }
+    }
+
+    private var lifecycleContent: some View {
+        deletionPresentationContent
+            .onAppear {
+                includeCostingsInExport = canViewFinancials
+                refreshDisplayTrail()
+            }
+            .onChange(of: tripForRecord?.pathPoints) { _, _ in
+                refreshDisplayTrail()
+            }
+    }
+
+    @ToolbarContentBuilder
+    private var detailToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            if !record.isTemplate && (accessControl?.canEnterPricing == true || accessControl?.canViewFinancials == true) {
+                Button {
+                    Task { await openCorrectionEditor() }
+                } label: {
+                    if isLoadingCorrection {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "fuelpump")
+                    }
+                }
+                .disabled(isLoadingCorrection || tripForRecord == nil)
+                .accessibilityLabel("Correct equipment and fuel")
+            }
+            if record.isManualEntry && accessControl?.canManageManualSprays == true {
+                Button(role: .destructive) {
+                    isConfirmingManualDelete = true
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .accessibilityLabel("Delete manual spray")
+            }
+            Button("Done") {
+                dismiss()
+            }
+            .font(.headline)
         }
     }
 

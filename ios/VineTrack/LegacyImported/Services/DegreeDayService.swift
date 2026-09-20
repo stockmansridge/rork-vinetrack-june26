@@ -396,7 +396,7 @@ class DegreeDayService {
         }
 
         if let existing = loadTasks[key] {
-            await existing.value
+            _ = await existing.value
             return
         }
 
@@ -430,7 +430,7 @@ class DegreeDayService {
             return completedError
         }
         loadTasks[key] = task
-        await task.value
+        _ = await task.value
         loadTasks[key] = nil
     }
 
@@ -657,7 +657,7 @@ class DegreeDayService {
         }
 
         // Build aligned temp array — nil where missing.
-        var raw: [DailyTemp?] = allDays.map { stationTemps[compactKey(for: $0)] }
+        let raw: [DailyTemp?] = allDays.map { stationTemps[compactKey(for: $0)] }
         let reportedCount = raw.compactMap { $0 }.count
 
         // Interpolate missing entries from up to 3 reported neighbours on each side.
@@ -712,7 +712,7 @@ class DegreeDayService {
             d = cal.date(byAdding: .day, value: 1, to: d) ?? endDay
         }
         guard let stationTemps = temps[stationId] else { return [] }
-        var raw: [DailyTemp?] = allDays.map { stationTemps[compactKey(for: $0)] }
+        let raw: [DailyTemp?] = allDays.map { stationTemps[compactKey(for: $0)] }
         var filled = raw
         var interpolatedFlags = Array(repeating: false, count: raw.count)
         for i in 0..<filled.count where filled[i] == nil {

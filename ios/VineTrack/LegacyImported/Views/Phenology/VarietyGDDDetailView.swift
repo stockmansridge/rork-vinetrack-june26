@@ -19,7 +19,7 @@ struct VarietyGDDDetailView: View {
     }
 
     private var defaultSeasonStartDate: Date {
-        let cal = Calendar.current
+        let cal = store.settings.resolvedCalendar
         let now = Date()
         let month = store.settings.seasonStartMonth
         let day = store.settings.seasonStartDay
@@ -69,7 +69,7 @@ struct VarietyGDDDetailView: View {
         // shows a fetch is in progress — rather than rendering every block
         // at a fabricated 0 GDD (`dailyGDDSeries` can't distinguish an empty
         // cache from a genuine zero-day accumulation).
-        let cal = Calendar.current
+        let cal = store.settings.resolvedCalendar
         let now = Date()
         let oneYearAgo = cal.date(byAdding: .year, value: -1, to: now) ?? now
         let seasonStart = defaultSeasonStartDate
