@@ -266,6 +266,20 @@ class SprayBandedTankPersistenceTest {
         )
     }
 
+    @Test
+    fun `5b - Tank-by-Tank Mix stays wired to result water and every chemical`() {
+        val screen = source(screenPath)
+        val card = screen
+            .substringAfter("private fun TankByTankMixCard(")
+            .substringBefore("private fun TankMixQuantityRow(")
+
+        assertTrue(card.contains("(1..result.totalTanks).forEach"))
+        assertTrue(card.contains("result.lastTankLitres else result.tankCapacityLitres"))
+        assertTrue(card.contains("TankMixQuantityRow(\"Water\""))
+        assertTrue(card.contains("result.chemicalResults.forEach"))
+        assertTrue(card.contains("chemical.amountInLastTank else chemical.amountPerFullTank"))
+    }
+
     // endregion
 
     // region 6. Round trip preserves basis and quantities

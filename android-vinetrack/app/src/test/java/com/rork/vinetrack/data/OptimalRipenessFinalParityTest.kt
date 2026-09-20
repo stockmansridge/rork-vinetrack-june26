@@ -154,7 +154,7 @@ class OptimalRipenessFinalParityTest {
         assertTrue(app.contains("prepareOptimalRipenessWeather(vineyardId)"))
         assertTrue(app.contains("refreshIfNeeded(isOnline = true)"))
         assertTrue(app.contains("refreshIfNeeded(isOnline = _ui.value.isOnline)"))
-        assertTrue(coordinator.contains("DailyWeatherCacheStore(appContext)"))
+        assertTrue(coordinator.contains("DailyWeatherCacheStore(appContext, request.timeZone.id)"))
         assertTrue(coordinator.contains("private var refreshJob: Job?"))
         assertFalse(surfaces.contains("OptimalRipenessWeatherRepository("))
         assertFalse(surfaces.contains("DavisWeatherLinkRepository("))

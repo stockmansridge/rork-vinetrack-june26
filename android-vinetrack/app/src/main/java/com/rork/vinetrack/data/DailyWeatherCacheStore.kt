@@ -16,7 +16,10 @@ interface DailyWeatherCache {
 }
 
 /** Durable SharedPreferences implementation of [DailyWeatherCache]. */
-class DailyWeatherCacheStore(context: Context) : DailyWeatherCache {
+class DailyWeatherCacheStore(
+    context: Context,
+    private val requiredTimeZoneId: String,
+) : DailyWeatherCache {
     @Serializable
     private data class CachedTemp(val high: Double, val low: Double)
 
@@ -38,7 +41,7 @@ class DailyWeatherCacheStore(context: Context) : DailyWeatherCache {
         val snapshot = runCatching {
             SupabaseClient.json.decodeFromString(SourceSnapshot.serializer(), payload)
         }.getOrNull() ?: return emptyMap()
-        if (snapshot.sourceKey != sourceKey) return emptyMap()
+        if (snapshot.sourceKey != sourceKey || snapshot.timeZoneId != requiredTimeZoneId) return emptyMap()
         return snapshot.rows.mapValues { DailyTemp(it.value.high, it.value.low) }
     }
 

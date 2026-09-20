@@ -7,6 +7,7 @@ import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.VineyardMachine
 import com.rork.vinetrack.data.model.SprayEquipment
 import com.rork.vinetrack.data.model.resolveSprayEquipmentName
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -16,6 +17,24 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+
+/** Lightweight audited correction row; loading it performs no report enrichment. */
+@Serializable
+data class SprayTripCorrectionMetadata(
+    @SerialName("trip_id") val tripId: String,
+    val version: Long,
+    @SerialName("machine_id") val machineId: String? = null,
+    @SerialName("tractor_id") val tractorId: String? = null,
+    @SerialName("spray_equipment_id") val sprayEquipmentId: String? = null,
+    @SerialName("operator_user_id") val operatorUserId: String? = null,
+    @SerialName("machine_name_snapshot") val machineNameSnapshot: String? = null,
+    @SerialName("spray_unit_name_snapshot") val sprayUnitNameSnapshot: String? = null,
+    @SerialName("operator_name_snapshot") val operatorNameSnapshot: String? = null,
+    @SerialName("fuel_consumption_l_per_hour") val fuelConsumptionLPerHour: Double? = null,
+    @SerialName("fuel_consumption_source") val fuelConsumptionSource: String? = null,
+    @SerialName("start_engine_hours") val startEngineHours: Double? = null,
+    @SerialName("end_engine_hours") val endEngineHours: Double? = null,
+)
 
 /** Canonical semantic input for every Spray Report export. */
 @Serializable
@@ -68,6 +87,41 @@ data class SprayReportPayloadV1(
     @Serializable data class Weather(val sampleSlot: String, val observedAt: String?, val source: String, val sourceKind: String, val isStale: Boolean, val temperatureC: Double?, val humidityPct: Double?, val windSpeedKmh: Double?, val windGustKmh: Double?, val windDirectionDeg: Double?, val rainMm: Double?, val provider: String? = null, val stationId: String? = null, val stationName: String? = null, val retrievalMode: String? = null, val providerRecordId: String? = null, val retrievedAt: String? = null, val retrievalHistory: List<WeatherAttempt> = emptyList())
     @Serializable data class WeatherAttempt(val provider: String, val stationId: String? = null, val stationName: String? = null, val retrievalMode: String, val outcome: String, val observedAt: String? = null, val source: String? = null, val temperatureC: Double? = null, val humidityPct: Double? = null, val windSpeedKmh: Double? = null, val windGustKmh: Double? = null, val windDirectionDeg: Double? = null, val rainMm: Double? = null, val isStale: Boolean? = null, val providerRecordId: String? = null, val retrievedAt: String)
     @Serializable data class Route(val bucket: String, val objectPath: String, val sha256: String, val routeHash: String, val styleVersion: String)
+
+    /** Overlays only corrected historical metadata; operational facts remain unchanged. */
+    fun applyingCorrection(
+        correction: SprayTripCorrectionMetadata,
+        machineName: String?,
+        tractorName: String?,
+        sprayUnitName: String?,
+    ): SprayReportPayloadV1 {
+        val engineUsed = correction.startEngineHours?.let { start ->
+            correction.endEngineHours?.takeIf { it >= start }?.minus(start)
+        }
+        return copy(
+            trip = trip.copy(
+                operatorName = correction.operatorNameSnapshot,
+                operatorId = correction.operatorUserId,
+                operatorSource = "audited_correction",
+            ),
+            equipment = equipment.copy(
+                tractorName = machineName ?: tractorName,
+                startEngineHours = correction.startEngineHours,
+                endEngineHours = correction.endEngineHours,
+                engineHoursUsed = engineUsed,
+                sprayUnitName = sprayUnitName,
+                machineId = correction.machineId,
+                tractorId = correction.tractorId,
+                sprayEquipmentId = correction.sprayEquipmentId,
+                equipmentSource = "audited_correction",
+                fuelConsumptionLPerHour = correction.fuelConsumptionLPerHour,
+                fuelConsumptionSource = correction.fuelConsumptionSource,
+                fuelHours = engineUsed ?: equipment.fuelHours,
+                fuelHoursSource = if (engineUsed == null) equipment.fuelHoursSource else "engine_hours",
+            ),
+            metadataCorrectionVersion = correction.version,
+        )
+    }
 
     fun exportFileName(platform: String): String {
         val zone = runCatching { TimeZone.getTimeZone(identity.vineyardTimeZone) }.getOrDefault(TimeZone.getTimeZone("UTC"))
@@ -183,9 +237,28 @@ data class SprayReportPayloadV1(
             return SprayReportPayloadV1(
                 schemaVersion = SCHEMA_VERSION,
                 identity = Identity(trip.id, record.id, trip.vineyardId, vineyardName, record.sprayReference.orEmpty(), vineyardTimeZone),
-                trip = TripSummary(trip.startTime, trip.endTime, trip.activeDurationSeconds, trip.totalDistance, trip.personName?.takeIf { it.isNotBlank() }, pinCount),
+                trip = TripSummary(
+                    startUtc = trip.startTime,
+                    endUtc = trip.endTime,
+                    activeDurationSeconds = trip.activeDurationSeconds,
+                    distanceMetres = trip.totalDistance,
+                    operatorName = trip.personName?.takeIf { it.isNotBlank() },
+                    pinCount = pinCount,
+                    operatorId = trip.operatorUserId,
+                    operatorSource = if (trip.operatorUserId == null) "recorded_snapshot" else "recorded_identity",
+                ),
                 blocks = blocks,
-                equipment = Equipment(machineName, trip.startEngineHours, trip.endEngineHours, trip.engineHoursUsed, unitName),
+                equipment = Equipment(
+                    tractorName = machineName,
+                    startEngineHours = trip.startEngineHours,
+                    endEngineHours = trip.endEngineHours,
+                    engineHoursUsed = trip.engineHoursUsed,
+                    sprayUnitName = unitName,
+                    machineId = trip.machineId,
+                    tractorId = trip.tractorId,
+                    sprayEquipmentId = record.sprayEquipmentId,
+                    equipmentSource = "offline_projection",
+                ),
                 rows = rows,
                 tanks = tanks,
                 weather = weather,

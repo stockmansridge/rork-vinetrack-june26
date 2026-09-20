@@ -295,6 +295,9 @@ fun OptimalRipenessScreen(
                         item {
                             SetupChecklistCard(
                                 state = state,
+                                weather = weather,
+                                gddSettings = gddSettings,
+                                timeZone = timeZone,
                                 seasonStartMonth = state.seasonStartMonth,
                                 seasonStartDay = state.seasonStartDay,
                                 onOpenTool = onOpenTool,
@@ -459,6 +462,9 @@ private fun BlockRipenessCard(
 @Composable
 private fun SetupChecklistCard(
     state: AppUiState,
+    weather: com.rork.vinetrack.data.OptimalRipenessWeatherState,
+    gddSettings: com.rork.vinetrack.data.GddSettings,
+    timeZone: java.util.TimeZone,
     seasonStartMonth: Int,
     seasonStartDay: Int,
     onOpenTool: (ToolRoute) -> Unit,
@@ -473,10 +479,13 @@ private fun SetupChecklistCard(
         state.grapeVarieties,
         state.grapeVarietyReferenceLoading,
         state.selectedVineyardId,
+        weather,
+        gddSettings,
+        timeZone,
         seasonStartMonth,
         seasonStartDay,
     ) {
-        buildChecklist(state, seasonStartMonth, seasonStartDay)
+        buildChecklist(state, weather, gddSettings, timeZone, seasonStartMonth, seasonStartDay)
     }
     val pending = items.count { !it.ok }
 
@@ -554,40 +563,56 @@ private data class ChecklistItem(
     val opensFixVarieties: Boolean = false,
 )
 
-private fun buildChecklist(state: AppUiState, seasonStartMonth: Int, seasonStartDay: Int): List<ChecklistItem> {
+private fun buildChecklist(
+    state: AppUiState,
+    weather: com.rork.vinetrack.data.OptimalRipenessWeatherState,
+    gddSettings: com.rork.vinetrack.data.GddSettings,
+    timeZone: java.util.TimeZone,
+    seasonStartMonth: Int,
+    seasonStartDay: Int,
+): List<ChecklistItem> {
     val out = mutableListOf<ChecklistItem>()
     val paddocks = selectedOptimalRipenessPaddocks(state)
 
     val v = state.selectedVineyard
     val hasCoords = (v?.latitude != null && v.longitude != null) ||
         paddocks.any { it.centroid != null }
-    out.add(
-        ChecklistItem(
-            "Weather source",
-            if (hasCoords) "Open-Meteo Archive ready" else "Add vineyard coordinates or map a block",
-            hasCoords,
-            ToolRoute.WeatherData,
-        )
-    )
+    val seasonStartMs = seasonStartDate(seasonStartMonth, seasonStartDay, timeZone)
+    val requiredStart = earliestRequiredWeatherDate(paddocks, seasonStartMs, gddSettings.resetMode)
+        ?.let { optimalRipenessStartOfDay(it, timeZone) }
+    val completedEnd = weather.completedEndMs
+    val hasCompleteWeather = weather.service != null && weather.sourceKey != null &&
+        requiredStart != null && completedEnd != null &&
+        weather.service.hasCompleteData(weather.sourceKey, requiredStart, completedEnd)
+    val weatherReady = !weather.isUpdating && hasCompleteWeather
+    val weatherDetail = when {
+        weather.isUpdating -> "Loading required ${weather.sourceLabel} history"
+        weather.sourceKey == null -> "Configure a weather source"
+        weather.error != null -> "Weather history unavailable"
+        !hasCompleteWeather -> "Incomplete weather data"
+        else -> "${weather.sourceLabel} coverage complete"
+    }
+    out.add(ChecklistItem("Weather source", weatherDetail, weatherReady, ToolRoute.WeatherData))
 
     // Flags blocks with no allocation AND blocks whose variety can't be matched
     // to the managed catalog (mirrors iOS `RipenessVarietyResolver` — an
     // unrecognised variety is just as broken as a missing one). Tapping opens
     // the inline Fix Block Varieties sheet rather than the full Blocks editor.
-    if (!state.grapeVarietyReferenceLoading) {
-        val blocksNeedingVariety = paddocks.count { !blockVarietyRecognised(it, state.grapeVarieties) }
-        out.add(
-            ChecklistItem(
-                "Block varieties",
-                if (paddocks.isEmpty()) "Add blocks first"
-                else if (blocksNeedingVariety == 0) "All blocks have a recognised variety"
-                else "$blocksNeedingVariety block${if (blocksNeedingVariety == 1) "" else "s"} need a variety — tap to fix",
-                paddocks.isNotEmpty() && blocksNeedingVariety == 0,
-                route = null,
-                opensFixVarieties = true,
-            )
+    val blocksNeedingVariety = paddocks.count { !blockVarietyRecognised(it, state.grapeVarieties) }
+    out.add(
+        ChecklistItem(
+            "Block varieties",
+            when {
+                state.grapeVarietyReferenceLoading -> "Loading variety reference data"
+                paddocks.isEmpty() -> "Add blocks first"
+                blocksNeedingVariety == 0 -> "All allocations have a recognised variety"
+                else -> "$blocksNeedingVariety block${if (blocksNeedingVariety == 1) "" else "s"} need a variety — tap to fix"
+            },
+            !state.grapeVarietyReferenceLoading && paddocks.isNotEmpty() && blocksNeedingVariety == 0,
+            route = null,
+            opensFixVarieties = true,
         )
-    }
+    )
 
     // Season start date (always satisfied — informational, deep-links to prefs).
     val monthName = monthSymbol(seasonStartMonth)
@@ -603,29 +628,34 @@ private fun buildChecklist(state: AppUiState, seasonStartMonth: Int, seasonStart
     // GDD targets for varieties currently in use.
     val targetsMissing = paddocks.flatMap { it.varietyAllocations.orEmpty() }
         .mapNotNull { alloc ->
-            val target = resolveTargetForAllocation(alloc.varietyKey, alloc.varietyId, alloc.displayName, state)
-            if (target <= 0) (alloc.displayName ?: "Unknown") else null
+            val resolved = VineyardVarietyPresentation.resolve(alloc, state.grapeVarieties)
+            val target = resolveTargetForAllocation(alloc.varietyKey, alloc.varietyId, resolved.name, state)
+            if (!resolved.isResolved || target <= 0) (resolved.name ?: alloc.displayName ?: "Unknown") else null
         }.distinct()
     out.add(
         ChecklistItem(
             "Variety GDD targets",
-            if (targetsMissing.isEmpty()) "Targets resolved for blocks in use"
-            else "Add a target for: ${targetsMissing.take(3).joinToString(", ")}",
-            targetsMissing.isEmpty(),
+            when {
+                state.grapeVarietyReferenceLoading -> "Loading variety reference data"
+                targetsMissing.isEmpty() -> "Targets resolved for all allocations in use"
+                else -> "Add a target for: ${targetsMissing.take(3).joinToString(", ")}"
+            },
+            !state.grapeVarietyReferenceLoading && targetsMissing.isEmpty(),
             ToolRoute.Growth,
         )
     )
 
     // Budburst dates — surfaced when any block has a budburst date in play, so
     // the reset used for GDD accumulation is accurate.
-    val blocksWithBudburst = paddocks.count { !it.budburstDate.isNullOrBlank() }
-    if (paddocks.isNotEmpty()) {
+    val budburstBlocks = paddocks.filter { it.effectiveResetMode(gddSettings.resetMode) == GddResetMode.BUDBURST }
+    val missingBudburst = budburstBlocks.filter { it.budburstDate.isNullOrBlank() }
+    if (budburstBlocks.isNotEmpty()) {
         out.add(
             ChecklistItem(
                 "Budburst dates",
-                if (blocksWithBudburst > 0) "$blocksWithBudburst block${if (blocksWithBudburst == 1) "" else "s"} using block budburst date — tap to review"
-                else "Budburst required before GDD can be calculated — tap to set dates",
-                blocksWithBudburst > 0,
+                if (missingBudburst.isEmpty()) "${budburstBlocks.size} block${if (budburstBlocks.size == 1) "" else "s"} using block budburst date — tap to review"
+                else "Missing for: ${missingBudburst.take(3).joinToString(", ") { it.name }}",
+                missingBudburst.isEmpty(),
                 route = null,
                 opensBudburst = true,
             )
@@ -920,8 +950,10 @@ internal fun resolvedRipenessVarietyName(
 ): String? = VineyardVarietyPresentation.resolve(allocation, grapeVarieties).name
 
 internal fun blockVarietyRecognised(block: Paddock, grapeVarieties: List<GrapeVarietyRow>): Boolean {
-    val primary = block.varietyAllocations.orEmpty().maxByOrNull { it.displayPercent ?: 0.0 } ?: return false
-    return VineyardVarietyPresentation.resolve(primary, grapeVarieties).isResolved
+    val allocations = block.varietyAllocations.orEmpty()
+    return allocations.isNotEmpty() && allocations.all {
+        VineyardVarietyPresentation.resolve(it, grapeVarieties).isResolved
+    }
 }
 
 private fun selectedOptimalRipenessPaddocks(state: AppUiState): List<Paddock> {

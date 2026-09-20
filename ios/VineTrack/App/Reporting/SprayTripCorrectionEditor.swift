@@ -1,4 +1,5 @@
 import SwiftUI
+import OSLog
 
 struct SprayTripCorrectionEditor: View {
     let tripId: UUID
@@ -6,7 +7,7 @@ struct SprayTripCorrectionEditor: View {
     let machines: [VineyardMachine]
     let tractors: [Tractor]
     let sprayEquipment: [SprayEquipmentItem]
-    let onSaved: (SprayReportPayloadV1) -> Void
+    let onSaved: (SprayTripCorrectionMetadata) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var machineId: UUID?
@@ -17,6 +18,10 @@ struct SprayTripCorrectionEditor: View {
     @State private var endHoursText: String
     @State private var isSaving: Bool = false
     @State private var errorMessage: String?
+    @State private var pendingOperationId: UUID = UUID()
+    @State private var pendingFingerprint: String?
+
+    private let logger = Logger(subsystem: "com.vinetrack.app", category: "spray-correction")
 
     init(
         tripId: UUID,
@@ -24,7 +29,7 @@ struct SprayTripCorrectionEditor: View {
         machines: [VineyardMachine],
         tractors: [Tractor],
         sprayEquipment: [SprayEquipmentItem],
-        onSaved: @escaping (SprayReportPayloadV1) -> Void
+        onSaved: @escaping (SprayTripCorrectionMetadata) -> Void
     ) {
         self.tripId = tripId
         self.report = report
@@ -101,8 +106,22 @@ struct SprayTripCorrectionEditor: View {
         if let validationError { errorMessage = validationError; return }
         isSaving = true
         defer { isSaving = false }
+        let fingerprint = [
+            machineId?.uuidString ?? "null",
+            tractorId?.uuidString ?? "null",
+            sprayEquipmentId?.uuidString ?? "null",
+            report.trip.operatorId?.uuidString ?? "null",
+            fuelRateText.trimmingCharacters(in: .whitespacesAndNewlines),
+            startHoursText.trimmingCharacters(in: .whitespacesAndNewlines),
+            endHoursText.trimmingCharacters(in: .whitespacesAndNewlines)
+        ].joined(separator: "|")
+        if pendingFingerprint != fingerprint {
+            pendingFingerprint = fingerprint
+            pendingOperationId = UUID()
+        }
         do {
             let updated = try await SprayReportRepository.shared.correctMetadata(
+                operationId: pendingOperationId,
                 tripId: tripId,
                 expectedVersion: report.metadataCorrectionVersion ?? 0,
                 machineId: machineId,
@@ -116,6 +135,7 @@ struct SprayTripCorrectionEditor: View {
             onSaved(updated)
             dismiss()
         } catch {
+            logger.error("Correction RPC failed: \(String(describing: error), privacy: .public)")
             errorMessage = "The correction could not be saved. Refresh the report and try again."
         }
     }

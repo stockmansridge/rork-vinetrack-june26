@@ -26,7 +26,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
+import android.util.Log
 import com.rork.vinetrack.data.reporting.SprayReportPayloadV1
+import com.rork.vinetrack.data.reporting.SprayTripCorrectionMetadata
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
@@ -38,7 +40,7 @@ fun SprayTripCorrectionSheet(
     state: AppUiState,
     report: SprayReportPayloadV1,
     onDismiss: () -> Unit,
-    onSaved: (SprayReportPayloadV1) -> Unit,
+    onSaved: (SprayTripCorrectionMetadata) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var machineId by remember(report) { mutableStateOf(report.equipment.machineId) }
@@ -48,6 +50,8 @@ fun SprayTripCorrectionSheet(
     var end by remember(report) { mutableStateOf(report.equipment.endEngineHours?.toString().orEmpty()) }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var pendingOperationId by remember { mutableStateOf(java.util.UUID.randomUUID().toString()) }
+    var pendingFingerprint by remember { mutableStateOf<String?>(null) }
 
     fun number(value: String): Double? = value.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() }
     val fuelValue = number(fuel)
@@ -85,13 +89,24 @@ fun SprayTripCorrectionSheet(
                 onClick = {
                     saving = true
                     error = null
+                    val fingerprint = listOf(
+                        machineId, report.equipment.tractorId, sprayEquipmentId,
+                        report.trip.operatorId, fuel.trim(), start.trim(), end.trim(),
+                    ).joinToString("|") { it ?: "null" }
+                    if (pendingFingerprint != fingerprint) {
+                        pendingFingerprint = fingerprint
+                        pendingOperationId = java.util.UUID.randomUUID().toString()
+                    }
                     vm.correctSprayTripMetadata(
-                        report.identity.tripId, report.metadataCorrectionVersion, machineId,
+                        pendingOperationId, report.identity.tripId, report.metadataCorrectionVersion, machineId,
                         report.equipment.tractorId, sprayEquipmentId, report.trip.operatorId,
                         fuelValue, startValue, endValue,
                     ) { result ->
                         saving = false
-                        result.onSuccess(onSaved).onFailure { error = "The correction could not be saved. Refresh and try again." }
+                        result.onSuccess(onSaved).onFailure { failure ->
+                            Log.e("SprayCorrection", "Correction RPC failed: ${failure.message}", failure)
+                            error = "The correction could not be saved. Refresh and try again."
+                        }
                     }
                 },
                 enabled = !saving && validation == null,

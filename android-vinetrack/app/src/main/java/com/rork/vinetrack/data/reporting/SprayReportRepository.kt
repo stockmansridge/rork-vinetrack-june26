@@ -65,9 +65,25 @@ class SprayReportRepository(private val session: SessionStore) {
         @SerialName("p_start_engine_hours") val startEngineHours: Double?,
         @SerialName("p_end_engine_hours") val endEngineHours: Double?,
     )
-    @Serializable private data class CorrectionResponse(val report: SprayReportPayloadV1)
+    @Serializable private data class CorrectionResponse(val correction: SprayTripCorrectionMetadata)
+
+    /** Reads only the protected correction row; no report or recovery work runs. */
+    suspend fun fetchCorrectionMetadata(tripId: String): SprayTripCorrectionMetadata? {
+        if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val select = "trip_id,version,machine_id,tractor_id,spray_equipment_id,operator_user_id,machine_name_snapshot,spray_unit_name_snapshot,operator_name_snapshot,fuel_consumption_l_per_hour,fuel_consumption_source,start_engine_hours,end_engine_hours"
+        val response = SupabaseClient.http.get(
+            "${SupabaseClient.baseUrl}/rest/v1/spray_trip_corrections?select=$select&trip_id=eq.$tripId&limit=1",
+        ) {
+            headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
+        }
+        if (response.status.value == 401 || response.status.value == 403) throw BackendError.Unauthorized
+        if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
+        return response.body<List<SprayTripCorrectionMetadata>>().firstOrNull()
+    }
 
     suspend fun correctMetadata(
+        operationId: String,
         tripId: String,
         expectedVersion: Long,
         machineId: String?,
@@ -77,13 +93,13 @@ class SprayReportRepository(private val session: SessionStore) {
         fuelRate: Double?,
         startEngineHours: Double?,
         endEngineHours: Double?,
-    ): SprayReportPayloadV1 {
+    ): SprayTripCorrectionMetadata {
         val response: CorrectionResponse = rpc(
             "correct_spray_trip_metadata_v1",
-            CorrectionArgs(java.util.UUID.randomUUID().toString(), tripId, expectedVersion, machineId, tractorId,
+            CorrectionArgs(operationId, tripId, expectedVersion, machineId, tractorId,
                 sprayEquipmentId, operatorUserId, fuelRate, startEngineHours, endEngineHours),
         )
-        return response.report
+        return response.correction
     }
 
     /** Runs the shared server derivation; ambiguous paths are intentionally left unresolved. */

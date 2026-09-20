@@ -57,7 +57,7 @@ internal object VineyardVarietyPresentation {
             BuiltInGrapeVarietyGDD.displayNameForName(rawName)?.let {
                 return Resolved(it, true)
             }
-            return Resolved(rawName, true)
+            return Resolved(rawName, false)
         }
         return Resolved(null, false)
     }

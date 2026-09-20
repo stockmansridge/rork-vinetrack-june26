@@ -63,7 +63,10 @@ class OptimalRipenessWeatherCoordinator(
         val existing = _state.value
         val service = if (existing.vineyardId == request.vineyardId &&
             existing.service != null && existing.timeZoneId == request.timeZone.id
-        ) existing.service else DegreeDayService(DailyWeatherCacheStore(appContext), request.timeZone)
+        ) existing.service else DegreeDayService(
+            DailyWeatherCacheStore(appContext, request.timeZone.id),
+            request.timeZone,
+        )
         val sourceKey = cachedSource?.sourceFingerprint
         val hasCache = sourceKey != null && service.hasUsableData(sourceKey)
         val earliest = request.paddocks.mapNotNull { block ->

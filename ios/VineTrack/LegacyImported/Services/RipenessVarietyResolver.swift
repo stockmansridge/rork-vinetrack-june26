@@ -131,12 +131,11 @@ enum RipenessVarietyResolver {
         var seen = Set<UUID>()
         var result: [GrapeVariety] = []
         for paddock in store.orderedPaddocks {
-            for alloc in paddock.varietyAllocations {
-                guard !seen.contains(alloc.varietyId) else { continue }
-                if let v = store.grapeVariety(for: alloc.varietyId) {
-                    seen.insert(v.id)
-                    result.append(v)
-                }
+            for allocation in paddock.varietyAllocations {
+                guard let variety = resolve(allocation: allocation, store: store).variety,
+                      !seen.contains(variety.id) else { continue }
+                seen.insert(variety.id)
+                result.append(variety)
             }
         }
         return result

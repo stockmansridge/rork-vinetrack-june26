@@ -594,16 +594,15 @@ nonisolated enum DavisWeatherLinkService {
     // MARK: - Historic temperatures (for GDD)
 
     /// Aggregated daily min/max temperatures (Celsius) parsed from a
-    /// WeatherLink v2 historic response. Keys are start-of-day in
-    /// `Calendar.current`.
+    /// WeatherLink v2 historic response. Keys use the requested vineyard day.
     nonisolated struct DavisDailyTemps: Sendable {
         let dailyHighC: [Date: Double]
         let dailyLowC: [Date: Double]
         let recordCount: Int
     }
 
-    /// Fetches archive temperature records and aggregates to daily
-    /// high/low (Celsius) using `Calendar.current`. Splits the window
+    /// Fetches archive temperature records and aggregates to vineyard-local
+    /// daily high/low (Celsius). Splits the window
     /// into 24-hour chunks to satisfy the WeatherLink v2 historic
     /// endpoint limit.
     static func fetchDailyTemperatures(
@@ -612,6 +611,7 @@ nonisolated enum DavisWeatherLinkService {
         stationId: String,
         from: Date,
         to: Date,
+        timeZone: TimeZone,
         maxConcurrent: Int = 4
     ) async throws -> DavisDailyTemps {
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -662,7 +662,8 @@ nonisolated enum DavisWeatherLinkService {
             }
         }
 
-        let cal = Calendar.current
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = timeZone
         var highs: [Date: Double] = [:]
         var lows: [Date: Double] = [:]
         for (ts, hiF, loF) in perRecord {

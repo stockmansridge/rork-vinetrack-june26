@@ -138,7 +138,12 @@ struct OptimalRipenessHubView: View {
     }
 
     private var checklist: SetupChecklist {
-        SetupChecklist.build(store: store, candidates: candidates)
+        SetupChecklist.build(
+            store: store,
+            candidates: candidates,
+            degreeDayService: degreeDayService,
+            isFetching: isFetching
+        )
     }
 
     var body: some View {
@@ -213,6 +218,7 @@ struct OptimalRipenessHubView: View {
         .navigationTitle("Optimal Ripeness")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: candidatesKey) {
+            degreeDayService.configure(timeZone: store.settings.resolvedTimeZone)
             await degreeDayService.ensureSeasonLoaded(
                 candidates: candidates,
                 vineyardId: store.selectedVineyardId,
@@ -494,23 +500,45 @@ private struct SetupChecklist {
     let items: [SetupChecklistItem]
 
     @MainActor
-    static func build(store: MigratedDataStore, candidates: [RipenessSourceCandidate]) -> SetupChecklist {
+    static func build(
+        store: MigratedDataStore,
+        candidates: [RipenessSourceCandidate],
+        degreeDayService: DegreeDayService,
+        isFetching: Bool
+    ) -> SetupChecklist {
         var items: [SetupChecklistItem] = []
 
-        // 1. Weather source
-        let weatherOK = !candidates.isEmpty
-        let weatherDetail: String? = candidates.first.map { c in
-            switch c.source {
-            case .davisWeatherLink: return "Davis WeatherLink"
-            case .weatherUnderground: return "Weather Underground"
-            case .openMeteoArchive: return "Open-Meteo Archive"
-            }
+        // 1. Weather source and exact completed-day coverage.
+        let source = degreeDayService.lastSource.flatMap { resolved in
+            candidates.first(where: { $0.source == resolved })?.source
+        } ?? candidates.first?.source
+        let calendar = store.settings.resolvedCalendar
+        let completedEnd = calendar.startOfDay(for: Date())
+        let requiredStarts = store.orderedPaddocks.compactMap { block -> Date? in
+            let mode = block.effectiveResetMode(defaultMode: store.settings.resetMode)
+            return block.resetDate(for: mode, seasonStart: RipenessMath.seasonStartDate(settings: store.settings))
         }
+        let hasCompleteCoverage = source.map { resolved in
+            !requiredStarts.isEmpty && requiredStarts.allSatisfy { start in
+                degreeDayService.hasCompleteData(
+                    forKey: resolved.sourceKey,
+                    coveringFrom: calendar.startOfDay(for: start),
+                    to: completedEnd
+                )
+            }
+        } ?? false
+        let weatherOK = source != nil && !isFetching && hasCompleteCoverage
+        let weatherDetail: String? = {
+            guard let source else { return nil }
+            if isFetching { return "Loading required \(source.displayName) history" }
+            if !hasCompleteCoverage { return "Incomplete weather data" }
+            return "\(source.displayName) coverage complete"
+        }()
         items.append(SetupChecklistItem(
             title: "Weather source",
             detail: weatherDetail,
             ok: weatherOK,
-            action: weatherOK ? nil : "Configure a weather source",
+            action: source == nil ? "Configure a weather source" : "Refresh weather history",
             destination: .weatherSource
         ))
 
@@ -518,21 +546,28 @@ private struct SetupChecklist {
         //
         // Uses the same `RipenessVarietyResolver` as the block row list and
         // the GDD calculation so the checklist can never disagree with the
-        // calculation surface. A block passes only when its primary
-        // allocation resolves to a managed `GrapeVariety` with a usable
-        // optimal GDD target.
+        // calculation surface. Every allocation must resolve to a managed
+        // `GrapeVariety` with a usable optimal GDD target.
         let blocks = store.orderedPaddocks
         var blocksMissingVariety: [Paddock] = []
         var blocksUnrecognised: [Paddock] = []
         var blocksMissingTarget: [(Paddock, GrapeVariety)] = []
         for block in blocks {
-            switch RipenessVarietyResolver.resolve(block, store: store).status {
-            case .missing: blocksMissingVariety.append(block)
-            case .unrecognised: blocksUnrecognised.append(block)
-            case .missingTarget(let v): blocksMissingTarget.append((block, v))
-            case .ready: break
+            if block.varietyAllocations.isEmpty {
+                blocksMissingVariety.append(block)
+                continue
+            }
+            for allocation in block.varietyAllocations {
+                switch RipenessVarietyResolver.resolve(allocation: allocation, store: store).status {
+                case .missing: blocksMissingVariety.append(block)
+                case .unrecognised: blocksUnrecognised.append(block)
+                case .missingTarget(let variety): blocksMissingTarget.append((block, variety))
+                case .ready: break
+                }
             }
         }
+        blocksMissingVariety = Array(Dictionary(grouping: blocksMissingVariety, by: \.id).values.compactMap(\.first))
+        blocksUnrecognised = Array(Dictionary(grouping: blocksUnrecognised, by: \.id).values.compactMap(\.first))
         let varietyDetail: String
         let varietyOK: Bool
         let varietyAction: String?
@@ -561,7 +596,7 @@ private struct SetupChecklist {
             varietyAction = "Set GDD targets"
             varietyDestination = .varietyTargets
         } else {
-            varietyDetail = "All blocks have a recognised variety"
+            varietyDetail = "All allocations have a recognised variety"
             varietyOK = true
             varietyAction = nil
             varietyDestination = .fixBlockVarieties

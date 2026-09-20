@@ -1,5 +1,39 @@
 import Foundation
 
+/// Lightweight audited correction row used by the editor and immediate local
+/// display without invoking report, row, weather, route, or image enrichment.
+nonisolated struct SprayTripCorrectionMetadata: Codable, Sendable, Hashable {
+    let tripId: UUID
+    let version: Int
+    let machineId: UUID?
+    let tractorId: UUID?
+    let sprayEquipmentId: UUID?
+    let operatorUserId: UUID?
+    let machineNameSnapshot: String?
+    let sprayUnitNameSnapshot: String?
+    let operatorNameSnapshot: String?
+    let fuelConsumptionLPerHour: Double?
+    let fuelConsumptionSource: String?
+    let startEngineHours: Double?
+    let endEngineHours: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case tripId = "trip_id"
+        case version
+        case machineId = "machine_id"
+        case tractorId = "tractor_id"
+        case sprayEquipmentId = "spray_equipment_id"
+        case operatorUserId = "operator_user_id"
+        case machineNameSnapshot = "machine_name_snapshot"
+        case sprayUnitNameSnapshot = "spray_unit_name_snapshot"
+        case operatorNameSnapshot = "operator_name_snapshot"
+        case fuelConsumptionLPerHour = "fuel_consumption_l_per_hour"
+        case fuelConsumptionSource = "fuel_consumption_source"
+        case startEngineHours = "start_engine_hours"
+        case endEngineHours = "end_engine_hours"
+    }
+}
+
 /// Canonical semantic input for every Spray Report export.
 nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
     static let currentSchemaVersion: String = "1.2"
@@ -85,6 +119,74 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         let fuelConsumptionSource: String?
         let fuelHours: Double?
         let fuelHoursSource: String?
+    }
+
+    /// Applies only corrected historical metadata. Spray plans, tank values,
+    /// chemistry, route, rows, weather, and costing remain untouched.
+    func applyingCorrection(
+        _ correction: SprayTripCorrectionMetadata,
+        machineName: String?,
+        tractorName: String?,
+        sprayUnitName: String?
+    ) -> SprayReportPayloadV1 {
+        let resolvedEquipmentName = machineName ?? tractorName
+        let engineHoursUsed: Double? = {
+            guard let start = correction.startEngineHours, let end = correction.endEngineHours, end >= start else { return nil }
+            return end - start
+        }()
+        let correctedTrip = TripSummary(
+            startUtc: trip.startUtc,
+            endUtc: trip.endUtc,
+            activeDurationSeconds: trip.activeDurationSeconds,
+            distanceMetres: trip.distanceMetres,
+            operatorName: correction.operatorNameSnapshot,
+            pinCount: trip.pinCount,
+            operatorId: correction.operatorUserId,
+            operatorSource: "audited_correction",
+            elapsedDurationSeconds: trip.elapsedDurationSeconds,
+            pausedDurationSeconds: trip.pausedDurationSeconds
+        )
+        let correctedEquipment = Equipment(
+            tractorName: resolvedEquipmentName,
+            startEngineHours: correction.startEngineHours,
+            endEngineHours: correction.endEngineHours,
+            engineHoursUsed: engineHoursUsed,
+            sprayUnitName: sprayUnitName,
+            machineId: correction.machineId,
+            tractorId: correction.tractorId,
+            sprayEquipmentId: correction.sprayEquipmentId,
+            equipmentSource: "audited_correction",
+            tractorGear: equipment.tractorGear,
+            numberOfFansJets: equipment.numberOfFansJets,
+            averageSpeedKmh: equipment.averageSpeedKmh,
+            fuelConsumptionLPerHour: correction.fuelConsumptionLPerHour,
+            fuelConsumptionSource: correction.fuelConsumptionSource,
+            fuelHours: engineHoursUsed ?? equipment.fuelHours,
+            fuelHoursSource: engineHoursUsed == nil ? equipment.fuelHoursSource : "engine_hours"
+        )
+        return SprayReportPayloadV1(
+            schemaVersion: schemaVersion,
+            identity: identity,
+            provenance: provenance,
+            recordingEvidence: recordingEvidence,
+            trip: correctedTrip,
+            blocks: blocks,
+            equipment: correctedEquipment,
+            rows: rows,
+            tanks: tanks,
+            actualChemicalTotals: actualChemicalTotals,
+            plannedChemicalTotals: plannedChemicalTotals,
+            application: application,
+            programStep: programStep,
+            tankSessions: tankSessions,
+            cost: cost,
+            metadataCorrectionVersion: correction.version,
+            metadataAmendments: metadataAmendments,
+            weather: weather,
+            route: route,
+            amendments: amendments,
+            warnings: warnings
+        )
     }
 
     nonisolated struct Application: Codable, Sendable, Hashable {

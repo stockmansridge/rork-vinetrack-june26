@@ -92,7 +92,8 @@ class OptimalRipenessWeatherRepository(
         }
         return try {
             val result = refreshUncoordinated(
-                vineyardId, latitude, longitude, fromEpochMs, toEpochMs, cachedSourceFingerprint,
+                vineyardId, latitude, longitude, fromEpochMs, toEpochMs,
+                cachedSourceFingerprint, timeZoneId,
             )
             synchronized(lock) { recent[requestKey] = System.currentTimeMillis() to result }
             task.complete(result)
@@ -112,6 +113,7 @@ class OptimalRipenessWeatherRepository(
         fromEpochMs: Long,
         toEpochMs: Long,
         cachedSourceFingerprint: String?,
+        timeZoneId: String,
     ): OptimalRipenessWeatherResult {
         val integrationRead = runCatching {
             integrationRepository.fetch(vineyardId, WeatherIntegrationProvider.DAVIS)
@@ -142,6 +144,7 @@ class OptimalRipenessWeatherRepository(
                                 stationId = source.stationId,
                                 fromEpochMs = window.startEpochMs,
                                 toEpochMs = window.endEpochMs,
+                                timeZone = java.util.TimeZone.getTimeZone(timeZoneId),
                             )
                         }.getOrNull().orEmpty()
                         degreeDays.installDailyTemps(source.sourceKey, rows)

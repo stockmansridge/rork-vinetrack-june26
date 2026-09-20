@@ -138,9 +138,10 @@ class DavisWeatherLinkRepository(private val session: SessionStore) {
         stationId: String,
         fromEpochMs: Long,
         toEpochMs: Long,
+        timeZone: java.util.TimeZone,
     ): Map<String, DailyTemp> = withContext(Dispatchers.IO) {
         val formatter = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).apply {
-            timeZone = java.util.TimeZone.getTimeZone("UTC")
+            this.timeZone = timeZone
         }
         val highs = mutableMapOf<String, Double>()
         val lows = mutableMapOf<String, Double>()

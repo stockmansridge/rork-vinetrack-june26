@@ -2197,12 +2197,14 @@ struct SprayCalculatorView: View {
                 )
             }
 
-            ForEach(guidedTankLines, id: \.chemicalLine.id) { entry in
-                mixChemicalRow(
-                    chemicalLine: entry.chemicalLine,
-                    planLine: entry.planLine,
-                    tankSplit: plan.tankSplit
-                )
+            if plan.tankSplit.totalTanks > 0 {
+                ForEach(1...plan.tankSplit.totalTanks, id: \.self) { tankNumber in
+                    mixTankCard(
+                        tankNumber: tankNumber,
+                        tankSplit: plan.tankSplit,
+                        lines: guidedTankLines
+                    )
+                }
             }
 
             // A line the plan could not resolve must still be named here —
@@ -2266,110 +2268,76 @@ struct SprayCalculatorView: View {
         .clipShape(.rect(cornerRadius: 10))
     }
 
-    /// One product's row on the Spray Tank Mixing screen.
-    ///
-    /// The total is the SAME `planLine.totalQuantity` Review already showed —
-    /// nothing here recalculates a label rate. The per-tank amounts are that
-    /// same total, already split by the planner using the authoritative tank
-    /// water split (`quantityPerFullTank` / `quantityInLastTank`), so
-    /// `sum(per-tank amounts) == planLine.totalQuantity` by construction. Only
-    /// the rows that actually exist are shown: a job with one partial tank
-    /// never shows a "Full tank" line, and a job with no partial tank never
-    /// shows a "Last tank" line.
-    @ViewBuilder
-    private func mixChemicalRow(
-        chemicalLine line: ChemicalLine,
-        planLine: SprayProductLineResult,
-        tankSplit: SprayTankSplit
+    /// One physical tank on the Spray Tank Mixing screen. Water and product
+    /// quantities are projections of the plan's existing split outputs; this
+    /// view performs no chemistry or tank calculation of its own.
+    private func mixTankCard(
+        tankNumber: Int,
+        tankSplit: SprayTankSplit,
+        lines: [(chemicalLine: ChemicalLine, planLine: SprayProductLineResult)]
     ) -> some View {
-        let saved = store.savedChemicals.first(where: { $0.id == line.chemicalId })
-        let labelURL = saved?.labelURL ?? ""
-        let totalTanks = tankSplit.totalTanks
+        let isPartialLastTank = tankNumber == tankSplit.totalTanks && tankSplit.lastTankLitres > 0
+        let waterLitres = isPartialLastTank ? tankSplit.lastTankLitres : tankSplit.tankCapacityLitres
 
-        // This card answers exactly three things: what product, how much to
-        // add, and where the official label is if the operator needs the
-        // full legal detail. Override state, the product's marketing page,
-        // restriction text, the registered use and rate-basis workings,
-        // WHP/REI and verification state all belong to the Chemical Store
-        // record and the Products-step inspector — never duplicated on this
-        // operational screen.
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: "flask.fill")
-                    .foregroundStyle(VineyardTheme.leafGreen)
-                Text(planLine.name)
-                    .font(.subheadline.weight(.semibold))
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Tank \(tankNumber)", systemImage: "drop.fill")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(VineyardTheme.olive)
                 Spacer()
-                if let url = Self.normalizedLabelURL(labelURL) {
-                    Button {
-                        openURL(url)
-                    } label: {
-                        Image(systemName: "doc.text.magnifyingglass")
-                            .font(.subheadline)
-                            .foregroundStyle(VineyardTheme.olive)
-                            .padding(6)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Open official label")
-                }
+                Text(SprayGuidedFormat.litres(waterLitres))
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
             }
 
-            if let total = planLine.totalQuantity {
-                let displayUnit = planLine.unitDisplay.displayUnit
-                HStack(alignment: .firstTextBaseline) {
-                    Text(SprayGuidedFormat.quantity(planLine.unitDisplay.display(total), unit: displayUnit))
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(VineyardTheme.olive)
-                        .monospacedDigit()
-                    Spacer()
-                    if totalTanks <= 1 {
-                        // The one-tank case: the whole amount goes in the one
-                        // tank there is — named so the operator sees the tank
-                        // size beside what goes in it, not just a bare total.
-                        Text("\(SprayGuidedFormat.number(tankSplit.lastTankLitres > 0 ? tankSplit.lastTankLitres : tankSplit.tankCapacityLitres)) L tank")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+            Divider()
+            mixTankQuantityRow(name: "Water", amount: SprayGuidedFormat.litres(waterLitres))
 
-                // List every physical tank explicitly so the operator can read
-                // the product amount in loading order without translating a
-                // grouped "full tanks × count" summary.
-                if totalTanks > 0 {
-                    VStack(spacing: 0) {
-                        ForEach(1...totalTanks, id: \.self) { tankNumber in
-                            let isPartialLastTank = tankNumber == totalTanks && tankSplit.lastTankLitres > 0
-                            let tankQuantity = isPartialLastTank
-                                ? planLine.quantityInLastTank
-                                : planLine.quantityPerFullTank
-                            if let tankQuantity {
-                                HStack(spacing: 8) {
-                                    Text("Tank \(tankNumber)")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.primary)
-                                    Spacer()
-                                    Text(SprayGuidedFormat.quantity(
-                                        planLine.unitDisplay.display(tankQuantity),
-                                        unit: displayUnit
-                                    ))
-                                        .font(.caption.weight(.medium).monospacedDigit())
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(.vertical, 5)
-                                if tankNumber < totalTanks {
-                                    Divider()
-                                }
-                            }
-                        }
-                    }
+            ForEach(lines, id: \.chemicalLine.id) { entry in
+                let quantity = isPartialLastTank
+                    ? entry.planLine.quantityInLastTank
+                    : entry.planLine.quantityPerFullTank
+                if let quantity {
+                    let saved = store.savedChemicals.first(where: { $0.id == entry.chemicalLine.chemicalId })
+                    mixTankQuantityRow(
+                        name: entry.planLine.name,
+                        amount: SprayGuidedFormat.quantity(
+                            entry.planLine.unitDisplay.display(quantity),
+                            unit: entry.planLine.unitDisplay.displayUnit
+                        ),
+                        labelURL: Self.normalizedLabelURL(saved?.labelURL ?? "")
+                    )
                 }
             }
-
         }
-        .padding(10)
+        .padding(12)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(.rect(cornerRadius: 10))
+    }
+
+    private func mixTankQuantityRow(name: String, amount: String, labelURL: URL? = nil) -> some View {
+        HStack(spacing: 8) {
+            Text(name)
+                .font(.caption)
+                .foregroundStyle(.primary)
+            Spacer()
+            Text(amount)
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(.primary)
+            if let labelURL {
+                Button {
+                    openURL(labelURL)
+                } label: {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.caption)
+                        .foregroundStyle(VineyardTheme.olive)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open official label for \(name)")
+            }
+        }
+        .frame(minHeight: 28)
     }
 
     private var tractorSelection: some View {

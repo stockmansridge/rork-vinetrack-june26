@@ -307,8 +307,8 @@ nonisolated enum VineyardDavisProxyService {
         )
     }
 
-    /// Fetches archive temperature records and aggregates to daily
-    /// high/low (Celsius) using `Calendar.current`. Splits the window
+    /// Fetches archive temperature records and aggregates to vineyard-local
+    /// daily high/low (Celsius). Splits the window
     /// into 24-hour chunks to satisfy the WeatherLink v2 historic
     /// endpoint limit. Calls go through the davis-proxy edge function
     /// so operators without API credentials can still use the vineyard's
@@ -317,7 +317,8 @@ nonisolated enum VineyardDavisProxyService {
         vineyardId: UUID,
         stationId: String,
         from: Date,
-        to: Date
+        to: Date,
+        timeZone: TimeZone
     ) async throws -> DavisWeatherLinkService.DavisDailyTemps {
         guard !stationId.isEmpty else { throw VineyardDavisProxyError.notConfigured }
         guard from < to else {
@@ -350,7 +351,8 @@ nonisolated enum VineyardDavisProxyService {
             for r in parsed { perRecord.append((r.0, r.1, r.2)) }
         }
 
-        let cal = Calendar.current
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = timeZone
         var highs: [Date: Double] = [:]
         var lows: [Date: Double] = [:]
         for (ts, hiF, loF) in perRecord {

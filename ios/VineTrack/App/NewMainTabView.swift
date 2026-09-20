@@ -76,6 +76,7 @@ struct NewMainTabView: View {
                 paddocks: store.orderedPaddocks,
                 settings: store.settings
               ) else { return }
+        degreeDayService.configure(timeZone: store.settings.resolvedTimeZone)
         await degreeDayService.ensureSeasonLoaded(
             candidates: RipenessMath.candidates(store: store),
             vineyardId: store.selectedVineyardId,

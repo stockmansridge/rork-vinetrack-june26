@@ -135,6 +135,7 @@ import com.rork.vinetrack.data.model.SprayChemical
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.SprayStatus
 import com.rork.vinetrack.data.model.SprayTank
+import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.formatTripDuration
 import com.rork.vinetrack.data.model.resolveSprayEquipmentName
 import com.rork.vinetrack.data.model.resolveSprayTrip
@@ -1050,14 +1051,50 @@ private fun SprayDetailView(
     var starting by remember { mutableStateOf(false) }
     var showStartConfirmation by remember { mutableStateOf(false) }
     var correctionReport by remember { mutableStateOf<SprayReportPayloadV1?>(null) }
+    var correctedDisplayReport by remember { mutableStateOf<SprayReportPayloadV1?>(null) }
     var loadingCorrection by remember { mutableStateOf(false) }
+    var exportingPdf by remember { mutableStateOf(false) }
 
     if (record == null) {
         LaunchedEffectBack(onBack)
         return
     }
 
+    fun localCorrectionReport(trip: Trip): SprayReportPayloadV1 {
+        val vineyard = state.vineyards.firstOrNull { it.id == trip.vineyardId }
+        val actuals = com.rork.vinetrack.data.SprayTankActualStore(context).load()
+            .filter { it.sprayRecordId == record.id }
+        return SprayReportPayloadV1.offlineProjection(
+            trip = trip,
+            record = record,
+            vineyardName = vineyard?.name ?: "Vineyard",
+            vineyardTimeZone = regionFormatter.settings.timezone ?: "UTC",
+            paddocks = state.paddocks,
+            machines = state.machines,
+            sprayEquipment = state.sprayEquipment,
+            tankActuals = actuals,
+            pinCount = state.pins.count { it.tripId == trip.id },
+        )
+    }
+
+    fun correctedReport(
+        base: SprayReportPayloadV1,
+        correction: com.rork.vinetrack.data.reporting.SprayTripCorrectionMetadata,
+    ): SprayReportPayloadV1 {
+        val machineName = correction.machineId?.let { id -> state.machines.firstOrNull { it.id == id }?.displayName }
+            ?: correction.machineNameSnapshot
+        val sprayUnitName = correction.sprayEquipmentId?.let { id -> state.sprayEquipment.firstOrNull { it.id == id }?.displayName }
+            ?: correction.sprayUnitNameSnapshot
+        return base.applyingCorrection(
+            correction = correction,
+            machineName = machineName,
+            tractorName = base.equipment.tractorName,
+            sprayUnitName = sprayUnitName,
+        )
+    }
+
     fun exportPdf() {
+        if (exportingPdf) return
         val reportTrip = resolveSprayTrip(record, state.trips)
         if (reportTrip == null) {
             Toast.makeText(context, "Spray record not available yet—sync and retry.", Toast.LENGTH_LONG).show()
@@ -1065,7 +1102,9 @@ private fun SprayDetailView(
         }
         val reportVineyard = state.vineyards.firstOrNull { it.id == reportTrip.vineyardId }
         exportScope.launch {
-            val ok = SprayRecordPdfExporter.exportAndShare(
+            exportingPdf = true
+            val ok = try {
+                SprayRecordPdfExporter.exportAndShare(
                 context = context,
             record = record,
             vineyardName = reportVineyard?.name ?: "Vineyard",
@@ -1081,8 +1120,12 @@ private fun SprayDetailView(
             vineyardLogoPath = reportVineyard?.logoPath,
             regionFormatter = regionFormatter,
             vineyardTimeZone = regionFormatter.settings.timezone ?: "UTC",
-            pinCount = state.pins.count { it.tripId == reportTrip.id },
-        )
+                            pinCount = state.pins.count { it.tripId == reportTrip.id },
+                    preferredOfflinePayload = correctedDisplayReport,
+                )
+            } finally {
+                exportingPdf = false
+            }
             if (!ok) {
                 Toast.makeText(context, "Couldn't create the PDF. Please try again.", Toast.LENGTH_SHORT).show()
             }
@@ -1099,7 +1142,13 @@ private fun SprayDetailView(
                 },
                 actions = {
                     if (!record.isManualEntry || com.rork.vinetrack.data.model.canManageManualSprays(state.currentRole)) {
-                        IconButton(onClick = { exportPdf() }) { Icon(Icons.Filled.PictureAsPdf, contentDescription = "Export as PDF") }
+                        IconButton(onClick = { exportPdf() }, enabled = !exportingPdf) {
+                            if (exportingPdf) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Filled.PictureAsPdf, contentDescription = "Export as PDF")
+                            }
+                        }
                     }
                     if (record.isTemplate) {
                         // The Program is a shared vineyard resource: an authorised
@@ -1121,10 +1170,21 @@ private fun SprayDetailView(
                                 onClick = {
                                     val tripId = record.tripId ?: return@IconButton
                                     loadingCorrection = true
-                                    vm.loadCanonicalSprayReport(tripId) { result ->
+                                    val trip = state.trips.firstOrNull { it.id == tripId }
+                                    if (trip == null) {
                                         loadingCorrection = false
-                                        result.onSuccess { correctionReport = it }
-                                            .onFailure { Toast.makeText(context, "Correction unavailable. Sync and try again.", Toast.LENGTH_LONG).show() }
+                                        Toast.makeText(context, "Correction unavailable. Sync and try again.", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        val base = correctedDisplayReport ?: localCorrectionReport(trip)
+                                        vm.loadSprayCorrectionMetadata(tripId) { result ->
+                                            loadingCorrection = false
+                                            result.onSuccess { correction ->
+                                                correctionReport = correction?.let { correctedReport(base, it) } ?: base
+                                            }.onFailure {
+                                                android.util.Log.e("SprayCorrection", "Correction metadata load failed: ${it.message}", it)
+                                                Toast.makeText(context, "Correction unavailable. Sync and try again.", Toast.LENGTH_LONG).show()
+                                            }
+                                        }
                                     }
                                 },
                             ) {
@@ -1190,11 +1250,18 @@ private fun SprayDetailView(
 
             // Equipment (placed right after Job Details, mirroring iOS where the
             // equipment fields live inside the Job Details card before weather).
-            val machineName = record.displayMachine(state.machines)
-            val sprayEquipName = resolveSprayEquipmentName(record, state.sprayEquipment)
+            val hasCorrection = (correctedDisplayReport?.metadataCorrectionVersion ?: 0) > 0
+            val machineName = if (hasCorrection) correctedDisplayReport?.equipment?.tractorName else record.displayMachine(state.machines)
+            val sprayEquipName = if (hasCorrection) correctedDisplayReport?.equipment?.sprayUnitName else resolveSprayEquipmentName(record, state.sprayEquipment)
             val equipParts = buildList {
                 sprayEquipName?.let { add(Triple(Icons.Filled.Agriculture, "Spray equipment", it)) }
                 machineName?.let { add(Triple(Icons.Filled.Agriculture, "Machine", it)) }
+                if (hasCorrection) {
+                    correctedDisplayReport?.trip?.operatorName?.let { add(Triple(Icons.Filled.Person, "Operator", it)) }
+                    correctedDisplayReport?.equipment?.fuelConsumptionLPerHour?.let { add(Triple(Icons.Filled.LocalGasStation, "Fuel use", "${trimNum(it)} L/hr")) }
+                    correctedDisplayReport?.equipment?.startEngineHours?.let { add(Triple(Icons.Filled.Schedule, "Start engine hours", trimNum(it))) }
+                    correctedDisplayReport?.equipment?.endEngineHours?.let { add(Triple(Icons.Filled.Schedule, "End engine hours", trimNum(it))) }
+                }
                 record.tractorGear?.takeIf { it.isNotBlank() }?.let { add(Triple(Icons.Filled.Agriculture, "Tractor Gear", it)) }
                 record.numberOfFansJets?.takeIf { it.isNotBlank() }?.let { add(Triple(Icons.Filled.Air, "No. Fans/Jets", it)) }
                 record.averageSpeed?.let { add(Triple(Icons.Filled.Schedule, "Avg speed", "${trimNum(it)} km/h")) }
@@ -1506,7 +1573,14 @@ private fun SprayDetailView(
             state = state,
             report = report,
             onDismiss = { correctionReport = null },
-            onSaved = { correctionReport = null },
+            onSaved = { correction ->
+                val updated = correctedReport(report, correction)
+                correctedDisplayReport = updated
+                correctionReport = null
+                vm.loadCanonicalSprayReport(report.identity.tripId) { refreshed ->
+                    refreshed.onSuccess { correctedDisplayReport = it }
+                }
+            },
         )
     }
 

@@ -166,6 +166,55 @@ struct SprayTankMixChemistryParityTests {
         #expect(abs(sum - total) < 0.0001)
     }
 
+    @Test("Two physical tanks each expose water and every planned chemical")
+    func twoTankPresentationUsesOnlyPlannerSplitOutputs() throws {
+        let carrier = try #require(self.carrier)
+        let products = [
+            SprayProductLineInput(
+                productId: "fungicide",
+                name: "Fungicide",
+                unit: "g",
+                basis: .per100Litres,
+                rate: 150,
+                unitDisplay: SprayProductUnitDisplay(displayUnit: "g", baseUnitsPerDisplayUnit: 1)
+            ),
+            SprayProductLineInput(
+                productId: "adjuvant",
+                name: "Adjuvant",
+                unit: "mL",
+                basis: .per100Litres,
+                rate: 50,
+                unitDisplay: SprayProductUnitDisplay(displayUnit: "mL", baseUnitsPerDisplayUnit: 1)
+            )
+        ]
+        let result = SprayApplicationPlanner.plan(
+            blocks: [SprayBlockInput(
+                blockId: "cab-franc",
+                grossAreaHectares: 0.49,
+                mappedRowLengthMetres: 1_750,
+                rowSpacingMetres: 2.8
+            )],
+            mode: .wholeBlock,
+            carrier: carrier,
+            tankCapacityLitres: 100,
+            productLines: products
+        )
+
+        #expect(result.tankSplit.totalTanks == 2)
+        let tankWater = [result.tankSplit.tankCapacityLitres, result.tankSplit.lastTankLitres]
+        #expect(abs(tankWater[0] - 100) < tolerance)
+        #expect(abs(tankWater[1] - 75) < tolerance)
+
+        for line in result.productLines {
+            let fullTankAmount = try #require(line.quantityPerFullTank)
+            let lastTankAmount = try #require(line.quantityInLastTank)
+            #expect(fullTankAmount > 0)
+            #expect(lastTankAmount > 0)
+            #expect(abs(fullTankAmount + lastTankAmount - (line.totalQuantity ?? 0)) < tolerance)
+        }
+        #expect(result.productLines.map(\.name) == ["Fungicide", "Adjuvant"])
+    }
+
     @Test("Zero full tanks means no full-tank amount is offered")
     func zeroFullTanksMeansNoFullTankRow() throws {
         // The whole 175 L job fits in one tank \u2014 there must be nothing for a

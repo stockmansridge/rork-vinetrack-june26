@@ -122,8 +122,13 @@ struct SprayRecordDetailView: View {
                     machines: store.currentVineyardMachines,
                     tractors: store.currentTractors,
                     sprayEquipment: store.sprayEquipment
-                ) { updated in
-                    self.canonicalReport = updated
+                ) { correction in
+                    applyCorrectionImmediately(correction)
+                    Task {
+                        if let refreshed = try? await SprayReportRepository.shared.fetch(tripId: trip.id) {
+                            canonicalReport = refreshed
+                        }
+                    }
                 }
             }
         }
@@ -164,11 +169,56 @@ struct SprayRecordDetailView: View {
         isLoadingCorrection = true
         defer { isLoadingCorrection = false }
         do {
-            canonicalReport = try await SprayReportRepository.shared.fetch(tripId: trip.id)
+            let base = localCorrectionReport(for: trip)
+            let correction = try await withSprayExportTimeout(seconds: 5) {
+                try await SprayReportRepository.shared.fetchCorrectionMetadata(tripId: trip.id)
+            }
+            canonicalReport = correction.map { correctedReport(base, correction: $0) } ?? base
             showCorrectionEditor = true
         } catch {
+            print("[SprayCorrection] metadata load failed: \(String(describing: error))")
             correctionError = "Sync this spray record and check your connection, then try again."
         }
+    }
+
+    private func localCorrectionReport(for trip: Trip) -> SprayReportPayloadV1 {
+        SprayReportPayloadV1.offlineProjection(
+            trip: trip,
+            record: record,
+            vineyardName: store.vineyards.first(where: { $0.id == trip.vineyardId })?.name ?? "Vineyard",
+            timeZone: store.settings.resolvedTimeZone,
+            paddocks: store.paddocks,
+            tractorName: store.resolvedSprayTractorName(record),
+            sprayUnitName: store.resolvedSprayEquipmentName(record),
+            tankActuals: SprayTankActualStore.shared.records.filter { $0.tripId == trip.id && $0.sprayRecordId == record.id }
+        )
+    }
+
+    private func correctedReport(
+        _ base: SprayReportPayloadV1,
+        correction: SprayTripCorrectionMetadata
+    ) -> SprayReportPayloadV1 {
+        let machineName = correction.machineId.flatMap { id in
+            store.currentVineyardMachines.first(where: { $0.id == id })?.displayName
+        } ?? correction.machineNameSnapshot
+        let tractorName = correction.tractorId.flatMap { id in
+            store.currentTractors.first(where: { $0.id == id })?.displayName
+        }
+        let sprayUnitName = correction.sprayEquipmentId.flatMap { id in
+            store.sprayEquipment.first(where: { $0.id == id })?.name
+        } ?? correction.sprayUnitNameSnapshot
+        return base.applyingCorrection(
+            correction,
+            machineName: machineName,
+            tractorName: tractorName,
+            sprayUnitName: sprayUnitName
+        )
+    }
+
+    @MainActor
+    private func applyCorrectionImmediately(_ correction: SprayTripCorrectionMetadata) {
+        guard let trip = tripForRecord else { return }
+        canonicalReport = correctedReport(canonicalReport ?? localCorrectionReport(for: trip), correction: correction)
     }
 
     // MARK: - Card Container
@@ -309,7 +359,10 @@ struct SprayRecordDetailView: View {
                     Divider()
                     detailRow("Block", value: trip.paddockName)
                 }
-                let tractorName = store.resolvedSprayTractorName(record)
+                let hasCorrection = (canonicalReport?.metadataCorrectionVersion ?? 0) > 0
+                let tractorName = hasCorrection
+                    ? (canonicalReport?.equipment.tractorName ?? "")
+                    : store.resolvedSprayTractorName(record)
                 if !tractorName.isEmpty {
                     Divider()
                     HStack {
@@ -321,14 +374,31 @@ struct SprayRecordDetailView: View {
                             .font(.subheadline)
                     }
                 }
-                let equipmentName = store.resolvedSprayEquipmentName(record)
+                let equipmentName = hasCorrection
+                    ? (canonicalReport?.equipment.sprayUnitName ?? "")
+                    : store.resolvedSprayEquipmentName(record)
                 if !equipmentName.isEmpty {
                     Divider()
                     detailRow("Equipment", value: equipmentName)
                 }
-                if let trip = tripForRecord, !trip.personName.isEmpty {
+                let operatorName = hasCorrection
+                    ? (canonicalReport?.trip.operatorName ?? "")
+                    : (tripForRecord?.personName ?? "")
+                if !operatorName.isEmpty {
                     Divider()
-                    detailRow("Operator", value: trip.personName)
+                    detailRow("Operator", value: operatorName)
+                }
+                if hasCorrection, let fuelRate = canonicalReport?.equipment.fuelConsumptionLPerHour {
+                    Divider()
+                    detailRow("Fuel use", value: "\(fuelRate.formatted(.number.precision(.fractionLength(0...2)))) L/hr")
+                }
+                if hasCorrection, let startHours = canonicalReport?.equipment.startEngineHours {
+                    Divider()
+                    detailRow("Start engine hours", value: startHours.formatted(.number.precision(.fractionLength(0...2))))
+                }
+                if hasCorrection, let endHours = canonicalReport?.equipment.endEngineHours {
+                    Divider()
+                    detailRow("End engine hours", value: endHours.formatted(.number.precision(.fractionLength(0...2))))
                 }
                 if !record.tractorGear.isEmpty {
                     Divider()
@@ -884,8 +954,13 @@ extension SprayRecordDetailView {
         let operatorCatName = operatorCategoryNameForTrip
         let includeCostings = canViewFinancials && includeCostingsInExport
         let recordCopy = record
-        let resolvedTractorName = store.resolvedSprayTractorName(record)
-        let resolvedEquipmentName = store.resolvedSprayEquipmentName(record)
+        let hasCorrection = (canonicalReport?.metadataCorrectionVersion ?? 0) > 0
+        let resolvedTractorName = hasCorrection
+            ? (canonicalReport?.equipment.tractorName ?? "")
+            : store.resolvedSprayTractorName(record)
+        let resolvedEquipmentName = hasCorrection
+            ? (canonicalReport?.equipment.sprayUnitName ?? "")
+            : store.resolvedSprayEquipmentName(record)
         let exportTimeZone = store.settings.resolvedTimeZone
 
         // Build TripCostService.Result for owner/manager exports so we render
@@ -932,25 +1007,14 @@ extension SprayRecordDetailView {
         }()
 
         Task {
+            defer { isGeneratingPDF = false }
             guard let trip else {
-                await MainActor.run {
-                    exportError = "Spray record not available yet—sync and retry."
-                    isGeneratingPDF = false
-                }
+                exportError = "Spray record not available yet—sync and retry."
                 return
             }
-            var resolvedLogoData = logoData
-            if resolvedLogoData == nil, let logoPath = exportVineyard?.logoPath {
-                do {
-                    resolvedLogoData = try await VineyardLogoStorageService().downloadLogo(path: logoPath, vineyardId: trip.vineyardId, remoteUpdatedAt: exportVineyard?.logoUpdatedAt)
-                } catch {
-                    await MainActor.run {
-                        exportError = "The configured vineyard logo could not be loaded. Check your connection and try the export again."
-                        isGeneratingPDF = false
-                    }
-                    return
-                }
-            }
+
+            // Local projection is the export authority. Every remote lookup is
+            // optional, bounded enrichment and can never prevent PDF creation.
             let offlinePayload = SprayReportPayloadV1.offlineProjection(
                 trip: trip,
                 record: recordCopy,
@@ -961,9 +1025,31 @@ extension SprayRecordDetailView {
                 sprayUnitName: resolvedEquipmentName,
                 tankActuals: SprayTankActualStore.shared.records.filter { $0.tripId == trip.id && $0.sprayRecordId == recordCopy.id }
             )
-            await SprayReportRepository.shared.captureUnavailableIfDue(for: trip, at: trip.endTime ?? Date(), isFinal: trip.endTime != nil)
-            let payload = (try? await SprayReportRepository.shared.fetch(tripId: trip.id)) ?? offlinePayload
-            let snapshot = await SprayReportRepository.shared.routeImage(for: payload, fallbackTrip: trip)
+
+            var resolvedLogoData = logoData
+            if resolvedLogoData == nil, let logoPath = exportVineyard?.logoPath {
+                resolvedLogoData = try? await withSprayExportTimeout(seconds: 5) {
+                    try await VineyardLogoStorageService().downloadLogo(
+                        path: logoPath,
+                        vineyardId: trip.vineyardId,
+                        remoteUpdatedAt: exportVineyard?.logoUpdatedAt
+                    )
+                }
+            }
+
+            _ = try? await withSprayExportTimeout(seconds: 5) {
+                await SprayReportRepository.shared.captureUnavailableIfDue(
+                    for: trip,
+                    at: trip.endTime ?? Date(),
+                    isFinal: trip.endTime != nil
+                )
+            }
+            let payload = (try? await withSprayExportTimeout(seconds: 8) {
+                try await SprayReportRepository.shared.fetch(tripId: trip.id)
+            }) ?? canonicalReport ?? offlinePayload
+            let snapshot = try? await withSprayExportTimeout(seconds: 6) {
+                await SprayReportRepository.shared.routeImage(for: payload, fallbackTrip: trip)
+            }
             let data = SprayRecordPDFService.generatePDF(
                 payload: payload,
                 record: recordCopy,
@@ -988,9 +1074,32 @@ extension SprayRecordDetailView {
             let url = SprayRecordPDFService.savePDFToTemp(data: data, fileName: fileName)
             await MainActor.run {
                 sharePDFURL = ShareURL(url: url)
-                isGeneratingPDF = false
             }
         }
+    }
+}
+
+private enum SprayExportTimeoutError: Error {
+    case timedOut
+}
+
+/// Bounds optional remote PDF enrichment so local report generation remains
+/// available offline. The losing task is cancelled immediately.
+private func withSprayExportTimeout<Value: Sendable>(
+    seconds: Double,
+    operation: @escaping @Sendable () async throws -> Value
+) async throws -> Value {
+    try await withThrowingTaskGroup(of: Value.self) { group in
+        group.addTask { try await operation() }
+        group.addTask {
+            try await Task.sleep(for: .seconds(seconds))
+            throw SprayExportTimeoutError.timedOut
+        }
+        guard let value = try await group.next() else {
+            throw SprayExportTimeoutError.timedOut
+        }
+        group.cancelAll()
+        return value
     }
 }
 

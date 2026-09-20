@@ -8,13 +8,34 @@ import CryptoKit
 @MainActor
 final class SprayReportRepository {
     static let shared: SprayReportRepository = SprayReportRepository()
+
+    private nonisolated struct FetchRequest: Encodable, Sendable {
+        let p_trip_id: UUID
+    }
+
+    private nonisolated struct CorrectionRequest: Encodable, Sendable {
+        let p_operation_id: UUID
+        let p_trip_id: UUID
+        let p_expected_version: Int
+        let p_machine_id: UUID?
+        let p_tractor_id: UUID?
+        let p_spray_equipment_id: UUID?
+        let p_operator_user_id: UUID?
+        let p_fuel_consumption_l_per_hour: Double?
+        let p_start_engine_hours: Double?
+        let p_end_engine_hours: Double?
+    }
+
+    private nonisolated struct CorrectionResponse: Decodable, Sendable {
+        let correction: SprayTripCorrectionMetadata
+    }
+
     private init() {}
 
     func fetch(tripId: UUID) async throws -> SprayReportPayloadV1 {
         await recoverRows(tripId: tripId)
-        struct Request: Encodable { let p_trip_id: UUID }
         return try await SupabaseClientProvider.shared.client
-            .rpc("get_spray_report_v1", params: Request(p_trip_id: tripId))
+            .rpc("get_spray_report_v1", params: FetchRequest(p_trip_id: tripId))
             .execute()
             .value
     }
@@ -30,7 +51,21 @@ final class SprayReportRepository {
         return reports
     }
 
+    /// Reads only the protected correction row. This path never performs row
+    /// recovery or canonical report enrichment.
+    func fetchCorrectionMetadata(tripId: UUID) async throws -> SprayTripCorrectionMetadata? {
+        let rows: [SprayTripCorrectionMetadata] = try await SupabaseClientProvider.shared.client
+            .from("spray_trip_corrections")
+            .select("trip_id,version,machine_id,tractor_id,spray_equipment_id,operator_user_id,machine_name_snapshot,spray_unit_name_snapshot,operator_name_snapshot,fuel_consumption_l_per_hour,fuel_consumption_source,start_engine_hours,end_engine_hours")
+            .eq("trip_id", value: tripId.uuidString)
+            .limit(1)
+            .execute()
+            .value
+        return rows.first
+    }
+
     func correctMetadata(
+        operationId: UUID,
         tripId: UUID,
         expectedVersion: Int,
         machineId: UUID?,
@@ -40,31 +75,18 @@ final class SprayReportRepository {
         fuelConsumptionLPerHour: Double?,
         startEngineHours: Double?,
         endEngineHours: Double?
-    ) async throws -> SprayReportPayloadV1 {
-        struct Request: Encodable {
-            let p_operation_id: UUID
-            let p_trip_id: UUID
-            let p_expected_version: Int
-            let p_machine_id: UUID?
-            let p_tractor_id: UUID?
-            let p_spray_equipment_id: UUID?
-            let p_operator_user_id: UUID?
-            let p_fuel_consumption_l_per_hour: Double?
-            let p_start_engine_hours: Double?
-            let p_end_engine_hours: Double?
-        }
-        struct Response: Decodable { let report: SprayReportPayloadV1 }
-        let request = Request(
-            p_operation_id: UUID(), p_trip_id: tripId, p_expected_version: expectedVersion,
+    ) async throws -> SprayTripCorrectionMetadata {
+        let request = CorrectionRequest(
+            p_operation_id: operationId, p_trip_id: tripId, p_expected_version: expectedVersion,
             p_machine_id: machineId, p_tractor_id: tractorId, p_spray_equipment_id: sprayEquipmentId,
             p_operator_user_id: operatorUserId, p_fuel_consumption_l_per_hour: fuelConsumptionLPerHour,
             p_start_engine_hours: startEngineHours, p_end_engine_hours: endEngineHours
         )
-        let response: Response = try await SupabaseClientProvider.shared.client
+        let response: CorrectionResponse = try await SupabaseClientProvider.shared.client
             .rpc("correct_spray_trip_metadata_v1", params: request)
             .execute()
             .value
-        return response.report
+        return response.correction
     }
 
     /// Runs the shared server derivation; ambiguous paths are intentionally left unresolved.

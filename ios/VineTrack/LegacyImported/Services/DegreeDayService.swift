@@ -95,9 +95,9 @@ class DegreeDayService {
     private let baseTemp: Double = 10.0
     private let beddCap: Double = 19.0
     static let recentCompletedDayRefreshCount: Int = 3
-    private let calendar: Calendar
+    private var calendar: Calendar
 
-    private var cacheKey: String { "vinetrack_gdd_temps_cache_v2" }
+    private var cacheKey: String { "vinetrack_gdd_temps_cache_v3" }
     private let lastDailySyncKey = "vinetrack_gdd_last_daily_sync"
 
     private static let dateFormatter: DateFormatter = {
@@ -119,6 +119,11 @@ class DegreeDayService {
         calendar.timeZone = timeZone
         self.calendar = calendar
         loadCache()
+    }
+
+    func configure(timeZone: TimeZone) {
+        guard calendar.timeZone.identifier != timeZone.identifier else { return }
+        calendar.timeZone = timeZone
     }
 
     private func compactKey(for date: Date) -> String {
@@ -951,7 +956,11 @@ class DegreeDayService {
                         return
                     }
                     result = try await VineyardDavisProxyService.fetchHistoricDailyTemps(
-                        vineyardId: vid, stationId: stationId, from: from, to: to
+                        vineyardId: vid,
+                        stationId: stationId,
+                        from: from,
+                        to: to,
+                        timeZone: calendar.timeZone
                     )
                 } else {
                     let apiKey = WeatherKeychain.get(.apiKey) ?? ""
@@ -962,8 +971,12 @@ class DegreeDayService {
                         return
                     }
                     result = try await DavisWeatherLinkService.fetchDailyTemperatures(
-                        apiKey: apiKey, apiSecret: apiSecret,
-                        stationId: stationId, from: from, to: to
+                        apiKey: apiKey,
+                        apiSecret: apiSecret,
+                        stationId: stationId,
+                        from: from,
+                        to: to,
+                        timeZone: calendar.timeZone
                     )
                 }
                 for (day, hi) in result.dailyHighC {

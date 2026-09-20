@@ -1118,7 +1118,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { onResult(runCatching { sprayReportRepository.fetch(tripId) }) }
     }
 
+    fun loadSprayCorrectionMetadata(
+        tripId: String,
+        onResult: (Result<com.rork.vinetrack.data.reporting.SprayTripCorrectionMetadata?>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            onResult(runCatching {
+                kotlinx.coroutines.withTimeout(5_000) {
+                    sprayReportRepository.fetchCorrectionMetadata(tripId)
+                }
+            })
+        }
+    }
+
     fun correctSprayTripMetadata(
+        operationId: String,
         tripId: String,
         expectedVersion: Long,
         machineId: String?,
@@ -1128,11 +1142,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         fuelRate: Double?,
         startEngineHours: Double?,
         endEngineHours: Double?,
-        onResult: (Result<com.rork.vinetrack.data.reporting.SprayReportPayloadV1>) -> Unit,
+        onResult: (Result<com.rork.vinetrack.data.reporting.SprayTripCorrectionMetadata>) -> Unit,
     ) {
         viewModelScope.launch {
             onResult(runCatching {
-                sprayReportRepository.correctMetadata(tripId, expectedVersion, machineId, tractorId,
+                sprayReportRepository.correctMetadata(operationId, tripId, expectedVersion, machineId, tractorId,
                     sprayEquipmentId, operatorUserId, fuelRate, startEngineHours, endEngineHours)
             })
         }

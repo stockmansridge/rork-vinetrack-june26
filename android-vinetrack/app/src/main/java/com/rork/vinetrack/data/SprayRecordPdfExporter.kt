@@ -27,7 +27,7 @@ import com.rork.vinetrack.data.model.resolveSprayEquipmentName
 import com.rork.vinetrack.data.model.SprayEquipment
 import com.rork.vinetrack.data.model.parseIsoToEpochMs
 import com.rork.vinetrack.data.spray.SprayBlockAttributionDisplay
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -171,16 +171,15 @@ object SprayRecordPdfExporter {
         regionFormatter: RegionFormatter = RegionFormatter(),
         vineyardTimeZone: String = regionFormatter.settings.timezone ?: "UTC",
         pinCount: Int = 0,
+        preferredOfflinePayload: SprayReportPayloadV1? = null,
     ): Boolean {
         return try {
             require(trip != null) { "Spray record not available yet—sync and retry" }
             val session = SessionStore(context)
-            val resolvedVineyardLogo = if (!vineyardLogoPath.isNullOrBlank()) {
-                val bytes = withTimeout(5_000) { VineyardLogoRepository(session).download(vineyardLogoPath) }
-                requireNotNull(BitmapFactory.decodeByteArray(bytes, 0, bytes.size)) { "Configured vineyard logo could not be decoded" }
-            } else logo
             val actuals = SprayTankActualStore(context).load().filter { it.sprayRecordId == record.id }
-            val offlinePayload = SprayReportPayloadV1.offlineProjection(
+            // Build the complete local report before attempting any network
+            // enrichment. Remote failures and timeouts only omit enhancements.
+            val offlinePayload = preferredOfflinePayload ?: SprayReportPayloadV1.offlineProjection(
                 trip = trip,
                 record = record,
                 vineyardName = vineyardName,
@@ -192,14 +191,37 @@ object SprayRecordPdfExporter {
                 pinCount = pinCount,
             )
             val repository = SprayReportRepository(session)
-            repository.captureUnavailableIfDue(trip, trip.endTime?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() } ?: java.time.Instant.now(), isFinal = trip.endTime != null)
-            val payload = runCatching { repository.fetch(trip.id) }.getOrDefault(offlinePayload)
-            val resolvedRoute = payload.route ?: runCatching { repository.ensureRoute(trip) }.getOrNull()
-            val sharedRoute = resolvedRoute?.let { route ->
+            val resolvedVineyardLogo = if (!vineyardLogoPath.isNullOrBlank()) {
+                withTimeoutOrNull(5_000) {
+                    runCatching {
+                        val bytes = VineyardLogoRepository(session).download(vineyardLogoPath)
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    }.getOrNull()
+                } ?: logo
+            } else logo
+            withTimeoutOrNull(5_000) {
                 runCatching {
-                    val bytes = repository.downloadRoute(route)
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                }.getOrNull()
+                    repository.captureUnavailableIfDue(
+                        trip,
+                        trip.endTime?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() }
+                            ?: java.time.Instant.now(),
+                        isFinal = trip.endTime != null,
+                    )
+                }
+            }
+            val payload = withTimeoutOrNull(8_000) {
+                runCatching { repository.fetch(trip.id) }.getOrNull()
+            } ?: offlinePayload
+            val resolvedRoute = payload.route ?: withTimeoutOrNull(5_000) {
+                runCatching { repository.ensureRoute(trip) }.getOrNull()
+            }
+            val sharedRoute = resolvedRoute?.let { route ->
+                withTimeoutOrNull(5_000) {
+                    runCatching {
+                        val bytes = repository.downloadRoute(route)
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    }.getOrNull()
+                }
             }
             val doc = PdfDocument()
             val officialLogo = BitmapFactory.decodeResource(context.resources, R.drawable.vinetrack_logo)

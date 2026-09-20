@@ -2,6 +2,7 @@ package com.rork.vinetrack.ui.screens
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,8 +32,10 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,6 +45,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -93,6 +97,7 @@ internal data class BlockGddSeries(
     val points: List<GddPoint>,
     val resetMs: Long,
     val total: Double,
+    val isIncomplete: Boolean,
 )
 
 private data class VarietyGddResult(
@@ -191,6 +196,14 @@ fun VarietyGDDDetailScreen(
                 sourceConfigured = result.sourceConfigured,
                 sourceLabel = result.sourceLabel,
             )
+            if (series.any { it.isIncomplete }) {
+                Text(
+                    "Incomplete weather data",
+                    color = VineColors.Orange,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
 
             when {
                 weather.isUpdating && !weather.hasCachedData -> {
@@ -251,15 +264,21 @@ private fun VarietyHeaderCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Season to date", color = vine.textSecondary, fontSize = 12.sp)
                     Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("${averageTotal.toInt()}", color = color, fontSize = 32.sp, fontWeight = FontWeight.Bold)
-                        Text("°C·days", color = vine.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(bottom = 4.dp))
+                        Text(
+                            if (target > 0) "${averageTotal.toInt()} / ${target.toInt()} GDD" else "${averageTotal.toInt()} GDD",
+                            color = color,
+                            fontSize = 27.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
                     }
                 }
                 if (target > 0) {
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text("Target", color = vine.textSecondary, fontSize = 12.sp)
-                        Text("${target.toInt()}", color = vine.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                    }
+                    Text(
+                        if (progress > 0 && progress < 0.01) "<1%" else "${(progress * 100).toInt()}%",
+                        color = color,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 }
             }
 
@@ -274,7 +293,13 @@ private fun VarietyHeaderCard(
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("${(progress * 100).toInt()}% of optimal", color = color, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(
+                    "${if (progress > 0 && progress < 0.01) "<1%" else "${(progress * 100).toInt()}%"} of optimal",
+                    color = color,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
                 if (target > 0) {
                     if (averageTotal >= target) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -372,6 +397,7 @@ private fun CumulativeChartCard(points: List<GddPoint>, target: Double) {
 @Composable
 private fun DailyChartCard(points: List<GddPoint>) {
     val vine = LocalVineColors.current
+    var selectedIndex by remember(points) { mutableStateOf<Int?>(null) }
     VineyardCard {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -384,21 +410,69 @@ private fun DailyChartCard(points: List<GddPoint>) {
                 val maxDaily = points.maxOf { it.daily }.coerceAtLeast(0.1)
                 val reported = progressColorFor(0.5)
                 val estimated = vine.textSecondary.copy(alpha = 0.5f)
-                Canvas(modifier = Modifier.fillMaxWidth().height(120.dp)) {
-                    val w = size.width
-                    val h = size.height
-                    val n = points.size
-                    val slot = w / n
-                    val barW = (slot * 0.7f).coerceAtLeast(1f)
-                    points.forEachIndexed { i, p ->
-                        val bh = (p.daily / maxDaily * h).toFloat()
-                        val left = i * slot + (slot - barW) / 2f
-                        drawRect(
-                            color = if (p.interpolated) estimated else reported.copy(alpha = 0.8f),
-                            topLeft = Offset(left, h - bh),
-                            size = androidx.compose.ui.geometry.Size(barW, bh),
+                selectedIndex?.let { index ->
+                    points.getOrNull(index)?.let { point ->
+                        Text(
+                            "${longDate(point.epochDayMs)} · ${String.format(Locale.US, "%.2f", point.daily)} GDD · ${if (point.interpolated) "Estimated" else "Reported"}",
+                            color = vine.textPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
                         )
                     }
+                }
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                    Column(
+                        modifier = Modifier.width(36.dp).height(132.dp),
+                        verticalArrangement = Arrangement.SpaceBetween,
+                        horizontalAlignment = Alignment.End,
+                    ) {
+                        Text(String.format(Locale.US, "%.1f", maxDaily), color = vine.textSecondary, fontSize = 10.sp)
+                        Text(String.format(Locale.US, "%.1f", maxDaily / 2.0), color = vine.textSecondary, fontSize = 10.sp)
+                        Text("0", color = vine.textSecondary, fontSize = 10.sp)
+                    }
+                    Canvas(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(132.dp)
+                            .pointerInput(points) {
+                                detectTapGestures { offset ->
+                                    if (points.isNotEmpty() && size.width > 0) {
+                                        selectedIndex = ((offset.x / size.width.toFloat()) * points.size)
+                                            .toInt().coerceIn(points.indices)
+                                    }
+                                }
+                            },
+                    ) {
+                        val w = size.width
+                        val h = size.height
+                        val slot = w / points.size
+                        val barW = (slot * 0.7f).coerceAtLeast(1f)
+                        drawLine(vine.cardBorder, Offset(0f, 0f), Offset(w, 0f), 1f)
+                        drawLine(vine.cardBorder, Offset(0f, h / 2f), Offset(w, h / 2f), 1f)
+                        drawLine(vine.cardBorder, Offset(0f, h), Offset(w, h), 1f)
+                        points.forEachIndexed { i, point ->
+                            val barHeight = (point.daily / maxDaily * h).toFloat()
+                            val left = i * slot + (slot - barW) / 2f
+                            drawRect(
+                                color = if (point.interpolated) estimated else reported.copy(alpha = 0.8f),
+                                topLeft = Offset(left, h - barHeight),
+                                size = androidx.compose.ui.geometry.Size(barW, barHeight),
+                            )
+                            if (selectedIndex == i) {
+                                drawRect(
+                                    color = vine.textPrimary,
+                                    topLeft = Offset(left, (h - barHeight).coerceAtLeast(0f)),
+                                    size = androidx.compose.ui.geometry.Size(barW, barHeight.coerceAtLeast(2f)),
+                                    style = Stroke(width = 2f),
+                                )
+                            }
+                        }
+                    }
+                }
+                Row(modifier = Modifier.fillMaxWidth().padding(start = 36.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(shortDate(points.first().epochDayMs), color = vine.textSecondary, fontSize = 10.sp)
+                    if (points.size > 2) Text(shortDate(points[points.lastIndex / 2].epochDayMs), color = vine.textSecondary, fontSize = 10.sp)
+                    Text(shortDate(points.last().epochDayMs), color = vine.textSecondary, fontSize = 10.sp)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     LegendDot(reported.copy(alpha = 0.8f), "Reported")
@@ -428,7 +502,14 @@ private fun BlockBreakdownRow(series: BlockGddSeries, target: Double) {
                 Text("Since ${shortDate(series.resetMs)}", color = vine.textSecondary, fontSize = 11.sp)
             }
             val p = if (target > 0) series.total / target else 0.0
-            Text("${series.total.toInt()} GDD", color = progressColorFor(p), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Column(horizontalAlignment = Alignment.End) {
+                Text("${series.total.toInt()} / ${target.toInt()} GDD", color = progressColorFor(p), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (p > 0 && p < 0.01) "<1%" else "${(p.coerceAtLeast(0.0) * 100).toInt()}%",
+                    color = progressColorFor(p),
+                    fontSize = 11.sp,
+                )
+            }
         }
     }
 }
@@ -488,7 +569,13 @@ internal fun computeVarietySeries(
         globalResetMode, globalCalculationMode, timeZone, nowMs,
     )
     if (!calculation.hasValue || calculation.points.isEmpty() || calculation.resetDateMs == null) null
-    else BlockGddSeries(block, calculation.points, calculation.resetDateMs, calculation.total)
+    else BlockGddSeries(
+        block,
+        calculation.points,
+        calculation.resetDateMs,
+        calculation.total,
+        calculation.isIncomplete,
+    )
 }
 
 /** Daily-aligned average cumulative across all block series (mirrors iOS unionPoints). */
@@ -502,9 +589,13 @@ private fun unionPoints(series: List<BlockGddSeries>): List<GddPoint> {
             sums[p.epochDayMs] = (cur.first + p.cumulative) to (cur.second + 1)
         }
     }
-    return longest.mapNotNull { p ->
-        val agg = sums[p.epochDayMs] ?: return@mapNotNull null
-        GddPoint(p.epochDayMs, p.daily, agg.first / agg.second, p.interpolated)
+    var previousCumulative = 0.0
+    return longest.mapNotNull { point ->
+        val aggregate = sums[point.epochDayMs] ?: return@mapNotNull null
+        val cumulative = aggregate.first / aggregate.second
+        val daily = cumulative - previousCumulative
+        previousCumulative = cumulative
+        GddPoint(point.epochDayMs, daily, cumulative, point.interpolated)
     }
 }
 
