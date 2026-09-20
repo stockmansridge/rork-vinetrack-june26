@@ -169,13 +169,15 @@ class VineyardInsightsController(
         val today = clock().atZone(java.time.ZoneId.systemDefault()).toLocalDate()
         val visitDate = runCatching { LocalDate.parse(visit.scoutDateIso) }.getOrNull()
         if (visitDate != today) {
-            setWeather(
-                visitId,
-                ScoutWeatherSnapshot.unavailable(
-                    capturedAt,
-                    "Current weather not used for an older Scout visit",
-                ),
-            )
+            if (visit.weather == null) {
+                setWeather(
+                    visitId,
+                    ScoutWeatherSnapshot.unavailable(
+                        capturedAt,
+                        "Current weather not used for an older Scout visit",
+                    ),
+                )
+            }
             return
         }
         val snapshot = runCatching { weatherLoader?.invoke(visit.vineyardId, capturedAt) }

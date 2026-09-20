@@ -319,6 +319,8 @@ private fun ScoutWorkspace(
     var completionError by remember { mutableStateOf<String?>(null) }
     var showAllVintages by remember { mutableStateOf(false) }
     var visitPendingDeletion by remember { mutableStateOf<ScoutVisit?>(null) }
+    var reportVisit by remember { mutableStateOf<ScoutVisit?>(null) }
+    var cameraError by remember { mutableStateOf<String?>(null) }
     var cameraVisitId by rememberSaveable { mutableStateOf<String?>(null) }
     var cameraAssessmentId by rememberSaveable { mutableStateOf<String?>(null) }
     var cameraItemCode by rememberSaveable { mutableStateOf<String?>(null) }
@@ -331,15 +333,23 @@ private fun ScoutWorkspace(
             cameraAssessmentId = null
             cameraItemCode = null
             if (uri != null && visitId != null && assessmentId != null && item != null) {
-                vm.captureScoutPhoto(visitId, assessmentId, item, uri) { }
+                vm.captureScoutPhoto(visitId, assessmentId, item, uri) { saved ->
+                    if (!saved) cameraError = "The photograph could not be read or saved. Try again."
+                }
             }
         },
-        onError = {
+        onError = { message ->
             cameraVisitId = null
             cameraAssessmentId = null
             cameraItemCode = null
+            cameraError = message
         },
     )
+    reportVisit?.let { visit ->
+        ScoutReportScreen(vm = vm, state = state, visit = visit, onBack = { reportVisit = null })
+        return
+    }
+
     val currentVintage = VintageResolver.vintageYear(
         LocalDate.now(),
         state.seasonStartMonth,
@@ -366,6 +376,10 @@ private fun ScoutWorkspace(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item { PreviewBadge() }
+
+            cameraError?.let { error ->
+                item { VineyardCard { Text(error, color = VineColors.Destructive); TextButton(onClick = { cameraError = null }) { Text("Dismiss") } } }
+            }
 
             if (writeFailed) {
                 item {
@@ -437,6 +451,7 @@ private fun ScoutWorkspace(
                         visits = historyVisits,
                         paddocks = state.paddocks,
                         onOpen = { insights.openVisit(it) },
+                        onReport = { reportVisit = it },
                         onEdit = { visit ->
                             if (!visit.isEditable) insights.reopenVisit(visit.id)
                             insights.openVisit(visit.id)
@@ -447,6 +462,13 @@ private fun ScoutWorkspace(
                 }
             } else {
                 item { ScoutVisitHeader(vm, state, current) }
+                item {
+                    ScoutWorkspaceMap(
+                        visit = current,
+                        blocks = current.assessments.mapNotNull { assessment -> state.paddocks.firstOrNull { it.id == assessment.paddockId } },
+                        pins = state.pins,
+                    )
+                }
                 item {
                     ScoutBlockPicker(
                         paddocks = state.paddocks,
@@ -513,6 +535,7 @@ private fun ScoutWorkspace(
             completionCanRetry = reviewVisit.isEditable || insights.completionNeedsRetry(reviewVisit.id),
             completionError = completionError,
             onDismiss = { showReview = false },
+            onViewReport = { reportVisit = reviewVisit },
             onComplete = {
                 if (insights.completeVisit(reviewVisit.id)) {
                     completionError = null
@@ -532,6 +555,7 @@ private fun ScoutList(
     visits: List<ScoutVisit>,
     paddocks: List<Paddock>,
     onOpen: (String) -> Unit,
+    onReport: (ScoutVisit) -> Unit,
     onEdit: (ScoutVisit) -> Unit,
     onDelete: (ScoutVisit) -> Unit,
     syncStatus: (ScoutVisit) -> String,
@@ -581,6 +605,7 @@ private fun ScoutList(
                 Text("Vintage ${VintageYearText.format(visit.vintageYear)}", fontSize = 12.sp, color = vine.textSecondary)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = { onReport(visit) }) { Text("View Report") }
                 TextButton(onClick = { onEdit(visit) }) {
                     Text(if (visit.isEditable) "Edit" else "Reopen and edit")
                 }
@@ -1176,6 +1201,7 @@ private fun ScoutReviewDialog(
     completionCanRetry: Boolean,
     completionError: String?,
     onDismiss: () -> Unit,
+    onViewReport: () -> Unit,
     onComplete: () -> Unit,
 ) {
     AlertDialog(
@@ -1206,7 +1232,12 @@ private fun ScoutReviewDialog(
                 Text("Complete Scout")
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Keep editing") } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onViewReport) { Text("View Report") }
+                TextButton(onClick = onDismiss) { Text("Keep editing") }
+            }
+        },
     )
 }
 

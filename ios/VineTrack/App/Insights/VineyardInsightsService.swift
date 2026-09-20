@@ -157,6 +157,15 @@ final class VineyardInsightsService {
     func captureWeather(visitID: UUID) async {
         guard let current = visit(visitID), current.isEditable else { return }
         let capturedAt = now()
+        guard Calendar.current.isDateInToday(current.scoutDate) else {
+            if current.weather == nil {
+                setWeather(visitID: visitID, weather: .unavailable(
+                    capturedAt: capturedAt,
+                    source: "Current weather not used for an older Scout visit"
+                ))
+            }
+            return
+        }
         do {
             guard let snapshot = try await WeatherCurrentService().fetchCachedCurrent(vineyardId: current.vineyardID),
                   snapshot.status == "ok" else {
@@ -668,6 +677,12 @@ final class VineyardInsightsService {
         await syncCoordinator.request(vineyardID: vineyardID) { [weak self] in
             guard let self, generation == self.syncGeneration else { return }
             self.isSyncing = true
+            guard self.store.repairMissingObligations() else {
+                self.lastSyncError = "Local changes could not be prepared safely for sync."
+                return
+            }
+            self.visits = self.store.loadVisits()
+            self.notes = self.store.loadNotes()
             self.processLocalFileCleanup(vineyardID: vineyardID)
             await self.pullDeletions(vineyardID: vineyardID, generation: generation)
             guard generation == self.syncGeneration else { return }
@@ -1162,7 +1177,7 @@ final class VineyardInsightsService {
         let hasLocalPending = store.loadQueue().contains {
             $0.recordID == row.id && $0.entity == .vintageNote
         }
-        if hasLocalPending || store.isDeleted(
+        if hasLocalPending || store.isSyncOwed(noteID: row.id) || store.isDeleted(
             vineyardID: row.vineyard_id,
             entity: .vintageNote,
             entityID: row.id
@@ -1203,7 +1218,7 @@ final class VineyardInsightsService {
         let hasLocalPending = store.loadQueue().contains {
             $0.recordID == row.id && $0.entity == .scoutVisit
         }
-        if hasLocalPending || store.isDeleted(
+        if hasLocalPending || store.isSyncOwed(visitID: row.id) || store.isDeleted(
             vineyardID: row.vineyard_id,
             entity: .scoutVisit,
             entityID: row.id
@@ -1219,6 +1234,7 @@ final class VineyardInsightsService {
         }
 
         guard let scoutDate = VineyardInsightsSyncRepository.parseDay(row.scout_date) else { return }
+        let localVisit = store.loadVisits().first { $0.id == row.id }
 
         let builtAssessments: [ScoutBlockAssessment] = assessments
             .filter { VineyardInsightsSyncRepository.parseTimestamp($0.deleted_at) == nil }
@@ -1229,7 +1245,7 @@ final class VineyardInsightsService {
                 }
                 let built: [ScoutObservation] = rows.compactMap { observationRow in
                     guard let item = ScoutItem.byCode(observationRow.item_kind) else { return nil }
-                    let ownPhotos: [ScoutPhoto] = photos
+                    var ownPhotos: [ScoutPhoto] = photos
                         .filter {
                             $0.observation_id == observationRow.id
                                 && VineyardInsightsSyncRepository.parseTimestamp($0.deleted_at) == nil
@@ -1277,6 +1293,14 @@ final class VineyardInsightsService {
                                 storagePath: photoRow.storage_path
                             )
                         }
+                    if let localObservation = localVisit?.assessments
+                        .first(where: { $0.id == assessmentRow.id })?
+                        .observations.first(where: { $0.id == observationRow.id }) {
+                        let localByID = Dictionary(uniqueKeysWithValues: localObservation.photos.map { ($0.id, $0) })
+                        ownPhotos = ownPhotos.map { localByID[$0.id] ?? $0 }
+                        let serverIDs = Set(ownPhotos.map(\.id))
+                        ownPhotos.append(contentsOf: localObservation.photos.filter { !serverIDs.contains($0.id) })
+                    }
                     return ScoutObservation(
                         id: observationRow.id,
                         assessmentID: assessmentRow.id,

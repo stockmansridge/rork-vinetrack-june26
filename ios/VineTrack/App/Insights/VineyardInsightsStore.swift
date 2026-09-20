@@ -721,10 +721,18 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         queueID: UUID = UUID()
     ) -> Bool {
         var all = loadQueue()
+        if let existingDelete = all.first(where: {
+            $0.recordID == recordID && $0.entity == entity && $0.operation == .delete
+        }), operation == .upsert {
+            return true
+        }
+        let preservedID = all.first(where: {
+            $0.recordID == recordID && $0.entity == entity && $0.operation == operation
+        })?.id ?? queueID
         all.removeAll { $0.recordID == recordID && $0.entity == entity }
         all.append(
             QueuedOperation(
-                id: queueID,
+                id: preservedID,
                 recordID: recordID,
                 vineyardID: vineyardID,
                 entity: entity,
@@ -761,23 +769,33 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
     @discardableResult
     func repairMissingObligations() -> Bool {
         var success = true
-        let queue = loadQueue()
+        var queue = loadQueue()
+        let consumed = decode([ConsumedDeletion].self, Key.consumedDeletions) ?? []
         for row in decode([StoredVisit].self, Key.visits) ?? [] where row.syncOwed == true {
-            if !queue.contains(where: { $0.entity == .scoutVisit && $0.recordID == row.id && $0.clientUpdatedAt == row.clientUpdatedAt }) {
+            let deletionWins = queue.contains { $0.entity == .scoutVisit && $0.recordID == row.id && $0.operation == .delete }
+                || consumed.contains { $0.vineyardID == row.vineyardID && $0.entity == .scoutVisit && $0.entityID == row.id }
+            if !deletionWins && !queue.contains(where: { $0.entity == .scoutVisit && $0.recordID == row.id && $0.clientUpdatedAt == row.clientUpdatedAt }) {
                 success = enqueue(recordID: row.id, vineyardID: row.vineyardID, entity: .scoutVisit,
                     operation: .upsert, clientUpdatedAt: row.clientUpdatedAt) && success
+                queue = loadQueue()
             }
         }
         let refreshedQueue = loadQueue()
         for row in decode([StoredNote].self, Key.notes) ?? [] where row.syncOwed == true {
-            if !refreshedQueue.contains(where: { $0.entity == .vintageNote && $0.recordID == row.id && $0.clientUpdatedAt == row.clientUpdatedAt }) {
+            let deletionWins = refreshedQueue.contains { $0.entity == .vintageNote && $0.recordID == row.id && $0.operation == .delete }
+                || consumed.contains { $0.vineyardID == row.vineyardID && $0.entity == .vintageNote && $0.entityID == row.id }
+            if !deletionWins && !refreshedQueue.contains(where: { $0.entity == .vintageNote && $0.recordID == row.id && $0.clientUpdatedAt == row.clientUpdatedAt }) {
                 success = enqueue(recordID: row.id, vineyardID: row.vineyardID, entity: .vintageNote,
                     operation: .upsert, clientUpdatedAt: row.clientUpdatedAt) && success
             }
         }
         var photos = loadPhotoQueue()
         let queuedPhotoIDs = Set(photos.map(\.id))
-        for visit in loadVisits() {
+        for visit in loadVisits() where !queue.contains(where: {
+            $0.entity == .scoutVisit && $0.recordID == visit.id && $0.operation == .delete
+        }) && !consumed.contains(where: {
+            $0.vineyardID == visit.vineyardID && $0.entity == .scoutVisit && $0.entityID == visit.id
+        }) {
             for photo in visit.assessments.flatMap(\.observations).flatMap(\.photos)
             where photo.storagePath == nil && photo.localPath != nil && !queuedPhotoIDs.contains(photo.id) {
                 guard let localPath = photo.localPath else { continue }

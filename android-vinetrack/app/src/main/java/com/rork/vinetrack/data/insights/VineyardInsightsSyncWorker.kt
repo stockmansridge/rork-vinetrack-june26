@@ -41,6 +41,9 @@ class VineyardInsightsSyncWorker(
     )
 
     suspend fun sync(vineyardId: String): Outcome {
+        if (!store.repairMissingObligations()) {
+            return Outcome(error = "Local changes could not be prepared safely for sync.")
+        }
         val deletionsBeforePush = pullDeletions(vineyardId)
         val localCleanup = processLocalObjectCleanup(vineyardId)
         val serverCleanup = processServerPhotoCleanup(vineyardId)
@@ -564,7 +567,7 @@ class VineyardInsightsSyncWorker(
             it.recordId == row.id &&
                 it.entity == VineyardInsightsStore.QueuedOperation.Entity.VINTAGE_NOTE
         }
-        if (pending || store.isDeleted(row.vineyardId, "vintage_note", row.id)) return
+        if (pending || store.isSyncOwedForNote(row.id) || store.isDeleted(row.vineyardId, "vintage_note", row.id)) return
         store.saveNote(
             VintageNote(
                 id = row.id,
@@ -598,7 +601,7 @@ class VineyardInsightsSyncWorker(
             it.recordId == row.id &&
                 it.entity == VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT
         }
-        if (pending || store.isDeleted(row.vineyardId, "scout_visit", row.id)) return
+        if (pending || store.isSyncOwedForVisit(row.id) || store.isDeleted(row.vineyardId, "scout_visit", row.id)) return
 
         // A tombstoned visit is removed locally rather than shown as empty.
         if (row.deletedAt != null) {
@@ -606,6 +609,7 @@ class VineyardInsightsSyncWorker(
             return
         }
 
+        val localVisit = store.loadVisits().firstOrNull { it.id == row.id }
         val builtAssessments = assessments
             .filter { it.deletedAt == null }
             .map { assessmentRow ->
@@ -621,11 +625,18 @@ class VineyardInsightsSyncWorker(
                             valueCode = observationRow.valueCode,
                             valueLabel = observationRow.valueLabel,
                             notes = observationRow.notes,
-                            photos = photos
-                                .filter {
-                                    it.observationId == observationRow.id && it.deletedAt == null
-                                }
-                                .map { photoRow -> photoRow.toDomain(photoRow.id in failedPhotoDownloads) },
+                            photos = mergePhotos(
+                                server = photos
+                                    .filter {
+                                        it.observationId == observationRow.id && it.deletedAt == null
+                                    }
+                                    .map { photoRow -> photoRow.toDomain(photoRow.id in failedPhotoDownloads) },
+                                local = localVisit?.assessments
+                                    ?.firstOrNull { it.id == assessmentRow.id }
+                                    ?.observations
+                                    ?.firstOrNull { it.id == observationRow.id }
+                                    ?.photos.orEmpty(),
+                            ),
                             linkedPinId = observationRow.linkedPinId,
                             linkedGrowthStageRecordId =
                             observationRow.linkedGrowthStageRecordId,
@@ -678,6 +689,14 @@ class VineyardInsightsSyncWorker(
             ),
             syncOwed = false,
         )
+    }
+
+    private fun mergePhotos(server: List<ScoutPhoto>, local: List<ScoutPhoto>): List<ScoutPhoto> {
+        val localById = local.associateBy { it.id }
+        val merged = server.map { localById[it.id] ?: it }.toMutableList()
+        val serverIds = merged.mapTo(mutableSetOf()) { it.id }
+        merged += local.filterNot { it.id in serverIds }
+        return merged
     }
 
     /**

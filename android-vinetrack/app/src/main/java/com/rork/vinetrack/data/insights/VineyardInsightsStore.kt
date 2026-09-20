@@ -713,10 +713,17 @@ class VineyardInsightsStore(
         clientUpdatedAtIso: String,
         queueId: String = java.util.UUID.randomUUID().toString(),
     ): Boolean {
-        val existing = decodeList<StoredQueueEntry>(KEY_QUEUE)
-            .filterNot { it.recordId == recordId && it.entity == entity.code }
+        val all = decodeList<StoredQueueEntry>(KEY_QUEUE)
+        if (operation == QueuedOperation.Operation.UPSERT && all.any {
+                it.recordId == recordId && it.entity == entity.code &&
+                    it.operation == QueuedOperation.Operation.DELETE.code
+            }) return true
+        val preservedId = all.firstOrNull {
+            it.recordId == recordId && it.entity == entity.code && it.operation == operation.code
+        }?.id ?: queueId
+        val existing = all.filterNot { it.recordId == recordId && it.entity == entity.code }
         val next = existing + StoredQueueEntry(
-            id = queueId,
+            id = preservedId,
             recordId = recordId,
             vineyardId = vineyardId,
             entity = entity.code,
@@ -748,15 +755,30 @@ class VineyardInsightsStore(
     fun repairMissingObligations(): Boolean {
         var success = true
         var queue = loadQueue()
+        val consumed = decodeList<ConsumedDeletion>(KEY_CONSUMED_DELETIONS)
         decodeList<StoredVisit>(KEY_VISITS).filter { it.syncOwed }.forEach { row ->
-            if (queue.none { it.entity == QueuedOperation.Entity.SCOUT_VISIT && it.recordId == row.id && it.clientUpdatedAtIso == row.clientUpdatedAt }) {
+            val deletionWins = queue.any {
+                it.entity == QueuedOperation.Entity.SCOUT_VISIT && it.recordId == row.id &&
+                    it.operation == QueuedOperation.Operation.DELETE
+            } || consumed.any {
+                it.vineyardId == row.vineyardId && it.entityType == QueuedOperation.Entity.SCOUT_VISIT.code &&
+                    it.entityId == row.id
+            }
+            if (!deletionWins && queue.none { it.entity == QueuedOperation.Entity.SCOUT_VISIT && it.recordId == row.id && it.clientUpdatedAtIso == row.clientUpdatedAt }) {
                 success = enqueue(row.id, row.vineyardId, QueuedOperation.Entity.SCOUT_VISIT,
                     QueuedOperation.Operation.UPSERT, row.clientUpdatedAt) && success
                 queue = loadQueue()
             }
         }
         decodeList<StoredNote>(KEY_NOTES).filter { it.syncOwed }.forEach { row ->
-            if (queue.none { it.entity == QueuedOperation.Entity.VINTAGE_NOTE && it.recordId == row.id && it.clientUpdatedAtIso == row.clientUpdatedAt }) {
+            val deletionWins = queue.any {
+                it.entity == QueuedOperation.Entity.VINTAGE_NOTE && it.recordId == row.id &&
+                    it.operation == QueuedOperation.Operation.DELETE
+            } || consumed.any {
+                it.vineyardId == row.vineyardId && it.entityType == QueuedOperation.Entity.VINTAGE_NOTE.code &&
+                    it.entityId == row.id
+            }
+            if (!deletionWins && queue.none { it.entity == QueuedOperation.Entity.VINTAGE_NOTE && it.recordId == row.id && it.clientUpdatedAtIso == row.clientUpdatedAt }) {
                 success = enqueue(row.id, row.vineyardId, QueuedOperation.Entity.VINTAGE_NOTE,
                     QueuedOperation.Operation.UPSERT, row.clientUpdatedAt) && success
                 queue = loadQueue()
@@ -764,7 +786,15 @@ class VineyardInsightsStore(
         }
         val photos = loadPhotoQueue().toMutableList()
         val queuedIds = photos.mapTo(mutableSetOf()) { it.id }
-        loadVisits().forEach { visit ->
+        loadVisits().filterNot { visit ->
+            queue.any {
+                it.entity == QueuedOperation.Entity.SCOUT_VISIT && it.recordId == visit.id &&
+                    it.operation == QueuedOperation.Operation.DELETE
+            } || consumed.any {
+                it.vineyardId == visit.vineyardId && it.entityType == QueuedOperation.Entity.SCOUT_VISIT.code &&
+                    it.entityId == visit.id
+            }
+        }.forEach { visit ->
             visit.assessments.flatMap { it.observations }.flatMap { it.photos }.forEach { photo ->
                 val path = photo.localPath
                 if (path != null && photo.storagePath == null && photo.id !in queuedIds) {

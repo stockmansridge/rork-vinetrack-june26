@@ -1,5 +1,7 @@
 package com.rork.vinetrack.ui.components
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -11,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.compose.ui.platform.LocalContext
 import java.io.File
@@ -47,20 +50,32 @@ fun rememberPhotoCaptureCoordinator(
     val gallery = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         currentOnPhoto(uri)
     }
+    val launchCameraCapture: () -> Unit = {
+        try {
+            val directory = File(context.cacheDir, "camera-captures").apply { mkdirs() }
+            if (!directory.exists()) throw IllegalStateException("Camera cache is unavailable")
+            val file = File(directory, "capture-${UUID.randomUUID()}.jpg")
+            pendingPath = file.absolutePath
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            camera.launch(uri)
+        } catch (_: Exception) {
+            pendingPath?.let(::File)?.delete()
+            pendingPath = null
+            currentOnError("The camera could not be opened or its photo could not be saved.")
+        }
+    }
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) launchCameraCapture()
+        else currentOnError("Camera permission is required to take Scout photographs.")
+    }
 
-    return remember(context, camera, gallery) {
+    return remember(context, camera, gallery, permission) {
         PhotoCaptureCoordinator(
             takePhoto = {
-                try {
-                    val directory = File(context.cacheDir, "camera-captures").apply { mkdirs() }
-                    val file = File(directory, "capture-${UUID.randomUUID()}.jpg")
-                    pendingPath = file.absolutePath
-                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                    camera.launch(uri)
-                } catch (_: Exception) {
-                    pendingPath?.let(::File)?.delete()
-                    pendingPath = null
-                    currentOnError("No camera app is available on this device.")
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    launchCameraCapture()
+                } else {
+                    permission.launch(Manifest.permission.CAMERA)
                 }
             },
             chooseFromGallery = {

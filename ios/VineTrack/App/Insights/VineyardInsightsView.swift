@@ -174,6 +174,7 @@ struct ScoutWorkspaceView: View {
     @State private var visitPendingDeletion: ScoutVisit?
     @State private var completionError: String?
     @State private var cameraRequest: ScoutCameraRequest?
+    @State private var reportVisit: ScoutVisit?
 
     private var openVisit: ScoutVisit? { insights.openVisit }
     private var currentVintage: Int {
@@ -264,12 +265,16 @@ struct ScoutWorkspaceView: View {
             }
             .ignoresSafeArea()
         }
+        .sheet(item: $reportVisit) { visit in
+            ScoutReportView(visit: visit)
+        }
         .sheet(isPresented: $showReview) {
             if let visit = openVisit {
                 ScoutReviewSheet(
                     review: ScoutReview.of(visit),
                     completionCanRetry: visit.isEditable || insights.completionNeedsRetry(visit.id),
-                    completionError: completionError
+                    completionError: completionError,
+                    onViewReport: { reportVisit = visit }
                 ) {
                     if insights.completeVisit(visit.id) {
                         completionError = nil
@@ -352,12 +357,16 @@ struct ScoutWorkspaceView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .swipeActions {
-                    Button("Delete", role: .destructive) { visitPendingDeletion = visit }
+                HStack {
+                    Button("View Report") { reportVisit = visit }.buttonStyle(.bordered)
+                    Spacer()
                     Button(visit.isEditable ? "Edit" : "Reopen and edit") {
                         if !visit.isEditable { _ = insights.reopenVisit(visit.id) }
                         insights.openVisit(visit.id)
-                    }
+                    }.buttonStyle(.bordered)
+                }
+                .swipeActions {
+                    Button("Delete", role: .destructive) { visitPendingDeletion = visit }
                 }
             }
         }
@@ -398,6 +407,10 @@ struct ScoutWorkspaceView: View {
             )
             .lineLimit(2...5)
             .disabled(!visit.isEditable)
+        }
+
+        Section("Scout map") {
+            ScoutWorkspaceMap(visit: visit)
         }
 
         Section("Blocks") {
@@ -875,6 +888,7 @@ private struct ScoutReviewSheet: View {
     let review: ScoutReview
     let completionCanRetry: Bool
     let completionError: String?
+    let onViewReport: () -> Void
     let onComplete: () -> Void
 
     var body: some View {
@@ -898,6 +912,7 @@ private struct ScoutReviewSheet: View {
                     }
                 }
                 Section {
+                    Button("View Report", action: onViewReport)
                     Button("Complete Scout", action: onComplete)
                         .disabled(!completionCanRetry || !review.canComplete)
                 }
