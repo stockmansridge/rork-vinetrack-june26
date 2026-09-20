@@ -192,7 +192,7 @@ struct ScoutWorkspaceMap: View {
         let markers = visit.assessments.flatMap { assessment -> [ScoutReportMarker] in
             let blockName = blocks.first { $0.id == assessment.paddockID }?.name ?? "Block"
             return assessment.observations.flatMap { observation in
-                var result = observation.photos.compactMap { photo in
+                var result = observation.photos.compactMap { photo -> ScoutReportMarker? in
                     guard let latitude = photo.latitude, let longitude = photo.longitude, photo.locationStatus == .gpsConfirmed else { return nil }
                     return ScoutReportMarker(id: photo.id, title: observation.item.label, subtitle: blockName,
                         coordinate: .init(latitude: latitude, longitude: longitude), photo: photo)
