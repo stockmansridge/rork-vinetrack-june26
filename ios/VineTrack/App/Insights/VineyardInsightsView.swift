@@ -149,15 +149,31 @@ private struct HubCard: View {
 
 // MARK: - Scout
 
+private struct ScoutCameraRequest: Identifiable {
+    let id: UUID
+    let visitID: UUID
+    let assessmentID: UUID
+    let item: ScoutItem
+
+    init(visitID: UUID, assessmentID: UUID, item: ScoutItem) {
+        self.id = UUID()
+        self.visitID = visitID
+        self.assessmentID = assessmentID
+        self.item = item
+    }
+}
+
 struct ScoutWorkspaceView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(VineyardInsightsService.self) private var insights
+    @Environment(LocationService.self) private var locationService
 
     @State private var showReview = false
     @State private var showsAllVintages = false
     @State private var visitPendingDeletion: ScoutVisit?
     @State private var completionError: String?
+    @State private var cameraRequest: ScoutCameraRequest?
 
     private var openVisit: ScoutVisit? { insights.openVisit }
     private var currentVintage: Int {
@@ -224,11 +240,35 @@ struct ScoutWorkspaceView: View {
         } message: {
             Text("The visit, assessments, observations and Scout photos will be permanently removed.")
         }
+        .sheet(item: $cameraRequest) { request in
+            CameraImagePicker { data in
+                defer { cameraRequest = nil }
+                guard let data else { return }
+                let (location, quality) = locationService.freshLocation()
+                let fix: ScoutPhotoFix? = {
+                    guard quality == .fresh, let location else { return nil }
+                    return ScoutPhotoFix(
+                        latitude: location.coordinate.latitude,
+                        longitude: location.coordinate.longitude,
+                        accuracyMetres: location.horizontalAccuracy
+                    )
+                }()
+                _ = insights.capturePhoto(
+                    visitID: request.visitID,
+                    assessmentID: request.assessmentID,
+                    item: request.item,
+                    imageData: data,
+                    locationFix: fix,
+                    capturedByUserID: auth.userId
+                )
+            }
+            .ignoresSafeArea()
+        }
         .sheet(isPresented: $showReview) {
             if let visit = openVisit {
                 ScoutReviewSheet(
                     review: ScoutReview.of(visit),
-                    isEditable: visit.isEditable,
+                    completionCanRetry: visit.isEditable || insights.completionNeedsRetry(visit.id),
                     completionError: completionError
                 ) {
                     if insights.completeVisit(visit.id) {
@@ -268,7 +308,7 @@ struct ScoutWorkspaceView: View {
 
         Section("Season") {
             Picker("Vintage", selection: $showsAllVintages) {
-                Text("Vintage \(currentVintage)").tag(false)
+                Text(verbatim: "Vintage \(VintageYearText.format(currentVintage))").tag(false)
                 Text("All vintages").tag(true)
             }
             .pickerStyle(.segmented)
@@ -307,7 +347,7 @@ struct ScoutWorkspaceView: View {
                             }
                         }
                         Spacer()
-                        Text("Vintage \(String(visit.vintageYear))")
+                        Text(verbatim: "Vintage \(VintageYearText.format(visit.vintageYear))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -336,7 +376,7 @@ struct ScoutWorkspaceView: View {
             LabeledContent("Date") {
                 Text(visit.scoutDate, format: .dateTime.day().month().year())
             }
-            LabeledContent("Vintage", value: String(visit.vintageYear))
+            LabeledContent("Vintage", value: VintageYearText.format(visit.vintageYear))
             LabeledContent("Scout", value: visit.scoutNameSnapshot ?? auth.userName ?? "—")
             LabeledContent("Status", value: visit.status.label)
             // Weather never blocks saving and is never invented: when no
@@ -385,7 +425,14 @@ struct ScoutWorkspaceView: View {
                 assessment: assessment,
                 paddock: store.paddocks.first { $0.id == assessment.paddockID },
                 vintageYear: visit.vintageYear,
-                isEditable: visit.isEditable
+                isEditable: visit.isEditable,
+                onRequestPhoto: { item in
+                    cameraRequest = ScoutCameraRequest(
+                        visitID: visit.id,
+                        assessmentID: assessment.id,
+                        item: item
+                    )
+                }
             )
         }
 
@@ -432,11 +479,9 @@ private struct ScoutAssessmentSection: View {
     let paddock: Paddock?
     let vintageYear: Int
     let isEditable: Bool
+    let onRequestPhoto: (ScoutItem) -> Void
 
-    /// Which item a presented camera belongs to. Held as state rather than
-    /// derived, so a photograph can never be attached to the wrong item if the
-    /// list re-renders while the camera is open.
-    @State private var photoItem: ScoutItem?
+
     @State private var showGrowthPicker = false
     @State private var confirmUnlink = false
     @State private var message: String?
@@ -475,18 +520,6 @@ private struct ScoutAssessmentSection: View {
             GrowthStagePickerSheet { stage in
                 recordStage(stage)
             }
-        }
-        .sheet(
-            isPresented: Binding(
-                get: { photoItem != nil },
-                set: { if !$0 { photoItem = nil } }
-            )
-        ) {
-            CameraImagePicker { data in
-                if let data, let item = photoItem { capturePhoto(item: item, data: data) }
-                photoItem = nil
-            }
-            .ignoresSafeArea()
         }
         .confirmationDialog(
             "Remove the link to this Growth Stage record?",
@@ -574,40 +607,6 @@ private struct ScoutAssessmentSection: View {
         }
     }
 
-    /// Capture a photograph for one item.
-    ///
-    /// The fix is resolved through the EXISTING strict validator and only a
-    /// `.fresh` verdict becomes coordinates. Anything else produces an explicit
-    /// block-only photograph — never a stale fix or a centroid.
-    private func capturePhoto(item: ScoutItem, data: Data) {
-        let (location, quality) = locationService.freshLocation()
-        let fix: ScoutPhotoFix? = {
-            guard quality == .fresh, let location else { return nil }
-            return ScoutPhotoFix(
-                latitude: location.coordinate.latitude,
-                longitude: location.coordinate.longitude,
-                accuracyMetres: location.horizontalAccuracy
-            )
-        }()
-
-        let saved = insights.capturePhoto(
-            visitID: visitID,
-            assessmentID: assessment.id,
-            item: item,
-            imageData: data,
-            locationFix: fix,
-            capturedByUserID: auth.userId
-        )
-
-        if saved == nil {
-            show("This device could not save the photograph. Try again.", isError: true)
-        } else if fix == nil {
-            show(PhotoLocationStatus.unavailable.label, isError: false)
-        } else {
-            show("Photograph saved on this device and queued to upload.", isError: false)
-        }
-    }
-
     private func show(_ text: String, isError: Bool) {
         message = text
         messageIsError = isError
@@ -619,7 +618,7 @@ private struct ScoutAssessmentSection: View {
             .compactMap { $0.name?.isEmpty == false ? $0.name : nil }
         if !varieties.isEmpty { parts.append(varieties.joined(separator: ", ")) }
         if let rows = paddock?.rows.count, rows > 0 { parts.append("\(rows) rows") }
-        parts.append("Vintage \(String(vintageYear))")
+        parts.append("Vintage \(VintageYearText.format(vintageYear))")
         return parts.joined(separator: "  •  ")
     }
 
@@ -767,7 +766,7 @@ private struct ScoutAssessmentSection: View {
 
             HStack(spacing: 12) {
                 Button {
-                    photoItem = item
+                    onRequestPhoto(item)
                 } label: {
                     Label(
                         photos.isEmpty ? "Add photograph" : "Add another",
@@ -874,7 +873,7 @@ private struct ScoutReviewSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let review: ScoutReview
-    let isEditable: Bool
+    let completionCanRetry: Bool
     let completionError: String?
     let onComplete: () -> Void
 
@@ -900,7 +899,7 @@ private struct ScoutReviewSheet: View {
                 }
                 Section {
                     Button("Complete Scout", action: onComplete)
-                        .disabled(!isEditable || !review.canComplete)
+                        .disabled(!completionCanRetry || !review.canComplete)
                 }
             }
             .navigationTitle("Review Scout")
@@ -944,7 +943,7 @@ struct VintageNotesWorkspaceView: View {
         List {
             Section("Season") {
                 Picker("Vintage", selection: $showsAllVintages) {
-                    Text("Vintage \(vintage)").tag(false)
+                    Text(verbatim: "Vintage \(VintageYearText.format(vintage))").tag(false)
                     Text("All vintages").tag(true)
                 }
                 .pickerStyle(.segmented)
@@ -965,7 +964,7 @@ struct VintageNotesWorkspaceView: View {
 
                 // The Vintage moves with the date so the observer can see which
                 // season they are filing against before they save.
-                LabeledContent("Vintage", value: String(vintage))
+                LabeledContent("Vintage", value: VintageYearText.format(vintage))
 
                 Button {
                     showTypePicker = true
@@ -1004,7 +1003,7 @@ struct VintageNotesWorkspaceView: View {
 
             }
 
-            Section(showsAllVintages ? "All Vintage Notes" : "Notes for Vintage \(String(vintage))") {
+            Section(showsAllVintages ? "All Vintage Notes" : "Notes for Vintage \(VintageYearText.format(vintage))") {
                 let notes = store.selectedVineyardId.map {
                     insights.noteHistory(
                         vineyardID: $0,
@@ -1191,7 +1190,7 @@ struct VintageReportWorkspaceView: View {
 
             Section("Vintage") {
                 Stepper(
-                    "Vintage \(String(resolvedVintage))",
+                    "Vintage \(VintageYearText.format(resolvedVintage))",
                     value: Binding(
                         get: { resolvedVintage },
                         set: { vintage = $0 }

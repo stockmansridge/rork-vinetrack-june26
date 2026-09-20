@@ -62,6 +62,7 @@ final class VineyardInsightsService {
         self.photoFiles = photoFiles
         self.repository = repository
         self.now = now
+        _ = store.repairMissingObligations()
         self.visits = store.loadVisits()
         self.notes = store.loadNotes()
         self.pendingPhotoCount = store.loadPhotoQueue().count
@@ -182,7 +183,12 @@ final class VineyardInsightsService {
     func syncStatus(for visit: ScoutVisit) -> String {
         let isQueued = store.loadQueue().contains { $0.entity == .scoutVisit && $0.recordID == visit.id }
         let hasQueuedPhoto = store.loadPhotoQueue().contains { $0.visitID == visit.id }
-        if isQueued || hasQueuedPhoto { return "Sync pending" }
+        let hasUnacknowledgedPhoto = visit.assessments.flatMap(\.observations).flatMap(\.photos).contains {
+            $0.storagePath == nil || $0.uploadFailed
+        }
+        if store.isSyncOwed(visitID: visit.id) || isQueued || hasQueuedPhoto || hasUnacknowledgedPhoto {
+            return "Sync pending"
+        }
         return visit.syncVersion > 0 ? "Synced" : "Saved on this device"
     }
 
@@ -427,8 +433,21 @@ final class VineyardInsightsService {
     @discardableResult
     func completeVisit(_ visitID: UUID) -> Bool {
         guard var visit = visit(visitID), ScoutReview.of(visit).canComplete else { return false }
+        if visit.status == .completed {
+            guard store.repairMissingObligations() else { return record(false) }
+            let durable = store.loadQueue().contains {
+                $0.entity == .scoutVisit && $0.recordID == visitID && $0.clientUpdatedAt == visit.clientUpdatedAt
+            }
+            if durable { scheduleSync(vineyardID: visit.vineyardID) }
+            return record(durable)
+        }
         visit.status = .completed
         return persist(visit)
+    }
+
+    func completionNeedsRetry(_ visitID: UUID) -> Bool {
+        guard let visit = visit(visitID), visit.status == .completed else { return false }
+        return store.isSyncOwed(visitID: visitID)
     }
 
     /// Deliberately return a completed visit to Draft, with caller confirmation.
@@ -969,7 +988,7 @@ final class VineyardInsightsService {
             guard changed else { continue }
             // Saved WITHOUT re-queuing the visit: reconciling a storage path is
             // the server's own answer coming home, not a new local edit.
-            if store.saveVisit(visit) { visits = store.loadVisits() }
+            if store.saveVisit(visit, syncOwed: store.isSyncOwed(visitID: visit.id)) { visits = store.loadVisits() }
             return
         }
     }
@@ -1171,7 +1190,7 @@ final class VineyardInsightsService {
             syncVersion: row.sync_version ?? 0,
             deletedAt: deletedAt
         )
-        if store.saveNote(note) { notes = store.loadNotes() }
+        if store.saveNote(note, syncOwed: false) { notes = store.loadNotes() }
     }
 
     private func apply(
@@ -1314,7 +1333,7 @@ final class VineyardInsightsService {
             clientUpdatedAt: VineyardInsightsSyncRepository.parseTimestamp(row.client_updated_at) ?? scoutDate,
             syncVersion: row.sync_version ?? 0
         )
-        if store.saveVisit(visit) { visits = store.loadVisits() }
+        if store.saveVisit(visit, syncOwed: false) { visits = store.loadVisits() }
     }
 
     // MARK: - Session
@@ -1333,6 +1352,7 @@ final class VineyardInsightsService {
             lastWriteFailed = true
             return
         }
+        _ = store.repairMissingObligations()
         visits = store.loadVisits()
         notes = store.loadNotes()
         pendingPhotoCount = store.loadPhotoQueue().count

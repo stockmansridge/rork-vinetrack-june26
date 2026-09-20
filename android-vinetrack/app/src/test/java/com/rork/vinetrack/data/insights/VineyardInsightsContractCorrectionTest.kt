@@ -145,6 +145,67 @@ class VineyardInsightsContractCorrectionTest {
         assertEquals(1, passes)
     }
 
+    @Test fun `partial entity outbox failures repair after restart with stable ids`() {
+        val raw = MemoryStore()
+        val store = VineyardInsightsStore(raw)
+        val visit = ScoutVisit(
+            id = "visit-stable", vineyardId = "vineyard", vintageYear = 2027,
+            scoutDateIso = "2026-09-20", scoutUserId = null, scoutNameSnapshot = "Scout",
+            clientUpdatedAtIso = "2026-09-20T01:00:00Z",
+        )
+        assertTrue(store.saveVisit(visit))
+        raw.failNext(VineyardInsightsStore.KEY_QUEUE)
+        assertFalse(store.enqueue(
+            visit.id, visit.vineyardId, VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT,
+            VineyardInsightsStore.QueuedOperation.Operation.UPSERT, visit.clientUpdatedAtIso,
+        ))
+        val restarted = VineyardInsightsStore(raw)
+        assertTrue(restarted.repairMissingObligations())
+        assertEquals("visit-stable", restarted.loadQueue().single().recordId)
+        assertEquals("visit-stable", restarted.loadVisits().single().id)
+    }
+
+    @Test fun `acknowledging exact revision controls synced state`() {
+        val raw = MemoryStore()
+        val store = VineyardInsightsStore(raw)
+        val visit = ScoutVisit(
+            id = "visit", vineyardId = "vineyard", vintageYear = 2027,
+            scoutDateIso = "2026-09-20", status = ScoutStatus.COMPLETED,
+            scoutUserId = null, scoutNameSnapshot = null,
+            clientUpdatedAtIso = "2026-09-20T01:00:00Z", syncVersion = 3,
+        )
+        assertTrue(store.saveVisit(visit))
+        assertTrue(store.enqueue(visit.id, visit.vineyardId,
+            VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT,
+            VineyardInsightsStore.QueuedOperation.Operation.UPSERT, visit.clientUpdatedAtIso,
+            queueId = "queue"))
+        assertTrue(store.isSyncOwedForVisit(visit.id))
+        assertTrue(store.dequeue("queue"))
+        assertFalse(store.isSyncOwedForVisit(visit.id))
+    }
+
+    @Test fun `older Scout weather retry never attaches current conditions`() = runTest {
+        val store = VineyardInsightsStore(MemoryStore())
+        var loads = 0
+        val controller = VineyardInsightsController(
+            store = store,
+            weatherLoader = { _, capturedAt ->
+                loads += 1
+                ScoutWeatherSnapshot(
+                    observedAtIso = capturedAt, capturedAtIso = capturedAt, source = "station",
+                    temperatureCelsius = 22.0, humidityPercent = 50.0, windSpeedKph = 4.0,
+                    windGustKph = null, recentRainfallMm = 0.0,
+                )
+            },
+            clock = { java.time.Instant.parse("2026-09-20T12:00:00Z") },
+        )
+        val visit = controller.startVisit("vineyard", null, null, 7, 1, LocalDate.of(2026, 9, 19))
+        controller.captureWeather(visit.id)
+        assertEquals(0, loads)
+        assertTrue(controller.visit(visit.id)?.weather?.isUnavailable == true)
+        assertTrue(controller.visit(visit.id)?.weather?.source?.contains("older Scout") == true)
+    }
+
     @Test fun `object cleanup and local file obligations survive store restart`() {
         val raw = MemoryStore()
         val first = VineyardInsightsStore(raw)
@@ -157,8 +218,14 @@ class VineyardInsightsContractCorrectionTest {
 
     private class MemoryStore : InsightsKeyValueStore {
         private val values = mutableMapOf<String, String>()
+        private var failingKey: String? = null
+        fun failNext(key: String) { failingKey = key }
         override fun get(key: String): String? = values[key]
-        override fun put(key: String, value: String): Boolean { values[key] = value; return true }
+        override fun put(key: String, value: String): Boolean {
+            if (failingKey == key) { failingKey = null; return false }
+            values[key] = value
+            return true
+        }
         override fun remove(key: String): Boolean { values.remove(key); return true }
         override fun clear(): Boolean { values.clear(); return true }
     }

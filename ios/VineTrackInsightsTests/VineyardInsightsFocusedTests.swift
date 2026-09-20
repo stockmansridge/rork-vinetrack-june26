@@ -133,6 +133,51 @@ struct VineyardInsightsFocusedTests {
         #expect(restarted.loadLocalFileCleanup().singleValue?.relativePath == "v/o/p.jpg")
     }
 
+    @Test func missingVisitOutboxIsRepairedAfterRestartWithStableID() throws {
+        let suite = "insights-focused-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = VineyardInsightsStore(defaults: defaults)
+        let visitID = UUID()
+        let vineyardID = UUID()
+        let updatedAt = Date(timeIntervalSince1970: 1_758_326_400)
+        let visit = ScoutVisit(
+            id: visitID, vineyardID: vineyardID, vintageYear: 2027,
+            scoutDate: updatedAt, status: .completed, scoutUserID: nil,
+            scoutNameSnapshot: "Scout", clientUpdatedAt: updatedAt, syncVersion: 0
+        )
+        #expect(store.saveVisit(visit))
+        #expect(store.loadQueue().isEmpty)
+
+        let restarted = VineyardInsightsStore(defaults: defaults)
+        #expect(restarted.repairMissingObligations())
+        let repaired = try #require(restarted.loadQueue().singleValue)
+        #expect(repaired.recordID == visitID)
+        #expect(restarted.loadVisits().singleValue?.id == visitID)
+    }
+
+    @Test func exactAcknowledgedRevisionClearsSyncOwed() throws {
+        let suite = "insights-focused-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = VineyardInsightsStore(defaults: defaults)
+        let visitID = UUID()
+        let vineyardID = UUID()
+        let updatedAt = Date(timeIntervalSince1970: 1_758_326_400)
+        let visit = ScoutVisit(
+            id: visitID, vineyardID: vineyardID, vintageYear: 2027,
+            scoutDate: updatedAt, status: .completed, scoutUserID: nil,
+            scoutNameSnapshot: nil, clientUpdatedAt: updatedAt, syncVersion: 4
+        )
+        #expect(store.saveVisit(visit))
+        let queueID = UUID()
+        #expect(store.enqueue(recordID: visitID, vineyardID: vineyardID, entity: .scoutVisit,
+            operation: .upsert, clientUpdatedAt: updatedAt, queueID: queueID))
+        #expect(store.isSyncOwed(visitID: visitID))
+        #expect(store.dequeue(queueID: queueID))
+        #expect(!store.isSyncOwed(visitID: visitID))
+    }
+
     @Test func clearedObservationPayloadContainsNullValues() throws {
         let payload = VineyardInsightsSyncRepository.ObservationUpsert(
             id: "o", assessment_id: "a", vineyard_id: "v", item_kind: "disease",

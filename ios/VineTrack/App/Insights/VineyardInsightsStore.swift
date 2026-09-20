@@ -215,6 +215,9 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         let assessments: [StoredAssessment]
         let clientUpdatedAt: Date
         let syncVersion: Int
+        /// Durable repair marker written in the same record blob as the edit.
+        /// It remains true until the exact client revision is acknowledged.
+        let syncOwed: Bool?
     }
 
     private struct StoredNote: Codable {
@@ -232,6 +235,7 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         let clientUpdatedAt: Date
         let syncVersion: Int
         let deletedAt: Date?
+        let syncOwed: Bool?
     }
 
     private struct StoredNoteType: Codable {
@@ -349,7 +353,7 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         )
     }
 
-    private func stored(_ visit: ScoutVisit) -> StoredVisit {
+    private func stored(_ visit: ScoutVisit, syncOwed: Bool) -> StoredVisit {
         StoredVisit(
             id: visit.id,
             vineyardID: visit.vineyardID,
@@ -396,7 +400,8 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
                 )
             },
             clientUpdatedAt: visit.clientUpdatedAt,
-            syncVersion: visit.syncVersion
+            syncVersion: visit.syncVersion,
+            syncOwed: syncOwed
         )
     }
 
@@ -419,7 +424,7 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         )
     }
 
-    private func stored(_ note: VintageNote) -> StoredNote {
+    private func stored(_ note: VintageNote, syncOwed: Bool) -> StoredNote {
         StoredNote(
             id: note.id,
             vineyardID: note.vineyardID,
@@ -434,7 +439,8 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
             updatedAt: note.updatedAt,
             clientUpdatedAt: note.clientUpdatedAt,
             syncVersion: note.syncVersion,
-            deletedAt: note.deletedAt
+            deletedAt: note.deletedAt,
+            syncOwed: syncOwed
         )
     }
 
@@ -519,11 +525,15 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
     /// Persist a visit. Returns false when the write did not reach disk, so a
     /// caller can tell the operator rather than assuming success.
     @discardableResult
-    func saveVisit(_ visit: ScoutVisit) -> Bool {
+    func saveVisit(_ visit: ScoutVisit, syncOwed: Bool = true) -> Bool {
         var all = decode([StoredVisit].self, Key.visits) ?? []
         all.removeAll { $0.id == visit.id }
-        all.append(stored(visit))
+        all.append(stored(visit, syncOwed: syncOwed))
         return encodeAndWrite(all, Key.visits)
+    }
+
+    func isSyncOwed(visitID: UUID) -> Bool {
+        (decode([StoredVisit].self, Key.visits) ?? []).first { $0.id == visitID }?.syncOwed == true
     }
 
     @discardableResult
@@ -534,11 +544,15 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
     }
 
     @discardableResult
-    func saveNote(_ note: VintageNote) -> Bool {
+    func saveNote(_ note: VintageNote, syncOwed: Bool = true) -> Bool {
         var all = decode([StoredNote].self, Key.notes) ?? []
         all.removeAll { $0.id == note.id }
-        all.append(stored(note))
+        all.append(stored(note, syncOwed: syncOwed))
         return encodeAndWrite(all, Key.notes)
+    }
+
+    func isSyncOwed(noteID: UUID) -> Bool {
+        (decode([StoredNote].self, Key.notes) ?? []).first { $0.id == noteID }?.syncOwed == true
     }
 
     @discardableResult
@@ -674,7 +688,9 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
                 changed = true
             }
         }
-        return !changed || encodeAndWrite(notes.map { stored($0) }, Key.notes)
+        return !changed || encodeAndWrite(notes.map { note in
+            stored(note, syncOwed: isSyncOwed(noteID: note.id))
+        }, Key.notes)
     }
 
     @discardableResult
@@ -720,12 +736,61 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         return encodeAndWrite(all, Key.queue)
     }
 
-    /// Remove a queue entry after the server confirmed it.
+    /// Remove a queue entry after the server confirmed it, then acknowledge
+    /// only the exact revision that was sent. A newer edit remains owed.
     @discardableResult
     func dequeue(queueID: UUID) -> Bool {
         var all = loadQueue()
+        guard let completed = all.first(where: { $0.id == queueID }) else { return true }
         all.removeAll { $0.id == queueID }
-        return encodeAndWrite(all, Key.queue)
+        guard encodeAndWrite(all, Key.queue) else { return false }
+        switch completed.entity {
+        case .scoutVisit:
+            guard let visit = loadVisits().first(where: { $0.id == completed.recordID }),
+                  visit.clientUpdatedAt == completed.clientUpdatedAt else { return true }
+            return saveVisit(visit, syncOwed: false)
+        case .vintageNote:
+            guard let note = loadNotes().first(where: { $0.id == completed.recordID }),
+                  note.clientUpdatedAt == completed.clientUpdatedAt else { return true }
+            return saveNote(note, syncOwed: false)
+        }
+    }
+
+    /// Rebuild obligations whose entity/photo write reached disk but whose
+    /// separate outbox write did not. Stable record IDs make this idempotent.
+    @discardableResult
+    func repairMissingObligations() -> Bool {
+        var success = true
+        let queue = loadQueue()
+        for row in decode([StoredVisit].self, Key.visits) ?? [] where row.syncOwed == true {
+            if !queue.contains(where: { $0.entity == .scoutVisit && $0.recordID == row.id && $0.clientUpdatedAt == row.clientUpdatedAt }) {
+                success = enqueue(recordID: row.id, vineyardID: row.vineyardID, entity: .scoutVisit,
+                    operation: .upsert, clientUpdatedAt: row.clientUpdatedAt) && success
+            }
+        }
+        let refreshedQueue = loadQueue()
+        for row in decode([StoredNote].self, Key.notes) ?? [] where row.syncOwed == true {
+            if !refreshedQueue.contains(where: { $0.entity == .vintageNote && $0.recordID == row.id && $0.clientUpdatedAt == row.clientUpdatedAt }) {
+                success = enqueue(recordID: row.id, vineyardID: row.vineyardID, entity: .vintageNote,
+                    operation: .upsert, clientUpdatedAt: row.clientUpdatedAt) && success
+            }
+        }
+        var photos = loadPhotoQueue()
+        let queuedPhotoIDs = Set(photos.map(\.id))
+        for visit in loadVisits() {
+            for photo in visit.assessments.flatMap(\.observations).flatMap(\.photos)
+            where photo.storagePath == nil && photo.localPath != nil && !queuedPhotoIDs.contains(photo.id) {
+                guard let localPath = photo.localPath else { continue }
+                photos.append(QueuedPhoto(id: photo.id, vineyardID: visit.vineyardID, visitID: visit.id,
+                    observationID: photo.observationID, localPath: localPath, uploadedStoragePath: nil,
+                    rowCommitted: false, capturedAt: photo.capturedAt, attemptCount: 0,
+                    lastError: "Recovered after an interrupted local save"))
+            }
+        }
+        if photos.count != loadPhotoQueue().count {
+            success = encodeAndWrite(photos, Key.photoQueue) && success
+        }
+        return success
     }
 
     /// Queue a photograph whose bytes are ALREADY on disk.

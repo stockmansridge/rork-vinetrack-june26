@@ -162,6 +162,7 @@ class VineyardInsightsStore(
         val assessments: List<StoredAssessment> = emptyList(),
         @SerialName("client_updated_at") val clientUpdatedAt: String,
         @SerialName("sync_version") val syncVersion: Long = 0,
+        @SerialName("sync_owed") val syncOwed: Boolean = false,
     )
 
     @Serializable
@@ -180,6 +181,7 @@ class VineyardInsightsStore(
         @SerialName("client_updated_at") val clientUpdatedAt: String,
         @SerialName("sync_version") val syncVersion: Long = 0,
         @SerialName("deleted_at") val deletedAt: String? = null,
+        @SerialName("sync_owed") val syncOwed: Boolean = false,
     )
 
     @Serializable
@@ -364,7 +366,7 @@ class VineyardInsightsStore(
         syncVersion = syncVersion,
     )
 
-    private fun ScoutVisit.toStored(): StoredVisit = StoredVisit(
+    private fun ScoutVisit.toStored(syncOwed: Boolean): StoredVisit = StoredVisit(
         id = id,
         vineyardId = vineyardId,
         vintageYear = vintageYear,
@@ -399,6 +401,7 @@ class VineyardInsightsStore(
         },
         clientUpdatedAt = clientUpdatedAtIso,
         syncVersion = syncVersion,
+        syncOwed = syncOwed,
     )
 
     private fun StoredNote.toDomain(): VintageNote = VintageNote(
@@ -418,7 +421,7 @@ class VineyardInsightsStore(
         deletedAtIso = deletedAt,
     )
 
-    private fun VintageNote.toStored(): StoredNote = StoredNote(
+    private fun VintageNote.toStored(syncOwed: Boolean): StoredNote = StoredNote(
         id = id,
         vineyardId = vineyardId,
         noteDate = noteDateIso,
@@ -433,6 +436,7 @@ class VineyardInsightsStore(
         clientUpdatedAt = clientUpdatedAtIso,
         syncVersion = syncVersion,
         deletedAt = deletedAtIso,
+        syncOwed = syncOwed,
     )
 
     // ------------------------------------------------------------- Reads
@@ -536,22 +540,28 @@ class VineyardInsightsStore(
      * Persist a visit. Returns false when the write did not reach disk, so a
      * caller can tell the operator rather than assuming success.
      */
-    fun saveVisit(visit: ScoutVisit): Boolean {
+    fun saveVisit(visit: ScoutVisit, syncOwed: Boolean = true): Boolean {
         val existing = decodeList<StoredVisit>(KEY_VISITS)
-        val next = existing.filterNot { it.id == visit.id } + visit.toStored()
+        val next = existing.filterNot { it.id == visit.id } + visit.toStored(syncOwed)
         return encodeAndWrite(KEY_VISITS, next)
     }
+
+    fun isSyncOwedForVisit(visitId: String): Boolean =
+        decodeList<StoredVisit>(KEY_VISITS).firstOrNull { it.id == visitId }?.syncOwed == true
 
     fun deleteVisit(visitId: String): Boolean {
         val next = decodeList<StoredVisit>(KEY_VISITS).filterNot { it.id == visitId }
         return encodeAndWrite(KEY_VISITS, next)
     }
 
-    fun saveNote(note: VintageNote): Boolean {
+    fun saveNote(note: VintageNote, syncOwed: Boolean = true): Boolean {
         val existing = decodeList<StoredNote>(KEY_NOTES)
-        val next = existing.filterNot { it.id == note.id } + note.toStored()
+        val next = existing.filterNot { it.id == note.id } + note.toStored(syncOwed)
         return encodeAndWrite(KEY_NOTES, next)
     }
+
+    fun isSyncOwedForNote(noteId: String): Boolean =
+        decodeList<StoredNote>(KEY_NOTES).firstOrNull { it.id == noteId }?.syncOwed == true
 
     fun deleteNote(noteId: String): Boolean {
         val next = decodeList<StoredNote>(KEY_NOTES).filterNot { it.id == noteId }
@@ -676,7 +686,7 @@ class VineyardInsightsStore(
             val legacyCode = note.noteTypeId?.takeIf { runCatching { UUID.fromString(it) }.isFailure }
             if (legacyCode != null) byCode[legacyCode]?.let { note.copy(noteTypeId = it) } ?: note else note
         }
-        return encodeAndWrite(KEY_NOTES, notes.map { it.toStored() })
+        return encodeAndWrite(KEY_NOTES, notes.map { it.toStored(isSyncOwedForNote(it.id)) })
     }
 
     fun markNoteTypeSynced(id: String): Boolean {
@@ -716,10 +726,57 @@ class VineyardInsightsStore(
         return encodeAndWrite(KEY_QUEUE, next)
     }
 
-    /** Remove a queue entry after the server confirmed it. */
+    /** Remove an acknowledged entry and clear only the exact sent revision. */
     fun dequeue(queueId: String): Boolean {
+        val queue = loadQueue()
+        val completed = queue.firstOrNull { it.id == queueId } ?: return true
         val next = decodeList<StoredQueueEntry>(KEY_QUEUE).filterNot { it.id == queueId }
-        return encodeAndWrite(KEY_QUEUE, next)
+        if (!encodeAndWrite(KEY_QUEUE, next)) return false
+        return when (completed.entity) {
+            QueuedOperation.Entity.SCOUT_VISIT -> {
+                val visit = loadVisits().firstOrNull { it.id == completed.recordId }
+                if (visit?.clientUpdatedAtIso == completed.clientUpdatedAtIso) saveVisit(visit, false) else true
+            }
+            QueuedOperation.Entity.VINTAGE_NOTE -> {
+                val note = loadNotes().firstOrNull { it.id == completed.recordId }
+                if (note?.clientUpdatedAtIso == completed.clientUpdatedAtIso) saveNote(note, false) else true
+            }
+        }
+    }
+
+    /** Recover entity/photo obligations after a record write/outbox write split failure. */
+    fun repairMissingObligations(): Boolean {
+        var success = true
+        var queue = loadQueue()
+        decodeList<StoredVisit>(KEY_VISITS).filter { it.syncOwed }.forEach { row ->
+            if (queue.none { it.entity == QueuedOperation.Entity.SCOUT_VISIT && it.recordId == row.id && it.clientUpdatedAtIso == row.clientUpdatedAt }) {
+                success = enqueue(row.id, row.vineyardId, QueuedOperation.Entity.SCOUT_VISIT,
+                    QueuedOperation.Operation.UPSERT, row.clientUpdatedAt) && success
+                queue = loadQueue()
+            }
+        }
+        decodeList<StoredNote>(KEY_NOTES).filter { it.syncOwed }.forEach { row ->
+            if (queue.none { it.entity == QueuedOperation.Entity.VINTAGE_NOTE && it.recordId == row.id && it.clientUpdatedAtIso == row.clientUpdatedAt }) {
+                success = enqueue(row.id, row.vineyardId, QueuedOperation.Entity.VINTAGE_NOTE,
+                    QueuedOperation.Operation.UPSERT, row.clientUpdatedAt) && success
+                queue = loadQueue()
+            }
+        }
+        val photos = loadPhotoQueue().toMutableList()
+        val queuedIds = photos.mapTo(mutableSetOf()) { it.id }
+        loadVisits().forEach { visit ->
+            visit.assessments.flatMap { it.observations }.flatMap { it.photos }.forEach { photo ->
+                val path = photo.localPath
+                if (path != null && photo.storagePath == null && photo.id !in queuedIds) {
+                    photos += QueuedPhoto(photo.id, visit.vineyardId, visit.id, photo.observationId,
+                        path, capturedAt = photo.capturedAtIso,
+                        lastError = "Recovered after an interrupted local save")
+                    queuedIds += photo.id
+                }
+            }
+        }
+        if (photos.size != loadPhotoQueue().size) success = encodeAndWrite(KEY_PHOTO_QUEUE, photos) && success
+        return success
     }
 
     /**

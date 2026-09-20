@@ -1243,6 +1243,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         ),
         com.rork.vinetrack.data.insights.ScoutPhotoFileStore(app),
         com.rork.vinetrack.data.insights.VineyardInsightsSyncRepository(session),
+        weatherLoader = { vineyardId, capturedAt ->
+            com.rork.vinetrack.data.insights.ScoutWeatherRepository(session).current(vineyardId, capturedAt)
+        },
         onMutation = ::scheduleVineyardInsightsSync,
     )
 
@@ -1255,6 +1258,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun syncVineyardInsights(vineyardId: String) {
         viewModelScope.launch { runCatching { vineyardInsights.sync(vineyardId) } }
+    }
+
+    /** Capture configured-source weather without blocking local Scout saving. */
+    fun captureScoutWeather(visitId: String) {
+        viewModelScope.launch { vineyardInsights.captureWeather(visitId) }
     }
 
     /** Retry failed Scout photograph uploads. The local bytes are retained. */

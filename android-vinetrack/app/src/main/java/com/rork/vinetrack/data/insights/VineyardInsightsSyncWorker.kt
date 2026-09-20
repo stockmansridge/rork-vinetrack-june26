@@ -492,7 +492,7 @@ class VineyardInsightsSyncWorker(
                 )
             },
         )
-        store.saveVisit(next)
+        store.saveVisit(next, store.isSyncOwedForVisit(next.id))
     }
 
     // ------------------------------------------------------------ Pull
@@ -583,6 +583,7 @@ class VineyardInsightsSyncWorker(
                 syncVersion = row.syncVersion,
                 deletedAtIso = row.deletedAt,
             ),
+            syncOwed = false,
         )
     }
 
@@ -675,6 +676,7 @@ class VineyardInsightsSyncWorker(
                 clientUpdatedAtIso = row.clientUpdatedAt ?: row.updatedAt ?: row.scoutDate,
                 syncVersion = row.syncVersion,
             ),
+            syncOwed = false,
         )
     }
 

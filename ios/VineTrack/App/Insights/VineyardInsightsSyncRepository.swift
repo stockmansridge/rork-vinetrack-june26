@@ -124,6 +124,25 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let linked_pin_id: String?
         let linked_growth_record_id: String?
         let client_updated_at: String
+
+        private enum CodingKeys: String, CodingKey {
+            case id, assessment_id, vineyard_id, item_kind, value_code, value_label
+            case notes, linked_pin_id, linked_growth_record_id, client_updated_at
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(id, forKey: .id)
+            try container.encode(assessment_id, forKey: .assessment_id)
+            try container.encode(vineyard_id, forKey: .vineyard_id)
+            try container.encode(item_kind, forKey: .item_kind)
+            try container.encode(value_code, forKey: .value_code)
+            try container.encode(value_label, forKey: .value_label)
+            try container.encode(notes, forKey: .notes)
+            try container.encode(linked_pin_id, forKey: .linked_pin_id)
+            try container.encode(linked_growth_record_id, forKey: .linked_growth_record_id)
+            try container.encode(client_updated_at, forKey: .client_updated_at)
+        }
     }
 
     struct ObservationRow: Decodable, Sendable {

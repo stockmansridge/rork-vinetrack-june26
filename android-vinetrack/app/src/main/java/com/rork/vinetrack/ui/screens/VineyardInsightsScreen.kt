@@ -316,8 +316,30 @@ private fun ScoutWorkspace(
     val writeFailed by insights.lastWriteFailed.collectAsStateWithLifecycle()
     val current = visits.firstOrNull { it.id == openId }
     var showReview by remember { mutableStateOf(false) }
+    var completionError by remember { mutableStateOf<String?>(null) }
     var showAllVintages by remember { mutableStateOf(false) }
     var visitPendingDeletion by remember { mutableStateOf<ScoutVisit?>(null) }
+    var cameraVisitId by rememberSaveable { mutableStateOf<String?>(null) }
+    var cameraAssessmentId by rememberSaveable { mutableStateOf<String?>(null) }
+    var cameraItemCode by rememberSaveable { mutableStateOf<String?>(null) }
+    val camera = rememberPhotoCaptureCoordinator(
+        onPhoto = { uri ->
+            val visitId = cameraVisitId
+            val assessmentId = cameraAssessmentId
+            val item = cameraItemCode?.let(ScoutItem::byCode)
+            cameraVisitId = null
+            cameraAssessmentId = null
+            cameraItemCode = null
+            if (uri != null && visitId != null && assessmentId != null && item != null) {
+                vm.captureScoutPhoto(visitId, assessmentId, item, uri) { }
+            }
+        },
+        onError = {
+            cameraVisitId = null
+            cameraAssessmentId = null
+            cameraItemCode = null
+        },
+    )
     val currentVintage = VintageResolver.vintageYear(
         LocalDate.now(),
         state.seasonStartMonth,
@@ -382,13 +404,14 @@ private fun ScoutWorkspace(
                         Button(
                             onClick = {
                                 val vineyardId = state.selectedVineyardId ?: return@Button
-                                insights.startVisit(
+                                val visit = insights.startVisit(
                                     vineyardId = vineyardId,
                                     scoutUserId = state.currentUserId,
                                     scoutName = state.userDisplayName,
                                     seasonStartMonth = state.seasonStartMonth,
                                     seasonStartDay = state.seasonStartDay,
                                 )
+                                vm.captureScoutWeather(visit.id)
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
                         ) {
@@ -419,6 +442,7 @@ private fun ScoutWorkspace(
                             insights.openVisit(visit.id)
                         },
                         onDelete = { visitPendingDeletion = it },
+                        syncStatus = insights::syncStatus,
                     )
                 }
             } else {
@@ -438,6 +462,12 @@ private fun ScoutWorkspace(
                         assessmentId = assessment.id,
                         enabled = current.isEditable,
                         observations = assessment.observations,
+                        onRequestPhoto = { item ->
+                            cameraVisitId = current.id
+                            cameraAssessmentId = assessment.id
+                            cameraItemCode = item.code
+                            camera.takePhoto()
+                        },
                     )
                 }
                 item {
@@ -480,12 +510,16 @@ private fun ScoutWorkspace(
     if (showReview && reviewVisit != null) {
         ScoutReviewDialog(
             review = ScoutReview.of(reviewVisit),
-            editable = reviewVisit.isEditable,
+            completionCanRetry = reviewVisit.isEditable || insights.completionNeedsRetry(reviewVisit.id),
+            completionError = completionError,
             onDismiss = { showReview = false },
             onComplete = {
                 if (insights.completeVisit(reviewVisit.id)) {
+                    completionError = null
                     showReview = false
                     insights.openVisit(null)
+                } else {
+                    completionError = "The completed Scout could not be saved with its sync obligation. Your field data remains on this device; try Complete again."
                 }
             },
         )
@@ -500,6 +534,7 @@ private fun ScoutList(
     onOpen: (String) -> Unit,
     onEdit: (ScoutVisit) -> Unit,
     onDelete: (ScoutVisit) -> Unit,
+    syncStatus: (ScoutVisit) -> String,
 ) {
     val vine = LocalVineColors.current
     VineyardCard {
@@ -524,6 +559,11 @@ private fun ScoutList(
                         "${visit.status.label} • ${visit.scoutNameSnapshot ?: "—"}",
                         fontSize = 12.sp,
                         color = vine.textSecondary,
+                    )
+                    Text(
+                        syncStatus(visit),
+                        fontSize = 12.sp,
+                        color = if (syncStatus(visit) == "Synced") VineColors.LeafGreen else VineColors.Warning,
                     )
                     Text(
                         if (names.isEmpty()) "No blocks yet" else "${names.joinToString(", ")} (${names.size})",
@@ -582,18 +622,24 @@ private fun ScoutVisitHeader(vm: AppViewModel, state: AppUiState, visit: ScoutVi
         Text(
             when {
                 weather == null -> "Weather not captured"
-                weather.isUnavailable -> "Weather unavailable at capture time"
-                weather.isStale -> "Weather  last reading may be out of date"
+                weather.isUnavailable -> "Weather unavailable at capture time${weather.source?.let { " • $it" }.orEmpty()}"
                 else -> buildString {
-                    append("Weather  ")
-                    weather.temperatureCelsius?.let { append("${it}\u00B0C  ") }
-                    weather.humidityPercent?.let { append("${it}% RH  ") }
-                    weather.windSpeedKph?.let { append("wind ${it} km/h") }
+                    append("Weather")
+                    weather.temperatureCelsius?.let { append(" • ${it}\u00B0C") }
+                    weather.humidityPercent?.let { append(" • ${it}% RH") }
+                    weather.windSpeedKph?.let { append(" • wind ${it} km/h") }
+                    weather.source?.let { append(" • $it") }
+                    weather.observedAtIso?.let { append(" • observed $it") }
+                    append(" • captured ${weather.capturedAtIso}")
+                    if (weather.isStale) append(" • stale")
                 }
             },
             fontSize = 12.sp,
             color = vine.textSecondary,
         )
+        if (visit.isEditable && (weather == null || weather.isUnavailable)) {
+            TextButton(onClick = { vm.captureScoutWeather(visit.id) }) { Text("Retry weather") }
+        }
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(
             value = visit.visitSummary.orEmpty(),
@@ -664,42 +710,17 @@ private fun ScoutBlockAssessmentCard(
     assessmentId: String,
     enabled: Boolean,
     observations: List<com.rork.vinetrack.data.insights.ScoutObservation>,
+    onRequestPhoto: (ScoutItem) -> Unit,
 ) {
     val vine = LocalVineColors.current
     val insights = vm.vineyardInsights
     val visit = insights.visit(visitId)
     val appState by vm.ui.collectAsStateWithLifecycle()
 
-    // Which item a pending camera belongs to, held in state so a recomposition
-    // while the camera is open cannot attach the photograph to the wrong item.
-    var photoItemCode by rememberSaveable { mutableStateOf<String?>(null) }
-    val photoItem = photoItemCode?.let(ScoutItem::byCode)
     var showStagePicker by remember { mutableStateOf(false) }
     var confirmUnlink by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var messageIsError by remember { mutableStateOf(false) }
-
-    val camera = rememberPhotoCaptureCoordinator(
-        onPhoto = { uri ->
-            val item = photoItem
-            photoItemCode = null
-            if (uri != null && item != null) {
-                vm.captureScoutPhoto(visitId, assessmentId, item, uri) { ok ->
-                    message = if (ok) {
-                        "Photograph saved on this device and queued to upload."
-                    } else {
-                        "This device could not save the photograph. Try again."
-                    }
-                    messageIsError = !ok
-                }
-            }
-        },
-        onError = {
-            photoItemCode = null
-            message = it
-            messageIsError = true
-        },
-    )
 
     VineyardCard {
         Text(
@@ -819,10 +840,7 @@ private fun ScoutBlockAssessmentCard(
                 photos = photos,
                 enabled = enabled,
                 bytesFor = { insights.photoBytes(it) },
-                onAdd = {
-                    photoItemCode = item.code
-                    camera.takePhoto()
-                },
+                onAdd = { onRequestPhoto(item) },
                 onDelete = { photo ->
                     insights.deletePhoto(visitId, assessmentId, item, photo.id)
                 },
@@ -1155,7 +1173,8 @@ private fun PhotoRow(
 @Composable
 private fun ScoutReviewDialog(
     review: ScoutReview,
-    editable: Boolean,
+    completionCanRetry: Boolean,
+    completionError: String?,
     onDismiss: () -> Unit,
     onComplete: () -> Unit,
 ) {
@@ -1177,10 +1196,13 @@ private fun ScoutReviewDialog(
                     fontSize = 12.sp,
                     color = VineColors.TextSecondaryLight,
                 )
+                completionError?.let {
+                    Text(it, fontSize = 12.sp, color = VineColors.Destructive)
+                }
             }
         },
         confirmButton = {
-            TextButton(onClick = onComplete, enabled = editable && review.canComplete) {
+            TextButton(onClick = onComplete, enabled = completionCanRetry && review.canComplete) {
                 Text("Complete Scout")
             }
         },

@@ -32,6 +32,7 @@ class VineyardInsightsController(
     private val photoFiles: ScoutPhotoFiles? = null,
     /** Null in tests and whenever the backend is unreachable. */
     private val repository: VineyardInsightsSyncApi? = null,
+    private val weatherLoader: (suspend (String, String) -> ScoutWeatherSnapshot)? = null,
     private val clock: () -> Instant = { Instant.now() },
     private val onMutation: (String) -> Unit = {},
 ) {
@@ -66,6 +67,11 @@ class VineyardInsightsController(
     private val _pendingPhotoCount = MutableStateFlow(store.loadPhotoQueue().size)
     val pendingPhotoCount: StateFlow<Int> = _pendingPhotoCount.asStateFlow()
 
+    init {
+        store.repairMissingObligations()
+        _pendingPhotoCount.value = store.loadPhotoQueue().size
+    }
+
     private fun nowIso(): String = clock().toString()
 
     private fun record(success: Boolean): Boolean {
@@ -90,6 +96,17 @@ class VineyardInsightsController(
     fun visits(status: ScoutStatus): List<ScoutVisit> =
         _visits.value.filter { it.status == status }
             .sortedByDescending { it.scoutDateIso }
+
+    fun syncStatus(visit: ScoutVisit): String {
+        val queued = store.loadQueue().any {
+            it.entity == VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT && it.recordId == visit.id
+        }
+        val queuedPhoto = store.loadPhotoQueue().any { it.visitId == visit.id }
+        val unacknowledgedPhoto = visit.assessments.flatMap { it.observations }.flatMap { it.photos }
+            .any { it.storagePath == null || it.uploadFailed }
+        if (store.isSyncOwedForVisit(visit.id) || queued || queuedPhoto || unacknowledgedPhoto) return "Sync pending"
+        return if (visit.syncVersion > 0) "Synced" else "Saved on this device"
+    }
 
     /**
      * Start a new visit. The id is client-generated so an offline capture
@@ -142,6 +159,29 @@ class VineyardInsightsController(
         val visit = visit(visitId) ?: return
         if (!visit.isEditable) return
         persist(visit.copy(weather = weather))
+    }
+
+    /** Capture current configured-source weather only for a visit dated today. */
+    suspend fun captureWeather(visitId: String) {
+        val visit = visit(visitId) ?: return
+        if (!visit.isEditable) return
+        val capturedAt = nowIso()
+        val today = clock().atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        val visitDate = runCatching { LocalDate.parse(visit.scoutDateIso) }.getOrNull()
+        if (visitDate != today) {
+            setWeather(
+                visitId,
+                ScoutWeatherSnapshot.unavailable(
+                    capturedAt,
+                    "Current weather not used for an older Scout visit",
+                ),
+            )
+            return
+        }
+        val snapshot = runCatching { weatherLoader?.invoke(visit.vineyardId, capturedAt) }
+            .getOrNull()
+            ?: ScoutWeatherSnapshot.unavailable(capturedAt, "Configured vineyard weather source")
+        setWeather(visitId, snapshot)
     }
 
     fun setObservationValue(visitId: String, assessmentId: String, item: ScoutItem, option: ScoutOption) {
@@ -404,8 +444,20 @@ class VineyardInsightsController(
     fun completeVisit(visitId: String): Boolean {
         val visit = visit(visitId) ?: return false
         if (!ScoutReview.of(visit).canComplete) return false
+        if (visit.status == ScoutStatus.COMPLETED) {
+            if (!store.repairMissingObligations()) return record(false)
+            val durable = store.loadQueue().any {
+                it.entity == VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT &&
+                    it.recordId == visitId && it.clientUpdatedAtIso == visit.clientUpdatedAtIso
+            }
+            if (durable) onMutation(visit.vineyardId)
+            return record(durable)
+        }
         return persist(visit.copy(status = ScoutStatus.COMPLETED))
     }
+
+    fun completionNeedsRetry(visitId: String): Boolean =
+        visit(visitId)?.status == ScoutStatus.COMPLETED && store.isSyncOwedForVisit(visitId)
 
     /** Deliberately return a completed visit to Draft, with caller confirmation. */
     fun reopenVisit(visitId: String): Boolean {
