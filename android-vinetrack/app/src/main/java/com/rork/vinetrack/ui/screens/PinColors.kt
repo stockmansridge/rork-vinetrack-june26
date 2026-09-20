@@ -2,110 +2,104 @@ package com.rork.vinetrack.ui.screens
 
 import androidx.compose.ui.graphics.Color
 import com.rork.vinetrack.data.PinCategoryCatalog
+import com.rork.vinetrack.data.model.LauncherButton
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.theme.VineColors
 
-/**
- * Shared pin colour resolution used across the Pins map, list and stats views.
- *
- * Repairs pins follow the canonical category colour contract
- * ([PinCategoryCatalog], mirrored 1:1 by iOS `PinCategoryCatalog.swift`): the
- * colour is derived deterministically from the pin's stable category id, so
- * two "Vine Issue" pins can never render in different colours across devices
- * or platforms. Unknown / missing categories (including historical records)
- * render as the neutral unassigned gray — never another category's colour.
- *
- * Growth observations keep their observation accents (stored colour → button
- * configuration → leaf green) and manual issues keep the amber accent, since
- * those record types are not part of the repairs category catalogue.
- */
-
-/** Colour tokens shared by the editor and resolver — must all be handled by [launcherColor]. */
-internal val launcherColorTokens: List<String> = listOf(
-    "blue", "brown", "green", "darkgreen", "red", "gray",
-    "yellow", "orange", "purple", "pink", "cyan", "indigo",
+/** Cross-platform token palette. Values mirror iOS `PinColorTokenContract` exactly. */
+internal val pinColorHexByToken: Map<String, Long> = linkedMapOf(
+    "red" to 0xFFFF3B30, "orange" to 0xFFFF9500, "yellow" to 0xFFFFCC00,
+    "green" to 0xFF34C759, "darkgreen" to 0xFF1B7F3B, "mint" to 0xFF00C7BE,
+    "teal" to 0xFF30B0C7, "cyan" to 0xFF32ADE6, "blue" to 0xFF007AFF,
+    "indigo" to 0xFF5856D6, "purple" to 0xFFAF52DE, "pink" to 0xFFFF2D55,
+    "brown" to 0xFFA2845E, "gray" to 0xFF8E8E93, "black" to 0xFF000000,
+    "white" to 0xFFFFFFFF,
 )
 
-/** Repairs accent (wine red) and Growth accent (leaf green) — iOS observation parity. */
-internal val RepairColor = VineColors.VineRed
-internal val GrowthColor = VineColors.LeafGreen
+internal val launcherColorTokens: List<String> = pinColorHexByToken.keys.toList()
+internal val RepairColor: Color = launcherColor("red")
+internal val GrowthColor: Color = launcherColor("darkgreen")
+internal val ManualIssueColor: Color = launcherColor("orange")
 
-/**
- * Manual Issue accent (amber). Deliberately distinct from the repairs red,
- * growth green, and completed/healthy tints so a manual issue is never
- * mistaken for another record type. The create RPC also stamps
- * button_color='orange' on the row, so this fallback rarely fires.
- */
-internal val ManualIssueColor = VineColors.Orange
-
-/** Map an iOS `ButtonConfig.color` token to the matching Android brand colour. */
-internal fun launcherColor(token: String): Color = when (token.trim().lowercase()) {
-    "blue" -> VineColors.Primary
-    "brown" -> VineColors.EarthBrown
-    "green" -> VineColors.LeafGreen
-    "darkgreen" -> VineColors.DarkGreen
-    "red" -> VineColors.Destructive
-    "gray", "grey" -> Color(0xFF8E8E93)
-    "yellow" -> Color(0xFFE6B800)
-    "orange" -> VineColors.Orange
-    "purple" -> VineColors.Purple
-    "pink" -> VineColors.Pink
-    "cyan" -> VineColors.Cyan
-    "indigo" -> VineColors.Indigo
-    else -> VineColors.Primary
+internal fun normalizedPinColorToken(token: String?): String? {
+    val normalized = token?.trim()?.lowercase()?.let { if (it == "grey") "gray" else it }
+    return normalized?.takeIf { it in pinColorHexByToken }
 }
 
-/** Mode-specific accent for a pin's stored `mode` raw value. */
+/** Configurable pin colours never use brand or platform-native colour values. */
+internal fun launcherColor(token: String): Color =
+    Color(pinColorHexByToken[normalizedPinColorToken(token)] ?: pinColorHexByToken.getValue("gray"))
+
 internal fun pinModeColor(mode: String?): Color = when {
     mode?.contains("manual", ignoreCase = true) == true -> ManualIssueColor
     mode?.contains("growth", ignoreCase = true) == true -> GrowthColor
     else -> RepairColor
 }
 
-/**
- * Build a button-name → colour-token map from the vineyard's launcher button
- * configuration (iOS `nameColorMap` parity). First config wins per name.
- */
-internal fun pinColorMap(state: AppUiState): Map<String, String> {
-    val map = HashMap<String, String>()
-    (state.repairButtons + state.growthButtons).forEach { cfg ->
-        val name = cfg.name
-        if (name.isNotBlank() && cfg.color.isNotBlank() && !map.containsKey(name)) {
-            map[name] = cfg.color
-        }
+private fun normalizedName(value: String?): String? =
+    value?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+
+/** Vineyard-scoped authoritative launcher configuration used by every Pins surface. */
+internal data class PinColorConfiguration(
+    val vineyardId: String?,
+    val repairButtons: List<LauncherButton>,
+    val growthButtons: List<LauncherButton>,
+) {
+    fun tokenForName(name: String?): String? {
+        val normalized = normalizedName(name) ?: return null
+        return (repairButtons + growthButtons).firstOrNull {
+            normalizedName(it.name) == normalized
+        }?.color?.let(::normalizedPinColorToken)
     }
-    return map
 }
 
+internal fun pinColorMap(state: AppUiState): PinColorConfiguration = PinColorConfiguration(
+    vineyardId = state.selectedVineyardId,
+    repairButtons = state.repairButtons,
+    growthButtons = state.growthButtons,
+)
+
 /**
- * Resolve a pin's display colour.
- *
- * Repairs pins: canonical category contract — colour derived from the stable
- * category id ([PinCategoryCatalog.canonicalId] over `category`, then
- * `button_name`, then `title`). Never from the editable button configuration
- * or an arbitrary stored colour token, so every device renders the same
- * category identically. Unknown/missing → unassigned gray, never a crash.
- *
- * Growth pins: stored colour → launcher configuration → leaf green accent.
- * Manual issues: fixed amber accent.
+ * Resolve current configured colour, then legacy snapshot, then canonical/mode fallback.
+ * Stable id wins; canonical repair id and normalized name keep legacy rows compatible.
  */
-internal fun pinColor(pin: Pin, colorMap: Map<String, String>): Color {
-    val mode = pin.mode
-    return when {
-        mode?.contains("manual", ignoreCase = true) == true -> ManualIssueColor
-        mode?.contains("growth", ignoreCase = true) == true -> {
-            pin.buttonColor?.trim()?.takeIf { it.isNotBlank() }?.let { return launcherColor(it) }
-            val token = pin.buttonName?.takeIf { it.isNotBlank() }?.let { colorMap[it] }
-                ?: colorMap[pin.displayTitle]
-            if (!token.isNullOrBlank()) launcherColor(token) else GrowthColor
+internal fun pinColorToken(pin: Pin, configuration: PinColorConfiguration): String {
+    if (pin.mode?.contains("manual", ignoreCase = true) == true) {
+        return normalizedPinColorToken(pin.buttonColor) ?: "orange"
+    }
+    val sameVineyard = configuration.vineyardId?.equals(pin.vineyardId, ignoreCase = true) == true
+    val buttons = if (pin.mode?.contains("growth", ignoreCase = true) == true) {
+        configuration.growthButtons
+    } else {
+        configuration.repairButtons
+    }
+    if (sameVineyard) {
+        pin.launcherButtonId?.let { id ->
+            buttons.firstOrNull { it.id == id }?.color?.let(::normalizedPinColorToken)?.let { return it }
         }
-        else -> launcherColor(
-            PinCategoryCatalog.colorTokenForRaw(
-                pin.category?.takeIf { it.isNotBlank() }
-                    ?: pin.buttonName?.takeIf { it.isNotBlank() }
-                    ?: pin.title,
-            ),
+        val rawName = pin.category?.takeIf { it.isNotBlank() }
+            ?: pin.buttonName?.takeIf { it.isNotBlank() }
+            ?: pin.title
+        PinCategoryCatalog.canonicalId(rawName)?.let { canonical ->
+            buttons.firstOrNull { PinCategoryCatalog.canonicalId(it.name) == canonical }
+                ?.color?.let(::normalizedPinColorToken)?.let { return it }
+        }
+        val normalized = normalizedName(pin.buttonName) ?: normalizedName(pin.displayTitle)
+        buttons.firstOrNull { normalizedName(it.name) == normalized }
+            ?.color?.let(::normalizedPinColorToken)?.let { return it }
+    }
+    normalizedPinColorToken(pin.buttonColor)?.let { return it }
+    return if (pin.mode?.contains("growth", ignoreCase = true) == true) {
+        "darkgreen"
+    } else {
+        PinCategoryCatalog.colorTokenForRaw(
+            pin.category?.takeIf { it.isNotBlank() }
+                ?: pin.buttonName?.takeIf { it.isNotBlank() }
+                ?: pin.title,
         )
     }
 }
+
+internal fun pinColor(pin: Pin, configuration: PinColorConfiguration): Color =
+    launcherColor(pinColorToken(pin, configuration))

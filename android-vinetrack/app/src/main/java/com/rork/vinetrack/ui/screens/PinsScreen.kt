@@ -1019,7 +1019,7 @@ private fun PinFilterSheet(
     selectedNames: Set<String>,
     selectedPaddockIds: Set<String>,
     uniqueNames: kotlin.collections.List<String>,
-    colorMap: Map<String, String>,
+    colorMap: PinColorConfiguration,
     paddocks: kotlin.collections.List<Paddock>,
     /** Resolved season filter shared by the list, map, stats and exports. */
     season: SeasonScope,
@@ -1075,7 +1075,7 @@ private fun PinFilterSheet(
             ) {
                 PinModeFilterChip("All", selectedNames.isEmpty()) { onNames(emptySet()) }
                 uniqueNames.forEach { name ->
-                    val dotColor = colorMap[name]?.let { launcherColor(it) } ?: Color(0xFF8E8E93)
+                    val dotColor = colorMap.tokenForName(name)?.let { launcherColor(it) } ?: launcherColor("gray")
                     val isActive = name in selectedNames
                     FilterChip(
                         selected = isActive,
@@ -1241,7 +1241,7 @@ private fun PinsListMode(
     vm: AppViewModel,
     visiblePins: kotlin.collections.List<Pin>,
     state: AppUiState,
-    colorMap: Map<String, String>,
+    colorMap: PinColorConfiguration,
     userLocation: Pair<Double, Double>?,
     travelContext: PinQueryPolicy.TravelContext?,
     rowUnavailableReason: String,
@@ -1368,7 +1368,7 @@ private data class PinCategoryStat(
 
 /** Stats view: overview totals + per-category breakdown (iOS PinsSummaryView parity). */
 @Composable
-private fun PinsStatsMode(pins: kotlin.collections.List<Pin>, colorMap: Map<String, String>) {
+private fun PinsStatsMode(pins: kotlin.collections.List<Pin>, colorMap: PinColorConfiguration) {
     val vine = LocalVineColors.current
     if (pins.isEmpty()) {
         Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
@@ -1385,7 +1385,7 @@ private fun PinsStatsMode(pins: kotlin.collections.List<Pin>, colorMap: Map<Stri
     val active = total - completed
     val growth = pins.count { it.mode?.contains("growth", ignoreCase = true) == true }
     val repairs = total - growth
-    val stats = remember(pins) {
+    val stats = remember(pins, colorMap) {
         pins.groupBy { it.displayTitle.trim().lowercase() }
             .map { (_, group) ->
                 val first = group.first()
@@ -1518,7 +1518,7 @@ private fun PinEditSheetHost(
             // iOS-parity identity: persist the pin's name as button_name
             // and, when the title matches a configured launcher button,
             // its colour token as button_color.
-            val colorToken = pinColorMap(state)[fields.title]?.ifBlank { null }
+            val colorToken = pinColorMap(state).tokenForName(fields.title)?.ifBlank { null }
             val doCreate: () -> Unit = {
                 vm.createPin(
                     title = fields.title,
@@ -1947,7 +1947,8 @@ fun PinCategoryLauncherScreen(
         // iOS-parity identity: store the tapped button's name and colour token
         // on the pin so every device renders it identically.
         val buttons = if (capturedMode == "Growth") state.growthButtons else state.repairButtons
-        val colorToken = buttons.firstOrNull { it.name == category }?.color?.ifBlank { null }
+        val matchedButton = buttons.firstOrNull { it.name == category }
+        val colorToken = matchedButton?.color?.ifBlank { null }
 
         val doCreate: () -> Unit = doCreate@{
             if (!vm.isPinCaptureContextCurrent(capture.vineyardId, capture.tripId)) {
@@ -2002,6 +2003,7 @@ fun PinCategoryLauncherScreen(
                 longitude = lng,
                 buttonName = category,
                 buttonColor = colorToken,
+                launcherButtonId = matchedButton?.id,
                 // The exact fresh facing already used for row selection.
                 heading = capture.headingDegrees,
                 placement = placement,
@@ -2368,6 +2370,8 @@ fun PinCategoryLauncherScreen(
 
 /** A single editable launcher row (paired Left/Right on save). */
 private data class ButtonRowDraft(
+    val leftId: String?,
+    val rightId: String?,
     val name: String,
     val color: String,
     val isGrowthStage: Boolean,
@@ -2377,17 +2381,17 @@ private data class ButtonRowDraft(
 private fun defaultButtonDrafts(mode: String): List<ButtonRowDraft> =
     if (mode == "Growth") {
         listOf(
-            ButtonRowDraft("Growth Stage", "darkgreen", true),
-            ButtonRowDraft("Powdery", "gray", false),
-            ButtonRowDraft("Downy", "yellow", false),
-            ButtonRowDraft("Blackberries", "red", false),
+            ButtonRowDraft(null, null, "Growth Stage", "darkgreen", true),
+            ButtonRowDraft(null, null, "Powdery", "gray", false),
+            ButtonRowDraft(null, null, "Downy", "yellow", false),
+            ButtonRowDraft(null, null, "Blackberries", "red", false),
         )
     } else {
         listOf(
-            ButtonRowDraft("Irrigation", "blue", false),
-            ButtonRowDraft("Broken Post", "brown", false),
-            ButtonRowDraft("Vine Issue", "green", false),
-            ButtonRowDraft("Other", "red", false),
+            ButtonRowDraft(null, null, "Irrigation", "blue", false),
+            ButtonRowDraft(null, null, "Broken Post", "brown", false),
+            ButtonRowDraft(null, null, "Vine Issue", "green", false),
+            ButtonRowDraft(null, null, "Other", "red", false),
         )
     }
 
@@ -2399,7 +2403,13 @@ private fun draftsFromConfig(mode: String, buttons: List<LauncherButton>): List<
     return (0 until 4).map { i ->
         val b = sorted.getOrNull(i)
         if (b != null) {
-            ButtonRowDraft(b.name, b.color.ifBlank { fallback[i].color }, b.isGrowthStageButton)
+            ButtonRowDraft(
+                leftId = b.id,
+                rightId = buttons.firstOrNull { it.index == i + 4 }?.id,
+                name = b.name,
+                color = b.color.ifBlank { fallback[i].color },
+                isGrowthStage = b.isGrowthStageButton,
+            )
         } else {
             fallback[i]
         }
@@ -2564,8 +2574,8 @@ internal fun EditLauncherButtonsSheet(
                         val payload = buildList {
                             rows.forEachIndexed { i, r ->
                                 val name = r.name.trim()
-                                add(LauncherButton(name = name, color = r.color, index = i, mode = mode, isGrowthStageButton = r.isGrowthStage))
-                                add(LauncherButton(name = name, color = r.color, index = i + 4, mode = mode, isGrowthStageButton = r.isGrowthStage))
+                                add(LauncherButton(id = r.leftId ?: UUID.randomUUID().toString(), name = name, color = r.color, index = i, mode = mode, isGrowthStageButton = r.isGrowthStage))
+                                add(LauncherButton(id = r.rightId ?: UUID.randomUUID().toString(), name = name, color = r.color, index = i + 4, mode = mode, isGrowthStageButton = r.isGrowthStage))
                             }
                         }
                         vm.saveLauncherButtons(mode, payload) { ok -> if (ok) onDismiss() }

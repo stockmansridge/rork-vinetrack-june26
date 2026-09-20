@@ -1,11 +1,8 @@
 import Foundation
 
-/// Canonical pin-category colour contract, shared verbatim with Android
-/// (`PinCategoryCatalog.kt`). Pin colours are derived deterministically from
-/// the pin's *stable category id* — never from the vineyard's editable button
-/// configuration, a translated/display label comparison, or an arbitrary
-/// colour token stored on the row. This guarantees two pins of the same
-/// category always render identically on every device and platform.
+/// Canonical repair-category identities and fallback colours shared with Android.
+/// Vineyard button configuration is authoritative; these colours are used only
+/// when no current configured button can be safely matched.
 ///
 /// Stable ids and their canonical colour tokens:
 ///  - `irrigation`  → blue
@@ -79,23 +76,51 @@ nonisolated enum PinCategoryCatalog {
     }
 }
 
+nonisolated enum PinColorTokenContract {
+    static let hexByToken: [String: UInt32] = [
+        "red": 0xFF3B30, "orange": 0xFF9500, "yellow": 0xFFCC00,
+        "green": 0x34C759, "darkgreen": 0x1B7F3B, "mint": 0x00C7BE,
+        "teal": 0x30B0C7, "cyan": 0x32ADE6, "blue": 0x007AFF,
+        "indigo": 0x5856D6, "purple": 0xAF52DE, "pink": 0xFF2D55,
+        "brown": 0xA2845E, "gray": 0x8E8E93, "black": 0x000000,
+        "white": 0xFFFFFF,
+    ]
+
+    static func normalized(_ token: String?) -> String? {
+        guard var value = token?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !value.isEmpty else { return nil }
+        if value == "grey" { value = "gray" }
+        return hexByToken[value] == nil ? nil : value
+    }
+}
+
+nonisolated enum PinColorResolver {
+    static func token(for pin: VinePin, repairButtons: [ButtonConfig], growthButtons: [ButtonConfig]) -> String {
+        if pin.mode == .manualIssue { return PinColorTokenContract.normalized(pin.buttonColor) ?? "orange" }
+        let buttons = (pin.mode == .growth ? growthButtons : repairButtons)
+            .filter { $0.vineyardId == pin.vineyardId && $0.mode == pin.mode }
+        if let stableID = pin.launcherButtonId,
+           let match = buttons.first(where: { $0.id == stableID }),
+           let color = PinColorTokenContract.normalized(match.color) { return color }
+        let canonical = PinCategoryCatalog.canonicalId(forRaw: pin.buttonName)
+        if let canonical,
+           let match = buttons.first(where: { PinCategoryCatalog.canonicalId(forRaw: $0.name) == canonical }),
+           let color = PinColorTokenContract.normalized(match.color) { return color }
+        let normalizedName = pin.buttonName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !normalizedName.isEmpty,
+           let match = buttons.first(where: {
+               $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedName
+           }), let color = PinColorTokenContract.normalized(match.color) { return color }
+        if let stored = PinColorTokenContract.normalized(pin.buttonColor) { return stored }
+        if pin.mode == .repairs { return PinCategoryCatalog.colorToken(forCanonicalId: canonical) }
+        return pin.mode == .growth ? "darkgreen" : "gray"
+    }
+}
+
 extension VinePin {
-    /// The colour token every display surface should render this pin with.
-    ///
-    /// Repairs pins follow the canonical category contract (deterministic
-    /// from the stable category id, Android parity); growth observations keep
-    /// their observation accent (stored colour → dark green) and manual
-    /// issues keep the amber accent. Unknown/missing categories render as
-    /// the neutral unassigned gray.
+    /// Legacy fallback for contexts that genuinely have no vineyard config.
     var displayColorToken: String {
-        switch mode {
-        case .manualIssue:
-            return "orange"
-        case .growth:
-            return buttonColor.isEmpty ? "darkgreen" : buttonColor
-        case .repairs:
-            return PinCategoryCatalog.colorToken(forRaw: buttonName.isEmpty ? nil : buttonName)
-        }
+        PinColorResolver.token(for: self, repairButtons: [], growthButtons: [])
     }
 
     /// Human label shown for pins whose category/name never synced — keeps

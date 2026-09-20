@@ -6603,6 +6603,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // button configuration. Defaults keep older callers compiling.
         buttonName: String? = null,
         buttonColor: String? = null,
+        launcherButtonId: String? = null,
         /** Device bearing at drop time (degrees 0–360), when the fix had one. */
         heading: Double? = null,
         photoUri: Uri? = null,
@@ -6672,6 +6673,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             category = category?.ifBlank { null },
             buttonName = (buttonName ?: title).ifBlank { null },
             buttonColor = buttonColor?.ifBlank { null },
+            launcherButtonId = launcherButtonId?.ifBlank { null },
             mode = mode.ifBlank { null },
             notes = notes?.ifBlank { null },
             side = side?.ifBlank { null },

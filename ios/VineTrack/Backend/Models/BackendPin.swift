@@ -23,6 +23,7 @@ nonisolated struct BackendPin: Codable, Sendable, Identifiable {
     let status: String?
     let buttonName: String?
     let buttonColor: String?
+    let launcherButtonId: UUID?
     let title: String?
     let notes: String?
     let latitude: Double?
@@ -73,6 +74,7 @@ nonisolated struct BackendPin: Codable, Sendable, Identifiable {
         case status
         case buttonName = "button_name"
         case buttonColor = "button_color"
+        case launcherButtonId = "launcher_button_id"
         case title
         case notes
         case latitude
@@ -127,6 +129,7 @@ nonisolated struct BackendPinUpsert: Encodable, Sendable {
     let mode: String?
     let buttonName: String?
     let buttonColor: String?
+    let launcherButtonId: UUID?
     /// Display-title snapshot kept equal to `buttonName` for repair/growth
     /// pins — Android's list and detail read `title` first, so a type change
     /// made on iOS must update it too. Nil (omitted from the payload, column
@@ -168,6 +171,7 @@ nonisolated struct BackendPinUpsert: Encodable, Sendable {
         case mode
         case buttonName = "button_name"
         case buttonColor = "button_color"
+        case launcherButtonId = "launcher_button_id"
         case title
         case notes
         case latitude
@@ -218,6 +222,7 @@ extension BackendPin {
             mode: pin.mode.rawValue,
             buttonName: pin.buttonName,
             buttonColor: pin.buttonColor,
+            launcherButtonId: pin.launcherButtonId,
             title: pin.mode == .manualIssue ? nil : (pin.buttonName.isEmpty ? nil : pin.buttonName),
             notes: pin.notes,
             latitude: pin.latitude,
@@ -289,6 +294,7 @@ extension BackendPin {
             heading: heading,
             buttonName: resolvedName,
             buttonColor: resolvedColor,
+            launcherButtonId: launcherButtonId,
             side: resolvedSide,
             mode: pinMode,
             paddockId: paddockId,

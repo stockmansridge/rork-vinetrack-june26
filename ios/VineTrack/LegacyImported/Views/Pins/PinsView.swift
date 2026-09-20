@@ -581,10 +581,11 @@ nonisolated enum PinsListSortOption: String, CaseIterable, Hashable {
 /// One selectable entry of the canonical pin-type catalogue (the vineyard's
 /// Repairs/Growth launcher buttons) used by the Change Pin Type control.
 nonisolated struct PinTypeOption: Identifiable, Hashable {
+    let buttonId: UUID
     let name: String
     let color: String
     let mode: PinMode
-    var id: String { "\(mode.rawValue)|\(name.lowercased())" }
+    var id: UUID { buttonId }
 }
 
 // MARK: - Summary / Repair Report
@@ -606,7 +607,7 @@ struct PinsSummaryView: View {
         var buckets: [String: (name: String, color: String, total: Int, active: Int, completed: Int)] = [:]
         for pin in pins {
             let key = pin.buttonName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            var entry = buckets[key] ?? (name: pin.displayNameOrUnassigned, color: pin.displayColorToken, total: 0, active: 0, completed: 0)
+            var entry = buckets[key] ?? (name: pin.displayNameOrUnassigned, color: store.resolvedPinColorToken(pin), total: 0, active: 0, completed: 0)
             entry.total += 1
             if pin.isCompleted { entry.completed += 1 } else { entry.active += 1 }
             buckets[key] = entry
@@ -930,7 +931,7 @@ struct PinsMapView: View {
                     // Marker sits on the validated attached location (snapped
                     // vine row when the pin has one, raw drop point otherwise).
                     coordinate: $0.attachedCoordinate,
-                    color: Color.fromString($0.displayColorToken),
+                    color: Color.fromString(store.resolvedPinColorToken($0)),
                     isCompleted: $0.isCompleted,
                     name: $0.buttonName
                 )
@@ -983,7 +984,7 @@ struct PinsMapView: View {
                     } label: {
                         ZStack {
                             Circle()
-                                .fill(Color.fromString(pin.displayColorToken).gradient)
+                                .fill(Color.fromString(store.resolvedPinColorToken(pin)).gradient)
                                 .frame(width: 30, height: 30)
 
                             if pin.isCompleted {
@@ -1529,7 +1530,7 @@ struct PinRowView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.fromString(pin.displayColorToken).gradient)
+                    .background(Color.fromString(store.resolvedPinColorToken(pin)).gradient)
                     .clipShape(.rect(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
@@ -1794,6 +1795,7 @@ struct ActionButton: View {
 // MARK: - Pin Location Map Sheet
 
 struct PinLocationMapSheet: View {
+    @Environment(MigratedDataStore.self) private var store
     let pin: VinePin
     @Environment(\.dismiss) private var dismiss
     @State private var position: MapCameraPosition
@@ -1812,7 +1814,7 @@ struct PinLocationMapSheet: View {
                 Annotation(pin.buttonName, coordinate: pin.attachedCoordinate) {
                     ZStack {
                         Circle()
-                            .fill(Color.fromString(pin.displayColorToken).gradient)
+                            .fill(Color.fromString(store.resolvedPinColorToken(pin)).gradient)
                             .frame(width: 36, height: 36)
                         Image(systemName: "mappin")
                             .font(.caption.bold())
@@ -1865,7 +1867,7 @@ struct PinDirectionsSheet: View {
                     Annotation(pin.buttonName, coordinate: pin.attachedCoordinate) {
                         ZStack {
                             Circle()
-                                .fill(Color.fromString(pin.displayColorToken).gradient)
+                                .fill(Color.fromString(store.resolvedPinColorToken(pin)).gradient)
                                 .frame(width: 36, height: 36)
                             Image(systemName: "mappin")
                                 .font(.caption.bold())
@@ -2109,13 +2111,13 @@ struct PinDetailSheet: View {
             let key = name.lowercased()
             guard !seen.contains(key) else { continue }
             seen.insert(key)
-            options.append(PinTypeOption(name: name, color: button.color, mode: mode))
+            options.append(PinTypeOption(buttonId: button.id, name: name, color: button.color, mode: mode))
         }
         return options
     }
 
     private var displayTypeName: String { typeDraft?.name ?? pin.buttonName }
-    private var displayTypeColor: String { typeDraft?.color ?? pin.displayColorToken }
+    private var displayTypeColor: String { typeDraft?.color ?? store.resolvedPinColorToken(pin) }
     private var displayTypeMode: PinMode { typeDraft?.mode ?? pin.mode }
 
     /// Applies a type change to the LIVE pin row — same id, coordinates, row
@@ -2126,9 +2128,10 @@ struct PinDetailSheet: View {
         let unchanged = live.buttonName.lowercased() == option.name.lowercased()
             && live.buttonColor == option.color
             && live.mode == option.mode
+            && live.launcherButtonId == option.buttonId
         guard !unchanged else { return }
         typeDraft = option
-        store.updatePin(live.changingType(buttonName: option.name, buttonColor: option.color, mode: option.mode))
+        store.updatePin(live.changingType(buttonName: option.name, buttonColor: option.color, mode: option.mode, launcherButtonId: option.buttonId))
     }
 
     @ViewBuilder

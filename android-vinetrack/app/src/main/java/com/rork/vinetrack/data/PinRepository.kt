@@ -51,6 +51,7 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
         // without needing the vineyard's button configuration.
         @SerialName("button_name") val buttonName: String? = null,
         @SerialName("button_color") val buttonColor: String? = null,
+        @SerialName("launcher_button_id") val launcherButtonId: String? = null,
         val mode: String? = null,
         val notes: String? = null,
         val side: String? = null,

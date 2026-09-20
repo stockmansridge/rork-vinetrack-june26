@@ -295,6 +295,7 @@ struct VineyardDetailsView: View {
 // MARK: - Mini Map
 
 private struct VineyardBlocksMiniMap: View {
+    @Environment(MigratedDataStore.self) private var store
     let paddocks: [Paddock]
     let pins: [VinePin]
     @Binding var selectedPaddock: Paddock?
@@ -331,7 +332,7 @@ private struct VineyardBlocksMiniMap: View {
                 OfflineVineyardMapView.Pin(
                     id: $0.id,
                     coordinate: $0.coordinate,
-                    color: Color.fromString($0.displayColorToken),
+                    color: Color.fromString(store.resolvedPinColorToken($0)),
                     isCompleted: $0.isCompleted,
                     name: $0.buttonName
                 )

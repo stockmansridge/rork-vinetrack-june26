@@ -48,21 +48,48 @@ struct PinCategoryCatalogTests {
         #expect(PinCategoryCatalog.colorToken(forRaw: "irrigation") == "blue")
     }
 
-    @Test func repairsPinsDisplayCanonicalColoursRegardlessOfStoredToken() {
-        // Two "Vine Issue" pins with different stored colours must render
-        // identically — the canonical category colour, not the stored token.
-        let a = VinePin(
-            latitude: -34.0, longitude: 138.0, heading: nil,
-            buttonName: "Vine Issue", buttonColor: "red",
-            side: .left, mode: .repairs, timestamp: Date()
+    @Test func configuredRepairAndGrowthColoursOverrideHistoricalSnapshots() {
+        let vineyardID = UUID()
+        let repairID = UUID()
+        let growthID = UUID()
+        let repair = VinePin(
+            vineyardId: vineyardID, latitude: -34, longitude: 138, heading: nil,
+            buttonName: "Vine Issue", buttonColor: "green", launcherButtonId: repairID,
+            side: .left, mode: .repairs
         )
-        let b = VinePin(
-            latitude: -34.0, longitude: 138.0, heading: nil,
-            buttonName: "Vine Issue", buttonColor: "green",
-            side: .right, mode: .repairs, timestamp: Date()
+        let growth = VinePin(
+            vineyardId: vineyardID, latitude: -34, longitude: 138, heading: nil,
+            buttonName: "Powdery", buttonColor: "gray", launcherButtonId: growthID,
+            side: .right, mode: .growth
         )
-        #expect(a.displayColorToken == "green")
-        #expect(b.displayColorToken == "green")
+        let repairs = [ButtonConfig(id: repairID, vineyardId: vineyardID, name: "Renamed issue", color: "yellow", index: 0, mode: .repairs)]
+        let growths = [ButtonConfig(id: growthID, vineyardId: vineyardID, name: "Powdery", color: "pink", index: 0, mode: .growth)]
+        #expect(PinColorResolver.token(for: repair, repairButtons: repairs, growthButtons: growths) == "yellow")
+        #expect(PinColorResolver.token(for: growth, repairButtons: repairs, growthButtons: growths) == "pink")
+    }
+
+    @Test func legacyAndVineyardScopedFallbacksAreSafe() {
+        let vineyardA = UUID()
+        let vineyardB = UUID()
+        let pin = VinePin(
+            vineyardId: vineyardA, latitude: -34, longitude: 138, heading: nil,
+            buttonName: "Custom A", buttonColor: "purple", side: .left, mode: .repairs
+        )
+        let wrongVineyard = [ButtonConfig(vineyardId: vineyardB, name: "Custom A", color: "blue", index: 0, mode: .repairs)]
+        #expect(PinColorResolver.token(for: pin, repairButtons: wrongVineyard, growthButtons: []) == "purple")
+    }
+
+    @Test func allTokensUseTheExactSharedHexContract() {
+        let expected: [String: UInt32] = [
+            "red": 0xFF3B30, "orange": 0xFF9500, "yellow": 0xFFCC00,
+            "green": 0x34C759, "darkgreen": 0x1B7F3B, "mint": 0x00C7BE,
+            "teal": 0x30B0C7, "cyan": 0x32ADE6, "blue": 0x007AFF,
+            "indigo": 0x5856D6, "purple": 0xAF52DE, "pink": 0xFF2D55,
+            "brown": 0xA2845E, "gray": 0x8E8E93, "black": 0x000000,
+            "white": 0xFFFFFF,
+        ]
+        #expect(PinColorTokenContract.hexByToken == expected)
+        #expect(PinColorTokenContract.normalized("grey") == "gray")
     }
 
     @Test func historicalPinsWithoutACategoryDisplayAsUnassigned() {

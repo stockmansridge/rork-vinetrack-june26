@@ -1282,6 +1282,8 @@ data class Pin(
     @SerialName("button_name") val buttonName: String? = null,
     /** Colour token stored at drop time (iOS `buttonColor` parity, e.g. "blue"). */
     @SerialName("button_color") val buttonColor: String? = null,
+    /** Stable vineyard launcher button identity; null on legacy pins. */
+    @SerialName("launcher_button_id") val launcherButtonId: String? = null,
     val mode: String? = null,
     @SerialName("growth_stage_code") val growthStageCode: String? = null,
     val notes: String? = null,

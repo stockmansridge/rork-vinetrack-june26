@@ -4,6 +4,7 @@ import CoreLocation
 /// Warning sheet shown when a user is about to drop a pin near an existing
 /// one. Allows viewing the existing pin, creating anyway, or cancelling.
 struct PinDuplicateWarningSheet: View {
+    @Environment(MigratedDataStore.self) private var store
     let existingPin: VinePin
     let distance: Double
     let radius: Double
@@ -11,7 +12,6 @@ struct PinDuplicateWarningSheet: View {
     let onViewExisting: () -> Void
     let onCancel: () -> Void
 
-    @Environment(MigratedDataStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
     private var paddockName: String {
@@ -84,7 +84,7 @@ struct PinDuplicateWarningSheet: View {
                     Section("Existing Pin") {
                         HStack(spacing: 12) {
                             Circle()
-                                .fill(Color.fromString(existingPin.displayColorToken).gradient)
+                                .fill(Color.fromString(store.resolvedPinColorToken(existingPin)).gradient)
                                 .frame(width: 32, height: 32)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(existingPin.buttonName)

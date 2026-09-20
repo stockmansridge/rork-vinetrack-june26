@@ -228,10 +228,12 @@ struct EditButtonsSheet: View {
 
     private func saveButtons() {
         guard canSave, let vineyardId = store.selectedVineyardId else { return }
+        let storeButtons = mode == .repairs ? store.repairButtons : store.growthButtons
         var configs: [ButtonConfig] = []
         for i in 0..<4 {
             let name = entryNames[i].trimmingCharacters(in: .whitespacesAndNewlines)
             configs.append(ButtonConfig(
+                id: storeButtons.first(where: { $0.index == i })?.id ?? UUID(),
                 vineyardId: vineyardId,
                 name: name,
                 color: entryColors[i],
@@ -240,6 +242,7 @@ struct EditButtonsSheet: View {
                 isGrowthStageButton: entryIsGrowthStage[i]
             ))
             configs.append(ButtonConfig(
+                id: storeButtons.first(where: { $0.index == i + 4 })?.id ?? UUID(),
                 vineyardId: vineyardId,
                 name: name,
                 color: entryColors[i],

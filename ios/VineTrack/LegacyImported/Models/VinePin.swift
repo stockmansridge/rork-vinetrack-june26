@@ -11,6 +11,8 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
     let heading: Double?
     let buttonName: String
     let buttonColor: String
+    /// Stable identity of the vineyard launcher button. Nil on legacy pins.
+    let launcherButtonId: UUID?
     /// Legacy operator side (Left/Right). Nil for pins created through the
     /// unified composer, which has no side selection — shown honestly as
     /// side-less instead of a fake default.
@@ -86,6 +88,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         heading: Double?,
         buttonName: String,
         buttonColor: String,
+        launcherButtonId: UUID? = nil,
         side: PinSide?,
         mode: PinMode,
         paddockId: UUID? = nil,
@@ -120,6 +123,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         self.heading = heading
         self.buttonName = buttonName
         self.buttonColor = buttonColor
+        self.launcherButtonId = launcherButtonId
         self.side = side
         self.mode = mode
         self.paddockId = paddockId
@@ -152,7 +156,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
     // decodes cleanly with safe defaults.
     private enum CodingKeys: String, CodingKey {
         case id, vineyardId, latitude, longitude, heading
-        case buttonName, buttonColor, side, mode, paddockId, rowNumber
+        case buttonName, buttonColor, launcherButtonId, side, mode, paddockId, rowNumber
         case timestamp, createdBy, createdByUserId
         case isCompleted, completedBy, completedByUserId, completedAt
         case photoData, photoPath, tripId, growthStageCode, notes
@@ -170,6 +174,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         heading = try c.decodeIfPresent(Double.self, forKey: .heading)
         buttonName = try c.decode(String.self, forKey: .buttonName)
         buttonColor = try c.decode(String.self, forKey: .buttonColor)
+        launcherButtonId = try c.decodeIfPresent(UUID.self, forKey: .launcherButtonId)
         side = try c.decodeIfPresent(PinSide.self, forKey: .side)
         mode = try c.decode(PinMode.self, forKey: .mode)
         paddockId = try c.decodeIfPresent(UUID.self, forKey: .paddockId)
@@ -205,7 +210,7 @@ extension VinePin {
     /// and side, notes, photo, completion state and audit fields — is
     /// preserved verbatim, so correcting a mis-assigned type never moves or
     /// recreates the pin.
-    func changingType(buttonName newName: String, buttonColor newColor: String, mode newMode: PinMode) -> VinePin {
+    func changingType(buttonName newName: String, buttonColor newColor: String, mode newMode: PinMode, launcherButtonId newButtonId: UUID? = nil) -> VinePin {
         VinePin(
             id: id,
             vineyardId: vineyardId,
@@ -214,6 +219,7 @@ extension VinePin {
             heading: heading,
             buttonName: newName,
             buttonColor: newColor,
+            launcherButtonId: newButtonId,
             side: side,
             mode: newMode,
             paddockId: paddockId,

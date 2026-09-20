@@ -369,6 +369,7 @@ fun UnifiedPinComposerScreen(
                     longitude = marker.longitude,
                     buttonName = chosen.name,
                     buttonColor = chosen.colorToken,
+                    launcherButtonId = chosen.buttonId,
                     heading = null,
                     placement = placement,
                     locationScope = method,
@@ -612,7 +613,7 @@ fun UnifiedPinComposerScreen(
 /** What the user picked on the Repair / Growth / Custom tabs. */
 private sealed interface ComposerTypeSelection {
     /** An existing Repair or Growth launcher button (same ids/labels/colours). */
-    data class Standard(val name: String, val colorToken: String?, val mode: String) : ComposerTypeSelection
+    data class Standard(val buttonId: String?, val name: String, val colorToken: String?, val mode: String) : ComposerTypeSelection
 
     /** The Growth Stage launcher: an exact E-L stage from the existing picker. */
     data class GrowthStageSel(val stage: GrowthStage) : ComposerTypeSelection
@@ -1347,7 +1348,7 @@ private fun TypeStep(
 }
 
 /** A selectable Repair/Growth tile identified by name + colour token. */
-private data class ComposerButton(val name: String, val colorToken: String?)
+private data class ComposerButton(val id: String?, val name: String, val colorToken: String?)
 
 /**
  * The EXISTING vineyard button catalogue — same stored identifiers, labels
@@ -1365,20 +1366,20 @@ private fun composerButtons(state: AppUiState, mode: String): List<ComposerButto
         }
         // Left/right launcher duplicates collapse to one tile each.
         .distinctBy { UnifiedPinContract.catalogueKey(it.name, it.color.ifBlank { null }) }
-        .map { ComposerButton(it.name, it.color.ifBlank { null }) }
+        .map { ComposerButton(it.id, it.name, it.color.ifBlank { null }) }
     if (remote.isNotEmpty()) return remote
     return if (mode == "Growth") {
         listOf(
-            ComposerButton("Powdery", "gray"),
-            ComposerButton("Downy", "yellow"),
-            ComposerButton("Blackberries", "red"),
+            ComposerButton(null, "Powdery", "gray"),
+            ComposerButton(null, "Downy", "yellow"),
+            ComposerButton(null, "Blackberries", "red"),
         )
     } else {
         listOf(
-            ComposerButton("Irrigation", "blue"),
-            ComposerButton("Broken Post", "brown"),
-            ComposerButton("Vine Issue", "green"),
-            ComposerButton("Other", "red"),
+            ComposerButton(null, "Irrigation", "blue"),
+            ComposerButton(null, "Broken Post", "brown"),
+            ComposerButton(null, "Vine Issue", "green"),
+            ComposerButton(null, "Other", "red"),
         )
     }
 }
@@ -1442,7 +1443,7 @@ private fun StandardButtonsPage(
                     .heightIn(min = UnifiedPinContract.TYPE_BUTTON_MIN_HEIGHT.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(tileColor)
-                    .clickable { onSelect(ComposerTypeSelection.Standard(button.name, button.colorToken, mode)) }
+                    .clickable { onSelect(ComposerTypeSelection.Standard(button.id, button.name, button.colorToken, mode)) }
                     .padding(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,

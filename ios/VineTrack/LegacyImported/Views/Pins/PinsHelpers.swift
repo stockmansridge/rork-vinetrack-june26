@@ -52,25 +52,13 @@ enum PDFHeaderHelper {
 
 extension Color {
     static func fromString(_ name: String) -> Color {
-        switch name.lowercased() {
-        case "red": return .red
-        case "orange": return .orange
-        case "yellow": return .yellow
-        case "green": return .green
-        case "darkgreen": return Color(red: 0.10, green: 0.45, blue: 0.20)
-        case "mint": return .mint
-        case "teal": return .teal
-        case "cyan": return .cyan
-        case "blue": return .blue
-        case "indigo": return .indigo
-        case "purple": return .purple
-        case "pink": return .pink
-        case "brown": return .brown
-        case "gray", "grey": return .gray
-        case "black": return .black
-        case "white": return .white
-        default: return VineyardTheme.olive
-        }
+        let token = PinColorTokenContract.normalized(name) ?? "gray"
+        let rgb = PinColorTokenContract.hexByToken[token] ?? 0x8E8E93
+        return Color(
+            red: Double((rgb >> 16) & 0xFF) / 255.0,
+            green: Double((rgb >> 8) & 0xFF) / 255.0,
+            blue: Double(rgb & 0xFF) / 255.0
+        )
     }
 }
 

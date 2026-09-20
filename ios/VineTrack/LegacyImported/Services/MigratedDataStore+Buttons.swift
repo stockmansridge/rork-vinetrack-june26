@@ -115,6 +115,11 @@ extension MigratedDataStore {
         }
     }
 
+    /// One authoritative colour lookup for map, list, details, filters, stats and history.
+    func resolvedPinColorToken(_ pin: VinePin) -> String {
+        PinColorResolver.token(for: pin, repairButtons: repairButtons, growthButtons: growthButtons)
+    }
+
     // MARK: - Quick pin creation from a button
 
     /// Create a local VinePin from a button configuration. Persists via `addPin`.
@@ -161,6 +166,7 @@ extension MigratedDataStore {
             heading: heading,
             buttonName: button.name,
             buttonColor: button.color,
+            launcherButtonId: button.id,
             side: side,
             mode: button.mode,
             paddockId: paddockId,
