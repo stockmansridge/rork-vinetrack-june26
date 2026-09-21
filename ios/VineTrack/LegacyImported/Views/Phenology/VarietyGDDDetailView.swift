@@ -519,6 +519,28 @@ struct VarietyGDDDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if let selectedDate,
+               let point = unionPoints.min(by: {
+                   abs($0.date.timeIntervalSince(selectedDate)) < abs($1.date.timeIntervalSince(selectedDate))
+               }) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(point.date.formatted(date: .complete, time: .omitted))
+                    Text(String(format: "%.4f GDD", point.daily))
+                    if let source = weatherSource,
+                       let temperature = degreeDayService.dailyTemp(for: point.date, source: source) {
+                        Text(String(format: "Min %.2f°C · Max %.2f°C", temperature.low, temperature.high))
+                    }
+                    Text("Base 10°C · BEDD cap 19°C")
+                    Text(weatherSource?.displayName ?? "Weather source unavailable")
+                    Text(point.interpolated ? "Estimated" : "Reported")
+                    if let source = weatherSource,
+                       let refreshed = degreeDayService.lastUpdated ?? degreeDayService.lastSuccessfulRefresh(for: source) {
+                        Text("Fetched \(refreshed.formatted(date: .abbreviated, time: .shortened))")
+                    }
+                }
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+            }
             Chart {
                 ForEach(unionPoints) { point in
                     BarMark(
@@ -535,10 +557,14 @@ struct VarietyGDDDetailView: View {
                     AxisValueLabel(format: .dateTime.month(.abbreviated).day())
                 }
             }
+            .chartXSelection(value: $selectedDate)
             .frame(height: 140)
 
             HStack(spacing: 14) {
-                legendDot(color: progressColor.opacity(0.8), label: "Reported")
+                legendDot(
+                    color: progressColor.opacity(0.8),
+                    label: "Reported · \(weatherSource?.displayName ?? "Weather source")"
+                )
                 legendDot(color: Color.secondary.opacity(0.5), label: "Estimated")
                 Spacer()
             }

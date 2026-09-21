@@ -28,6 +28,8 @@ data class GddPoint(
     val daily: Double,
     val cumulative: Double,
     val interpolated: Boolean,
+    val highC: Double? = null,
+    val lowC: Double? = null,
 )
 
 /** Exclusive-end date range requested from one weather provider. */
@@ -116,6 +118,9 @@ class DegreeDayService(
     private fun sourceTemps(sourceKey: String): MutableMap<String, DailyTemp> =
         tempsBySource.getOrPut(sourceKey) { persistentCache?.load(sourceKey)?.toMutableMap() ?: mutableMapOf() }
 
+    fun lastSuccessfulRefreshMs(sourceKey: String): Long? =
+        persistentCache?.lastSuccessfulRefreshMs(sourceKey)
+
     /** Rehydrates revisions written by the app-wide coordinator into this reader. */
     fun reloadPersistentSource(sourceKey: String) {
         val durable = persistentCache?.load(sourceKey) ?: return
@@ -181,6 +186,15 @@ class DegreeDayService(
             persistentCache?.save(sourceKey, timeZone.id, sourceKey, merged)
         }
         return merged.isNotEmpty()
+    }
+
+    /** Atomically replaces a provider window after a complete forced fetch succeeds. */
+    fun replaceDailyTemps(sourceKey: String, temperatures: Map<String, DailyTemp>): Boolean {
+        if (temperatures.isEmpty()) return false
+        tempsBySource[sourceKey] = temperatures.toMutableMap()
+        lastSourceKey = sourceKey
+        persistentCache?.save(sourceKey, timeZone.id, sourceKey, temperatures)
+        return true
     }
 
     /** Fetches only the planned missing/recent windows from Open-Meteo. */
@@ -304,10 +318,11 @@ class DegreeDayService(
         val result = mutableListOf<GddPoint>()
         for ((idx, day) in allDays.withIndex()) {
             val temp = filled[idx] ?: continue
-            val value = if (useBEDD) beddDay(temp.high, temp.low, latitude, day)
-            else max(0.0, (temp.high + temp.low) / 2.0 - baseTemp)
+            val rawValue = if (useBEDD) beddDay(temp.high, temp.low, latitude, day)
+            else (temp.high + temp.low) / 2.0 - baseTemp
+            val value = max(0.0, rawValue)
             cumulative += value
-            result.add(GddPoint(day, value, cumulative, interpolatedFlags[idx]))
+            result.add(GddPoint(day, value, cumulative, interpolatedFlags[idx], temp.high, temp.low))
         }
         return result
     }
@@ -319,7 +334,7 @@ class DegreeDayService(
         var heat = max(0.0, mean - baseTemp)
         val range = high - low
         if (range > 13) heat += (range - 13) * 0.25
-        return heat * dayLengthFactor(latitude, dayMs)
+        return max(0.0, heat * dayLengthFactor(latitude, dayMs))
     }
 
     private fun dayLengthFactor(latitude: Double?, dayMs: Long): Double {

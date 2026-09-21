@@ -34,6 +34,7 @@ data class OptimalRipenessWeatherState(
     val hasCachedData: Boolean = false,
     val isUpdating: Boolean = false,
     val lastRefreshMs: Long? = null,
+    val refreshMessage: String? = null,
     val error: String? = null,
 )
 
@@ -83,7 +84,9 @@ class OptimalRipenessWeatherCoordinator(
             completedEndMs = completedEnd,
             hasCachedData = hasCache,
             isUpdating = existing.isUpdating && existing.vineyardId == request.vineyardId,
-            lastRefreshMs = existing.lastRefreshMs.takeIf { existing.vineyardId == request.vineyardId },
+            lastRefreshMs = existing.lastRefreshMs.takeIf { existing.vineyardId == request.vineyardId }
+                ?: sourceKey?.let(service::lastSuccessfulRefreshMs),
+            refreshMessage = existing.refreshMessage.takeIf { existing.vineyardId == request.vineyardId },
             error = existing.error.takeIf { existing.vineyardId == request.vineyardId },
         )
         if (!isOnline || earliest == null) return
@@ -96,12 +99,24 @@ class OptimalRipenessWeatherCoordinator(
             refreshJob?.cancel()
         }
         requestIdentity = identity
-        refreshJob = scope.launch { refresh(request, service, cachedSource, earliest, completedEnd, identity) }
+        refreshJob = scope.launch { refresh(request, service, cachedSource, earliest, completedEnd, identity, force) }
     }
 
     fun refreshIfNeeded(isOnline: Boolean) {
         val request = currentRequest ?: return
         prepare(request, isOnline = isOnline, force = false)
+    }
+
+    fun recheck(isOnline: Boolean) {
+        val request = currentRequest ?: return
+        if (!isOnline) {
+            _state.value = _state.value.copy(
+                refreshMessage = null,
+                error = "Weather data could not be refreshed while offline. Existing data was kept.",
+            )
+            return
+        }
+        prepare(request, isOnline = true, force = true)
     }
 
     private suspend fun refresh(
@@ -111,8 +126,9 @@ class OptimalRipenessWeatherCoordinator(
         earliest: Long,
         completedEnd: Long,
         identity: String,
+        forceRefresh: Boolean,
     ) {
-        _state.value = _state.value.copy(isUpdating = true, error = null)
+        _state.value = _state.value.copy(isUpdating = true, refreshMessage = null, error = null)
         val result = runCatching {
             OptimalRipenessWeatherRepository(service, integrationRepository, davisRepository).refresh(
                 vineyardId = request.vineyardId,
@@ -122,6 +138,7 @@ class OptimalRipenessWeatherCoordinator(
                 toEpochMs = completedEnd,
                 cachedSourceFingerprint = cachedSource?.sourceFingerprint,
                 timeZoneId = request.timeZone.id,
+                forceRefresh = forceRefresh,
             )
         }
         if (requestIdentity != identity || currentRequest != request) return
@@ -138,13 +155,15 @@ class OptimalRipenessWeatherCoordinator(
                 hasCachedData = weather.hasUsableData,
                 isUpdating = false,
                 lastRefreshMs = System.currentTimeMillis(),
-                error = if (weather.hasUsableData) null else "Weather history could not be updated.",
+                refreshMessage = if (weather.hasUsableData) "Weather data refreshed from ${weather.source.label}." else null,
+                error = if (weather.hasUsableData) null else "Weather history could not be updated. Existing data was kept.",
             )
         }.onFailure {
             _state.value = _state.value.copy(
                 isUpdating = false,
                 hasCachedData = _state.value.sourceKey?.let(service::hasUsableData) == true,
-                error = "Weather history could not be updated.",
+                refreshMessage = null,
+                error = "Weather data could not be refreshed from the primary source. Existing data was kept.",
             )
         }
     }

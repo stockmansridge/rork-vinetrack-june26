@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.WbSunny
@@ -306,7 +307,13 @@ fun OptimalRipenessScreen(
                             )
                         }
                     }
-                    item { GddSourceCard(result.sourceLabel, screenState.isUpdatingWeather) }
+                    item {
+                        GddSourceCard(
+                            sourceLabel = result.sourceLabel,
+                            weather = weather,
+                            onRecheck = vm::recheckOptimalRipenessWeather,
+                        )
+                    }
                     item { SectionHeader("Blocks · ${result.rows.size}", onLight = true) }
                     items(result.rows) { row ->
                         val varietyKey = row.varietyName?.let { name ->
@@ -351,17 +358,34 @@ fun OptimalRipenessScreen(
 }
 
 @Composable
-private fun GddSourceCard(sourceLabel: String, isUpdatingWeather: Boolean) {
+private fun GddSourceCard(
+    sourceLabel: String,
+    weather: com.rork.vinetrack.data.OptimalRipenessWeatherState,
+    onRecheck: () -> Unit,
+) {
     val vine = LocalVineColors.current
     VineyardCard {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Icon(Icons.Filled.WbSunny, contentDescription = null, tint = VineColors.Orange, modifier = Modifier.size(18.dp))
-            Text("GDD source", color = vine.textSecondary, fontSize = 13.sp, modifier = Modifier.weight(1f))
-            Column(horizontalAlignment = Alignment.End) {
-                Text(sourceLabel, color = vine.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                if (isUpdatingWeather) {
-                    Text("Updating season weather…", color = vine.textSecondary, fontSize = 11.sp)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(Icons.Filled.WbSunny, contentDescription = null, tint = VineColors.Orange, modifier = Modifier.size(18.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("GDD source", color = vine.textSecondary, fontSize = 12.sp)
+                    Text(sourceLabel, color = vine.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    weather.lastRefreshMs?.let {
+                        Text("Last refreshed ${refreshTimestamp(it)}", color = vine.textSecondary, fontSize = 11.sp)
+                    }
                 }
+                TextButton(onClick = onRecheck, enabled = !weather.isUpdating) {
+                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(if (weather.isUpdating) "Refreshing…" else "Recheck weather data")
+                }
+            }
+            weather.refreshMessage?.let {
+                Text(it, color = VineColors.LeafGreen, fontSize = 11.sp)
+            }
+            weather.error?.let {
+                Text(it, color = VineColors.Orange, fontSize = 11.sp)
             }
         }
     }
@@ -935,6 +959,9 @@ internal fun seasonStartDate(
 
 private fun shortDate(ms: Long): String =
     SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(ms))
+
+private fun refreshTimestamp(ms: Long): String =
+    SimpleDateFormat("d MMM yyyy, h:mm a", Locale.getDefault()).format(Date(ms))
 
 // MARK: - Fix Block Varieties
 

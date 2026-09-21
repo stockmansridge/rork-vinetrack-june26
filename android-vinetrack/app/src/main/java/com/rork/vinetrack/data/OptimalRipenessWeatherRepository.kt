@@ -58,6 +58,7 @@ class OptimalRipenessWeatherRepository(
         toEpochMs: Long,
         cachedSourceFingerprint: String?,
         timeZoneId: String = java.util.TimeZone.getDefault().id,
+        forceRefresh: Boolean = false,
     ): OptimalRipenessWeatherResult {
         val completedCalendarEnd = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).apply {
             timeZone = java.util.TimeZone.getTimeZone(timeZoneId)
@@ -76,7 +77,7 @@ class OptimalRipenessWeatherRepository(
         val now = System.currentTimeMillis()
         var owner = false
         val task = synchronized(lock) {
-            recent[requestKey]?.takeIf { now - it.first < REFRESH_THROTTLE_MS }?.second?.let {
+            recent[requestKey]?.takeIf { !forceRefresh && now - it.first < REFRESH_THROTTLE_MS }?.second?.let {
                 degreeDays.reloadPersistentSource(it.source.sourceKey)
                 return it
             }
@@ -93,7 +94,7 @@ class OptimalRipenessWeatherRepository(
         return try {
             val result = refreshUncoordinated(
                 vineyardId, latitude, longitude, fromEpochMs, toEpochMs,
-                cachedSourceFingerprint, timeZoneId,
+                cachedSourceFingerprint, timeZoneId, forceRefresh,
             )
             synchronized(lock) { recent[requestKey] = System.currentTimeMillis() to result }
             task.complete(result)
@@ -114,6 +115,7 @@ class OptimalRipenessWeatherRepository(
         toEpochMs: Long,
         cachedSourceFingerprint: String?,
         timeZoneId: String,
+        forceRefresh: Boolean,
     ): OptimalRipenessWeatherResult {
         val integrationRead = runCatching {
             integrationRepository.fetch(vineyardId, WeatherIntegrationProvider.DAVIS)
@@ -126,29 +128,40 @@ class OptimalRipenessWeatherRepository(
         )
         val hadLocal = degreeDays.hasUsableData(source.sourceKey)
         if (integrationRead.isFailure) {
+            if (forceRefresh) {
+                throw IllegalStateException("Configured primary weather source could not be resolved")
+            }
             return OptimalRipenessWeatherResult(source, hadLocal, hadLocal, emptyList())
         }
 
-        val windows = degreeDays.refreshWindows(
-            sourceKey = source.sourceKey,
-            fromMs = fromEpochMs,
-            toMs = toEpochMs,
-        )
+        val windows = if (forceRefresh) {
+            listOf(WeatherDateWindow(fromEpochMs, toEpochMs))
+        } else {
+            degreeDays.refreshWindows(
+                sourceKey = source.sourceKey,
+                fromMs = fromEpochMs,
+                toMs = toEpochMs,
+            )
+        }
         if (windows.isNotEmpty()) {
             when (source) {
                 is OptimalRipenessWeatherSource.Davis -> {
+                    // Fetch the complete requested set before touching the durable
+                    // cache. A failed force refresh therefore leaves prior data intact.
+                    val fetched = mutableMapOf<String, DailyTemp>()
                     windows.forEach { window ->
-                        val rows = runCatching {
-                            davisRepository.fetchHistoricDailyTemps(
-                                vineyardId = vineyardId,
-                                stationId = source.stationId,
-                                fromEpochMs = window.startEpochMs,
-                                toEpochMs = window.endEpochMs,
-                                timeZone = java.util.TimeZone.getTimeZone(timeZoneId),
-                            )
-                        }.getOrNull().orEmpty()
-                        degreeDays.installDailyTemps(source.sourceKey, rows)
+                        fetched.putAll(davisRepository.fetchHistoricDailyTemps(
+                            vineyardId = vineyardId,
+                            stationId = source.stationId,
+                            fromEpochMs = window.startEpochMs,
+                            toEpochMs = window.endEpochMs,
+                            timeZone = java.util.TimeZone.getTimeZone(timeZoneId),
+                        ))
                     }
+                    if (forceRefresh && fetched.isEmpty()) {
+                        throw IllegalStateException("Primary Davis source returned no reported days")
+                    }
+                    degreeDays.installDailyTemps(source.sourceKey, fetched)
                 }
                 is OptimalRipenessWeatherSource.OpenMeteo -> {
                     degreeDays.fetchOpenMeteoWindows(source.latitude, source.longitude, windows)

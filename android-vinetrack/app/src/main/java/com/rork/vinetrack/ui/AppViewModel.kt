@@ -14882,6 +14882,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun recheckOptimalRipenessWeather() {
+        optimalRipenessWeatherCoordinator.recheck(isOnline = _ui.value.isOnline)
+    }
+
     private fun prepareOptimalRipenessWeather(vineyardId: String) {
         val state = _ui.value
         if (state.selectedVineyardId != vineyardId) return

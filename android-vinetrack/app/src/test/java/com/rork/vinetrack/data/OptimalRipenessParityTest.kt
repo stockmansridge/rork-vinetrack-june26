@@ -40,6 +40,27 @@ class OptimalRipenessParityTest {
     }
 
     @Test
+    fun `daily contributions never go negative and totals use unrounded values`() {
+        val service = DegreeDayService(timeZone = utc)
+        val key = DegreeDayService.davisKey("station-1")
+        service.installDailyTemps(key, mapOf(
+            "20260901" to DailyTemp(8.2, 1.4),
+            "20260902" to DailyTemp(23.33, 10.11),
+        ))
+        val points = service.dailyGddSeries(
+            key,
+            start,
+            Instant.parse("2026-09-03T00:00:00Z").toEpochMilli(),
+            latitude = null,
+            useBEDD = false,
+        )
+
+        assertEquals(0.0, points[0].daily, 0.0)
+        assertEquals(6.72, points[1].daily, 0.000_001)
+        assertEquals(points.sumOf { it.daily }, points.last().cumulative, 0.000_001)
+    }
+
+    @Test
     fun `provider caches cannot combine in one calculation`() {
         val service = DegreeDayService(timeZone = utc)
         val davis = DegreeDayService.davisKey("station-1")
@@ -230,6 +251,8 @@ class OptimalRipenessParityTest {
         private val rowsBySource = mutableMapOf<String, Map<String, DailyTemp>>()
 
         override fun load(sourceKey: String): Map<String, DailyTemp> = rowsBySource[sourceKey].orEmpty()
+
+        override fun lastSuccessfulRefreshMs(sourceKey: String): Long? = null
 
         override fun save(
             sourceKey: String,

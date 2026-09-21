@@ -30,6 +30,28 @@ final class OptimalRipenessParityTests: XCTestCase {
         XCTAssertTrue(service.hasCompleteData(forKey: source.sourceKey, coveringFrom: start, to: end))
     }
 
+    func testDailyContributionsNeverGoNegativeAndTotalsUseUnroundedValues() throws {
+        let service = DegreeDayService(timeZone: TimeZone(identifier: "UTC")!)
+        service.installDailyTemps([
+            "20260901": DailyTemp(high: 8.2, low: 1.4),
+            "20260902": DailyTemp(high: 23.33, low: 10.11),
+        ], for: source)
+        let start = try date("2026-09-01T00:00:00Z")
+        let end = try date("2026-09-03T00:00:00Z")
+
+        let points = service.dailyGDDSeries(
+            stationId: source.sourceKey,
+            from: start,
+            to: end,
+            latitude: nil,
+            useBEDD: false
+        )
+
+        XCTAssertEqual(points[0].daily, 0)
+        XCTAssertEqual(points[1].daily, 6.72, accuracy: 0.000_001)
+        XCTAssertEqual(points.last?.cumulative ?? -1, points.reduce(0) { $0 + $1.daily }, accuracy: 0.000_001)
+    }
+
     func testProviderCachesCannotCombineInOneCalculation() throws {
         let service = DegreeDayService(timeZone: TimeZone(identifier: "UTC")!)
         let davis = GDDSource.davisWeatherLink(stationId: "station-1")

@@ -44,7 +44,7 @@ nonisolated enum DegreeDayMath {
         }
 
         let k = dayLengthFactor(latitude: latitude, date: date)
-        return heat * k
+        return max(0, heat * k)
     }
 
     /// Day-length correction factor, clamped to `[0.5, 1.5]`.

@@ -97,7 +97,9 @@ class DegreeDayService {
     static let recentCompletedDayRefreshCount: Int = 3
     private var calendar: Calendar
 
-    private var cacheKey: String { "vinetrack_gdd_temps_cache_v3" }
+    // v4 deliberately invalidates legacy rows that lacked reliable provider and
+    // vineyard-timezone provenance; the normal online load repopulates them.
+    private var cacheKey: String { "vinetrack_gdd_temps_cache_v4" }
     private let lastDailySyncKey = "vinetrack_gdd_last_daily_sync"
 
     private static let dateFormatter: DateFormatter = {
@@ -264,6 +266,10 @@ class DegreeDayService {
         temps[source.sourceKey]?[dayKey]
     }
 
+    func dailyTemp(for date: Date, source: GDDSource) -> DailyTemp? {
+        temps[source.sourceKey]?[compactKey(for: date)]
+    }
+
     /// Stable dedup key for every input that can affect a season load.
     /// Weather-only candidates remain shareable through their source keys;
     /// Davis proxy ownership and latitude-dependent BEDD results do not.
@@ -412,12 +418,16 @@ class DegreeDayService {
                         useProxy: candidate.usesProxy,
                         latitude: latitude,
                         seasonStart: seasonStart,
-                        useBEDD: useBEDD
+                        useBEDD: useBEDD,
+                        forceAllDates: forceRefresh
                     )
                 case .weatherUnderground, .openMeteoArchive:
                     await self.fetchSeason(source: candidate.source, seasonStart: seasonStart, useBEDD: useBEDD)
                 }
                 completedError = self.errorMessage
+                if forceRefresh {
+                    break // explicit recheck is primary-only; never substitute a fallback
+                }
                 if self.lastSource == candidate.source, self.hasUsableData(for: candidate.source) {
                     break // success, stop cascading
                 }
@@ -440,6 +450,11 @@ class DegreeDayService {
         let key = "\(lastDailySyncKey)_\(stationId)"
         guard let last = UserDefaults.standard.object(forKey: key) as? Date else { return true }
         return !calendar.isDateInToday(last)
+    }
+
+    func lastSuccessfulRefresh(for source: GDDSource) -> Date? {
+        let key = "\(lastDailySyncKey)_\(source.sourceKey)"
+        return UserDefaults.standard.object(forKey: key) as? Date
     }
 
     private func markDailyRefresh(for stationId: String) {
@@ -758,7 +773,7 @@ class DegreeDayService {
         }
 
         let k = dayLengthFactor(latitude: latitude, date: date)
-        return heat * k
+        return max(0, heat * k)
     }
 
     private func dayLengthFactor(latitude: Double?, date: Date) -> Double {
@@ -895,7 +910,8 @@ class DegreeDayService {
         useProxy: Bool,
         latitude: Double?,
         seasonStart: Date,
-        useBEDD: Bool = true
+        useBEDD: Bool = true,
+        forceAllDates: Bool = false
     ) async {
         guard !stationId.isEmpty else {
             errorMessage = "Davis station is not configured for this vineyard."
@@ -934,7 +950,9 @@ class DegreeDayService {
             dates.append(d)
             d = cal.date(byAdding: .day, value: 1, to: d) ?? today
         }
-        let refreshDates = refreshDates(forKey: key, coveringFrom: start, to: today)
+        let refreshDates = forceAllDates
+            ? dates
+            : refreshDates(forKey: key, coveringFrom: start, to: today)
         diagnostics.append("Season dates: \(dates.count) \u{2022} missing/recent refresh: \(refreshDates.count)")
 
         // Fetch the complete required range in this background pass. The direct
@@ -978,6 +996,12 @@ class DegreeDayService {
                         to: to,
                         timeZone: calendar.timeZone
                     )
+                }
+                if forceAllDates && result.dailyHighC.isEmpty {
+                    errorMessage = "Davis returned no reported temperatures for the requested window. Existing data was kept."
+                    lastDiagnostics = diagnostics.joined(separator: "\n")
+                    isLoading = false
+                    return
                 }
                 for (day, hi) in result.dailyHighC {
                     let k = compactKey(for: day)

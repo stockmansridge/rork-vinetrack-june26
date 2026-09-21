@@ -226,7 +226,11 @@ fun VarietyGDDDetailScreen(
                 else -> {
                     val union = remember(series) { unionPoints(series) }
                     CumulativeChartCard(points = union, target = target)
-                    DailyChartCard(points = union)
+                    DailyChartCard(
+                        points = union,
+                        sourceLabel = result.sourceLabel,
+                        fetchedAtMs = weather.lastRefreshMs,
+                    )
                     SectionHeader("Blocks", onLight = true)
                     series.forEach { bs -> BlockBreakdownRow(bs, target) }
                     PhenologyMilestonesCard(blocks = allocatedBlocks)
@@ -395,7 +399,11 @@ private fun CumulativeChartCard(points: List<GddPoint>, target: Double) {
 }
 
 @Composable
-private fun DailyChartCard(points: List<GddPoint>) {
+private fun DailyChartCard(
+    points: List<GddPoint>,
+    sourceLabel: String,
+    fetchedAtMs: Long?,
+) {
     val vine = LocalVineColors.current
     var selectedIndex by remember(points) { mutableStateOf<Int?>(null) }
     VineyardCard {
@@ -413,7 +421,16 @@ private fun DailyChartCard(points: List<GddPoint>) {
                 selectedIndex?.let { index ->
                     points.getOrNull(index)?.let { point ->
                         Text(
-                            "${longDate(point.epochDayMs)} · ${String.format(Locale.US, "%.2f", point.daily)} GDD · ${if (point.interpolated) "Estimated" else "Reported"}",
+                            buildString {
+                                append(longDate(point.epochDayMs))
+                                append(" · ${String.format(Locale.US, "%.4f", point.daily)} GDD")
+                                point.lowC?.let { append(" · Min ${String.format(Locale.US, "%.2f", it)}°C") }
+                                point.highC?.let { append(" · Max ${String.format(Locale.US, "%.2f", it)}°C") }
+                                append(" · Base 10°C · BEDD cap 19°C")
+                                append(" · $sourceLabel")
+                                append(if (point.interpolated) " · Estimated" else " · Reported")
+                                fetchedAtMs?.let { append(" · Fetched ${refreshTimestamp(it)}") }
+                            },
                             color = vine.textPrimary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -595,7 +612,14 @@ private fun unionPoints(series: List<BlockGddSeries>): List<GddPoint> {
         val cumulative = aggregate.first / aggregate.second
         val daily = cumulative - previousCumulative
         previousCumulative = cumulative
-        GddPoint(point.epochDayMs, daily, cumulative, point.interpolated)
+        GddPoint(
+            point.epochDayMs,
+            daily,
+            cumulative,
+            point.interpolated,
+            point.highC,
+            point.lowC,
+        )
     }
 }
 
@@ -642,3 +666,4 @@ private fun progressColorFor(progress: Double): Color = when {
 
 private fun shortDate(ms: Long): String = SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(ms))
 private fun longDate(ms: Long): String = SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(ms))
+private fun refreshTimestamp(ms: Long): String = SimpleDateFormat("d MMM yyyy, h:mm a", Locale.getDefault()).format(Date(ms))

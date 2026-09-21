@@ -6,6 +6,7 @@ import kotlinx.serialization.Serializable
 /** Provider-isolated persistence contract for Optimal Ripeness daily weather. */
 interface DailyWeatherCache {
     fun load(sourceKey: String): Map<String, DailyTemp>
+    fun lastSuccessfulRefreshMs(sourceKey: String): Long?
     fun save(
         sourceKey: String,
         timeZoneId: String,
@@ -34,16 +35,27 @@ class DailyWeatherCacheStore(
         val rows: Map<String, CachedTemp> = emptyMap(),
     )
 
-    private val preferences = context.getSharedPreferences("optimal_ripeness_daily_weather_v1", Context.MODE_PRIVATE)
+    // v2 intentionally rejects legacy rows that did not prove provider and
+    // vineyard-timezone provenance. They are refetched automatically online.
+    private val preferences = context.getSharedPreferences("optimal_ripeness_daily_weather_v2", Context.MODE_PRIVATE)
 
-    override fun load(sourceKey: String): Map<String, DailyTemp> {
-        val payload = preferences.getString(key(sourceKey), null) ?: return emptyMap()
+    private fun snapshot(sourceKey: String): SourceSnapshot? {
+        val payload = preferences.getString(key(sourceKey), null) ?: return null
         val snapshot = runCatching {
             SupabaseClient.json.decodeFromString(SourceSnapshot.serializer(), payload)
-        }.getOrNull() ?: return emptyMap()
-        if (snapshot.sourceKey != sourceKey || snapshot.timeZoneId != requiredTimeZoneId) return emptyMap()
-        return snapshot.rows.mapValues { DailyTemp(it.value.high, it.value.low) }
+        }.getOrNull() ?: return null
+        return snapshot.takeIf {
+            it.sourceKey == sourceKey &&
+                it.stationOrLocationId == sourceKey &&
+                it.timeZoneId == requiredTimeZoneId
+        }
     }
+
+    override fun load(sourceKey: String): Map<String, DailyTemp> =
+        snapshot(sourceKey)?.rows?.mapValues { DailyTemp(it.value.high, it.value.low) }.orEmpty()
+
+    override fun lastSuccessfulRefreshMs(sourceKey: String): Long? =
+        snapshot(sourceKey)?.lastSuccessfulRefreshMs
 
     override fun save(
         sourceKey: String,

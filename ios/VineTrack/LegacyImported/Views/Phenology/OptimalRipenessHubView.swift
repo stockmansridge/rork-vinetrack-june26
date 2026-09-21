@@ -17,6 +17,8 @@ struct OptimalRipenessHubView: View {
     @State private var activeDestination: SetupChecklistDestination?
     @State private var budburstFocusPaddockId: UUID?
     @State private var showBudburstSheet: Bool = false
+    @State private var recheckMessage: String?
+    @State private var isRecheckingWeather: Bool = false
 
     private var candidates: [RipenessSourceCandidate] {
         RipenessMath.candidates(store: store)
@@ -168,21 +170,39 @@ struct OptimalRipenessHubView: View {
 
                     if let source = activeSource {
                         Section {
-                            HStack(spacing: 8) {
-                                Image(systemName: "thermometer.sun.fill")
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "thermometer.sun.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.orange)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("GDD source")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text(source.displayName)
+                                            .font(.caption.weight(.semibold))
+                                        if let refreshed = degreeDayService.lastUpdated ?? degreeDayService.lastSuccessfulRefresh(for: source) {
+                                            Text("Last refreshed \(refreshed.formatted(date: .abbreviated, time: .shortened))")
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    Spacer()
+                                    Button {
+                                        recheckWeather()
+                                    } label: {
+                                        Label(
+                                            isRecheckingWeather ? "Refreshing…" : "Recheck weather data",
+                                            systemImage: "arrow.clockwise"
+                                        )
+                                    }
                                     .font(.caption)
-                                    .foregroundStyle(.orange)
-                                Text("GDD source")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text(source.displayName)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.primary)
-                                if isFetching {
-                                    Text("Updating…")
+                                    .disabled(isRecheckingWeather || isFetching)
+                                }
+                                if let recheckMessage {
+                                    Text(recheckMessage)
                                         .font(.caption2)
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(degreeDayService.errorMessage == nil ? VineyardTheme.leafGreen : .orange)
                                 }
                             }
                         }
@@ -270,6 +290,27 @@ struct OptimalRipenessHubView: View {
             seasonStart: RipenessMath.fetchRangeStart(paddocks: store.orderedPaddocks, settings: store.settings) ?? RipenessMath.seasonStartDate(settings: store.settings),
             useBEDD: store.settings.calculationMode.useBEDD
         )
+    }
+
+    private func recheckWeather() {
+        isRecheckingWeather = true
+        recheckMessage = nil
+        Task {
+            await degreeDayService.ensureSeasonLoaded(
+                candidates: candidates,
+                vineyardId: store.selectedVineyardId,
+                latitude: store.settings.vineyardLatitude ?? store.paddockCentroidLatitude,
+                seasonStart: RipenessMath.fetchRangeStart(paddocks: store.orderedPaddocks, settings: store.settings) ?? RipenessMath.seasonStartDate(settings: store.settings),
+                useBEDD: store.settings.calculationMode.useBEDD,
+                forceRefresh: true
+            )
+            if degreeDayService.errorMessage == nil {
+                recheckMessage = "Weather data refreshed from \(activeSource?.displayName ?? "the primary source")."
+            } else {
+                recheckMessage = "Weather data could not be refreshed. Existing data was kept."
+            }
+            isRecheckingWeather = false
+        }
     }
 
     /// True while the shared season-load request for this hub's active
