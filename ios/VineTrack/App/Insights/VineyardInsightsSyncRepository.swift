@@ -370,6 +370,7 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
     struct SoftDeletePatch: Encodable, Sendable {
         let deleted_at: String
         let client_updated_at: String
+        let client_revision_id: String
     }
 
     /// Soft-delete a visit and its children.
@@ -403,17 +404,19 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         ).execute()
     }
 
-    func softDeletePhoto(id: UUID, at date: Date) async throws {
+    func softDeletePhoto(_ revision: VineyardInsightsStore.PhotoDeletionRevision) async throws {
         try requireConfigured()
+        let timestamp = Self.timestamp(revision.deletedAt)
         try await provider.client
             .from("scout_observation_photos")
             .update(
                 SoftDeletePatch(
-                    deleted_at: Self.timestamp(date),
-                    client_updated_at: Self.timestamp(date)
+                    deleted_at: timestamp,
+                    client_updated_at: timestamp,
+                    client_revision_id: revision.id.uuidString
                 )
             )
-            .eq("id", value: id.uuidString)
+            .eq("id", value: revision.photoID.uuidString)
             .execute()
     }
 

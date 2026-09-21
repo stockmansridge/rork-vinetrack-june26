@@ -36,6 +36,7 @@ class VineyardInsightsSyncRepository(
     private data class SoftDeletePatch(
         @SerialName("deleted_at") val deletedAt: String,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
+        @SerialName("client_revision_id") val clientRevisionId: String,
     )
 
     @Serializable
@@ -193,8 +194,13 @@ class VineyardInsightsSyncRepository(
         ),
     )
 
-    override suspend fun softDeletePhoto(id: String, atIso: String) = withContext(Dispatchers.IO) {
-        patchRows("scout_observation_photos?id=eq.$id", SoftDeletePatch(atIso, atIso))
+    override suspend fun softDeletePhoto(
+        revision: VineyardInsightsStore.PhotoDeletionRevision,
+    ) = withContext(Dispatchers.IO) {
+        patchRows(
+            "scout_observation_photos?id=eq.${revision.photoId}",
+            SoftDeletePatch(revision.deletedAt, revision.deletedAt, revision.id),
+        )
     }
 
     // ----------------------------------------------------------- Scout pull

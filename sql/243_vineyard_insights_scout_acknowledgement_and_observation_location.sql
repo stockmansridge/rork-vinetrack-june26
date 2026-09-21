@@ -49,12 +49,11 @@ begin
     end if;
 
     if new.client_revision_id is not null
-       and new.client_revision_id = old.client_revision_id
-       and new.client_updated_at is not distinct from old.client_updated_at then
+       and new.client_revision_id = old.client_revision_id then
       if (to_jsonb(new) - array['sync_version', 'updated_at']::text[])
          is distinct from
          (to_jsonb(old) - array['sync_version', 'updated_at']::text[]) then
-        raise exception 'Scout revision identity was reused with different content; local work was not accepted'
+        raise exception 'Scout revision identity was reused with a different timestamp or content; local work was not accepted'
           using errcode='40001';
       end if;
       new.sync_version := old.sync_version;

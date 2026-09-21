@@ -381,7 +381,9 @@ class VineyardInsightsSyncWorker(
                     runCatching { repository.removePhotoObject(orphan) }
                 }
                 if (entry.rowCommitted) {
-                    runCatching { repository.softDeletePhoto(entry.id, nowIso()) }
+                    store.photoDeletionRevision(entry.id, entry.vineyardId, nowIso())?.let { revision ->
+                        runCatching { repository.softDeletePhoto(revision) }
+                    }
                 }
                 store.dequeuePhoto(entry.id)
                 continue
@@ -469,8 +471,8 @@ class VineyardInsightsSyncWorker(
      * retained: the established policy keeps uploaded evidence recoverable
      * rather than destroying the record of a real observation.
      */
-    suspend fun tombstonePhoto(photoId: String): Boolean =
-        runCatching { repository.softDeletePhoto(photoId, nowIso()) }.isSuccess
+    suspend fun tombstonePhoto(revision: VineyardInsightsStore.PhotoDeletionRevision): Boolean =
+        runCatching { repository.softDeletePhoto(revision) }.isSuccess
 
     private fun findPhoto(photoId: String): ScoutPhoto? =
         store.loadVisits().asSequence()
@@ -543,6 +545,10 @@ class VineyardInsightsSyncWorker(
                 if (!canApplyServerResults()) return Outcome()
                 val photoRows = repository.fetchPhotos(vineyardId, observationRows.map { it.id })
                 if (!canApplyServerResults()) return Outcome()
+                val deletionIntents = store.photoDeletionIntents()
+                photoRows.filter { it.id in deletionIntents && it.deletedAt == null }.forEach { photo ->
+                    store.photoDeletionRevision(photo.id, photo.vineyardId, nowIso())
+                }
                 val failedDownloads = mutableSetOf<String>()
                 photoRows.filter { it.deletedAt == null && it.storagePath.isNotBlank() }.forEach { photo ->
                     val files = photoFiles

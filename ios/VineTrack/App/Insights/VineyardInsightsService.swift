@@ -387,6 +387,7 @@ final class VineyardInsightsService {
               let photo = observation.photos.first(where: { $0.id == photoID }) else { return false }
 
         let queued = store.loadPhotoQueue().first { $0.id == photoID }
+        let deletedAt = now()
         store.dequeuePhoto(photoID: photoID)
         guard store.markPhotoDeletionIntent(photoID) else { return false }
         pendingPhotoCount = store.loadPhotoQueue().count
@@ -399,14 +400,18 @@ final class VineyardInsightsService {
 
         if let path = photo.localPath { photoFiles.remove(relativePath: path) }
 
-        let deletedAt = now()
         if let orphanedPath = queued?.uploadedStoragePath, queued?.rowCommitted != true {
             Task { [repository] in
                 try? await repository.removePhotoObject(path: orphanedPath)
             }
-        } else if photo.storagePath != nil || queued?.rowCommitted == true {
+        } else if photo.storagePath != nil || queued?.rowCommitted == true,
+                  let revision = store.photoDeletionRevision(
+                    photoID: photoID,
+                    vineyardID: visit.vineyardID,
+                    fallbackDate: deletedAt
+                  ) {
             Task { [repository] in
-                try? await repository.softDeletePhoto(id: photoID, at: deletedAt)
+                try? await repository.softDeletePhoto(revision)
             }
         }
         scheduleSync(vineyardID: visit.vineyardID)
@@ -739,6 +744,8 @@ final class VineyardInsightsService {
             guard generation == self.syncGeneration else { return }
             await self.processPhotoCleanup(vineyardID: vineyardID)
             guard generation == self.syncGeneration else { return }
+            await self.syncPhotoDeletions(vineyardID: vineyardID)
+            guard generation == self.syncGeneration else { return }
             await self.pullNoteTypes(vineyardID: vineyardID, generation: generation)
             guard generation == self.syncGeneration else { return }
             await self.syncNoteTypes(vineyardID: vineyardID)
@@ -1025,7 +1032,14 @@ final class VineyardInsightsService {
                 guard store.markPhotoRowCommitted(photoID: entry.id) else {
                     // A deletion raced the metadata callback. Tombstone the row;
                     // never recreate the local queue entry or photograph.
-                    try? await repository.softDeletePhoto(id: entry.id, at: now())
+                    let deletedAt = now()
+                    if let revision = store.photoDeletionRevision(
+                        photoID: entry.id,
+                        vineyardID: entry.vineyardID,
+                        fallbackDate: deletedAt
+                    ) {
+                        try? await repository.softDeletePhoto(revision)
+                    }
                     continue
                 }
                 applyPhotoStoragePath(photoID: entry.id, storagePath: path, failed: false)
@@ -1037,6 +1051,16 @@ final class VineyardInsightsService {
             }
         }
         pendingPhotoCount = store.loadPhotoQueue().count
+    }
+
+    private func syncPhotoDeletions(vineyardID: UUID) async {
+        for revision in store.photoDeletionRevisions() where revision.vineyardID == vineyardID {
+            do {
+                try await repository.softDeletePhoto(revision)
+            } catch {
+                lastSyncError = error.localizedDescription
+            }
+        }
     }
 
     private func markPhotoFailed(entry: VineyardInsightsStore.QueuedPhoto, message: String) {
@@ -1210,6 +1234,16 @@ final class VineyardInsightsService {
                     observationIDs: observationRows.map(\.id)
                 )
                 guard expectedGeneration == syncGeneration else { return }
+                let deletionIntents = store.photoDeletionIntents()
+                for photo in photoRows where
+                    deletionIntents.contains(photo.id)
+                        && VineyardInsightsSyncRepository.parseTimestamp(photo.deleted_at) == nil {
+                    _ = store.photoDeletionRevision(
+                        photoID: photo.id,
+                        vineyardID: photo.vineyard_id,
+                        fallbackDate: now()
+                    )
+                }
                 var failedDownloads: Set<UUID> = []
                 for photo in photoRows where VineyardInsightsSyncRepository.parseTimestamp(photo.deleted_at) == nil {
                     let relative = ScoutPhotoFileStore.relativePath(vineyardID: photo.vineyard_id,

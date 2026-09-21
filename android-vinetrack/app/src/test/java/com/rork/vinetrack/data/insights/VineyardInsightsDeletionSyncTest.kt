@@ -46,7 +46,7 @@ class VineyardInsightsDeletionSyncTest {
         override suspend fun pushPhotoRow(photo: VineyardInsightsSyncApi.PhotoUpsert) = Unit
         override suspend fun uploadPhotoBytes(path: String, jpeg: ByteArray) = path
         override suspend fun hardDeleteVisit(id: String, vineyardId: String, operationId: String, atIso: String) = Unit
-        override suspend fun softDeletePhoto(id: String, atIso: String) = Unit
+        override suspend fun softDeletePhoto(revision: VineyardInsightsStore.PhotoDeletionRevision) = Unit
         override suspend fun fetchVisits(vineyardId: String, sinceIso: String?) = emptyList<VineyardInsightsSyncApi.VisitRow>()
         override suspend fun fetchAssessments(vineyardId: String, visitIds: List<String>) = emptyList<VineyardInsightsSyncApi.AssessmentRow>()
         override suspend fun fetchObservations(vineyardId: String, assessmentIds: List<String>) = emptyList<VineyardInsightsSyncApi.ObservationRow>()

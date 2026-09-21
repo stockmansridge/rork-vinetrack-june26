@@ -35,6 +35,7 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         static let noteTypes = "vineyard_insights.custom_note_types"
         static let photoQueue = "vineyard_insights.pending_photos"
         static let photoDeletionIntents = "vineyard_insights.photo_deletion_intents"
+        static let photoDeletionRevisions = "vineyard_insights.photo_deletion_revisions"
         static let lastPull = "vineyard_insights.last_pull"
         static let deletionCursors = "vineyard_insights.deletion_cursors"
         static let consumedDeletions = "vineyard_insights.consumed_deletions"
@@ -123,6 +124,13 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
             if uploadedStoragePath != nil { return .objectUploaded }
             return .queued
         }
+    }
+
+    nonisolated struct PhotoDeletionRevision: Codable, Equatable, Sendable, Identifiable {
+        let id: UUID
+        let photoID: UUID
+        let vineyardID: UUID
+        let deletedAt: Date
     }
 
     nonisolated struct DeletionCursor: Codable, Equatable, Sendable {
@@ -884,14 +892,32 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         Set(decode([UUID].self, Key.photoDeletionIntents) ?? [])
     }
 
+    func photoDeletionRevisions() -> [PhotoDeletionRevision] {
+        decode([PhotoDeletionRevision].self, Key.photoDeletionRevisions) ?? []
+    }
+
     @discardableResult
     func markPhotoDeletionIntent(_ photoID: UUID) -> Bool {
         encodeAndWrite(Array(photoDeletionIntents().union([photoID])), Key.photoDeletionIntents)
     }
 
+    /// Persist one immutable deletion revision before any metadata write. Legacy
+    /// intents receive one revision on their first retry and then keep it.
+    func photoDeletionRevision(photoID: UUID, vineyardID: UUID, fallbackDate: Date) -> PhotoDeletionRevision? {
+        if let existing = photoDeletionRevisions().first(where: { $0.photoID == photoID }) { return existing }
+        var revisions = photoDeletionRevisions()
+        revisions.append(.init(id: UUID(), photoID: photoID, vineyardID: vineyardID, deletedAt: fallbackDate))
+        guard encodeAndWrite(revisions, Key.photoDeletionRevisions) else { return nil }
+        return revisions.last
+    }
+
     @discardableResult
     func clearPhotoDeletionIntents(_ photoIDs: Set<UUID>) -> Bool {
-        encodeAndWrite(Array(photoDeletionIntents().subtracting(photoIDs)), Key.photoDeletionIntents)
+        guard encodeAndWrite(
+            photoDeletionRevisions().filter { !photoIDs.contains($0.photoID) },
+            Key.photoDeletionRevisions
+        ) else { return false }
+        return encodeAndWrite(Array(photoDeletionIntents().subtracting(photoIDs)), Key.photoDeletionIntents)
     }
 
     /// Remove a photo entry once BOTH the bytes and the row are stored, or when
@@ -914,6 +940,7 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         defaults.removeObject(forKey: Key.noteTypes)
         defaults.removeObject(forKey: Key.photoQueue)
         defaults.removeObject(forKey: Key.photoDeletionIntents)
+        defaults.removeObject(forKey: Key.photoDeletionRevisions)
         defaults.removeObject(forKey: Key.lastPull)
         defaults.removeObject(forKey: Key.deletionCursors)
         defaults.removeObject(forKey: Key.consumedDeletions)

@@ -112,6 +112,14 @@ class VineyardInsightsStore(
     }
 
     @Serializable
+    data class PhotoDeletionRevision(
+        val id: String,
+        @SerialName("photo_id") val photoId: String,
+        @SerialName("vineyard_id") val vineyardId: String,
+        @SerialName("deleted_at") val deletedAt: String,
+    )
+
+    @Serializable
     private data class StoredObservation(
         val id: String,
         @SerialName("assessment_id") val assessmentId: String,
@@ -900,8 +908,29 @@ class VineyardInsightsStore(
     fun markPhotoDeletionIntent(photoId: String): Boolean =
         encodeAndWrite(KEY_PHOTO_DELETION_INTENTS, (photoDeletionIntents() + photoId).toList())
 
-    fun clearPhotoDeletionIntents(photoIds: Set<String>): Boolean =
-        encodeAndWrite(KEY_PHOTO_DELETION_INTENTS, (photoDeletionIntents() - photoIds).toList())
+    fun photoDeletionRevisions(): List<PhotoDeletionRevision> =
+        decodeList(KEY_PHOTO_DELETION_REVISIONS)
+
+    /** Persist one immutable metadata-deletion revision before its first attempt. */
+    fun photoDeletionRevision(photoId: String, vineyardId: String, deletedAt: String): PhotoDeletionRevision? {
+        photoDeletionRevisions().firstOrNull { it.photoId == photoId }?.let { return it }
+        val revision = PhotoDeletionRevision(
+            id = UUID.randomUUID().toString(),
+            photoId = photoId,
+            vineyardId = vineyardId,
+            deletedAt = deletedAt,
+        )
+        return if (encodeAndWrite(KEY_PHOTO_DELETION_REVISIONS, photoDeletionRevisions() + revision)) revision else null
+    }
+
+    fun clearPhotoDeletionIntents(photoIds: Set<String>): Boolean {
+        if (!encodeAndWrite(
+                KEY_PHOTO_DELETION_REVISIONS,
+                photoDeletionRevisions().filterNot { it.photoId in photoIds },
+            )
+        ) return false
+        return encodeAndWrite(KEY_PHOTO_DELETION_INTENTS, (photoDeletionIntents() - photoIds).toList())
+    }
 
     /**
      * Remove a photo entry once BOTH the bytes and the row are stored, or when
@@ -933,6 +962,7 @@ class VineyardInsightsStore(
             KEY_NOTE_TYPES,
             KEY_PHOTO_QUEUE,
             KEY_PHOTO_DELETION_INTENTS,
+            KEY_PHOTO_DELETION_REVISIONS,
             KEY_LAST_PULL,
             KEY_DELETION_CURSORS,
             KEY_CONSUMED_DELETIONS,
@@ -974,6 +1004,7 @@ class VineyardInsightsStore(
         const val KEY_NOTE_TYPES = "custom_note_types"
         const val KEY_PHOTO_QUEUE = "pending_photos"
         const val KEY_PHOTO_DELETION_INTENTS = "photo_deletion_intents"
+        const val KEY_PHOTO_DELETION_REVISIONS = "photo_deletion_revisions"
         const val KEY_LAST_PULL = "last_pull"
         const val KEY_DELETION_CURSORS = "deletion_cursors"
         const val KEY_CONSUMED_DELETIONS = "consumed_deletions"

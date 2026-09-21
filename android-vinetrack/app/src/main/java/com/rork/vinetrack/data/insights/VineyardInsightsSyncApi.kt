@@ -302,7 +302,7 @@ interface VineyardInsightsSyncApi {
 
     suspend fun hardDeleteVisit(id: String, vineyardId: String, operationId: String, atIso: String)
 
-    suspend fun softDeletePhoto(id: String, atIso: String)
+    suspend fun softDeletePhoto(revision: VineyardInsightsStore.PhotoDeletionRevision)
 
     // ----------------------------------------------------------- Scout pull
 

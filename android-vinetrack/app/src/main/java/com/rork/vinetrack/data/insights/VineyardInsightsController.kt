@@ -379,6 +379,9 @@ class VineyardInsightsController(
         // Cancelled before anything else, so an in-flight upload cannot revive it.
         store.dequeuePhoto(photoId)
         if (!store.markPhotoDeletionIntent(photoId)) return null
+        if (plan is ScoutPhotoUpload.Deletion.FullyUploaded &&
+            store.photoDeletionRevision(photoId, visit.vineyardId, nowIso()) == null
+        ) return null
         _pendingPhotoCount.value = store.loadPhotoQueue().size
 
         val nextAssessment = assessment.withObservation(
@@ -399,7 +402,6 @@ class VineyardInsightsController(
             }
             is ScoutPhotoUpload.Deletion.FullyUploaded -> {
                 plan.localPath?.let { photoFiles?.remove(it) }
-                pendingPhotoTombstones.add(photoId)
             }
         }
         onMutation(visit.vineyardId)
@@ -412,9 +414,6 @@ class VineyardInsightsController(
      * them, so they are unreachable rather than recoverable.
      */
     private val pendingOrphanedObjects = mutableSetOf<String>()
-
-    /** Fully-stored photographs awaiting a server-side soft delete. */
-    private val pendingPhotoTombstones = mutableSetOf<String>()
 
     // ------------------------------------------------------------ E-L link
 
@@ -734,8 +733,8 @@ class VineyardInsightsController(
         pendingOrphanedObjects.toList().forEach { path ->
             if (worker.removeOrphanedPhotoObject(path)) pendingOrphanedObjects.remove(path)
         }
-        pendingPhotoTombstones.toList().forEach { photoId ->
-            if (worker.tombstonePhoto(photoId)) pendingPhotoTombstones.remove(photoId)
+        store.photoDeletionRevisions().forEach { revision ->
+            worker.tombstonePhoto(revision)
         }
     }
 
@@ -746,7 +745,6 @@ class VineyardInsightsController(
         syncGeneration += 1
         syncCoordinator.invalidateAll()
         pendingOrphanedObjects.clear()
-        pendingPhotoTombstones.clear()
         store.clearForSignOut()
         photoFiles?.clearForSignOut()
         _visits.value = emptyList()
