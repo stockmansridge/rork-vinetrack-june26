@@ -12,6 +12,14 @@ nonisolated struct ScoutPhotoFix: Equatable, Sendable {
     let latitude: Double
     let longitude: Double
     let accuracyMetres: Double
+    let measuredAt: Date
+
+    init(latitude: Double, longitude: Double, accuracyMetres: Double, measuredAt: Date = Date()) {
+        self.latitude = latitude
+        self.longitude = longitude
+        self.accuracyMetres = accuracyMetres
+        self.measuredAt = measuredAt
+    }
 }
 
 /// Local-first state holder for the Vineyard Insights preview.
@@ -217,20 +225,34 @@ final class VineyardInsightsService {
         }
     }
 
+    @discardableResult
     func setObservationLocation(
         visitID: UUID,
         assessmentID: UUID,
         item: ScoutItem,
         fix: ScoutPhotoFix?
-    ) {
-        guard let fix else { return }
-        updateObservation(visitID: visitID, assessmentID: assessmentID, item: item) {
-            $0.latitude = fix.latitude
-            $0.longitude = fix.longitude
-            $0.accuracyMetres = fix.accuracyMetres
-            $0.locationCapturedAt = now()
-            $0.locationStatus = .gpsConfirmed
+    ) -> Bool {
+        guard let fix,
+              var visit = visit(visitID),
+              visit.isEditable,
+              var assessment = visit.assessments.first(where: { $0.id == assessmentID }) else { return false }
+        let previousVisit = visit
+        let previousSyncOwed = store.isSyncOwed(visitID: visitID)
+        var observation = assessment.observation(item)
+            ?? ScoutObservation.empty(assessmentID: assessmentID, item: item)
+        observation.latitude = fix.latitude
+        observation.longitude = fix.longitude
+        observation.accuracyMetres = fix.accuracyMetres
+        observation.locationCapturedAt = fix.measuredAt
+        observation.locationStatus = .gpsConfirmed
+        assessment.setObservation(observation)
+        visit.setAssessment(assessment)
+        guard persist(visit) else {
+            _ = store.saveVisit(previousVisit, syncOwed: previousSyncOwed)
+            visits = store.loadVisits()
+            return false
         }
+        return true
     }
 
     func retrySync(vineyardID: UUID) {
@@ -431,20 +453,21 @@ final class VineyardInsightsService {
         }
     }
 
+    @discardableResult
     private func updateObservation(
         visitID: UUID,
         assessmentID: UUID,
         item: ScoutItem,
         _ transform: (inout ScoutObservation) -> Void
-    ) {
-        guard var visit = visit(visitID), visit.isEditable else { return }
-        guard var assessment = visit.assessments.first(where: { $0.id == assessmentID }) else { return }
+    ) -> Bool {
+        guard var visit = visit(visitID), visit.isEditable else { return false }
+        guard var assessment = visit.assessments.first(where: { $0.id == assessmentID }) else { return false }
         var observation = assessment.observation(item)
             ?? ScoutObservation.empty(assessmentID: assessmentID, item: item)
         transform(&observation)
         assessment.setObservation(observation)
         visit.setAssessment(assessment)
-        persist(visit)
+        return persist(visit)
     }
 
     func review(visitID: UUID) -> ScoutReview {
@@ -540,7 +563,10 @@ final class VineyardInsightsService {
     @discardableResult
     private func persist(_ visit: ScoutVisit) -> Bool {
         var stamped = visit
-        stamped.clientUpdatedAt = now()
+        let candidate = now()
+        stamped.clientUpdatedAt = candidate > visit.clientUpdatedAt
+            ? candidate
+            : visit.clientUpdatedAt.addingTimeInterval(0.001)
         let saved = store.saveVisit(stamped)
         if saved {
             visits = store.loadVisits()
@@ -812,7 +838,11 @@ final class VineyardInsightsService {
             store.dequeue(queueID: entry.id)
             return nil
         }
-        guard let visit = visits.first(where: { $0.id == entry.recordID }) else { return nil }
+        guard let visit = store.loadVisits().first(where: { $0.id == entry.recordID }) else { return nil }
+        guard visit.clientUpdatedAt == entry.clientUpdatedAt else {
+            throw VineyardInsightsReconciliationError.localWriteFailed
+        }
+        let revisionID = entry.id.uuidString
 
         let weather = visit.weather.map {
             VineyardInsightsSyncRepository.WeatherPayload(
@@ -839,7 +869,8 @@ final class VineyardInsightsService {
             weather_snapshot: weather,
             scout_user_id: visit.scoutUserID?.uuidString,
             scout_name_snapshot: visit.scoutNameSnapshot,
-            client_updated_at: VineyardInsightsSyncRepository.timestamp(visit.clientUpdatedAt),
+            client_updated_at: VineyardInsightsSyncRepository.timestamp(entry.clientUpdatedAt),
+            client_revision_id: revisionID,
             deleted_at: nil
         )
 
@@ -850,7 +881,8 @@ final class VineyardInsightsService {
                 vineyard_id: assessment.vineyardID.uuidString,
                 paddock_id: assessment.paddockID.uuidString,
                 status: assessment.status.code,
-                client_updated_at: VineyardInsightsSyncRepository.timestamp(visit.clientUpdatedAt)
+                client_updated_at: VineyardInsightsSyncRepository.timestamp(entry.clientUpdatedAt),
+                client_revision_id: revisionID
             )
         }
 
@@ -873,7 +905,8 @@ final class VineyardInsightsService {
                     location_status: observation.locationStatus.code,
                     linked_pin_id: observation.linkedPinID?.uuidString,
                     linked_growth_record_id: observation.linkedGrowthStageRecordID?.uuidString,
-                    client_updated_at: VineyardInsightsSyncRepository.timestamp(visit.clientUpdatedAt)
+                    client_updated_at: VineyardInsightsSyncRepository.timestamp(entry.clientUpdatedAt),
+                    client_revision_id: revisionID
                 )
             }
         }
@@ -885,7 +918,7 @@ final class VineyardInsightsService {
             observations: observations
         )
         guard acknowledged.id == entry.recordID,
-              VineyardInsightsSyncRepository.parseTimestamp(acknowledged.client_updated_at) == entry.clientUpdatedAt else {
+              acknowledged.client_revision_id == entry.id else {
             throw VineyardInsightsReconciliationError.localWriteFailed
         }
         return acknowledged.sync_version
@@ -984,7 +1017,8 @@ final class VineyardInsightsService {
                         horizontal_accuracy: photo.accuracyMetres,
                         location_status: photo.locationStatus.code,
                         captured_by: photo.capturedByUserID?.uuidString,
-                        client_updated_at: VineyardInsightsSyncRepository.timestamp(now())
+                        client_updated_at: VineyardInsightsSyncRepository.timestamp(entry.capturedAt),
+                        client_revision_id: entry.id.uuidString
                     )
                 )
 

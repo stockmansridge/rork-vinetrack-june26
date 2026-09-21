@@ -72,7 +72,13 @@ class VineyardInsightsController(
         _pendingPhotoCount.value = store.loadPhotoQueue().size
     }
 
-    private fun nowIso(): String = clock().toString()
+    private fun nowIso(): String = clock().truncatedTo(java.time.temporal.ChronoUnit.MILLIS).toString()
+
+    private fun nextRevisionIso(previousIso: String): String {
+        val candidate = clock().truncatedTo(java.time.temporal.ChronoUnit.MILLIS)
+        val previous = runCatching { Instant.parse(previousIso) }.getOrNull()
+        return if (previous != null && !candidate.isAfter(previous)) previous.plusMillis(1).toString() else candidate.toString()
+    }
 
     private fun record(success: Boolean): Boolean {
         _lastWriteFailed.value = !success
@@ -202,17 +208,27 @@ class VineyardInsightsController(
         assessmentId: String,
         item: ScoutItem,
         fix: ScoutPhotoFix?,
-    ) {
-        if (fix == null) return
-        updateObservation(visitId, assessmentId, item) {
-            it.copy(
-                latitude = fix.latitude,
-                longitude = fix.longitude,
-                accuracyMetres = fix.accuracyMetres,
-                locationCapturedAtIso = nowIso(),
-                locationStatus = PhotoLocationStatus.GPS_CONFIRMED,
-            )
+    ): Boolean {
+        if (fix == null) return false
+        val visit = visit(visitId) ?: return false
+        if (!visit.isEditable) return false
+        val assessment = visit.assessments.firstOrNull { it.id == assessmentId } ?: return false
+        val previousSyncOwed = store.isSyncOwedForVisit(visitId)
+        val observation = assessment.observation(item) ?: ScoutObservation.empty(assessmentId, item)
+        val nextObservation = observation.copy(
+            latitude = fix.latitude,
+            longitude = fix.longitude,
+            accuracyMetres = fix.accuracyMetres,
+            locationCapturedAtIso = fix.measuredAtIso,
+            locationStatus = PhotoLocationStatus.GPS_CONFIRMED,
+        )
+        val nextAssessment = assessment.withObservation(nextObservation).let {
+            it.copy(status = if (it.isComplete) ScoutAssessmentStatus.COMPLETE else ScoutAssessmentStatus.IN_PROGRESS)
         }
+        if (persist(visit.withAssessment(nextAssessment))) return true
+        store.saveVisit(visit, previousSyncOwed)
+        _visits.value = store.loadVisits()
+        return false
     }
 
     fun setObservationNotes(visitId: String, assessmentId: String, item: ScoutItem, notes: String) {
@@ -444,10 +460,10 @@ class VineyardInsightsController(
         assessmentId: String,
         item: ScoutItem,
         transform: (ScoutObservation) -> ScoutObservation,
-    ) {
-        val visit = visit(visitId) ?: return
-        if (!visit.isEditable) return
-        val assessment = visit.assessments.firstOrNull { it.id == assessmentId } ?: return
+    ): Boolean {
+        val visit = visit(visitId) ?: return false
+        if (!visit.isEditable) return false
+        val assessment = visit.assessments.firstOrNull { it.id == assessmentId } ?: return false
         val existing = assessment.observation(item) ?: ScoutObservation.empty(assessmentId, item)
         val updated = transform(existing)
         val nextAssessment = assessment.withObservation(updated).let {
@@ -459,7 +475,7 @@ class VineyardInsightsController(
                 },
             )
         }
-        persist(visit.withAssessment(nextAssessment))
+        return persist(visit.withAssessment(nextAssessment))
     }
 
     fun review(visitId: String): ScoutReview =
@@ -531,7 +547,7 @@ class VineyardInsightsController(
     }
 
     private fun persist(visit: ScoutVisit): Boolean {
-        val stamped = visit.copy(clientUpdatedAtIso = nowIso())
+        val stamped = visit.copy(clientUpdatedAtIso = nextRevisionIso(visit.clientUpdatedAtIso))
         val saved = store.saveVisit(stamped)
         if (saved) {
             _visits.value = store.loadVisits()
@@ -754,4 +770,5 @@ data class ScoutPhotoFix(
     val latitude: Double,
     val longitude: Double,
     val accuracyMetres: Double,
+    val measuredAtIso: String = Instant.now().toString(),
 )

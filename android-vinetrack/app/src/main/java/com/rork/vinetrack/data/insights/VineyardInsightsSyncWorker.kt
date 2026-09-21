@@ -225,6 +225,10 @@ class VineyardInsightsSyncWorker(
             return null
         }
         val visit = store.loadVisits().firstOrNull { it.id == entry.recordId } ?: return null
+        check(visit.clientUpdatedAtIso == entry.clientUpdatedAtIso) {
+            "A newer local Scout revision is waiting; the older operation was not acknowledged."
+        }
+        val revisionId = entry.id
 
         // vintage_year is NOT sent: SQL 236 resolves it from scout_date.
         val payload = VineyardInsightsSyncApi.VisitUpsert(
@@ -249,7 +253,8 @@ class VineyardInsightsSyncWorker(
             },
             scoutUserId = visit.scoutUserId,
             scoutNameSnapshot = visit.scoutNameSnapshot,
-            clientUpdatedAt = visit.clientUpdatedAtIso,
+            clientUpdatedAt = entry.clientUpdatedAtIso,
+            clientRevisionId = revisionId,
         )
 
         val assessments = visit.assessments.map {
@@ -259,7 +264,8 @@ class VineyardInsightsSyncWorker(
                 vineyardId = it.vineyardId,
                 paddockId = it.paddockId,
                 status = it.status.code,
-                clientUpdatedAt = visit.clientUpdatedAtIso,
+                clientUpdatedAt = entry.clientUpdatedAtIso,
+                clientRevisionId = revisionId,
             )
         }
 
@@ -283,7 +289,8 @@ class VineyardInsightsSyncWorker(
                     locationStatus = it.locationStatus.code,
                     linkedPinId = it.linkedPinId,
                     linkedGrowthStageRecordId = it.linkedGrowthStageRecordId,
-                    clientUpdatedAt = visit.clientUpdatedAtIso,
+                    clientUpdatedAt = entry.clientUpdatedAtIso,
+                    clientRevisionId = revisionId,
                 )
             }
         }
@@ -292,9 +299,7 @@ class VineyardInsightsSyncWorker(
         // foreign keys are real, so a child replayed before its parent would be
         // rejected.
         val acknowledged = repository.pushVisit(payload, assessments, observations)
-        val acknowledgedRevision = acknowledged.clientUpdatedAt?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() }
-        val sentRevision = runCatching { java.time.Instant.parse(entry.clientUpdatedAtIso) }.getOrNull()
-        check(acknowledged.id == entry.recordId && acknowledgedRevision != null && acknowledgedRevision == sentRevision) {
+        check(acknowledged.id == entry.recordId && acknowledged.clientRevisionId == revisionId) {
             "The server did not acknowledge this exact Scout revision."
         }
         return acknowledged.syncVersion
@@ -425,7 +430,8 @@ class VineyardInsightsSyncWorker(
                         horizontalAccuracy = photo.accuracyMetres,
                         locationStatus = photo.locationStatus.code,
                         capturedBy = photo.capturedByUserId,
-                        clientUpdatedAt = nowIso(),
+                        clientUpdatedAt = entry.capturedAt,
+                        clientRevisionId = entry.id,
                     ),
                 )
                 if (!store.markPhotoRowCommitted(entry.id)) continue

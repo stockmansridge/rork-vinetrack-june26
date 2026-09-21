@@ -41,7 +41,9 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
     static func parseDay(_ value: String) -> Date? { dayFormatter.date(from: value) }
 
     static func timestamp(_ date: Date) -> String {
-        ISO8601DateFormatter().string(from: date)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
     }
 
     static func parseTimestamp(_ value: String?) -> Date? {
@@ -63,6 +65,7 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let scout_user_id: String?
         let scout_name_snapshot: String?
         let client_updated_at: String
+        let client_revision_id: String
         let deleted_at: String?
     }
 
@@ -91,6 +94,7 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let scout_name_snapshot: String?
         let updated_at: String?
         let client_updated_at: String?
+        let client_revision_id: UUID?
         let sync_version: Int?
         let deleted_at: String?
     }
@@ -102,6 +106,7 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let paddock_id: String
         let status: String
         let client_updated_at: String
+        let client_revision_id: String
     }
 
     struct AssessmentRow: Decodable, Sendable {
@@ -129,6 +134,7 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let linked_pin_id: String?
         let linked_growth_record_id: String?
         let client_updated_at: String
+        let client_revision_id: String
 
         init(
             id: String, assessment_id: String, vineyard_id: String, item_kind: String,
@@ -136,7 +142,8 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
             latitude: Double? = nil, longitude: Double? = nil,
             horizontal_accuracy: Double? = nil, location_captured_at: String? = nil,
             location_status: String = PhotoLocationStatus.unavailable.code,
-            linked_pin_id: String?, linked_growth_record_id: String?, client_updated_at: String
+            linked_pin_id: String?, linked_growth_record_id: String?, client_updated_at: String,
+            client_revision_id: String = UUID().uuidString
         ) {
             self.id = id
             self.assessment_id = assessment_id
@@ -153,12 +160,13 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
             self.linked_pin_id = linked_pin_id
             self.linked_growth_record_id = linked_growth_record_id
             self.client_updated_at = client_updated_at
+            self.client_revision_id = client_revision_id
         }
 
         private enum CodingKeys: String, CodingKey {
             case id, assessment_id, vineyard_id, item_kind, value_code, value_label
             case notes, latitude, longitude, horizontal_accuracy, location_captured_at, location_status
-            case linked_pin_id, linked_growth_record_id, client_updated_at
+            case linked_pin_id, linked_growth_record_id, client_updated_at, client_revision_id
         }
 
         func encode(to encoder: Encoder) throws {
@@ -178,6 +186,7 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
             try container.encode(linked_pin_id, forKey: .linked_pin_id)
             try container.encode(linked_growth_record_id, forKey: .linked_growth_record_id)
             try container.encode(client_updated_at, forKey: .client_updated_at)
+            try container.encode(client_revision_id, forKey: .client_revision_id)
         }
     }
 
@@ -211,6 +220,7 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let location_status: String
         let captured_by: String?
         let client_updated_at: String
+        let client_revision_id: String
     }
 
     struct PhotoRow: Decodable, Sendable {

@@ -286,10 +286,19 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
                 )
             }
             is MainSurface.Tool -> {
-                BackHandler { work.setTool(null) }
+                val onToolBack: () -> Unit = {
+                    if (surface.route == ToolRoute.VineyardInsights) {
+                        // Vineyard Insights is launched from Home's Operational Tools grid.
+                        // Do not reveal a stale Settings/Work Tasks tab retained underneath.
+                        work.openTab(MainTab.Home)
+                    } else {
+                        work.setTool(null)
+                    }
+                }
+                BackHandler(onBack = onToolBack)
                 ToolHost(
                     surface.route, vm, state, modifier,
-                    onBack = { work.setTool(null) },
+                    onBack = onToolBack,
                     pinMode = surface.pinMode,
                     pins = surface.pins,
                     onPinsViewMode = { work.setPinsViewMode(it) },

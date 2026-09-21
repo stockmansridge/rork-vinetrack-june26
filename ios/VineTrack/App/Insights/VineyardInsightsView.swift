@@ -305,7 +305,8 @@ struct ScoutWorkspaceView: View {
                     return ScoutPhotoFix(
                         latitude: location.coordinate.latitude,
                         longitude: location.coordinate.longitude,
-                        accuracyMetres: location.horizontalAccuracy
+                        accuracyMetres: location.horizontalAccuracy,
+                        measuredAt: location.timestamp
                     )
                 }()
                 _ = insights.capturePhoto(
@@ -863,12 +864,41 @@ private struct ScoutAssessmentSection: View {
                 Text("Location unavailable").font(.caption).foregroundStyle(.orange)
             }
             Button(observation?.locationStatus == .gpsConfirmed ? "Update location" : "Record location") {
+                let retained = observation?.locationStatus == .gpsConfirmed
                 let (location, quality) = locationService.freshLocation()
-                let fix = quality == .fresh ? location.map {
-                    ScoutPhotoFix(latitude: $0.coordinate.latitude, longitude: $0.coordinate.longitude,
-                        accuracyMetres: $0.horizontalAccuracy)
-                } : nil
-                insights.setObservationLocation(visitID: visitID, assessmentID: assessment.id, item: item, fix: fix)
+                guard quality == .fresh, let location else {
+                    show(
+                        retained
+                            ? "A fresh GPS fix was unavailable. The previous valid location was retained."
+                            : "Location unavailable. No coordinates were saved; try again with a fresh GPS fix.",
+                        isError: true
+                    )
+                    return
+                }
+                let fix = ScoutPhotoFix(
+                    latitude: location.coordinate.latitude,
+                    longitude: location.coordinate.longitude,
+                    accuracyMetres: location.horizontalAccuracy,
+                    measuredAt: location.timestamp
+                )
+                if insights.setObservationLocation(
+                    visitID: visitID,
+                    assessmentID: assessment.id,
+                    item: item,
+                    fix: fix
+                ) {
+                    show("Location recorded and saved for sync.", isError: false)
+                } else {
+                    let current = insights.visit(visitID)?.assessments
+                        .first(where: { $0.id == assessment.id })?.observation(item)
+                    let previousWasRetained = current?.locationCapturedAt == observation?.locationCapturedAt
+                    show(
+                        previousWasRetained && retained
+                            ? "The location update could not be saved. The previous valid location was retained."
+                            : "The location save could not be confirmed. Check the visible location and try again before leaving this Scout.",
+                        isError: true
+                    )
+                }
             }
             .font(.caption)
             .disabled(!isEditable)

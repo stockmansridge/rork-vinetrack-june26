@@ -20,8 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -344,6 +343,7 @@ private fun ScoutWorkspace(
     var cameraItemCode by rememberSaveable { mutableStateOf<String?>(null) }
     var stageRequest by remember { mutableStateOf<ScoutStageRequest?>(null) }
     var paddockToScrollTo by remember { mutableStateOf<String?>(null) }
+    val scoutListState = rememberLazyListState()
     val camera = rememberPhotoCaptureCoordinator(
         onPhoto = { uri ->
             val visitId = cameraVisitId
@@ -383,6 +383,17 @@ private fun ScoutWorkspace(
         insights.visitHistory(vineyardId, if (showAllVintages) null else currentVintage)
     }.orEmpty()
 
+    LaunchedEffect(paddockToScrollTo, current?.assessments?.map { it.id }, cameraError, syncError, writeFailed) {
+        val targetPaddock = paddockToScrollTo ?: return@LaunchedEffect
+        val visit = current ?: return@LaunchedEffect
+        val assessmentOffset = visit.assessments.indexOfFirst { it.paddockId == targetPaddock }
+        if (assessmentOffset < 0) return@LaunchedEffect
+        val conditionalRows = listOf(cameraError, syncError).count { it != null } + if (writeFailed) 1 else 0
+        val assessmentStartIndex = 1 + conditionalRows + 3
+        scoutListState.animateScrollToItem(assessmentStartIndex + assessmentOffset)
+        paddockToScrollTo = null
+    }
+
     Scaffold(
         modifier = modifier,
         topBar = {
@@ -395,6 +406,7 @@ private fun ScoutWorkspace(
         },
     ) { padding ->
         LazyColumn(
+            state = scoutListState,
             modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -525,8 +537,6 @@ private fun ScoutWorkspace(
                         assessmentId = assessment.id,
                         enabled = current.isEditable,
                         observations = assessment.observations,
-                        shouldScrollIntoView = paddockToScrollTo == assessment.paddockId,
-                        onScrolledIntoView = { paddockToScrollTo = null },
                         onRequestGrowthStage = {
                             stageRequest = ScoutStageRequest(current.id, assessment.id, assessment.paddockId)
                         },
@@ -778,8 +788,6 @@ private fun ScoutBlockAssessmentCard(
     assessmentId: String,
     enabled: Boolean,
     observations: List<com.rork.vinetrack.data.insights.ScoutObservation>,
-    shouldScrollIntoView: Boolean,
-    onScrolledIntoView: () -> Unit,
     onRequestGrowthStage: () -> Unit,
     onRequestPhoto: (ScoutItem) -> Unit,
 ) {
@@ -791,15 +799,8 @@ private fun ScoutBlockAssessmentCard(
     var confirmUnlink by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var messageIsError by remember { mutableStateOf(false) }
-    val bringIntoViewRequester = remember { BringIntoViewRequester() }
-    LaunchedEffect(shouldScrollIntoView) {
-        if (shouldScrollIntoView) {
-            bringIntoViewRequester.bringIntoView()
-            onScrolledIntoView()
-        }
-    }
 
-    VineyardCard(modifier = Modifier.bringIntoViewRequester(bringIntoViewRequester)) {
+    VineyardCard {
         Text(
             paddock?.name ?: "Block",
             fontSize = 16.sp,
@@ -921,9 +922,9 @@ private fun ScoutBlockAssessmentCard(
                 }
                 TextButton(
                     onClick = {
-                        vm.captureScoutObservationLocation(visitId, assessmentId, item) { recorded ->
-                            message = if (recorded) "Location recorded" else "Location unavailable — Retry"
-                            messageIsError = false
+                        vm.captureScoutObservationLocation(visitId, assessmentId, item) { recorded, feedback ->
+                            message = feedback
+                            messageIsError = !recorded
                         }
                     },
                     enabled = enabled,

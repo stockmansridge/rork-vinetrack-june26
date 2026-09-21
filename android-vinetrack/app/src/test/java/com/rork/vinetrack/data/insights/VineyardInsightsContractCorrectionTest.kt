@@ -24,6 +24,7 @@ class VineyardInsightsContractCorrectionTest {
         val payload = VineyardInsightsSyncApi.ObservationUpsert(
             id = "o", assessmentId = "a", vineyardId = "v", itemKind = "growth_stage",
             linkedPinId = "pin", linkedGrowthStageRecordId = "growth", clientUpdatedAt = "now",
+            clientRevisionId = "revision",
         )
         val objectValue = json.parseToJsonElement(json.encodeToString(payload)).jsonObject
         assertEquals("growth", objectValue["linked_growth_record_id"]?.jsonPrimitive?.content)

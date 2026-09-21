@@ -1442,6 +1442,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     latitude = it.fix.latitude,
                     longitude = it.fix.longitude,
                     accuracyMetres = it.fix.accuracyMetres,
+                    measuredAtIso = java.time.Instant.ofEpochMilli(it.fix.fixTimeEpochMs).toString(),
                 )
             }
             viewModelScope.launch {
@@ -1475,18 +1476,48 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         visitId: String,
         assessmentId: String,
         item: com.rork.vinetrack.data.insights.ScoutItem,
-        onResult: (Boolean) -> Unit,
+        onResult: (Boolean, String) -> Unit,
     ) {
+        val previousObservation = vineyardInsights.visit(visitId)
+            ?.assessments?.firstOrNull { it.id == assessmentId }
+            ?.observation(item)
+        val retained = previousObservation?.locationStatus ==
+            com.rork.vinetrack.data.insights.PhotoLocationStatus.GPS_CONFIRMED
+        val previousCapturedAt = previousObservation?.locationCapturedAtIso
         fetchCurrentFix { result ->
-            val fix = (result as? PinLocationResult.Success)?.let {
-                com.rork.vinetrack.data.insights.ScoutPhotoFix(
-                    latitude = it.fix.latitude,
-                    longitude = it.fix.longitude,
-                    accuracyMetres = it.fix.accuracyMetres,
+            val success = result as? PinLocationResult.Success
+            if (success == null) {
+                onResult(
+                    false,
+                    if (retained) {
+                        "${result.operatorMessage()} The previous valid location was retained."
+                    } else {
+                        "${result.operatorMessage()} No coordinates were saved."
+                    },
                 )
+                return@fetchCurrentFix
             }
-            vineyardInsights.setObservationLocation(visitId, assessmentId, item, fix)
-            onResult(fix != null)
+            val fix = com.rork.vinetrack.data.insights.ScoutPhotoFix(
+                latitude = success.fix.latitude,
+                longitude = success.fix.longitude,
+                accuracyMetres = success.fix.accuracyMetres,
+                measuredAtIso = java.time.Instant.ofEpochMilli(success.fix.fixTimeEpochMs).toString(),
+            )
+            val saved = vineyardInsights.setObservationLocation(visitId, assessmentId, item, fix)
+            val current = vineyardInsights.visit(visitId)
+                ?.assessments?.firstOrNull { it.id == assessmentId }
+                ?.observation(item)
+            val previousWasRetained = current?.locationCapturedAtIso == previousCapturedAt
+            onResult(
+                saved,
+                if (saved) {
+                    "Location recorded and saved for sync."
+                } else if (retained && previousWasRetained) {
+                    "The location update could not be saved. The previous valid location was retained."
+                } else {
+                    "The location save could not be confirmed. Check the visible location and try again before leaving this Scout."
+                },
+            )
         }
     }
 

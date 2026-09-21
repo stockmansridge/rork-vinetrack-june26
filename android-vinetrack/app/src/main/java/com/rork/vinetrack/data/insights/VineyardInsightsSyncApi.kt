@@ -53,6 +53,7 @@ interface VineyardInsightsSyncApi {
         @SerialName("scout_user_id") val scoutUserId: String? = null,
         @SerialName("scout_name_snapshot") val scoutNameSnapshot: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
+        @SerialName("client_revision_id") val clientRevisionId: String,
     )
 
     @Serializable
@@ -82,6 +83,7 @@ interface VineyardInsightsSyncApi {
         @SerialName("scout_name_snapshot") val scoutNameSnapshot: String? = null,
         @SerialName("updated_at") val updatedAt: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String? = null,
+        @SerialName("client_revision_id") val clientRevisionId: String? = null,
         @SerialName("sync_version") val syncVersion: Long = 0,
         @SerialName("deleted_at") val deletedAt: String? = null,
     )
@@ -94,6 +96,7 @@ interface VineyardInsightsSyncApi {
         @SerialName("paddock_id") val paddockId: String,
         val status: String,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
+        @SerialName("client_revision_id") val clientRevisionId: String,
     )
 
     @Serializable
@@ -123,6 +126,7 @@ interface VineyardInsightsSyncApi {
         @SerialName("linked_pin_id") val linkedPinId: String? = null,
         @SerialName("linked_growth_record_id") val linkedGrowthStageRecordId: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
+        @SerialName("client_revision_id") val clientRevisionId: String,
     )
 
     @Serializable
@@ -166,6 +170,7 @@ interface VineyardInsightsSyncApi {
         @SerialName("location_status") val locationStatus: String,
         @SerialName("captured_by") val capturedBy: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
+        @SerialName("client_revision_id") val clientRevisionId: String,
     )
 
     @Serializable
