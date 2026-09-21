@@ -22,7 +22,14 @@ import java.security.MessageDigest
 import java.util.Locale
 
 /** Authenticated Spray Report v1 and hourly-weather server paths. */
-class SprayReportRepository(private val session: SessionStore) {
+class SprayReportRepository private constructor(
+    private val session: SessionStore?,
+    private val reportFetcher: (suspend (String) -> SprayReportPayloadV1)?,
+) {
+    constructor(session: SessionStore) : this(session, null)
+
+    internal constructor(reportFetcher: suspend (String) -> SprayReportPayloadV1) :
+        this(null, reportFetcher)
     @Serializable private data class ReportArgs(@SerialName("p_trip_id") val tripId: String)
     @Serializable private data class WeatherArgs(
         @SerialName("p_trip_id") val tripId: String,
@@ -40,10 +47,8 @@ class SprayReportRepository(private val session: SessionStore) {
         @SerialName("p_is_stale") val isStale: Boolean = false,
     )
 
-    suspend fun fetch(tripId: String): SprayReportPayloadV1 {
-        recoverRows(tripId)
-        return rpc("get_spray_report_v1", ReportArgs(tripId))
-    }
+    suspend fun fetch(tripId: String): SprayReportPayloadV1 =
+        reportFetcher?.invoke(tripId) ?: rpc("get_spray_report_v1", ReportArgs(tripId))
 
     /** Fetches every distinct trip separately; failures are omitted for caller fallback. */
     suspend fun fetchAll(tripIds: List<String>): Map<String, SprayReportPayloadV1> = buildMap {
@@ -70,7 +75,7 @@ class SprayReportRepository(private val session: SessionStore) {
     /** Reads only the protected correction row; no report or recovery work runs. */
     suspend fun fetchCorrectionMetadata(tripId: String): SprayTripCorrectionMetadata? {
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
-        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val token = session?.accessToken ?: throw BackendError.Unauthorized
         val select = "trip_id,version,machine_id,tractor_id,spray_equipment_id,operator_user_id,machine_name_snapshot,spray_unit_name_snapshot,operator_name_snapshot,fuel_consumption_l_per_hour,fuel_consumption_source,start_engine_hours,end_engine_hours"
         val response = SupabaseClient.http.get(
             "${SupabaseClient.baseUrl}/rest/v1/spray_trip_corrections?select=$select&trip_id=eq.$tripId&limit=1",
@@ -102,26 +107,12 @@ class SprayReportRepository(private val session: SessionStore) {
         return response.correction
     }
 
-    /** Runs the shared server derivation; ambiguous paths are intentionally left unresolved. */
-    private suspend fun recoverRows(tripId: String) {
-        if (!SupabaseClient.isConfigured) return
-        val token = session.accessToken ?: return
-        runCatching {
-            SupabaseClient.http.post("${SupabaseClient.baseUrl}/functions/v1/spray-row-recovery") {
-                headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
-                contentType(ContentType.Application.Json)
-                setBody(RowRecoveryArgs(tripId))
-            }
-        }
-    }
-
-    @Serializable private data class RowRecoveryArgs(val tripId: String)
 
     /** Generates/registers the immutable hybrid route when no canonical winner exists. */
     suspend fun ensureRoute(trip: Trip): SprayReportPayloadV1.Route? {
         val points = trip.pathPoints.orEmpty()
         if (points.size < 2 || !SupabaseClient.isConfigured) return null
-        val token = session.accessToken ?: return null
+        val token = session?.accessToken ?: return null
         val input = buildList {
             add(SprayReportPayloadV1.ROUTE_STYLE_VERSION)
             add("1030x700")
@@ -143,7 +134,7 @@ class SprayReportRepository(private val session: SessionStore) {
 
     suspend fun downloadRoute(route: SprayReportPayloadV1.Route): ByteArray {
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
-        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val token = session?.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.get("${SupabaseClient.baseUrl}/storage/v1/object/authenticated/${route.bucket}/${route.objectPath}") {
             headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
         }
@@ -170,7 +161,7 @@ class SprayReportRepository(private val session: SessionStore) {
     /** Explicit historical recovery. Station availability never controls spray saving. */
     suspend fun recoverWeather(tripId: String, through: Instant): WeatherRecoveryResult {
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
-        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val token = session?.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.post("${SupabaseClient.baseUrl}/functions/v1/spray-weather-recovery") {
             headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
             contentType(ContentType.Application.Json)
@@ -186,7 +177,7 @@ class SprayReportRepository(private val session: SessionStore) {
         val start = trip.startTime?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: return
         val elapsedHours = ChronoUnit.HOURS.between(start, now).coerceAtLeast(0)
         val through = if (isFinal) now else start.plus(elapsedHours, ChronoUnit.HOURS)
-        val token = session.accessToken ?: return
+        val token = session?.accessToken ?: return
         runCatching {
             SupabaseClient.http.post("${SupabaseClient.baseUrl}/functions/v1/spray-weather-recovery") {
                 headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
@@ -200,7 +191,7 @@ class SprayReportRepository(private val session: SessionStore) {
 
     private suspend inline fun <reified Body, reified Result> rpc(name: String, body: Body): Result {
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
-        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val token = session?.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl(name)) {
             headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
             contentType(ContentType.Application.Json)

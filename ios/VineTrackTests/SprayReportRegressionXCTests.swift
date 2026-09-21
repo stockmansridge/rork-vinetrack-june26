@@ -3,6 +3,37 @@ import PDFKit
 @testable import VineTrack
 
 final class SprayReportRegressionXCTests: XCTestCase {
+    @MainActor
+    func testRepeatedCanonicalReportReadsNeverInvokeRecovery() async throws {
+        let trip = Trip(vineyardId: UUID(), tripFunction: TripFunction.spraying.rawValue)
+        let record = SprayRecord(tripId: trip.id, vineyardId: trip.vineyardId)
+        let payload = SprayReportPayloadV1.offlineProjection(
+            trip: trip,
+            record: record,
+            vineyardName: "Stockmans Ridge",
+            timeZone: .gmt,
+            paddocks: [],
+            tractorName: "",
+            sprayUnitName: "",
+            tankActuals: []
+        )
+        var reportReads = 0
+        let recoveryWrites = 0
+        let repository = SprayReportRepository { requestedTripID in
+            XCTAssertEqual(requestedTripID, trip.id)
+            reportReads += 1
+            return payload
+        }
+
+        _ = try await repository.fetch(tripId: trip.id)
+        _ = try await repository.fetch(tripId: trip.id)
+        let all = await repository.fetchAll(tripIds: [trip.id, trip.id])
+
+        XCTAssertNotNil(all[trip.id])
+        XCTAssertEqual(reportReads, 3)
+        XCTAssertEqual(recoveryWrites, 0)
+    }
+
     func testDuplicateOperationalCacheRowsCollapseBeforeSpraysListRendering() throws {
         let sharedId = UUID()
         let older = SprayRecord(id: sharedId, date: Date(timeIntervalSince1970: 100), sprayReference: "Older", tanks: [SprayTank()])

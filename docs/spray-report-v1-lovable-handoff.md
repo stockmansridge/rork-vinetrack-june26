@@ -134,7 +134,7 @@ Canonical precedence is: explicit correction overlay → trip recorded identity 
 
 ### Shared row/block recovery action
 
-Lovable does not derive assignments and must not call the persistence RPC. Invoke the authenticated `spray-row-recovery` function with `{ "tripId": "uuid" }`. The function verifies Owner/Manager/Supervisor access, reads the trip's saved row sequence, completed/skipped paths, tank sessions, recorded application blocks, trip/job block plans, saved row UUIDs/geometry and complete GPS route, applies the shared `spray-row-recovery-v1` rules, then invokes the service-only persistence boundary.
+Lovable does not derive assignments and must not call the persistence RPC. Invoke the authenticated `spray-row-recovery` function only from the explicit “Recover row and block matches” action, with `{ "tripId": "uuid", "operationId": "uuid" }`. Preserve one operation ID for an uncertain retry and configure the mutation with `retry: false`; report reads and exports must never invoke recovery. The function verifies Owner/Manager/Supervisor access, preserves existing historical evidence, derives only missing paths, applies the shared `spray-row-recovery-v1` rules, then invokes the service-only V2 persistence boundary.
 
 The shared derivation process:
 
@@ -144,7 +144,7 @@ The shared derivation process:
 - Uses GPS only against the centreline derived from the exact saved row pair. It requires at least three points within 8 m, a contiguous run of at least three points, median distance at most 6 m, at least 3 m separation from the next candidate and final confidence at least 0.90.
 - Returns ambiguous/no-identity paths under `unresolved[]` without writing an assignment.
 
-Response is `{ success, operationId?, recovered, unresolved, evidenceVersion, assignments? }`. Refresh `get_spray_report_v1` after `recovered > 0`. Render `isDerived`, source, confidence and `originalEvidence`; never hide its `derivationVersion`, attribution basis, candidate blocks, matching saved row IDs, session identity or geometry metrics. Repeated row numbers remain separate by block and row identity. Direct execution of `recover_spray_row_assignments_v1` is denied to authenticated clients; only the trusted function's service client can persist centrally derived evidence.
+Response is `{ success, status, operationId, requestOperationId?, recovered, preserved, unresolved, evidenceVersion, assignments, retryable }`. Refresh `get_spray_report_v1` after `recovered > 0`. `already_recovered` is a successful 200; in-progress or immutable-evidence conflicts are non-retryable 409; deterministic validation is 422; deliberate rate limiting is 429. Render `isDerived`, source, confidence and `originalEvidence`; never hide its `derivationVersion`, attribution basis, candidate blocks, matching saved row IDs, session identity or geometry metrics. Repeated row numbers remain separate by block and row identity. Direct execution of `recover_spray_row_assignments_v2` is denied to authenticated clients; only the trusted function's service client can persist centrally derived evidence. V1 remains revoked.
 
 ## Additive SQL 229 — genuine hourly weather and archive recovery
 
@@ -204,7 +204,7 @@ The user runs all SQL manually. Do not rerun SQL 224–227.
    - `supabase functions deploy spray-row-recovery --project-ref <PROJECT_REF>`
    - `supabase functions deploy spray-weather-recovery --project-ref <PROJECT_REF>`
    - `supabase functions deploy spray-report-route-upload --project-ref <PROJECT_REF>`
-6. No database trigger, webhook, cron or scheduler is required. Mobile/portal clients invoke weather recovery at start, each scheduled hour, resume/restart, trip end and before online export; they invoke row recovery on report open or before export. The database missing-slot query provides restart durability. A periodic authenticated job is optional operational redundancy, not a prerequisite.
+6. No database trigger, webhook, cron or scheduler is required. Mobile/portal clients invoke weather recovery at start, each scheduled hour, resume/restart, trip end and before online export. Row recovery is invoked only by the explicit recovery action—never on report open, refresh, CSV/PDF generation or export. The database missing-slot query provides weather restart durability. A periodic row-recovery job must not be added.
 7. Verify with an ordinary authenticated user, not a service key: row recovery leaves repeated ambiguous row numbers unresolved; Davis and WU each retrieve their own configured station; unavailable history retains a gap and attempt history; route upload returns and re-downloads the same SHA-verified winner. Verify Owner/Manager costs, Supervisor/Operator `cost: null`, and multipage branding/tables.
 
 Repository implementation and successful local checks are not deployment evidence.

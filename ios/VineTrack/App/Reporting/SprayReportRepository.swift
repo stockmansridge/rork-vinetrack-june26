@@ -30,10 +30,20 @@ final class SprayReportRepository {
         let correction: SprayTripCorrectionMetadata
     }
 
-    private init() {}
+    private let reportFetcher: (@MainActor (UUID) async throws -> SprayReportPayloadV1)?
+
+    private init() {
+        reportFetcher = nil
+    }
+
+    init(reportFetcher: @escaping @MainActor (UUID) async throws -> SprayReportPayloadV1) {
+        self.reportFetcher = reportFetcher
+    }
 
     func fetch(tripId: UUID) async throws -> SprayReportPayloadV1 {
-        await recoverRows(tripId: tripId)
+        if let reportFetcher {
+            return try await reportFetcher(tripId)
+        }
         return try await SupabaseClientProvider.shared.client
             .rpc("get_spray_report_v1", params: FetchRequest(p_trip_id: tripId))
             .execute()
@@ -89,19 +99,6 @@ final class SprayReportRepository {
         return response.correction
     }
 
-    /// Runs the shared server derivation; ambiguous paths are intentionally left unresolved.
-    private func recoverRows(tripId: UUID) async {
-        guard SupabaseClientProvider.shared.isConfigured,
-              let session = try? await SupabaseClientProvider.shared.client.auth.session,
-              let url = URL(string: "\(AppConfig.supabaseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/functions/v1/spray-row-recovery") else { return }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(AppConfig.supabaseAnonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: ["tripId": tripId.uuidString.lowercased()])
-        _ = try? await URLSession.shared.data(for: request)
-    }
 
     func routeImage(for payload: SprayReportPayloadV1, fallbackTrip: Trip) async -> UIImage? {
         if let route = payload.route,

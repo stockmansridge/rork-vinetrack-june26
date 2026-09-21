@@ -10,9 +10,34 @@ import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.chemicalUnitFromBase
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
 class SprayReportPayloadV1Test {
+    @Test fun `repeated canonical report reads never invoke recovery`() = runTest {
+        val trip = Trip(id = "trip", vineyardId = "vineyard", tripFunction = "spraying")
+        val record = SprayRecord(id = "record", tripId = trip.id, vineyardId = trip.vineyardId)
+        val payload = SprayReportPayloadV1.offlineProjection(
+            trip, record, "Stockmans Ridge", "Australia/Sydney",
+            emptyList(), emptyList(), emptyList(), emptyList(), 0,
+        )
+        var reportReads = 0
+        val recoveryWrites = 0
+        val repository = SprayReportRepository { requestedTripId ->
+            assertEquals(trip.id, requestedTripId)
+            reportReads += 1
+            payload
+        }
+
+        repository.fetch(trip.id)
+        repository.fetch(trip.id)
+        val all = repository.fetchAll(listOf(trip.id, trip.id))
+
+        assertEquals(payload, all[trip.id])
+        assertEquals(3, reportReads)
+        assertEquals(0, recoveryWrites)
+    }
+
     @Test fun `projection preserves canonical row tank and quantities`() {
         val tripId = "a1b2c3d4-0000-4000-8000-000000000001"
         val vineyardId = "a1b2c3d4-0000-4000-8000-000000000002"
