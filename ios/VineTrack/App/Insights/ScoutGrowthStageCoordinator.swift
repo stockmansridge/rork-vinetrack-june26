@@ -112,7 +112,7 @@ struct ScoutGrowthStageCoordinator {
             side: .right,
             // Prefer the block the scout is actually assessing; fall back to
             // geometric resolution only when it agrees there is none.
-            paddockId: resolved.paddockId ?? paddockID,
+            paddockId: paddockID,
             rowNumber: resolved.rowNumber,
             createdBy: auth.userName,
             createdByUserId: auth.userId,

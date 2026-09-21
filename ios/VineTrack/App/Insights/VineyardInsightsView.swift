@@ -147,7 +147,31 @@ private struct HubCard: View {
     }
 }
 
+private struct ScoutWeatherRows: View {
+    let weather: ScoutWeatherSnapshot?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            LabeledContent("Temp", value: weather?.temperatureCelsius.map { String(format: "%.1f °C", $0) } ?? "Unavailable")
+            LabeledContent("Humidity", value: weather?.humidityPercent.map { "\(Int($0.rounded()))%" } ?? "Unavailable")
+            LabeledContent("Wind", value: weather?.windSpeedKph.map { "\(Int($0.rounded())) km/h" } ?? "Unavailable")
+            LabeledContent("Source", value: weather?.source ?? "Unavailable")
+            Text(weather?.observedAt.map { "Observed " + $0.formatted(date: .abbreviated, time: .shortened) }
+                ?? "Observation time unavailable")
+                .font(.caption2).foregroundStyle(.secondary)
+            if weather?.isStale == true { Text("Stale weather reading").font(.caption2.bold()).foregroundStyle(.orange) }
+        }
+    }
+}
+
 // MARK: - Scout
+
+private struct ScoutGrowthPickerRequest: Identifiable {
+    let visitID: UUID
+    let assessment: ScoutBlockAssessment
+    let paddockID: UUID
+    var id: UUID { assessment.id }
+}
 
 private struct ScoutCameraRequest: Identifiable {
     let id: UUID
@@ -168,6 +192,8 @@ struct ScoutWorkspaceView: View {
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(VineyardInsightsService.self) private var insights
     @Environment(LocationService.self) private var locationService
+    @Environment(TripTrackingService.self) private var tracking
+    @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
 
     @State private var showReview = false
     @State private var showsAllVintages = false
@@ -175,6 +201,9 @@ struct ScoutWorkspaceView: View {
     @State private var completionError: String?
     @State private var cameraRequest: ScoutCameraRequest?
     @State private var reportVisit: ScoutVisit?
+    @State private var growthPickerRequest: ScoutGrowthPickerRequest?
+    @State private var assessmentToScrollTo: UUID?
+    @State private var growthStageError: String?
 
     private var openVisit: ScoutVisit? { insights.openVisit }
     private var currentVintage: Int {
@@ -193,7 +222,20 @@ struct ScoutWorkspaceView: View {
     }
 
     var body: some View {
+        ScrollViewReader { proxy in
         List {
+            if let syncError = insights.lastSyncError {
+                Section {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Sync failed").font(.subheadline.weight(.semibold)).foregroundStyle(.red)
+                        Text(syncError).font(.caption).foregroundStyle(.secondary)
+                        if let vineyardID = store.selectedVineyardId {
+                            Button("Retry sync") { insights.retrySync(vineyardID: vineyardID) }
+                        }
+                    }
+                }
+            }
+
             if insights.lastWriteFailed {
                 Section {
                     // An observation that silently failed to save is the worst
@@ -220,9 +262,21 @@ struct ScoutWorkspaceView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if openVisit != nil {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Close") { insights.openVisit(nil) }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { if !insights.lastWriteFailed { insights.openVisit(nil) } } label: {
+                        Label("Scout history", systemImage: "chevron.left")
+                    }
                 }
+            }
+        }
+        .navigationBarBackButtonHidden(openVisit != nil)
+        .alert("Could not record E-L stage", isPresented: Binding(
+            get: { growthStageError != nil }, set: { if !$0 { growthStageError = nil } }
+        )) { Button("OK", role: .cancel) {} } message: { Text(growthStageError ?? "Please try again.") }
+        .sheet(item: $growthPickerRequest) { request in
+            GrowthStagePickerSheet { stage in
+                recordStage(stage, request: request)
+                growthPickerRequest = nil
             }
         }
         .confirmationDialog(
@@ -268,6 +322,11 @@ struct ScoutWorkspaceView: View {
         .sheet(item: $reportVisit) { visit in
             ScoutReportView(visit: visit)
         }
+        .onChange(of: assessmentToScrollTo) { _, target in
+            guard let target else { return }
+            withAnimation { proxy.scrollTo(target, anchor: .top) }
+            assessmentToScrollTo = nil
+        }
         .sheet(isPresented: $showReview) {
             if let visit = openVisit {
                 ScoutReviewSheet(
@@ -288,6 +347,7 @@ struct ScoutWorkspaceView: View {
                     }
                 }
             }
+        }
         }
     }
 
@@ -341,9 +401,10 @@ struct ScoutWorkspaceView: View {
                             Text("\(visit.status.label) • \(visit.scoutNameSnapshot ?? "—")")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Text(insights.syncStatus(for: visit))
+                            let syncState = insights.syncStatus(for: visit)
+                            Text(syncState)
                                 .font(.caption)
-                                .foregroundStyle(insights.syncStatus(for: visit) == "Synced" ? .green : .orange)
+                                .foregroundStyle(syncState == "Synced" ? .green : (syncState.hasPrefix("Sync failed") ? .red : .orange))
                             Text(blockNames(visit))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -394,7 +455,7 @@ struct ScoutWorkspaceView: View {
             // Weather never blocks saving and is never invented: when no
             // reading is held the record says so rather than leaving a
             // confident blank.
-            Text(weatherLine(visit)).font(.caption).foregroundStyle(.secondary)
+            ScoutWeatherRows(weather: visit.weather)
             if visit.isEditable && (visit.weather == nil || visit.weather?.isUnavailable == true) {
                 Button("Retry weather") {
                     Task { await insights.captureWeather(visitID: visit.id) }
@@ -424,6 +485,9 @@ struct ScoutWorkspaceView: View {
                 let selected = visit.assessment(paddockID: paddock.id) != nil
                 Button {
                     insights.toggleBlock(visitID: visit.id, paddockID: paddock.id)
+                    if !selected {
+                        assessmentToScrollTo = insights.visit(visit.id)?.assessment(paddockID: paddock.id)?.id
+                    }
                 } label: {
                     HStack {
                         Image(systemName: selected ? "checkmark.circle.fill" : "plus.circle")
@@ -442,6 +506,11 @@ struct ScoutWorkspaceView: View {
                 paddock: store.paddocks.first { $0.id == assessment.paddockID },
                 vintageYear: visit.vintageYear,
                 isEditable: visit.isEditable,
+                onRequestGrowthStage: {
+                    growthPickerRequest = ScoutGrowthPickerRequest(
+                        visitID: visit.id, assessment: assessment, paddockID: assessment.paddockID
+                    )
+                },
                 onRequestPhoto: { item in
                     cameraRequest = ScoutCameraRequest(
                         visitID: visit.id,
@@ -450,6 +519,7 @@ struct ScoutWorkspaceView: View {
                     )
                 }
             )
+            .id(assessment.id)
         }
 
         Section {
@@ -457,6 +527,41 @@ struct ScoutWorkspaceView: View {
             if !visit.isEditable {
                 Button("Reopen and edit") { insights.reopenVisit(visit.id) }
             }
+        }
+    }
+
+    private func recordStage(_ stage: GrowthStage, request: ScoutGrowthPickerRequest) {
+        let coordinator = ScoutGrowthStageCoordinator(store: store, locationService: locationService,
+            tracking: tracking, growthStageRecordSync: growthStageRecordSync, auth: auth)
+        let existing = request.assessment.observation(.growthStage)
+        let plan = ScoutGrowthStageLink.plan(
+            observationID: existing?.id ?? UUID(), vineyardID: request.assessment.vineyardID,
+            paddockID: request.paddockID, existingRecordID: existing?.linkedGrowthStageRecordID,
+            existingStageCode: existing?.linkedGrowthStageRecordID.flatMap { coordinator.linkedStage(recordID: $0)?.code },
+            selectedStageCode: stage.code
+        )
+        switch plan {
+        case .create:
+            switch coordinator.capture(stage: stage, paddockID: request.paddockID) {
+            case .success(let capture):
+                insights.linkGrowthStageRecord(visitID: request.visitID, assessmentID: request.assessment.id,
+                    pinID: capture.pinID, recordID: capture.growthStageRecordID, stageLabel: capture.stageLabel)
+            case .failure(let error): growthStageError = error.localizedDescription
+            }
+        case .update:
+            guard let pinID = existing?.linkedPinID else {
+                growthStageError = "The linked Growth Stage pin is unavailable on this device."
+                return
+            }
+            switch coordinator.updateStage(pinID: pinID, stage: stage) {
+            case .success(let capture):
+                insights.linkGrowthStageRecord(visitID: request.visitID, assessmentID: request.assessment.id,
+                    pinID: capture.pinID, recordID: capture.growthStageRecordID, stageLabel: capture.stageLabel)
+            case .failure(let error): growthStageError = error.localizedDescription
+            }
+        case .unchanged:
+            growthStageError = "That E-L stage is already recorded for this block."
+        default: break
         }
     }
 
@@ -495,10 +600,9 @@ private struct ScoutAssessmentSection: View {
     let paddock: Paddock?
     let vintageYear: Int
     let isEditable: Bool
+    let onRequestGrowthStage: () -> Void
     let onRequestPhoto: (ScoutItem) -> Void
 
-
-    @State private var showGrowthPicker = false
     @State private var confirmUnlink = false
     @State private var message: String?
     @State private var messageIsError = false
@@ -530,13 +634,6 @@ private struct ScoutAssessmentSection: View {
             // who already knows the block should not be retyping its details.
             Text(detailLine)
         }
-        .sheet(isPresented: $showGrowthPicker) {
-            // The EXISTING production picker: enabled-stage catalogue, search
-            // and the E-L confirmation image step, unchanged.
-            GrowthStagePickerSheet { stage in
-                recordStage(stage)
-            }
-        }
         .confirmationDialog(
             "Remove the link to this Growth Stage record?",
             isPresented: $confirmUnlink,
@@ -556,9 +653,7 @@ private struct ScoutAssessmentSection: View {
 
     // MARK: - E-L capture
 
-    /// Route an E-L selection through the canonical pipeline, then store only
-    /// the resulting canonical ids plus a label snapshot.
-    private func recordStage(_ stage: GrowthStage) {
+    private func legacyRecordStage(_ stage: GrowthStage) {
         let existing = assessment.observation(.growthStage)
         let plan = ScoutGrowthStageLink.plan(
             observationID: existing?.id ?? UUID(),
@@ -650,32 +745,39 @@ private struct ScoutAssessmentSection: View {
             } else if item.isFreeText {
                 notesField(item, observation)
             } else {
-                Picker(
-                    item.label,
-                    selection: Binding(
-                        get: { observation?.valueCode ?? VineyardInsightsCatalog.notAssessedCode },
-                        set: { code in
-                            guard let option = VineyardInsightsCatalog.option(for: item, code: code) else { return }
-                            insights.setObservationValue(
-                                visitID: visitID,
-                                assessmentID: assessment.id,
-                                item: item,
-                                option: option
-                            )
-                        }
-                    )
-                ) {
+                Menu {
                     ForEach(VineyardInsightsCatalog.options(for: item)) { option in
-                        Text(option.label).tag(option.code)
+                        Button {
+                            insights.setObservationValue(visitID: visitID, assessmentID: assessment.id,
+                                item: item, option: option)
+                        } label: {
+                            if observation?.valueCode == option.code {
+                                Label(option.label, systemImage: "checkmark")
+                            } else {
+                                Text(option.label)
+                            }
+                        }
                     }
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(item.label).font(.caption).foregroundStyle(.secondary)
+                            Text(observation?.valueLabel ?? "Select assessment").foregroundStyle(.primary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.down").foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .padding(.horizontal, 12)
+                    .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 10))
+                    .overlay { RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.35)) }
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
                 .disabled(!isEditable)
 
                 notesField(item, observation)
             }
 
+            locationRow(item, observation)
             photoRow(item, observation)
         }
         .padding(.vertical, 4)
@@ -691,9 +793,7 @@ private struct ScoutAssessmentSection: View {
         let linkedRecordID = observation?.linkedGrowthStageRecordID
         let canonical = linkedRecordID.flatMap { coordinator.linkedStage(recordID: $0) }
 
-        Button {
-            showGrowthPicker = true
-        } label: {
+        Button(action: onRequestGrowthStage) {
             HStack(spacing: 10) {
                 GrapeLeafIcon(size: 18, color: VineyardTheme.leafGreen)
                 VStack(alignment: .leading, spacing: 2) {
@@ -745,8 +845,37 @@ private struct ScoutAssessmentSection: View {
             ),
             axis: .vertical
         )
-        .lineLimit(1...4)
+        .lineLimit(3...8)
+        .padding(10)
+        .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 10))
+        .overlay { RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.3)) }
         .disabled(!isEditable)
+    }
+
+    @ViewBuilder
+    private func locationRow(_ item: ScoutItem, _ observation: ScoutObservation?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if observation?.locationStatus == .gpsConfirmed, let captured = observation?.locationCapturedAt {
+                Label("Location recorded", systemImage: "location.fill").font(.caption).foregroundStyle(.green)
+                Text(captured, format: .dateTime.day().month().hour().minute())
+                    .font(.caption2).foregroundStyle(.secondary)
+            } else {
+                Text("Location unavailable").font(.caption).foregroundStyle(.orange)
+            }
+            Button(observation?.locationStatus == .gpsConfirmed ? "Update location" : "Record location") {
+                let (location, quality) = locationService.freshLocation()
+                let fix = quality == .fresh ? location.map {
+                    ScoutPhotoFix(latitude: $0.coordinate.latitude, longitude: $0.coordinate.longitude,
+                        accuracyMetres: $0.horizontalAccuracy)
+                } : nil
+                insights.setObservationLocation(visitID: visitID, assessmentID: assessment.id, item: item, fix: fix)
+            }
+            .font(.caption)
+            .disabled(!isEditable)
+            if observation?.locationStatus != .gpsConfirmed {
+                Text("Location unavailable — Retry").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
     }
 
     /// Photographs for one item: multiple, retained, and immediately visible.

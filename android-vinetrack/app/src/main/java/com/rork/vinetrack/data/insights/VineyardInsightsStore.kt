@@ -120,6 +120,11 @@ class VineyardInsightsStore(
         @SerialName("value_label") val valueLabel: String? = null,
         val notes: String? = null,
         val photos: List<StoredPhoto> = emptyList(),
+        val latitude: Double? = null,
+        val longitude: Double? = null,
+        val accuracy: Double? = null,
+        @SerialName("location_captured_at") val locationCapturedAt: String? = null,
+        @SerialName("location_status") val locationStatus: String = "location_unavailable",
         @SerialName("linked_pin_id") val linkedPinId: String? = null,
         @SerialName("linked_growth_record_id") val linkedGrowthRecordId: String? = null,
     )
@@ -198,6 +203,7 @@ class VineyardInsightsStore(
         val operation: String,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
         @SerialName("attempt_count") val attemptCount: Int = 0,
+        @SerialName("last_error") val lastError: String? = null,
     )
 
     // ------------------------------------------------------------- Domain
@@ -237,6 +243,7 @@ class VineyardInsightsStore(
         val operation: Operation,
         val clientUpdatedAtIso: String,
         val attemptCount: Int = 0,
+        val lastError: String? = null,
     ) {
         enum class Entity(val code: String) {
             SCOUT_VISIT("scout_visit"),
@@ -312,6 +319,11 @@ class VineyardInsightsStore(
             valueLabel = valueLabel,
             notes = notes,
             photos = photos.mapNotNull { it.toDomain() },
+            latitude = latitude.takeIf { locationStatus == PhotoLocationStatus.GPS_CONFIRMED.code },
+            longitude = longitude.takeIf { locationStatus == PhotoLocationStatus.GPS_CONFIRMED.code },
+            accuracyMetres = accuracy.takeIf { locationStatus == PhotoLocationStatus.GPS_CONFIRMED.code },
+            locationCapturedAtIso = locationCapturedAt.takeIf { locationStatus == PhotoLocationStatus.GPS_CONFIRMED.code },
+            locationStatus = PhotoLocationStatus.byCode(locationStatus),
             linkedPinId = linkedPinId,
             linkedGrowthStageRecordId = linkedGrowthRecordId,
         )
@@ -325,6 +337,11 @@ class VineyardInsightsStore(
         valueLabel = valueLabel,
         notes = notes,
         photos = photos.map { it.toStored() },
+        latitude = latitude,
+        longitude = longitude,
+        accuracy = accuracyMetres,
+        locationCapturedAt = locationCapturedAtIso,
+        locationStatus = locationStatus.code,
         linkedPinId = linkedPinId,
         linkedGrowthRecordId = linkedGrowthStageRecordId,
     )
@@ -503,6 +520,7 @@ class VineyardInsightsStore(
                 operation = operation,
                 clientUpdatedAtIso = entry.clientUpdatedAt,
                 attemptCount = entry.attemptCount,
+                lastError = entry.lastError,
             )
         }
 
@@ -731,12 +749,13 @@ class VineyardInsightsStore(
             entity = entity.code,
             operation = operation.code,
             clientUpdatedAt = clientUpdatedAtIso,
+            lastError = null,
         )
         return encodeAndWrite(KEY_QUEUE, next)
     }
 
     /** Remove an acknowledged entry and clear only the exact sent revision. */
-    fun dequeue(queueId: String): Boolean {
+    fun dequeue(queueId: String, acknowledgedSyncVersion: Long? = null): Boolean {
         val queue = loadQueue()
         val completed = queue.firstOrNull { it.id == queueId } ?: return true
         val next = decodeList<StoredQueueEntry>(KEY_QUEUE).filterNot { it.id == queueId }
@@ -744,7 +763,9 @@ class VineyardInsightsStore(
         return when (completed.entity) {
             QueuedOperation.Entity.SCOUT_VISIT -> {
                 val visit = loadVisits().firstOrNull { it.id == completed.recordId }
-                if (visit?.clientUpdatedAtIso == completed.clientUpdatedAtIso) saveVisit(visit, false) else true
+                if (visit?.clientUpdatedAtIso == completed.clientUpdatedAtIso) {
+                    saveVisit(visit.copy(syncVersion = acknowledgedSyncVersion ?: visit.syncVersion), false)
+                } else true
             }
             QueuedOperation.Entity.VINTAGE_NOTE -> {
                 val note = loadNotes().firstOrNull { it.id == completed.recordId }
@@ -891,9 +912,9 @@ class VineyardInsightsStore(
         return encodeAndWrite(KEY_PHOTO_QUEUE, next)
     }
 
-    fun recordAttempt(queueId: String): Boolean {
+    fun recordAttempt(queueId: String, message: String? = null): Boolean {
         val next = decodeList<StoredQueueEntry>(KEY_QUEUE).map {
-            if (it.id == queueId) it.copy(attemptCount = it.attemptCount + 1) else it
+            if (it.id == queueId) it.copy(attemptCount = it.attemptCount + 1, lastError = message) else it
         }
         return encodeAndWrite(KEY_QUEUE, next)
     }

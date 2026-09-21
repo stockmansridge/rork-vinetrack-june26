@@ -1471,6 +1471,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun captureScoutObservationLocation(
+        visitId: String,
+        assessmentId: String,
+        item: com.rork.vinetrack.data.insights.ScoutItem,
+        onResult: (Boolean) -> Unit,
+    ) {
+        fetchCurrentFix { result ->
+            val fix = (result as? PinLocationResult.Success)?.let {
+                com.rork.vinetrack.data.insights.ScoutPhotoFix(
+                    latitude = it.fix.latitude,
+                    longitude = it.fix.longitude,
+                    accuracyMetres = it.fix.accuracyMetres,
+                )
+            }
+            vineyardInsights.setObservationLocation(visitId, assessmentId, item, fix)
+            onResult(fix != null)
+        }
+    }
+
     /** Persists an edited layout (local first, then Supabase). */
     fun saveOperationalToolLayout(
         visibleToolIds: List<String>,

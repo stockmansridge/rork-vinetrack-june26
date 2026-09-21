@@ -121,13 +121,44 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let value_code: String?
         let value_label: String?
         let notes: String?
+        let latitude: Double?
+        let longitude: Double?
+        let horizontal_accuracy: Double?
+        let location_captured_at: String?
+        let location_status: String
         let linked_pin_id: String?
         let linked_growth_record_id: String?
         let client_updated_at: String
 
+        init(
+            id: String, assessment_id: String, vineyard_id: String, item_kind: String,
+            value_code: String?, value_label: String?, notes: String?,
+            latitude: Double? = nil, longitude: Double? = nil,
+            horizontal_accuracy: Double? = nil, location_captured_at: String? = nil,
+            location_status: String = PhotoLocationStatus.unavailable.code,
+            linked_pin_id: String?, linked_growth_record_id: String?, client_updated_at: String
+        ) {
+            self.id = id
+            self.assessment_id = assessment_id
+            self.vineyard_id = vineyard_id
+            self.item_kind = item_kind
+            self.value_code = value_code
+            self.value_label = value_label
+            self.notes = notes
+            self.latitude = latitude
+            self.longitude = longitude
+            self.horizontal_accuracy = horizontal_accuracy
+            self.location_captured_at = location_captured_at
+            self.location_status = location_status
+            self.linked_pin_id = linked_pin_id
+            self.linked_growth_record_id = linked_growth_record_id
+            self.client_updated_at = client_updated_at
+        }
+
         private enum CodingKeys: String, CodingKey {
             case id, assessment_id, vineyard_id, item_kind, value_code, value_label
-            case notes, linked_pin_id, linked_growth_record_id, client_updated_at
+            case notes, latitude, longitude, horizontal_accuracy, location_captured_at, location_status
+            case linked_pin_id, linked_growth_record_id, client_updated_at
         }
 
         func encode(to encoder: Encoder) throws {
@@ -139,6 +170,11 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
             try container.encode(value_code, forKey: .value_code)
             try container.encode(value_label, forKey: .value_label)
             try container.encode(notes, forKey: .notes)
+            try container.encode(latitude, forKey: .latitude)
+            try container.encode(longitude, forKey: .longitude)
+            try container.encode(horizontal_accuracy, forKey: .horizontal_accuracy)
+            try container.encode(location_captured_at, forKey: .location_captured_at)
+            try container.encode(location_status, forKey: .location_status)
             try container.encode(linked_pin_id, forKey: .linked_pin_id)
             try container.encode(linked_growth_record_id, forKey: .linked_growth_record_id)
             try container.encode(client_updated_at, forKey: .client_updated_at)
@@ -153,6 +189,11 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let value_code: String?
         let value_label: String?
         let notes: String?
+        let latitude: Double?
+        let longitude: Double?
+        let horizontal_accuracy: Double?
+        let location_captured_at: String?
+        let location_status: String?
         let linked_pin_id: UUID?
         let linked_growth_record_id: UUID?
         let deleted_at: String?
@@ -243,12 +284,15 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         visit: VisitUpsert,
         assessments: [AssessmentUpsert],
         observations: [ObservationUpsert]
-    ) async throws {
+    ) async throws -> VisitRow {
         try requireConfigured()
-        try await provider.client
+        let acknowledged: VisitRow = try await provider.client
             .from("scout_visits")
             .upsert(visit, onConflict: "id")
+            .select()
+            .single()
             .execute()
+            .value
 
         if !assessments.isEmpty {
             try await provider.client
@@ -263,6 +307,7 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
                 .upsert(observations, onConflict: "id")
                 .execute()
         }
+        return acknowledged
     }
 
     /// Insert the photo METADATA row. The bytes must already be in the bucket:

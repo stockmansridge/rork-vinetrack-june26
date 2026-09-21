@@ -99,10 +99,10 @@ object ScoutReportPdfExporter {
         val weather = visit.weather ?: return "Not captured"
         if (weather.isUnavailable) return "Unavailable at observation time • ${weather.source ?: "source unavailable"}"
         val parts = mutableListOf<String>()
-        weather.temperatureCelsius?.let { parts += "${it.toInt()}°C" }
-        weather.humidityPercent?.let { parts += "${it.toInt()}% RH" }
-        weather.windSpeedKph?.let { parts += "wind ${it.toInt()} km/h" }
-        parts += weather.source ?: "source unavailable"
+        parts += "Temp: ${weather.temperatureCelsius?.let { "%.1f °C".format(it) } ?: "Unavailable"}"
+        parts += "Humidity: ${weather.humidityPercent?.let { "${it.toInt()}%" } ?: "Unavailable"}"
+        parts += "Wind: ${weather.windSpeedKph?.let { "${it.toInt()} km/h" } ?: "Unavailable"}"
+        parts += "Source: ${weather.source ?: "Unavailable"}"
         parts += weather.observedAtIso?.let { "observed $it" } ?: "observation time unavailable"
         if (weather.isStale) parts += "STALE"
         return parts.joinToString(" • ")
@@ -119,18 +119,29 @@ object ScoutReportPdfExporter {
         fun heading(value: String, size: Float = 14f) = text(value, size, true, Color.rgb(85, 107, 47))
         fun text(value: String, size: Float = 10f, bold: Boolean = false, color: Int = Color.BLACK) {
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = size; this.color = color; typeface = Typeface.create(Typeface.DEFAULT, if (bold) Typeface.BOLD else Typeface.NORMAL) }
-            val words = value.replace("\n", " \n ").split(" ")
             var line = ""
             val lines = mutableListOf<String>()
-            words.forEach { word -> val candidate = if (line.isEmpty()) word else "$line $word"; if (word == "\n" || paint.measureText(candidate) > WIDTH - MARGIN * 2) { lines += line; line = if (word == "\n") "" else word } else line = candidate }
-            if (line.isNotEmpty()) lines += line
+            value.lines().forEach { paragraph ->
+                paragraph.split(" ").filter { it.isNotEmpty() }.forEach { word ->
+                    val candidate = if (line.isEmpty()) word else "$line $word"
+                    if (paint.measureText(candidate) > WIDTH - MARGIN * 2 && line.isNotEmpty()) { lines += line; line = word }
+                    else line = candidate
+                }
+                lines += line; line = ""
+            }
             lines.forEach { line -> ensure(size + 3f); canvas.drawText(line, MARGIN, y + size, paint); y += size + 3f }
             y += 5f
         }
     }
 
     private fun drawDiagram(state: PageState, blocks: List<Paddock>, visit: ScoutVisit, growthRecords: List<GrowthStageRecord>, pins: List<Pin>) {
-        val points = blocks.flatMap { it.polygonPoints.orEmpty() }
+        val observationPoints = visit.assessments.flatMap { it.observations }.mapNotNull { observation ->
+            if (observation.locationStatus == com.rork.vinetrack.data.insights.PhotoLocationStatus.GPS_CONFIRMED &&
+                observation.latitude != null && observation.longitude != null) {
+                com.rork.vinetrack.data.model.CoordinatePoint(latitude = observation.latitude, longitude = observation.longitude)
+            } else null
+        }
+        val points = blocks.flatMap { it.polygonPoints.orEmpty() } + observationPoints
         val rect = android.graphics.RectF(MARGIN, state.y, WIDTH - MARGIN, state.y + 180f)
         state.canvas.drawColor(Color.TRANSPARENT)
         if (points.size < 3) { state.text("Map imagery unavailable — no mapped block boundaries", color = Color.DKGRAY); return }
@@ -151,6 +162,12 @@ object ScoutReportPdfExporter {
         visit.assessments.forEach { assessment ->
             val blockName = blocks.firstOrNull { it.id == assessment.paddockId }?.name ?: "Block"
             assessment.observations.forEach { observation ->
+                if (observation.locationStatus == com.rork.vinetrack.data.insights.PhotoLocationStatus.GPS_CONFIRMED &&
+                    observation.latitude != null && observation.longitude != null) {
+                    state.canvas.drawCircle(x(observation.longitude), y(observation.latitude), 5f, markerPaint)
+                    state.canvas.drawText("$blockName • ${observation.item.label}", x(observation.longitude) + 6f,
+                        y(observation.latitude), Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = 7f })
+                }
                 observation.photos.forEach { photo ->
                     if (photo.latitude != null && photo.longitude != null) {
                         state.canvas.drawCircle(x(photo.longitude), y(photo.latitude), 4f, markerPaint)

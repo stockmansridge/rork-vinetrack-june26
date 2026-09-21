@@ -42,7 +42,7 @@ class VineyardInsightsDeletionSyncTest {
         override suspend fun acknowledgePhotoCleanup(id: String, leaseToken: String) { completed += id }
         override suspend fun failPhotoCleanup(id: String, leaseToken: String, error: String) { failed += id }
         override suspend fun removePhotoObject(path: String) { if (failRemoval) error("offline"); removed += path }
-        override suspend fun pushVisit(visit: VineyardInsightsSyncApi.VisitUpsert, assessments: List<VineyardInsightsSyncApi.AssessmentUpsert>, observations: List<VineyardInsightsSyncApi.ObservationUpsert>) = Unit
+        override suspend fun pushVisit(visit: VineyardInsightsSyncApi.VisitUpsert, assessments: List<VineyardInsightsSyncApi.AssessmentUpsert>, observations: List<VineyardInsightsSyncApi.ObservationUpsert>) = VineyardInsightsSyncApi.VisitRow(id = visit.id, vineyardId = visit.vineyardId, clientUpdatedAt = visit.clientUpdatedAt, syncVersion = 1)
         override suspend fun pushPhotoRow(photo: VineyardInsightsSyncApi.PhotoUpsert) = Unit
         override suspend fun uploadPhotoBytes(path: String, jpeg: ByteArray) = path
         override suspend fun hardDeleteVisit(id: String, vineyardId: String, operationId: String, atIso: String) = Unit

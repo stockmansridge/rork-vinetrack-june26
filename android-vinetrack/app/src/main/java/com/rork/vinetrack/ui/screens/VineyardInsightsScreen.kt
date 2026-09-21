@@ -1,5 +1,6 @@
 package com.rork.vinetrack.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -13,11 +14,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -25,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EventNote
@@ -37,6 +42,8 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -101,6 +108,12 @@ import java.time.LocalDate
 
 private enum class InsightsPane { Hub, Scout, Notes, Report }
 
+private data class ScoutStageRequest(
+    val visitId: String,
+    val assessmentId: String,
+    val paddockId: String,
+)
+
 /** Shown under the disabled Round 1 report controls. Mirrored on iOS. */
 const val VINTAGE_REPORT_DISABLED_MESSAGE: String =
     "Vintage Report generation will be enabled after the Scout and Vintage Notes " +
@@ -130,6 +143,10 @@ fun VineyardInsightsScreen(
     }
 
     var pane by remember { mutableStateOf(InsightsPane.Hub) }
+
+    BackHandler {
+        if (pane == InsightsPane.Hub) onBack() else pane = InsightsPane.Hub
+    }
 
     LaunchedEffect(state.selectedVineyardId) {
         state.selectedVineyardId?.let { vm.syncVineyardInsights(it) }
@@ -314,6 +331,7 @@ private fun ScoutWorkspace(
     val visits by insights.visits.collectAsStateWithLifecycle()
     val openId by insights.openVisitId.collectAsStateWithLifecycle()
     val writeFailed by insights.lastWriteFailed.collectAsStateWithLifecycle()
+    val syncError by insights.lastSyncError.collectAsStateWithLifecycle()
     val current = visits.firstOrNull { it.id == openId }
     var showReview by remember { mutableStateOf(false) }
     var completionError by remember { mutableStateOf<String?>(null) }
@@ -324,6 +342,8 @@ private fun ScoutWorkspace(
     var cameraVisitId by rememberSaveable { mutableStateOf<String?>(null) }
     var cameraAssessmentId by rememberSaveable { mutableStateOf<String?>(null) }
     var cameraItemCode by rememberSaveable { mutableStateOf<String?>(null) }
+    var stageRequest by remember { mutableStateOf<ScoutStageRequest?>(null) }
+    var paddockToScrollTo by remember { mutableStateOf<String?>(null) }
     val camera = rememberPhotoCaptureCoordinator(
         onPhoto = { uri ->
             val visitId = cameraVisitId
@@ -345,6 +365,10 @@ private fun ScoutWorkspace(
             cameraError = message
         },
     )
+    BackHandler(enabled = reportVisit != null || current != null) {
+        if (reportVisit != null) reportVisit = null else if (!writeFailed) insights.openVisit(null)
+    }
+
     reportVisit?.let { visit ->
         ScoutReportScreen(vm = vm, state = state, visit = visit, onBack = { reportVisit = null })
         return
@@ -365,7 +389,7 @@ private fun ScoutWorkspace(
             TopAppBar(
                 title = { Text("Scout") },
                 navigationIcon = {
-                    BackNavIcon { if (current != null) insights.openVisit(null) else onBack() }
+                    BackNavIcon { if (current != null) { if (!writeFailed) insights.openVisit(null) } else onBack() }
                 },
             )
         },
@@ -379,6 +403,18 @@ private fun ScoutWorkspace(
 
             cameraError?.let { error ->
                 item { VineyardCard { Text(error, color = VineColors.Destructive); TextButton(onClick = { cameraError = null }) { Text("Dismiss") } } }
+            }
+
+            syncError?.let { error ->
+                item {
+                    VineyardCard {
+                        Text("Sync failed", fontWeight = FontWeight.SemiBold, color = VineColors.Destructive)
+                        Text(error, fontSize = 12.sp, color = vine.textSecondary)
+                        TextButton(onClick = { state.selectedVineyardId?.let(vm::syncVineyardInsights) }) {
+                            Text("Retry sync")
+                        }
+                    }
+                }
             }
 
             if (writeFailed) {
@@ -475,7 +511,11 @@ private fun ScoutWorkspace(
                         paddocks = state.paddocks,
                         selectedPaddockIds = current.assessments.map { it.paddockId }.toSet(),
                         enabled = current.isEditable,
-                    ) { insights.toggleBlock(current.id, it) }
+                    ) { paddockId ->
+                        val wasSelected = current.assessment(paddockId) != null
+                        insights.toggleBlock(current.id, paddockId)
+                        if (!wasSelected) paddockToScrollTo = paddockId
+                    }
                 }
                 items(current.assessments, key = { it.id }) { assessment ->
                     ScoutBlockAssessmentCard(
@@ -485,6 +525,11 @@ private fun ScoutWorkspace(
                         assessmentId = assessment.id,
                         enabled = current.isEditable,
                         observations = assessment.observations,
+                        shouldScrollIntoView = paddockToScrollTo == assessment.paddockId,
+                        onScrolledIntoView = { paddockToScrollTo = null },
+                        onRequestGrowthStage = {
+                            stageRequest = ScoutStageRequest(current.id, assessment.id, assessment.paddockId)
+                        },
                         onRequestPhoto = { item ->
                             cameraVisitId = current.id
                             cameraAssessmentId = assessment.id
@@ -510,6 +555,19 @@ private fun ScoutWorkspace(
                 }
             }
         }
+    }
+
+    stageRequest?.let { request ->
+        ScoutGrowthStagePickerSheet(
+            vm = vm,
+            onDismiss = { stageRequest = null },
+            onPicked = { stage ->
+                stageRequest = null
+                vm.captureScoutGrowthStage(request.visitId, request.assessmentId, request.paddockId, stage) { ok, text ->
+                    if (!ok) cameraError = text
+                }
+            },
+        )
     }
 
     visitPendingDeletion?.let { visit ->
@@ -645,25 +703,9 @@ private fun ScoutVisitHeader(vm: AppViewModel, state: AppUiState, visit: ScoutVi
         // Weather never blocks saving and is never invented: when no reading is
         // held the record says so rather than leaving a confident blank.
         val weather = visit.weather
-        Text(
-            when {
-                weather == null -> "Weather not captured"
-                weather.isUnavailable -> "Weather unavailable at capture time${weather.source?.let { " • $it" }.orEmpty()}"
-                else -> buildString {
-                    append("Weather")
-                    weather.temperatureCelsius?.let { append(" • ${it}\u00B0C") }
-                    weather.humidityPercent?.let { append(" • ${it}% RH") }
-                    weather.windSpeedKph?.let { append(" • wind ${it} km/h") }
-                    weather.source?.let { append(" • $it") }
-                    weather.observedAtIso?.let { append(" • observed $it") }
-                    append(" • captured ${weather.capturedAtIso}")
-                    if (weather.isStale) append(" • stale")
-                }
-            },
-            fontSize = 12.sp,
-            color = vine.textSecondary,
-        )
-        if (visit.isEditable && (weather == null || weather.isUnavailable)) {
+        WeatherRows(weather)
+        if (visit.isEditable && visit.scoutDateIso == LocalDate.now().toString() &&
+            (weather == null || weather.isUnavailable)) {
             TextButton(onClick = { vm.captureScoutWeather(visit.id) }) { Text("Retry weather") }
         }
         Spacer(Modifier.height(10.dp))
@@ -673,7 +715,7 @@ private fun ScoutVisitHeader(vm: AppViewModel, state: AppUiState, visit: ScoutVi
             label = { Text("Visit summary (optional)") },
             modifier = Modifier.fillMaxWidth(),
             enabled = visit.isEditable,
-            minLines = 2,
+            minLines = 3,
         )
     }
 }
@@ -736,6 +778,9 @@ private fun ScoutBlockAssessmentCard(
     assessmentId: String,
     enabled: Boolean,
     observations: List<com.rork.vinetrack.data.insights.ScoutObservation>,
+    shouldScrollIntoView: Boolean,
+    onScrolledIntoView: () -> Unit,
+    onRequestGrowthStage: () -> Unit,
     onRequestPhoto: (ScoutItem) -> Unit,
 ) {
     val vine = LocalVineColors.current
@@ -743,12 +788,18 @@ private fun ScoutBlockAssessmentCard(
     val visit = insights.visit(visitId)
     val appState by vm.ui.collectAsStateWithLifecycle()
 
-    var showStagePicker by remember { mutableStateOf(false) }
     var confirmUnlink by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var messageIsError by remember { mutableStateOf(false) }
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    LaunchedEffect(shouldScrollIntoView) {
+        if (shouldScrollIntoView) {
+            bringIntoViewRequester.bringIntoView()
+            onScrolledIntoView()
+        }
+    }
 
-    VineyardCard {
+    VineyardCard(modifier = Modifier.bringIntoViewRequester(bringIntoViewRequester)) {
         Text(
             paddock?.name ?: "Block",
             fontSize = 16.sp,
@@ -784,7 +835,7 @@ private fun ScoutBlockAssessmentCard(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable(enabled = enabled) { showStagePicker = true }
+                            .clickable(enabled = enabled, onClick = onRequestGrowthStage)
                             .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -837,18 +888,17 @@ private fun ScoutBlockAssessmentCard(
                         },
                         modifier = Modifier.fillMaxWidth(),
                         enabled = enabled,
-                        minLines = 2,
+                        minLines = 3,
                         label = { Text("Notes (optional)") },
                     )
                 }
                 else -> {
-                    VineyardInsightsCatalog.options(item).forEach { option ->
-                        OptionRow(
-                            option = option,
-                            selected = observation?.valueCode == option.code,
-                            enabled = enabled,
-                        ) { insights.setObservationValue(visitId, assessmentId, item, option) }
-                    }
+                    ScoutSelectionField(
+                        label = item.label,
+                        selectedLabel = observation?.valueLabel,
+                        options = VineyardInsightsCatalog.options(item),
+                        enabled = enabled,
+                    ) { option -> insights.setObservationValue(visitId, assessmentId, item, option) }
                     OutlinedTextField(
                         value = observation?.notes.orEmpty(),
                         onValueChange = {
@@ -857,8 +907,27 @@ private fun ScoutBlockAssessmentCard(
                         modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                         enabled = enabled,
                         label = { Text("Notes (optional)") },
+                        minLines = 3,
                     )
                 }
+            }
+
+            Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                if (observation?.locationStatus == PhotoLocationStatus.GPS_CONFIRMED) {
+                    Text("Location recorded", fontSize = 12.sp, color = VineColors.LeafGreen)
+                    Text(observation.locationCapturedAtIso ?: "Capture time unavailable", fontSize = 11.sp, color = vine.textSecondary)
+                } else {
+                    Text("Location unavailable — Retry", fontSize = 12.sp, color = VineColors.Warning)
+                }
+                TextButton(
+                    onClick = {
+                        vm.captureScoutObservationLocation(visitId, assessmentId, item) { recorded ->
+                            message = if (recorded) "Location recorded" else "Location unavailable — Retry"
+                            messageIsError = false
+                        }
+                    },
+                    enabled = enabled,
+                ) { Text(if (observation?.locationStatus == PhotoLocationStatus.GPS_CONFIRMED) "Update location" else "Record location") }
             }
 
             val photos = observation?.photos.orEmpty()
@@ -884,31 +953,6 @@ private fun ScoutBlockAssessmentCard(
                 color = if (messageIsError) VineColors.Destructive else vine.textSecondary,
             )
         }
-    }
-
-    if (showStagePicker) {
-        val blockId = paddock?.id
-        ScoutGrowthStagePickerSheet(
-            vm = vm,
-            onDismiss = { showStagePicker = false },
-            onPicked = { stage ->
-                showStagePicker = false
-                if (blockId == null) {
-                    message = "This block is no longer available."
-                    messageIsError = true
-                } else {
-                    vm.captureScoutGrowthStage(
-                        visitId = visitId,
-                        assessmentId = assessmentId,
-                        paddockId = blockId,
-                        stage = stage,
-                    ) { ok, text ->
-                        message = text
-                        messageIsError = !ok
-                    }
-                }
-            },
-        )
     }
 
     if (confirmUnlink) {
@@ -954,7 +998,8 @@ private fun ScoutGrowthStagePickerSheet(
     var searchText by remember { mutableStateOf("") }
     var pending by remember { mutableStateOf<GrowthStage?>(null) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    BackHandler(enabled = pending != null) { pending = null }
+    ModalBottomSheet(onDismissRequest = { if (pending != null) pending = null else onDismiss() }) {
         val stage = pending
         if (stage == null) {
             GrowthStagePickList(
@@ -1123,6 +1168,49 @@ private fun ScoutPhotoThumbnail(
                     .size(16.dp)
                     .clickable(onClick = onDelete),
             )
+        }
+    }
+}
+
+@Composable
+private fun WeatherRows(weather: com.rork.vinetrack.data.insights.ScoutWeatherSnapshot?) {
+    val vine = LocalVineColors.current
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text("Temp: ${weather?.temperatureCelsius?.let { "%.1f °C".format(it) } ?: "Unavailable"}", fontSize = 12.sp)
+        Text("Humidity: ${weather?.humidityPercent?.let { "${it.toInt()}%" } ?: "Unavailable"}", fontSize = 12.sp)
+        Text("Wind: ${weather?.windSpeedKph?.let { "${it.toInt()} km/h" } ?: "Unavailable"}", fontSize = 12.sp)
+        Text("Source: ${weather?.source ?: "Unavailable"}", fontSize = 12.sp)
+        Text(weather?.observedAtIso?.let { "Observed $it" } ?: "Observation time unavailable",
+            fontSize = 11.sp, color = vine.textSecondary)
+        if (weather?.isStale == true) Text("Stale weather reading", fontSize = 11.sp, color = VineColors.Warning)
+    }
+}
+
+@Composable
+private fun ScoutSelectionField(
+    label: String,
+    selectedLabel: String?,
+    options: List<ScoutOption>,
+    enabled: Boolean,
+    onSelect: (ScoutOption) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = selectedLabel ?: "Select assessment",
+            onValueChange = {}, readOnly = true, enabled = enabled,
+            label = { Text(label) },
+            trailingIcon = { Icon(Icons.Filled.ArrowDropDown, null) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Box(Modifier.matchParentSize().clickable(enabled = enabled) { expanded = true })
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.fillMaxWidth()) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(if (option.label == selectedLabel) "✓ ${option.label}" else option.label) },
+                    onClick = { expanded = false; onSelect(option) },
+                )
+            }
         }
     }
 }

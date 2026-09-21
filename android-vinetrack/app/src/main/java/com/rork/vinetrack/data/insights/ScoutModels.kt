@@ -182,6 +182,11 @@ data class ScoutObservation(
     val valueLabel: String?,
     val notes: String?,
     val photos: List<ScoutPhoto> = emptyList(),
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val accuracyMetres: Double? = null,
+    val locationCapturedAtIso: String? = null,
+    val locationStatus: PhotoLocationStatus = PhotoLocationStatus.UNAVAILABLE,
     /** Nullable linkage reserved for the later reviewed-action workflow. */
     val linkedPinId: String? = null,
     /** Canonical `growth_stage_records.id` when [item] is GROWTH_STAGE. */
@@ -192,6 +197,7 @@ data class ScoutObservation(
         get() = VineyardInsightsCatalog.isAssessed(item, valueCode) ||
             !notes.isNullOrBlank() ||
             photos.isNotEmpty() ||
+            locationStatus == PhotoLocationStatus.GPS_CONFIRMED ||
             linkedGrowthStageRecordId != null
 
     val needsAttention: Boolean

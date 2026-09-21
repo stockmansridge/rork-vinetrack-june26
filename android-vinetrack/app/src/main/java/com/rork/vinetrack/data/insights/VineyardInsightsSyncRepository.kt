@@ -71,12 +71,8 @@ class VineyardInsightsSyncRepository(
         visit: VineyardInsightsSyncApi.VisitUpsert,
         assessments: List<VineyardInsightsSyncApi.AssessmentUpsert>,
         observations: List<VineyardInsightsSyncApi.ObservationUpsert>,
-    ) = withContext(Dispatchers.IO) {
-        upsert(
-            "scout_visits",
-            listOf(visit),
-            VineyardInsightsSyncApi.VisitUpsert.serializer(),
-        )
+    ): VineyardInsightsSyncApi.VisitRow = withContext(Dispatchers.IO) {
+        val acknowledged = upsertVisitReturning(visit)
         if (assessments.isNotEmpty()) {
             upsert(
                 "scout_block_assessments",
@@ -91,6 +87,7 @@ class VineyardInsightsSyncRepository(
                 VineyardInsightsSyncApi.ObservationUpsert.serializer(),
             )
         }
+        acknowledged
     }
 
     override suspend fun pushPhotoRow(photo: VineyardInsightsSyncApi.PhotoUpsert) =
@@ -397,6 +394,28 @@ class VineyardInsightsSyncRepository(
                 else -> throw BackendError.Server(response.status.value, response.bodyAsText())
             }
         }
+
+    private suspend fun upsertVisitReturning(
+        visit: VineyardInsightsSyncApi.VisitUpsert,
+    ): VineyardInsightsSyncApi.VisitRow {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val body = SupabaseClient.json.encodeToString(
+            kotlinx.serialization.builtins.ListSerializer(VineyardInsightsSyncApi.VisitUpsert.serializer()),
+            listOf(visit),
+        )
+        val response = SupabaseClient.http.post(SupabaseClient.restUrl("scout_visits")) {
+            authHeaders(token)
+            contentType(ContentType.Application.Json)
+            headers { append("Prefer", "resolution=merge-duplicates,return=representation") }
+            setBody(body)
+        }
+        return when {
+            response.status.isSuccess() -> response.body<List<VineyardInsightsSyncApi.VisitRow>>().first()
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
 
     private suspend fun <T> upsert(
         table: String,

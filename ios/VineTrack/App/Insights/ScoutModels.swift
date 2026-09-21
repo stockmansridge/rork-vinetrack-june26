@@ -201,6 +201,11 @@ nonisolated struct ScoutObservation: Identifiable, Equatable, Sendable {
     var valueLabel: String?
     var notes: String?
     var photos: [ScoutPhoto]
+    var latitude: Double?
+    var longitude: Double?
+    var accuracyMetres: Double?
+    var locationCapturedAt: Date?
+    var locationStatus: PhotoLocationStatus
     /// Nullable linkage reserved for the later reviewed-action workflow.
     var linkedPinID: UUID?
     /// Canonical `growth_stage_records.id` when `item == .growthStage`.
@@ -214,6 +219,11 @@ nonisolated struct ScoutObservation: Identifiable, Equatable, Sendable {
         valueLabel: String? = nil,
         notes: String? = nil,
         photos: [ScoutPhoto] = [],
+        latitude: Double? = nil,
+        longitude: Double? = nil,
+        accuracyMetres: Double? = nil,
+        locationCapturedAt: Date? = nil,
+        locationStatus: PhotoLocationStatus = .unavailable,
         linkedPinID: UUID? = nil,
         linkedGrowthStageRecordID: UUID? = nil
     ) {
@@ -224,6 +234,15 @@ nonisolated struct ScoutObservation: Identifiable, Equatable, Sendable {
         self.valueLabel = valueLabel
         self.notes = notes
         self.photos = photos
+        let hasHonestFix = locationStatus == .gpsConfirmed
+            && latitude?.isFinite == true && longitude?.isFinite == true
+            && (-90...90).contains(latitude ?? 999) && (-180...180).contains(longitude ?? 999)
+            && !(latitude == 0 && longitude == 0) && accuracyMetres != nil && locationCapturedAt != nil
+        self.latitude = hasHonestFix ? latitude : nil
+        self.longitude = hasHonestFix ? longitude : nil
+        self.accuracyMetres = hasHonestFix ? accuracyMetres : nil
+        self.locationCapturedAt = hasHonestFix ? locationCapturedAt : nil
+        self.locationStatus = hasHonestFix ? .gpsConfirmed : .unavailable
         self.linkedPinID = linkedPinID
         self.linkedGrowthStageRecordID = linkedGrowthStageRecordID
     }
@@ -233,6 +252,7 @@ nonisolated struct ScoutObservation: Identifiable, Equatable, Sendable {
         VineyardInsightsCatalog.isAssessed(item: item, code: valueCode)
             || !(notes ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !photos.isEmpty
+            || locationStatus == .gpsConfirmed
             || linkedGrowthStageRecordID != nil
     }
 

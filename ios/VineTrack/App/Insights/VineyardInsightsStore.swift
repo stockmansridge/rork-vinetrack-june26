@@ -83,6 +83,7 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         let operation: Operation
         let clientUpdatedAt: Date
         var attemptCount: Int
+        var lastError: String?
     }
 
     /// A photograph whose bytes are already on disk and whose upload is owed.
@@ -177,6 +178,11 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         let valueLabel: String?
         let notes: String?
         let photos: [StoredPhoto]
+        let latitude: Double?
+        let longitude: Double?
+        let accuracy: Double?
+        let locationCapturedAt: Date?
+        let locationStatus: String?
         let linkedPinID: UUID?
         let linkedGrowthRecordID: UUID?
     }
@@ -343,6 +349,11 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
                             valueLabel: observation.valueLabel,
                             notes: observation.notes,
                             photos: observation.photos.map { domain($0) },
+                            latitude: observation.latitude,
+                            longitude: observation.longitude,
+                            accuracyMetres: observation.accuracy,
+                            locationCapturedAt: observation.locationCapturedAt,
+                            locationStatus: PhotoLocationStatus.byCode(observation.locationStatus),
                             linkedPinID: observation.linkedPinID,
                             linkedGrowthStageRecordID: observation.linkedGrowthRecordID
                         )
@@ -394,6 +405,11 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
                             valueLabel: observation.valueLabel,
                             notes: observation.notes,
                             photos: observation.photos.map { stored($0) },
+                            latitude: observation.latitude,
+                            longitude: observation.longitude,
+                            accuracy: observation.accuracyMetres,
+                            locationCapturedAt: observation.locationCapturedAt,
+                            locationStatus: observation.locationStatus.code,
                             linkedPinID: observation.linkedPinID,
                             linkedGrowthRecordID: observation.linkedGrowthStageRecordID
                         )
@@ -738,7 +754,8 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
                 entity: entity,
                 operation: operation,
                 clientUpdatedAt: clientUpdatedAt,
-                attemptCount: 0
+                attemptCount: 0,
+                lastError: nil
             )
         )
         return encodeAndWrite(all, Key.queue)
@@ -747,21 +764,31 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
     /// Remove a queue entry after the server confirmed it, then acknowledge
     /// only the exact revision that was sent. A newer edit remains owed.
     @discardableResult
-    func dequeue(queueID: UUID) -> Bool {
+    func dequeue(queueID: UUID, acknowledgedSyncVersion: Int? = nil) -> Bool {
         var all = loadQueue()
         guard let completed = all.first(where: { $0.id == queueID }) else { return true }
         all.removeAll { $0.id == queueID }
         guard encodeAndWrite(all, Key.queue) else { return false }
         switch completed.entity {
         case .scoutVisit:
-            guard let visit = loadVisits().first(where: { $0.id == completed.recordID }),
+            guard var visit = loadVisits().first(where: { $0.id == completed.recordID }),
                   visit.clientUpdatedAt == completed.clientUpdatedAt else { return true }
+            if let acknowledgedSyncVersion { visit.syncVersion = acknowledgedSyncVersion }
             return saveVisit(visit, syncOwed: false)
         case .vintageNote:
             guard let note = loadNotes().first(where: { $0.id == completed.recordID }),
                   note.clientUpdatedAt == completed.clientUpdatedAt else { return true }
             return saveNote(note, syncOwed: false)
         }
+    }
+
+    @discardableResult
+    func recordFailure(queueID: UUID, message: String) -> Bool {
+        var all = loadQueue()
+        guard let index = all.firstIndex(where: { $0.id == queueID }) else { return false }
+        all[index].attemptCount += 1
+        all[index].lastError = message
+        return encodeAndWrite(all, Key.queue)
     }
 
     /// Rebuild obligations whose entity/photo write reached disk but whose

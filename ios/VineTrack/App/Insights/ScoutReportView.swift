@@ -20,13 +20,20 @@ struct ScoutReportView: View {
         visit.assessments.flatMap { assessment in
             let blockName = store.paddocks.first { $0.id == assessment.paddockID }?.name ?? "Block"
             return assessment.observations.flatMap { observation -> [ScoutReportMarker] in
-                var result = observation.photos.compactMap { photo -> ScoutReportMarker? in
+                var result: [ScoutReportMarker] = []
+                if observation.locationStatus == .gpsConfirmed,
+                   let latitude = observation.latitude, let longitude = observation.longitude {
+                    result.append(ScoutReportMarker(id: observation.id, title: observation.item.label,
+                        subtitle: blockName, coordinate: .init(latitude: latitude, longitude: longitude), photo: nil))
+                }
+                result += observation.photos.compactMap { photo -> ScoutReportMarker? in
                     guard let latitude = photo.latitude, let longitude = photo.longitude,
                           photo.locationStatus == .gpsConfirmed else { return nil }
                     return ScoutReportMarker(id: photo.id, title: observation.item.label,
                         subtitle: blockName, coordinate: .init(latitude: latitude, longitude: longitude), photo: photo)
                 }
-                if observation.item == .growthStage, let pinID = observation.linkedPinID,
+                if observation.locationStatus != .gpsConfirmed,
+                   observation.item == .growthStage, let pinID = observation.linkedPinID,
                    let pin = store.pins.first(where: { $0.id == pinID }) {
                     result.append(ScoutReportMarker(id: observation.id, title: observation.valueLabel ?? "E-L observation",
                         subtitle: blockName, coordinate: .init(latitude: pin.latitude, longitude: pin.longitude), photo: nil))
@@ -86,14 +93,15 @@ struct ScoutReportView: View {
     private var weather: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text("Weather").font(.headline)
-            if let value = visit.weather {
-                if value.isUnavailable { Text("Unavailable at observation time").foregroundStyle(.orange) }
-                HStack { weatherValue(value.temperatureCelsius, "°C"); weatherValue(value.humidityPercent, "% RH"); weatherValue(value.windSpeedKph, " km/h wind") }
-                Text(value.source ?? "Source unavailable").font(.caption).foregroundStyle(.secondary)
-                Text(value.observedAt.map { "Observed " + $0.formatted(date: .abbreviated, time: .shortened) } ?? "Observation time unavailable")
-                    .font(.caption).foregroundStyle(value.isStale ? .orange : .secondary)
-                if value.isStale { Text("Stale reading").font(.caption.bold()).foregroundStyle(.orange) }
-            } else { Text("Not captured").foregroundStyle(.secondary) }
+            let value = visit.weather
+            LabeledContent("Temp", value: value?.temperatureCelsius.map { String(format: "%.1f °C", $0) } ?? "Unavailable")
+            LabeledContent("Humidity", value: value?.humidityPercent.map { "\(Int($0.rounded()))%" } ?? "Unavailable")
+            LabeledContent("Wind", value: value?.windSpeedKph.map { "\(Int($0.rounded())) km/h" } ?? "Unavailable")
+            LabeledContent("Source", value: value?.source ?? "Unavailable")
+            Text(value?.observedAt.map { "Observed " + $0.formatted(date: .abbreviated, time: .shortened) } ?? "Observation time unavailable")
+                .font(.caption).foregroundStyle(.secondary)
+            if value?.isUnavailable == true { Text("Unavailable at observation time").font(.caption).foregroundStyle(.orange) }
+            if value?.isStale == true { Text("Stale reading").font(.caption.bold()).foregroundStyle(.orange) }
         }
     }
 
@@ -192,12 +200,19 @@ struct ScoutWorkspaceMap: View {
         let markers = visit.assessments.flatMap { assessment -> [ScoutReportMarker] in
             let blockName = blocks.first { $0.id == assessment.paddockID }?.name ?? "Block"
             return assessment.observations.flatMap { observation in
-                var result = observation.photos.compactMap { photo -> ScoutReportMarker? in
+                var result: [ScoutReportMarker] = []
+                if observation.locationStatus == .gpsConfirmed,
+                   let latitude = observation.latitude, let longitude = observation.longitude {
+                    result.append(ScoutReportMarker(id: observation.id, title: observation.item.label,
+                        subtitle: blockName, coordinate: .init(latitude: latitude, longitude: longitude), photo: nil))
+                }
+                result += observation.photos.compactMap { photo -> ScoutReportMarker? in
                     guard let latitude = photo.latitude, let longitude = photo.longitude, photo.locationStatus == .gpsConfirmed else { return nil }
                     return ScoutReportMarker(id: photo.id, title: observation.item.label, subtitle: blockName,
                         coordinate: .init(latitude: latitude, longitude: longitude), photo: photo)
                 }
-                if observation.item == .growthStage, let pinID = observation.linkedPinID,
+                if observation.locationStatus != .gpsConfirmed,
+                   observation.item == .growthStage, let pinID = observation.linkedPinID,
                    let pin = store.pins.first(where: { $0.id == pinID }) {
                     result.append(ScoutReportMarker(id: observation.id, title: observation.valueLabel ?? "E-L observation",
                         subtitle: blockName, coordinate: .init(latitude: pin.latitude, longitude: pin.longitude), photo: nil))
@@ -226,7 +241,7 @@ private struct ScoutMarkerDetail: View {
                     ContentUnavailableView("Photograph unavailable", systemImage: "photo", description: Text("The saved photograph is not available on this device."))
                 }
             } else {
-                Label("Linked E-L observation", systemImage: "leaf.fill")
+                Label("Recorded observation", systemImage: "mappin.circle.fill")
             }
             Text(marker.coordinate.latitude.formatted() + ", " + marker.coordinate.longitude.formatted())
                 .font(.caption).foregroundStyle(.secondary)
@@ -285,13 +300,14 @@ enum ScoutReportPDFService {
                 func drawLine(_ content: String) {
                     page(lineHeight); (content as NSString).draw(at: CGPoint(x: 42, y: y), withAttributes: attrs); y += lineHeight
                 }
-                for word in value.replacingOccurrences(of: "\n", with: " \n ").split(separator: " ").map(String.init) {
-                    if word == "\n" { drawLine(line); line = ""; continue }
-                    let candidate = line.isEmpty ? word : line + " " + word
-                    if (candidate as NSString).size(withAttributes: attrs).width > 511, !line.isEmpty { drawLine(line); line = word }
-                    else { line = candidate }
+                for paragraph in value.components(separatedBy: .newlines) {
+                    for word in paragraph.split(separator: " ").map(String.init) {
+                        let candidate = line.isEmpty ? word : line + " " + word
+                        if (candidate as NSString).size(withAttributes: attrs).width > 511, !line.isEmpty { drawLine(line); line = word }
+                        else { line = candidate }
+                    }
+                    drawLine(line); line = ""
                 }
-                if !line.isEmpty { drawLine(line) }
                 y += gap
             }
             context.beginPage()
@@ -338,10 +354,10 @@ enum ScoutReportPDFService {
         guard let weather else { return "Weather: Not captured" }
         if weather.isUnavailable { return "Weather: Unavailable at observation time (\(weather.source ?? "source unavailable"))" }
         var values = [String]()
-        if let value = weather.temperatureCelsius { values.append("\(Int(value.rounded()))°C") }
-        if let value = weather.humidityPercent { values.append("\(Int(value.rounded()))% RH") }
-        if let value = weather.windSpeedKph { values.append("wind \(Int(value.rounded())) km/h") }
-        values.append(weather.source ?? "source unavailable")
+        values.append("Temp: " + (weather.temperatureCelsius.map { String(format: "%.1f °C", $0) } ?? "Unavailable"))
+        values.append("Humidity: " + (weather.humidityPercent.map { "\(Int($0.rounded()))%" } ?? "Unavailable"))
+        values.append("Wind: " + (weather.windSpeedKph.map { "\(Int($0.rounded())) km/h" } ?? "Unavailable"))
+        values.append("Source: \(weather.source ?? "Unavailable")")
         values.append(weather.observedAt.map { "observed " + $0.formatted(date: .abbreviated, time: .shortened) } ?? "observation time unavailable")
         if weather.isStale { values.append("STALE") }
         return "Weather: " + values.joined(separator: " • ")
@@ -350,7 +366,12 @@ enum ScoutReportPDFService {
     private static func drawDiagram(blocks: [Paddock], visit: ScoutVisit, context: CGContext, rect: CGRect) {
         context.saveGState(); defer { context.restoreGState() }
         context.setFillColor(UIColor(white: 0.95, alpha: 1).cgColor); context.fill(rect)
-        let points = blocks.flatMap(\.polygonPoints)
+        let observationPoints = visit.assessments.flatMap(\.observations).compactMap { observation -> CoordinatePoint? in
+            guard observation.locationStatus == .gpsConfirmed,
+                  let latitude = observation.latitude, let longitude = observation.longitude else { return nil }
+            return CoordinatePoint(latitude: latitude, longitude: longitude)
+        }
+        let points = blocks.flatMap(\.polygonPoints) + observationPoints
         guard let minLat = points.map(\.latitude).min(), let maxLat = points.map(\.latitude).max(),
               let minLon = points.map(\.longitude).min(), let maxLon = points.map(\.longitude).max(), maxLat > minLat, maxLon > minLon else {
             ("Map imagery unavailable — no mapped block boundaries" as NSString).draw(at: CGPoint(x: rect.minX + 12, y: rect.midY), withAttributes: [.font: UIFont.systemFont(ofSize: 10), .foregroundColor: UIColor.darkGray]); return
@@ -359,6 +380,13 @@ enum ScoutReportPDFService {
         context.setStrokeColor(UIColor.systemGreen.cgColor); context.setFillColor(UIColor.systemGreen.withAlphaComponent(0.15).cgColor); context.setLineWidth(1.5)
         for block in blocks where block.polygonPoints.count >= 3 { let path = CGMutablePath(); path.move(to: point(block.polygonPoints[0])); block.polygonPoints.dropFirst().forEach { path.addLine(to: point($0)) }; path.closeSubpath(); context.addPath(path); context.drawPath(using: .fillStroke) }
         context.setFillColor(UIColor.systemIndigo.cgColor)
+        for observation in visit.assessments.flatMap(\.observations) {
+            if observation.locationStatus == .gpsConfirmed,
+               let lat = observation.latitude, let lon = observation.longitude {
+                let p = point(CoordinatePoint(latitude: lat, longitude: lon))
+                context.fillEllipse(in: CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8))
+            }
+        }
         for photo in visit.assessments.flatMap(\.observations).flatMap(\.photos) { if let lat = photo.latitude, let lon = photo.longitude { let p = point(CoordinatePoint(latitude: lat, longitude: lon)); context.fillEllipse(in: CGRect(x: p.x - 3, y: p.y - 3, width: 6, height: 6)) } }
     }
 }

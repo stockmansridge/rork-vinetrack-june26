@@ -49,7 +49,7 @@ class VineyardInsightsSyncWorker(
         val serverCleanup = processServerPhotoCleanup(vineyardId)
         val typePull = pullNoteTypes(vineyardId)
         val typePush = pushNoteTypes(vineyardId)
-        val push = pushQueue()
+        val push = pushQueue(vineyardId)
         val photos = pushPhotos(vineyardId)
         val pull = pull(vineyardId)
         val deletionsAfterPull = pullDeletions(vineyardId)
@@ -186,28 +186,31 @@ class VineyardInsightsSyncWorker(
         return Outcome(pushed = pushed, error = error)
     }
 
-    suspend fun pushQueue(): Outcome {
+    suspend fun pushQueue(vineyardId: String? = null): Outcome {
         var pushed = 0
         var error: String? = null
-        for (entry in store.loadQueue()) {
+        for (entry in store.loadQueue().filter { vineyardId == null || it.vineyardId == vineyardId }) {
             try {
-                when (entry.entity) {
+                val acknowledgedVersion = when (entry.entity) {
                     VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT -> pushVisit(entry)
-                    VineyardInsightsStore.QueuedOperation.Entity.VINTAGE_NOTE -> pushNote(entry)
+                    VineyardInsightsStore.QueuedOperation.Entity.VINTAGE_NOTE -> {
+                        pushNote(entry)
+                        null
+                    }
                 }
-                store.dequeue(entry.id)
+                store.dequeue(entry.id, acknowledgedVersion)
                 pushed += 1
             } catch (e: Exception) {
                 // Left queued deliberately: the local record is intact, so a
                 // later attempt can still deliver it.
-                store.recordAttempt(entry.id)
                 error = e.message ?: "Could not sync yet."
+                store.recordAttempt(entry.id, error)
             }
         }
         return Outcome(pushed = pushed, error = error)
     }
 
-    private suspend fun pushVisit(entry: VineyardInsightsStore.QueuedOperation) {
+    private suspend fun pushVisit(entry: VineyardInsightsStore.QueuedOperation): Long? {
         if (entry.operation == VineyardInsightsStore.QueuedOperation.Operation.DELETE) {
             repository.hardDeleteVisit(
                 entry.recordId,
@@ -215,13 +218,13 @@ class VineyardInsightsSyncWorker(
                 entry.id,
                 entry.clientUpdatedAtIso,
             )
-            return
+            return null
         }
         if (store.isDeleted(entry.vineyardId, entry.entity.code, entry.recordId)) {
             store.dequeue(entry.id)
-            return
+            return null
         }
-        val visit = store.loadVisits().firstOrNull { it.id == entry.recordId } ?: return
+        val visit = store.loadVisits().firstOrNull { it.id == entry.recordId } ?: return null
 
         // vintage_year is NOT sent: SQL 236 resolves it from scout_date.
         val payload = VineyardInsightsSyncApi.VisitUpsert(
@@ -273,6 +276,11 @@ class VineyardInsightsSyncWorker(
                     valueCode = it.valueCode,
                     valueLabel = it.valueLabel,
                     notes = it.notes,
+                    latitude = it.latitude,
+                    longitude = it.longitude,
+                    horizontalAccuracy = it.accuracyMetres,
+                    locationCapturedAt = it.locationCapturedAtIso,
+                    locationStatus = it.locationStatus.code,
                     linkedPinId = it.linkedPinId,
                     linkedGrowthStageRecordId = it.linkedGrowthStageRecordId,
                     clientUpdatedAt = visit.clientUpdatedAtIso,
@@ -283,7 +291,13 @@ class VineyardInsightsSyncWorker(
         // Parent-first ordering is guaranteed inside pushVisit: the SQL 236
         // foreign keys are real, so a child replayed before its parent would be
         // rejected.
-        repository.pushVisit(payload, assessments, observations)
+        val acknowledged = repository.pushVisit(payload, assessments, observations)
+        val acknowledgedRevision = acknowledged.clientUpdatedAt?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() }
+        val sentRevision = runCatching { java.time.Instant.parse(entry.clientUpdatedAtIso) }.getOrNull()
+        check(acknowledged.id == entry.recordId && acknowledgedRevision != null && acknowledgedRevision == sentRevision) {
+            "The server did not acknowledge this exact Scout revision."
+        }
+        return acknowledged.syncVersion
     }
 
     private suspend fun pushNote(entry: VineyardInsightsStore.QueuedOperation) {
@@ -638,6 +652,11 @@ class VineyardInsightsSyncWorker(
                                     ?.firstOrNull { it.id == observationRow.id }
                                     ?.photos.orEmpty(),
                             ),
+                            latitude = observationRow.latitude,
+                            longitude = observationRow.longitude,
+                            accuracyMetres = observationRow.horizontalAccuracy,
+                            locationCapturedAtIso = observationRow.locationCapturedAt,
+                            locationStatus = PhotoLocationStatus.byCode(observationRow.locationStatus),
                             linkedPinId = observationRow.linkedPinId,
                             linkedGrowthStageRecordId =
                             observationRow.linkedGrowthStageRecordId,

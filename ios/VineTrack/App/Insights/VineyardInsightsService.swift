@@ -195,6 +195,10 @@ final class VineyardInsightsService {
         let hasUnacknowledgedPhoto = visit.assessments.flatMap(\.observations).flatMap(\.photos).contains {
             $0.storagePath == nil || $0.uploadFailed
         }
+        let failed = store.loadQueue().first {
+            $0.entity == .scoutVisit && $0.recordID == visit.id && $0.attemptCount > 0
+        }
+        if let failed { return "Sync failed: \(failed.lastError ?? "Retry required")" }
         if store.isSyncOwed(visitID: visit.id) || isQueued || hasQueuedPhoto || hasUnacknowledgedPhoto {
             return "Sync pending"
         }
@@ -211,6 +215,26 @@ final class VineyardInsightsService {
             $0.valueCode = option.code
             $0.valueLabel = option.label
         }
+    }
+
+    func setObservationLocation(
+        visitID: UUID,
+        assessmentID: UUID,
+        item: ScoutItem,
+        fix: ScoutPhotoFix?
+    ) {
+        guard let fix else { return }
+        updateObservation(visitID: visitID, assessmentID: assessmentID, item: item) {
+            $0.latitude = fix.latitude
+            $0.longitude = fix.longitude
+            $0.accuracyMetres = fix.accuracyMetres
+            $0.locationCapturedAt = now()
+            $0.locationStatus = .gpsConfirmed
+        }
+    }
+
+    func retrySync(vineyardID: UUID) {
+        scheduleSync(vineyardID: vineyardID)
     }
 
     func setObservationNotes(
@@ -752,24 +776,29 @@ final class VineyardInsightsService {
     func syncQueue() async {
         for entry in store.loadQueue() {
             do {
+                let acknowledgedVersion: Int?
                 switch entry.entity {
                 case .scoutVisit:
-                    try await pushVisit(entry: entry)
+                    acknowledgedVersion = try await pushVisit(entry: entry)
                 case .vintageNote:
                     try await pushNote(entry: entry)
+                    acknowledgedVersion = nil
                 }
-                store.dequeue(queueID: entry.id)
-                lastSyncError = nil
+                store.dequeue(queueID: entry.id, acknowledgedSyncVersion: acknowledgedVersion)
+                if !store.loadQueue().contains(where: { $0.attemptCount > 0 }) {
+                    lastSyncError = nil
+                }
             } catch {
                 // Left queued deliberately: the local record is intact, so a
                 // later attempt can still deliver it.
                 lastSyncError = error.localizedDescription
+                _ = store.recordFailure(queueID: entry.id, message: error.localizedDescription)
                 logger.warning("Insights queue entry deferred")
             }
         }
     }
 
-    private func pushVisit(entry: VineyardInsightsStore.QueuedOperation) async throws {
+    private func pushVisit(entry: VineyardInsightsStore.QueuedOperation) async throws -> Int? {
         if entry.operation == .delete {
             try await repository.hardDeleteVisit(
                 id: entry.recordID,
@@ -777,13 +806,13 @@ final class VineyardInsightsService {
                 operationID: entry.id,
                 at: entry.clientUpdatedAt
             )
-            return
+            return nil
         }
         if store.isDeleted(vineyardID: entry.vineyardID, entity: .scoutVisit, entityID: entry.recordID) {
             store.dequeue(queueID: entry.id)
-            return
+            return nil
         }
-        guard let visit = visits.first(where: { $0.id == entry.recordID }) else { return }
+        guard let visit = visits.first(where: { $0.id == entry.recordID }) else { return nil }
 
         let weather = visit.weather.map {
             VineyardInsightsSyncRepository.WeatherPayload(
@@ -837,6 +866,11 @@ final class VineyardInsightsService {
                     value_code: observation.valueCode,
                     value_label: observation.valueLabel,
                     notes: observation.notes,
+                    latitude: observation.latitude,
+                    longitude: observation.longitude,
+                    horizontal_accuracy: observation.accuracyMetres,
+                    location_captured_at: observation.locationCapturedAt.map { VineyardInsightsSyncRepository.timestamp($0) },
+                    location_status: observation.locationStatus.code,
                     linked_pin_id: observation.linkedPinID?.uuidString,
                     linked_growth_record_id: observation.linkedGrowthStageRecordID?.uuidString,
                     client_updated_at: VineyardInsightsSyncRepository.timestamp(visit.clientUpdatedAt)
@@ -845,11 +879,16 @@ final class VineyardInsightsService {
         }
 
         // Parent-first ordering is guaranteed inside pushVisit.
-        try await repository.pushVisit(
+        let acknowledged = try await repository.pushVisit(
             visit: visitPayload,
             assessments: assessments,
             observations: observations
         )
+        guard acknowledged.id == entry.recordID,
+              VineyardInsightsSyncRepository.parseTimestamp(acknowledged.client_updated_at) == entry.clientUpdatedAt else {
+            throw VineyardInsightsReconciliationError.localWriteFailed
+        }
+        return acknowledged.sync_version
     }
 
     private func pushNote(entry: VineyardInsightsStore.QueuedOperation) async throws {
@@ -1324,6 +1363,11 @@ final class VineyardInsightsService {
                         valueLabel: observationRow.value_label,
                         notes: observationRow.notes,
                         photos: ownPhotos,
+                        latitude: observationRow.latitude,
+                        longitude: observationRow.longitude,
+                        accuracyMetres: observationRow.horizontal_accuracy,
+                        locationCapturedAt: VineyardInsightsSyncRepository.parseTimestamp(observationRow.location_captured_at),
+                        locationStatus: PhotoLocationStatus.byCode(observationRow.location_status),
                         linkedPinID: observationRow.linked_pin_id,
                         linkedGrowthStageRecordID: observationRow.linked_growth_record_id
                     )

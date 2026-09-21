@@ -115,6 +115,11 @@ interface VineyardInsightsSyncApi {
         @SerialName("value_code") val valueCode: String? = null,
         @SerialName("value_label") val valueLabel: String? = null,
         val notes: String? = null,
+        val latitude: Double? = null,
+        val longitude: Double? = null,
+        @SerialName("horizontal_accuracy") val horizontalAccuracy: Double? = null,
+        @SerialName("location_captured_at") val locationCapturedAt: String? = null,
+        @SerialName("location_status") val locationStatus: String = "location_unavailable",
         @SerialName("linked_pin_id") val linkedPinId: String? = null,
         @SerialName("linked_growth_record_id") val linkedGrowthStageRecordId: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
@@ -129,6 +134,11 @@ interface VineyardInsightsSyncApi {
         @SerialName("value_code") val valueCode: String? = null,
         @SerialName("value_label") val valueLabel: String? = null,
         val notes: String? = null,
+        val latitude: Double? = null,
+        val longitude: Double? = null,
+        @SerialName("horizontal_accuracy") val horizontalAccuracy: Double? = null,
+        @SerialName("location_captured_at") val locationCapturedAt: String? = null,
+        @SerialName("location_status") val locationStatus: String = "location_unavailable",
         @SerialName("linked_pin_id") val linkedPinId: String? = null,
         @SerialName("linked_growth_record_id") val linkedGrowthStageRecordId: String? = null,
         @SerialName("deleted_at") val deletedAt: String? = null,
@@ -269,7 +279,7 @@ interface VineyardInsightsSyncApi {
         visit: VisitUpsert,
         assessments: List<AssessmentUpsert>,
         observations: List<ObservationUpsert>,
-    )
+    ): VisitRow
 
     /**
      * Write the photo METADATA row. The bytes must already be in the bucket: a

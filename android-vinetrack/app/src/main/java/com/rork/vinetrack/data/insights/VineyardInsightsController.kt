@@ -104,6 +104,11 @@ class VineyardInsightsController(
         val queuedPhoto = store.loadPhotoQueue().any { it.visitId == visit.id }
         val unacknowledgedPhoto = visit.assessments.flatMap { it.observations }.flatMap { it.photos }
             .any { it.storagePath == null || it.uploadFailed }
+        val failed = store.loadQueue().firstOrNull {
+            it.entity == VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT &&
+                it.recordId == visit.id && it.attemptCount > 0
+        }
+        if (failed != null) return "Sync failed: ${failed.lastError ?: "Retry required"}"
         if (store.isSyncOwedForVisit(visit.id) || queued || queuedPhoto || unacknowledgedPhoto) return "Sync pending"
         return if (visit.syncVersion > 0) "Synced" else "Saved on this device"
     }
@@ -189,6 +194,24 @@ class VineyardInsightsController(
     fun setObservationValue(visitId: String, assessmentId: String, item: ScoutItem, option: ScoutOption) {
         updateObservation(visitId, assessmentId, item) {
             it.copy(valueCode = option.code, valueLabel = option.label)
+        }
+    }
+
+    fun setObservationLocation(
+        visitId: String,
+        assessmentId: String,
+        item: ScoutItem,
+        fix: ScoutPhotoFix?,
+    ) {
+        if (fix == null) return
+        updateObservation(visitId, assessmentId, item) {
+            it.copy(
+                latitude = fix.latitude,
+                longitude = fix.longitude,
+                accuracyMetres = fix.accuracyMetres,
+                locationCapturedAtIso = nowIso(),
+                locationStatus = PhotoLocationStatus.GPS_CONFIRMED,
+            )
         }
     }
 

@@ -167,14 +167,13 @@ private fun WeatherReportCard(visit: ScoutVisit) {
     VineyardCard {
         Text("Weather", fontWeight = FontWeight.Bold)
         val weather = visit.weather
-        when {
-            weather == null -> Text("Not captured", color = vine.textSecondary)
-            weather.isUnavailable -> Text("Unavailable at observation time • ${weather.source ?: "source unavailable"}", color = VineColors.Warning)
-            else -> {
-                Text(listOfNotNull(weather.temperatureCelsius?.let { "${it.toInt()}°C" }, weather.humidityPercent?.let { "${it.toInt()}% RH" }, weather.windSpeedKph?.let { "wind ${it.toInt()} km/h" }).joinToString(" • "))
-                Text("${weather.source ?: "Source unavailable"} • ${weather.observedAtIso?.let { "observed $it" } ?: "observation time unavailable"}", fontSize = 12.sp, color = if (weather.isStale) VineColors.Warning else vine.textSecondary)
-            }
-        }
+        Text("Temp: ${weather?.temperatureCelsius?.let { "%.1f °C".format(it) } ?: "Unavailable"}")
+        Text("Humidity: ${weather?.humidityPercent?.let { "${it.toInt()}%" } ?: "Unavailable"}")
+        Text("Wind: ${weather?.windSpeedKph?.let { "${it.toInt()} km/h" } ?: "Unavailable"}")
+        Text("Source: ${weather?.source ?: "Unavailable"}")
+        Text(weather?.observedAtIso?.let { "Observed $it" } ?: "Observation time unavailable", fontSize = 12.sp, color = vine.textSecondary)
+        if (weather?.isUnavailable == true) Text("Unavailable at observation time", fontSize = 12.sp, color = VineColors.Warning)
+        if (weather?.isStale == true) Text("Stale weather reading", fontSize = 12.sp, color = VineColors.Warning)
     }
 }
 
@@ -208,11 +207,18 @@ private fun ScoutVisitMap(blocks: List<Paddock>, markers: List<ScoutMapMarker>, 
 private fun reportMarkers(visit: ScoutVisit, blocks: List<Paddock>, pins: List<Pin>): List<ScoutMapMarker> = visit.assessments.flatMap { assessment ->
     val blockName = blocks.firstOrNull { it.id == assessment.paddockId }?.name ?: "Block"
     assessment.observations.flatMap { observation ->
-        val photos = observation.photos.mapNotNull { photo ->
+        val photos = mutableListOf<ScoutMapMarker>()
+        if (observation.locationStatus == PhotoLocationStatus.GPS_CONFIRMED &&
+            observation.latitude != null && observation.longitude != null) {
+            photos += ScoutMapMarker(observation.id, observation.item.label,
+                "$blockName • ${observation.item.label}", LatLng(observation.latitude, observation.longitude))
+        }
+        photos += observation.photos.mapNotNull { photo ->
             if (photo.locationStatus == PhotoLocationStatus.GPS_CONFIRMED && photo.latitude != null && photo.longitude != null)
                 ScoutMapMarker(photo.id, observation.item.label, "$blockName • ${observation.item.label}", LatLng(photo.latitude, photo.longitude), photo.id) else null
-        }.toMutableList()
-        if (observation.item == ScoutItem.GROWTH_STAGE) observation.linkedPinId?.let { id -> pins.firstOrNull { it.id == id } }?.let { pin ->
+        }
+        if (observation.locationStatus != PhotoLocationStatus.GPS_CONFIRMED &&
+            observation.item == ScoutItem.GROWTH_STAGE) observation.linkedPinId?.let { id -> pins.firstOrNull { it.id == id } }?.let { pin ->
             if (pin.latitude != null && pin.longitude != null) photos += ScoutMapMarker(observation.id, observation.valueLabel ?: "E-L observation", "$blockName • ${observation.item.label}", LatLng(pin.latitude, pin.longitude))
         }
         photos
