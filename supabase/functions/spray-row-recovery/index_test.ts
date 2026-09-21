@@ -35,6 +35,10 @@ Deno.test("deterministic database conflicts are never advertised as transient", 
     status: 409,
     retryable: false,
   });
+  assertEquals(classifyRpcError({ code: "23505" }), {
+    status: 409,
+    retryable: false,
+  });
   assertEquals(classifyRpcError({ code: "22023" }), {
     status: 422,
     retryable: false,
@@ -74,7 +78,11 @@ Deno.test("V2 result statuses map to bounded public outcomes", () => {
   assertEquals(statusForRecoveryResult({ status: "already_in_progress" }), 409);
   assertEquals(
     statusForRecoveryResult({ status: "historical_evidence_preserved" }),
-    409,
+    200,
+  );
+  assertEquals(
+    statusForRecoveryResult({ status: "recovered_with_preserved_history" }),
+    200,
   );
   assertEquals(statusForRecoveryResult({ status: "rate_limited" }), 429);
 });
@@ -88,20 +96,58 @@ Deno.test("a rapid logical retry loop keeps one caller operation identity", () =
   assertEquals(new Set(ids), new Set([supplied]));
 });
 
-Deno.test("rapid repeated recovery calls are stopped before backend work", () => {
+Deno.test("an ordinary exact stable-operation retry reaches database idempotency", () => {
   const guard = new RecoveryEdgeRateGuard();
   const tripId = "a1b2c3d4-0000-4000-8000-000000000004";
-  assertEquals(guard.check(tripId, 1_000), null);
-  const blocked = Array.from({ length: 999 }, () => guard.check(tripId, 1_001));
-  assertEquals(blocked.every((retryAfter) => retryAfter === 2), true);
+  const operationId = "a1b2c3d4-0000-4000-8000-000000000104";
+  assertEquals(guard.check(tripId, operationId, 1_000), null);
+  assertEquals(guard.check(tripId, operationId, 1_001), null);
+});
+
+Deno.test("an exact-operation tight loop is still bounded", () => {
+  const guard = new RecoveryEdgeRateGuard();
+  const tripId = "a1b2c3d4-0000-4000-8000-000000000014";
+  const operationId = "a1b2c3d4-0000-4000-8000-000000000114";
+  assertEquals(guard.check(tripId, operationId, 1_000), null);
+  assertEquals(guard.check(tripId, operationId, 1_001), null);
+  assertEquals(guard.check(tripId, operationId, 1_002), null);
+  assertEquals(guard.check(tripId, operationId, 1_003), null);
+  assertEquals(guard.check(tripId, operationId, 1_004), null);
+  assertEquals(guard.check(tripId, operationId, 1_005), 2);
+});
+
+Deno.test("a rapid novel recovery attempt is stopped before backend work", () => {
+  const guard = new RecoveryEdgeRateGuard();
+  const tripId = "a1b2c3d4-0000-4000-8000-000000000024";
+  assertEquals(
+    guard.check(tripId, "a1b2c3d4-0000-4000-8000-000000000201", 1_000),
+    null,
+  );
+  assertEquals(
+    guard.check(tripId, "a1b2c3d4-0000-4000-8000-000000000202", 1_001),
+    2,
+  );
 });
 
 Deno.test("novel attempts are capped per trip even when spaced beyond the burst guard", () => {
   const guard = new RecoveryEdgeRateGuard();
   const tripId = "a1b2c3d4-0000-4000-8000-000000000005";
   assertEquals(
-    [0, 2, 4, 6, 8].map((seconds) => guard.check(tripId, seconds * 1_000)),
+    [0, 2, 4, 6, 8].map((seconds, index) =>
+      guard.check(
+        tripId,
+        `a1b2c3d4-0000-4000-8000-${String(index + 301).padStart(12, "0")}`,
+        seconds * 1_000,
+      )
+    ),
     [null, null, null, null, null],
   );
-  assertEquals(guard.check(tripId, 10_000), 60);
+  assertEquals(
+    guard.check(
+      tripId,
+      "a1b2c3d4-0000-4000-8000-000000000399",
+      10_000,
+    ),
+    60,
+  );
 });

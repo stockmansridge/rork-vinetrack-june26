@@ -34,24 +34,51 @@ type EdgeGuardEntry = {
   windowStartedAt: number;
   acceptedCount: number;
   lastStartedAt: number;
+  lastOperationId: string;
+  replayWindowStartedAt: number;
+  replayCount: number;
 };
 
 /** Best-effort isolate-local protection; V2 repeats the guard transactionally in Postgres. */
 export class RecoveryEdgeRateGuard {
   private readonly entries = new Map<string, EdgeGuardEntry>();
 
-  check(tripId: string, now = Date.now()): number | null {
+  check(tripId: string, operationId: string, now = Date.now()): number | null {
     const prior = this.entries.get(tripId);
+    if (prior?.lastOperationId === operationId) {
+      const replayCount = now - prior.replayWindowStartedAt < 2_000
+        ? prior.replayCount + 1
+        : 1;
+      if (replayCount > 5) return 2;
+      this.entries.set(tripId, {
+        ...prior,
+        replayWindowStartedAt: replayCount === 1
+          ? now
+          : prior.replayWindowStartedAt,
+        replayCount,
+      });
+      return null;
+    }
     if (prior && now - prior.lastStartedAt < 2_000) return 2;
     if (
       prior && now - prior.windowStartedAt < 60_000 && prior.acceptedCount >= 5
     ) return 60;
     const next = !prior || now - prior.windowStartedAt >= 60_000
-      ? { windowStartedAt: now, acceptedCount: 1, lastStartedAt: now }
+      ? {
+        windowStartedAt: now,
+        acceptedCount: 1,
+        lastStartedAt: now,
+        lastOperationId: operationId,
+        replayWindowStartedAt: now,
+        replayCount: 1,
+      }
       : {
         ...prior,
         acceptedCount: prior.acceptedCount + 1,
         lastStartedAt: now,
+        lastOperationId: operationId,
+        replayWindowStartedAt: now,
+        replayCount: 1,
       };
     this.entries.set(tripId, next);
     if (this.entries.size > 1_000) {
@@ -95,7 +122,7 @@ export function classifyRpcError(
   if (code === "P0002" || code === "PGRST116") {
     return { status: 404, retryable: false };
   }
-  if (code === "40001" || code === "55P03") {
+  if (code === "40001" || code === "55P03" || code === "23505") {
     return { status: 409, retryable: false };
   }
   if (
@@ -115,8 +142,7 @@ export function classifyRpcError(
 export function statusForRecoveryResult(result: RecoveryRpcResult): number {
   if (
     result.status === "already_in_progress" ||
-    result.status === "operation_id_conflict" ||
-    result.status === "historical_evidence_preserved"
+    result.status === "operation_id_conflict"
   ) return 409;
   if (result.status === "validation_failed") return 422;
   if (result.status === "rate_limited") return 429;
@@ -266,7 +292,7 @@ export async function handler(request: Request): Promise<Response> {
     return json({ error: operation.error, retryable: false }, 400);
   }
   const operationId = operation.operationId;
-  const retryAfterSeconds = edgeRateGuard.check(tripId);
+  const retryAfterSeconds = edgeRateGuard.check(tripId, operationId);
   if (retryAfterSeconds !== null) {
     return json({
       error: "Recovery request rate limited for this trip",
