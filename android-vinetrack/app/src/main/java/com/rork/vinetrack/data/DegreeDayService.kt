@@ -60,6 +60,10 @@ class DegreeDayService(
     var lastSourceKey: String? = null
         private set
 
+    /** Credential-free evidence for the most recently calculated daily series. */
+    var lastCalculationDiagnostics: List<String> = emptyList()
+        private set
+
     /** True while a season fetch is in flight (UI spinner). */
     var isLoading: Boolean = false
         private set
@@ -285,7 +289,10 @@ class DegreeDayService(
         useBEDD: Boolean,
     ): List<GddPoint> {
         val station = sourceTemps(sourceKey)
-        if (station.isEmpty()) return emptyList()
+        if (station.isEmpty()) {
+            lastCalculationDiagnostics = listOf("source=$sourceKey timezone=${timeZone.id} no-data")
+            return emptyList()
+        }
         val startDay = startOfDay(fromMs)
         val endDay = startOfDay(toMs)
         val allDays = buildList {
@@ -316,6 +323,7 @@ class DegreeDayService(
         }
         var cumulative = 0.0
         val result = mutableListOf<GddPoint>()
+        val diagnostics = mutableListOf("source=$sourceKey timezone=${timeZone.id} mode=${if (useBEDD) "BEDD" else "GDD"}")
         for ((idx, day) in allDays.withIndex()) {
             val temp = filled[idx] ?: continue
             val rawValue = if (useBEDD) beddDay(temp.high, temp.low, latitude, day)
@@ -323,7 +331,14 @@ class DegreeDayService(
             val value = max(0.0, rawValue)
             cumulative += value
             result.add(GddPoint(day, value, cumulative, interpolatedFlags[idx], temp.high, temp.low))
+            val provenance = when {
+                interpolatedFlags[idx] -> "estimated"
+                sourceKey.startsWith("davis:") -> "davis_reported"
+                else -> "provider_reported"
+            }
+            diagnostics += "day=${compactFmt.format(Date(day))} source=$provenance highC=${temp.high} lowC=${temp.low} contribution=$value cumulative=$cumulative"
         }
+        lastCalculationDiagnostics = diagnostics
         return result
     }
 

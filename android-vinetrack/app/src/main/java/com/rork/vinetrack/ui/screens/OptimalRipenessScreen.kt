@@ -92,6 +92,7 @@ import com.rork.vinetrack.data.calculateOptimalRipenessBlock
 import com.rork.vinetrack.data.optimalRipenessStartOfDay
 import com.rork.vinetrack.data.PaddockRepository
 import com.rork.vinetrack.data.GddSettingsStore
+import com.rork.vinetrack.data.calculationModeForSource
 import com.rork.vinetrack.data.OperationPrefsStore
 import com.rork.vinetrack.data.model.BuiltInGrapeVarietyGDD
 import com.rork.vinetrack.data.model.GrapeVarietyRow
@@ -235,6 +236,7 @@ fun OptimalRipenessScreen(
     val weather = state.optimalRipenessWeather
     val service = weather.service
     val sourceKey = weather.sourceKey
+    val calculationMode = gddSettings.calculationModeForSource(sourceKey)
     val paddocks = remember(state.paddocks, state.selectedVineyardId) {
         selectedOptimalRipenessPaddocks(state)
     }
@@ -245,12 +247,17 @@ fun OptimalRipenessScreen(
             latitude = coordinates?.first ?: 0.0,
             paddocks = paddocks,
             grapeVarieties = state.grapeVarieties,
-            useBEDD = gddSettings.calculationMode.useBEDD,
+            useBEDD = calculationMode.useBEDD,
             seasonStartMs = seasonStartMs,
             globalResetMode = gddSettings.resetMode,
-            globalCalculationMode = gddSettings.calculationMode,
+            globalCalculationMode = calculationMode,
             timeZone = timeZone,
-        ).copy(sourceLabel = weather.sourceLabel, sourceFingerprint = sourceKey)
+        ).let { result ->
+            val displayedSource = if (
+                sourceKey.startsWith("davis:") && result.rows.any { it.isIncomplete }
+            ) "Davis WeatherLink · reported + estimated gaps" else weather.sourceLabel
+            result.copy(sourceLabel = displayedSource, sourceFingerprint = sourceKey)
+        }
     } else {
         buildImmediateRipenessResult(
             paddocks = paddocks,

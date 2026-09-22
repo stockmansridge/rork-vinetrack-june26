@@ -42,6 +42,7 @@ import com.rork.vinetrack.data.GddCalculationMode
 import com.rork.vinetrack.data.calculateOptimalRipenessBlock
 import com.rork.vinetrack.data.effectiveResetMode
 import com.rork.vinetrack.data.GddSettingsStore
+import com.rork.vinetrack.data.calculationModeForSource
 import com.rork.vinetrack.data.OperationPrefsStore
 import com.rork.vinetrack.data.DavisWeatherLinkRepository
 import com.rork.vinetrack.data.OptimalRipenessSourceSelection
@@ -146,7 +147,7 @@ fun RipenessWatchTile(state: AppUiState, onClick: () -> Unit, modifier: Modifier
         weather.service == null || weather.sourceKey == null || !weather.hasCachedData -> RipenessTileResult.NoData
         else -> computeTopVariety(
             weather.service, weather.sourceKey, coords.first, state, seasonStartMs,
-            gddSettings.resetMode, gddSettings.calculationMode, timeZone,
+            gddSettings.resetMode, gddSettings.calculationModeForSource(weather.sourceKey), timeZone,
         )
     }
 
@@ -312,7 +313,7 @@ fun BlockRipenessChip(state: AppUiState, block: Paddock, modifier: Modifier = Mo
         else -> {
             val total = blockGddTotal(
                 weather.service, weather.sourceKey, coords.first, block, seasonStartMs,
-                gddSettings.resetMode, gddSettings.calculationMode, timeZone,
+                gddSettings.resetMode, gddSettings.calculationModeForSource(weather.sourceKey), timeZone,
             )
             if (total == null) {
                 val reset = block.effectiveResetMode(gddSettings.resetMode).displayName

@@ -719,11 +719,14 @@ nonisolated enum DavisWeatherLinkService {
             guard let dataArr = sensor["data"] as? [[String: Any]] else { continue }
             for entry in dataArr {
                 guard let ts = parseAnyDouble(entry["ts"] ?? 0), ts > 0 else { continue }
-                // Pull outdoor high/low — prefer explicit hi/lo, then avg.
-                let hi = parseAnyDouble(entry["temp_hi"] ?? entry["temp_out_hi"] ?? entry["temp_last_hi"] ?? 0)
-                    ?? parseAnyDouble(entry["temp_avg"] ?? entry["temp_out_avg"] ?? entry["temp_last"] ?? 0)
-                let lo = parseAnyDouble(entry["temp_lo"] ?? entry["temp_out_lo"] ?? entry["temp_last_lo"] ?? 0)
-                    ?? parseAnyDouble(entry["temp_avg"] ?? entry["temp_out_avg"] ?? entry["temp_last"] ?? 0)
+                // Only genuine archive extrema are valid for daily GDD. Missing
+                // values must not become zero, current temperature or an average.
+                let hi = ["temp_hi", "temp_out_hi", "temp_last_hi"]
+                    .compactMap { key in entry[key].flatMap(parseAnyDouble) }
+                    .first
+                let lo = ["temp_lo", "temp_out_lo", "temp_last_lo"]
+                    .compactMap { key in entry[key].flatMap(parseAnyDouble) }
+                    .first
                 guard let hiF = hi, let loF = lo,
                       hiF.isFinite, loF.isFinite,
                       hiF > -100, hiF < 200, loF > -100, loF < 200 else { continue }

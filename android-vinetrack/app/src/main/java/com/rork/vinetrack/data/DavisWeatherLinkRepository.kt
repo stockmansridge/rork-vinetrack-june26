@@ -1,5 +1,6 @@
 package com.rork.vinetrack.data
 
+import android.util.Log
 import com.rork.vinetrack.data.auth.SessionStore
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.headers
@@ -20,7 +21,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -140,11 +140,10 @@ class DavisWeatherLinkRepository(private val session: SessionStore) {
         toEpochMs: Long,
         timeZone: java.util.TimeZone,
     ): Map<String, DailyTemp> = withContext(Dispatchers.IO) {
-        val formatter = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).apply {
-            this.timeZone = timeZone
-        }
-        val highs = mutableMapOf<String, Double>()
-        val lows = mutableMapOf<String, Double>()
+        Log.i(
+            "OptimalRipenessDavis",
+            "request vineyard=$vineyardId station=$stationId startMs=$fromEpochMs endMs=$toEpochMs timezone=${timeZone.id}",
+        )
         // The upstream range limit is genuinely 24 hours. Keep that maximum
         // range, but process a small bounded group concurrently instead of
         // serially waiting once per season day.
@@ -164,28 +163,30 @@ class DavisWeatherLinkRepository(private val session: SessionStore) {
                 }.awaitAll()
             }
         }
-        responses.forEach { json ->
-            json["sensors"]?.jsonArray?.forEach { sensorElement ->
-                val sensor = sensorElement.jsonObject
-                val sensorType = sensor["sensor_type"]?.jsonPrimitive?.intOrNull
-                if (sensorType != null && sensorType in internalSensorTypes) return@forEach
-                sensor["data"]?.jsonArray?.forEach { recordElement ->
-                    val record = recordElement.jsonObject
-                    val timestamp = record["ts"]?.jsonPrimitive?.longOrNull ?: return@forEach
-                    val highF = listOf("temp_hi", "temp_out_hi", "temp_last_hi", "temp_avg", "temp_out_avg", "temp_last")
-                        .firstNotNullOfOrNull { record[it]?.jsonPrimitive?.doubleOrNull }
-                    val lowF = listOf("temp_lo", "temp_out_lo", "temp_last_lo", "temp_avg", "temp_out_avg", "temp_last")
-                        .firstNotNullOfOrNull { record[it]?.jsonPrimitive?.doubleOrNull }
-                    if (highF == null || lowF == null || highF !in -100.0..200.0 || lowF !in -100.0..200.0) return@forEach
-                    val day = formatter.format(java.util.Date(timestamp * 1000L))
-                    val highC = (maxOf(highF, lowF) - 32.0) * 5.0 / 9.0
-                    val lowC = (minOf(highF, lowF) - 32.0) * 5.0 / 9.0
-                    highs[day] = maxOf(highs[day] ?: -Double.MAX_VALUE, highC)
-                    lows[day] = minOf(lows[day] ?: Double.MAX_VALUE, lowC)
-                }
+        val parsedResults = responses.mapNotNull { json ->
+            json["sensors"]?.jsonArray?.let { parseDavisHistoricTemperatures(it, timeZone) }
+        }
+        val daily = mutableMapOf<String, DailyTemp>()
+        parsedResults.forEach { parsed ->
+            parsed.dailyTemps.forEach { (day, temperature) ->
+                val current = daily[day]
+                daily[day] = DailyTemp(
+                    high = maxOf(current?.high ?: -Double.MAX_VALUE, temperature.high),
+                    low = minOf(current?.low ?: Double.MAX_VALUE, temperature.low),
+                )
             }
         }
-        highs.mapNotNull { (day, high) -> lows[day]?.let { day to DailyTemp(high, it) } }.toMap()
+        parsedResults.flatMap { it.records }.groupBy { it.localDate }.toSortedMap().forEach { (day, records) ->
+            val high = records.maxBy { it.highC }
+            val low = records.minBy { it.lowC }
+            val contribution = maxOf(0.0, ((high.highC + low.lowC) / 2.0) - 10.0)
+            Log.i(
+                "OptimalRipenessDavis",
+                "day=$day station=$stationId source=davis_reported highField=${high.highField} lowField=${low.lowField} " +
+                    "rawHighF=${high.rawHighF} rawLowF=${low.rawLowF} highC=${high.highC} lowC=${low.lowC} standardGddCandidate=$contribution",
+            )
+        }
+        daily
     }
 
     /**

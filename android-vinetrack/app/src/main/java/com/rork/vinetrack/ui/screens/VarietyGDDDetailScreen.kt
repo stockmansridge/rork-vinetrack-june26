@@ -55,6 +55,7 @@ import com.rork.vinetrack.data.GddPoint
 import com.rork.vinetrack.data.GddResetMode
 import com.rork.vinetrack.data.calculateOptimalRipenessBlock
 import com.rork.vinetrack.data.GddSettingsStore
+import com.rork.vinetrack.data.calculationModeForSource
 import com.rork.vinetrack.data.OperationPrefsStore
 import com.rork.vinetrack.data.DailyWeatherCacheStore
 import com.rork.vinetrack.data.DavisWeatherLinkRepository
@@ -152,7 +153,7 @@ fun VarietyGDDDetailScreen(
                 blocks = allocatedBlocks,
                 seasonStartMs = seasonStartMs,
                 globalResetMode = gddSettings.resetMode,
-                globalCalculationMode = gddSettings.calculationMode,
+                globalCalculationMode = gddSettings.calculationModeForSource(sourceKey),
                 timeZone = timeZone,
             ),
             sourceLabel = weather.sourceLabel,

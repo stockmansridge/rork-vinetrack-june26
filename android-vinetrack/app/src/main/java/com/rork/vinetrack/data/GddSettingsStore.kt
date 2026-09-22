@@ -66,7 +66,12 @@ fun Paddock.resetDateMs(mode: GddResetMode, seasonStartMs: Long): Long? = when (
 data class GddSettings(
     val calculationMode: GddCalculationMode = GddCalculationMode.BEDD,
     val resetMode: GddResetMode = GddResetMode.BUDBURST,
+    val hasExplicitCalculationMode: Boolean = false,
 )
+
+/** Davis Optimal Ripeness historically uses canonical standard GDD unless the user explicitly selected BEDD. */
+fun GddSettings.calculationModeForSource(sourceKey: String?): GddCalculationMode =
+    if (sourceKey?.startsWith("davis:") == true && !hasExplicitCalculationMode) GddCalculationMode.GDD else calculationMode
 
 /** Persists [GddSettings] locally via SharedPreferences. */
 class GddSettingsStore(context: Context) {
@@ -77,6 +82,7 @@ class GddSettingsStore(context: Context) {
     fun load(): GddSettings = GddSettings(
         calculationMode = GddCalculationMode.fromKey(prefs.getString(KEY_MODE, null)),
         resetMode = GddResetMode.fromKey(prefs.getString(KEY_RESET, null)),
+        hasExplicitCalculationMode = prefs.contains(KEY_MODE),
     )
 
     fun save(value: GddSettings) {

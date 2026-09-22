@@ -138,6 +138,59 @@ final class OptimalRipenessParityTests: XCTestCase {
         XCTAssertEqual(service.dailyTemp(forKey: "20260905", source: source)?.high, 20)
     }
 
+    func testCapturedDavisResponseMatchesAndroidDailyAndCumulativeGDD() throws {
+        let service = DegreeDayService(timeZone: try XCTUnwrap(TimeZone(identifier: "Australia/Sydney")))
+        let source = GDDSource.davisWeatherLink(stationId: "123345")
+        let fixture: [[String: Any]] = [
+            ["sensor_type": 23, "data": [
+                ["ts": 1_789_480_800, "temp_hi": 77.0, "temp_lo": 51.8],
+                ["ts": 1_789_567_200, "temp_hi": 75.2, "temp_lo": 50.0],
+                ["ts": 1_789_653_600, "temp_hi": 73.4, "temp_lo": 48.2],
+                ["ts": 1_789_740_000, "temp_hi": 71.6, "temp_lo": 50.0],
+                ["ts": 1_789_826_400, "temp_hi": 69.8, "temp_lo": 48.2],
+                ["ts": 1_789_912_800, "temp_hi": 68.0, "temp_lo": 50.0],
+                ["ts": 1_789_916_400, "temp_avg": 90.0, "temp_last": 90.0],
+                ["ts": 1_789_917_000, "temp_hi": NSNull(), "temp_lo": NSNull()],
+            ]],
+            ["sensor_type": 27, "data": [["ts": 1_789_480_800, "temp_hi": 95.0, "temp_lo": 80.0]]],
+        ]
+        let records = DavisWeatherLinkService.parseHistoricTemperatures(sensorsArr: fixture)
+        XCTAssertEqual(records.count, 6)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "Australia/Sydney"))
+        var highs: [String: Double] = [:]
+        var lows: [String: Double] = [:]
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyyMMdd"
+        for (timestamp, highF, lowF) in records {
+            let key = formatter.string(from: timestamp)
+            let highC = (highF - 32) * 5 / 9
+            let lowC = (lowF - 32) * 5 / 9
+            highs[key] = max(highs[key] ?? -.greatestFiniteMagnitude, highC)
+            lows[key] = min(lows[key] ?? .greatestFiniteMagnitude, lowC)
+        }
+        service.installDailyTemps(
+            highs.reduce(into: [String: DailyTemp]()) { values, pair in
+                if let low = lows[pair.key] { values[pair.key] = DailyTemp(high: pair.value, low: low) }
+            },
+            for: source
+        )
+        let start = try date("2026-09-15T14:00:00Z")
+        let end = try date("2026-09-21T14:00:00Z")
+        let points = service.dailyGDDSeries(stationId: source.sourceKey, from: start, to: end, latitude: -33.28, useBEDD: false)
+
+        let expected: [Double] = [8, 7, 6, 6, 5, 5]
+        XCTAssertEqual(points.count, expected.count)
+        for (point, value) in zip(points, expected) {
+            XCTAssertEqual(point.daily, value, accuracy: 0.000_001)
+        }
+        XCTAssertEqual(points.reduce(0) { $0 + $1.daily }, 37, accuracy: 0.000_001)
+        XCTAssertEqual(points.last?.cumulative ?? -1, points.reduce(0) { $0 + $1.daily }, accuracy: 0.000_001)
+    }
+
     private func date(_ value: String) throws -> Date {
         try XCTUnwrap(ISO8601DateFormatter().date(from: value))
     }
