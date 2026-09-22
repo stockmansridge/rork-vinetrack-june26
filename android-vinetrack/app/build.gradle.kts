@@ -220,6 +220,21 @@ if (providers.gradleProperty("optimalRipenessFocusedTests").orNull == "true") {
     }
 }
 
+// Focused Work Task Material Costs run (sql/247) — compiles only the material
+// suite so the foundation can be validated without building every unrelated
+// VineTrack test source.
+if (providers.gradleProperty("materialCostsFocusedTests").orNull == "true") {
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(
+                fileTree("src/test/java") {
+                    include("**/material/WorkTaskMaterialCostsTest.kt")
+                },
+            )
+        }
+    }
+}
+
 if (providers.gradleProperty("canopyReferenceFocusedTests").orNull == "true") {
     afterEvaluate {
         tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {

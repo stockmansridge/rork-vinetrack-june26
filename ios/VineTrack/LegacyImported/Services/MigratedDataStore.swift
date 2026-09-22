@@ -63,6 +63,21 @@ final class MigratedDataStore {
     /// Frozen commercial history — never recalculated from today's block rows.
     var workTaskPieceRateRows: [WorkTaskPieceRateRow] = []
 
+    // MARK: Work Task Material Costs (sql/247)
+
+    /// The global VineTrack base material catalogue. NOT vineyard scoped —
+    /// the same 18 high-level items for everyone. Falls back to the bundled
+    /// `MaterialCatalogueSeed` until a server copy has synced, so an offline
+    /// fresh install still resolves the same material keys.
+    var materialCatalogue: [MaterialCatalogueItem] = []
+    /// One vineyard's material library: its own default costs for base items
+    /// plus its own custom materials. Prices live here, never on the catalogue.
+    var vineyardMaterials: [VineyardMaterial] = []
+    /// Materials actually used on Work Tasks. Each row carries a FROZEN
+    /// name/unit/quantity/unit-cost snapshot, so later library repricing can
+    /// never alter a historical task cost.
+    var workTaskMaterials: [WorkTaskMaterial] = []
+
     var grapeVarieties: [GrapeVariety] = []
 
     /// Phase 5 — saved trip cost allocation rows (owner/manager only). UI must
@@ -174,6 +189,12 @@ final class MigratedDataStore {
     var onWorkTaskPaddockDeleted: ((UUID) -> Void)?
     var onWorkTaskPieceRateRowChanged: ((UUID) -> Void)?
     var onWorkTaskPieceRateRowDeleted: ((UUID) -> Void)?
+    /// Work Task Material Costs (sql/247). The base catalogue is pull-only and
+    /// therefore has no change hook.
+    var onVineyardMaterialChanged: ((UUID) -> Void)?
+    var onVineyardMaterialDeleted: ((UUID) -> Void)?
+    var onWorkTaskMaterialChanged: ((UUID) -> Void)?
+    var onWorkTaskMaterialDeleted: ((UUID) -> Void)?
     var onMaintenanceLogChanged: ((UUID) -> Void)?
     var onMaintenanceLogDeleted: ((UUID) -> Void)?
     var onYieldSessionChanged: ((UUID) -> Void)?
@@ -205,6 +226,10 @@ final class MigratedDataStore {
     let workTaskMachineLineRepo: WorkTaskMachineLineRepository
     let workTaskPaddockRepo: WorkTaskPaddockRepository
     let workTaskPieceRateRowRepo: WorkTaskPieceRateRowRepository
+    /// Work Task Material Costs (sql/247).
+    let materialCatalogueRepo: MaterialCatalogueRepository
+    let vineyardMaterialRepo: VineyardMaterialRepository
+    let workTaskMaterialRepo: WorkTaskMaterialRepository
     let workTaskTypeRepo: WorkTaskTypeRepository
     let equipmentItemRepo: EquipmentItemRepository
     let maintenanceLogRepo: MaintenanceLogRepository
@@ -251,6 +276,9 @@ final class MigratedDataStore {
         self.workTaskMachineLineRepo = WorkTaskMachineLineRepository(persistence: persistence)
         self.workTaskPaddockRepo = WorkTaskPaddockRepository(persistence: persistence)
         self.workTaskPieceRateRowRepo = WorkTaskPieceRateRowRepository(persistence: persistence)
+        self.materialCatalogueRepo = MaterialCatalogueRepository(persistence: persistence)
+        self.vineyardMaterialRepo = VineyardMaterialRepository(persistence: persistence)
+        self.workTaskMaterialRepo = WorkTaskMaterialRepository(persistence: persistence)
         self.workTaskTypeRepo = WorkTaskTypeRepository(persistence: persistence)
         self.equipmentItemRepo = EquipmentItemRepository(persistence: persistence)
         self.maintenanceLogRepo = MaintenanceLogRepository(persistence: persistence)
@@ -439,6 +467,12 @@ final class MigratedDataStore {
             workTaskMachineLines = []
             workTaskPaddocks = []
             workTaskPieceRateRows = []
+            // The base catalogue is global, not vineyard data, so it stays
+            // loaded with no vineyard selected. The vineyard-scoped material
+            // library and task lines do not.
+            materialCatalogue = materialCatalogueRepo.loadEffective()
+            vineyardMaterials = []
+            workTaskMaterials = []
             workTaskTypes = []
             equipmentItems = []
             // Equipment is vineyard-scoped operational state: with nothing
@@ -461,6 +495,9 @@ final class MigratedDataStore {
         workTaskMachineLines = workTaskMachineLineRepo.load(for: vineyardId)
         workTaskPaddocks = workTaskPaddockRepo.load(for: vineyardId)
         workTaskPieceRateRows = workTaskPieceRateRowRepo.load(for: vineyardId)
+        materialCatalogue = materialCatalogueRepo.loadEffective()
+        vineyardMaterials = vineyardMaterialRepo.load(for: vineyardId)
+        workTaskMaterials = workTaskMaterialRepo.load(for: vineyardId)
         workTaskTypes = workTaskTypeRepo.load(for: vineyardId)
         equipmentItems = equipmentItemRepo.load(for: vineyardId)
         maintenanceLogs = maintenanceLogRepo.load(for: vineyardId)
@@ -550,6 +587,9 @@ final class MigratedDataStore {
         workTaskMachineLines = []
         workTaskPaddocks = []
         workTaskPieceRateRows = []
+        materialCatalogue = []
+        vineyardMaterials = []
+        workTaskMaterials = []
         workTaskTypes = []
         equipmentItems = []
         grapeVarieties = []
@@ -1744,6 +1784,101 @@ final class MigratedDataStore {
                 addWorkTaskPieceRateRow(item)
             }
         }
+    }
+
+    // MARK: - Material Costs CRUD (sql/247)
+
+    /// The vineyard's effective material library: base catalogue merged with
+    /// its own overrides and custom items AT READ TIME, so no vineyard is
+    /// pre-populated with eighteen empty rows.
+    func materialLibrary() -> [MaterialLibraryEntry] {
+        guard let vineyardId = selectedVineyardId else { return [] }
+        return MaterialLibrary.merged(
+            catalogue: materialCatalogue,
+            vineyardMaterials: vineyardMaterials,
+            vineyardId: vineyardId
+        )
+    }
+
+    // MARK: Vineyard material library
+
+    func addVineyardMaterial(_ material: VineyardMaterial) {
+        guard let vineyardId = selectedVineyardId else { return }
+        var item = material
+        item.vineyardId = vineyardId
+        vineyardMaterials.append(item)
+        vineyardMaterialRepo.saveSlice(vineyardMaterials, for: vineyardId)
+        onVineyardMaterialChanged?(item.id)
+    }
+
+    func updateVineyardMaterial(_ material: VineyardMaterial) {
+        guard let vineyardId = selectedVineyardId else { return }
+        guard let index = vineyardMaterials.firstIndex(where: { $0.id == material.id }) else { return }
+        vineyardMaterials[index] = material
+        vineyardMaterialRepo.saveSlice(vineyardMaterials, for: vineyardId)
+        onVineyardMaterialChanged?(material.id)
+    }
+
+    /// Deactivate a library material WITHOUT touching history.
+    ///
+    /// Historical `workTaskMaterials` rows are deliberately left alone: they
+    /// read from their own snapshot, so a retired material never erases or
+    /// alters the tasks that used it.
+    func deactivateVineyardMaterial(_ materialId: UUID) {
+        guard let vineyardId = selectedVineyardId else { return }
+        guard let index = vineyardMaterials.firstIndex(where: { $0.id == materialId }) else { return }
+        vineyardMaterials[index].isActive = false
+        vineyardMaterialRepo.saveSlice(vineyardMaterials, for: vineyardId)
+        onVineyardMaterialChanged?(materialId)
+    }
+
+    func deleteVineyardMaterial(_ materialId: UUID) {
+        guard let vineyardId = selectedVineyardId else { return }
+        vineyardMaterials.removeAll { $0.id == materialId }
+        vineyardMaterialRepo.saveSlice(vineyardMaterials, for: vineyardId)
+        onVineyardMaterialDeleted?(materialId)
+    }
+
+    // MARK: Work Task material lines
+
+    /// The material lines of ONE task, in stable display order.
+    func materials(forWorkTask workTaskId: UUID) -> [WorkTaskMaterial] {
+        WorkTaskMaterialCosting.lines(workTaskMaterials, for: workTaskId)
+    }
+
+    /// Total material cost of one task. A task with NO material rows returns
+    /// zero without needing a row to say so.
+    func materialTotal(forWorkTask workTaskId: UUID) -> Decimal {
+        WorkTaskMaterialCosting.total(workTaskMaterials, for: workTaskId)
+    }
+
+    /// Persist a new material line.
+    ///
+    /// The id is already final (minted by the caller before any network call),
+    /// so the offline create, its replay and the eventual server row are all
+    /// the same row — a replay can never produce a second material line.
+    func addWorkTaskMaterial(_ material: WorkTaskMaterial) {
+        guard let vineyardId = selectedVineyardId else { return }
+        var item = material
+        item.vineyardId = vineyardId
+        workTaskMaterials.append(item)
+        workTaskMaterialRepo.saveSlice(workTaskMaterials, for: vineyardId)
+        onWorkTaskMaterialChanged?(item.id)
+    }
+
+    func updateWorkTaskMaterial(_ material: WorkTaskMaterial) {
+        guard let vineyardId = selectedVineyardId else { return }
+        guard let index = workTaskMaterials.firstIndex(where: { $0.id == material.id }) else { return }
+        workTaskMaterials[index] = material
+        workTaskMaterialRepo.saveSlice(workTaskMaterials, for: vineyardId)
+        onWorkTaskMaterialChanged?(material.id)
+    }
+
+    func deleteWorkTaskMaterial(_ materialId: UUID) {
+        guard let vineyardId = selectedVineyardId else { return }
+        workTaskMaterials.removeAll { $0.id == materialId }
+        workTaskMaterialRepo.saveSlice(workTaskMaterials, for: vineyardId)
+        onWorkTaskMaterialDeleted?(materialId)
     }
 
     // MARK: - Settings

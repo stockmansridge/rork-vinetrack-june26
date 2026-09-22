@@ -23,6 +23,20 @@ import com.rork.vinetrack.data.SeasonWindow
 import com.rork.vinetrack.data.VintageResolver
 import com.rork.vinetrack.data.chemical.ChemicalSnapshotCapture
 import com.rork.vinetrack.data.spray.CanopyReferenceImageRepository
+import com.rork.vinetrack.data.material.MaterialCatalogueItem
+import com.rork.vinetrack.data.material.MaterialMoney
+import com.rork.vinetrack.data.material.MaterialUnitCatalog
+import com.rork.vinetrack.data.material.MaterialCatalogueSeed
+import com.rork.vinetrack.data.material.MaterialLibrary
+import com.rork.vinetrack.data.material.MaterialLibraryEntry
+import com.rork.vinetrack.data.material.VineyardMaterial
+import com.rork.vinetrack.data.material.VineyardMaterialSync
+import com.rork.vinetrack.data.material.WorkTaskMaterial
+import com.rork.vinetrack.data.material.WorkTaskMaterialCosting
+import com.rork.vinetrack.data.material.WorkTaskMaterialCostsAccess
+import com.rork.vinetrack.data.material.WorkTaskMaterialRepository
+import com.rork.vinetrack.data.material.WorkTaskMaterialStore
+import com.rork.vinetrack.data.material.WorkTaskMaterialSync
 import com.rork.vinetrack.data.model.parseIsoToEpochMs
 import com.rork.vinetrack.data.subscription.EntitlementVerificationStore
 import com.rork.vinetrack.data.subscription.PaywallPackageUi
@@ -692,6 +706,24 @@ data class AppUiState(
     val pruningLabourBusy: Boolean = false,
     /** Machine lines for the work task currently open in detail. */
     val taskMachineLines: List<WorkTaskMachineLine> = emptyList(),
+    /**
+     * Work Task Material Costs (sql/247). The global base catalogue, falling
+     * back to the bundled `MaterialCatalogueSeed` until a server copy syncs so
+     * an offline fresh install still resolves the same stable material keys.
+     */
+    val materialCatalogue: List<MaterialCatalogueItem> = emptyList(),
+    /**
+     * The selected vineyard's material library: its own default costs for base
+     * items plus its custom materials. Prices live here, never on the catalogue.
+     */
+    val vineyardMaterials: List<VineyardMaterial> = emptyList(),
+    /**
+     * Material lines for the work task currently open in detail. Each carries a
+     * FROZEN name/unit/quantity/unit-cost snapshot, so later library repricing
+     * never alters a historical task cost. An empty list means the task has no
+     * materials and therefore costs $0 — no row is needed to say so.
+     */
+    val taskMaterials: List<WorkTaskMaterial> = emptyList(),
     /** Work task id the loaded lines belong to (null when nothing is open). */
     val taskLinesTaskId: String? = null,
     val taskLinesLoading: Boolean = false,
@@ -1180,6 +1212,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val workTaskLineRepo = WorkTaskLineRepository(session)
     /** HISTORICAL per-row piece-rate snapshots (sql/188). */
     private val pieceRateRowRepo = WorkTaskPieceRateRowRepository(session)
+    /**
+     * Work Task Material Costs transport (sql/247): base catalogue, vineyard
+     * material library and task material lines. The data layer is wired for
+     * every member; FEATURE EXPOSURE is gated separately by
+     * [com.rork.vinetrack.data.material.WorkTaskMaterialCostsAccess].
+     */
+    private val materialRepo = WorkTaskMaterialRepository(session)
     private val sprayRepo = SprayRecordRepository(session)
     private val sprayJobTemplateRepo = SprayJobTemplateRepository(session)
     private val vineyardSprayTargetRepo = VineyardSprayTargetRepository(session)
@@ -1781,6 +1820,34 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * rather than replayed against a parent that doesn't exist server-side.
      */
     private val workTaskPaddockSync = WorkTaskPaddockSync(workTaskPaddockRepo, pendingWrites)
+
+    /**
+     * Local offline store for Work Task Material Costs (sql/247): the cached
+     * base catalogue (with a bundled fallback), the vineyard material library
+     * and the task material lines. Durable across app termination so a material
+     * line entered offline survives relaunch and syncs once.
+     */
+    private val materialStore = WorkTaskMaterialStore(app)
+
+    /**
+     * Replay coordinator for work-task MATERIAL lines only (sql/247).
+     * WORK_TASK_MATERIAL create/update/delete — a work-task CHILD queue beside
+     * labour, machine and paddock. Never touches the header or any other child
+     * queue. Defers every material write while the parent task's create is
+     * unresolved; a never-synced line is folded or cancelled in place rather
+     * than replayed against a parent that doesn't exist server-side. The line id
+     * is minted before the first request, so a replay can never create a SECOND
+     * material line.
+     */
+    private val workTaskMaterialSync = WorkTaskMaterialSync(materialRepo, pendingWrites)
+
+    /**
+     * Replay coordinator for the vineyard MATERIAL LIBRARY only (sql/247).
+     * VINEYARD_MATERIAL upsert/delete — vineyard configuration with no parent
+     * task, so no parent gate. Repricing or retiring a library row never
+     * rewrites a task material line: those own their frozen snapshot.
+     */
+    private val vineyardMaterialSync = VineyardMaterialSync(materialRepo, pendingWrites)
 
     /**
      * Upload coordinator for retained pin photos only (Stage 7C). Replays
@@ -3506,6 +3573,68 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Replay queued work-task MATERIAL lines (sql/247). WORK_TASK_MATERIAL
+     * create/update/delete only — never the work-task header (owned by the
+     * header passes) and never any labour/machine/paddock child row (owned by
+     * their own coordinators). The coordinator processes creates, then updates,
+     * then deletes, and defers every write while the parent task's create is
+     * still unresolved — so this is safe to run after the header create/update
+     * passes and before the header delete pass. Each upsert reconciles the open
+     * task's material list by id and each delete keeps the line hidden, both
+     * only when the matching task is still open in detail. Skipped when offline
+     * or with no session so it can't fire during early startup.
+     */
+    private fun replayPendingWorkTaskMaterials() {
+        if (session.accessToken == null || !_ui.value.isOnline) return
+        viewModelScope.launch {
+            workTaskMaterialSync.replayAll(
+                onUpserted = { line ->
+                    persistTaskMaterialLocally(line)
+                    _ui.update { st ->
+                        if (st.taskLinesTaskId != line.workTaskId) return@update st
+                        val others = st.taskMaterials.filterNot { it.id == line.id }
+                        st.copy(taskMaterials = others + line)
+                    }
+                },
+                onDeleted = { materialId, workTaskId ->
+                    removeTaskMaterialLocally(materialId)
+                    _ui.update { st ->
+                        if (st.taskLinesTaskId != workTaskId) return@update st
+                        st.copy(taskMaterials = st.taskMaterials.filterNot { it.id == materialId })
+                    }
+                },
+            )
+        }
+    }
+
+    /**
+     * Replay the queued vineyard MATERIAL LIBRARY writes (sql/247).
+     * VINEYARD_MATERIAL upsert/delete only. The library is vineyard
+     * configuration with no parent task, so there is no parent gate. A retired
+     * or repriced library row never rewrites a historical task material line.
+     */
+    private fun replayPendingVineyardMaterials() {
+        if (session.accessToken == null || !_ui.value.isOnline) return
+        viewModelScope.launch {
+            vineyardMaterialSync.replayAll(
+                onUpserted = { material ->
+                    persistVineyardMaterialLocally(material)
+                    _ui.update { st ->
+                        val others = st.vineyardMaterials.filterNot { it.id == material.id }
+                        st.copy(vineyardMaterials = others + material)
+                    }
+                },
+                onDeleted = { materialId ->
+                    removeVineyardMaterialLocally(materialId)
+                    _ui.update { st ->
+                        st.copy(vineyardMaterials = st.vineyardMaterials.filterNot { it.id == materialId })
+                    }
+                },
+            )
+        }
+    }
+
+    /**
      * Replay queued work-task soft-deletes (Android Stage J-3). WORK_TASK /
      * DELETE only — never work-task create (owned by
      * [replayPendingWorkTaskCreates]) or edit (owned by
@@ -4194,6 +4323,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingWorkTaskLabour()
         replayPendingWorkTaskMachine()
         replayPendingWorkTaskPaddocks()
+        replayPendingVineyardMaterials()
+        replayPendingWorkTaskMaterials()
         replayPendingWorkTaskDeletes()
         replayPendingMaintenanceCreates()
         replayPendingMaintenanceUpdates()
@@ -4269,6 +4400,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingWorkTaskLabour()
         replayPendingWorkTaskMachine()
         replayPendingWorkTaskPaddocks()
+        replayPendingVineyardMaterials()
+        replayPendingWorkTaskMaterials()
         replayPendingWorkTaskDeletes()
         replayPendingMaintenanceCreates()
         replayPendingMaintenanceUpdates()
@@ -4345,6 +4478,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     replayPendingWorkTaskLabour()
                     replayPendingWorkTaskMachine()
                     replayPendingWorkTaskPaddocks()
+                    replayPendingVineyardMaterials()
+                    replayPendingWorkTaskMaterials()
                     replayPendingWorkTaskDeletes()
                     replayPendingMaintenanceCreates()
                     replayPendingMaintenanceUpdates()
@@ -4850,6 +4985,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingWorkTaskLabour()
         replayPendingWorkTaskMachine()
         replayPendingWorkTaskPaddocks()
+        replayPendingVineyardMaterials()
+        replayPendingWorkTaskMaterials()
         replayPendingWorkTaskDeletes()
         replayPendingMaintenanceCreates()
         replayPendingMaintenanceUpdates()
@@ -5851,6 +5988,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 replayPendingWorkTaskLabour()
                 replayPendingWorkTaskMachine()
                 replayPendingWorkTaskPaddocks()
+                replayPendingVineyardMaterials()
+                replayPendingWorkTaskMaterials()
                 replayPendingWorkTaskDeletes()
                 replayPendingMaintenanceCreates()
                 replayPendingMaintenanceUpdates()
@@ -9743,6 +9882,380 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearTaskLineError() {
         _ui.update { it.copy(taskLineError = null) }
+    }
+
+    // MARK: - Work Task Material Costs (sql/247)
+    //
+    // FEATURE EXPOSURE is gated by [WorkTaskMaterialCostsAccess] — see
+    // [materialCostsAccess]. The data layer below is deliberately ungated so
+    // removing the temporary System Admin gate needs no change here.
+
+    /**
+     * THE single Material Costs access decision for Android.
+     *
+     * TEMPORARY: resolves to allowed for platform System Admins only while the
+     * feature is being built. Callers ask this and nothing else — no screen,
+     * view model path or repository performs its own admin check — so the gate
+     * can be removed in one place.
+     */
+    fun materialCostsAccess(): WorkTaskMaterialCostsAccess =
+        WorkTaskMaterialCostsAccess.resolve(
+            sessionPhase = _ui.value.sessionPhase,
+            isSystemAdmin = _ui.value.isSystemAdmin,
+            selectedVineyardId = _ui.value.selectedVineyardId,
+            isMemberOfSelectedVineyard = _ui.value.currentRole != null,
+        )
+
+    /**
+     * The vineyard's effective material library: base catalogue merged with its
+     * own overrides and custom items AT READ TIME, so no vineyard is
+     * pre-populated with eighteen empty rows.
+     */
+    fun materialLibrary(): List<MaterialLibraryEntry> {
+        val vineyardId = _ui.value.selectedVineyardId ?: return emptyList()
+        return MaterialLibrary.merged(
+            catalogue = _ui.value.materialCatalogue,
+            vineyardMaterials = _ui.value.vineyardMaterials,
+            vineyardId = vineyardId,
+        )
+    }
+
+    /** Total material cost of one task. No rows means `0` — no row is needed to say so. */
+    fun materialTotal(workTaskId: String): java.math.BigDecimal =
+        WorkTaskMaterialCosting.total(_ui.value.taskMaterials, workTaskId)
+
+    /**
+     * Hydrate the base catalogue and the vineyard's library.
+     *
+     * Offline-first ladder `server → cached → bundled`: a failed read keeps the
+     * last cached copy, and a device that has never synced still resolves the
+     * bundled 18-item catalogue using the SAME stable keys as Supabase and iOS.
+     */
+    fun loadMaterialLibrary() {
+        val vineyardId = _ui.value.selectedVineyardId ?: return
+        // Paint immediately from local storage so an offline start is usable.
+        val cachedCatalogue = materialStore.loadCatalogue()
+        _ui.update {
+            it.copy(
+                materialCatalogue = MaterialCatalogueSeed.resolve(server = null, cached = cachedCatalogue),
+                vineyardMaterials = materialStore.loadVineyardMaterials().filter { m -> m.vineyardId == vineyardId },
+            )
+        }
+        if (session.accessToken == null || !_ui.value.isOnline) return
+        viewModelScope.launch {
+            val serverCatalogue = runCatching { materialRepo.listCatalogue() }.getOrNull()
+            if (!serverCatalogue.isNullOrEmpty()) materialStore.saveCatalogue(serverCatalogue)
+            val serverLibrary = runCatching { materialRepo.listVineyardMaterials(vineyardId) }.getOrNull()
+            if (serverLibrary != null) {
+                val others = materialStore.loadVineyardMaterials().filterNot { it.vineyardId == vineyardId }
+                materialStore.saveVineyardMaterials(others + serverLibrary)
+            }
+            _ui.update { st ->
+                if (st.selectedVineyardId != vineyardId) return@update st
+                st.copy(
+                    materialCatalogue = MaterialCatalogueSeed.resolve(
+                        server = serverCatalogue,
+                        cached = materialStore.loadCatalogue(),
+                    ),
+                    vineyardMaterials = serverLibrary ?: st.vineyardMaterials,
+                )
+            }
+        }
+    }
+
+    /**
+     * Load the material lines of a task opened in detail.
+     *
+     * Local storage paints first (so an offline-created line is visible
+     * immediately and survives relaunch), then a successful server read becomes
+     * authoritative and is written through.
+     */
+    fun loadTaskMaterials(taskId: String) {
+        _ui.update { st ->
+            st.copy(taskMaterials = WorkTaskMaterialCosting.lines(materialStore.loadTaskMaterials(), taskId))
+        }
+        if (session.accessToken == null || !_ui.value.isOnline) return
+        viewModelScope.launch {
+            val server = runCatching { materialRepo.listTaskMaterials(taskId) }.getOrNull() ?: return@launch
+            val others = materialStore.loadTaskMaterials().filterNot { it.workTaskId == taskId }
+            materialStore.saveTaskMaterials(others + server)
+            _ui.update { st ->
+                if (st.taskLinesTaskId != taskId) return@update st
+                st.copy(taskMaterials = WorkTaskMaterialCosting.lines(server, taskId))
+            }
+        }
+    }
+
+    /**
+     * Create or update a Work Task material line, offline-first.
+     *
+     * The id is minted BEFORE any network call and is shared by the optimistic
+     * local row, the queued WORK_TASK_MATERIAL marker and the eventual server
+     * row — so a replay after a crash, relaunch or reconnect upserts the SAME
+     * row and can never produce a second material line.
+     *
+     * The name, category, unit, quantity and unit cost passed here become the
+     * line's FROZEN snapshot: later library repricing never rewrites them.
+     */
+    fun saveTaskMaterial(
+        materialId: String?,
+        taskId: String,
+        baseMaterialId: String?,
+        vineyardMaterialId: String?,
+        materialName: String,
+        category: String,
+        unit: String,
+        quantity: java.math.BigDecimal,
+        unitCost: java.math.BigDecimal,
+        notes: String?,
+        onResult: (Boolean) -> Unit = {},
+    ) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        val id = materialId ?: materialRepo.newId()
+        val clientUpdatedAt = Instant.now().toString()
+        val optimistic = WorkTaskMaterial(
+            id = id,
+            workTaskId = taskId,
+            vineyardId = vineyardId,
+            baseMaterialId = baseMaterialId,
+            vineyardMaterialId = vineyardMaterialId,
+            materialName = materialName.trim(),
+            category = category,
+            unit = MaterialUnitCatalog.normalised(unit),
+            quantityRaw = MaterialMoney.wire(quantity.max(java.math.BigDecimal.ZERO)),
+            unitCostRaw = MaterialMoney.wire(unitCost.max(java.math.BigDecimal.ZERO)),
+            // The DB-generated total is unknown until sync, so the model's
+            // local quantity x unit cost is used meanwhile.
+            totalCostRaw = null,
+            notes = notes ?: "",
+        )
+        // Durable local write FIRST: an optimistic line the operator can see
+        // must already be on disk before any network attempt.
+        persistTaskMaterialLocally(optimistic)
+        _ui.update { st ->
+            if (st.taskLinesTaskId != taskId) return@update st
+            val others = st.taskMaterials.filterNot { it.id == id }
+            st.copy(taskMaterials = others + optimistic)
+        }
+
+        fun queueOffline() {
+            val folded = workTaskMaterialSync.foldCreate(
+                id, taskId, vineyardId, baseMaterialId, vineyardMaterialId,
+                optimistic.materialName, category, optimistic.unit, quantity, unitCost, notes, clientUpdatedAt,
+            )
+            if (!folded) {
+                if (materialId == null) {
+                    workTaskMaterialSync.enqueueCreate(
+                        id, taskId, vineyardId, baseMaterialId, vineyardMaterialId,
+                        optimistic.materialName, category, optimistic.unit, quantity, unitCost, notes, clientUpdatedAt,
+                    )
+                } else {
+                    workTaskMaterialSync.enqueueUpdate(
+                        id, taskId, vineyardId, baseMaterialId, vineyardMaterialId,
+                        optimistic.materialName, category, optimistic.unit, quantity, unitCost, notes, clientUpdatedAt,
+                    )
+                }
+            }
+        }
+
+        if (session.accessToken == null || !_ui.value.isOnline) {
+            queueOffline()
+            onResult(true)
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val saved = materialRepo.upsertTaskMaterial(
+                    id = id,
+                    workTaskId = taskId,
+                    vineyardId = vineyardId,
+                    baseMaterialId = baseMaterialId,
+                    vineyardMaterialId = vineyardMaterialId,
+                    materialName = optimistic.materialName,
+                    category = category,
+                    unit = optimistic.unit,
+                    quantity = quantity,
+                    unitCost = unitCost,
+                    notes = notes,
+                    clientUpdatedAt = clientUpdatedAt,
+                )
+                persistTaskMaterialLocally(saved)
+                _ui.update { st ->
+                    if (st.taskLinesTaskId != taskId) return@update st
+                    val others = st.taskMaterials.filterNot { it.id == id }
+                    st.copy(taskMaterials = others + saved)
+                }
+                onResult(true)
+            } catch (_: BackendError.Unauthorized) {
+                queueOffline()
+                onResult(false)
+            } catch (_: Exception) {
+                // Transient: keep the durable optimistic line and replay later.
+                queueOffline()
+                onResult(true)
+            }
+        }
+    }
+
+    /**
+     * Remove a material line. A never-synced line is cancelled locally rather
+     * than asking the server to delete a row that never existed.
+     */
+    fun deleteTaskMaterial(materialId: String, taskId: String, onResult: (Boolean) -> Unit = {}) {
+        removeTaskMaterialLocally(materialId)
+        _ui.update { st ->
+            if (st.taskLinesTaskId != taskId) return@update st
+            st.copy(taskMaterials = st.taskMaterials.filterNot { it.id == materialId })
+        }
+        if (workTaskMaterialSync.cancelLocalCreate(materialId)) {
+            onResult(true)
+            return
+        }
+        if (session.accessToken == null || !_ui.value.isOnline) {
+            workTaskMaterialSync.enqueueDelete(materialId, taskId)
+            onResult(true)
+            return
+        }
+        viewModelScope.launch {
+            try {
+                materialRepo.softDeleteTaskMaterial(materialId)
+                onResult(true)
+            } catch (_: Exception) {
+                workTaskMaterialSync.enqueueDelete(materialId, taskId)
+                onResult(true)
+            }
+        }
+    }
+
+    /**
+     * Create or update a vineyard library material: either the vineyard's own
+     * default cost for a base catalogue item ([isCustom] false, [baseMaterialId]
+     * set) or a custom vineyard material ([isCustom] true).
+     */
+    fun saveVineyardMaterial(
+        materialId: String?,
+        baseMaterialId: String?,
+        name: String,
+        category: String,
+        unit: String,
+        defaultUnitCost: java.math.BigDecimal?,
+        isCustom: Boolean,
+        isActive: Boolean = true,
+        onResult: (Boolean) -> Unit = {},
+    ) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        val id = materialId ?: materialRepo.newId()
+        val clientUpdatedAt = Instant.now().toString()
+        val optimistic = VineyardMaterial(
+            id = id,
+            vineyardId = vineyardId,
+            baseMaterialId = if (isCustom) null else baseMaterialId,
+            baseMaterialKey = if (isCustom) {
+                null
+            } else {
+                _ui.value.materialCatalogue.firstOrNull { it.remoteId == baseMaterialId }?.key
+            },
+            name = name.trim(),
+            category = category,
+            unit = MaterialUnitCatalog.normalised(unit),
+            defaultUnitCostRaw = defaultUnitCost?.let { MaterialMoney.wire(it) },
+            isCustom = isCustom,
+            isActive = isActive,
+        )
+        persistVineyardMaterialLocally(optimistic)
+        _ui.update { st ->
+            val others = st.vineyardMaterials.filterNot { it.id == id }
+            st.copy(vineyardMaterials = others + optimistic)
+        }
+        if (session.accessToken == null || !_ui.value.isOnline) {
+            vineyardMaterialSync.enqueueUpsert(
+                id, vineyardId, baseMaterialId, optimistic.name, category, optimistic.unit,
+                defaultUnitCost, isCustom, isActive, clientUpdatedAt,
+            )
+            onResult(true)
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val saved = materialRepo.upsertVineyardMaterial(
+                    id = id,
+                    vineyardId = vineyardId,
+                    baseMaterialId = baseMaterialId,
+                    name = optimistic.name,
+                    category = category,
+                    unit = optimistic.unit,
+                    defaultUnitCost = defaultUnitCost,
+                    isCustom = isCustom,
+                    isActive = isActive,
+                    clientUpdatedAt = clientUpdatedAt,
+                )
+                // Keep the locally-resolved base key: the server row does not
+                // carry it, and it is what lets an override match its base item
+                // when only the bundled catalogue is loaded.
+                val merged = saved.copy(baseMaterialKey = optimistic.baseMaterialKey)
+                persistVineyardMaterialLocally(merged)
+                _ui.update { st ->
+                    val others = st.vineyardMaterials.filterNot { it.id == id }
+                    st.copy(vineyardMaterials = others + merged)
+                }
+                onResult(true)
+            } catch (_: Exception) {
+                vineyardMaterialSync.enqueueUpsert(
+                    id, vineyardId, baseMaterialId, optimistic.name, category, optimistic.unit,
+                    defaultUnitCost, isCustom, isActive, clientUpdatedAt,
+                )
+                onResult(true)
+            }
+        }
+    }
+
+    /**
+     * Retire a library material.
+     *
+     * Historical [WorkTaskMaterial] rows are deliberately untouched: they read
+     * from their own snapshot, so a deactivated or removed library material
+     * never deletes, hides or alters the tasks that used it.
+     */
+    fun deleteVineyardMaterial(materialId: String, onResult: (Boolean) -> Unit = {}) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        removeVineyardMaterialLocally(materialId)
+        _ui.update { st -> st.copy(vineyardMaterials = st.vineyardMaterials.filterNot { it.id == materialId }) }
+        if (session.accessToken == null || !_ui.value.isOnline) {
+            vineyardMaterialSync.enqueueDelete(materialId, vineyardId)
+            onResult(true)
+            return
+        }
+        viewModelScope.launch {
+            try {
+                materialRepo.softDeleteVineyardMaterial(materialId)
+                onResult(true)
+            } catch (_: Exception) {
+                vineyardMaterialSync.enqueueDelete(materialId, vineyardId)
+                onResult(true)
+            }
+        }
+    }
+
+    /** Durably upsert one task material line by id. */
+    private fun persistTaskMaterialLocally(line: WorkTaskMaterial) {
+        val all = materialStore.loadTaskMaterials().filterNot { it.id == line.id }
+        materialStore.saveTaskMaterials(all + line)
+    }
+
+    private fun removeTaskMaterialLocally(materialId: String) {
+        materialStore.saveTaskMaterials(materialStore.loadTaskMaterials().filterNot { it.id == materialId })
+    }
+
+    /** Durably upsert one vineyard library material by id. */
+    private fun persistVineyardMaterialLocally(material: VineyardMaterial) {
+        val all = materialStore.loadVineyardMaterials().filterNot { it.id == material.id }
+        materialStore.saveVineyardMaterials(all + material)
+    }
+
+    private fun removeVineyardMaterialLocally(materialId: String) {
+        materialStore.saveVineyardMaterials(
+            materialStore.loadVineyardMaterials().filterNot { it.id == materialId },
+        )
     }
 
     /**

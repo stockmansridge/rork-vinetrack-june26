@@ -42,6 +42,11 @@ struct NewMainTabView: View {
     @Environment(WorkTaskMachineLineSyncService.self) private var workTaskMachineLineSync
     @Environment(WorkTaskPaddockSyncService.self) private var workTaskPaddockSync
     @Environment(WorkTaskPieceRateRowSyncService.self) private var workTaskPieceRateRowSync
+    /// Work Task Material Costs (sql/247). The data layer syncs for every
+    /// member; FEATURE EXPOSURE is gated by `WorkTaskMaterialCostsAccess`.
+    @Environment(MaterialCatalogueSyncService.self) private var materialCatalogueSync
+    @Environment(VineyardMaterialSyncService.self) private var vineyardMaterialSync
+    @Environment(WorkTaskMaterialSyncService.self) private var workTaskMaterialSync
     @Environment(MaintenanceLogSyncService.self) private var maintenanceLogSync
     @Environment(YieldEstimationSessionSyncService.self) private var yieldSessionSync
     @Environment(DamageRecordSyncService.self) private var damageRecordSync
@@ -160,6 +165,9 @@ struct NewMainTabView: View {
             workTaskMachineLineSync.configure(store: store, auth: auth)
             workTaskPaddockSync.configure(store: store, auth: auth)
             workTaskPieceRateRowSync.configure(store: store, auth: auth)
+            materialCatalogueSync.configure(store: store, auth: auth)
+            vineyardMaterialSync.configure(store: store, auth: auth)
+            workTaskMaterialSync.configure(store: store, auth: auth)
             maintenanceLogSync.configure(store: store, auth: auth)
             yieldSessionSync.configure(store: store, auth: auth)
             damageRecordSync.configure(store: store, auth: auth)
@@ -452,6 +460,12 @@ struct NewMainTabView: View {
         await workTaskMachineLineSync.syncForSelectedVineyard()
         await workTaskPaddockSync.syncForSelectedVineyard()
         await workTaskPieceRateRowSync.syncForSelectedVineyard()
+        // Work Task Material Costs (sql/247). Catalogue first so a vineyard
+        // override can resolve its base item, then the library, then the task
+        // lines. Additive: a vineyard with no material rows syncs nothing.
+        await materialCatalogueSync.sync()
+        await vineyardMaterialSync.syncForSelectedVineyard()
+        await workTaskMaterialSync.syncForSelectedVineyard()
         await maintenanceLogSync.syncForSelectedVineyard()
         await yieldSessionSync.syncForSelectedVineyard()
         await damageRecordSync.syncForSelectedVineyard()

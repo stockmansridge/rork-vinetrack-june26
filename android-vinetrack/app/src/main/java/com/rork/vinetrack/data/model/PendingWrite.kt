@@ -236,6 +236,45 @@ object PendingEntityType {
      * BLOCKS rather than retrying forever.
      */
     const val WORK_TASK_PADDOCK = "work_task_paddock"
+
+    /**
+     * A single work-task MATERIAL line queued offline (sql/247). Backs
+     * `work_task_materials`. CREATE / UPDATE / DELETE are carried on this
+     * discriminator, keyed by the material line id ([PendingWrite.clientId] =
+     * workTaskMaterialId), so the header queues ([WORK_TASK]) and the labour /
+     * machine / paddock child queues can never pick up a material write and a
+     * material replay never touches any of them.
+     *
+     * Parent dependency gate:
+     * [com.rork.vinetrack.data.material.WorkTaskMaterialSync] defers every
+     * material write while the SAME `workTaskId` still has an unresolved
+     * [WORK_TASK] / CREATE marker — a child line is never POSTed or deleted
+     * before its parent task exists server-side. Replay ordering places
+     * materials (create -> update -> delete) AFTER the header create/update
+     * passes and BEFORE the header delete pass, alongside the labour, machine
+     * and paddock queues.
+     *
+     * Idempotency: the line id is minted before the first network call and is
+     * the eventual server row id, and the write is a merge-duplicates upsert,
+     * so a replayed create can never produce a SECOND material line.
+     */
+    const val WORK_TASK_MATERIAL = "work_task_material"
+
+    /**
+     * A single vineyard MATERIAL LIBRARY row queued offline (sql/247). Backs
+     * `vineyard_materials` — the vineyard's own default costs for base
+     * catalogue items plus its custom materials. UPDATE (merge-duplicates
+     * upsert, create and edit both fold into it) and DELETE (soft-delete RPC,
+     * RLS-restricted to owner/manager/supervisor) are carried, keyed by the
+     * library row id ([PendingWrite.clientId] = vineyardMaterialId).
+     *
+     * Deliberately distinct from [WORK_TASK_MATERIAL]: the library is vineyard
+     * configuration and has NO parent work task, whereas a task material line
+     * is a child record. A library replay never touches a task line, and
+     * repricing or retiring a library row never rewrites one — task lines own
+     * their own frozen snapshot.
+     */
+    const val VINEYARD_MATERIAL = "vineyard_material"
     const val TANK_SESSION = "tank_session"
     const val GROWTH_RECORD = "growth_record"
     const val MAINTENANCE_LOG = "maintenance_log"

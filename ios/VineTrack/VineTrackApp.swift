@@ -47,6 +47,11 @@ struct VineTrackApp: App {
     @State private var workTaskPaddockSyncService = WorkTaskPaddockSyncService()
     /// Historical piece-rate row snapshots (sql/188).
     @State private var workTaskPieceRateRowSyncService = WorkTaskPieceRateRowSyncService()
+    /// Work Task Material Costs (sql/247). The data layer is always wired;
+    /// FEATURE EXPOSURE is gated separately by `WorkTaskMaterialCostsAccess`.
+    @State private var materialCatalogueSyncService = MaterialCatalogueSyncService()
+    @State private var vineyardMaterialSyncService = VineyardMaterialSyncService()
+    @State private var workTaskMaterialSyncService = WorkTaskMaterialSyncService()
     @State private var maintenanceLogSyncService = MaintenanceLogSyncService()
     @State private var yieldEstimationSessionSyncService = YieldEstimationSessionSyncService()
     @State private var damageRecordSyncService = DamageRecordSyncService()
@@ -138,6 +143,9 @@ struct VineTrackApp: App {
                         .environment(workTaskMachineLineSyncService)
                         .environment(workTaskPaddockSyncService)
                         .environment(workTaskPieceRateRowSyncService)
+                        .environment(materialCatalogueSyncService)
+                        .environment(vineyardMaterialSyncService)
+                        .environment(workTaskMaterialSyncService)
                         .environment(maintenanceLogSyncService)
                         .environment(yieldEstimationSessionSyncService)
                         .environment(damageRecordSyncService)
