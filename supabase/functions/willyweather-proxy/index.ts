@@ -23,9 +23,10 @@
 // Deprecated:
 //   - save_api_key             → returns 410 Gone. Key is now global.
 
-// deno-lint-ignore-file no-explicit-any
+// deno-lint-ignore-file no-explicit-any no-import-prefix no-inner-declarations
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { normaliseForecast } from "./forecast.ts";
 
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -34,7 +35,7 @@ const CORS: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const PROXY_VERSION = "willyweather-proxy-2026-05-17-debug-capabilities";
+const PROXY_VERSION = "willyweather-proxy-2026-09-22-detail";
 const WW_BASE = "https://api.willyweather.com.au/v2";
 const PROVIDER = "willyweather";
 
@@ -151,119 +152,25 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
 }
 
 async function wwForecast(apiKey: string, locationId: string, days: number): Promise<any> {
+  return await wwForecastType(apiKey, locationId, days, "rainfall,temperature,wind,rainfallprobability");
+}
+
+async function wwForecastType(apiKey: string, locationId: string, days: number, type: string): Promise<any> {
   const u = new URL(`${WW_BASE}/${encodeURIComponent(apiKey)}/locations/${encodeURIComponent(locationId)}/weather.json`);
-  u.searchParams.set("forecasts", "rainfall,temperature,wind,rainfallprobability");
+  u.searchParams.set("forecasts", type);
   u.searchParams.set("days", String(Math.max(1, Math.min(days, 7))));
   u.searchParams.set("units", "speed:km/h,temperature:c,distance:km");
-  const res = await fetch(u.toString());
-  const body = await res.text();
-  let parsed: any = null;
-  try { parsed = JSON.parse(body); } catch { /* fall through */ }
-  return { status: res.status, ok: res.ok, body: parsed ?? body };
-}
-
-// ---------------------------------------------------------------------------
-// Forecast normalisation
-// ---------------------------------------------------------------------------
-
-function rainfallMidpoint(entry: any): number | null {
-  const s = num(entry?.startRange);
-  const e = num(entry?.endRange);
-  if (s != null && e != null) return (s + e) / 2;
-  if (e != null) return e / 2;
-  if (s != null) return s;
-  return null;
-}
-
-function estimateET0(tmin: number | null, tmax: number | null): number | null {
-  if (tmin == null || tmax == null || tmax <= tmin) return null;
-  const tmean = (tmin + tmax) / 2;
-  const ra = 15;
-  const et0 = 0.0023 * (tmean + 17.8) * Math.sqrt(tmax - tmin) * (ra / 2.45);
-  return Math.max(0, Math.round(et0 * 100) / 100);
-}
-
-function normaliseForecast(raw: any, days: number): { ok: true; days: any[] } | { ok: false; error: string } {
-  const forecasts = raw?.forecasts;
-  if (!forecasts || typeof forecasts !== "object") {
-    return { ok: false, error: "missing_forecasts" };
+  try {
+    const res = await fetch(u.toString());
+    const body = await res.text();
+    let parsed: any = null;
+    try { parsed = JSON.parse(body); } catch { /* fall through */ }
+    return { status: res.status, ok: res.ok, body: parsed ?? body };
+  } catch {
+    // Optional detail calls deliberately fail soft. Do not log the request URL:
+    // the WillyWeather key is embedded in its path.
+    return { status: 0, ok: false, body: null };
   }
-
-  type DayBucket = { date: string; rainMm: number | null; probability: number | null; tmin: number | null; tmax: number | null; windKmh: number | null };
-  const byDate: Record<string, DayBucket> = {};
-
-  function bucket(dateTime: string): DayBucket {
-    const date = String(dateTime).slice(0, 10);
-    if (!byDate[date]) byDate[date] = { date, rainMm: null, probability: null, tmin: null, tmax: null, windKmh: null };
-    return byDate[date];
-  }
-
-  const rainDays = forecasts?.rainfall?.days;
-  if (Array.isArray(rainDays)) {
-    for (const d of rainDays) {
-      const b = bucket(String(d?.dateTime ?? ""));
-      const entries = Array.isArray(d?.entries) ? d.entries : [];
-      if (entries.length > 0) {
-        b.rainMm = rainfallMidpoint(entries[0]);
-      }
-    }
-  }
-
-  const probDays = forecasts?.rainfallprobability?.days;
-  if (Array.isArray(probDays)) {
-    for (const d of probDays) {
-      const b = bucket(String(d?.dateTime ?? ""));
-      const entries = Array.isArray(d?.entries) ? d.entries : [];
-      if (entries.length > 0) {
-        b.probability = num(entries[0]?.probability);
-      }
-    }
-  }
-
-  const tempDays = forecasts?.temperature?.days;
-  if (Array.isArray(tempDays)) {
-    for (const d of tempDays) {
-      const b = bucket(String(d?.dateTime ?? ""));
-      const entries = Array.isArray(d?.entries) ? d.entries : [];
-      let lo: number | null = null;
-      let hi: number | null = null;
-      for (const e of entries) {
-        const t = num(e?.temperature);
-        if (t == null) continue;
-        if (lo == null || t < lo) lo = t;
-        if (hi == null || t > hi) hi = t;
-      }
-      b.tmin = lo;
-      b.tmax = hi;
-    }
-  }
-
-  const windDays = forecasts?.wind?.days;
-  if (Array.isArray(windDays)) {
-    for (const d of windDays) {
-      const b = bucket(String(d?.dateTime ?? ""));
-      const entries = Array.isArray(d?.entries) ? d.entries : [];
-      let maxSpd: number | null = null;
-      for (const e of entries) {
-        const s = num(e?.speed);
-        if (s == null) continue;
-        if (maxSpd == null || s > maxSpd) maxSpd = s;
-      }
-      b.windKmh = maxSpd;
-    }
-  }
-
-  const sorted = Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date)).slice(0, days);
-  const out = sorted.map((b) => ({
-    date: b.date,
-    rain_mm: b.rainMm,
-    rain_probability: b.probability,
-    temp_min_c: b.tmin,
-    temp_max_c: b.tmax,
-    wind_kmh_max: b.windKmh,
-    et0_mm: estimateET0(b.tmin, b.tmax),
-  }));
-  return { ok: true, days: out };
 }
 
 // ---------------------------------------------------------------------------
@@ -512,6 +419,7 @@ Deno.serve(async (req: Request) => {
 
       const daysReq = num(body?.days) ?? 5;
       const days = Math.max(1, Math.min(Math.floor(daysReq), 7));
+      const includeDetail = body?.includeDetail === true;
       const r = await wwForecast(apiKey, loc.id, days);
       if (!r.ok) {
         return json({
@@ -519,7 +427,29 @@ Deno.serve(async (req: Request) => {
           http_status: r.status,
         }, 502);
       }
-      const norm = normaliseForecast(r.body, days);
+
+      const optionalForecasts: Record<string, any> = {};
+      if (includeDetail) {
+        const requested = Array.isArray(body?.forecastTypes)
+          ? new Set(body.forecastTypes.filter((value: unknown) => typeof value === "string"))
+          : new Set(["humidity", "relativehumidity", "weather", "precis"]);
+        const optionalTypes = new Set<string>();
+        if (requested.has("humidity") || requested.has("relativehumidity")) {
+          optionalTypes.add("humidity");
+          optionalTypes.add("relativehumidity");
+        }
+        for (const type of ["weather", "precis", "dewpoint"]) {
+          if (requested.has(type)) optionalTypes.add(type);
+        }
+        await Promise.all([...optionalTypes].map(async (type) => {
+          const result = await wwForecastType(apiKey, loc.id, days, type);
+          if (result.ok && result.body && typeof result.body === "object") {
+            optionalForecasts[type] = result.body;
+          }
+        }));
+      }
+
+      const norm = normaliseForecast(r.body, days, { includeDetail, optionalForecasts });
       if (!norm.ok) {
         return json({ error: "WillyWeather forecast could not be parsed", reason: norm.error }, 502);
       }
@@ -529,11 +459,21 @@ Deno.serve(async (req: Request) => {
         location_id: loc.id,
         location_name: loc.name,
         days: norm.days,
+        ...(includeDetail && norm.timezone ? { timezone: norm.timezone } : {}),
+        ...(includeDetail && norm.providerLocation ? { providerLocation: norm.providerLocation } : {}),
+        ...(includeDetail ? { detailAvailability: norm.detailAvailability } : {}),
       });
     }
 
     case "debug_capabilities": {
-      // System-admin / debugging only. Probes the WillyWeather API for the
+      // System-admin / debugging only. Use the established database permission
+      // contract with the caller's JWT; membership alone is not sufficient.
+      const { data: isAdmin, error: adminCheckError } = await userClient.rpc("is_system_admin");
+      if (adminCheckError || isAdmin !== true) {
+        return json({ error: "System Administrator access is required" }, 403);
+      }
+
+      // Probes the WillyWeather API for the
       // configured vineyard location to determine which forecast and
       // observational fields are actually available on the current API plan.
       // Used to decide whether Disease Risk Advisor can source hourly
@@ -566,16 +506,10 @@ Deno.serve(async (req: Request) => {
       let combined: any = null;
 
       for (const t of forecastTypes) {
-        const u = new URL(`${WW_BASE}/${encodeURIComponent(apiKey)}/locations/${encodeURIComponent(loc.id)}/weather.json`);
-        u.searchParams.set("forecasts", t);
-        u.searchParams.set("days", "2");
-        u.searchParams.set("units", "speed:km/h,temperature:c,distance:km");
-        const res = await fetch(u.toString());
-        const text = await res.text();
-        let parsed: any = null;
-        try { parsed = JSON.parse(text); } catch { /* keep raw */ }
-        const days = parsed?.forecasts?.[t]?.days;
-        const firstDay = Array.isArray(days) ? days[0] : null;
+        const probe = await wwForecastType(apiKey, loc.id, 2, t);
+        const parsed = probe.body;
+        const typeDays = parsed?.forecasts?.[t]?.days;
+        const firstDay = Array.isArray(typeDays) ? typeDays[0] : null;
         const entries = Array.isArray(firstDay?.entries) ? firstDay.entries : [];
         const entryCount = entries.length;
         const sampleEntry = entries[0] ?? null;
@@ -593,14 +527,12 @@ Deno.serve(async (req: Request) => {
         }
         forecastResults.push({
           type: t,
-          http_status: res.status,
-          ok: res.ok,
-          available: res.ok && entryCount > 0,
+          http_status: probe.status,
+          ok: probe.ok,
+          available: probe.ok && entryCount > 0,
           first_day_entry_count: entryCount,
           interval_minutes: intervalMinutes,
-          sample_entry: sampleEntry,
           sample_keys: sampleKeys,
-          error_message: res.ok ? null : (parsed?.error?.description ?? parsed?.error ?? text.slice(0, 200)),
         });
       }
 
