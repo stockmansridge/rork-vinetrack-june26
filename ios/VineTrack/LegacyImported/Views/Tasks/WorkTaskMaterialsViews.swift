@@ -31,11 +31,27 @@ struct WorkTaskMaterialsSection: View {
 
     let workTaskId: UUID?
     let vineyardId: UUID?
+    /// Optional host-owned routing used by the Work Task editor. Standalone
+    /// callers retain the section's self-contained presentation behavior.
+    let onAdd: (() -> Void)?
+    let onEdit: ((WorkTaskMaterial) -> Void)?
 
     @State private var isSelecting: Bool = false
     @State private var selectedEntry: MaterialLibraryEntry?
     @State private var editingLine: WorkTaskMaterial?
     @State private var deletingLine: WorkTaskMaterial?
+
+    init(
+        workTaskId: UUID?,
+        vineyardId: UUID?,
+        onAdd: (() -> Void)? = nil,
+        onEdit: ((WorkTaskMaterial) -> Void)? = nil
+    ) {
+        self.workTaskId = workTaskId
+        self.vineyardId = vineyardId
+        self.onAdd = onAdd
+        self.onEdit = onEdit
+    }
 
     private var lines: [WorkTaskMaterial] {
         guard let workTaskId else { return [] }
@@ -60,7 +76,9 @@ struct WorkTaskMaterialsSection: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(lines) { line in
-                        Button { editingLine = line } label: { lineRow(line) }
+                        Button {
+                            if let onEdit { onEdit(line) } else { editingLine = line }
+                        } label: { lineRow(line) }
                             .buttonStyle(.plain)
                             .swipeActions(edge: .trailing) {
                                 Button(role: .destructive) { deletingLine = line } label: {
@@ -70,7 +88,9 @@ struct WorkTaskMaterialsSection: View {
                     }
                 }
 
-                Button { isSelecting = true } label: {
+                Button {
+                    if let onAdd { onAdd() } else { isSelecting = true }
+                } label: {
                     Label("Add Material", systemImage: "plus.circle.fill")
                 }
 
@@ -142,11 +162,57 @@ struct WorkTaskMaterialsSection: View {
     }
 }
 
+nonisolated enum WorkTaskMaterialFlowPhase: Equatable, Sendable {
+    case selecting
+    case editing(MaterialLibraryEntry)
+}
+
+/// A single stable sheet for the add-material journey. Selecting a catalogue
+/// item swaps to the usage editor inside this presentation instead of dismissing
+/// one sheet and racing to present another.
+struct WorkTaskMaterialFlowView: View {
+    @Environment(MigratedDataStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+
+    let workTaskId: UUID
+    let vineyardId: UUID
+    @State private var phase: WorkTaskMaterialFlowPhase = .selecting
+
+    var body: some View {
+        switch phase {
+        case .selecting:
+            MaterialSelectorView(
+                entries: store.materialLibrary(),
+                dismissAfterSelection: false,
+                onSelect: { phase = .editing($0) }
+            )
+        case .editing(let entry):
+            WorkTaskMaterialEditorView(
+                workTaskId: workTaskId,
+                vineyardId: vineyardId,
+                entry: entry,
+                onFinished: { dismiss() }
+            )
+        }
+    }
+}
+
 struct MaterialSelectorView: View {
     @Environment(\.dismiss) private var dismiss
     let entries: [MaterialLibraryEntry]
+    let dismissAfterSelection: Bool
     let onSelect: (MaterialLibraryEntry) -> Void
     @State private var searchText: String = ""
+
+    init(
+        entries: [MaterialLibraryEntry],
+        dismissAfterSelection: Bool = true,
+        onSelect: @escaping (MaterialLibraryEntry) -> Void
+    ) {
+        self.entries = entries
+        self.dismissAfterSelection = dismissAfterSelection
+        self.onSelect = onSelect
+    }
 
     private var filtered: [MaterialLibraryEntry] {
         guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return entries }
@@ -164,7 +230,7 @@ struct MaterialSelectorView: View {
                             ForEach(filtered.filter { $0.category == category }) { entry in
                                 Button {
                                     onSelect(entry)
-                                    dismiss()
+                                    if dismissAfterSelection { dismiss() }
                                 } label: {
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(entry.name).foregroundStyle(.primary)
@@ -212,17 +278,25 @@ struct WorkTaskMaterialEditorView: View {
     let vineyardId: UUID
     let entry: MaterialLibraryEntry?
     let existingLine: WorkTaskMaterial?
+    let onFinished: (() -> Void)?
 
     @State private var quantityText: String
     @State private var unit: String
     @State private var unitCostText: String
     @State private var errorMessage: String?
 
-    init(workTaskId: UUID, vineyardId: UUID, entry: MaterialLibraryEntry? = nil, existingLine: WorkTaskMaterial? = nil) {
+    init(
+        workTaskId: UUID,
+        vineyardId: UUID,
+        entry: MaterialLibraryEntry? = nil,
+        existingLine: WorkTaskMaterial? = nil,
+        onFinished: (() -> Void)? = nil
+    ) {
         self.workTaskId = workTaskId
         self.vineyardId = vineyardId
         self.entry = entry
         self.existingLine = existingLine
+        self.onFinished = onFinished
         _quantityText = State(initialValue: existingLine.map { MaterialCostDisplay.decimal($0.quantity) } ?? "")
         _unit = State(initialValue: existingLine?.unit ?? entry?.unit ?? "Each")
         _unitCostText = State(initialValue: existingLine.map { MaterialCostDisplay.decimal($0.unitCost) } ?? entry?.defaultUnitCost.map { MaterialCostDisplay.decimal($0) } ?? "")
@@ -291,7 +365,7 @@ struct WorkTaskMaterialEditorView: View {
         } else if let entry {
             store.addWorkTaskMaterial(entry.makeTaskMaterial(workTaskId: workTaskId, vineyardId: vineyardId, quantity: quantity, unitCost: unitCost, unit: unit))
         }
-        dismiss()
+        if let onFinished { onFinished() } else { dismiss() }
     }
 }
 

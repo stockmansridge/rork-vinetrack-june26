@@ -230,6 +230,7 @@ if (providers.gradleProperty("materialCostsFocusedTests").orNull == "true") {
                 fileTree("src/test/java") {
                     include("**/material/WorkTaskMaterialCostsTest.kt")
                     include("**/WorkTaskCostRollupTest.kt")
+                    include("**/WorkTaskEditorLifecycleTest.kt")
                     include("**/WorkTaskLabourCostingTest.kt")
                     include("**/WorkTaskDeepLinkTest.kt")
                 },

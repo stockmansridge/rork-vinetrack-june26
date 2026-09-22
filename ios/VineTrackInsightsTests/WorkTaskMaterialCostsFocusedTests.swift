@@ -391,4 +391,65 @@ struct WorkTaskMaterialCostsFocusedTests {
         #expect(!result.isComplete)
         #expect(result.costPerHectare(areaHectares: 1) == nil)
     }
+
+    @Test func workTaskEditorFirstSaveRetainsStableParentAndKeepsEditorOpen() {
+        let stableID = UUID()
+        var lifecycle = WorkTaskEditorLifecycle()
+        #expect(lifecycle.saveTitle == "Save")
+        #expect(!lifecycle.childControlsEnabled)
+        #expect(!lifecycle.shouldCloseAfterAcceptedSave())
+
+        lifecycle.acceptFirstSave(taskID: stableID)
+        #expect(lifecycle.persistedTaskID == stableID)
+        #expect(lifecycle.saveTitle == "Save & Close")
+        #expect(lifecycle.childControlsEnabled)
+        #expect(lifecycle.shouldCloseAfterAcceptedSave())
+    }
+
+    @Test func existingWorkTaskEditorStartsInSaveAndCloseMode() {
+        let lifecycle = WorkTaskEditorLifecycle(persistedTaskID: taskID)
+        #expect(lifecycle.persistedTaskID == taskID)
+        #expect(lifecycle.childControlsEnabled)
+        #expect(lifecycle.saveTitle == "Save & Close")
+    }
+
+    @Test func materialSelectionTransitionsWithinOneFlowState() {
+        let entry = MaterialLibrary.merged(
+            catalogue: MaterialCatalogueSeed.items,
+            vineyardMaterials: [],
+            vineyardId: vineyardA
+        ).first { $0.baseMaterialKey == "material.trellis.gripple" }!
+        var phase = WorkTaskMaterialFlowPhase.selecting
+        #expect(phase == .selecting)
+        phase = .editing(entry)
+        #expect(phase == .editing(entry))
+    }
+
+    @Test func offlineParentAndChildrenPersistWithOneStableParentID() throws {
+        let persistence = try persistence()
+        let parent = WorkTask(id: taskID, vineyardId: vineyardA, taskType: "Wire Lifting")
+        let labour = WorkTaskLabourLine(
+            workTaskId: taskID, vineyardId: vineyardA,
+            workerCount: 2, hoursPerWorker: 4, hourlyRate: 25
+        )
+        let machine = WorkTaskMachineLine(
+            workTaskId: taskID, vineyardId: vineyardA,
+            durationHours: 2, totalMachineCost: 80
+        )
+        let material = WorkTaskMaterial(
+            workTaskId: taskID, vineyardId: vineyardA,
+            materialName: "Gripple / Wire Joiner-Tensioner",
+            quantity: 10, unitCost: Decimal(string: "1.80")!
+        )
+
+        WorkTaskRepository(persistence: persistence).saveSlice([parent], for: vineyardA)
+        WorkTaskLabourLineRepository(persistence: persistence).saveSlice([labour], for: vineyardA)
+        WorkTaskMachineLineRepository(persistence: persistence).saveSlice([machine], for: vineyardA)
+        WorkTaskMaterialRepository(persistence: persistence).saveSlice([material], for: vineyardA)
+
+        #expect(WorkTaskRepository(persistence: persistence).load(for: vineyardA).map(\.id) == [taskID])
+        #expect(WorkTaskLabourLineRepository(persistence: persistence).load(for: vineyardA).map(\.workTaskId) == [taskID])
+        #expect(WorkTaskMachineLineRepository(persistence: persistence).load(for: vineyardA).map(\.workTaskId) == [taskID])
+        #expect(WorkTaskMaterialRepository(persistence: persistence).load(forWorkTask: taskID).map(\.workTaskId) == [taskID])
+    }
 }

@@ -102,6 +102,8 @@ import com.rork.vinetrack.data.WorkTaskDeepLinkState
 import com.rork.vinetrack.data.model.PieceRateCosting
 import com.rork.vinetrack.data.model.WorkTaskCostRollup
 import com.rork.vinetrack.data.model.WorkTask
+import com.rork.vinetrack.data.model.WorkTaskEditorLifecycle
+import com.rork.vinetrack.data.model.WorkTaskEditorSaveOperation
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.WorkTaskMachineLine
 import com.rork.vinetrack.data.material.WorkTaskMaterialCosting
@@ -1378,6 +1380,12 @@ private fun WorkTaskSheet(
     var hoursText by remember { mutableStateOf(existing?.durationHours?.takeIf { it > 0 }?.let { trimHours(it) } ?: "") }
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
     var saving by remember { mutableStateOf(false) }
+    var lifecycle by remember(existing?.id) { mutableStateOf(WorkTaskEditorLifecycle(existing?.id)) }
+    var showsSavedFeedback by remember { mutableStateOf(false) }
+    var addingLabour by remember { mutableStateOf(false) }
+    var editLabour by remember { mutableStateOf<WorkTaskLabourLine?>(null) }
+    var addingMachine by remember { mutableStateOf(false) }
+    var editMachine by remember { mutableStateOf<WorkTaskMachineLine?>(null) }
     var typeMenu by remember { mutableStateOf(false) }
     var paddockMenu by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
@@ -1388,17 +1396,24 @@ private fun WorkTaskSheet(
         val iso = Instant.ofEpochMilli(dateMs).toString()
         val hours = hoursText.replace(',', '.').toDoubleOrNull() ?: 0.0
         val blockIds = selectedBlockIds.toList()
-        if (existing == null) {
-            vm.createWorkTask(
+        val currentId = lifecycle.persistedTaskId
+        if (lifecycle.saveOperation == WorkTaskEditorSaveOperation.CREATE) {
+            val mintedId = vm.createWorkTask(
                 taskType = taskType,
                 paddockIds = blockIds,
                 date = iso,
                 durationHours = hours,
                 notes = notes.trim().ifBlank { null },
-            ) { ok -> saving = false; if (ok) onSaved() }
+            ) { ok ->
+                saving = false
+                if (ok) showsSavedFeedback = true else lifecycle = lifecycle.rejectingFirstSave()
+            }
+            // The optimistic parent and stable UUID exist synchronously, even
+            // offline, so child controls can unlock without a server round-trip.
+            mintedId?.let { lifecycle = lifecycle.acceptingFirstSave(it) }
         } else {
             vm.updateWorkTask(
-                taskId = existing.id,
+                taskId = requireNotNull(currentId),
                 taskType = taskType,
                 paddockIds = blockIds,
                 date = iso,
@@ -1408,12 +1423,40 @@ private fun WorkTaskSheet(
         }
     }
 
+    LaunchedEffect(showsSavedFeedback) {
+        if (showsSavedFeedback) {
+            kotlinx.coroutines.delay(1_500)
+            showsSavedFeedback = false
+        }
+    }
+
+    LaunchedEffect(lifecycle.persistedTaskId) {
+        lifecycle.persistedTaskId?.let { taskId ->
+            vm.loadTaskLines(taskId)
+            if (vm.materialCostsAccess().isAllowed) {
+                vm.loadMaterialLibrary()
+                vm.loadTaskMaterials(taskId)
+            }
+        }
+    }
+
+    val currentTask = lifecycle.persistedTaskId?.let { id -> state.workTasks.firstOrNull { it.id == id } }
+    val taskWorkDate = currentTask?.date ?: Instant.ofEpochMilli(dateMs).toString()
+    val labourLines = lifecycle.persistedTaskId?.let { id -> state.taskLabourLines.filter { it.workTaskId == id }.sortedBy { it.workDate } }.orEmpty()
+    val machineLines = lifecycle.persistedTaskId?.let { id -> state.taskMachineLines.filter { it.workTaskId == id }.sortedBy { it.workDate } }.orEmpty()
+
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
+            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(if (existing == null) "Log a task" else "Edit task", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(if (!lifecycle.hasPersistedTask) "Log a task" else "Edit task", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary, modifier = Modifier.weight(1f))
+                if (showsSavedFeedback) {
+                    Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = VineColors.Success, modifier = Modifier.size(18.dp))
+                    Text("  Saved", color = VineColors.Success, fontWeight = FontWeight.SemiBold)
+                }
+            }
 
             // Task type
             ExposedDropdownMenuBox(expanded = typeMenu, onExpandedChange = { typeMenu = it }) {
@@ -1501,6 +1544,74 @@ private fun WorkTaskSheet(
                 modifier = Modifier.fillMaxWidth().height(100.dp),
             )
 
+            if (!lifecycle.childControlsEnabled) {
+                VineyardCard {
+                    Text("Labour", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    Text("Save this task first to add labour lines.", color = vine.textSecondary, fontSize = 13.sp)
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp), color = vine.cardBorder)
+                    Text("Materials", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    Text("Save this task first to add materials.", color = vine.textSecondary, fontSize = 13.sp)
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp), color = vine.cardBorder)
+                    Text("Machine Work", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    Text("Save this task first to add machine work.", color = vine.textSecondary, fontSize = 13.sp)
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SectionHeader("Labour", onLight = true)
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = { addingLabour = true }) {
+                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Text("  Add")
+                        }
+                    }
+                    VineyardCard {
+                        if (labourLines.isEmpty()) {
+                            Text("No labour resources added", color = vine.textSecondary, fontSize = 14.sp)
+                        } else {
+                            labourLines.forEachIndexed { index, line ->
+                                if (index > 0) DividerWT(vine.cardBorder)
+                                WorkTaskLabourLineRow(
+                                    line = line,
+                                    categoryName = state.operatorCategories.firstOrNull { it.id == line.operatorCategoryId }?.displayName,
+                                    canViewCosting = true,
+                                    onClick = { editLabour = line },
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SectionHeader("Machine Work", onLight = true)
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = { addingMachine = true }) {
+                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Text("  Add")
+                        }
+                    }
+                    VineyardCard {
+                        if (machineLines.isEmpty()) {
+                            Text("No machine resources added", color = vine.textSecondary, fontSize = 14.sp)
+                        } else {
+                            machineLines.forEachIndexed { index, line ->
+                                if (index > 0) DividerWT(vine.cardBorder)
+                                MachineLineRow(
+                                    line = line,
+                                    equipmentName = line.displayEquipment(state.machines),
+                                    onClick = { editMachine = line },
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (vm.materialCostsAccess().isAllowed) {
+                    WorkTaskMaterialCostsSection(vm = vm, state = state, taskId = lifecycle.persistedTaskId!!)
+                }
+            }
+
             Button(
                 onClick = { save() },
                 enabled = !saving && taskType.isNotBlank(),
@@ -1510,10 +1621,48 @@ private fun WorkTaskSheet(
                 if (saving) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 } else {
-                    Text(if (existing == null) "Save task" else "Save changes")
+                    Text(lifecycle.saveTitle)
                 }
             }
         }
+    }
+
+    if ((addingLabour || editLabour != null) && lifecycle.persistedTaskId != null) {
+        val editingLine = editLabour
+        WorkTaskLabourLineSheet(
+            operatorCategories = state.operatorCategories,
+            existing = editingLine,
+            canViewCosting = true,
+            isBusy = state.taskLineBusy,
+            onSave = { lineId, categoryId, workerType, workerCount, hoursPerWorker, hourlyRate, lineNotes ->
+                vm.saveLabourLine(
+                    lineId = lineId,
+                    taskId = lifecycle.persistedTaskId!!,
+                    workDate = editingLine?.workDate ?: taskWorkDate,
+                    operatorCategoryId = categoryId,
+                    workerType = workerType,
+                    workerCount = workerCount,
+                    hoursPerWorker = hoursPerWorker,
+                    hourlyRate = hourlyRate,
+                    notes = lineNotes,
+                ) { ok -> if (ok) { addingLabour = false; editLabour = null } }
+            },
+            onDelete = { lineId ->
+                vm.deleteLabourLine(lineId) { ok -> if (ok) { addingLabour = false; editLabour = null } }
+            },
+            onDismiss = { addingLabour = false; editLabour = null },
+        )
+    }
+
+    if ((addingMachine || editMachine != null) && lifecycle.persistedTaskId != null) {
+        MachineLineSheet(
+            vm = vm,
+            state = state,
+            taskId = lifecycle.persistedTaskId!!,
+            defaultDate = taskWorkDate,
+            existing = editMachine,
+            onDismiss = { addingMachine = false; editMachine = null },
+        )
     }
 
     if (showDatePicker) {

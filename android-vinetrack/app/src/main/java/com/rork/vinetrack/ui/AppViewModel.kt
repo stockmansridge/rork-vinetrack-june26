@@ -1771,6 +1771,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * then reconciles the returned server row into state.
      */
     private val workTaskCreateSync = WorkTaskCreateSync(workTaskRepo, pendingWrites)
+    /** Parent creates currently being attempted online; child writes queue behind them. */
+    private val inFlightWorkTaskCreates = mutableSetOf<String>()
+
+    private fun isWorkTaskParentPending(taskId: String): Boolean =
+        taskId in inFlightWorkTaskCreates || workTaskCreateSync.hasPendingCreate(taskId)
 
     /**
      * Replay coordinator for work-task HEADER edits only (Android Stage J-2).
@@ -9186,6 +9191,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
         // Optimistic insert at the top — the operator sees the task straight away.
         _ui.update { it.copy(workTasks = listOf(optimistic) + it.workTasks, workTaskError = null) }
+        inFlightWorkTaskCreates.add(id)
+        // Persist a crash-safe parent marker before any network attempt. Online
+        // acknowledgement removes it; children created meanwhile queue behind it.
+        workTaskCreateSync.enqueue(
+            id, vineyardId, paddockId, paddockName, date, trimmedType,
+            durationHours, trimmedNotes, clientUpdatedAt,
+            isFinalized = markCompleted, pruningActivityId = pruningActivityId,
+        )
 
         // Known-offline: queue the create marker without touching the network.
         if (!_ui.value.isOnline) {
@@ -9195,6 +9208,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // The labour line queues behind the header for the same reason.
             labourSeed?.let { seedLabourLine(id, it) }
             _ui.update { it.copy(workTaskError = "Work task saved offline — will sync when connection is available.") }
+            inFlightWorkTaskCreates.remove(id)
             onResult(true)
             return id
         }
@@ -9251,19 +9265,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (markCompleted) {
                     setWorkTaskComplete(id, true)
                 }
+                inFlightWorkTaskCreates.remove(id)
+                workTaskCreateSync.cancelPendingCreate(id)
+                // Child rows entered while this insert was in flight were queued
+                // against the same UUID. Parent now exists, so replay them now.
+                replayPendingWorkTaskPaddocks()
+                replayPendingWorkTaskLabour()
+                replayPendingWorkTaskMachine()
+                replayPendingWorkTaskMaterials()
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
+                inFlightWorkTaskCreates.remove(id)
+                workTaskCreateSync.cancelPendingCreate(id)
                 _ui.update { it.copy(workTaskBusy = false) }
                 onUnauthorized("createWorkTask"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll the optimistic row
                 // back, surface, don't queue as retryable.
+                inFlightWorkTaskCreates.remove(id)
+                workTaskCreateSync.cancelPendingCreate(id)
                 _ui.update { st -> st.copy(workTaskBusy = false, workTasks = st.workTasks.filterNot { it.id == id }, workTaskError = friendlyWriteError(e.code)) }
                 onResult(false)
             } catch (e: Exception) {
                 // Transient network failure — keep the optimistic row and queue a
                 // create marker for automatic replay rather than rolling back.
                 workTaskCreateSync.enqueue(id, vineyardId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, clientUpdatedAt, isFinalized = markCompleted, pruningActivityId = pruningActivityId)
+                inFlightWorkTaskCreates.remove(id)
                 // Join rows queue behind the now-pending header create.
                 reconcileWorkTaskPaddocks(id, vineyardId, paddockIds)
                 labourSeed?.let { seedLabourLine(id, it) }
@@ -10076,7 +10103,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
 
-        if (session.accessToken == null || !_ui.value.isOnline) {
+        if (session.accessToken == null || !_ui.value.isOnline || isWorkTaskParentPending(taskId)) {
             queueOffline()
             onResult(true)
             return
@@ -10363,10 +10390,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
 
-        // Known-offline: queue without touching the network.
-        if (!_ui.value.isOnline) {
+        // Queue while offline OR while the optimistic parent insert is still in
+        // flight. The existing replay gate guarantees parent-before-child order.
+        if (!_ui.value.isOnline || isWorkTaskParentPending(taskId)) {
             queueOffline()
-            _ui.update { it.copy(taskLineError = "Labour line saved offline — will sync when connection is available.") }
+            _ui.update { it.copy(taskLineError = "Labour line saved locally — will sync after its Work Task.") }
             onResult(true)
             return
         }
@@ -10563,10 +10591,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
 
-        // Known-offline: queue without touching the network.
-        if (!_ui.value.isOnline) {
+        // Queue while offline OR while the optimistic parent insert is still in
+        // flight. The existing replay gate guarantees parent-before-child order.
+        if (!_ui.value.isOnline || isWorkTaskParentPending(taskId)) {
             queueOffline()
-            _ui.update { it.copy(taskLineError = "Machine line saved offline — will sync when connection is available.") }
+            _ui.update { it.copy(taskLineError = "Machine line saved locally — will sync after its Work Task.") }
             onResult(true)
             return
         }

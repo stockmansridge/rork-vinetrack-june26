@@ -117,6 +117,26 @@ class WorkTaskCreateSync(
         )
     }
 
+    /** True while this stable parent id still has an unresolved queued create. */
+    fun hasPendingCreate(id: String): Boolean = pending.list().any {
+        it.entityType == PendingEntityType.WORK_TASK &&
+            it.opType == PendingOpType.CREATE &&
+            it.clientId == id &&
+            it.status != PendingWriteStatus.SYNCED
+    }
+
+    /** Remove the crash-safety marker after an online insert is acknowledged. */
+    fun cancelPendingCreate(id: String) {
+        pending.list()
+            .filter {
+                it.entityType == PendingEntityType.WORK_TASK &&
+                    it.opType == PendingOpType.CREATE &&
+                    it.clientId == id &&
+                    it.status != PendingWriteStatus.SYNCED
+            }
+            .forEach { pending.remove(it.id) }
+    }
+
     /**
      * Fold a later edit / finalize change into a still-pending create (Android
      * Stage J-2). When the operator edits (or completes/reopens) a work task

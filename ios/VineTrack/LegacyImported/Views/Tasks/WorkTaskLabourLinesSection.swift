@@ -22,6 +22,10 @@ struct WorkTaskLabourLinesSection: View {
     let canEdit: Bool
     /// Non-nil lets the ONE add/edit sheet choose Hourly or Piece Rate.
     let costingContext: WorkTaskCostingContext?
+    /// Optional host-owned presentation. When supplied, this reusable section
+    /// emits routes instead of attaching competing sheets to its row hierarchy.
+    let onAdd: (() -> Void)?
+    let onEdit: ((WorkTaskLabourLine) -> Void)?
 
     @State private var showAddLine: Bool = false
     @State private var editingLine: WorkTaskLabourLine?
@@ -31,13 +35,17 @@ struct WorkTaskLabourLinesSection: View {
         vineyardId: UUID,
         defaultWorkDate: Date = Date(),
         canEdit: Bool = true,
-        costingContext: WorkTaskCostingContext? = nil
+        costingContext: WorkTaskCostingContext? = nil,
+        onAdd: (() -> Void)? = nil,
+        onEdit: ((WorkTaskLabourLine) -> Void)? = nil
     ) {
         self.workTaskId = workTaskId
         self.vineyardId = vineyardId
         self.defaultWorkDate = defaultWorkDate
         self.canEdit = canEdit
         self.costingContext = costingContext
+        self.onAdd = onAdd
+        self.onEdit = onEdit
     }
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
@@ -76,7 +84,7 @@ struct WorkTaskLabourLinesSection: View {
                 ForEach(lines) { line in
                     if canEdit {
                         Button {
-                            editingLine = line
+                            if let onEdit { onEdit(line) } else { editingLine = line }
                         } label: {
                             labourLineRow(line)
                         }
@@ -89,7 +97,7 @@ struct WorkTaskLabourLinesSection: View {
             }
             if canEdit {
                 Button {
-                    showAddLine = true
+                    if let onAdd { onAdd() } else { showAddLine = true }
                 } label: {
                     Label(addButtonTitle, systemImage: "plus.circle.fill")
                         .font(.subheadline.weight(.semibold))

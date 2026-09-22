@@ -31,12 +31,28 @@ struct AddEditWorkTaskView: View {
     @State private var editingMachineLine: WorkTaskMachineLine?
     @State private var showLinkTripPicker: Bool = false
     @State private var tripToUnlink: Trip?
+    @State private var persistedTask: WorkTask?
+    @State private var lifecycle: WorkTaskEditorLifecycle
+    @State private var childRoute: WorkTaskChildRoute?
+    @State private var showsSavedFeedback: Bool = false
 
     init(existingTask: WorkTask? = nil) {
         self.existingTask = existingTask
+        _persistedTask = State(initialValue: existingTask)
+        _lifecycle = State(initialValue: WorkTaskEditorLifecycle(persistedTaskID: existingTask?.id))
     }
 
-    private var isEditing: Bool { existingTask != nil }
+    /// The locally accepted parent is authoritative for this editor session.
+    /// A matching store row is preferred so optimistic child and metadata updates
+    /// paint immediately without changing the stable parent identity.
+    private var currentTask: WorkTask? {
+        guard let persistedTask else { return nil }
+        return store.workTasks.first(where: { $0.id == persistedTask.id }) ?? persistedTask
+    }
+
+    private var currentTaskID: UUID? { lifecycle.persistedTaskID }
+    private var hasPersistedTask: Bool { lifecycle.hasPersistedTask }
+    private var isEditing: Bool { hasPersistedTask }
     private var canDelete: Bool { accessControl?.canDelete ?? false }
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
@@ -135,7 +151,7 @@ struct AddEditWorkTaskView: View {
     /// Manual machine/tractor work lines recorded under this task (when no GPS
     /// trip exists). Only available once the task has been saved.
     private var machineLines: [WorkTaskMachineLine] {
-        guard let id = existingTask?.id else { return [] }
+        guard let id = currentTaskID else { return [] }
         return store.workTaskMachineLines
             .filter { $0.workTaskId == id }
             .sorted { $0.workDate > $1.workDate }
@@ -146,7 +162,7 @@ struct AddEditWorkTaskView: View {
     /// Android. Displayed with the stored rate snapshot; never recalculated
     /// from a worker type's current rate.
     private var labourLines: [WorkTaskLabourLine] {
-        guard let id = existingTask?.id else { return [] }
+        guard let id = currentTaskID else { return [] }
         return store.workTaskLabourLines
             .filter { $0.workTaskId == id }
             .sorted { $0.workDate > $1.workDate }
@@ -175,11 +191,11 @@ struct AddEditWorkTaskView: View {
     }
 
     /// True when this task is costed per vine rather than per hour (sql/188).
-    private var isPieceRateTask: Bool { existingTask?.isPieceRate ?? false }
+    private var isPieceRateTask: Bool { currentTask?.isPieceRate ?? false }
 
     /// The task's HISTORICAL piece-rate cost (snapshot vine count × agreed
     /// rate). Never recalculated from today's block rows.
-    private var pieceRateCost: Double? { existingTask?.pieceRateCost }
+    private var pieceRateCost: Double? { currentTask?.pieceRateCost }
 
     /// Labour cost shown in the summary.
     ///
@@ -219,7 +235,7 @@ struct AddEditWorkTaskView: View {
 
     /// Successful GPS trips grouped under this task via `trips.work_task_id`.
     private var linkedTripCount: Int {
-        guard let id = existingTask?.id else { return 0 }
+        guard let id = currentTaskID else { return 0 }
         return store.trips.filter { $0.workTaskId == id }.count
     }
 
@@ -236,7 +252,7 @@ struct AddEditWorkTaskView: View {
     /// Estimated cost of linked GPS trips, summed from already-synced
     /// `trip_cost_allocations`. Available client-side, so no deferral needed.
     private var linkedTripCost: Double {
-        guard let id = existingTask?.id else { return 0 }
+        guard let id = currentTaskID else { return 0 }
         let linkedTripIds = Set(store.trips.filter { $0.workTaskId == id }.map { $0.id })
         guard !linkedTripIds.isEmpty else { return 0 }
         return store.tripCostAllocations
@@ -249,7 +265,7 @@ struct AddEditWorkTaskView: View {
     /// they exist, the legacy resource costing otherwise — so a task can never
     /// have its labour counted twice.
     private var combinedCostRollup: WorkTaskCostRollup.Result {
-        let materialCosts = existingTask.map { store.materialTotal(forWorkTask: $0.id) } ?? 0
+        let materialCosts = currentTaskID.map { store.materialTotal(forWorkTask: $0) } ?? 0
         let labourComplete = isPieceRateTask ? pieceRateCost != nil : labourLines.allSatisfy {
             WorkTaskLabourCosting.lineCost($0) != nil
         }
@@ -269,7 +285,7 @@ struct AddEditWorkTaskView: View {
     /// Successful GPS trips grouped under this task, newest first. Reads the
     /// live store slice so the list refreshes as soon as a link/unlink applies.
     private var linkedTrips: [Trip] {
-        guard let id = existingTask?.id else { return [] }
+        guard let id = currentTaskID else { return [] }
         return store.trips
             .filter { $0.workTaskId == id }
             .sorted { $0.startTime > $1.startTime }
@@ -418,11 +434,13 @@ struct AddEditWorkTaskView: View {
                 // person-hours and cost. Rendered through THE standard shared
                 // section, which the Pruning Activity editor also uses.
                 Section {
-                    if let taskId = existingTask?.id, let vineyardId = store.selectedVineyardId {
+                    if let taskId = currentTaskID, let vineyardId = store.selectedVineyardId {
                         WorkTaskLabourLinesSection(
                             workTaskId: taskId,
                             vineyardId: vineyardId,
-                            defaultWorkDate: date
+                            defaultWorkDate: date,
+                            onAdd: { childRoute = .addLabour },
+                            onEdit: { childRoute = .editLabour($0.id) }
                         )
                     } else {
                         Text("Save this task first to add labour lines.")
@@ -530,7 +548,12 @@ struct AddEditWorkTaskView: View {
                 }
 
                 if materialCostsAllowed {
-                    WorkTaskMaterialsSection(workTaskId: existingTask?.id, vineyardId: store.selectedVineyardId)
+                    WorkTaskMaterialsSection(
+                        workTaskId: currentTaskID,
+                        vineyardId: store.selectedVineyardId,
+                        onAdd: { childRoute = .addMaterial },
+                        onEdit: { childRoute = .editMaterial($0.id) }
+                    )
                 }
 
                 operationalSummarySection
@@ -564,20 +587,27 @@ struct AddEditWorkTaskView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
-                if let task = existingTask {
+                if let taskID = currentTaskID {
                     ToolbarItem(placement: .principal) {
-                        RecordSyncBadge(state: .forWorkTask(task.id, taskSync: workTaskSync))
+                        if showsSavedFeedback {
+                            Label("Saved", systemImage: "checkmark.circle.fill")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(VineyardTheme.leafGreen)
+                                .transition(.opacity)
+                        } else {
+                            RecordSyncBadge(state: .forWorkTask(taskID, taskSync: workTaskSync))
+                        }
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { saveTask() }
+                    Button(lifecycle.saveTitle) { saveTask() }
                         .fontWeight(.semibold)
                         .disabled(taskType.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
             .alert("Delete Task", isPresented: $showDelete) {
                 Button("Delete", role: .destructive) {
-                    if let t = existingTask {
+                    if let t = currentTask {
                         store.deleteWorkTask(t.id)
                         Task { await workTaskSync.syncForSelectedVineyard() }
                     }
@@ -614,12 +644,15 @@ struct AddEditWorkTaskView: View {
                 Text("The trip is kept. Only its link to this task is removed.")
             }
             .sheet(isPresented: $showAddMachineLine) {
-                if let id = existingTask?.id, let vid = store.selectedVineyardId {
+                if let id = currentTaskID, let vid = store.selectedVineyardId {
                     AddEditWorkTaskMachineLineView(workTaskId: id, vineyardId: vid)
                 }
             }
             .sheet(item: $editingMachineLine) { line in
                 AddEditWorkTaskMachineLineView(workTaskId: line.workTaskId, vineyardId: line.vineyardId, existingLine: line)
+            }
+            .sheet(item: $childRoute) { route in
+                childDestination(route)
             }
             .sheet(isPresented: $showWorkerTypes) {
                 NavigationStack {
@@ -682,7 +715,7 @@ struct AddEditWorkTaskView: View {
                 }
                 if materialCostsAllowed {
                     LabeledContent("Material Cost") {
-                        Text(MaterialCostDisplay.currency(existingTask.map { store.materialTotal(forWorkTask: $0.id) } ?? 0, code: fmt.currencyCode))
+                        Text(MaterialCostDisplay.currency(currentTaskID.map { store.materialTotal(forWorkTask: $0) } ?? 0, code: fmt.currencyCode))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -788,7 +821,7 @@ struct AddEditWorkTaskView: View {
     }
 
     private func link(_ trip: Trip) {
-        guard let taskId = existingTask?.id else { return }
+        guard let taskId = currentTaskID else { return }
         Task { await tripSync.setWorkTaskLink(tripId: trip.id, workTaskId: taskId) }
     }
 
@@ -984,7 +1017,7 @@ struct AddEditWorkTaskView: View {
 
     private func loadIfEditing() {
         logBlockPickerDiagnosticsIfEmpty()
-        if let t = existingTask {
+        if let t = currentTask {
             #if DEBUG
             // Labour-line trace: which task is selected, how many labour rows
             // the store holds, and how many match this task id.
@@ -1044,7 +1077,9 @@ struct AddEditWorkTaskView: View {
         let primaryBlockId = orderedSelected.first?.id
         let blockNames = orderedSelected.map { $0.name }.joined(separator: ", ")
 
-        var task = existingTask ?? WorkTask()
+        let wasPersisted = hasPersistedTask
+        var task = currentTask ?? WorkTask()
+        task.vineyardId = store.selectedVineyardId ?? task.vineyardId
         task.date = date
         task.taskType = trimmed
         task.paddockId = primaryBlockId
@@ -1082,11 +1117,13 @@ struct AddEditWorkTaskView: View {
         """)
         #endif
 
-        if isEditing {
+        if wasPersisted {
             store.updateWorkTask(task)
         } else {
             store.addWorkTask(task)
         }
+        persistedTask = task
+        if !wasPersisted { lifecycle.acceptFirstSave(taskID: task.id) }
 
         reconcileBlockLinks(for: task.id)
 
@@ -1095,7 +1132,50 @@ struct AddEditWorkTaskView: View {
             await workTaskSync.syncForSelectedVineyard()
             await workTaskPaddockSync.syncForSelectedVineyard()
         }
-        dismiss()
+        if wasPersisted && lifecycle.shouldCloseAfterAcceptedSave() {
+            dismiss()
+        } else {
+            withAnimation { showsSavedFeedback = true }
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                withAnimation { showsSavedFeedback = false }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func childDestination(_ route: WorkTaskChildRoute) -> some View {
+        if let taskID = currentTaskID, let vineyardID = store.selectedVineyardId {
+            switch route {
+            case .addLabour:
+                AddEditWorkTaskLabourLineView(
+                    workTaskId: taskID,
+                    vineyardId: vineyardID,
+                    defaultWorkDate: date
+                )
+            case .editLabour(let lineID):
+                if let line = store.workTaskLabourLines.first(where: { $0.id == lineID }) {
+                    AddEditWorkTaskLabourLineView(
+                        workTaskId: taskID,
+                        vineyardId: vineyardID,
+                        existingLine: line,
+                        defaultWorkDate: line.workDate
+                    )
+                }
+            case .addMaterial:
+                WorkTaskMaterialFlowView(workTaskId: taskID, vineyardId: vineyardID)
+            case .editMaterial(let lineID):
+                if let line = store.workTaskMaterials.first(where: { $0.id == lineID }) {
+                    WorkTaskMaterialEditorView(
+                        workTaskId: taskID,
+                        vineyardId: vineyardID,
+                        existingLine: line
+                    )
+                }
+            }
+        } else {
+            ContentUnavailableView("Save this task first", systemImage: "tray.and.arrow.down")
+        }
     }
 
     /// Reconciles work_task_paddocks join rows against the selected block set:
@@ -1127,6 +1207,22 @@ struct AddEditWorkTaskView: View {
                     areaHa: area
                 ))
             }
+        }
+    }
+}
+
+private enum WorkTaskChildRoute: Identifiable {
+    case addLabour
+    case editLabour(UUID)
+    case addMaterial
+    case editMaterial(UUID)
+
+    var id: String {
+        switch self {
+        case .addLabour: return "add-labour"
+        case .editLabour(let id): return "edit-labour-\(id.uuidString)"
+        case .addMaterial: return "add-material"
+        case .editMaterial(let id): return "edit-material-\(id.uuidString)"
         }
     }
 }
