@@ -9,7 +9,9 @@ struct AddEditWorkTaskView: View {
     @Environment(WorkTaskMachineLineSyncService.self) private var workTaskMachineLineSync
     @Environment(TripSyncService.self) private var tripSync
     @Environment(PaddockSyncService.self) private var paddockSync
+    @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(\.accessControl) private var accessControl
+    @Environment(BackendAccessControl.self) private var backendAccessControl
     @Environment(\.dismiss) private var dismiss
 
     let existingTask: WorkTask?
@@ -40,6 +42,15 @@ struct AddEditWorkTaskView: View {
     private var fmt: RegionFormatter { store.settings.regionFormatter }
     private var tz: TimeZone { store.settings.resolvedTimeZone }
     private var canViewFinancials: Bool { accessControl?.canViewFinancials ?? false }
+    private var materialCostsAllowed: Bool {
+        WorkTaskMaterialCostsAccess.resolve(
+            isAuthenticated: auth.isSignedIn,
+            isResolving: systemAdmin.isLoading || systemAdmin.lastLoadedAt == nil,
+            isSystemAdmin: systemAdmin.isSystemAdmin,
+            selectedVineyardID: store.selectedVineyardId,
+            isMemberOfSelectedVineyard: backendAccessControl.currentRole != nil
+        ).isAllowed
+    }
 
     private var durationHours: Double {
         Double(durationText.replacingOccurrences(of: ",", with: ".")) ?? 0
@@ -237,8 +248,10 @@ struct AddEditWorkTaskView: View {
     /// cost. Labour contributes ONCE via [displayLabourCost] — labour lines when
     /// they exist, the legacy resource costing otherwise — so a task can never
     /// have its labour counted twice.
-    private var combinedTotalCost: Double {
-        displayLabourCost + manualMachineCharge + manualMachineFuel + linkedTripCost
+    private var combinedTotalCost: Decimal {
+        let existingCosts = Decimal(string: String(displayLabourCost + manualMachineCharge + manualMachineFuel + linkedTripCost)) ?? 0
+        let materialCosts = existingTask.map { store.materialTotal(forWorkTask: $0.id) } ?? 0
+        return existingCosts + (materialCostsAllowed ? materialCosts : 0)
     }
 
     /// Successful GPS trips grouped under this task, newest first. Reads the
@@ -497,6 +510,10 @@ struct AddEditWorkTaskView: View {
                     }
                 }
 
+                if materialCostsAllowed {
+                    WorkTaskMaterialsSection(workTaskId: existingTask?.id, vineyardId: store.selectedVineyardId)
+                }
+
                 operationalSummarySection
 
                 linkedTripsSection
@@ -644,11 +661,17 @@ struct AddEditWorkTaskView: View {
                     Text(fmt.formatCurrency(linkedTripCost))
                         .foregroundStyle(.secondary)
                 }
+                if materialCostsAllowed {
+                    LabeledContent("Material Cost") {
+                        Text(MaterialCostDisplay.currency(existingTask.map { store.materialTotal(forWorkTask: $0.id) } ?? 0, code: fmt.currencyCode))
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 HStack {
                     Text("Combined Total")
                         .font(.headline)
                     Spacer()
-                    Text(fmt.formatCurrency(combinedTotalCost))
+                    Text(MaterialCostDisplay.currency(combinedTotalCost, code: fmt.currencyCode))
                         .font(.title3.weight(.bold))
                         .foregroundStyle(VineyardTheme.leafGreen)
                 }

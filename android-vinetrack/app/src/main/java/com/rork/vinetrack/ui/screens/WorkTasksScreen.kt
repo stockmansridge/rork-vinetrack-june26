@@ -103,6 +103,7 @@ import com.rork.vinetrack.data.model.PieceRateCosting
 import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.WorkTaskMachineLine
+import com.rork.vinetrack.data.material.WorkTaskMaterialCosting
 import com.rork.vinetrack.data.model.builtInWorkTaskTypes
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
@@ -120,6 +121,8 @@ import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.text.SimpleDateFormat
 import java.time.Instant
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.util.Date
 import java.util.Locale
 
@@ -880,8 +883,16 @@ private fun WorkTaskDetailView(
     var addingMachine by remember { mutableStateOf(false) }
     var showWorkerTypes by remember { mutableStateOf(false) }
 
+    val materialCostsAllowed = vm.materialCostsAccess().isAllowed
+
     // Load the costing lines for this task whenever it opens.
-    LaunchedEffect(taskId) { vm.loadTaskLines(taskId) }
+    LaunchedEffect(taskId, materialCostsAllowed) {
+        vm.loadTaskLines(taskId)
+        if (materialCostsAllowed) {
+            vm.loadMaterialLibrary()
+            vm.loadTaskMaterials(taskId)
+        }
+    }
 
     LaunchedEffect(task == null) { if (task == null) onBack() }
     if (task == null) return
@@ -916,7 +927,13 @@ private fun WorkTaskDetailView(
         if (task.isPieceRate) PieceRateCosting.costPerVine(effectiveLabour, task.pieceVineCount) else null
     }
     val machineTotal = remember(machineLines) { machineLines.sumOf { it.resolvedCost } }
-    val overallTotal = labourTotal + machineTotal
+    val materialLines = remember(state.taskMaterials, taskId) { WorkTaskMaterialCosting.lines(state.taskMaterials, taskId) }
+    val materialTotal = remember(materialLines) { WorkTaskMaterialCosting.total(materialLines) }
+    val overallTotal = remember(labourTotal, machineTotal, materialTotal, materialCostsAllowed) {
+        BigDecimal.valueOf(labourTotal).add(BigDecimal.valueOf(machineTotal))
+            .add(if (materialCostsAllowed) materialTotal else BigDecimal.ZERO)
+            .setScale(2, RoundingMode.HALF_UP)
+    }
     val areaHa = remember(state.paddocks, task.paddockId) {
         task.paddockId?.let { pid -> state.paddocks.firstOrNull { it.id == pid }?.areaHectares }?.takeIf { it > 0 }
     }
@@ -1100,8 +1117,12 @@ private fun WorkTaskDetailView(
                 }
             }
 
+            if (materialCostsAllowed) {
+                WorkTaskMaterialCostsSection(vm = vm, state = state, taskId = taskId)
+            }
+
             // Cost roll-up.
-            if (overallTotal > 0 || labourLines.isNotEmpty() || machineLines.isNotEmpty() || task.isPieceRate) {
+            if (overallTotal > BigDecimal.ZERO || labourLines.isNotEmpty() || machineLines.isNotEmpty() || materialLines.isNotEmpty() || task.isPieceRate) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     SectionHeader("Cost summary", onLight = true)
                     VineyardCard {
@@ -1117,8 +1138,12 @@ private fun WorkTaskDetailView(
                         }
                         DividerWT(vine.cardBorder)
                         CostRow("Machinery", formatCurrency(machineTotal), vine.textSecondary, vine.textPrimary)
+                        if (materialCostsAllowed) {
+                            DividerWT(vine.cardBorder)
+                            CostRow("Materials", materialCurrency(materialTotal, fmt), vine.textSecondary, vine.textPrimary)
+                        }
                         DividerWT(vine.cardBorder)
-                        CostRow("Total", formatCurrency(overallTotal), vine.textPrimary, VineColors.PrimaryAccent, emphasise = true)
+                        CostRow("Total", materialCurrency(overallTotal, fmt), vine.textPrimary, VineColors.PrimaryAccent, emphasise = true)
                         if (areaHa != null) {
                             DividerWT(vine.cardBorder)
                             // Both halves are regionalised: the cost is re-based over the
@@ -1126,7 +1151,7 @@ private fun WorkTaskDetailView(
                             // acre vineyard never reads a per-hectare figure labelled /ac.
                             CostRow(
                                 "Cost / ${fmt.areaUnitAbbreviation}",
-                                "${fmt.formatCostPerArea(overallTotal / areaHa)} · ${fmt.formatAreaCompact(areaHa)}",
+                                "${materialCurrency(overallTotal.divide(BigDecimal.valueOf(fmt.areaValue(areaHa)), 2, RoundingMode.HALF_UP), fmt)}/${fmt.areaUnitAbbreviation} · ${fmt.formatAreaCompact(areaHa)}",
                                 vine.textSecondary,
                                 vine.textPrimary,
                             )

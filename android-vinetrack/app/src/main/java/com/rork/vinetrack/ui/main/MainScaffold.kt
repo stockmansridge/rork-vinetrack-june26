@@ -92,6 +92,7 @@ import com.rork.vinetrack.ui.screens.UnifiedPinComposerScreen
 import com.rork.vinetrack.ui.screens.VineyardLocationScreen
 import com.rork.vinetrack.ui.screens.WeatherDataScreen
 import com.rork.vinetrack.ui.screens.WorkTasksScreen
+import com.rork.vinetrack.ui.screens.MaterialLibraryScreen
 import com.rork.vinetrack.ui.screens.YieldScreen
 
 @Composable
@@ -516,6 +517,7 @@ private fun ToolHost(
         )
         ToolRoute.Blocks -> BlocksScreen(vm, state, modifier, onBack = onBack, onOpenTool = onOpenTool)
         ToolRoute.WorkTasks -> WorkTasksScreen(vm, state, modifier, onBack = onBack)
+        ToolRoute.MaterialLibrary -> MaterialLibraryScreen(vm, state, modifier, onBack = onBack)
         ToolRoute.Growth -> GrowthScreen(vm, state, modifier, onBack, onOpenStageImages = { onOpenTool(ToolRoute.GrowthStageImages) })
         ToolRoute.GrowthStageImages -> GrowthStageImagesScreen(vm, state, modifier, onBack = onBack)
         ToolRoute.GrowthStageConfig -> GrowthStageConfigScreen(modifier, onBack = onBack)

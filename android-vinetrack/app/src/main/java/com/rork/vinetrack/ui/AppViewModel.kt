@@ -724,6 +724,9 @@ data class AppUiState(
      * materials and therefore costs $0 — no row is needed to say so.
      */
     val taskMaterials: List<WorkTaskMaterial> = emptyList(),
+    /** Material library refresh state; cached data remains usable after failure. */
+    val materialLibraryLoading: Boolean = false,
+    val materialLibraryError: String? = null,
     /** Work task id the loaded lines belong to (null when nothing is open). */
     val taskLinesTaskId: String? = null,
     val taskLinesLoading: Boolean = false,
@@ -9939,13 +9942,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 materialCatalogue = MaterialCatalogueSeed.resolve(server = null, cached = cachedCatalogue),
                 vineyardMaterials = materialStore.loadVineyardMaterials().filter { m -> m.vineyardId == vineyardId },
+                materialLibraryLoading = session.accessToken != null && it.isOnline,
+                materialLibraryError = null,
             )
         }
         if (session.accessToken == null || !_ui.value.isOnline) return
         viewModelScope.launch {
-            val serverCatalogue = runCatching { materialRepo.listCatalogue() }.getOrNull()
+            val catalogueResult = runCatching { materialRepo.listCatalogue() }
+            val libraryResult = runCatching { materialRepo.listVineyardMaterials(vineyardId) }
+            val serverCatalogue = catalogueResult.getOrNull()
             if (!serverCatalogue.isNullOrEmpty()) materialStore.saveCatalogue(serverCatalogue)
-            val serverLibrary = runCatching { materialRepo.listVineyardMaterials(vineyardId) }.getOrNull()
+            val serverLibrary = libraryResult.getOrNull()
             if (serverLibrary != null) {
                 val others = materialStore.loadVineyardMaterials().filterNot { it.vineyardId == vineyardId }
                 materialStore.saveVineyardMaterials(others + serverLibrary)
@@ -9958,6 +9965,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         cached = materialStore.loadCatalogue(),
                     ),
                     vineyardMaterials = serverLibrary ?: st.vineyardMaterials,
+                    materialLibraryLoading = false,
+                    materialLibraryError = if (catalogueResult.isFailure || libraryResult.isFailure) {
+                        "The material library could not be refreshed. Saved materials remain available."
+                    } else null,
                 )
             }
         }

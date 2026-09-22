@@ -82,6 +82,7 @@ enum class ToolRoute(
     GrowthStageConfig("E-L Growth Stages", "Enable stages for recording", Icons.Filled.Checklist, VineColors.LeafGreen, ToolGroup.Vineyard),
     Irrigation("Irrigation", "Water planning", Icons.Filled.Opacity, VineColors.Cyan, ToolGroup.Vineyard),
     WorkTasks("Work Tasks", "Labour & machine logs", Icons.Filled.Assignment, VineColors.Indigo, ToolGroup.Operations),
+    MaterialLibrary("Material Library", "Materials & default costs", Icons.Filled.Payments, VineColors.EarthBrown, ToolGroup.Operations),
     DiseaseRisk("Disease Risk", "Downy, Powdery & Botrytis", Icons.Filled.Coronavirus, VineColors.LeafGreen, ToolGroup.Operations),
     Spray("Spray", "Applications & programs", Icons.Filled.WaterDrop, VineColors.Info, ToolGroup.Operations),
     SprayEquipment("Spray & Equipment", "Spray Management, Equipment & Tractors, Chemicals", Icons.Filled.WaterDrop, VineColors.Info, ToolGroup.Operations),

@@ -174,6 +174,105 @@ struct WorkTaskMaterialCostsFocusedTests {
         ) == .unavailable(.notVineyardMember))
     }
 
+    @Test func taskEditorDefaultsAndOverridesRemainIndependent() {
+        var base = MaterialCatalogueSeed.items.first { $0.key == "material.trellis.gripple" }!
+        base.remoteId = UUID()
+        let libraryDefault = VineyardMaterial.override(
+            vineyardId: vineyardA,
+            base: base,
+            defaultUnitCost: Decimal(string: "1.82")
+        )!
+        let entry = MaterialLibrary.merged(
+            catalogue: MaterialCatalogueSeed.items.map { $0.key == base.key ? base : $0 },
+            vineyardMaterials: [libraryDefault],
+            vineyardId: vineyardA
+        ).first { $0.baseMaterialKey == base.key }!
+
+        let defaultLine = entry.makeTaskMaterial(workTaskId: taskID, vineyardId: vineyardA, quantity: 12)
+        let overriddenLine = entry.makeTaskMaterial(
+            workTaskId: taskID,
+            vineyardId: vineyardA,
+            quantity: Decimal(string: "0.5")!,
+            unitCost: Decimal(string: "1.95")!,
+            unit: "Pack"
+        )
+        #expect(defaultLine.unitCost == Decimal(string: "1.82"))
+        #expect(defaultLine.totalCost == Decimal(string: "21.84"))
+        #expect(overriddenLine.totalCost == Decimal(string: "0.98"))
+        #expect(libraryDefault.defaultUnitCost == Decimal(string: "1.82"))
+        #expect(libraryDefault.unit == "Each")
+    }
+
+    @Test func editReplacesStableLineAndDeleteRemovesOnlyTaskUsage() throws {
+        let persistence = try persistence()
+        let taskRepository = WorkTaskMaterialRepository(persistence: persistence)
+        let libraryRepository = VineyardMaterialRepository(persistence: persistence)
+        let custom = VineyardMaterial.custom(
+            vineyardId: vineyardA,
+            name: "Gripple Plus Medium",
+            category: MaterialCategoryCatalog.trellis,
+            unit: "Each",
+            defaultUnitCost: Decimal(string: "2.15")
+        )
+        libraryRepository.saveSlice([custom], for: vineyardA)
+        var line = WorkTaskMaterial(
+            id: UUID(), workTaskId: taskID, vineyardId: vineyardA,
+            vineyardMaterialId: custom.id, materialName: custom.name,
+            category: custom.category, unit: custom.unit,
+            quantity: 10, unitCost: custom.defaultUnitCost!
+        )
+        taskRepository.saveSlice([line], for: vineyardA)
+
+        line.quantity = 12
+        line.unitCost = Decimal(string: "2.35")!
+        _ = taskRepository.merge([line], for: vineyardA)
+        #expect(taskRepository.load(forWorkTask: taskID).count == 1)
+        #expect(taskRepository.load(forWorkTask: taskID)[0].totalCost == Decimal(string: "28.20"))
+
+        taskRepository.saveSlice([], for: vineyardA)
+        #expect(taskRepository.load(forWorkTask: taskID).isEmpty)
+        #expect(libraryRepository.load(for: vineyardA).first?.id == custom.id)
+    }
+
+    @Test func offlineCustomMaterialSurvivesRestartAndDeactivationOnlyAffectsSelection() throws {
+        let persistence = try persistence()
+        let id = UUID()
+        var custom = VineyardMaterial.custom(
+            vineyardId: vineyardA,
+            name: "Offline Vine Guard",
+            category: MaterialCategoryCatalog.establishment,
+            unit: "Box",
+            defaultUnitCost: Decimal(string: "42.50"),
+            id: id
+        )
+        VineyardMaterialRepository(persistence: persistence).saveSlice([custom], for: vineyardA)
+        let relaunched = VineyardMaterialRepository(persistence: persistence)
+        #expect(relaunched.load(for: vineyardA).first?.id == id)
+
+        custom.isActive = false
+        relaunched.saveSlice([custom], for: vineyardA)
+        let selectable = MaterialLibrary.merged(
+            catalogue: MaterialCatalogueSeed.items,
+            vineyardMaterials: relaunched.load(for: vineyardA),
+            vineyardId: vineyardA
+        )
+        #expect(!selectable.contains { $0.name == custom.name })
+        #expect(relaunched.load(for: vineyardA).first?.name == "Offline Vine Guard")
+    }
+
+    @Test func cachedCatalogueRemainsUsableWhenRefreshHasNoResult() throws {
+        let persistence = try persistence()
+        let repository = MaterialCatalogueRepository(persistence: persistence)
+        var gripple = MaterialCatalogueSeed.items.first { $0.key == "material.trellis.gripple" }!
+        gripple.remoteId = UUID()
+        repository.replace([gripple])
+        let effective = MaterialCatalogueSeed.resolve(server: nil, cached: repository.loadCached())
+        #expect(effective.count == 1)
+        #expect(effective[0].name == "Gripple / Wire Joiner-Tensioner")
+        repository.replace([])
+        #expect(repository.loadEffective().first?.remoteId == gripple.remoteId)
+    }
+
     @Test func existingWorkTaskCostingRemainsAdditiveAndGateFree() {
         var task = WorkTask(vineyardId: vineyardA, taskType: "Wire Lifting", durationHours: 4)
         task.resources = [WorkTaskResource(workerTypeName: "Casual", hourlyRate: 32, count: 2)]

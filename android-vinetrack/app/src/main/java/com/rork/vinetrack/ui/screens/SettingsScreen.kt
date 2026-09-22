@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PrecisionManufacturing
 import androidx.compose.material.icons.filled.PrivacyTip
@@ -316,6 +317,16 @@ fun SettingsScreen(
                             "Season E-L, spray/tank, yield",
                             onClick = { onOpenTool(ToolRoute.OperationPreferences) },
                         )
+                        if (vm.materialCostsAccess().isAllowed) {
+                            RowDivider(vine.cardBorder)
+                            PreferenceRow(
+                                Icons.Filled.Payments,
+                                VineColors.EarthBrown,
+                                "Material Library",
+                                "Standard materials, custom materials & default costs",
+                                onClick = { onOpenTool(ToolRoute.MaterialLibrary) },
+                            )
+                        }
                     }
                 }
             }

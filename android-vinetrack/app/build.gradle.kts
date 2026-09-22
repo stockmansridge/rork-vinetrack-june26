@@ -229,6 +229,8 @@ if (providers.gradleProperty("materialCostsFocusedTests").orNull == "true") {
             setSource(
                 fileTree("src/test/java") {
                     include("**/material/WorkTaskMaterialCostsTest.kt")
+                    include("**/WorkTaskLabourCostingTest.kt")
+                    include("**/WorkTaskDeepLinkTest.kt")
                 },
             )
         }

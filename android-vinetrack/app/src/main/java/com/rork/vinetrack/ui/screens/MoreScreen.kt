@@ -76,6 +76,9 @@ fun MoreScreen(
                         // (System Admin AND vineyard membership). This hub has
                         // no such check, so listing it here would expose it.
                         tool != ToolRoute.VineyardInsights &&
+                        // Material Library is temporarily System-Admin-only and
+                        // is exposed exclusively through the centrally gated Settings row.
+                        tool != ToolRoute.MaterialLibrary &&
                         (tool != ToolRoute.CostReports || canViewCosting)
                     // Irrigation Records is publicly released (SQL 151): every
                     // vineyard role may open it. The screen resolves the

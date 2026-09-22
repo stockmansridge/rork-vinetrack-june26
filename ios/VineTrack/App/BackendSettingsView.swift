@@ -28,6 +28,16 @@ struct BackendSettingsView: View {
 
     @Environment(\.openURL) private var openURL
 
+    private var materialCostsAllowed: Bool {
+        WorkTaskMaterialCostsAccess.resolve(
+            isAuthenticated: auth.isSignedIn,
+            isResolving: systemAdmin.isLoading || systemAdmin.lastLoadedAt == nil,
+            isSystemAdmin: systemAdmin.isSystemAdmin,
+            selectedVineyardID: store.selectedVineyardId,
+            isMemberOfSelectedVineyard: accessControl.currentRole != nil
+        ).isAllowed
+    }
+
     private var pendingInvitationCount: Int {
         let userEmail = (auth.userEmail ?? "").lowercased()
         let memberIds = Set(store.vineyards.map { $0.id })
@@ -318,6 +328,17 @@ struct BackendSettingsView: View {
                 destination: AnyView(AccountDeletionRequestView())
             )
         ]
+        if materialCostsAllowed {
+            items.append(SettingsSearchItem(
+                title: "Material Library",
+                subtitle: "Standard materials, custom materials & default costs",
+                keywords: ["materials", "costs", "work tasks", "gripple", "trellis", "library"],
+                symbol: "shippingbox.fill",
+                color: VineyardTheme.earthBrown,
+                destination: AnyView(VineyardMaterialLibraryView()),
+                parent: "Operations"
+            ))
+        }
         // Child setup screens — indexed so search can navigate one level
         // deeper than the top-level cards. Display/navigation only.
         items.append(contentsOf: childSettingsItems)
@@ -702,6 +723,18 @@ struct BackendSettingsView: View {
                     symbol: "slider.horizontal.3",
                     color: .orange
                 )
+            }
+            if materialCostsAllowed {
+                NavigationLink {
+                    VineyardMaterialLibraryView()
+                } label: {
+                    SettingsRow(
+                        title: "Material Library",
+                        subtitle: "Standard materials, custom materials & default costs",
+                        symbol: "shippingbox.fill",
+                        color: VineyardTheme.earthBrown
+                    )
+                }
             }
         } header: {
             SettingsSectionHeader(title: "Operations", symbol: "wrench.adjustable.fill", color: .orange)
