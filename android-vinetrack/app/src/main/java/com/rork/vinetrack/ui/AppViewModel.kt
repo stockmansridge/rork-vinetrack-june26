@@ -22,6 +22,7 @@ import com.rork.vinetrack.data.SeasonSelection
 import com.rork.vinetrack.data.SeasonWindow
 import com.rork.vinetrack.data.VintageResolver
 import com.rork.vinetrack.data.chemical.ChemicalSnapshotCapture
+import com.rork.vinetrack.data.spray.CanopyReferenceImageRepository
 import com.rork.vinetrack.data.model.parseIsoToEpochMs
 import com.rork.vinetrack.data.subscription.EntitlementVerificationStore
 import com.rork.vinetrack.data.subscription.PaywallPackageUi
@@ -1163,6 +1164,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val pinPhotoRepo = PinPhotoRepository(session)
     private val vineyardLogoRepo = VineyardLogoRepository(session)
     private val vineyardLogoCache = VineyardLogoCache(app)
+    private val canopyReferenceImages = CanopyReferenceImageRepository.create(app, session)
+    val canopyReferenceImageFiles = canopyReferenceImages.localFiles
+
+    fun refreshCanopyReferenceImagesOncePerSession() {
+        viewModelScope.launch { canopyReferenceImages.refreshOncePerSession() }
+    }
+
+    private fun refreshCanopyReferenceImages() {
+        if (!session.hasSession) return
+        viewModelScope.launch { canopyReferenceImages.refresh() }
+    }
     private val tripRepo = TripRepository(session)
     private val workTaskRepo = WorkTaskRepository(session)
     private val workTaskLineRepo = WorkTaskLineRepository(session)
@@ -4305,6 +4317,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // outbox is empty or no session yet.
                 if (online) {
                     optimalRipenessWeatherCoordinator.refreshIfNeeded(isOnline = true)
+                    refreshCanopyReferenceImages()
                     replayPendingPinCreates()
                     replayPendingCustomPins()
                     replayPendingPinCompletions()
@@ -4668,6 +4681,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Pick up a layout change made on another device (throttled).
             operationalToolLayoutStore.refreshFromServer()
             optimalRipenessWeatherCoordinator.refreshIfNeeded(isOnline = _ui.value.isOnline)
+            if (_ui.value.isOnline) refreshCanopyReferenceImages()
             if (_ui.value.isOnline) {
                 replayAllPendingWrites()
                 // Freshness parity (audit #1/#9/#11): re-pull remote snapshots

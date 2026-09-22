@@ -79,6 +79,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -171,6 +172,7 @@ import com.rork.vinetrack.ui.components.ResistanceCheckSlot
 import com.rork.vinetrack.ui.components.SprayGuidedFormat
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
+import java.io.File
 import java.time.Instant
 import java.util.Locale
 import java.util.UUID
@@ -420,6 +422,8 @@ fun SprayCalculatorScreen(
     val vine = LocalVineColors.current
     val context = LocalContext.current
     val canopyRates = remember { CanopyWaterRatesStore(context).load() }
+    val canopyReferenceFiles by vm.canopyReferenceImageFiles.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { vm.refreshCanopyReferenceImagesOncePerSession() }
     val canEditCost = state.currentRole == "owner" || state.currentRole == "manager"
 
     var sprayName by remember { mutableStateOf("") }
@@ -1695,6 +1699,9 @@ fun SprayCalculatorScreen(
                         selection = canopySelection,
                         rates = canopyRates,
                         isConfirmed = isCanopyConfirmed,
+                        customImageFile = canopySelection.type?.let { type ->
+                            canopyReferenceFiles[com.rork.vinetrack.data.spray.SprayCanopyReferenceImages.slotKey(type, canopySelection.size)]
+                        },
                         onSelectionChange = { updated ->
                             canopySelection = updated
                             result = null

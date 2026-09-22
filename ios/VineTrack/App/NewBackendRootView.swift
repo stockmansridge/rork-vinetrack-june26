@@ -8,6 +8,7 @@ struct NewBackendRootView: View {
     @Environment(BiometricAuthService.self) private var biometric
     @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(VineyardInsightsService.self) private var vineyardInsights
+    @Environment(CanopyReferenceImageRepository.self) private var canopyReferenceImages
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var didAttemptRestore: Bool = false
@@ -234,6 +235,7 @@ struct NewBackendRootView: View {
                 // so the cache is ready before any block screen renders.
                 await SharedGrapeVarietyCatalogCache.shared.refresh()
                 await CloneRootstockCatalogStore.shared.refresh(vineyardId: store.selectedVineyardId)
+                await canopyReferenceImages.refresh()
                 // Best-effort client telemetry heartbeat (SQL 154). Throttled
                 // internally; never blocks sign-in or normal use.
                 await ClientTelemetryService.shared.reportActivity(vineyardId: store.selectedVineyardId)
@@ -269,6 +271,7 @@ struct NewBackendRootView: View {
                 Task { await entitlementGate.refresh() }
                 // Foreground telemetry heartbeat (throttled to 15 min).
                 Task { await ClientTelemetryService.shared.reportActivity(vineyardId: store.selectedVineyardId) }
+                Task { await canopyReferenceImages.refresh() }
             }
             lastScenePhase = newPhase
         }

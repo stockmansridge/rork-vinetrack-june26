@@ -25,16 +25,33 @@ nonisolated enum CanopyType: String, CaseIterable, Sendable, Codable {
     }
 }
 
-/// Where a canopy reference picture comes from.
-///
-/// VSP's images are the existing hosted ones and are reused byte-for-byte. The
-/// Sprawl slots are bundled asset names so the artwork can be dropped into the
-/// asset catalogue without touching code — and until it is, the control shows
-/// an explicit "image not available" state rather than a VSP picture standing
-/// in for a sprawl canopy, which would be worse than no picture at all.
-nonisolated enum CanopyReferenceImage: Sendable, Hashable {
-    case remote(URL)
-    case bundled(name: String)
+/// Stable portal/backend identity for one canopy reference image.
+nonisolated enum CanopyReferenceImageSlot: String, CaseIterable, Codable, Sendable {
+    case vspSmall = "canopy.vsp.small"
+    case vspMedium = "canopy.vsp.medium"
+    case vspLarge = "canopy.vsp.large"
+    case vspFull = "canopy.vsp.full"
+    case sprawlSmall = "canopy.sprawl.small"
+    case sprawlMedium = "canopy.sprawl.medium"
+    case sprawlLarge = "canopy.sprawl.large"
+    case sprawlFull = "canopy.sprawl.full"
+
+    var bundledAssetName: String {
+        rawValue.replacingOccurrences(of: ".", with: "-")
+    }
+
+    static func slot(type: CanopyType, size: CanopySize) -> Self {
+        switch (type, size) {
+        case (.vsp, .small): return .vspSmall
+        case (.vsp, .medium): return .vspMedium
+        case (.vsp, .large): return .vspLarge
+        case (.vsp, .full): return .vspFull
+        case (.sprawl, .small): return .sprawlSmall
+        case (.sprawl, .medium): return .sprawlMedium
+        case (.sprawl, .large): return .sprawlLarge
+        case (.sprawl, .full): return .sprawlFull
+        }
+    }
 }
 
 nonisolated enum CanopySize: String, CaseIterable, Sendable, Codable {
@@ -82,40 +99,9 @@ nonisolated enum CanopySize: String, CaseIterable, Sendable, Codable {
         }
     }
 
-    /// The existing hosted VSP reference imagery. Unchanged.
-    var referenceImageURL: URL? {
-        switch self {
-        case .small:
-            URL(string: "https://r2-pub.rork.com/attachments/n9g6j5bjz0l47bkxhd42r.png")
-        case .medium:
-            URL(string: "https://pub-e001eb4506b145aa938b5d3badbff6a5.r2.dev/attachments/5dye3l0veago38uvra0ec.png")
-        case .large:
-            URL(string: "https://pub-e001eb4506b145aa938b5d3badbff6a5.r2.dev/attachments/00p3rr1b6qpdaht5ihsdh.png")
-        case .full:
-            URL(string: "https://pub-e001eb4506b145aa938b5d3badbff6a5.r2.dev/attachments/iducbl7zsx0yk8ftvuntf.png")
-        }
-    }
-
-    /// The bundled asset name for this size's Sprawl reference picture.
-    ///
-    /// Drop the artwork into `ios/VineTrack/Assets.xcassets` under exactly
-    /// these names and it appears with no code change.
-    var sprawlAssetName: String {
-        switch self {
-        case .small: return "canopy-sprawl-small"
-        case .medium: return "canopy-sprawl-medium"
-        case .large: return "canopy-sprawl-large"
-        case .full: return "canopy-sprawl-full"
-        }
-    }
-
-    func referenceImage(for type: CanopyType) -> CanopyReferenceImage? {
-        switch type {
-        case .vsp:
-            return referenceImageURL.map { .remote($0) }
-        case .sprawl:
-            return .bundled(name: sprawlAssetName)
-        }
+    /// The semantic slot shared by iOS, Android and the System Admin portal.
+    func referenceImageSlot(for type: CanopyType) -> CanopyReferenceImageSlot {
+        CanopyReferenceImageSlot.slot(type: type, size: self)
     }
 
     static let help = "Choose the image/size that most closely represents the canopy "

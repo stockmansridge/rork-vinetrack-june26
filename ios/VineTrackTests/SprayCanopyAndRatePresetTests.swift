@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UIKit
 @testable import VineTrack
 
 /// Two device decisions, both about refusing to answer a question on the
@@ -179,11 +180,15 @@ struct SprayCanopyAndRatePresetTests {
         #expect(CanopyDensity.allCases == [.low, .high])
     }
 
-    @Test("Every canopy size keeps its reference image")
+    @Test("Every canopy type and size keeps a semantic slot and bundled fallback")
     func canopyImageryIsIntact() {
-        for size in CanopySize.allCases {
-            #expect(size.referenceImageURL != nil, "\(size.rawValue) lost its reference image")
-            #expect(!size.description.isEmpty)
+        for type in CanopyType.allCases {
+            for size in CanopySize.allCases {
+                let slot = size.referenceImageSlot(for: type)
+                #expect(CanopyReferenceImageSlot.allCases.contains(slot))
+                #expect(UIImage(named: slot.bundledAssetName) != nil, "\(slot.rawValue) lost its bundled fallback")
+                #expect(!size.description.isEmpty)
+            }
         }
     }
 

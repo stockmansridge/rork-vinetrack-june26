@@ -78,6 +78,7 @@ struct VineTrackApp: App {
     @State private var syncStatusCenter = SyncStatusCenter()
     /// Per-user Operational Tools layout (sql/159) — shared with Android.
     @State private var operationalToolLayout = OperationalToolLayoutStore()
+    @State private var canopyReferenceImages = CanopyReferenceImageRepository()
 
     init() {
         VineyardTheme.applyGlobalAppearance()
@@ -159,6 +160,7 @@ struct VineTrackApp: App {
                         .environment(networkMonitor)
                         .environment(syncStatusCenter)
                         .environment(operationalToolLayout)
+                        .environment(canopyReferenceImages)
                 } else {
                     ContentView()
                 }

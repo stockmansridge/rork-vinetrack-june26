@@ -1,5 +1,6 @@
 package com.rork.vinetrack.ui.components
 
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -17,10 +18,12 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -34,6 +37,7 @@ import com.rork.vinetrack.data.spray.SprayCanopyReferenceImages
 import com.rork.vinetrack.data.spray.SprayCanopySelection
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
+import java.io.File
 import java.util.Locale
 
 /** Shared iOS-parity canopy control used by both foliar carrier bases. */
@@ -42,6 +46,7 @@ fun SprayCanopySelector(
     selection: SprayCanopySelection,
     rates: CanopyWaterRates,
     isConfirmed: Boolean,
+    customImageFile: File? = null,
     onSelectionChange: (SprayCanopySelection) -> Unit,
     onConfirm: () -> Unit,
     modifier: Modifier = Modifier,
@@ -93,13 +98,29 @@ fun SprayCanopySelector(
                 .clip(RoundedCornerShape(8.dp)).background(Color.White).padding(8.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Image(
-                painter = painterResource(canopyDrawable(type, selection.size)),
-                contentDescription = SprayCanopyReferenceImages.accessibilityDescription(type, selection.size),
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxWidth().height(124.dp),
-                alpha = if (isConfirmed) 1f else 0.55f,
-            )
+            val customBitmap = remember(customImageFile?.absolutePath, customImageFile?.lastModified()) {
+                customImageFile?.takeIf(File::isFile)?.let { file ->
+                    runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
+                }
+            }
+            val description = SprayCanopyReferenceImages.accessibilityDescription(type, selection.size)
+            if (customBitmap != null) {
+                Image(
+                    bitmap = customBitmap.asImageBitmap(),
+                    contentDescription = description,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth().height(124.dp),
+                    alpha = if (isConfirmed) 1f else 0.55f,
+                )
+            } else {
+                Image(
+                    painter = painterResource(canopyDrawable(type, selection.size)),
+                    contentDescription = description,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth().height(124.dp),
+                    alpha = if (isConfirmed) 1f else 0.55f,
+                )
+            }
         }
 
         Text(

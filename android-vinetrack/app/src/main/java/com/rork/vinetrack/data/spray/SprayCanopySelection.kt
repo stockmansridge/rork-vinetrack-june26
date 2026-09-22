@@ -63,10 +63,17 @@ data class SprayCanopySelection(
 
 data class CanopyReferenceBand(val low: Double, val high: Double)
 
-/** Stable drawable names, mapped to packaged resources by the shared UI. */
+/** Stable image identities shared by Android, iOS and the System Admin portal. */
 object SprayCanopyReferenceImages {
+    val slotKeys: Set<String> = SprayCalculator.CanopyType.entries.flatMap { type ->
+        SprayCalculator.CanopySize.entries.map { size -> slotKey(type, size) }
+    }.toSet()
+
+    fun slotKey(type: SprayCalculator.CanopyType, size: SprayCalculator.CanopySize): String =
+        "canopy.${type.name.lowercase()}.${size.name.lowercase()}"
+
     fun drawableName(type: SprayCalculator.CanopyType, size: SprayCalculator.CanopySize): String =
-        "canopy_${type.name.lowercase()}_${size.name.lowercase()}"
+        slotKey(type, size).replace('.', '_')
 
     fun accessibilityDescription(
         type: SprayCalculator.CanopyType,

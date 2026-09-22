@@ -220,6 +220,17 @@ if (providers.gradleProperty("optimalRipenessFocusedTests").orNull == "true") {
     }
 }
 
+if (providers.gradleProperty("canopyReferenceFocusedTests").orNull == "true") {
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/CanopyReferenceImageRepositoryTest.kt")
+                include("**/SprayCanopyParityTest.kt")
+            })
+        }
+    }
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

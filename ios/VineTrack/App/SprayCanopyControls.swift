@@ -155,6 +155,7 @@ private struct SprayFieldLabel: View {
 /// per-100 L product measured against it.
 struct SprayCanopyControls: View {
     @Binding var selection: SprayCanopySelection
+    @Environment(CanopyReferenceImageRepository.self) private var canopyImages
 
     private var typeBinding: Binding<CanopyType?> {
         Binding(
@@ -188,6 +189,9 @@ struct SprayCanopyControls: View {
                     confirmPrompt
                 }
             }
+        }
+        .task {
+            await canopyImages.refreshOncePerSession()
         }
     }
 
@@ -248,62 +252,38 @@ struct SprayCanopyControls: View {
 
     @ViewBuilder
     private func referenceImage(type: CanopyType) -> some View {
-        switch selection.size.referenceImage(for: type) {
-        case let .remote(url):
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().aspectRatio(contentMode: .fit)
-                case .failure:
-                    Image(systemName: "leaf")
-                        .font(.title)
-                        .foregroundStyle(.tertiary)
-                case .empty:
-                    ProgressView()
-                @unknown default:
-                    EmptyView()
-                }
+        let slot = selection.size.referenceImageSlot(for: type)
+        if let localURL = canopyImages.localImageURL(for: slot),
+           let localImage = UIImage(contentsOfFile: localURL.path) {
+            canopyImage(Image(uiImage: localImage))
+        } else if UIImage(named: slot.bundledAssetName) != nil {
+            canopyImage(Image(slot.bundledAssetName))
+        } else {
+            VStack(spacing: 4) {
+                Image(systemName: "photo")
+                    .font(.title3)
+                    .foregroundStyle(.tertiary)
+                Text("Canopy reference image not available")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
+            .frame(maxWidth: .infinity)
+            .frame(height: 80)
+            .background(Color(.tertiarySystemGroupedBackground))
+            .clipShape(.rect(cornerRadius: 8))
+        }
+    }
+
+    private func canopyImage(_ image: Image) -> some View {
+        image
+            .resizable()
+            .aspectRatio(contentMode: .fit)
             .frame(maxWidth: .infinity)
             .frame(height: 120)
             .padding(8)
             .background(Color.white)
             .clipShape(.rect(cornerRadius: 8))
             .opacity(selection.isSizeAndDensityConfirmed ? 1 : 0.55)
-
-        case let .bundled(name):
-            // Until the Sprawl artwork is dropped into the asset catalogue this
-            // states plainly that there is no picture, rather than showing the
-            // VSP one — a VSP photograph standing in for a sprawl canopy would
-            // actively mislead the size choice it exists to inform.
-            if UIImage(named: name) != nil {
-                Image(name)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 120)
-                    .padding(8)
-                    .background(Color.white)
-                    .clipShape(.rect(cornerRadius: 8))
-                    .opacity(selection.isSizeAndDensityConfirmed ? 1 : 0.55)
-            } else {
-                VStack(spacing: 4) {
-                    Image(systemName: "photo")
-                        .font(.title3)
-                        .foregroundStyle(.tertiary)
-                    Text("Sprawl reference image not available")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 80)
-                .background(Color(.tertiarySystemGroupedBackground))
-                .clipShape(.rect(cornerRadius: 8))
-            }
-
-        case .none:
-            EmptyView()
-        }
     }
 
     // MARK: - 3. Canopy density
