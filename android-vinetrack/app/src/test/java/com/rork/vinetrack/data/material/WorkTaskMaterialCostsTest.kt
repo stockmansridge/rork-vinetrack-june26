@@ -38,10 +38,10 @@ class WorkTaskMaterialCostsTest {
     // Shared fixtures (identical on iOS)
     // -----------------------------------------------------------------
 
-    private val vineyardA = "00000000-0000-0000-0000-00000000ma01"
-    private val vineyardB = "00000000-0000-0000-0000-00000000ma02"
-    private val taskOne = "00000000-0000-0000-0000-00000000ma03"
-    private val taskTwo = "00000000-0000-0000-0000-00000000ma04"
+    private val vineyardA = "00000000-0000-0000-0000-00000000aa01"
+    private val vineyardB = "00000000-0000-0000-0000-00000000aa02"
+    private val taskOne = "00000000-0000-0000-0000-00000000aa03"
+    private val taskTwo = "00000000-0000-0000-0000-00000000aa04"
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -310,7 +310,7 @@ class WorkTaskMaterialCostsTest {
             id = "m-6", workTaskId = taskOne, vineyardId = vineyardA, quantity = BigDecimal("3"),
         )
         store.saveTaskMaterials(listOf(line))
-        assertEquals(BigDecimal("12.40"), line.unitCost)
+        assertEquals(0, BigDecimal("12.40").compareTo(line.unitCost))
         assertEquals(BigDecimal("37.20"), line.totalCost)
 
         // Next season the vineyard raises its standard post price.
@@ -320,7 +320,7 @@ class WorkTaskMaterialCostsTest {
         // The historical task is untouched.
         val history = WorkTaskMaterialCosting.lines(store.loadTaskMaterials(), taskOne)
         assertEquals(1, history.size)
-        assertEquals(BigDecimal("12.40"), history[0].unitCost)
+        assertEquals(0, BigDecimal("12.40").compareTo(history[0].unitCost))
         assertEquals(BigDecimal("37.20"), history[0].totalCost)
         assertEquals("Line / Trellis Post", history[0].materialName)
 
@@ -330,7 +330,7 @@ class WorkTaskMaterialCostsTest {
         val newLine = newEntry.toTaskMaterial(
             id = "m-7", workTaskId = taskTwo, vineyardId = vineyardA, quantity = BigDecimal("3"),
         )
-        assertEquals(BigDecimal("14.50"), newLine.unitCost)
+        assertEquals(0, BigDecimal("14.50").compareTo(newLine.unitCost))
     }
 
     @Test
@@ -455,7 +455,7 @@ class WorkTaskMaterialCostsTest {
     fun `an offline create queues exactly one marker keyed by the line id`() {
         val pending = pending()
         val sync = WorkTaskMaterialSync(
-            repo = WorkTaskMaterialRepository(FakeSessionStore()),
+            repo = FakeWorkTaskMaterialWriter(),
             pending = pending,
         )
         val now = "2026-09-22T00:00:00Z"
@@ -479,14 +479,14 @@ class WorkTaskMaterialCostsTest {
         )
         assertEquals(taskOne, payload.workTaskId)
         assertEquals("20", payload.quantity)
-        assertEquals("1.10", payload.unitCost)
+        assertEquals("1.1", payload.unitCost)
         assertEquals("Vine Guard", payload.materialName)
     }
 
     @Test
     fun `re-queueing the same line coalesces so replay cannot duplicate a row`() {
         val pending = pending()
-        val sync = WorkTaskMaterialSync(WorkTaskMaterialRepository(FakeSessionStore()), pending)
+        val sync = WorkTaskMaterialSync(FakeWorkTaskMaterialWriter(), pending)
 
         repeat(3) { attempt ->
             sync.enqueueCreate(
@@ -512,7 +512,7 @@ class WorkTaskMaterialCostsTest {
     @Test
     fun `an edit before the create has synced folds into the create`() {
         val pending = pending()
-        val sync = WorkTaskMaterialSync(WorkTaskMaterialRepository(FakeSessionStore()), pending)
+        val sync = WorkTaskMaterialSync(FakeWorkTaskMaterialWriter(), pending)
         sync.enqueueCreate(
             "m-15", taskOne, vineyardA, null, null, "Vine Stake",
             MaterialCategoryCatalog.ESTABLISHMENT, "Each",
@@ -539,7 +539,7 @@ class WorkTaskMaterialCostsTest {
     @Test
     fun `deleting a never-synced line cancels locally instead of queueing a server delete`() {
         val pending = pending()
-        val sync = WorkTaskMaterialSync(WorkTaskMaterialRepository(FakeSessionStore()), pending)
+        val sync = WorkTaskMaterialSync(FakeWorkTaskMaterialWriter(), pending)
         sync.enqueueCreate(
             "m-16", taskOne, vineyardA, null, null, "Anchor / Stay",
             MaterialCategoryCatalog.TRELLIS, "Each",
@@ -566,7 +566,7 @@ class WorkTaskMaterialCostsTest {
             payloadJson = "{}",
             clientId = taskOne,
         )
-        val sync = WorkTaskMaterialSync(WorkTaskMaterialRepository(FakeSessionStore()), pending)
+        val sync = WorkTaskMaterialSync(FakeWorkTaskMaterialWriter(), pending)
         sync.enqueueCreate(
             "m-18", taskOne, vineyardA, null, null, "Trellis Wire",
             MaterialCategoryCatalog.TRELLIS, "Metre",
@@ -587,7 +587,7 @@ class WorkTaskMaterialCostsTest {
     @Test
     fun `deleting the parent work task drops its unresolved material markers`() {
         val pending = pending()
-        val sync = WorkTaskMaterialSync(WorkTaskMaterialRepository(FakeSessionStore()), pending)
+        val sync = WorkTaskMaterialSync(FakeWorkTaskMaterialWriter(), pending)
         sync.enqueueCreate(
             "m-19", taskOne, vineyardA, null, null, "Vine Tie",
             MaterialCategoryCatalog.FASTENERS, "Each",
@@ -608,7 +608,7 @@ class WorkTaskMaterialCostsTest {
     @Test
     fun `the library queue is separate from the task line queue`() {
         val pending = pending()
-        val repo = WorkTaskMaterialRepository(FakeSessionStore())
+        val repo = FakeWorkTaskMaterialWriter()
         WorkTaskMaterialSync(repo, pending).enqueueCreate(
             "m-21", taskOne, vineyardA, null, null, "Dripline",
             MaterialCategoryCatalog.IRRIGATION, "Metre",
@@ -640,7 +640,7 @@ class WorkTaskMaterialCostsTest {
     fun `a backend row decodes to the same values iOS reads`() {
         val raw = """
         {
-          "id": "00000000-0000-0000-0000-00000000ma05",
+          "id": "00000000-0000-0000-0000-00000000aa05",
           "work_task_id": "$taskOne",
           "vineyard_id": "$vineyardA",
           "base_material_id": null,
@@ -648,9 +648,9 @@ class WorkTaskMaterialCostsTest {
           "material_name": "Trellis Wire",
           "category": "Trellis",
           "unit": "Metre",
-          "quantity": "42.5",
-          "unit_cost": "0.31",
-          "total_cost": "13.18",
+          "quantity": 42.5,
+          "unit_cost": 0.31,
+          "total_cost": 13.18,
           "notes": "",
           "deleted_at": null
         }
@@ -736,10 +736,10 @@ class WorkTaskMaterialCostsTest {
             id = taskOne,
             vineyardId = vineyardA,
             taskType = "Wire Lifting",
-            costingMethodRaw = null,
+            costingMethod = null,
         )
         // Unchanged defaults: an existing task still resolves as hourly.
-        assertEquals(WorkTaskCostingMethod.Hourly, task.costingMethod)
+        assertEquals(WorkTaskCostingMethod.HOURLY, task.resolvedCostingMethod)
         assertFalse(task.isPieceRate)
         // Materials are never mandatory: no row means no cost.
         assertEquals(BigDecimal("0.00"), WorkTaskMaterialCosting.total(emptyList(), taskOne))
@@ -751,7 +751,7 @@ class WorkTaskMaterialCostsTest {
         // of these required an isSystemAdmin argument, this would not compile.
         val store = InMemoryWorkTaskMaterialStore()
         val pending = pending()
-        val repo = WorkTaskMaterialRepository(FakeSessionStore())
+        val repo = FakeWorkTaskMaterialWriter()
 
         val custom = VineyardMaterial(
             id = "vm-10", vineyardId = vineyardA, name = "Zip Tie 300mm",
@@ -780,5 +780,61 @@ class WorkTaskMaterialCostsTest {
         // The queued payload carries no admin concept.
         val marker = pending.list().first { it.entityType == PendingEntityType.WORK_TASK_MATERIAL }
         assertFalse(marker.payloadJson.contains("admin", ignoreCase = true))
+    }
+
+    private class FakeWorkTaskMaterialWriter : WorkTaskMaterialWriting {
+        override suspend fun upsertVineyardMaterial(
+            id: String,
+            vineyardId: String,
+            baseMaterialId: String?,
+            name: String,
+            category: String,
+            unit: String,
+            defaultUnitCost: BigDecimal?,
+            isCustom: Boolean,
+            isActive: Boolean,
+            clientUpdatedAt: String?,
+        ): VineyardMaterial = VineyardMaterial(
+            id = id,
+            vineyardId = vineyardId,
+            baseMaterialId = baseMaterialId,
+            name = name,
+            category = category,
+            unit = unit,
+            defaultUnitCostRaw = defaultUnitCost?.toPlainString(),
+            isCustom = isCustom,
+            isActive = isActive,
+        )
+
+        override suspend fun softDeleteVineyardMaterial(id: String) = Unit
+
+        override suspend fun upsertTaskMaterial(
+            id: String,
+            workTaskId: String,
+            vineyardId: String,
+            baseMaterialId: String?,
+            vineyardMaterialId: String?,
+            materialName: String,
+            category: String,
+            unit: String,
+            quantity: BigDecimal,
+            unitCost: BigDecimal,
+            notes: String?,
+            clientUpdatedAt: String?,
+        ): WorkTaskMaterial = WorkTaskMaterial(
+            id = id,
+            workTaskId = workTaskId,
+            vineyardId = vineyardId,
+            baseMaterialId = baseMaterialId,
+            vineyardMaterialId = vineyardMaterialId,
+            materialName = materialName,
+            category = category,
+            unit = unit,
+            quantityRaw = quantity.toPlainString(),
+            unitCostRaw = unitCost.toPlainString(),
+            notes = notes.orEmpty(),
+        )
+
+        override suspend fun softDeleteTaskMaterial(id: String) = Unit
     }
 }

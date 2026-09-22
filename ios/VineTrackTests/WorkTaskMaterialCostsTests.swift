@@ -22,10 +22,10 @@ struct WorkTaskMaterialCostsTests {
 
     // MARK: - Fixtures
 
-    private static let vineyardA = UUID(uuidString: "00000000-0000-0000-0000-00000000ma01")!
-    private static let vineyardB = UUID(uuidString: "00000000-0000-0000-0000-00000000ma02")!
-    private static let taskOne = UUID(uuidString: "00000000-0000-0000-0000-00000000ma03")!
-    private static let taskTwo = UUID(uuidString: "00000000-0000-0000-0000-00000000ma04")!
+    private static let vineyardA = UUID(uuidString: "00000000-0000-0000-0000-00000000aa01")!
+    private static let vineyardB = UUID(uuidString: "00000000-0000-0000-0000-00000000aa02")!
+    private static let taskOne = UUID(uuidString: "00000000-0000-0000-0000-00000000aa03")!
+    private static let taskTwo = UUID(uuidString: "00000000-0000-0000-0000-00000000aa04")!
 
     /// Isolated on-disk persistence so each test starts from a clean install.
     private func store() throws -> PersistenceStore {
@@ -482,9 +482,9 @@ struct WorkTaskMaterialCostsTests {
     func backendRowDecodesConsistently() throws {
         let raw = """
         {
-          "id": "00000000-0000-0000-0000-00000000ma05",
-          "work_task_id": "00000000-0000-0000-0000-00000000ma03",
-          "vineyard_id": "00000000-0000-0000-0000-00000000ma01",
+          "id": "00000000-0000-0000-0000-00000000aa05",
+          "work_task_id": "00000000-0000-0000-0000-00000000aa03",
+          "vineyard_id": "00000000-0000-0000-0000-00000000aa01",
           "base_material_id": null,
           "vineyard_material_id": null,
           "material_name": "Trellis Wire",

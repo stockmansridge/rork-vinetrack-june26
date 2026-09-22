@@ -329,6 +329,41 @@ create table if not exists public.work_task_materials (
   constraint work_task_materials_unit_cost_non_negative check (unit_cost >= 0)
 );
 
+-- Keep the denormalised vineyard scope trustworthy. RLS checks vineyard_id,
+-- while this trigger guarantees the parent task (and optional private library
+-- provenance row) actually belongs to that same vineyard. A caller therefore
+-- cannot attach a line to another vineyard's task by supplying its UUID.
+create or replace function public.validate_work_task_material_scope()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $function$
+begin
+  if not exists (
+    select 1 from public.work_tasks t
+    where t.id = new.work_task_id
+      and t.vineyard_id = new.vineyard_id
+  ) then
+    raise exception 'Work task material must belong to the same vineyard as its work task';
+  end if;
+
+  if new.vineyard_material_id is not null and not exists (
+    select 1 from public.vineyard_materials vm
+    where vm.id = new.vineyard_material_id
+      and vm.vineyard_id = new.vineyard_id
+  ) then
+    raise exception 'Source vineyard material must belong to the same vineyard';
+  end if;
+
+  return new;
+end;
+$function$;
+
+create or replace trigger work_task_materials_validate_scope
+before insert or update of work_task_id, vineyard_id, vineyard_material_id
+on public.work_task_materials
+for each row execute function public.validate_work_task_material_scope();
+
 create index if not exists idx_work_task_materials_work_task_id
   on public.work_task_materials (work_task_id);
 create index if not exists idx_work_task_materials_vineyard_id

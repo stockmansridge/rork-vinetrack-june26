@@ -1,7 +1,17 @@
 package com.rork.vinetrack.data.material
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.jsonPrimitive
 import java.math.BigDecimal
 import java.math.RoundingMode
 
@@ -102,6 +112,38 @@ object MaterialMoney {
 
     /** Canonical wire form for a numeric: plain string, never scientific notation. */
     fun wire(value: BigDecimal): String = value.stripTrailingZeros().toPlainString()
+}
+
+/**
+ * Accepts PostgreSQL numeric values whether PostgREST emits a JSON number or a
+ * quoted string, preserving the original decimal text for [BigDecimal].
+ */
+object MaterialNumericStringSerializer : KSerializer<String> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("MaterialNumericString", PrimitiveKind.STRING)
+
+    override fun deserialize(decoder: Decoder): String =
+        if (decoder is JsonDecoder) decoder.decodeJsonElement().jsonPrimitive.content else decoder.decodeString()
+
+    override fun serialize(encoder: Encoder, value: String) {
+        if (encoder is JsonEncoder) encoder.encodeString(value) else encoder.encodeString(value)
+    }
+}
+
+/** Nullable counterpart used by optional default and generated costs. */
+object NullableMaterialNumericStringSerializer : KSerializer<String?> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("NullableMaterialNumericString", PrimitiveKind.STRING)
+
+    override fun deserialize(decoder: Decoder): String? {
+        if (decoder !is JsonDecoder) return decoder.decodeString()
+        val element = decoder.decodeJsonElement()
+        return if (element is JsonNull) null else element.jsonPrimitive.content
+    }
+
+    override fun serialize(encoder: Encoder, value: String?) {
+        if (value == null) encoder.encodeNull() else encoder.encodeString(value)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -232,7 +274,9 @@ data class VineyardMaterial(
     val name: String = "",
     val category: String = "",
     val unit: String = "Each",
-    @SerialName("default_unit_cost") val defaultUnitCostRaw: String? = null,
+    @SerialName("default_unit_cost")
+    @Serializable(with = NullableMaterialNumericStringSerializer::class)
+    val defaultUnitCostRaw: String? = null,
     @SerialName("is_custom") val isCustom: Boolean = false,
     @SerialName("is_active") val isActive: Boolean = true,
     @SerialName("deleted_at") val deletedAt: String? = null,
@@ -272,10 +316,16 @@ data class WorkTaskMaterial(
     @SerialName("material_name") val materialName: String = "",
     val category: String = "",
     val unit: String = "Each",
-    @SerialName("quantity") val quantityRaw: String = "0",
-    @SerialName("unit_cost") val unitCostRaw: String = "0",
+    @SerialName("quantity")
+    @Serializable(with = MaterialNumericStringSerializer::class)
+    val quantityRaw: String = "0",
+    @SerialName("unit_cost")
+    @Serializable(with = MaterialNumericStringSerializer::class)
+    val unitCostRaw: String = "0",
     /** GENERATED column — read back for verification, never written. */
-    @SerialName("total_cost") val totalCostRaw: String? = null,
+    @SerialName("total_cost")
+    @Serializable(with = NullableMaterialNumericStringSerializer::class)
+    val totalCostRaw: String? = null,
     val notes: String = "",
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
