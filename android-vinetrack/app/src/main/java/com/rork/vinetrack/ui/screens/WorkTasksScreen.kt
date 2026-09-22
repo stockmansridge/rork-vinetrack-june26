@@ -100,6 +100,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import com.rork.vinetrack.data.WorkTaskDeepLink
 import com.rork.vinetrack.data.WorkTaskDeepLinkState
 import com.rork.vinetrack.data.model.PieceRateCosting
+import com.rork.vinetrack.data.model.WorkTaskCostRollup
 import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.WorkTaskMachineLine
@@ -170,6 +171,7 @@ fun WorkTasksScreen(
             )
             else -> WorkTasksHub(
                 state = state,
+                materialCostsAllowed = vm.materialCostsAccess().isAllowed,
                 onBack = onBack,
                 onOpenLog = { nav = WTNav.Log },
                 onOpenCalculator = { nav = WTNav.Calculator },
@@ -335,6 +337,7 @@ private enum class WTNav { Hub, Log, Calculator }
 @Composable
 private fun WorkTasksHub(
     state: AppUiState,
+    materialCostsAllowed: Boolean,
     onBack: (() -> Unit)?,
     onOpenLog: () -> Unit,
     onOpenCalculator: () -> Unit,
@@ -345,19 +348,27 @@ private fun WorkTasksHub(
     val tasks = remember(state.workTasks) { state.workTasks.filterNot { it.isArchived } }
     val recent = remember(tasks) { tasks.sortedByDescending { it.startEpochMs ?: 0L }.take(5) }
 
-    // Season-to-date labour total (owner/manager only), summing canonical
-    // labour-line costs for current-season tasks — mirrors the iOS hub card.
+    // Season-to-date total uses the same component roll-up as task detail.
     val canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager"
     val seasonStartMs = remember(state.seasonStartMonth, state.seasonStartDay) {
         seasonStartDate(state.seasonStartMonth, state.seasonStartDay)
     }
-    val seasonCost = remember(tasks, state.vineyardLabourLines, seasonStartMs) {
+    val seasonCost = remember(
+        tasks, state.vineyardLabourLines, state.vineyardMachineLines,
+        state.vineyardTaskMaterials, state.trips, state.tripCostAllocations,
+        seasonStartMs, materialCostsAllowed,
+    ) {
         val lines = state.vineyardLabourLines ?: return@remember null
-        val seasonTaskIds = tasks
-            .filter { (it.startEpochMs ?: 0L) >= seasonStartMs }
-            .map { it.id }
-            .toHashSet()
-        lines.filter { it.workTaskId in seasonTaskIds }.sumOf { it.resolvedCost }
+        val seasonTasks = tasks.filter { (it.startEpochMs ?: 0L) >= seasonStartMs }
+        WorkTaskCostRollup.seasonTotal(
+            tasks = seasonTasks,
+            labourLines = lines,
+            machineLines = state.vineyardMachineLines,
+            trips = state.trips,
+            tripCostAllocations = state.tripCostAllocations,
+            materials = state.vineyardTaskMaterials,
+            includeMaterials = materialCostsAllowed,
+        )
     }
 
     Scaffold(
@@ -392,7 +403,7 @@ private fun WorkTasksHub(
                         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text("Total · This Season", fontSize = 11.sp, color = vine.textSecondary)
                             Text(
-                                formatCurrency(seasonCost),
+                                if (seasonCost.isComplete) materialCurrency(seasonCost.totalCost, LocalRegionFormatter.current) else "Incomplete",
                                 fontSize = 20.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = VineColors.LeafGreen,
@@ -926,14 +937,30 @@ private fun WorkTaskDetailView(
     val pieceRateCostPerVine = remember(task, effectiveLabour) {
         if (task.isPieceRate) PieceRateCosting.costPerVine(effectiveLabour, task.pieceVineCount) else null
     }
-    val machineTotal = remember(machineLines) { machineLines.sumOf { it.resolvedCost } }
-    val materialLines = remember(state.taskMaterials, taskId) { WorkTaskMaterialCosting.lines(state.taskMaterials, taskId) }
-    val materialTotal = remember(materialLines) { WorkTaskMaterialCosting.total(materialLines) }
-    val overallTotal = remember(labourTotal, machineTotal, materialTotal, materialCostsAllowed) {
-        BigDecimal.valueOf(labourTotal).add(BigDecimal.valueOf(machineTotal))
-            .add(if (materialCostsAllowed) materialTotal else BigDecimal.ZERO)
-            .setScale(2, RoundingMode.HALF_UP)
+    val allMachineLines = remember(state.vineyardMachineLines, machineLines, taskId) {
+        state.vineyardMachineLines.filterNot { it.workTaskId == taskId } + machineLines
     }
+    val materialLines = remember(state.taskMaterials, taskId) { WorkTaskMaterialCosting.lines(state.taskMaterials, taskId) }
+    val allMaterialLines = remember(state.vineyardTaskMaterials, materialLines, taskId) {
+        state.vineyardTaskMaterials.filterNot { it.workTaskId == taskId } + materialLines
+    }
+    val costRollup = remember(
+        task, labourLines, allMachineLines, state.trips, state.tripCostAllocations,
+        allMaterialLines, materialCostsAllowed,
+    ) {
+        WorkTaskCostRollup.resolve(
+            task = task,
+            labourLines = labourLines,
+            machineLines = allMachineLines,
+            trips = state.trips,
+            tripCostAllocations = state.tripCostAllocations,
+            materials = allMaterialLines,
+            includeMaterials = materialCostsAllowed,
+        )
+    }
+    val machineTotal = costRollup.manualMachineCost
+    val materialTotal = costRollup.materialCost
+    val overallTotal = costRollup.totalCost
     val areaHa = remember(state.paddocks, task.paddockId) {
         task.paddockId?.let { pid -> state.paddocks.firstOrNull { it.id == pid }?.areaHectares }?.takeIf { it > 0 }
     }
@@ -1137,13 +1164,17 @@ private fun WorkTaskDetailView(
                             )
                         }
                         DividerWT(vine.cardBorder)
-                        CostRow("Machinery", formatCurrency(machineTotal), vine.textSecondary, vine.textPrimary)
+                        CostRow("Machinery", materialCurrency(machineTotal, fmt), vine.textSecondary, vine.textPrimary)
+                        if (costRollup.linkedTripCost > BigDecimal.ZERO) {
+                            DividerWT(vine.cardBorder)
+                            CostRow("Linked GPS trips", materialCurrency(costRollup.linkedTripCost, fmt), vine.textSecondary, vine.textPrimary)
+                        }
                         if (materialCostsAllowed) {
                             DividerWT(vine.cardBorder)
                             CostRow("Materials", materialCurrency(materialTotal, fmt), vine.textSecondary, vine.textPrimary)
                         }
                         DividerWT(vine.cardBorder)
-                        CostRow("Total", materialCurrency(overallTotal, fmt), vine.textPrimary, VineColors.PrimaryAccent, emphasise = true)
+                        CostRow("Total", if (costRollup.isComplete) materialCurrency(overallTotal, fmt) else "Incomplete", vine.textPrimary, VineColors.PrimaryAccent, emphasise = true)
                         if (areaHa != null) {
                             DividerWT(vine.cardBorder)
                             // Both halves are regionalised: the cost is re-based over the
@@ -1151,7 +1182,9 @@ private fun WorkTaskDetailView(
                             // acre vineyard never reads a per-hectare figure labelled /ac.
                             CostRow(
                                 "Cost / ${fmt.areaUnitAbbreviation}",
-                                "${materialCurrency(overallTotal.divide(BigDecimal.valueOf(fmt.areaValue(areaHa)), 2, RoundingMode.HALF_UP), fmt)}/${fmt.areaUnitAbbreviation} · ${fmt.formatAreaCompact(areaHa)}",
+                                costRollup.costPerArea(areaHa, fmt.areaValue(areaHa))?.let {
+                                    "${materialCurrency(it, fmt)}/${fmt.areaUnitAbbreviation} · ${fmt.formatAreaCompact(areaHa)}"
+                                } ?: "Incomplete",
                                 vine.textSecondary,
                                 vine.textPrimary,
                             )

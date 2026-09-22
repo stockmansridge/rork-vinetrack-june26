@@ -80,6 +80,7 @@ import com.rork.vinetrack.data.PaddockRepository
 import com.rork.vinetrack.data.PaddockTransferService
 import com.rork.vinetrack.data.calculateRowLines
 import com.rork.vinetrack.data.DomainCacheRepository
+import com.rork.vinetrack.data.TripCostAllocationRepository
 import com.rork.vinetrack.data.PendingPhotoRepository
 import com.rork.vinetrack.data.ActiveTripReconciliation
 import com.rork.vinetrack.data.ActiveTripStore
@@ -309,6 +310,7 @@ import com.rork.vinetrack.data.model.VineyardMember
 import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.WorkTaskMachineLine
+import com.rork.vinetrack.data.model.TripCostAllocation
 import com.rork.vinetrack.data.model.WorkTaskPaddock
 import com.rork.vinetrack.ui.main.TripsListKnowledge
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -691,6 +693,10 @@ data class AppUiState(
      * UI can hide the total rather than show a misleading $0.00.
      */
     val vineyardLabourLines: List<WorkTaskLabourLine>? = null,
+    /** Cached vineyard-wide children used by every Work Task total surface. */
+    val vineyardMachineLines: List<WorkTaskMachineLine> = emptyList(),
+    val vineyardTaskMaterials: List<WorkTaskMaterial> = emptyList(),
+    val tripCostAllocations: List<TripCostAllocation> = emptyList(),
     /** Labour lines for the work task currently open in detail. */
     val taskLabourLines: List<WorkTaskLabourLine> = emptyList(),
     /**
@@ -1213,6 +1219,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val tripRepo = TripRepository(session)
     private val workTaskRepo = WorkTaskRepository(session)
     private val workTaskLineRepo = WorkTaskLineRepository(session)
+    private val tripCostAllocationRepo = TripCostAllocationRepository(session)
     /** HISTORICAL per-row piece-rate snapshots (sql/188). */
     private val pieceRateRowRepo = WorkTaskPieceRateRowRepository(session)
     /**
@@ -6221,7 +6228,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         reportClientTelemetry()
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), tripsListKnowledge = TripsListKnowledge.Unknown, machines = emptyList(), workTasks = emptyList(), members = emptyList(), membershipLoading = true, membershipError = null, operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), grapeVarieties = emptyList(), grapeVarietyReferenceLoading = true, grapeVarietyReferenceError = null, vineyardClones = emptyList(), vineyardRootstocks = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), grapeAllocations = emptyList(), grapePurchasers = emptyList(), grapeAllocationFinancialAccess = false, workTaskPaddocks = emptyList(), vineyardLabourLines = null, growthStageImages = emptyList(), seasonYieldOverview = null, seasonYieldVintage = null, seasonYieldError = null) }
+        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), tripsListKnowledge = TripsListKnowledge.Unknown, machines = emptyList(), workTasks = emptyList(), members = emptyList(), membershipLoading = true, membershipError = null, operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), grapeVarieties = emptyList(), grapeVarietyReferenceLoading = true, grapeVarietyReferenceError = null, vineyardClones = emptyList(), vineyardRootstocks = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), grapeAllocations = emptyList(), grapePurchasers = emptyList(), grapeAllocationFinancialAccess = false, workTaskPaddocks = emptyList(), vineyardLabourLines = null, vineyardMachineLines = emptyList(), vineyardTaskMaterials = emptyList(), tripCostAllocations = emptyList(), growthStageImages = emptyList(), seasonYieldOverview = null, seasonYieldVintage = null, seasonYieldError = null) }
         loadedLogoKey = null
         // Apply the cached region settings instantly so units/currency render
         // correctly on first paint, then refresh from the backend below.
@@ -10046,7 +10053,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { st ->
             if (st.taskLinesTaskId != taskId) return@update st
             val others = st.taskMaterials.filterNot { it.id == id }
-            st.copy(taskMaterials = others + optimistic)
+            st.copy(taskMaterials = others + optimistic, vineyardTaskMaterials = st.vineyardTaskMaterials.filterNot { it.id == id } + optimistic)
         }
 
         fun queueOffline() {
@@ -10094,7 +10101,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st ->
                     if (st.taskLinesTaskId != taskId) return@update st
                     val others = st.taskMaterials.filterNot { it.id == id }
-                    st.copy(taskMaterials = others + saved)
+                    st.copy(taskMaterials = others + saved, vineyardTaskMaterials = st.vineyardTaskMaterials.filterNot { it.id == id } + saved)
                 }
                 onResult(true)
             } catch (_: BackendError.Unauthorized) {
@@ -10116,7 +10123,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         removeTaskMaterialLocally(materialId)
         _ui.update { st ->
             if (st.taskLinesTaskId != taskId) return@update st
-            st.copy(taskMaterials = st.taskMaterials.filterNot { it.id == materialId })
+            st.copy(
+                taskMaterials = st.taskMaterials.filterNot { it.id == materialId },
+                vineyardTaskMaterials = st.vineyardTaskMaterials.filterNot { it.id == materialId },
+            )
         }
         if (workTaskMaterialSync.cancelLocalCreate(materialId)) {
             onResult(true)
@@ -10330,7 +10340,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { st ->
             if (st.taskLinesTaskId != taskId) return@update st
             val others = st.taskLabourLines.filterNot { it.id == id }
-            st.copy(taskLabourLines = others + optimistic, taskLineError = null)
+            st.copy(taskLabourLines = others + optimistic, vineyardLabourLines = st.vineyardLabourLines?.filterNot { it.id == id }?.plus(optimistic), taskLineError = null)
         }
 
         fun queueOffline() {
@@ -10384,7 +10394,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     // into another task's open line list.
                     if (st.taskLinesTaskId != taskId) return@update st.copy(taskLineBusy = false)
                     val others = st.taskLabourLines.filterNot { it.id == saved.id }
-                    st.copy(taskLabourLines = others + saved, taskLineBusy = false)
+                    st.copy(taskLabourLines = others + saved, vineyardLabourLines = st.vineyardLabourLines?.filterNot { it.id == saved.id }?.plus(saved), taskLineBusy = false)
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
@@ -10424,12 +10434,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Never-synced offline line: cancel the queued create/update locally so
         // WorkTaskLabourSync can never resurrect a line the operator removed.
         if (workTaskLabourSync.cancelLocalCreate(lineId)) {
-            _ui.update { st -> st.copy(taskLabourLines = st.taskLabourLines.filterNot { it.id == lineId }) }
+            _ui.update { st -> st.copy(taskLabourLines = st.taskLabourLines.filterNot { it.id == lineId }, vineyardLabourLines = st.vineyardLabourLines?.filterNot { it.id == lineId }) }
             onResult(true)
             return
         }
 
-        _ui.update { st -> st.copy(taskLabourLines = st.taskLabourLines.filterNot { it.id == lineId }) }
+        _ui.update { st -> st.copy(taskLabourLines = st.taskLabourLines.filterNot { it.id == lineId }, vineyardLabourLines = st.vineyardLabourLines?.filterNot { it.id == lineId }) }
 
         // Known-offline: queue the soft-delete marker without touching the network.
         if (!_ui.value.isOnline) {
@@ -10527,7 +10537,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { st ->
             if (st.taskLinesTaskId != taskId) return@update st
             val others = st.taskMachineLines.filterNot { it.id == id }
-            st.copy(taskMachineLines = others + optimistic, taskLineError = null)
+            st.copy(taskMachineLines = others + optimistic, vineyardMachineLines = st.vineyardMachineLines.filterNot { it.id == id } + optimistic, taskLineError = null)
         }
 
         fun queueOffline() {
@@ -10582,7 +10592,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 _ui.update { st ->
                     val others = st.taskMachineLines.filterNot { it.id == saved.id }
-                    st.copy(taskMachineLines = others + saved, taskLineBusy = false)
+                    st.copy(taskMachineLines = others + saved, vineyardMachineLines = st.vineyardMachineLines.filterNot { it.id == saved.id } + saved, taskLineBusy = false)
                 }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
@@ -10622,12 +10632,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Never-synced offline line: cancel the queued create/update locally so
         // WorkTaskMachineSync can never resurrect a line the operator removed.
         if (workTaskMachineSync.cancelLocalCreate(lineId)) {
-            _ui.update { st -> st.copy(taskMachineLines = st.taskMachineLines.filterNot { it.id == lineId }) }
+            _ui.update { st -> st.copy(taskMachineLines = st.taskMachineLines.filterNot { it.id == lineId }, vineyardMachineLines = st.vineyardMachineLines.filterNot { it.id == lineId }) }
             onResult(true)
             return
         }
 
-        _ui.update { st -> st.copy(taskMachineLines = st.taskMachineLines.filterNot { it.id == lineId }) }
+        _ui.update { st -> st.copy(taskMachineLines = st.taskMachineLines.filterNot { it.id == lineId }, vineyardMachineLines = st.vineyardMachineLines.filterNot { it.id == lineId }) }
 
         // Known-offline: queue the soft-delete marker without touching the network.
         if (!_ui.value.isOnline) {
@@ -15317,6 +15327,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         val userId = session.userId
         viewModelScope.launch {
+            val cachedMachines = domainCache.loadVineyardMachineLines(userId, vineyardId).orEmpty()
+            val cachedMaterials = domainCache.loadVineyardTaskMaterials(userId, vineyardId).orEmpty()
+            val cachedAllocations = domainCache.loadTripCostAllocations(userId, vineyardId).orEmpty()
+            _ui.update { st ->
+                if (st.selectedVineyardId != vineyardId) st else st.copy(
+                    vineyardMachineLines = cachedMachines.ifEmpty { st.vineyardMachineLines },
+                    vineyardTaskMaterials = cachedMaterials.ifEmpty { st.vineyardTaskMaterials },
+                    tripCostAllocations = cachedAllocations.ifEmpty { st.tripCostAllocations },
+                )
+            }
             val tasks = try {
                 repo.listWorkTasks(vineyardId)
             } catch (e: Exception) {
@@ -15333,11 +15353,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 null
             }
+            val machineLines = try {
+                workTaskLineRepo.listMachineLinesForVineyard(vineyardId)
+            } catch (e: Exception) {
+                null
+            }
+            val allocations = try {
+                tripCostAllocationRepo.listForVineyard(vineyardId)
+            } catch (e: Exception) {
+                null
+            }
+            val materials = if (materialCostsAccess().isAllowed) try {
+                materialRepo.listTaskMaterialsForVineyard(vineyardId)
+            } catch (e: Exception) {
+                null
+            } else null
             if (_ui.value.selectedVineyardId != vineyardId) {
                 onComplete?.invoke()
                 return@launch
             }
             runCatching { domainCache.saveWorkTasks(userId, vineyardId, tasks) }
+            machineLines?.let { runCatching { domainCache.saveVineyardMachineLines(userId, vineyardId, it) } }
+            allocations?.let { runCatching { domainCache.saveTripCostAllocations(userId, vineyardId, it) } }
+            materials?.let { runCatching { domainCache.saveVineyardTaskMaterials(userId, vineyardId, it) } }
             val pendingSnapshot = pendingWrites.list()
             val overlaid = PendingWriteOverlay.overlayWorkTaskHeaders(tasks, pendingSnapshot, vineyardId)
             _ui.update { st ->
@@ -15347,6 +15385,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         PendingWriteOverlay.overlayWorkTaskPaddocks(it, pendingSnapshot, vineyardId)
                     } ?: st.workTaskPaddocks,
                     vineyardLabourLines = labourLines ?: st.vineyardLabourLines,
+                    vineyardMachineLines = machineLines ?: st.vineyardMachineLines,
+                    vineyardTaskMaterials = materials ?: st.vineyardTaskMaterials,
+                    tripCostAllocations = allocations ?: st.tripCostAllocations,
                 )
             }
             onComplete?.invoke()

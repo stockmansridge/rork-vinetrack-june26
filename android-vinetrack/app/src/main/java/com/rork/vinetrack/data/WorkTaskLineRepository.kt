@@ -155,6 +155,11 @@ class WorkTaskLineRepository(private val session: SessionStore) {
         get("work_task_machine_lines?select=*&work_task_id=eq.$workTaskId&deleted_at=is.null&order=work_date.asc")
     }
 
+    suspend fun listMachineLinesForVineyard(vineyardId: String): List<WorkTaskMachineLine> = withContext(Dispatchers.IO) {
+        requireConfig()
+        get("work_task_machine_lines?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=work_date.asc")
+    }
+
     /**
      * Insert or update a machine line (id present = update). Returns the saved
      * row. [clientUpdatedAt] defaults to now for the online path; offline replay

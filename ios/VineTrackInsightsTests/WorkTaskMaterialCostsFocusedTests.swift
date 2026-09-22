@@ -303,4 +303,92 @@ struct WorkTaskMaterialCostsFocusedTests {
         #expect(payload.id == line.id)
         #expect(task.totalCost == 256)
     }
+
+    @Test func totalCostRollupIncludesEveryAuthoritativeSourceExactlyOnce() {
+        let tripID = UUID()
+        let task = WorkTask(id: taskID, vineyardId: vineyardA)
+        let labour = WorkTaskLabourLine(
+            workTaskId: taskID, vineyardId: vineyardA,
+            workerCount: 1, hoursPerWorker: 4, hourlyRate: 25
+        )
+        let machine = WorkTaskMachineLine(
+            workTaskId: taskID, vineyardId: vineyardA,
+            fuelCost: 10, totalMachineCost: 40
+        )
+        let trip = Trip(id: tripID, vineyardId: vineyardA, totalDistance: 99_999, workTaskId: taskID)
+        let allocation = TripCostAllocation(
+            vineyardId: vineyardA, tripId: tripID, seasonYear: 2026,
+            totalCost: 75.25
+        )
+        let material = WorkTaskMaterial(
+            workTaskId: taskID, vineyardId: vineyardA,
+            materialName: "Posts", quantity: 1, unitCost: 180
+        )
+
+        let result = WorkTaskCostRollup.resolve(
+            task: task, labourLines: [labour], machineLines: [machine],
+            trips: [trip], tripCostAllocations: [allocation], materials: [material],
+            includeMaterials: true
+        )
+        #expect(result.labourCost == 100)
+        #expect(result.manualMachineCost == 50)
+        #expect(result.linkedTripCost == Decimal(string: "75.25"))
+        #expect(result.materialCost == 180)
+        #expect(result.totalCost == Decimal(string: "405.25"))
+        #expect(result.costPerHectare(areaHectares: 2) == Decimal(string: "202.625"))
+    }
+
+    @Test func materialOnlyAndTemporaryGateBehaveConsistently() {
+        let task = WorkTask(id: taskID, vineyardId: vineyardA)
+        let material = WorkTaskMaterial(
+            workTaskId: taskID, vineyardId: vineyardA,
+            materialName: "Posts", quantity: 1, unitCost: 180
+        )
+        let allowed = WorkTaskCostRollup.resolve(
+            task: task, labourLines: [], machineLines: [], trips: [],
+            tripCostAllocations: [], materials: [material], includeMaterials: true
+        )
+        let denied = WorkTaskCostRollup.resolve(
+            task: task, labourLines: [], machineLines: [], trips: [],
+            tripCostAllocations: [], materials: [material], includeMaterials: false
+        )
+        #expect(allowed.totalCost == 180)
+        #expect(denied.totalCost == 0)
+    }
+
+    @Test func pieceRateRemainsTheSingleLabourSource() {
+        let task = WorkTask(
+            id: taskID, vineyardId: vineyardA, costingMethodRaw: "piece_rate",
+            pieceRatePerVine: 0.50, pieceVineCount: 200
+        )
+        let historicalHours = WorkTaskLabourLine(
+            workTaskId: taskID, vineyardId: vineyardA,
+            workerCount: 10, hoursPerWorker: 10, hourlyRate: 99
+        )
+        let result = WorkTaskCostRollup.resolve(
+            task: task, labourLines: [historicalHours], machineLines: [], trips: [],
+            tripCostAllocations: [], materials: [], includeMaterials: true
+        )
+        #expect(result.labourCost == 100)
+        #expect(result.totalCost == 100)
+    }
+
+    @Test func unresolvedLabourDoesNotPresentMaterialSubtotalAsComplete() {
+        let task = WorkTask(id: taskID, vineyardId: vineyardA)
+        let unresolved = WorkTaskLabourLine(
+            workTaskId: taskID, vineyardId: vineyardA,
+            workerCount: 1, hoursPerWorker: 4, hourlyRate: nil
+        )
+        let material = WorkTaskMaterial(
+            workTaskId: taskID, vineyardId: vineyardA,
+            materialName: "Posts", quantity: 1, unitCost: 180
+        )
+        let result = WorkTaskCostRollup.resolve(
+            task: task, labourLines: [unresolved], machineLines: [], trips: [],
+            tripCostAllocations: [], materials: [material], includeMaterials: true
+        )
+        #expect(result.totalCost == 180)
+        #expect(!result.isComplete)
+        #expect(result.costPerHectare(areaHectares: 1) == nil)
+    }
 }

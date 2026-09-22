@@ -20,6 +20,8 @@ import com.rork.vinetrack.data.model.VineyardRootstockRow
 import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.WorkTaskMachineLine
+import com.rork.vinetrack.data.model.TripCostAllocation
+import com.rork.vinetrack.data.material.WorkTaskMaterial
 import com.rork.vinetrack.data.model.YieldEstimationSession
 import com.rork.vinetrack.data.spray.VineyardSprayTarget
 import com.rork.vinetrack.data.spray.VineyardSprayTargetCreateParams
@@ -64,6 +66,8 @@ class DomainCacheStore(context: Context) {
     private val workTaskSerializer = ListSerializer(WorkTask.serializer())
     private val labourLineSerializer = ListSerializer(WorkTaskLabourLine.serializer())
     private val machineLineSerializer = ListSerializer(WorkTaskMachineLine.serializer())
+    private val taskMaterialSerializer = ListSerializer(WorkTaskMaterial.serializer())
+    private val tripCostAllocationSerializer = ListSerializer(TripCostAllocation.serializer())
     private val tripSerializer = ListSerializer(Trip.serializer())
     private val yieldSessionSerializer = ListSerializer(YieldEstimationSession.serializer())
     private val pickingSerializer = ListSerializer(PickingRecord.serializer())
@@ -303,6 +307,44 @@ class DomainCacheStore(context: Context) {
     }
 
     fun machineLinesSyncedAt(workTaskId: String): Long? = readTimestamp(keyMachineAt(workTaskId))
+
+    // MARK: - Vineyard-wide Work Task cost children
+
+    fun loadVineyardMachineLines(vineyardId: String): List<WorkTaskMachineLine> =
+        decode(prefs.getString("work_task_machines_vineyard_$vineyardId", null), machineLineSerializer)
+
+    fun saveVineyardMachineLines(vineyardId: String, lines: List<WorkTaskMachineLine>, syncedAt: Long) {
+        prefs.edit {
+            putString("work_task_machines_vineyard_$vineyardId", json.encodeToString(machineLineSerializer, lines))
+            putLong("work_task_machines_vineyard_at_$vineyardId", syncedAt)
+        }
+    }
+
+    fun vineyardMachineLinesSyncedAt(vineyardId: String): Long? = readTimestamp("work_task_machines_vineyard_at_$vineyardId")
+
+    fun loadVineyardTaskMaterials(vineyardId: String): List<WorkTaskMaterial> =
+        decode(prefs.getString("work_task_materials_vineyard_$vineyardId", null), taskMaterialSerializer)
+
+    fun saveVineyardTaskMaterials(vineyardId: String, lines: List<WorkTaskMaterial>, syncedAt: Long) {
+        prefs.edit {
+            putString("work_task_materials_vineyard_$vineyardId", json.encodeToString(taskMaterialSerializer, lines))
+            putLong("work_task_materials_vineyard_at_$vineyardId", syncedAt)
+        }
+    }
+
+    fun vineyardTaskMaterialsSyncedAt(vineyardId: String): Long? = readTimestamp("work_task_materials_vineyard_at_$vineyardId")
+
+    fun loadTripCostAllocations(vineyardId: String): List<TripCostAllocation> =
+        decode(prefs.getString("trip_cost_allocations_$vineyardId", null), tripCostAllocationSerializer)
+
+    fun saveTripCostAllocations(vineyardId: String, lines: List<TripCostAllocation>, syncedAt: Long) {
+        prefs.edit {
+            putString("trip_cost_allocations_$vineyardId", json.encodeToString(tripCostAllocationSerializer, lines))
+            putLong("trip_cost_allocations_at_$vineyardId", syncedAt)
+        }
+    }
+
+    fun tripCostAllocationsSyncedAt(vineyardId: String): Long? = readTimestamp("trip_cost_allocations_at_$vineyardId")
 
     // MARK: - Historical trips by vineyard (Stage P-4 — snapshot-only cache, no overlay)
 

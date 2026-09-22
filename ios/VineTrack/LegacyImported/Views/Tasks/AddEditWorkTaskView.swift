@@ -100,7 +100,7 @@ struct AddEditWorkTaskView: View {
         return selectedBlocksOrdered.map { p in
             let area = areaFor(p)
             let share = (total > 0 && area != nil) ? (area! / total) : 0
-            let cost = displayLabourCost * share
+            let cost = NSDecimalNumber(decimal: combinedCostRollup.totalCost).doubleValue * share
             let cph: Double? = (area ?? 0) > 0 ? cost / area! : nil
             return BlockAllocation(
                 id: p.id,
@@ -248,10 +248,22 @@ struct AddEditWorkTaskView: View {
     /// cost. Labour contributes ONCE via [displayLabourCost] — labour lines when
     /// they exist, the legacy resource costing otherwise — so a task can never
     /// have its labour counted twice.
-    private var combinedTotalCost: Decimal {
-        let existingCosts = Decimal(string: String(displayLabourCost + manualMachineCharge + manualMachineFuel + linkedTripCost)) ?? 0
+    private var combinedCostRollup: WorkTaskCostRollup.Result {
         let materialCosts = existingTask.map { store.materialTotal(forWorkTask: $0.id) } ?? 0
-        return existingCosts + (materialCostsAllowed ? materialCosts : 0)
+        let labourComplete = isPieceRateTask ? pieceRateCost != nil : labourLines.allSatisfy {
+            WorkTaskLabourCosting.lineCost($0) != nil
+        }
+        let linkedTripIDs = Set(linkedTrips.map(\.id))
+        let linkedAllocations = store.tripCostAllocations.filter { linkedTripIDs.contains($0.tripId) }
+        return WorkTaskCostRollup.combine(
+            labourCost: WorkTaskCostRollup.decimal(displayLabourCost),
+            manualMachineCost: WorkTaskCostRollup.decimal(manualMachineCharge + manualMachineFuel),
+            linkedTripCost: WorkTaskCostRollup.decimal(linkedTripCost),
+            materialCost: materialCostsAllowed ? materialCosts : 0,
+            isComplete: labourComplete
+                && linkedTripIDs.isSubset(of: Set(linkedAllocations.map(\.tripId)))
+                && linkedAllocations.allSatisfy { $0.totalCost != nil }
+        )
     }
 
     /// Successful GPS trips grouped under this task, newest first. Reads the
@@ -503,8 +515,15 @@ struct AddEditWorkTaskView: View {
                         }
                         if (accessControl?.canViewFinancials ?? false) && totalSelectedArea > 0 {
                             LabeledContent("Cost / \(fmt.areaUnitAbbreviation)") {
-                                Text("\(fmt.formatCurrency((displayLabourCost / totalSelectedArea) / fmt.areaValue(hectares: 1)))/\(fmt.areaUnitAbbreviation)")
-                                    .foregroundStyle(.secondary)
+                                if combinedCostRollup.isComplete,
+                                   let costPerHa = combinedCostRollup.costPerHectare(areaHectares: totalSelectedArea) {
+                                    let regionalCost = NSDecimalNumber(decimal: costPerHa).doubleValue / fmt.areaValue(hectares: 1)
+                                    Text("\(fmt.formatCurrency(regionalCost))/\(fmt.areaUnitAbbreviation)")
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text("Incomplete")
+                                        .foregroundStyle(.orange)
+                                }
                             }
                         }
                     }
@@ -671,7 +690,7 @@ struct AddEditWorkTaskView: View {
                     Text("Combined Total")
                         .font(.headline)
                     Spacer()
-                    Text(MaterialCostDisplay.currency(combinedTotalCost, code: fmt.currencyCode))
+                    Text(combinedCostRollup.isComplete ? MaterialCostDisplay.currency(combinedCostRollup.totalCost, code: fmt.currencyCode) : "Incomplete")
                         .font(.title3.weight(.bold))
                         .foregroundStyle(VineyardTheme.leafGreen)
                 }

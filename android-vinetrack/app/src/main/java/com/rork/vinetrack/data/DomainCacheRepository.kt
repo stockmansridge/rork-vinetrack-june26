@@ -19,6 +19,8 @@ import com.rork.vinetrack.data.model.VineyardRootstockRow
 import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.WorkTaskMachineLine
+import com.rork.vinetrack.data.model.TripCostAllocation
+import com.rork.vinetrack.data.material.WorkTaskMaterial
 import com.rork.vinetrack.data.model.YieldEstimationSession
 import com.rork.vinetrack.data.spray.VineyardSprayTarget
 import com.rork.vinetrack.data.spray.VineyardSprayTargetCreateParams
@@ -298,6 +300,29 @@ class DomainCacheRepository(context: Context) {
 
     fun machineLinesSyncedAt(userId: String?, workTaskId: String): Long? =
         if (ownerMatches(userId)) store.machineLinesSyncedAt(workTaskId) else null
+
+    // MARK: - Vineyard-wide Work Task costing children
+
+    fun saveVineyardMachineLines(userId: String?, vineyardId: String, lines: List<WorkTaskMachineLine>) {
+        ensureOwner(userId); store.saveVineyardMachineLines(vineyardId, lines, System.currentTimeMillis())
+    }
+
+    fun loadVineyardMachineLines(userId: String?, vineyardId: String): List<WorkTaskMachineLine>? =
+        if (ownerMatches(userId) && store.vineyardMachineLinesSyncedAt(vineyardId) != null) store.loadVineyardMachineLines(vineyardId) else null
+
+    fun saveVineyardTaskMaterials(userId: String?, vineyardId: String, lines: List<WorkTaskMaterial>) {
+        ensureOwner(userId); store.saveVineyardTaskMaterials(vineyardId, lines, System.currentTimeMillis())
+    }
+
+    fun loadVineyardTaskMaterials(userId: String?, vineyardId: String): List<WorkTaskMaterial>? =
+        if (ownerMatches(userId) && store.vineyardTaskMaterialsSyncedAt(vineyardId) != null) store.loadVineyardTaskMaterials(vineyardId) else null
+
+    fun saveTripCostAllocations(userId: String?, vineyardId: String, lines: List<TripCostAllocation>) {
+        ensureOwner(userId); store.saveTripCostAllocations(vineyardId, lines, System.currentTimeMillis())
+    }
+
+    fun loadTripCostAllocations(userId: String?, vineyardId: String): List<TripCostAllocation>? =
+        if (ownerMatches(userId) && store.tripCostAllocationsSyncedAt(vineyardId) != null) store.loadTripCostAllocations(vineyardId) else null
 
     // MARK: - Historical trips by vineyard (Stage P-4 — snapshot-only cache, no overlay)
 

@@ -6,6 +6,11 @@ struct WorkTasksHubView: View {
     @Environment(WorkTaskLabourLineSyncService.self) private var workTaskLabourLineSync
     @Environment(WorkTaskMachineLineSyncService.self) private var workTaskMachineLineSync
     @Environment(WorkTaskPaddockSyncService.self) private var workTaskPaddockSync
+    @Environment(WorkTaskMaterialSyncService.self) private var workTaskMaterialSync
+    @Environment(TripCostAllocationSyncService.self) private var tripCostAllocationSync
+    @Environment(NewBackendAuthService.self) private var auth
+    @Environment(SystemAdminService.self) private var systemAdmin
+    @Environment(BackendAccessControl.self) private var backendAccessControl
     @Environment(\.accessControl) private var accessControl
 
     @State private var showLog: Bool = false
@@ -13,6 +18,15 @@ struct WorkTasksHubView: View {
     @State private var showAddTask: Bool = false
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
+    private var materialCostsAllowed: Bool {
+        WorkTaskMaterialCostsAccess.resolve(
+            isAuthenticated: auth.isSignedIn,
+            isResolving: systemAdmin.isLoading || systemAdmin.lastLoadedAt == nil,
+            isSystemAdmin: systemAdmin.isSystemAdmin,
+            selectedVineyardID: store.selectedVineyardId,
+            isMemberOfSelectedVineyard: backendAccessControl.currentRole != nil
+        ).isAllowed
+    }
 
     private var visibleTasks: [WorkTask] { store.workTasks.filter { !$0.isArchived } }
     private var totalTasks: Int { visibleTasks.count }
@@ -36,10 +50,13 @@ struct WorkTasksHubView: View {
         visibleTasks.filter { $0.date >= currentSeasonStart }
     }
 
-    /// Season-to-date labour cost across current-season tasks.
-    private var seasonCost: Double {
-        seasonTasks.reduce(0) { $0 + $1.displayLabourCost(in: store) }
+    /// Season-to-date total cost across current-season tasks.
+    private var seasonRollups: [WorkTaskCostRollup.Result] {
+        seasonTasks.map { $0.costRollup(in: store, includeMaterials: materialCostsAllowed) }
     }
+
+    private var seasonCost: Decimal { seasonRollups.reduce(0) { $0 + $1.totalCost } }
+    private var hasIncompleteSeasonCost: Bool { seasonRollups.contains { !$0.isComplete } }
 
     var body: some View {
         ScrollView {
@@ -88,6 +105,10 @@ struct WorkTasksHubView: View {
         await workTaskLabourLineSync.syncForSelectedVineyard()
         await workTaskMachineLineSync.syncForSelectedVineyard()
         await workTaskPaddockSync.syncForSelectedVineyard()
+        await tripCostAllocationSync.syncForSelectedVineyard()
+        if materialCostsAllowed {
+            await workTaskMaterialSync.syncForSelectedVineyard()
+        }
     }
 
     private var summaryCard: some View {
@@ -106,7 +127,7 @@ struct WorkTasksHubView: View {
                         Text("Total · This Season")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text(fmt.formatCurrency(seasonCost))
+                        Text(hasIncompleteSeasonCost ? "Incomplete" : MaterialCostDisplay.currency(seasonCost, code: fmt.currencyCode))
                             .font(.title2.weight(.bold).monospacedDigit())
                             .foregroundStyle(VineyardTheme.leafGreen)
                         Text("From \(currentSeasonStart.formatted(.dateTime.day().month(.abbreviated).year()))")
@@ -199,7 +220,7 @@ struct WorkTasksHubView: View {
             } else {
                 VStack(spacing: 8) {
                     ForEach(recent) { task in
-                        WorkTaskRow(task: task)
+                        WorkTaskRow(task: task, includeMaterials: materialCostsAllowed)
                     }
                 }
             }
@@ -240,6 +261,7 @@ struct WorkTasksHubView: View {
 
 struct WorkTaskRow: View {
     let task: WorkTask
+    let includeMaterials: Bool
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.accessControl) private var accessControl
     @Environment(WorkTaskSyncService.self) private var workTaskSync
@@ -247,6 +269,9 @@ struct WorkTaskRow: View {
     @State private var showEdit: Bool = false
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
+    private var rollup: WorkTaskCostRollup.Result {
+        task.costRollup(in: store, includeMaterials: includeMaterials)
+    }
 
     var body: some View {
         Button {
@@ -282,11 +307,11 @@ struct WorkTaskRow: View {
                         Label("\(task.displayPeople(in: store))", systemImage: "person.fill")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                        if task.displayLabourCost(in: store) > 0 && (accessControl?.canViewFinancials ?? false) {
+                        if rollup.totalCost > 0 && (accessControl?.canViewFinancials ?? false) {
                             Text("•")
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
-                            Text(fmt.formatCurrency(task.displayLabourCost(in: store)))
+                            Text(rollup.isComplete ? MaterialCostDisplay.currency(rollup.totalCost, code: fmt.currencyCode) : "Incomplete")
                                 .font(.caption2.weight(.medium))
                                 .foregroundStyle(VineyardTheme.leafGreen)
                         }

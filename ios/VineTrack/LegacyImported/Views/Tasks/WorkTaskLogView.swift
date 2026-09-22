@@ -6,6 +6,11 @@ struct WorkTaskLogView: View {
     @Environment(WorkTaskLabourLineSyncService.self) private var workTaskLabourLineSync
     @Environment(WorkTaskMachineLineSyncService.self) private var workTaskMachineLineSync
     @Environment(WorkTaskPaddockSyncService.self) private var workTaskPaddockSync
+    @Environment(WorkTaskMaterialSyncService.self) private var workTaskMaterialSync
+    @Environment(TripCostAllocationSyncService.self) private var tripCostAllocationSync
+    @Environment(NewBackendAuthService.self) private var auth
+    @Environment(SystemAdminService.self) private var systemAdmin
+    @Environment(BackendAccessControl.self) private var backendAccessControl
     @Environment(\.accessControl) private var accessControl
 
     enum SortOption: String, CaseIterable, Identifiable {
@@ -26,6 +31,19 @@ struct WorkTaskLogView: View {
     @State private var showAdd: Bool = false
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
+    private var materialCostsAllowed: Bool {
+        WorkTaskMaterialCostsAccess.resolve(
+            isAuthenticated: auth.isSignedIn,
+            isResolving: systemAdmin.isLoading || systemAdmin.lastLoadedAt == nil,
+            isSystemAdmin: systemAdmin.isSystemAdmin,
+            selectedVineyardID: store.selectedVineyardId,
+            isMemberOfSelectedVineyard: backendAccessControl.currentRole != nil
+        ).isAllowed
+    }
+
+    private func rollup(for task: WorkTask) -> WorkTaskCostRollup.Result {
+        task.costRollup(in: store, includeMaterials: materialCostsAllowed)
+    }
 
     private var allTaskTypes: [String] {
         Array(Set(store.workTasks.map { $0.taskType }).union(WorkTaskTypeCatalog.defaults)).sorted()
@@ -60,12 +78,14 @@ struct WorkTaskLogView: View {
         case .block:
             items.sort { $0.paddockName.localizedStandardCompare($1.paddockName) == .orderedAscending }
         case .costDesc:
-            items.sort { $0.displayLabourCost(in: store) > $1.displayLabourCost(in: store) }
+            items.sort { rollup(for: $0).totalCost > rollup(for: $1).totalCost }
         }
         return items
     }
 
-    private var totalCost: Double { filtered.reduce(0) { $0 + $1.displayLabourCost(in: store) } }
+    private var filteredRollups: [WorkTaskCostRollup.Result] { filtered.map(rollup(for:)) }
+    private var totalCost: Decimal { filteredRollups.reduce(0) { $0 + $1.totalCost } }
+    private var hasIncompleteCost: Bool { filteredRollups.contains { !$0.isComplete } }
     private var totalHours: Double { filtered.reduce(0) { $0 + $1.displayHours(in: store) } }
     private var totalPeople: Int { filtered.reduce(0) { $0 + $1.displayPeople(in: store) } }
 
@@ -112,6 +132,10 @@ struct WorkTaskLogView: View {
         await workTaskLabourLineSync.syncForSelectedVineyard()
         await workTaskMachineLineSync.syncForSelectedVineyard()
         await workTaskPaddockSync.syncForSelectedVineyard()
+        await tripCostAllocationSync.syncForSelectedVineyard()
+        if materialCostsAllowed {
+            await workTaskMaterialSync.syncForSelectedVineyard()
+        }
     }
 
     private var summaryCard: some View {
@@ -130,7 +154,7 @@ struct WorkTaskLogView: View {
                         Text("Cost")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text(fmt.formatCurrency(totalCost))
+                        Text(hasIncompleteCost ? "Incomplete" : MaterialCostDisplay.currency(totalCost, code: fmt.currencyCode))
                             .font(.title2.weight(.bold).monospacedDigit())
                             .foregroundStyle(VineyardTheme.leafGreen)
                     }
@@ -260,7 +284,7 @@ struct WorkTaskLogView: View {
                     Button {
                         selectedTask = task
                     } label: {
-                        WorkTaskLogRow(task: task)
+                        WorkTaskLogRow(task: task, includeMaterials: materialCostsAllowed)
                     }
                     .buttonStyle(.plain)
                 }
@@ -340,6 +364,7 @@ extension WorkTask {
 
 private struct WorkTaskLogRow: View {
     let task: WorkTask
+    let includeMaterials: Bool
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.accessControl) private var accessControl
     @Environment(WorkTaskSyncService.self) private var workTaskSync
@@ -347,6 +372,9 @@ private struct WorkTaskLogRow: View {
     private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var blockDisplay: String { task.blockDisplay(in: store) }
+    private var rollup: WorkTaskCostRollup.Result {
+        task.costRollup(in: store, includeMaterials: includeMaterials)
+    }
 
     private var displayCostPerPerson: Double {
         let people = task.displayPeople(in: store)
@@ -400,7 +428,7 @@ private struct WorkTaskLogRow: View {
 
             VStack(alignment: .trailing, spacing: 4) {
                 if accessControl?.canViewFinancials ?? false {
-                    Text(fmt.formatCurrency(task.displayLabourCost(in: store)))
+                    Text(rollup.isComplete ? MaterialCostDisplay.currency(rollup.totalCost, code: fmt.currencyCode) : "Incomplete")
                         .font(.subheadline.weight(.bold).monospacedDigit())
                         .foregroundStyle(VineyardTheme.leafGreen)
                 }
