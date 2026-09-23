@@ -894,6 +894,25 @@ nonisolated struct ChemicalInfoService: Sendable {
     ///
     /// The overload the Match flow uses, so the "canonical name, never the
     /// typed query" rule lives in one testable place.
+    private struct LabelIdentityResponse: Decodable {
+        let productName: String?
+        enum CodingKeys: String, CodingKey { case productName = "product_name" }
+    }
+
+    func identifyLabel(ocrText: String) async throws -> String? {
+        let data = try await postEdge(path: "chemical-info-lookup", payload: [
+            "action": "identify_label", "ocrText": ocrText, "country": "AU"
+        ], timeout: 30)
+        return try JSONDecoder().decode(LabelIdentityResponse.self, from: data).productName
+    }
+
+    func discoverLabel(query: String) async throws -> ChemicalStructuredLookup {
+        let data = try await postEdge(path: "chemical-info-lookup", payload: [
+            "action": "discover_label", "query": query, "country": "AU"
+        ], timeout: 75)
+        return try JSONDecoder().decode(ChemicalStructuredLookup.self, from: data)
+    }
+
     func lookupStructured(_ request: ChemicalStructuredLookupRequest) async throws -> ChemicalStructuredLookup {
         try await lookupStructured(
             productName: request.productName,

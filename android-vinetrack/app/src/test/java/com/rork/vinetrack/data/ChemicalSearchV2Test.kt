@@ -43,6 +43,17 @@ class ChemicalSearchV2Test {
 
     @Test fun photoApvmaIdentityComesBeforeExternalFallback() {
         assertEquals("62764", ChemicalLabelIdentityOCR.apvmaNumber("APVMA Product No. 62764"))
+        assertEquals("62764", ChemicalLabelIdentityOCR.proposedQuery("62764", "Dithane Rainshield"))
+    }
+
+    @Test fun headingsCannotSilentlyBecomePhotoQueries() {
+        listOf("WARNING", "CAUTION").forEach { heading ->
+            val text = "$heading\nDITHANE RAINSHIELD\nFUNGICIDE"
+            assertNull(ChemicalLabelIdentityOCR.apvmaNumber(text))
+            assertNull(ChemicalLabelIdentityOCR.proposedQuery(null, null))
+            assertEquals("DITHANE RAINSHIELD", ChemicalLabelIdentityOCR.proposedQuery(null, "DITHANE RAINSHIELD"))
+        }
+        assertEquals("Corrected name", ChemicalSearchV2ManualPrefill.productName(" Corrected name "))
     }
 
     @Test fun viticultureRatesKeepBothBasesAndSeparateOptions() {

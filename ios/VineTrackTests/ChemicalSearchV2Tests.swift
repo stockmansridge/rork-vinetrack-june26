@@ -23,6 +23,17 @@ struct ChemicalSearchV2Tests {
 
     @Test func photoRegistrationIdentityIsExtractedBeforeFallback() {
         #expect(ChemicalLabelIdentityOCR.apvmaNumber(in: "APVMA Product No. 62764") == "62764")
+        #expect(ChemicalLabelIdentityOCR.proposedQuery(apvma: "62764", identifiedName: "Dithane Rainshield") == "62764")
+    }
+
+    @Test func photoHeadingCannotSilentlyBecomeQuery() {
+        for heading in ["WARNING", "CAUTION"] {
+            let text = "\(heading)\nDITHANE RAINSHIELD\nFUNGICIDE"
+            #expect(ChemicalLabelIdentityOCR.apvmaNumber(in: text) == nil)
+            #expect(ChemicalLabelIdentityOCR.proposedQuery(apvma: nil, identifiedName: nil) == nil)
+            #expect(ChemicalLabelIdentityOCR.proposedQuery(apvma: nil, identifiedName: "DITHANE RAINSHIELD") == "DITHANE RAINSHIELD")
+        }
+        #expect(ChemicalSearchV2ManualPrefill.productName(from: " Corrected name ") == "Corrected name")
     }
 
     @Test func viticultureRatesKeepBothBasesAndSeparateOptions() {

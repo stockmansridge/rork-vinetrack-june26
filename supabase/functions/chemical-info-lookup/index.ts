@@ -125,6 +125,7 @@ import {
   reconcileGroup,
 } from "./ingestion/activity_groups.ts";
 import type { MasterOps, MasterRow } from "./ingestion/contract.ts";
+import { chooseLabelCandidate, confirmedOCRName, directOfficialLabelURL } from "./label_fallback.ts";
 import {
   buildCandidatePayload,
   buildFieldProvenance,
@@ -1149,13 +1150,6 @@ Deno.serve(async (req: Request) => {
   }
 
   const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
-  if (!apiKey) {
-    return json(
-      { error: "Server is missing OPENAI_API_KEY secret" },
-      500,
-    );
-  }
-
   let body: any;
   try {
     body = await req.json();
@@ -1164,6 +1158,9 @@ Deno.serve(async (req: Request) => {
   }
 
   const action = String(body?.action ?? "").toLowerCase();
+  if (!apiKey && action !== "discover_label") {
+    return json({ error: "Server is missing OPENAI_API_KEY secret" }, 500);
+  }
 
   // Task §14 production diagnostics.
   //
@@ -1249,6 +1246,43 @@ Deno.serve(async (req: Request) => {
   const countryLabel = jur.displayName ?? jur.raw;
 
   try {
+    if (action === "identify_label") {
+      const ocr = typeof body?.ocrText === "string" ? body.ocrText.slice(0, 12000) : "";
+      if (ocr.trim().length < 5) return json({ error: "No readable label text" }, 400);
+      const raw = await callOpenAI(
+        "Identify only the agricultural product name literally printed on this label. Return JSON {\"product_name\":string|null}. If uncertain or only regulatory headings are visible return null. Do not infer registration, rates or label details.",
+        ocr, apiKey,
+      );
+      const parsed = extractJSON(raw);
+      return json({ product_name: confirmedOCRName(parsed?.product_name, ocr) });
+    }
+
+    if (action === "discover_label") {
+      const query = typeof body?.query === "string" ? body.query.trim() : "";
+      if (query.length < 2 || query.length > 200) return json({ error: "Enter a product name or APVMA number" }, 400);
+      if (countryCode !== "AU") return json({ error: "Official label discovery is currently available for Australia only" }, 422);
+      const deps = { fetchFn: fetch, now: () => new Date() };
+      const candidates = await discoverRegisterCandidates("AU", query, deps);
+      const candidate = chooseLabelCandidate(query, candidates);
+      if (!candidate) return json({ error: "No unique APVMA product found. Refine the name or enter its registration number; you can also add it manually." }, 422);
+      const discovered = await discoverAuthoritative("AU", candidate.registered_product_name, candidate.registration_number, deps);
+      const reg = discovered.registration;
+      if (discovered.outcome !== "resolved" || !reg || reg.registration_number !== candidate.registration_number) {
+        return json({ error: "The APVMA could not verify this exact product. Refine your search or add it manually." }, 422);
+      }
+      const result = buildRegisterOnlyStructured(reg, ACTIVITY_GROUP_TABLE_VERSION);
+      const label = directOfficialLabelURL(result.registration?.regulator_label_url, reg.registration_number) ??
+        directOfficialLabelURL(result.registration?.label_reference, reg.registration_number);
+      if (!label) return json({ error: "No direct official product label could be verified. Try again or add it manually." }, 422);
+      result.registration.label_reference = label;
+      result.registration.regulator_label_url = label;
+      result.registration.manufacturer_label_url = null;
+      result.registration.manufacturer_product_url = null;
+      applyRateIdentities(result);
+      applyDefaultRateOptions(result);
+      return json({ ...result, match_source: "authoritative_candidate", jurisdiction: jurEnv });
+    }
+
     if (action === "search") {
       const query = typeof body?.query === "string" ? body.query.trim() : "";
       if (!query) return json({ error: "Missing query" }, 400);

@@ -298,6 +298,21 @@ class ChemicalInfoService {
      * The result is never verified: the lookup can identify a candidate and
      * classify its chemistry, but confirming product identity is a human step.
      */
+    @Serializable
+    private data class LabelIdentityResponse(@SerialName("product_name") val productName: String? = null)
+
+    suspend fun identifyLabel(ocrText: String): String? = withContext(Dispatchers.IO) {
+        SupabaseClient.json.decodeFromString<LabelIdentityResponse>(
+            withTimeout(30_000L) { postEdge(mapOf("action" to "identify_label", "ocrText" to ocrText, "country" to "AU")) },
+        ).productName
+    }
+
+    suspend fun discoverLabel(query: String): ChemicalStructuredLookup = withContext(Dispatchers.IO) {
+        SupabaseClient.json.decodeFromString<ChemicalStructuredLookup>(
+            withTimeout(75_000L) { postEdge(mapOf("action" to "discover_label", "query" to query, "country" to "AU")) },
+        )
+    }
+
     suspend fun lookupStructured(
         productName: String,
         country: String,

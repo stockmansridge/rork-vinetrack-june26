@@ -229,6 +229,8 @@ class ChemicalLabelAttachmentV2Repository {
 data class ChemicalLabelIdentityEvidence(val text: String, val apvmaNumber: String?, val searchQuery: String?)
 
 object ChemicalLabelIdentityOCR {
+    fun proposedQuery(apvma: String?, identifiedName: String?): String? = apvma ?: identifiedName
+
     suspend fun recognise(context: Context, uri: Uri): ChemicalLabelIdentityEvidence {
         val image = InputImage.fromFilePath(context, uri)
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
@@ -239,10 +241,7 @@ object ChemicalLabelIdentityOCR {
         }
         recognizer.close()
         val number = apvmaNumber(text)
-        val name = text.lineSequence().map(String::trim).firstOrNull {
-            it.length >= 3 && it.any(Char::isLetter) && !it.contains("apvma", ignoreCase = true)
-        }
-        return ChemicalLabelIdentityEvidence(text, number, number ?: name)
+        return ChemicalLabelIdentityEvidence(text, number, number)
     }
 
     fun apvmaNumber(text: String): String? =

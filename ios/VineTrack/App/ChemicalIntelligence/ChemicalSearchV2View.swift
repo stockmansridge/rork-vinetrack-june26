@@ -308,6 +308,10 @@ enum ChemicalLabelIdentityOCR {
         let searchQuery: String?
     }
 
+    static func proposedQuery(apvma: String?, identifiedName: String?) -> String? {
+        apvma ?? identifiedName
+    }
+
     static func recognise(_ data: Data) async throws -> Evidence {
         guard let image = UIImage(data: data), let cgImage = image.cgImage else {
             throw NSError(domain: "ChemicalSearchV2", code: 1, userInfo: [NSLocalizedDescriptionKey: "The selected photo could not be read."])
@@ -319,12 +323,7 @@ enum ChemicalLabelIdentityOCR {
                     .compactMap { $0.topCandidates(1).first?.string } ?? []
                 let text = lines.joined(separator: "\n")
                 let number = apvmaNumber(in: text)
-                let name = lines.first(where: { line in
-                    let clean = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                    return clean.count >= 3 && clean.rangeOfCharacter(from: .letters) != nil
-                        && !clean.lowercased().contains("apvma")
-                })
-                continuation.resume(returning: Evidence(text: text, apvmaNumber: number, searchQuery: number ?? name))
+                continuation.resume(returning: Evidence(text: text, apvmaNumber: number, searchQuery: number))
             }
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
@@ -362,6 +361,11 @@ struct ChemicalSearchV2View: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var isShowingCamera: Bool = false
     @State private var isExternalLookupRunning: Bool = false
+    @State private var isReadingPhoto: Bool = false
+    @State private var proposedIdentity: String?
+    @State private var photoRegistration: String?
+    @State private var externalRequestID: UUID?
+    @State private var photoRequestID: UUID?
     @State private var diagnostics = ChemicalSearchV2Diagnostics()
 
     private let repository = MasterChemicalV2Repository()
@@ -404,6 +408,18 @@ struct ChemicalSearchV2View: View {
                     Text("Master Catalogue only. No AI, web search or label lookup runs while you type or search here.")
                 }
 
+                if isReadingPhoto { HStack { ProgressView(); Text("Identifying product on label…") } }
+                if let proposedIdentity {
+                    Section("Product found on label") {
+                        Text(proposedIdentity)
+                        if let photoRegistration { Text("APVMA \(photoRegistration)").font(.caption) }
+                        TextField("Edit product or APVMA number", text: $query)
+                        Button("Search this product") {
+                            self.proposedIdentity = nil
+                            search()
+                        }
+                    }
+                }
                 if let message { Text(message).foregroundStyle(.secondary) }
 
                 ForEach(results) { result in
@@ -422,8 +438,12 @@ struct ChemicalSearchV2View: View {
                 }
 
                 Section("Fallbacks") {
-                    Button("Can't find it? Search label online", action: searchOnline)
-                        .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || isExternalLookupRunning)
+                    if isExternalLookupRunning {
+                        HStack { ProgressView(); Text("Searching for official product label…") }
+                    } else {
+                        Button(results.isEmpty && photoRegistration != nil ? "Search official label for \"\(query)\"" : "Can't find it? Search label online", action: searchOnline)
+                            .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
+                    }
                     Button("Take Photo of Label") { isShowingCamera = true }
                     PhotosPicker(selection: $photoItem, matching: .images) {
                         Label("Choose Label Photo", systemImage: "photo.on.rectangle")
@@ -432,7 +452,8 @@ struct ChemicalSearchV2View: View {
             }
             .navigationTitle("Chemical Search V2")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { externalRequestID = nil; photoRequestID = nil; dismiss() } } }
+            .onDisappear { externalRequestID = nil; photoRequestID = nil }
             .sheet(isPresented: $isShowingCamera) {
                 CameraImagePicker { data in if let data { acceptPhoto(data) } }
             }
@@ -518,15 +539,13 @@ struct ChemicalSearchV2View: View {
     private func searchOnline() {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2, !isExternalLookupRunning else { return }
-        isExternalLookupRunning = true; diagnostics.fallbackInvoked = true
+        let token = UUID(); externalRequestID = token
+        isExternalLookupRunning = true; message = nil; diagnostics.fallbackInvoked = true
         print("[ChemicalSearchV2] fallback_invoked=true type=label_lookup")
         Task {
             do {
-                let lookup = try await externalService.lookupStructured(
-                    productName: trimmed,
-                    country: "AU",
-                    registrationNumber: nil
-                )
+                let lookup = try await externalService.discoverLabel(query: trimmed)
+                guard externalRequestID == token else { return }
                 let intel = lookup.intelligence()
                 let viticultureRates = ViticultureRates.fromRegisteredUses(intel.registeredUses)
                 let automatic = ChemicalSearchV2OperationalDefaults.unambiguousRates(from: viticultureRates)
@@ -539,37 +558,36 @@ struct ChemicalSearchV2View: View {
                     selectedRegisteredRateID: selected?.id, automaticRates: automatic
                 )
                 diagnostics.externalLookupSucceeded = true
-                print("[ChemicalSearchV2] external_lookup=success")
             } catch {
-                diagnostics.externalLookupSucceeded = false
-                message = "Label lookup failed. \(error.localizedDescription)"
-                print("[ChemicalSearchV2] external_lookup=failure")
+                if externalRequestID == token {
+                    diagnostics.externalLookupSucceeded = false
+                    message = "Official label search failed. \(error.localizedDescription) Try again or add manually."
+                }
             }
-            isExternalLookupRunning = false
+            if externalRequestID == token { isExternalLookupRunning = false; externalRequestID = nil }
         }
     }
 
     private func acceptPhoto(_ data: Data) {
-        photoData = data; message = "Reading visible label identity…"
+        let token = UUID(); photoRequestID = token
+        photoData = data; proposedIdentity = nil; isReadingPhoto = true; message = nil
         Task {
             do {
                 let evidence = try await ChemicalLabelIdentityOCR.recognise(data)
-                guard let identity = evidence.searchQuery else {
-                    message = "No clear product identity was found. Search the Master Catalogue by name or APVMA number."
-                    return
-                }
-                query = identity
-                let found = try await repository.search(identity)
-                results = found
-                diagnostics.photoMatch = !found.isEmpty
-                print("[ChemicalSearchV2] photo_match=\(!found.isEmpty) apvma_present=\(evidence.apvmaNumber != nil)")
-                if let exact = evidence.apvmaNumber.flatMap({ number in found.first { $0.registrationNumber.filter { $0.isNumber } == number } }) {
-                    message = "Suggested Master Catalogue match from APVMA number. Please confirm."
-                    openMaster(exact)
+                let name = evidence.apvmaNumber == nil ? try await externalService.identifyLabel(ocrText: evidence.text) : nil
+                guard photoRequestID == token else { return }
+                photoRegistration = evidence.apvmaNumber
+                if let identity = ChemicalLabelIdentityOCR.proposedQuery(apvma: evidence.apvmaNumber, identifiedName: name) {
+                    proposedIdentity = name ?? "APVMA \(identity)"
+                    query = identity
+                    message = "Confirm or edit the search text before searching VineTrack Master."
                 } else {
-                    message = found.isEmpty ? "No Master match from the visible identity. You may explicitly search the label online." : "Possible Master matches found. Please confirm one."
+                    message = "No confident product identity found. Enter the product name to search VineTrack Master."
                 }
-            } catch { message = error.localizedDescription }
+            } catch {
+                if photoRequestID == token { message = "Could not identify the label. Enter a product name or APVMA number to search." }
+            }
+            if photoRequestID == token { isReadingPhoto = false; photoRequestID = nil }
         }
     }
 
@@ -652,10 +670,15 @@ private struct ChemicalSearchV2ReviewView: View {
                         LabeledContent("APVMA", value: draft.intelligence.registration?.registrationNumber ?? "—")
                         LabeledContent("Active ingredients", value: draft.intelligence.activeIngredients.map(\.name).joined(separator: ", ").ifEmpty("—"))
                         if !draft.intelligence.productCategory.isEmpty { LabeledContent("Category", value: draft.intelligence.productCategory.capitalized) }
+                        if let label = draft.intelligence.registration?.labelReference,
+                           let url = URL(string: label), url.scheme == "https", url.host == "elabels.apvma.gov.au",
+                           url.path.lowercased().hasSuffix(".pdf") {
+                            Link("Official Label", destination: url)
+                        }
                     }
                     Section("Registered vineyard rates") {
                         if draft.viticultureRates.all.isEmpty {
-                            Text("No registered vineyard rate is currently recorded in VineTrack.")
+                            Text("Grapevine use or rate could not be established from the official label. Check the document before entering a deliberate manual default; VineTrack will not invent one.")
                                 .foregroundStyle(.secondary)
                         }
                         if !draft.viticultureRates.perHectare.isEmpty {
