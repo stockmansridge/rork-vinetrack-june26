@@ -27,6 +27,7 @@ nonisolated struct WeatherCurrentService: Sendable {
         let humidityPct: Double?
         let windSpeedKmh: Double?
         let windDirectionDeg: Double?
+        let windGustKmh: Double?
         let rainTodayMm: Double?
         let rainRateMmPerHr: Double?
         let leafWetness: Double?
@@ -260,7 +261,7 @@ nonisolated struct WeatherCurrentService: Sendable {
             .value
         guard let row = rows.first else { return nil }
         return CachedSnapshot(
-            source: row.source ?? "davis_weatherlink",
+            source: row.source ?? "none",
             stationId: row.stationId,
             stationName: row.stationName,
             observedAt: row.observedAt,
@@ -268,6 +269,7 @@ nonisolated struct WeatherCurrentService: Sendable {
             humidityPct: row.humidityPct,
             windSpeedKmh: row.windSpeedKmh,
             windDirectionDeg: row.windDirectionDeg,
+            windGustKmh: row.windGustKmh,
             rainTodayMm: row.rainTodayMm,
             rainRateMmPerHr: row.rainRateMmPerHr,
             leafWetness: row.leafWetness,
@@ -275,6 +277,62 @@ nonisolated struct WeatherCurrentService: Sendable {
             status: row.status ?? "unavailable",
             message: row.message ?? ""
         )
+    }
+
+    /// Determine the only eligible upstream; no cross-provider fallback.
+    static func currentAction(source: String, status: String, isStale: Bool, force: Bool) -> String? {
+        guard status != "not_configured", force || isStale || status == "no_data" else { return nil }
+        switch source {
+        case "davis_weatherlink", "wunderground_pws": return source
+        default: return nil
+        }
+    }
+
+    /// The server RPC chooses the active source and decides staleness. Never
+    /// route based on a device-only setting or fall back to a different station.
+    func refreshSelectedCurrent(vineyardId: UUID, force: Bool = false) async throws {
+        guard let snap = try await fetchCachedCurrent(vineyardId: vineyardId),
+              let action = Self.currentAction(source: snap.source, status: snap.status,
+                                              isStale: snap.isStale, force: force) else { return }
+        switch action {
+        case "wunderground_pws":
+            try await VineyardWundergroundProxyService.fetchCurrent(vineyardId: vineyardId)
+        case "davis_weatherlink":
+            guard let stationId = snap.stationId, !stationId.isEmpty else { return }
+            _ = try await VineyardDavisProxyService.fetchCurrentConditions(
+                vineyardId: vineyardId, stationId: stationId
+            )
+        default:
+            return
+        }
+    }
+
+    func setSelectedProvider(_ selection: LocalObservationProvider, vineyardId: UUID) async throws {
+        let source: String
+        switch selection {
+        case .none: source = "none"
+        case .davis: source = "davis_weatherlink"
+        case .wunderground: source = "wunderground_pws"
+        }
+        let provider = SupabaseClientProvider.shared
+        try await provider.client.rpc("set_vineyard_current_observation_provider", params: [
+            "p_vineyard_id": vineyardId.uuidString,
+            "p_provider": source,
+        ]).execute()
+    }
+
+    func selectedProvider(vineyardId: UUID) async throws -> LocalObservationProvider? {
+        let provider = SupabaseClientProvider.shared
+        let source: String? = try await provider.client.rpc(
+            "get_vineyard_current_observation_provider",
+            params: GetCurrentWeatherParams(pVineyardId: vineyardId)
+        ).execute().value
+        switch source {
+        case "none": return LocalObservationProvider.none
+        case "davis_weatherlink": return .davis
+        case "wunderground_pws": return .wunderground
+        default: return nil // Legacy: no shared selection yet.
+        }
     }
 
     nonisolated private struct GetCurrentWeatherParams: Encodable, Sendable {
@@ -291,6 +349,7 @@ nonisolated struct WeatherCurrentService: Sendable {
         let humidityPct: Double?
         let windSpeedKmh: Double?
         let windDirectionDeg: Double?
+        let windGustKmh: Double?
         let rainTodayMm: Double?
         let rainRateMmPerHr: Double?
         let leafWetness: Double?
@@ -306,6 +365,7 @@ nonisolated struct WeatherCurrentService: Sendable {
             case humidityPct = "humidity_pct"
             case windSpeedKmh = "wind_speed_kmh"
             case windDirectionDeg = "wind_direction_deg"
+            case windGustKmh = "wind_gust_kmh"
             case rainTodayMm = "rain_today_mm"
             case rainRateMmPerHr = "rain_rate_mm_per_hr"
             case leafWetness = "leaf_wetness"

@@ -45,10 +45,11 @@ final class VineyardWeatherIntegrationCache {
                     vineyardId: vineyardId,
                     provider: "davis_weatherlink"
                 )
+                let selected = try? await WeatherCurrentService().selectedProvider(vineyardId: vineyardId)
                 await MainActor.run {
                     self.cached[vineyardId] = integ
                     print("[DavisConfig] cache load vineyardId=\(vineyardId) source=rpc configured=\(integ?.isFullyConfigured ?? false) hasKey=\(integ?.hasApiKey ?? false) hasSecret=\(integ?.hasApiSecret ?? false) stationId=\(integ?.stationId ?? "-")")
-                    self.applyToConfig(integ, for: vineyardId)
+                    self.applyToConfig(integ, selectedProvider: selected, for: vineyardId)
                 }
             } catch {
                 print("[DavisConfig] local fallback used reason=\(error.localizedDescription) vineyardId=\(vineyardId)")
@@ -93,6 +94,7 @@ final class VineyardWeatherIntegrationCache {
     /// so reads are routed through the proxy.
     private func applyToConfig(
         _ integ: VineyardWeatherIntegration?,
+        selectedProvider: LocalObservationProvider?,
         for vineyardId: UUID
     ) {
         var c = WeatherProviderStore.shared.config(for: vineyardId)
@@ -113,7 +115,7 @@ final class VineyardWeatherIntegrationCache {
                 // If the user hasn't explicitly chosen a local source,
                 // use the vineyard's Davis as the local observation
                 // source so labels/source resolution work everywhere.
-                if c.localObservationProvider == .none {
+                if c.localObservationProvider == .none && selectedProvider == nil {
                     c.localObservationProvider = .davis
                 }
             }
@@ -123,6 +125,7 @@ final class VineyardWeatherIntegrationCache {
             c.davisVineyardConfiguredBy = nil
             c.davisVineyardUpdatedAt = nil
         }
+        if let selectedProvider { c.localObservationProvider = selectedProvider }
         WeatherProviderStore.shared.save(c, for: vineyardId)
     }
 }

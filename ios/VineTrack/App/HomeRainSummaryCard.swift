@@ -145,11 +145,8 @@ struct HomeRainSummaryCard: View {
 
     // MARK: - Refresh
 
-    /// Single entry point used by `.task`, vineyard switching, and
-    /// scenePhase transitions. Pulls the live Davis observation (when a
-    /// shared station is configured) so the cached snapshot reflects the
-    /// current station reading, then reads `get_vineyard_current_weather`
-    /// the same way the rest of the app does. Forecast is always reloaded.
+    /// Refresh the server-selected live observation only when stale or missing,
+    /// then independently load rainfall history and the forecast.
     private func refresh() async {
         guard !isRefreshInFlight else { return }
         guard let vid = store.selectedVineyardId else {
@@ -171,39 +168,16 @@ struct HomeRainSummaryCard: View {
         }
         refreshDidFail = false
 
-        // 1) Provider-appropriate live refresh. We pick at most one
-        //    foreground refresh per call so this stays cheap; lower-priority
-        //    backfills (e.g. Open-Meteo gap fill) are scheduled detached.
-        await VineyardWeatherIntegrationCache.shared.ensureLoaded(for: vid)
-        let cfg = WeatherProviderStore.shared.config(for: vid)
-        let canUseDavis = (cfg.davisStationId?.isEmpty == false) &&
-            ((cfg.davisIsVineyardShared && cfg.davisVineyardHasServerCredentials)
-             || (cfg.davisHasCredentials && cfg.davisConnectionTested))
-        var didLivePull = false
-
-        if canUseDavis, let sid = cfg.davisStationId {
-            do {
-                _ = try await VineyardDavisProxyService.fetchCurrentConditions(
-                    vineyardId: vid, stationId: sid
-                )
-                didLivePull = true
-                NotificationCenter.default.post(
-                    name: .rainfallCalendarShouldReload, object: nil
-                )
-            } catch {
-                // Network/auth/rate-limit issues shouldn't blank the card;
-                // we still read whatever's in the cache below.
-                refreshDidFail = true
-                print("[HomeRain] live Davis refresh failed — \(error.localizedDescription)")
-            }
+        // 1) The cache RPC is authoritative about provider and 20-minute
+        // staleness; a WU failure must never trigger a Davis current fetch.
+        do {
+            try await WeatherCurrentService().refreshSelectedCurrent(vineyardId: vid)
+        } catch {
+            refreshDidFail = true
+            print("[HomeRain] selected observation refresh failed — \(error.localizedDescription)")
         }
-
-        // If Davis isn't the active source, try the next-best server-side
-        // refresh so the Home card reflects today's available data without
-        // requiring the user to open the Rain page and tap refresh.
-        if !didLivePull {
-            await refreshNonDavis(vineyardId: vid)
-        }
+        // History gap filling is independent of today's live observation.
+        await refreshNonDavis(vineyardId: vid)
 
         // 2) Read the cached current snapshot (matches Rain page + Irrigation).
         var resolvedToday: Double?

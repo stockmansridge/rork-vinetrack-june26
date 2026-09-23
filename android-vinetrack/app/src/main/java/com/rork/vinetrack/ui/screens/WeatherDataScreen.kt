@@ -63,6 +63,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.CurrentObservationRepository
 import com.rork.vinetrack.data.DavisSensorSummary
 import com.rork.vinetrack.data.DavisStation
 import com.rork.vinetrack.data.DavisWeatherLinkRepository
@@ -126,6 +127,7 @@ fun WeatherDataScreen(
     val integrationRepo = remember { VineyardWeatherIntegrationRepository(SessionStore(context)) }
     val davisRepo = remember { DavisWeatherLinkRepository(SessionStore(context)) }
     val backfillRepo = remember { RainfallHistoryBackfillRepository(SessionStore(context)) }
+    val observationRepo = remember { CurrentObservationRepository(SessionStore(context)) }
     val vineyardId = state.selectedVineyardId
     val vineyard = state.vineyards.firstOrNull { it.id == vineyardId }
     val canEdit = state.currentRole == "owner" || state.currentRole == "manager"
@@ -159,6 +161,8 @@ fun WeatherDataScreen(
     var davisIntegration by remember { mutableStateOf<VineyardWeatherIntegration?>(null) }
     var loading by remember { mutableStateOf(true) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
+    var selectedObservation by remember { mutableStateOf<String?>(null) }
+    var observationBusy by remember { mutableStateOf(false) }
 
     suspend fun reload() {
         if (vineyardId == null) return
@@ -174,6 +178,7 @@ fun WeatherDataScreen(
         davisIntegration = runCatching {
             integrationRepo.fetch(vineyardId, WeatherIntegrationProvider.DAVIS)
         }.getOrNull()
+        selectedObservation = runCatching { observationRepo.selected(vineyardId) }.getOrNull()
     }
 
     LaunchedEffect(vineyardId) {
@@ -308,6 +313,55 @@ fun WeatherDataScreen(
                         }
                     },
                 )
+            }
+
+            // Shared observation selection is separate from the forecast picker.
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionHeader("Current Observation Source", onLight = true)
+                listOf(
+                    "none" to "None / Automatic",
+                    "davis_weatherlink" to "Davis WeatherLink",
+                    "wunderground_pws" to "Weather Underground PWS",
+                ).forEach { (source, label) ->
+                    TextButton(
+                        enabled = canEdit && !observationBusy && vineyardId != null,
+                        onClick = {
+                            val id = vineyardId ?: return@TextButton
+                            observationBusy = true
+                            scope.launch {
+                                try {
+                                    observationRepo.select(id, source)
+                                    selectedObservation = source
+                                    statusMessage = null
+                                } catch (_: Exception) {
+                                    statusMessage = "Couldn't change current observation source."
+                                } finally { observationBusy = false }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(label, modifier = Modifier.weight(1f), color = vine.textPrimary)
+                        if (selectedObservation == source) Icon(Icons.Filled.Check, contentDescription = "Selected")
+                    }
+                }
+                if (selectedObservation == null) Text("Legacy selection: Davis first, then Weather Underground", fontSize = 12.sp)
+                Button(
+                    enabled = !observationBusy && vineyardId != null,
+                    onClick = {
+                        val id = vineyardId ?: return@Button
+                        observationBusy = true
+                        scope.launch {
+                            try {
+                                statusMessage = when (observationRepo.refresh(id, force = true)) {
+                                    "not_configured" -> "No active local observation station is configured."
+                                    else -> "Selected observations refreshed."
+                                }
+                            } catch (_: Exception) {
+                                statusMessage = "Selected observation refresh failed. Try again later."
+                            } finally { observationBusy = false }
+                        }
+                    },
+                ) { Text(if (observationBusy) "Refreshing…" else "Refresh selected observations now") }
             }
 
             // Local observation source (Weather Underground PWS + Davis status)

@@ -128,6 +128,18 @@ nonisolated enum VineyardWundergroundProxyService {
         )
     }
 
+    /// Refresh the selected vineyard PWS's current observation cache. The
+    /// server resolves station ID; caller overrides are intentionally excluded.
+    static func fetchCurrent(vineyardId: UUID) async throws {
+        let json = try await invoke(payload: [
+            "vineyardId": vineyardId.uuidString,
+            "action": "current",
+        ])
+        guard json["success"] as? Bool == true else {
+            throw VineyardWundergroundProxyError.decoding("Current observation was not saved")
+        }
+    }
+
     // MARK: - Internals
 
     private static func invoke(

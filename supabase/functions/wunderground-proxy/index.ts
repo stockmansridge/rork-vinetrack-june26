@@ -1,18 +1,18 @@
 // Supabase Edge Function: wunderground-proxy
 //
-// Server-side proxy for Weather Underground PWS history. Reads the
+// Server-side proxy for Weather Underground PWS history and current observations. Reads the
 // platform-wide WUNDERGROUND_API_KEY secret and the per-vineyard
 // station ID from `vineyard_weather_integrations` (provider =
 // 'wunderground'), so the API key is never exposed to the device or
 // portal.
 //
 // Auth: caller must send the Supabase JWT in the Authorization header.
-// Owner/Manager role required for backfill.
+// Owner/Manager role required for backfill; any member can refresh current.
 //
 // Request (POST JSON):
 //   {
 //     "vineyardId": "<uuid>",
-//     "action": "backfill_rainfall",
+//     "action": "backfill_rainfall" | "current",
 //     "stationId"?: string,            // optional override
 //     "days"?: number,                 // target window 1..365 (default 14)
 //     "offsetDays"?: number,           // skip first N days from yesterday (default 0)
@@ -27,13 +27,14 @@
 //     attempted_dates: [...], per_day: [{ date, status, mm? }]
 //   }
 //
-// Writes: only source = 'wunderground_pws' rows via
-// public.upsert_wunderground_rainfall_daily(...). Never touches
+// Writes: only source = 'wunderground_pws' rows via the daily rainfall RPC
+// or the vineyard_weather_observations shared current cache. Never touches
 // manual, davis_weatherlink, or open_meteo rows.
 
 // deno-lint-ignore-file no-explicit-any
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { refreshWundergroundCurrent } from "./current_observation.ts";
 
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -199,6 +200,28 @@ Deno.serve(async (req: Request) => {
   const stationName = integ?.station_name ?? null;
 
   switch (action) {
+    case "current": {
+      // Current is a member-readable refresh of the vineyard's configured station;
+      // never accept a caller-supplied station override for shared cache writes.
+      if (!integ?.is_active || !integ.station_id) {
+        return json({ error: "No active Weather Underground station configured for this vineyard" }, 404);
+      }
+      try {
+        const row = await refreshWundergroundCurrent(
+          vineyardId, String(integ.station_id), stationName, apiKey,
+          async (observation) => {
+            const { error } = await admin.from("vineyard_weather_observations")
+              .upsert(observation, { onConflict: "vineyard_id,source" });
+            return { error };
+          },
+        );
+        return json({ success: true, source: row.source, station_id: row.station_id, observed_at: row.observed_at });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "upstream_unavailable";
+        console.log(JSON.stringify({ tag: "wunderground-proxy.current.failed", vineyardId, reason }));
+        return json({ error: reason }, reason === "rate_limited" ? 429 : 502);
+      }
+    }
     case "backfill_rainfall": {
       if (role !== "owner" && role !== "manager") {
         return json({ error: "Owner or manager role required" }, 403);

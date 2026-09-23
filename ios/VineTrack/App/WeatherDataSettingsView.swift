@@ -46,6 +46,10 @@ struct WeatherDataSettingsView: View {
     @State private var davisForceRefreshStatus: String?
     @State private var davisForceRefreshOk: Bool = false
     @State private var isForceRefreshingDavis: Bool = false
+    @State private var isRefreshingSelectedObservation: Bool = false
+    @State private var observationStatus: String?
+    @State private var isSavingObservationProvider: Bool = false
+    @State private var hasSharedObservationSelection: Bool = false
     /// Status text for the Owner/Manager-only "Backfill Davis rainfall"
     /// action. Posts `action: backfill_rainfall` to the davis-proxy edge
     /// function which iterates closed days and upserts `rainfall_daily`
@@ -849,11 +853,22 @@ struct WeatherDataSettingsView: View {
         Section {
             ForEach(LocalObservationProvider.allCases) { provider in
                 Button {
-                    guard canEdit else { return }
-                    var c = config
-                    c.localObservationProvider = provider
-                    config = c
-                    persist()
+                    guard canEdit, !isSavingObservationProvider, let vid = vineyardId else { return }
+                    isSavingObservationProvider = true
+                    Task {
+                        defer { isSavingObservationProvider = false }
+                        do {
+                            try await WeatherCurrentService().setSelectedProvider(provider, vineyardId: vid)
+                            hasSharedObservationSelection = true
+                            var c = config
+                            c.localObservationProvider = provider
+                            config = c
+                            persist()
+                            observationStatus = nil
+                        } catch {
+                            observationStatus = "Could not save observation source: \(error.localizedDescription)"
+                        }
+                    }
                 } label: {
                     HStack(alignment: .top, spacing: 12) {
                         SettingsIconTile(symbol: provider.symbol, color: localProviderColor(provider))
@@ -885,8 +900,33 @@ struct WeatherDataSettingsView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(!canEdit)
+                .disabled(!canEdit || isSavingObservationProvider)
             }
+            Button {
+                guard let vid = vineyardId, !isRefreshingSelectedObservation else { return }
+                isRefreshingSelectedObservation = true
+                Task {
+                    defer { isRefreshingSelectedObservation = false }
+                    do {
+                        let weather = WeatherCurrentService()
+                        guard let selected = try await weather.fetchCachedCurrent(vineyardId: vid),
+                              selected.status != "not_configured" else {
+                            observationStatus = "No active local observation station is configured."
+                            return
+                        }
+                        try await weather.refreshSelectedCurrent(vineyardId: vid, force: true)
+                        observationStatus = "Selected observation source refreshed."
+                        NotificationCenter.default.post(name: .rainfallCalendarShouldReload, object: nil)
+                    } catch {
+                        observationStatus = "Observation refresh failed: \(error.localizedDescription)"
+                    }
+                }
+            } label: {
+                if isRefreshingSelectedObservation { ProgressView() }
+                else { Label("Refresh selected observations now", systemImage: "arrow.clockwise") }
+            }
+            .disabled(isRefreshingSelectedObservation)
+            if let observationStatus { Text(observationStatus).font(.caption) }
         } header: {
             Text("Local Observation Source")
         } footer: {
@@ -2480,7 +2520,16 @@ struct WeatherDataSettingsView: View {
         config = c
         davisStations = c.davisAvailableStations
         print("[DavisConfig] loadConfig vineyardId=\(vid) localProvider=\(c.localObservationProvider.rawValue) hasKeychain=\(c.davisHasCredentials) cachedShared=\(c.davisIsVineyardShared) cachedHasServerSecret=\(c.davisVineyardHasServerCredentials) cachedStationId=\(c.davisStationId ?? "-")")
-        Task { await loadVineyardIntegration(for: vid) }
+        Task {
+            if let selected = try? await WeatherCurrentService().selectedProvider(vineyardId: vid) {
+                hasSharedObservationSelection = true
+                var updated = config
+                updated.localObservationProvider = selected
+                config = updated
+                WeatherProviderStore.shared.save(updated, for: vid)
+            }
+            await loadVineyardIntegration(for: vid)
+        }
     }
 
     private func loadVineyardIntegration(for vineyardId: UUID) async {
@@ -2540,7 +2589,7 @@ struct WeatherDataSettingsView: View {
                 // station. Without this, a fully-configured vineyard
                 // appears "not configured" in the UI on devices that
                 // never opened the picker.
-                if c.localObservationProvider == .none && integ.hasApiSecret {
+                if c.localObservationProvider == .none && integ.hasApiSecret && !hasSharedObservationSelection {
                     c.localObservationProvider = .davis
                 }
             }
