@@ -53,6 +53,7 @@ import com.rork.vinetrack.data.chemical.ChemicalManualEntry
 import com.rork.vinetrack.data.chemical.ChemicalManualRateDraft
 import com.rork.vinetrack.data.chemical.ChemicalSaveContract
 import com.rork.vinetrack.data.chemical.ChemicalStoreMatching
+import com.rork.vinetrack.data.chemical.SavedChemicalEntrySource
 import com.rork.vinetrack.data.chemical.ChemicalSearchV2Duplicate
 import com.rork.vinetrack.data.chemical.ChemicalSearchV2OperationalDefaults
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
@@ -335,7 +336,11 @@ internal fun ChemicalSearchV2Sheet(
                                 Log.d("ChemicalSearchV2", "external_lookup=success")
                             } catch (_: CancellationException) {
                             } catch (error: Exception) {
-                                message = "Official label search failed. ${error.message.orEmpty()} Try again or add manually."
+                                message = if (error.message?.contains("APVMA registration not verified", ignoreCase = true) == true ||
+                                    error.message?.contains("No unique APVMA product found", ignoreCase = true) == true) {
+                                    openManual()
+                                    null
+                                } else "Label search unavailable. Try again or add manually."
                                 Log.d("ChemicalSearchV2", "external_lookup=failure")
                             } finally { externalBusy = false }
                         }
@@ -409,7 +414,7 @@ private fun ChemicalReviewV2(
         Text("Manual vineyard chemical · Unverified", fontSize = 12.sp)
     } else {
         Text("Registrant: ${draft.intelligence.registration?.registrant ?: "—"}")
-        Text("APVMA: ${draft.intelligence.registration?.registrationNumber ?: "—"}")
+        Text("APVMA: ${if (draft.intelligence.hasEvidencedRegistration) draft.intelligence.registration?.registrationNumber ?: "—" else "Registration not verified"}")
         Text("Active ingredients: ${draft.intelligence.activeIngredients.joinToString { it.name }.ifBlank { "—" }}")
         draft.intelligence.productCategory.takeIf(String::isNotBlank)?.let { Text("Category: $it") }
         draft.intelligence.registration?.labelReference?.takeIf { label ->
@@ -422,7 +427,7 @@ private fun ChemicalReviewV2(
 
         Text("Registered vineyard rates", fontWeight = FontWeight.Bold)
         if (registeredRates.isEmpty()) {
-            Text("Grapevine use or rate could not be established from the official label. Check the document before entering a deliberate manual default; VineTrack will not invent one.", fontSize = 13.sp)
+            Text("Grapevine use or rate was not established. Check the label before entering a deliberate manual default; VineTrack will not invent one.", fontSize = 13.sp)
         }
         if (draft.viticultureRates.perHectare.isNotEmpty()) {
             Text("Per hectare", fontWeight = FontWeight.SemiBold)
@@ -600,11 +605,14 @@ private fun ChemicalReviewV2(
                     defaultRates = ChemicalSearchV2OperationalDefaults.storedDefaults(
                         effectiveRates, java.time.Instant.now().toString(),
                     ),
-                    entrySource = if (draft.isManual) "manual_v2" else if (draft.master == null) "label_lookup_v2" else "master_catalogue_v2",
+                    entrySource = SavedChemicalEntrySource.reviewed(draft.isManual, draft.master != null, canonicalIntelligence),
                 )
                 vm.createSavedChemicalV2(input) { created ->
                     saving = false
-                    if (created == null) return@createSavedChemicalV2
+                    if (created == null) {
+                        notice = "Couldn't save this chemical. Check your connection and try again."
+                        return@createSavedChemicalV2
+                    }
                     onSaved(created)
                     if (photoBytes == null) { onDone(); return@createSavedChemicalV2 }
                     scope.launch {

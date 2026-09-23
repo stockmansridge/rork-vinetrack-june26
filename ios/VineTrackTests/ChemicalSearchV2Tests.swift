@@ -160,6 +160,23 @@ struct ChemicalSearchV2Tests {
         #expect(!evaluation.violations.contains { $0.code == .productCategoryMissing })
     }
 
+    @Test func provenanceAndQueuedV2RepairPreserveEvidence() {
+        let unverified = ChemicalIntelligence(verification: .manual())
+        let verified = ChemicalIntelligence(
+            registration: ChemicalRegistration(countryCode: "AU", scheme: .apvma, registrationNumber: "59688"),
+            verification: ChemicalVerification(sources: [ChemicalDataSource(kind: .officialRegister, name: "APVMA")])
+        )
+        #expect(SavedChemicalEntrySource.reviewed(isManual: true, isMaster: false, intelligence: verified) == "customer_entered")
+        #expect(SavedChemicalEntrySource.reviewed(isManual: false, isMaster: true, intelligence: verified) == "master_catalogue")
+        #expect(SavedChemicalEntrySource.reviewed(isManual: false, isMaster: false, intelligence: verified) == "register_lookup")
+        #expect(SavedChemicalEntrySource.reviewed(isManual: false, isMaster: false, intelligence: unverified) == "label_lookup")
+        #expect(SavedChemicalEntrySource.repaired("manual_v2", intelligence: nil) == "customer_entered")
+        #expect(SavedChemicalEntrySource.repaired("master_catalogue_v2", intelligence: nil) == "master_catalogue")
+        #expect(SavedChemicalEntrySource.repaired("label_lookup_v2", intelligence: verified) == "register_lookup")
+        #expect(SavedChemicalEntrySource.repaired("label_lookup_v2", intelligence: unverified) == "label_lookup")
+        #expect(SavedChemicalEntrySource.repaired(nil, intelligence: verified) == nil)
+    }
+
     @Test func manualDuplicateUsesExactNormalisedVineyardNameOnly() {
         let existing = SavedChemical(name: "Wettable Sulphur")
         let intelligence = ChemicalIntelligence(verification: .manual())

@@ -550,14 +550,13 @@ struct WorkTaskMaterialCostsTests {
         #expect(repo.loadEffective().count == 18)
     }
 
-    // MARK: - 12 & 13. The TEMPORARY System Admin gate
+    // MARK: - 12 & 13. Work Task access
 
-    @Test("A System Admin member of the selected vineyard can enter Material Costs")
-    func systemAdminCanAccess() {
+    @Test("A permitted vineyard member can enter Work Task Material Costs")
+    func vineyardMemberCanAccess() {
         let access = WorkTaskMaterialCostsAccess.resolve(
             isAuthenticated: true,
             isResolving: false,
-            isSystemAdmin: true,
             selectedVineyardID: Self.vineyardA,
             isMemberOfSelectedVineyard: true
         )
@@ -565,49 +564,43 @@ struct WorkTaskMaterialCostsTests {
         #expect(access.isAllowed)
     }
 
-    @Test("A non-System-Admin never sees or enters Material Costs while the gate is active")
-    func nonSystemAdminIsRefused() {
-        // This assertion is what makes the gate's removal visible: when
-        // `isTemporarySystemAdminGateActive` is flipped, this test must be
-        // rewritten rather than silently passing against a public feature.
-        #expect(WorkTaskMaterialCostsAccess.isTemporarySystemAdminGateActive)
-
-        // Every ordinary vineyard role, including owner, is refused today.
-        let owner = WorkTaskMaterialCostsAccess.resolve(
-            isAuthenticated: true, isResolving: false, isSystemAdmin: false,
+    @Test("A normal permitted Work Task user can use Materials without System Admin status")
+    func normalWorkTaskUserCanAccess() {
+        let member = WorkTaskMaterialCostsAccess.resolve(
+            isAuthenticated: true, isResolving: false,
             selectedVineyardID: Self.vineyardA, isMemberOfSelectedVineyard: true
         )
-        #expect(owner == .unavailable(.notSystemAdmin))
-        #expect(!owner.isAllowed)
+        #expect(member == .allowed)
+        #expect(member.isAllowed)
     }
 
     @Test("The gate fails closed while resolving, signed out, or outside a vineyard")
     func gateFailsClosed() {
         // Still resolving — denied, so nothing flashes into view at launch.
         #expect(WorkTaskMaterialCostsAccess.resolve(
-            isAuthenticated: true, isResolving: true, isSystemAdmin: true,
+            isAuthenticated: true, isResolving: true,
             selectedVineyardID: Self.vineyardA, isMemberOfSelectedVineyard: true
         ) == .unavailable(.stillResolving))
 
         // Signed out.
         #expect(WorkTaskMaterialCostsAccess.resolve(
-            isAuthenticated: false, isResolving: false, isSystemAdmin: true,
+            isAuthenticated: false, isResolving: false,
             selectedVineyardID: Self.vineyardA, isMemberOfSelectedVineyard: true
         ) == .unavailable(.notAuthenticated))
 
-        // System Admin is not a skeleton key: tenancy still applies.
+        // Vineyard tenancy still applies.
         #expect(WorkTaskMaterialCostsAccess.resolve(
-            isAuthenticated: true, isResolving: false, isSystemAdmin: true,
+            isAuthenticated: true, isResolving: false,
             selectedVineyardID: Self.vineyardA, isMemberOfSelectedVineyard: false
         ) == .unavailable(.notVineyardMember))
 
         #expect(WorkTaskMaterialCostsAccess.resolve(
-            isAuthenticated: true, isResolving: false, isSystemAdmin: true,
+            isAuthenticated: true, isResolving: false,
             selectedVineyardID: nil, isMemberOfSelectedVineyard: true
         ) == .unavailable(.notVineyardMember))
     }
 
-    // MARK: - 16 & 17. Additive, and the gate is cleanly removable
+    // MARK: - 16 & 17. Additive, with unchanged storage
 
     @Test("Material Costs is additive — existing Work Task behaviour is untouched")
     func existingWorkTaskBehaviourUnchanged() {

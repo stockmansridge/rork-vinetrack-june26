@@ -149,26 +149,16 @@ struct WorkTaskMaterialCostsFocusedTests {
         #expect(line.totalCost == Decimal(string: "13.18"))
     }
 
-    @Test func temporaryGateAllowsOnlyAuthenticatedSystemAdminVineyardMembers() {
-        #expect(WorkTaskMaterialCostsAccess.isTemporarySystemAdminGateActive)
+    @Test func workTaskMaterialsAllowAuthenticatedVineyardMembers() {
         #expect(WorkTaskMaterialCostsAccess.resolve(
             isAuthenticated: true,
             isResolving: false,
-            isSystemAdmin: true,
             selectedVineyardID: vineyardA,
             isMemberOfSelectedVineyard: true
         ) == .allowed)
         #expect(WorkTaskMaterialCostsAccess.resolve(
             isAuthenticated: true,
             isResolving: false,
-            isSystemAdmin: false,
-            selectedVineyardID: vineyardA,
-            isMemberOfSelectedVineyard: true
-        ) == .unavailable(.notSystemAdmin))
-        #expect(WorkTaskMaterialCostsAccess.resolve(
-            isAuthenticated: true,
-            isResolving: false,
-            isSystemAdmin: true,
             selectedVineyardID: vineyardA,
             isMemberOfSelectedVineyard: false
         ) == .unavailable(.notVineyardMember))

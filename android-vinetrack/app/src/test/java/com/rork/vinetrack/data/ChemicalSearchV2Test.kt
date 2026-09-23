@@ -12,6 +12,13 @@ import com.rork.vinetrack.data.chemical.MasterChemicalV2Repository
 import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
 import com.rork.vinetrack.data.chemical.ChemicalSearchV2Duplicate
 import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
+import com.rork.vinetrack.data.chemical.ChemicalVerification
+import com.rork.vinetrack.data.chemical.ChemicalIntelligence
+import com.rork.vinetrack.data.chemical.ChemicalRegistration
+import com.rork.vinetrack.data.chemical.ChemicalRegistrationScheme
+import com.rork.vinetrack.data.chemical.ChemicalDataSource
+import com.rork.vinetrack.data.chemical.ChemicalDataSourceKind
+import com.rork.vinetrack.data.chemical.SavedChemicalEntrySource
 import com.rork.vinetrack.data.model.SavedChemical
 import com.rork.vinetrack.ui.screens.ChemicalSearchV2ManualDetails
 import com.rork.vinetrack.ui.screens.ChemicalSearchV2ManualPrefill
@@ -23,6 +30,22 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ChemicalSearchV2Test {
+    @Test fun provenanceAndQueuedV2RepairUseEvidenceNotScreenVersion() {
+        val unverified = ChemicalIntelligence()
+        val verified = ChemicalIntelligence(
+            registration = ChemicalRegistration(countryCode = "AU", scheme = ChemicalRegistrationScheme.APVMA, registrationNumber = "59688"),
+            verification = ChemicalVerification(sources = listOf(ChemicalDataSource(kind = ChemicalDataSourceKind.OFFICIAL_REGISTER, name = "APVMA"))),
+        )
+        assertEquals("customer_entered", SavedChemicalEntrySource.reviewed(true, false, verified))
+        assertEquals("master_catalogue", SavedChemicalEntrySource.reviewed(false, true, verified))
+        assertEquals("register_lookup", SavedChemicalEntrySource.reviewed(false, false, verified))
+        assertEquals("label_lookup", SavedChemicalEntrySource.reviewed(false, false, unverified))
+        assertEquals("customer_entered", SavedChemicalEntrySource.repaired("manual_v2", null))
+        assertEquals("master_catalogue", SavedChemicalEntrySource.repaired("master_catalogue_v2", null))
+        assertEquals("register_lookup", SavedChemicalEntrySource.repaired("label_lookup_v2", verified))
+        assertEquals("label_lookup", SavedChemicalEntrySource.repaired("label_lookup_v2", unverified))
+        assertNull(SavedChemicalEntrySource.repaired(null, verified))
+    }
     @Test fun deterministicRankingCoversExactPrefixRegistrationAndActive() {
         val args = arrayOf("Kocide Blue Xtra", listOf("kocide blue"), "62764", listOf("copper hydroxide"), "Corteva")
         assertEquals(1, ChemicalSearchV2Rank.rank("Kocide Blue Xtra", args[0] as String, args[1] as List<String>, args[2] as String, args[3] as List<String>, args[4] as String))

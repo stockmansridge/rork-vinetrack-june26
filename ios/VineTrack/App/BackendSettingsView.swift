@@ -28,11 +28,12 @@ struct BackendSettingsView: View {
 
     @Environment(\.openURL) private var openURL
 
-    private var materialCostsAllowed: Bool {
+    // Material Library stays System Admin-only; task material entry uses the separate Work Task access decision.
+    private var materialLibraryAllowed: Bool {
+        systemAdmin.isSystemAdmin && !systemAdmin.isLoading && systemAdmin.lastLoadedAt != nil &&
         WorkTaskMaterialCostsAccess.resolve(
             isAuthenticated: auth.isSignedIn,
-            isResolving: systemAdmin.isLoading || systemAdmin.lastLoadedAt == nil,
-            isSystemAdmin: systemAdmin.isSystemAdmin,
+            isResolving: auth.isLoading,
             selectedVineyardID: store.selectedVineyardId,
             isMemberOfSelectedVineyard: accessControl.currentRole != nil
         ).isAllowed
@@ -328,7 +329,7 @@ struct BackendSettingsView: View {
                 destination: AnyView(AccountDeletionRequestView())
             )
         ]
-        if materialCostsAllowed {
+        if materialLibraryAllowed {
             items.append(SettingsSearchItem(
                 title: "Material Library",
                 subtitle: "Standard materials, custom materials & default costs",
@@ -724,7 +725,7 @@ struct BackendSettingsView: View {
                     color: .orange
                 )
             }
-            if materialCostsAllowed {
+            if materialLibraryAllowed {
                 NavigationLink {
                     VineyardMaterialLibraryView()
                 } label: {

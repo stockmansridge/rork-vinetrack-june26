@@ -665,14 +665,13 @@ class WorkTaskMaterialCostsTest {
     }
 
     // -----------------------------------------------------------------
-    // 14 & 15. The TEMPORARY System Admin gate
+    // 14 & 15. Work Task access
     // -----------------------------------------------------------------
 
     @Test
-    fun `a system admin member of the selected vineyard can enter material costs`() {
+    fun `a permitted vineyard member can enter work task material costs`() {
         val access = WorkTaskMaterialCostsAccess.resolve(
             sessionPhase = SessionPhase.AuthenticatedOnline,
-            isSystemAdmin = true,
             selectedVineyardId = vineyardA,
             isMemberOfSelectedVineyard = true,
         )
@@ -681,48 +680,39 @@ class WorkTaskMaterialCostsTest {
     }
 
     @Test
-    fun `a non system admin never sees or enters material costs while the gate is active`() {
-        // This assertion is what makes the gate's removal visible: when the
-        // flag is flipped, this test must be rewritten rather than silently
-        // passing against a now-public feature.
-        assertTrue(WorkTaskMaterialCostsAccess.IS_TEMPORARY_SYSTEM_ADMIN_GATE_ACTIVE)
-
-        val owner = WorkTaskMaterialCostsAccess.resolve(
+    fun `a normal permitted work task user can use materials without system admin status`() {
+        val member = WorkTaskMaterialCostsAccess.resolve(
             sessionPhase = SessionPhase.AuthenticatedOnline,
-            isSystemAdmin = false,
             selectedVineyardId = vineyardA,
             isMemberOfSelectedVineyard = true,
         )
-        assertEquals(
-            WorkTaskMaterialCostsAccess.Unavailable(WorkTaskMaterialCostsAccess.Reason.NotSystemAdmin),
-            owner,
-        )
-        assertFalse(owner.isAllowed)
+        assertEquals(WorkTaskMaterialCostsAccess.Allowed, member)
+        assertTrue(member.isAllowed)
     }
 
     @Test
     fun `the gate fails closed while restoring signed out or outside a vineyard`() {
         assertEquals(
             WorkTaskMaterialCostsAccess.Unavailable(WorkTaskMaterialCostsAccess.Reason.SessionRestoring),
-            WorkTaskMaterialCostsAccess.resolve(SessionPhase.Restoring, true, vineyardA, true),
+            WorkTaskMaterialCostsAccess.resolve(SessionPhase.Restoring, vineyardA, true),
         )
         assertEquals(
             WorkTaskMaterialCostsAccess.Unavailable(WorkTaskMaterialCostsAccess.Reason.NotAuthenticated),
-            WorkTaskMaterialCostsAccess.resolve(SessionPhase.SignedOut, true, vineyardA, true),
+            WorkTaskMaterialCostsAccess.resolve(SessionPhase.SignedOut, vineyardA, true),
         )
-        // System Admin is not a skeleton key: tenancy still applies.
+        // Vineyard tenancy still applies.
         assertEquals(
             WorkTaskMaterialCostsAccess.Unavailable(WorkTaskMaterialCostsAccess.Reason.NotVineyardMember),
-            WorkTaskMaterialCostsAccess.resolve(SessionPhase.AuthenticatedOnline, true, vineyardA, false),
+            WorkTaskMaterialCostsAccess.resolve(SessionPhase.AuthenticatedOnline, vineyardA, false),
         )
         assertEquals(
             WorkTaskMaterialCostsAccess.Unavailable(WorkTaskMaterialCostsAccess.Reason.NotVineyardMember),
-            WorkTaskMaterialCostsAccess.resolve(SessionPhase.AuthenticatedOnline, true, null, true),
+            WorkTaskMaterialCostsAccess.resolve(SessionPhase.AuthenticatedOnline, null, true),
         )
         // Offline but authenticated still works — Material Costs is offline-first.
         assertEquals(
             WorkTaskMaterialCostsAccess.Allowed,
-            WorkTaskMaterialCostsAccess.resolve(SessionPhase.AuthenticatedOffline, true, vineyardA, true),
+            WorkTaskMaterialCostsAccess.resolve(SessionPhase.AuthenticatedOffline, vineyardA, true),
         )
     }
 

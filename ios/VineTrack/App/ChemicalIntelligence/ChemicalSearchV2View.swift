@@ -567,7 +567,12 @@ struct ChemicalSearchV2View: View {
             } catch {
                 if externalRequestID == token {
                     diagnostics.externalLookupSucceeded = false
-                    message = "Official label search failed. \(error.localizedDescription) Try again or add manually."
+                    if error.localizedDescription.localizedCaseInsensitiveContains("APVMA registration not verified") ||
+                        error.localizedDescription.localizedCaseInsensitiveContains("No unique APVMA product found") {
+                        openManual()
+                    } else {
+                        message = "Label search unavailable. Try again or add manually."
+                    }
                 }
             }
             if externalRequestID == token { isExternalLookupRunning = false; externalRequestID = nil }
@@ -676,7 +681,8 @@ private struct ChemicalSearchV2ReviewView: View {
                     Section("Product") {
                         TextField("Chemical / product name *", text: $draft.productName)
                         LabeledContent("Registrant", value: draft.intelligence.registration?.registrant ?? "—")
-                        LabeledContent("APVMA", value: draft.intelligence.registration?.registrationNumber ?? "—")
+                        LabeledContent("APVMA", value: draft.intelligence.hasEvidencedRegistration
+                            ? (draft.intelligence.registration?.registrationNumber ?? "—") : "Registration not verified")
                         LabeledContent("Active ingredients", value: draft.intelligence.activeIngredients.map(\.name).joined(separator: ", ").ifEmpty("—"))
                         if !draft.intelligence.productCategory.isEmpty { LabeledContent("Category", value: draft.intelligence.productCategory.capitalized) }
                         if let label = draft.intelligence.registration?.labelReference,
@@ -687,7 +693,7 @@ private struct ChemicalSearchV2ReviewView: View {
                     }
                     Section("Registered vineyard rates") {
                         if draft.viticultureRates.all.isEmpty {
-                            Text("Grapevine use or rate could not be established from the official label. Check the document before entering a deliberate manual default; VineTrack will not invent one.")
+                            Text("Grapevine use or rate was not established. Check the label before entering a deliberate manual default; VineTrack will not invent one.")
                                 .foregroundStyle(.secondary)
                         }
                         if !draft.viticultureRates.perHectare.isEmpty {
@@ -866,7 +872,9 @@ private struct ChemicalSearchV2ReviewView: View {
             chemicalIntelligence: canonicalIntelligence,
             masterChemicalId: draft.master?.id, masterSourceRevision: draft.master?.catalogueVersion,
             defaultRates: defaults,
-            entrySource: draft.isManual ? "manual_v2" : (draft.master == nil ? "label_lookup_v2" : "master_catalogue_v2")
+            entrySource: SavedChemicalEntrySource.reviewed(
+                isManual: draft.isManual, isMaster: draft.master != nil, intelligence: canonicalIntelligence
+            )
         )
         store.addSavedChemical(chemical)
         guard store.savedChemicals.contains(where: { $0.id == chemical.id }) else {

@@ -457,7 +457,7 @@ extension BackendSavedChemical {
             intelligenceSchemaVersion: intel?.schemaVersion ?? 0,
             masterChemicalId: c.masterChemicalId,
             masterSourceRevision: c.masterSourceRevision,
-            entrySource: c.entrySource,
+            entrySource: SavedChemicalEntrySource.repaired(c.entrySource, intelligence: intel),
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt
         )

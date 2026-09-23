@@ -10082,22 +10082,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // MARK: - Work Task Material Costs (sql/247)
     //
-    // FEATURE EXPOSURE is gated by [WorkTaskMaterialCostsAccess] — see
-    // [materialCostsAccess]. The data layer below is deliberately ungated so
-    // removing the temporary System Admin gate needs no change here.
+    // Work Task material presentation uses [WorkTaskMaterialCostsAccess].
+    // The data layer below is unchanged and remains subject to existing permissions.
 
     /**
      * THE single Material Costs access decision for Android.
      *
-     * TEMPORARY: resolves to allowed for platform System Admins only while the
-     * feature is being built. Callers ask this and nothing else — no screen,
-     * view model path or repository performs its own admin check — so the gate
-     * can be removed in one place.
+     * Resolves the authenticated selected-vineyard access for Work Task materials.
+     * Material Library retains a separate System Admin entry restriction.
      */
     fun materialCostsAccess(): WorkTaskMaterialCostsAccess =
         WorkTaskMaterialCostsAccess.resolve(
             sessionPhase = _ui.value.sessionPhase,
-            isSystemAdmin = _ui.value.isSystemAdmin,
             selectedVineyardId = _ui.value.selectedVineyardId,
             isMemberOfSelectedVineyard = _ui.value.currentRole != null,
         )

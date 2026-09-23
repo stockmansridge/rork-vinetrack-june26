@@ -10,6 +10,7 @@ import com.rork.vinetrack.data.chemical.ChemicalLabelRateNormalizer
 import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
 import com.rork.vinetrack.data.chemical.ChemicalVerificationConflict
 import com.rork.vinetrack.data.chemical.StoredChemicalDefaultRates
+import com.rork.vinetrack.data.chemical.SavedChemicalEntrySource
 import com.rork.vinetrack.data.model.ChemicalPurchase
 import com.rork.vinetrack.data.model.ChemicalRate
 import com.rork.vinetrack.data.model.SavedChemical
@@ -437,7 +438,7 @@ class SavedChemicalRepository(private val session: SessionStore) {
                 intelligenceSchemaVersion = intel.intelligenceSchemaVersion,
                 masterChemicalId = input.masterChemicalId,
                 masterSourceRevision = input.masterSourceRevision,
-                entrySource = input.entrySource,
+                entrySource = SavedChemicalEntrySource.repaired(input.entrySource, input.intelligence),
             )
             val response = SupabaseClient.http.post(SupabaseClient.restUrl("saved_chemicals")) {
                 authHeaders(token)
@@ -507,7 +508,7 @@ class SavedChemicalRepository(private val session: SessionStore) {
                 intelligenceSchemaVersion = intel.intelligenceSchemaVersion,
                 masterChemicalId = input.masterChemicalId,
                 masterSourceRevision = input.masterSourceRevision,
-                entrySource = input.entrySource,
+                entrySource = SavedChemicalEntrySource.repaired(input.entrySource, input.intelligence),
             )
             val response = SupabaseClient.http.patch(SupabaseClient.restUrl("saved_chemicals?id=eq.$id")) {
                 authHeaders(token)

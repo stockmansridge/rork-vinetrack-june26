@@ -317,7 +317,7 @@ fun SettingsScreen(
                             "Season E-L, spray/tank, yield",
                             onClick = { onOpenTool(ToolRoute.OperationPreferences) },
                         )
-                        if (vm.materialCostsAccess().isAllowed) {
+                        if (state.isSystemAdmin && vm.materialCostsAccess().isAllowed) {
                             RowDivider(vine.cardBorder)
                             PreferenceRow(
                                 Icons.Filled.Payments,

@@ -362,7 +362,7 @@ fun MaterialLibraryScreen(
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
 ) {
-    if (!vm.materialCostsAccess().isAllowed) {
+    if (!state.isSystemAdmin || !vm.materialCostsAccess().isAllowed) {
         LaunchedEffect(Unit) { onBack() }
         return
     }

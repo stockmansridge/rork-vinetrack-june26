@@ -9,7 +9,6 @@ struct AddEditWorkTaskView: View {
     @Environment(WorkTaskMachineLineSyncService.self) private var workTaskMachineLineSync
     @Environment(TripSyncService.self) private var tripSync
     @Environment(PaddockSyncService.self) private var paddockSync
-    @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(\.accessControl) private var accessControl
     @Environment(BackendAccessControl.self) private var backendAccessControl
     @Environment(\.dismiss) private var dismiss
@@ -61,8 +60,7 @@ struct AddEditWorkTaskView: View {
     private var materialCostsAllowed: Bool {
         WorkTaskMaterialCostsAccess.resolve(
             isAuthenticated: auth.isSignedIn,
-            isResolving: systemAdmin.isLoading || systemAdmin.lastLoadedAt == nil,
-            isSystemAdmin: systemAdmin.isSystemAdmin,
+            isResolving: auth.isLoading,
             selectedVineyardID: store.selectedVineyardId,
             isMemberOfSelectedVineyard: backendAccessControl.currentRole != nil
         ).isAllowed

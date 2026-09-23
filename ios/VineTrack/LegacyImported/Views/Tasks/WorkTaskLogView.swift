@@ -9,7 +9,6 @@ struct WorkTaskLogView: View {
     @Environment(WorkTaskMaterialSyncService.self) private var workTaskMaterialSync
     @Environment(TripCostAllocationSyncService.self) private var tripCostAllocationSync
     @Environment(NewBackendAuthService.self) private var auth
-    @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(BackendAccessControl.self) private var backendAccessControl
     @Environment(\.accessControl) private var accessControl
 
@@ -34,8 +33,7 @@ struct WorkTaskLogView: View {
     private var materialCostsAllowed: Bool {
         WorkTaskMaterialCostsAccess.resolve(
             isAuthenticated: auth.isSignedIn,
-            isResolving: systemAdmin.isLoading || systemAdmin.lastLoadedAt == nil,
-            isSystemAdmin: systemAdmin.isSystemAdmin,
+            isResolving: auth.isLoading,
             selectedVineyardID: store.selectedVineyardId,
             isMemberOfSelectedVineyard: backendAccessControl.currentRole != nil
         ).isAllowed

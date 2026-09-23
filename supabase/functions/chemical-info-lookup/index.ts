@@ -126,6 +126,7 @@ import {
 } from "./ingestion/activity_groups.ts";
 import type { MasterOps, MasterRow } from "./ingestion/contract.ts";
 import { chooseLabelCandidate, confirmedOCRName, directOfficialLabelURL } from "./label_fallback.ts";
+import { discoverUnverifiedLabel } from "./unverified_label_discovery.ts";
 import {
   buildCandidatePayload,
   buildFieldProvenance,
@@ -1264,14 +1265,31 @@ Deno.serve(async (req: Request) => {
       const deps = { fetchFn: fetch, now: () => new Date() };
       const candidates = await discoverRegisterCandidates("AU", query, deps);
       const candidate = chooseLabelCandidate(query, candidates);
-      if (!candidate) return json({ error: "No unique APVMA product found. Refine the name or enter its registration number; you can also add it manually." }, 422);
+      const labelFallback = async () => {
+        if (!apiKey || !readResearchConfig().enabled) return null;
+        const research = await runChemicalResearch({
+          query, countryCode: "AU", countryLabel, mode: "product_enrichment",
+          apiKey, fetchFn: fetch, config: readResearchConfig(), registerResolved: false,
+        });
+        return research.research ? await discoverUnverifiedLabel(query, research.research, fetch) : null;
+      };
+      if (!candidate) {
+        const label = await labelFallback();
+        return label ? json({ ...label, jurisdiction: jurEnv }) : json({
+          error: "APVMA registration not verified and no matching registrant label could be confirmed. Review the name or add the chemical manually."
+        }, 422);
+      }
       const discovered = await discoverAuthoritative("AU", candidate.registered_product_name, candidate.registration_number, deps);
       const reg = discovered.registration;
       if (discovered.outcome !== "resolved" || !reg || reg.registration_number !== candidate.registration_number) {
-        return json({ error: "The APVMA could not verify this exact product. Refine your search or add it manually." }, 422);
+        const label = await labelFallback();
+        return label ? json({ ...label, jurisdiction: jurEnv }) : json({ error: "APVMA registration not verified. Review the name or add the chemical manually." }, 422);
       }
       if (reg.active_ingredients.length === 0) {
-        return json({ error: "The APVMA did not provide active ingredient evidence for this product. Add it manually after checking its label." }, 422);
+        // Registration identity is resolved, but missing chemistry is a review gap,
+        // not a reason to block creation or invent an active ingredient.
+        const incomplete = buildRegisterOnlyStructured(reg, ACTIVITY_GROUP_TABLE_VERSION);
+        return json({ ...incomplete, match_source: "authoritative_candidate", jurisdiction: jurEnv });
       }
       const result = buildRegisterOnlyStructured(reg, ACTIVITY_GROUP_TABLE_VERSION);
       const regulatorLabel = directOfficialLabelURL(result.registration?.regulator_label_url, reg.registration_number) ??
