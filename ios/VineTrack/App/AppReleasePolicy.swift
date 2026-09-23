@@ -35,6 +35,23 @@ nonisolated struct AppReleasePolicy: Decodable, Sendable {
         return installedBuild < minimumSupportedBuild ? .required : .optional
     }
 
+    var displayTitle: String {
+        safeCopy(updateTitle, fallback: "Update available", limit: 100)
+    }
+
+    var displayMessage: String {
+        safeCopy(updateMessage, fallback: "A newer version of VineTrack is available.", limit: 800)
+    }
+
+    private func safeCopy(_ value: String, fallback: String, limit: Int) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= limit,
+              !trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) && $0.value != 10 }) else {
+            return fallback
+        }
+        return trimmed
+    }
+
     var officialStoreURL: URL? {
         guard let url = URL(string: storeURL), url.scheme == "https",
               url.host == "apps.apple.com", url.path.contains("id6761143377") else { return nil }

@@ -42,10 +42,52 @@ struct AppReleaseAndBiometricEnrollmentTests {
         #expect(release.officialStoreURL != nil)
     }
 
+    @Test func backendCopyUsesSafeDefaultsAndOptionalMinimumRemainsIndependent() {
+        let custom = AppReleasePolicy(
+            platform: "ios", latestVersion: "3.1.2", latestBuild: 134,
+            minimumSupportedVersion: "1.0.0", minimumSupportedBuild: 1,
+            updateTitle: "  New season release  ", updateMessage: "  Better field reports  ",
+            storeURL: "https://apps.apple.com/app/id6761143377", active: true,
+            updatedAt: "2026-09-23T00:00:00Z"
+        )
+        #expect(custom.displayTitle == "New season release")
+        #expect(custom.displayMessage == "Better field reports")
+        #expect(custom.decision(installedBuild: 133) == .optional)
+        #expect(custom.decision(installedBuild: 134) == .none)
+        let malformed = AppReleasePolicy(
+            platform: "ios", latestVersion: "3.1.2", latestBuild: 134,
+            minimumSupportedVersion: "1.0.0", minimumSupportedBuild: 1,
+            updateTitle: " \n ", updateMessage: "\u{0000}",
+            storeURL: "https://apps.apple.com/app/id6761143377", active: true,
+            updatedAt: "2026-09-23T00:00:00Z"
+        )
+        #expect(malformed.displayTitle == "Update available")
+        #expect(malformed.displayMessage == "A newer version of VineTrack is available.")
+    }
+
     @Test func offlinePolicyCheckNeverProducesRequiredPrompt() async {
         enum Offline: Error { case unavailable }
         let service = AppReleasePolicyService(fetchPolicy: { throw Offline.unavailable })
         await service.refreshIfNeeded()
+        #expect(service.decision == .none)
+        #expect(service.prompt == nil)
+    }
+
+    @Test func requiredStateClearsWhenForegroundRefreshCannotFetch() async {
+        enum Offline: Error { case unavailable }
+        let installed = Int64(AppBuildInfo.buildNumber) ?? 1
+        var attempts = 0
+        let release = policy(latestBuild: installed + 2, minimumBuild: installed + 1)
+        let service = AppReleasePolicyService(fetchPolicy: {
+            attempts += 1
+            if attempts == 1 { return release }
+            throw Offline.unavailable
+        })
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        await service.refreshIfNeeded(now: now)
+        #expect(service.decision == .required)
+        await service.refreshIfNeeded(now: now.addingTimeInterval(30))
+        #expect(attempts == 2)
         #expect(service.decision == .none)
         #expect(service.prompt == nil)
     }

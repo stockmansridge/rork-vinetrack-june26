@@ -114,9 +114,9 @@ struct NewBackendRootView: View {
             }
         }
         .alert(
-            releasePolicy.decision == .required ? "VineTrack update required" : "Update available",
+            releasePolicy.prompt?.displayTitle ?? "Update available",
             isPresented: Binding(
-                get: { releasePolicy.prompt != nil && didAttemptRestore && !showBiometricEnrollment && !biometric.requiresUnlock && (!auth.isSignedIn || didApplyDefaultVineyard) },
+                get: { releasePolicy.decision == .optional && releasePolicy.prompt != nil && didAttemptRestore && !showBiometricEnrollment && !biometric.requiresUnlock && (!auth.isSignedIn || didApplyDefaultVineyard) },
                 set: { _ in }
             )
         ) {
@@ -130,10 +130,17 @@ struct NewBackendRootView: View {
                 Button("Later", role: .cancel) { releasePolicy.later() }
             }
         } message: {
-            if releasePolicy.decision == .required {
-                Text("Your version of VineTrack is no longer supported. Please update to continue using the latest fixes and services.")
-            } else if let policy = releasePolicy.prompt {
-                Text("A newer version of VineTrack is available.\n\nInstalled: \(AppBuildInfo.version)\nLatest: \(policy.latestVersion)")
+            if let policy = releasePolicy.prompt {
+                Text("\(policy.displayMessage)\n\nInstalled: \(AppBuildInfo.version)\nLatest: \(policy.latestVersion)")
+            }
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { releasePolicy.decision == .required && releasePolicy.prompt != nil && didAttemptRestore && !biometric.requiresUnlock },
+            set: { _ in }
+        )) {
+            if let policy = releasePolicy.prompt, let url = policy.officialStoreURL {
+                RequiredReleaseUpdateView(policy: policy) { openURL(url) }
+                    .interactiveDismissDisabled()
             }
         }
         .task { await releasePolicy.refreshIfNeeded() }

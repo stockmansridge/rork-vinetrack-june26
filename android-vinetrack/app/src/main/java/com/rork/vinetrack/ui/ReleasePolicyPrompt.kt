@@ -46,7 +46,7 @@ fun ReleasePolicyPrompt(route: AppRoute) {
     LaunchedEffect(foregroundCount) {
         if (foregroundCount == 0) return@LaunchedEffect
         val now = System.currentTimeMillis()
-        if (lastAttempt != 0L && now - lastAttempt < 60L * 60 * 1000) return@LaunchedEffect
+        if (decision != ReleaseDecision.REQUIRED && lastAttempt != 0L && now - lastAttempt < 60L * 60 * 1000) return@LaunchedEffect
         lastAttempt = now
         val result = repository.fetch()
         val packageInfo = runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull()
@@ -73,16 +73,17 @@ fun ReleasePolicyPrompt(route: AppRoute) {
                 policy = null
             }
         },
-        title = { Text(if (decision == ReleaseDecision.REQUIRED) "VineTrack update required" else "Update available") },
+        title = { Text(if (decision == ReleaseDecision.REQUIRED) "VineTrack update required" else visiblePolicy.displayTitle) },
         text = {
             Text(
-                if (decision == ReleaseDecision.REQUIRED) {
-                    "Your version of VineTrack is no longer supported. Please update to continue using the latest fixes and services."
-                } else {
+                run {
                     val installedVersion = runCatching {
                         context.packageManager.getPackageInfo(context.packageName, 0).versionName
                     }.getOrNull() ?: "Unknown"
-                    "A newer version of VineTrack is available.\n\nInstalled: $installedVersion\nLatest: ${visiblePolicy.latestVersion}"
+                    val explanation = if (decision == ReleaseDecision.REQUIRED) {
+                        "\n\nYour version of VineTrack is no longer supported. Update to continue."
+                    } else ""
+                    "${visiblePolicy.displayMessage}$explanation\n\nInstalled: $installedVersion\nLatest: ${visiblePolicy.latestVersion}"
                 },
             )
         },

@@ -33,7 +33,7 @@ final class AppReleasePolicyService {
 
     func refreshIfNeeded(now: Date = Date()) async {
         guard canFetch, !isChecking,
-              lastAttempt.map({ now.timeIntervalSince($0) >= refreshInterval }) ?? true else { return }
+              (decision == .required || lastAttempt.map({ now.timeIntervalSince($0) >= refreshInterval }) ?? true) else { return }
         lastAttempt = now
         isChecking = true
         defer { isChecking = false }

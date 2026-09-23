@@ -45,6 +45,18 @@ class AppReleaseAndBiometricEnrollmentTest {
         assertEquals(ReleaseDecision.OPTIONAL, release(minimum = 0).decision(8))
     }
 
+    @Test fun backendCopyHasDefaultsAndMinimumDoesNotTrackLatest() {
+        val custom = release(latest = 134, minimum = 1, version = "3.1.2")
+            .copy(updateTitle = "  New season release  ", updateMessage = "  Better field reports  ")
+        assertEquals("New season release", custom.displayTitle)
+        assertEquals("Better field reports", custom.displayMessage)
+        assertEquals(ReleaseDecision.OPTIONAL, custom.decision(133))
+        assertEquals(ReleaseDecision.NONE, custom.decision(134))
+        val malformed = custom.copy(updateTitle = " \n ", updateMessage = "\u0000")
+        assertEquals("Update available", malformed.displayTitle)
+        assertEquals("A newer version of VineTrack is available.", malformed.displayMessage)
+    }
+
     @Test fun numericBuildIsAuthorityAndUnavailablePolicyHasNoDecision() {
         assertEquals(ReleaseDecision.OPTIONAL, release(version = "0.1").decision(10))
         assertEquals(ReleaseDecision.NONE, release(version = "99.0").decision(12))

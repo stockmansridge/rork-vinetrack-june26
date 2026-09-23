@@ -25,6 +25,19 @@ data class AppReleasePolicy(
         else -> ReleaseDecision.OPTIONAL
     }
 
+    val displayTitle: String
+        get() = safeCopy(updateTitle, "Update available", 100)
+
+    val displayMessage: String
+        get() = safeCopy(updateMessage, "A newer version of VineTrack is available.", 800)
+
+    private fun safeCopy(value: String, fallback: String, limit: Int): String {
+        val trimmed = value.trim()
+        return trimmed.takeIf {
+            it.isNotEmpty() && it.length <= limit && it.none { character -> character.isISOControl() && character != '\n' }
+        } ?: fallback
+    }
+
     val officialStoreUri: Uri?
         get() {
             val uri = runCatching { Uri.parse(storeUrl) }.getOrNull() ?: return null
