@@ -262,13 +262,15 @@ struct TripDetailView: View {
                 Section {
                     DisclosureGroup(isExpanded: $showCostSection) {
                         tripCostBody
-                        Button {
-                            showEditCostingLinks = true
-                        } label: {
-                            Label("Edit operator, worker type & tractor", systemImage: "pencil")
-                                .font(.subheadline.weight(.medium))
+                        if !trip.isActive {
+                            Button {
+                                showEditCostingLinks = true
+                            } label: {
+                                Label("Edit operator, worker type & tractor", systemImage: "pencil")
+                                    .font(.subheadline.weight(.medium))
+                            }
+                            .padding(.top, 4)
                         }
-                        .padding(.top, 4)
                     } label: {
                         Label("Estimated Trip Cost", systemImage: "dollarsign.circle")
                             .font(.subheadline.weight(.semibold))
@@ -352,7 +354,7 @@ struct TripDetailView: View {
                     .disabled(isExporting)
                 }
             }
-            if accessControl.canDeleteOperationalRecords {
+            if accessControl.canDeleteOperationalRecords && !trip.isActive {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(role: .destructive) {
                         showDeleteConfirmation = true

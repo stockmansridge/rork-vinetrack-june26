@@ -34,6 +34,16 @@ struct TripView: View {
             Group {
                 if let active = tracking.activeTrip {
                     ActiveTripView(trip: active)
+                } else if let owned = store.deviceOwnedTrip, owned.vineyardId != store.selectedVineyardId {
+                    VStack(spacing: 16) {
+                        ContentUnavailableView("Trip already in progress", systemImage: "tractor", description: Text("You already have an active trip in \(store.vineyards.first(where: { $0.id == owned.vineyardId })?.name ?? "another vineyard"). Finish or return to that trip before starting another."))
+                        Button("Return to Trip") {
+                            if let vineyard = store.vineyards.first(where: { $0.id == owned.vineyardId }) {
+                                store.selectVineyard(vineyard)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
                 } else if pastTrips.isEmpty {
                     emptyStateView
                 } else {
@@ -87,7 +97,7 @@ struct TripView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                if tracking.activeTrip == nil {
+                if tracking.activeTrip == nil && store.deviceActiveTripId == nil {
                     Button {
                         showTripChoice = true
                     } label: {
@@ -163,7 +173,7 @@ struct TripView: View {
     }
 
     private var pastTrips: [Trip] {
-        store.trips.filter { !$0.isActive }
+        store.trips.filter { $0.id != store.deviceActiveTripId }
     }
 
     private var filteredAndSortedTrips: [Trip] {
@@ -332,11 +342,12 @@ struct TripView: View {
                     }
                     .onDelete(perform: accessControl.canDeleteOperationalRecords ? { offsets in
                         let trips = filteredAndSortedTrips
-                        tripToDelete = offsets.first.map { trips[$0] }
+                        guard let index = offsets.first, !trips[index].isActive else { return }
+                        tripToDelete = trips[index]
                         showDeleteConfirmation = true
                     } : nil)
                 } header: {
-                    Label("Trip History", systemImage: "road.lanes")
+                    Label("Other Trips", systemImage: "road.lanes")
                         .foregroundStyle(Color.accentColor)
                 }
             }
@@ -476,6 +487,11 @@ struct TripHistoryRow: View {
                 Text(displayName)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.accentColor)
+                if trip.isActive {
+                    Label(trip.isPaused ? "Paused · other device" : "Active · other device", systemImage: "play.circle")
+                        .font(.caption2)
+                        .foregroundStyle(.green)
+                }
 
                 if let function = resolvedFunction,
                    trip.tripTitle?.trimmingCharacters(in: .whitespaces).isEmpty == false {

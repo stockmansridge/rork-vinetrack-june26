@@ -893,6 +893,8 @@ data class AppUiState(
      * until the end marker successfully syncs.
      */
     val locallyEndedTripIds: Set<String> = emptySet(),
+    /** Exactly one locally claimed trip UUID; never inferred from server trip ordering. */
+    val deviceActiveTripId: String? = null,
     /**
      * Trip ids this device deleted (optimistically hidden, possibly with a
      * queued offline TRIP/DELETE marker still to replay). In-memory only.
@@ -1006,7 +1008,10 @@ data class AppUiState(
      * active and its Stage A snapshot is retained for the queued end replay, so
      * the UI treats it as finished.
      */
-    val activeTrip: Trip? get() = trips.firstOrNull { it.isActive && it.id !in locallyEndedTripIds }
+    val activeTrip: Trip? get() = trips.firstOrNull {
+        it.id == deviceActiveTripId && it.vineyardId == selectedVineyardId &&
+            it.isActive && it.id !in locallyEndedTripIds
+    }
 
     /**
      * Notices the device should display now — active, in-window, and not
@@ -3095,8 +3100,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         trips = st.trips.map { if (it.id == trip.id)
                             trip.copy(manualCorrectionEvents = (trip.manualCorrectionEvents.orEmpty() + it.manualCorrectionEvents.orEmpty()).distinct()) else it },
                         locallyEndedTripIds = st.locallyEndedTripIds - trip.id,
+                        deviceActiveTripId = if (st.deviceActiveTripId == trip.id) null else st.deviceActiveTripId,
                     ) }
-                    persistActiveTripSnapshot()
+                    runCatching { activeTripStore.load()?.takeIf { it.trip.id == trip.id }?.let { activeTripStore.clear() } }
                 }
             } finally {
                 phase5ReplayRunning.set(false)
@@ -8031,6 +8037,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * unresolved TRIP_START until the server row exists. Unauthorized still signs
      * out and queues nothing.
      */
+    private fun canStartDeviceTrip(onBlocked: (String) -> Unit): Boolean {
+        val snapshot = runCatching { activeTripStore.load() }.getOrNull()
+        val owned = snapshot?.takeIf { it.ownerUserId == session.userId }
+        if (owned == null && _ui.value.deviceActiveTripId == null) return true
+        val vineyardId = owned?.vineyardId
+        val name = _ui.value.vineyards.firstOrNull { it.id == vineyardId }?.name ?: "another vineyard"
+        onBlocked("Trip already in progress. You already have an active trip in $name. Finish or return to that trip before starting another.")
+        return false
+    }
+
+    private fun claimDeviceTrip(trip: Trip): Boolean {
+        val owner = session.userId ?: return false
+        val saved = runCatching { activeTripStore.saveDurably(owner, trip.vineyardId, trip) }.getOrDefault(false)
+        if (saved) _ui.update { it.copy(deviceActiveTripId = trip.id) }
+        return saved
+    }
+
     fun startTrip(
         paddockId: String?,
         paddockName: String?,
@@ -8050,6 +8073,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         onResult: (Boolean) -> Unit,
     ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        if (!canStartDeviceTrip { message -> _ui.update { it.copy(tripError = message) } }) {
+            onResult(false); return
+        }
         // Final id + start instant generated up front so an offline/transient
         // fallback provisional trip shares the eventual server row's identity.
         val tripId = java.util.UUID.randomUUID().toString()
@@ -8085,7 +8111,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Known offline: start locally and queue the create marker; no network.
         if (!_ui.value.isOnline) {
             startTripLocally(provisional)
-            onResult(true)
+            onResult(_ui.value.activeTrip?.id == provisional.id)
             return
         }
         viewModelScope.launch {
@@ -8113,6 +8139,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     rowSequence = rowSequence,
                     sequenceIndex = 0,
                 )
+                if (!claimDeviceTrip(created)) {
+                    _ui.update { it.copy(tripBusy = false, tripError = "Couldn't save this device's trip. Please retry.") }
+                    onResult(false); return@launch
+                }
                 _ui.update { it.copy(trips = listOf(created) + it.trips, tripBusy = false) }
                 beginTracking(created)
                 onResult(true)
@@ -8138,6 +8168,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * with no remapping.
      */
     private fun startTripLocally(provisional: Trip) {
+        if (!claimDeviceTrip(provisional)) {
+            _ui.update { it.copy(tripBusy = false, tripError = "Couldn't save this device's trip. Please free up storage and retry.") }
+            return
+        }
         _ui.update {
             it.copy(
                 trips = listOf(provisional) + it.trips,
@@ -8165,6 +8199,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         paddockIds: List<String> = emptyList(),
         onResult: (Boolean) -> Unit,
     ) {
+        if (_ui.value.trips.any { it.id == tripId && it.isActive } && _ui.value.activeTrip?.id != tripId) {
+            _ui.update { it.copy(tripError = "This active trip belongs to another device.") }
+            onResult(false); return
+        }
         val previous = _ui.value.trips
         // Stage B-1: queue the scalar edit offline for an existing active server
         // trip instead of failing. Optimistically apply locally, refresh the
@@ -8235,6 +8273,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * (`Trip.activeDuration` parity).
      */
     fun setTripPaused(tripId: String, paused: Boolean) {
+        if (_ui.value.activeTrip?.id != tripId) return
         val nowIso = java.time.Instant.now().toString()
         _ui.update { st ->
             st.copy(
@@ -8374,11 +8413,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             ended.copy(manualCorrectionEvents =
                                 (ended.manualCorrectionEvents.orEmpty() + it.manualCorrectionEvents.orEmpty()).distinct()) else it },
                         locallyEndedTripIds = st.locallyEndedTripIds - tripId,
+                        deviceActiveTripId = null,
                         tripBusy = false,
                     )
                 }
-                // Trip finished server-side — drop the durable local snapshot.
-                persistActiveTripSnapshot()
+                // Trip finished server-side — drop only this device's snapshot.
+                runCatching { activeTripStore.load()?.takeIf { it.trip.id == tripId }?.let { activeTripStore.clear() } }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(tripBusy = false) }
@@ -8418,6 +8458,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update {
             it.copy(
                 locallyEndedTripIds = it.locallyEndedTripIds + tripId,
+                deviceActiveTripId = null,
                 tripBusy = false,
                 tripError = if (it.isOnline)
                     "Trip ended on this device — waiting for the changed route and other trip data to sync."
@@ -8534,6 +8575,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      *    signs out.
      */
     fun deleteTrip(tripId: String, onResult: (Boolean) -> Unit) {
+        if (_ui.value.trips.any { it.id == tripId && it.isActive } && _ui.value.activeTrip?.id != tripId) {
+            _ui.update { it.copy(tripError = "This active trip belongs to another device.") }
+            onResult(false); return
+        }
         val previous = _ui.value.trips
         val isActiveTrip = _ui.value.activeTrip?.id == tripId ||
             previous.firstOrNull { it.id == tripId }?.isActive == true
@@ -8552,8 +8597,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     locallyDeletedTripIds = st.locallyDeletedTripIds + tripId,
                 )
             }
-            // Drop the local snapshot if the deleted trip was the active one.
-            persistActiveTripSnapshot()
+            // Drop the local snapshot only when this device owned the deleted trip.
+            if (_ui.value.deviceActiveTripId == tripId) {
+                runCatching { activeTripStore.clear() }
+                _ui.update { it.copy(deviceActiveTripId = null) }
+            }
             viewModelScope.launch {
                 try {
                     tripRepo.softDeleteTrip(tripId)
@@ -8661,6 +8709,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Id of the currently active trip, if any (used to navigate after start). */
     fun activeTripIdOrNull(): String? = _ui.value.activeTrip?.id
+
+    fun deviceTripVineyardIdOrNull(): String? = runCatching { activeTripStore.load() }.getOrNull()
+        ?.takeIf { it.ownerUserId == session.userId }?.vineyardId
 
     /**
      * Freeze identity, time, heading and the established trip-aware placement
@@ -8878,7 +8929,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { st ->
                 st.copy(trips = st.trips.map { if (it.id == trip.id) it.copy(pathPoints = points, totalDistance = distance) else it })
             }
-            updateRowLockState(trip.id, sample)
+            if (_ui.value.selectedVineyardId == trip.vineyardId) updateRowLockState(trip.id, sample)
             maybeAutosave(trip.id, points, distance)
             maybeAutosaveLocal()
         }
@@ -9017,7 +9068,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (pointsSinceSave < 8 && now - lastSaveMs < 20_000L) return
         pointsSinceSave = 0
         lastSaveMs = now
-        val trip = _ui.value.trips.firstOrNull { it.id == tripId } ?: return
+        val trip = _ui.value.trips.firstOrNull { it.id == tripId }
+            ?: runCatching { activeTripStore.load()?.takeIf { it.trip.id == tripId && it.ownerUserId == session.userId }?.trip }.getOrNull()
+            ?: return
         val paused = trip.isPaused
         // Stage C-1: when known offline, don't attempt a network write that would
         // throw and be swallowed — just queue/refresh the coalesced TRIP_GPS
@@ -9044,6 +9097,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // than silently lost. Coalesced by trip id, so repeated failures
                 // never bloat the outbox.
                 val current = _ui.value.trips.firstOrNull { it.id == tripId }
+                    ?: runCatching { activeTripStore.load()?.takeIf { it.trip.id == tripId }?.trip }.getOrNull()
                 if (current != null && current.isActive) tripGpsSync.enqueue(current)
             }
         }
@@ -9076,14 +9130,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // [AppUiState.activeTrip], but its snapshot must be preserved until the
         // queued TRIP_END marker syncs so the end replay and its GPS/row/tank
         // dependency replays still have the local source. Fall back to it here.
-        val trip = state.activeTrip
-            ?: state.trips.firstOrNull { it.isActive && it.id in state.locallyEndedTripIds }
+        val snapshot = runCatching { activeTripStore.load() }.getOrNull() ?: return
         val vineyardId = state.selectedVineyardId
         val userId = session.userId
-        if (trip == null || vineyardId == null || userId == null) {
-            runCatching { activeTripStore.clear() }
+        // A vineyard switch or server refresh must never replace the owned snapshot
+        // with another active trip, nor clear an offline end awaiting replay.
+        if (snapshot.ownerUserId != userId) return
+        if (snapshot.vineyardId != vineyardId) {
+            val live = tracker ?: return
+            runCatching { activeTripStore.save(userId, snapshot.vineyardId,
+                snapshot.trip.copy(pathPoints = live.points.toList(), totalDistance = live.distanceMetres)) }
             return
         }
+        val trip = state.trips.firstOrNull { it.id == snapshot.trip.id && it.isActive } ?: return
         runCatching { activeTripStore.save(userId, vineyardId, trip) }
     }
 
@@ -9118,13 +9177,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         tripsFromServer: Boolean,
     ): List<Trip> {
         val snapshot = runCatching { activeTripStore.load() }.getOrNull() ?: return loadedTrips
-        if (snapshot.ownerUserId != userId || snapshot.vineyardId != vineyardId) {
-            runCatching { activeTripStore.clear() }
+        if (snapshot.ownerUserId != userId) return loadedTrips
+        if (snapshot.vineyardId != vineyardId) return loadedTrips
+        val saved = snapshot.trip
+        if (pendingWrites.list().any { it.clientId == saved.id &&
+                it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_END &&
+                it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved }) {
+            _ui.update { it.copy(deviceActiveTripId = null) }
             return loadedTrips
         }
-        val saved = snapshot.trip
+        _ui.update { it.copy(deviceActiveTripId = saved.id) }
         if (!saved.isActive) {
             runCatching { activeTripStore.clear() }
+            _ui.update { it.copy(deviceActiveTripId = null) }
             return loadedTrips
         }
         val index = loadedTrips.indexOfFirst { it.id == saved.id }
@@ -9133,6 +9198,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (!server.isActive) {
                 // Ended/deleted elsewhere — server wins.
                 runCatching { activeTripStore.clear() }
+                _ui.update { it.copy(deviceActiveTripId = null) }
                 return loadedTrips
             }
             val merged = ActiveTripReconciliation.mergeProgress(server, saved)
@@ -9150,6 +9216,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return if (tripsFromServer) {
             // Fresh server list without it — the trip is gone; don't resurrect.
             runCatching { activeTripStore.clear() }
+            _ui.update { it.copy(deviceActiveTripId = null) }
             loadedTrips
         } else {
             // Stale/offline list — restore so the active-trip view survives.
@@ -10966,15 +11033,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(sprayError = "This spray job's trip is no longer available.") }
             onResult(false); return
         }
-        if (existing.isActive) { onResult(true); return }
+        if (existing.isActive) {
+            _ui.update { it.copy(sprayError = "This spray job is already active on another device. Choose a different job.") }
+            onResult(false); return
+        }
         if (session.accessToken == null) {
             onUnauthorized("startSprayJob")
             onResult(false)
             return
         }
-        val active = _ui.value.activeTrip
-        if (active != null) {
-            _ui.update { it.copy(sprayError = "Finish the active trip before starting another spray job.") }
+        if (!canStartDeviceTrip { message -> _ui.update { it.copy(sprayError = message) } }) {
             onResult(false); return
         }
         val operationalStart = java.time.Instant.now().toString()
@@ -10994,6 +11062,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Local-first: store the complete active snapshot before GPS starts.
         // The TRIP_START marker doubles as an idempotent activation patch and
         // dependency gate for subsequent GPS, row, tank and end writes.
+        if (!claimDeviceTrip(activated)) {
+            _ui.update { it.copy(sprayError = "Couldn't save this device's trip. Please retry.") }
+            onResult(false); return
+        }
         _ui.update { st ->
             st.copy(
                 trips = st.trips.map { if (it.id == tripId) activated else it },
@@ -11043,8 +11115,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         onResult: (Boolean) -> Unit,
     ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
-        if (_ui.value.activeTrip != null) {
-            _ui.update { it.copy(sprayError = "Finish the active trip before starting another spray job.") }
+        if (!canStartDeviceTrip { message -> _ui.update { it.copy(sprayError = message) } }) {
             onResult(false); return
         }
         viewModelScope.launch {
@@ -11085,8 +11156,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         sprayRecords = listOf(created) + it.sprayRecords,
                     )
                 }
-                // Persist and queue the complete start before GPS permission or
-                // foreground tracking can return.
+                // Persist the claimed UUID before GPS permission or tracking.
+                if (!claimDeviceTrip(seededTrip)) {
+                    _ui.update { it.copy(sprayBusy = false, tripBusy = false, sprayError = "Couldn't save this device's trip. Please retry.") }
+                    onResult(false); return@launch
+                }
                 persistActiveTripSnapshot()
                 tripStartSync.enqueue(seededTrip)
                 beginTracking(seededTrip)
@@ -11127,7 +11201,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun applyRowCoverage(tripId: String, markComplete: Boolean) {
         val trip = _ui.value.trips.firstOrNull { it.id == tripId }
-        if (trip == null || !trip.isActive) {
+        if (trip == null || _ui.value.activeTrip?.id != tripId) {
             _ui.update { it.copy(tripError = "No active trip to update.") }
             return
         }
@@ -11164,7 +11238,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun undoLastRowAction(tripId: String) {
         val trip = _ui.value.trips.firstOrNull { it.id == tripId }
-        if (trip == null || !trip.isActive) {
+        if (trip == null || _ui.value.activeTrip?.id != tripId) {
             _ui.update { it.copy(tripError = "No active trip to update.") }
             return
         }
@@ -11184,6 +11258,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         newIndex: Int,
         sequence: List<Double>,
     ) {
+        if (_ui.value.activeTrip?.id != tripId) return
         // Stage B-2-1: ignore row actions for a trip the operator already ended
         // locally (its TRIP_END marker is queued) — no new coverage may accrue.
         if (tripId in _ui.value.locallyEndedTripIds) return
@@ -11267,6 +11342,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         actualWaterLitres: Double,
         actualChemicalBaseAmounts: Map<String, Double>,
     ): Boolean {
+        if (_ui.value.activeTrip?.id != pending.sourceTrip.id) return false
         val trip = _ui.value.trips.firstOrNull { it.id == pending.sourceTrip.id && it.isActive } ?: return false
         val selectedVineyardId = _ui.value.selectedVineyardId
         val currentRecord = TankMixPresentation.linkedRecord(trip.id, _ui.value.sprayRecords)
@@ -11370,6 +11446,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Explicit legacy fallback; no zero actual quantities are fabricated. */
     fun startTankWithoutRecordedMix(tripId: String) {
+        if (_ui.value.activeTrip?.id != tripId) return
         val trip = _ui.value.trips.firstOrNull { it.id == tripId && it.isActive } ?: return
         val result = TankSessionLifecycle.startResult(
             trip, java.time.Instant.now().toString(),
@@ -11381,7 +11458,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** End only the session identified by the active tank number. */
     fun endTankSession(tripId: String) {
         val trip = _ui.value.trips.firstOrNull { it.id == tripId }
-        if (trip == null || !trip.isActive) {
+        if (trip == null || _ui.value.activeTrip?.id != tripId) {
             _ui.update { it.copy(tripError = "No active trip to update.") }
             return
         }
@@ -11410,7 +11487,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun startFillTimer(tripId: String) {
         val trip = _ui.value.trips.firstOrNull { it.id == tripId }
-        if (trip == null || !trip.isActive) {
+        if (trip == null || _ui.value.activeTrip?.id != tripId) {
             _ui.update { it.copy(tripError = "No active trip to update.") }
             return
         }
@@ -11451,7 +11528,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun stopFillTimer(tripId: String) {
         val trip = _ui.value.trips.firstOrNull { it.id == tripId }
-        if (trip == null || !trip.isActive) {
+        if (trip == null || _ui.value.activeTrip?.id != tripId) {
             _ui.update { it.copy(tripError = "No active trip to update.") }
             return
         }
@@ -11480,7 +11557,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Stage B-2-1: ignore tank/fill actions for a trip the operator already
         // ended locally (its TRIP_END marker is queued) — no new tank work may
         // accrue after a local end.
-        if (tripId in _ui.value.locallyEndedTripIds) return
+        if (tripId in _ui.value.locallyEndedTripIds || _ui.value.activeTrip?.id != tripId) return
         val previous = _ui.value.trips
         // Optimistic local update so the controls reflect the action immediately.
         _ui.update { st ->
@@ -12147,6 +12224,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         details: com.rork.vinetrack.data.model.SeedingDetails?,
         onResult: (Boolean) -> Unit,
     ) {
+        if (_ui.value.trips.any { it.id == tripId && it.isActive } && _ui.value.activeTrip?.id != tripId) {
+            _ui.update { it.copy(tripError = "This active trip belongs to another device.") }
+            onResult(false); return
+        }
         val previous = _ui.value.trips
         val normalised = details?.takeIf { it.hasAnyValue }
         _ui.update { st ->

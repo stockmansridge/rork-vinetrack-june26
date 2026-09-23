@@ -316,6 +316,8 @@ fun TripsScreen(
                 onSelect = { onSelectedTripIdChange(it.id) },
                 onStart = { choosing = true },
                 onSelectActive = { onSelectedTripIdChange(it.id) },
+                onReturnToTrip = vm.deviceTripVineyardIdOrNull()?.takeIf { it != state.selectedVineyardId }
+                    ?.let { ownerVineyard -> { vm.selectVineyard(ownerVineyard) } },
             )
         } else {
             TripDetailView(
@@ -376,10 +378,10 @@ private fun tripFunctionIcon(raw: String): ImageVector = when (raw) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: () -> Unit, onSelectActive: (Trip) -> Unit) {
+private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: () -> Unit, onSelectActive: (Trip) -> Unit, onReturnToTrip: (() -> Unit)?) {
     val vine = LocalVineColors.current
     val active = state.activeTrip
-    val finished = remember(state.trips) { state.trips.filterNot { it.isActive } }
+    val finished = remember(state.trips, active?.id) { state.trips.filter { it.id != active?.id } }
 
     var search by remember { mutableStateOf("") }
     var typeFilter by remember { mutableStateOf(TripTypeFilter.ALL) }
@@ -434,6 +436,9 @@ private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: (
                 title = { Text("Trips") },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
                 actions = {
+                    if (onReturnToTrip != null) {
+                        TextButton(onClick = onReturnToTrip) { Text("Return to Trip") }
+                    }
                     if (active == null && finished.isNotEmpty()) {
                         Box {
                             IconButton(onClick = { filterMenu = true }) {
@@ -650,7 +655,7 @@ private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: (
                         if (visibleTrips.isNotEmpty()) {
                             item(key = "history-header") {
                                 Text(
-                                    "History · ${visibleTrips.size}",
+                                    "Other trips · ${visibleTrips.size}",
                                     color = vine.textSecondary,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Medium,
@@ -882,6 +887,9 @@ private fun TripRow(
                     fontSize = 15.sp,
                     maxLines = 1,
                 )
+                if (trip.isActive) {
+                    TripRowLabel(Icons.Filled.PlayArrow, if (trip.isPaused) "Paused · other device" else "Active · other device", VineColors.LeafGreen, 12.sp)
+                }
                 functionLabel?.let {
                     TripRowLabel(tripFunctionIcon(trip.tripFunction ?: ""), it, vine.textSecondary, 12.sp)
                 }
@@ -980,7 +988,8 @@ private fun TripDetailView(
     // iOS parity: ActiveTripView disables the idle timer while it is on screen
     // (including paused trips), gated by the "Keep screen awake during trips"
     // preference. Cleared automatically when the trip ends or the user leaves.
-    KeepScreenAwake(enabled = trip.isActive, reason = ScreenAwakeController.Reason.ActiveTrip)
+    val isDeviceTrip = state.activeTrip?.id == trip.id
+    KeepScreenAwake(enabled = isDeviceTrip, reason = ScreenAwakeController.Reason.ActiveTrip)
 
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(trip.isActive, trip.isPaused) {
@@ -991,7 +1000,7 @@ private fun TripDetailView(
     }
     val durationSeconds = if (trip.isActive) liveDurationSeconds(trip, nowMs) else (trip.activeDurationSeconds ?: 0L)
 
-    if (trip.isActive && showLiveHud) {
+    if (isDeviceTrip && showLiveHud) {
         ActiveTripHud(
             vm = vm,
             state = state,
@@ -1017,7 +1026,7 @@ private fun TripDetailView(
                     }
                 },
                 actions = {
-                    if (trip.isActive) {
+                    if (isDeviceTrip) {
                         IconButton(onClick = { showLiveHud = true }) {
                             Icon(Icons.Filled.NearMe, contentDescription = "Live map")
                         }
@@ -1135,7 +1144,7 @@ private fun TripDetailView(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            if (trip.isActive) {
+            if (isDeviceTrip) {
                 ActiveTripControls(
                     vm = vm,
                     trip = trip,
@@ -1453,7 +1462,7 @@ private fun TripDetailView(
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         SectionHeader("Seeding details", onLight = true, modifier = Modifier.weight(1f))
-                        if (canManageSeeding) {
+                        if (canManageSeeding && (!trip.isActive || isDeviceTrip)) {
                             TextButton(onClick = { editingSeeding = true }) {
                                 Icon(Icons.Filled.Edit, contentDescription = null, tint = VineColors.PrimaryAccent, modifier = Modifier.size(16.dp))
                                 Text("  Edit", color = VineColors.PrimaryAccent, fontSize = 13.sp)
@@ -1616,9 +1625,11 @@ private fun TripDetailView(
                             }
                         }
                         Spacer(Modifier.height(4.dp))
-                        TextButton(onClick = { editingCostLinks = true }) {
-                            Icon(Icons.Filled.Edit, contentDescription = null, tint = VineColors.PrimaryAccent, modifier = Modifier.size(16.dp))
-                            Text("  Edit operator, worker type & tractor", color = VineColors.PrimaryAccent, fontSize = 13.sp)
+                        if (!trip.isActive || isDeviceTrip) {
+                            TextButton(onClick = { editingCostLinks = true }) {
+                                Icon(Icons.Filled.Edit, contentDescription = null, tint = VineColors.PrimaryAccent, modifier = Modifier.size(16.dp))
+                                Text("  Edit operator, worker type & tractor", color = VineColors.PrimaryAccent, fontSize = 13.sp)
+                            }
                         }
                     }
                 }
@@ -1717,10 +1728,10 @@ private fun TripDetailView(
         )
     }
 
-    if (changingRoute && trip.isActive) {
+    if (changingRoute && isDeviceTrip) {
         ChangeTripRouteSheet(vm, trip, state.paddocks, onDismiss = { changingRoute = false })
     }
-    if (ending) {
+    if (ending && isDeviceTrip) {
         EndTripSheet(
             vm = vm,
             trip = trip,
@@ -2875,6 +2886,7 @@ private fun StartTripSheet(
     var startEngineHoursText by remember { mutableStateOf("") }
     var operatorName by remember { mutableStateOf(state.userDisplayName ?: "") }
     var saving by remember { mutableStateOf(false) }
+    var startError by remember { mutableStateOf<String?>(null) }
     var showBlockPicker by remember { mutableStateOf(false) }
     var showAddFunction by remember { mutableStateOf(false) }
     var functionMenu by remember { mutableStateOf(false) }
@@ -3116,6 +3128,7 @@ private fun StartTripSheet(
         ) { ok ->
             saving = false
             if (ok) vm.activeTripIdOrNull()?.let(onStarted)
+            else startError = vm.ui.value.tripError ?: "Couldn't start the trip."
         }
     }
 
@@ -3146,6 +3159,14 @@ private fun StartTripSheet(
                     fontWeight = FontWeight.SemiBold,
                     color = vine.textPrimary,
                     modifier = Modifier.align(Alignment.Center),
+                )
+            }
+
+            if (startError != null) {
+                Text(
+                    text = startError ?: "",
+                    color = Color.Red,
+                    modifier = Modifier.padding(horizontal = 16.dp),
                 )
             }
 

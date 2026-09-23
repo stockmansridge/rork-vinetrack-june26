@@ -254,10 +254,18 @@ final class TripTrackingService {
     // MARK: - Active trip helpers
 
     var activeTrip: Trip? {
-        store?.trips.first { $0.isActive }
+        guard let store, let id = store.deviceActiveTripId else { return nil }
+        return store.trips.first { $0.id == id && $0.isActive && $0.vineyardId == store.selectedVineyardId }
     }
 
     // MARK: - Start
+
+    private func deviceTripConflictMessage(in store: MigratedDataStore) -> String {
+        let name = store.deviceOwnedTrip.flatMap { trip in
+            store.vineyards.first(where: { $0.id == trip.vineyardId })?.name
+        } ?? "another vineyard"
+        return "Trip already in progress. You already have an active trip in \(name). Finish or return to that trip before starting another."
+    }
 
     func startTrip(
         type: TripType,
@@ -285,8 +293,8 @@ final class TripTrackingService {
             errorMessage = "No vineyard selected."
             return
         }
-        if activeTrip != nil {
-            errorMessage = "A trip is already in progress."
+        if store.deviceActiveTripId != nil {
+            errorMessage = deviceTripConflictMessage(in: store)
             return
         }
 
@@ -331,6 +339,7 @@ final class TripTrackingService {
         // Persist one complete snapshot before GPS, sync callbacks, or any
         // dependent trip event can observe it.
         store.startTrip(trip)
+        store.claimDeviceTrip(trip.id)
         errorMessage = nil
         beginSprayWeatherCapture(for: trip)
         beginTracking()
@@ -350,8 +359,8 @@ final class TripTrackingService {
             errorMessage = "No vineyard selected."
             return
         }
-        if let activeTrip, activeTrip.id != savedTrip.id {
-            errorMessage = "A trip is already in progress."
+        if store.deviceActiveTripId != nil {
+            errorMessage = deviceTripConflictMessage(in: store)
             return
         }
         guard !savedTrip.isActive,
@@ -395,6 +404,7 @@ final class TripTrackingService {
         // snapshots are deliberately untouched.
         store.updateSprayRecord(record)
         store.updateTrip(activated)
+        store.claimDeviceTrip(activated.id)
         errorMessage = nil
         beginSprayWeatherCapture(for: activated)
         beginTracking()
@@ -543,6 +553,7 @@ final class TripTrackingService {
         // discard the whole route.
         do {
             try store?.endTripOrThrow(trip.id)
+            store?.releaseDeviceTrip(trip.id)
         } catch {
             let detail = (error as NSError).localizedDescription
             errorMessage = TripEndOutcome.persistenceFailed(detail).operatorMessage
@@ -1118,7 +1129,7 @@ final class TripTrackingService {
 
     /// Processes one GPS fix through the same persistence and row-guidance path used by live tracking.
     func processLocation(_ location: CLLocation, force: Bool = false) {
-        guard let store, var trip = activeTrip, !trip.isPaused else { return }
+        guard let store, var trip = store.deviceOwnedTrip, !trip.isPaused else { return }
         #if DEBUG
         diagLocationUpdateCount += 1
         #endif
@@ -1135,7 +1146,7 @@ final class TripTrackingService {
         }
 
         let rowTrackingEnabled = store.settings.rowTrackingEnabled
-        if rowTrackingEnabled {
+        if rowTrackingEnabled && trip.vineyardId == store.selectedVineyardId {
             updateRowGuidance(for: location, trip: &trip, store: store)
         } else {
             currentRowNumber = nil
@@ -1144,7 +1155,7 @@ final class TripTrackingService {
             rowsCoveredCount = trip.completedPaths.count
         }
 
-        store.updateTrip(trip)
+        store.updateDeviceOwnedTrip(trip)
         currentDistance = trip.totalDistance
         updateSmoothedSpeed(from: location)
         currentSpeed = smoothedSpeed > 0 ? smoothedSpeed : nil

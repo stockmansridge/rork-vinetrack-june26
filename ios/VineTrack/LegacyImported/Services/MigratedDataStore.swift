@@ -19,6 +19,54 @@ final class MigratedDataStore {
     var pins: [VinePin] = []
     var paddocks: [Paddock] = []
     var trips: [Trip] = []
+    /// The UUID claimed by this device, never inferred from server-active rows.
+    private struct DeviceTripOwnership: Codable {
+        let tripId: UUID
+        let userId: UUID?
+    }
+    private var deviceTripOwnership: DeviceTripOwnership?
+    var deviceActiveTripId: UUID? {
+        guard let ownership = deviceTripOwnership,
+              ownership.userId == currentUserIdProvider?() else { return nil }
+        return ownership.tripId
+    }
+
+    var deviceOwnedTrip: Trip? {
+        guard let id = deviceActiveTripId else { return nil }
+        if let trip = trips.first(where: { $0.id == id }) { return trip.isActive ? trip : nil }
+        for vineyard in vineyards where vineyard.id != selectedVineyardId {
+            if let trip = tripRepo.load(for: vineyard.id).first(where: { $0.id == id && $0.isActive }) {
+                return trip
+            }
+        }
+        return nil
+    }
+
+    func claimDeviceTrip(_ id: UUID) {
+        let ownership = DeviceTripOwnership(tripId: id, userId: currentUserIdProvider?())
+        deviceTripOwnership = ownership
+        persistence.save(ownership, key: Keys.deviceActiveTripId)
+    }
+
+    func releaseDeviceTrip(_ id: UUID) {
+        guard deviceActiveTripId == id else { return }
+        deviceTripOwnership = nil
+        persistence.remove(key: Keys.deviceActiveTripId)
+    }
+
+    /// Keep GPS on the owned trip when the operator views another vineyard.
+    func updateDeviceOwnedTrip(_ trip: Trip) {
+        guard trip.id == deviceActiveTripId else { return }
+        if trip.vineyardId == selectedVineyardId {
+            updateTrip(trip)
+        } else {
+            var slice = tripRepo.load(for: trip.vineyardId)
+            guard let index = slice.firstIndex(where: { $0.id == trip.id }) else { return }
+            slice[index] = trip
+            tripRepo.saveSlice(slice, for: trip.vineyardId)
+            onTripChanged?(trip.id)
+        }
+    }
 
     var repairButtons: [ButtonConfig] = []
     var growthButtons: [ButtonConfig] = []
@@ -260,6 +308,7 @@ final class MigratedDataStore {
         static let buttonTemplates = "vinetrack_button_templates"
         static let grapeVarieties = "vinetrack_grape_varieties"
         static let selectedVineyardId = "vinetrack_selected_vineyard_id"
+        static let deviceActiveTripId = "vinetrack_device_active_trip_id"
     }
 
     // MARK: - Init
@@ -293,6 +342,7 @@ final class MigratedDataStore {
     // MARK: - Lifecycle
 
     func load() {
+        deviceTripOwnership = persistence.load(key: Keys.deviceActiveTripId)
         vineyards = vineyardRepo.loadAll()
         hydrateVineyardLogosFromCache()
 
@@ -637,11 +687,13 @@ final class MigratedDataStore {
             Keys.buttonTemplates,
             Keys.grapeVarieties,
             Keys.selectedVineyardId,
+            Keys.deviceActiveTripId,
         ]
         for key in keys {
             persistence.remove(key: key)
         }
         clearInMemoryState()
+        deviceTripOwnership = nil
     }
 
     // MARK: - Vineyard selection
@@ -1389,6 +1441,7 @@ final class MigratedDataStore {
         clearTripLinkOnPins(tripId: tripId, propagate: true)
         trips.removeAll { $0.id == tripId }
         tripRepo.saveSlice(trips, for: vineyardId)
+        releaseDeviceTrip(tripId)
         // Fires markTripDeleted on the sync service, which also drops any
         // pending work_task_id clear for this trip (subsumed by the delete).
         onTripDeleted?(tripId)

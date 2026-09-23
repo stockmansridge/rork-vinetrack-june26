@@ -1096,6 +1096,11 @@ struct ActiveTripView: View {
     /// that belong to the current trip. With the pin-overlay toggle ON
     /// the operator also sees existing pins in the same vineyard so they
     /// can avoid dropping duplicates before the warning is triggered.
+    static func includesExistingPin(_ pin: VinePin, tripId: UUID, vineyardId: UUID?) -> Bool {
+        if pin.tripId == tripId { return true }
+        return !pin.isCompleted && (vineyardId == nil || pin.vineyardId == vineyardId)
+    }
+
     private var visibleMapPins: [VinePin] {
         let tripPins = store.pins.filter { $0.tripId == trip.id }
         guard showPinOverlay else { return tripPins }
@@ -1107,6 +1112,7 @@ struct ActiveTripView: View {
             return ids
         }()
         let overlay = store.pins.filter { pin in
+            if !Self.includesExistingPin(pin, tripId: trip.id, vineyardId: vineyardId) { return false }
             if let v = vineyardId, pin.vineyardId != v { return false }
             if !blockIds.isEmpty, let pid = pin.paddockId, !blockIds.contains(pid) {
                 // include pins outside selected blocks too if they share

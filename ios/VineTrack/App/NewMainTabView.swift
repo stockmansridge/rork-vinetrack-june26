@@ -128,6 +128,8 @@ struct NewMainTabView: View {
             } else if locationService.authorizationStatus == .authorizedWhenInUse || locationService.authorizationStatus == .authorizedAlways {
                 locationService.startUpdating()
             }
+            // Set the authenticated owner before restoring this device's trip.
+            pinSync.configure(store: store, auth: auth)
             tripTracking.configure(store: store, locationService: locationService)
             // Provide active-trip lookup so MigratedDataStore.addPin can
             // self-link any pin dropped during a live trip back to that
@@ -137,7 +139,6 @@ struct NewMainTabView: View {
             store.currentActiveTripIdProvider = { [weak tripTracking = tripTracking] in
                 tripTracking?.activeTrip?.id
             }
-            pinSync.configure(store: store, auth: auth)
             paddockSync.configure(store: store, auth: auth)
             tripSync.configure(store: store, auth: auth)
             tripSync.configurePhase5EndGate { tripId in
