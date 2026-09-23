@@ -34,6 +34,8 @@ struct TripView: View {
             Group {
                 if let active = tracking.activeTrip {
                     ActiveTripView(trip: active)
+                } else if store.deviceActiveTripId != nil && !store.isDeviceTripOwner {
+                    ContentUnavailableView("Trip already in progress", systemImage: "tractor", description: Text("This device already has an active trip. Sign back in as the operator who started it, or finish that trip before starting another."))
                 } else if let owned = store.deviceOwnedTrip, owned.vineyardId != store.selectedVineyardId {
                     VStack(spacing: 16) {
                         ContentUnavailableView("Trip already in progress", systemImage: "tractor", description: Text("You already have an active trip in \(store.vineyards.first(where: { $0.id == owned.vineyardId })?.name ?? "another vineyard"). Finish or return to that trip before starting another."))

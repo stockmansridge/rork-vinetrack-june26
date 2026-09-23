@@ -539,7 +539,7 @@ private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: (
             )
         },
         bottomBar = {
-            if (active == null && state.trips.isNotEmpty()) {
+            if (state.deviceActiveTripId == null && state.trips.isNotEmpty()) {
                 Surface(color = vine.appBackground) {
                     Button(
                         onClick = onStart,

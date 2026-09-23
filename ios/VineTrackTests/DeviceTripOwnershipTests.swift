@@ -48,13 +48,72 @@ final class DeviceTripOwnershipTests: XCTestCase {
         let relaunched = MigratedDataStore(persistence: PersistenceStore(directory: directory))
         relaunched.selectedVineyardId = vineyard
         relaunched.reloadCurrentVineyardData()
-        relaunched.currentUserIdProvider = { UUID() }
-        XCTAssertNil(relaunched.deviceActiveTripId)
+        let secondUser = UUID()
+        relaunched.currentUserIdProvider = { secondUser }
+        XCTAssertEqual(relaunched.deviceActiveTripId, owned.id)
         let tracking = TripTrackingService()
         tracking.configure(store: relaunched, locationService: LocationService())
         XCTAssertNil(tracking.activeTrip)
-        relaunched.currentUserIdProvider = { firstUser }
-        XCTAssertEqual(tracking.activeTrip?.id, owned.id)
+        XCTAssertNil(relaunched.deviceOwnedTrip)
+        tracking.startTrip(type: .maintenance, primaryPaddockId: nil, paddockIds: [], paddockName: "Second")
+        XCTAssertTrue(tracking.errorMessage?.contains("Trip already in progress") == true)
+        relaunched.claimDeviceTrip(UUID())
+        XCTAssertEqual(relaunched.deviceActiveTripId, owned.id)
+        relaunched.clearInMemoryState()
+        XCTAssertEqual(relaunched.deviceActiveTripId, owned.id)
+        let persisted = MigratedDataStore(persistence: PersistenceStore(directory: directory))
+        persisted.currentUserIdProvider = { firstUser }
+        XCTAssertEqual(persisted.deviceActiveTripId, owned.id)
+        persisted.selectedVineyardId = vineyard
+        persisted.reloadCurrentVineyardData()
+        XCTAssertEqual(persisted.deviceOwnedTrip?.id, owned.id)
+        let originalTracking = TripTrackingService()
+        originalTracking.configure(store: persisted, locationService: LocationService())
+        XCTAssertEqual(originalTracking.activeTrip?.id, owned.id)
+    }
+
+    func testAuthoritativeInactiveOwnedTripReleasesOnlyMatchingOwnership() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let firstVineyard = UUID()
+        let otherVineyard = UUID()
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: directory))
+        store.selectedVineyardId = firstVineyard
+        let a = Trip(vineyardId: firstVineyard, isActive: true)
+        let b = Trip(vineyardId: otherVineyard, isActive: true)
+        store.startTrip(a)
+        store.claimDeviceTrip(a.id)
+        store.selectedVineyardId = otherVineyard
+        store.reloadCurrentVineyardData()
+        XCTAssertEqual(store.deviceActiveTripId, a.id)
+        var endedB = b
+        endedB.isActive = false
+        store.applyRemoteTripUpsert(endedB)
+        store.applyRemoteTripDelete(b.id)
+        XCTAssertEqual(store.deviceActiveTripId, a.id)
+        var endedA = a
+        endedA.isActive = false
+        store.applyRemoteTripUpsert(endedA)
+        XCTAssertNil(store.deviceActiveTripId)
+        XCTAssertNil(MigratedDataStore(persistence: PersistenceStore(directory: directory)).deviceActiveTripId)
+    }
+
+    func testAuthoritativeOwnedTripDeleteReleasesOnlyMatchingOwnership() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let vineyard = UUID()
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: directory))
+        store.selectedVineyardId = vineyard
+        let a = Trip(vineyardId: vineyard, isActive: true)
+        store.startTrip(a)
+        store.claimDeviceTrip(a.id)
+        store.applyRemoteTripDelete(UUID())
+        XCTAssertEqual(store.deviceActiveTripId, a.id)
+        store.applyRemoteTripDelete(a.id)
+        XCTAssertNil(store.deviceActiveTripId)
+        XCTAssertNil(MigratedDataStore(persistence: PersistenceStore(directory: directory)).deviceActiveTripId)
     }
 
     func testRemoteActiveTripDoesNotBlockStartAndOwnedTripBlocksOtherVineyard() throws {

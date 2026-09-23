@@ -25,14 +25,14 @@ final class MigratedDataStore {
         let userId: UUID?
     }
     private var deviceTripOwnership: DeviceTripOwnership?
-    var deviceActiveTripId: UUID? {
-        guard let ownership = deviceTripOwnership,
-              ownership.userId == currentUserIdProvider?() else { return nil }
-        return ownership.tripId
+    var deviceActiveTripId: UUID? { deviceTripOwnership?.tripId }
+    var isDeviceTripOwner: Bool {
+        guard let ownership = deviceTripOwnership else { return false }
+        return ownership.userId == currentUserIdProvider?()
     }
 
     var deviceOwnedTrip: Trip? {
-        guard let id = deviceActiveTripId else { return nil }
+        guard isDeviceTripOwner, let id = deviceActiveTripId else { return nil }
         if let trip = trips.first(where: { $0.id == id }) { return trip.isActive ? trip : nil }
         for vineyard in vineyards where vineyard.id != selectedVineyardId {
             if let trip = tripRepo.load(for: vineyard.id).first(where: { $0.id == id && $0.isActive }) {
@@ -43,6 +43,7 @@ final class MigratedDataStore {
     }
 
     func claimDeviceTrip(_ id: UUID) {
+        guard deviceTripOwnership == nil else { return }
         let ownership = DeviceTripOwnership(tripId: id, userId: currentUserIdProvider?())
         deviceTripOwnership = ownership
         persistence.save(ownership, key: Keys.deviceActiveTripId)
@@ -56,7 +57,7 @@ final class MigratedDataStore {
 
     /// Keep GPS on the owned trip when the operator views another vineyard.
     func updateDeviceOwnedTrip(_ trip: Trip) {
-        guard trip.id == deviceActiveTripId else { return }
+        guard isDeviceTripOwner, trip.id == deviceActiveTripId else { return }
         if trip.vineyardId == selectedVineyardId {
             updateTrip(trip)
         } else {
@@ -687,13 +688,13 @@ final class MigratedDataStore {
             Keys.buttonTemplates,
             Keys.grapeVarieties,
             Keys.selectedVineyardId,
-            Keys.deviceActiveTripId,
         ]
         for key in keys {
             persistence.remove(key: key)
         }
+        // An active device claim survives a local-data reset/account switch;
+        // only an exact remote end/delete or the owner's successful end releases it.
         clearInMemoryState()
-        deviceTripOwnership = nil
     }
 
     // MARK: - Vineyard selection
@@ -1430,6 +1431,7 @@ final class MigratedDataStore {
     }
 
     func deleteTrip(_ tripId: UUID) {
+        guard tripId != deviceActiveTripId || isDeviceTripOwner else { return }
         guard let vineyardId = selectedVineyardId else { return }
         // Clean up local links that depend on this trip BEFORE removing it so
         // nothing is left pointing at a missing trip.
@@ -1487,6 +1489,7 @@ final class MigratedDataStore {
             }
             tripRepo.replace(all.filter { $0.vineyardId == trip.vineyardId }, for: trip.vineyardId)
         }
+        if !trip.isActive { releaseDeviceTrip(trip.id) }
     }
 
     /// Apply a trip deletion that originated from a remote sync pull.
@@ -1505,6 +1508,7 @@ final class MigratedDataStore {
             all.removeAll { $0.id == tripId }
             tripRepo.replace(all.filter { $0.vineyardId == removed.vineyardId }, for: removed.vineyardId)
         }
+        releaseDeviceTrip(tripId)
     }
 
     // MARK: - SprayRecord CRUD

@@ -254,13 +254,16 @@ final class TripTrackingService {
     // MARK: - Active trip helpers
 
     var activeTrip: Trip? {
-        guard let store, let id = store.deviceActiveTripId else { return nil }
+        guard let store, store.isDeviceTripOwner, let id = store.deviceActiveTripId else { return nil }
         return store.trips.first { $0.id == id && $0.isActive && $0.vineyardId == store.selectedVineyardId }
     }
 
     // MARK: - Start
 
     private func deviceTripConflictMessage(in store: MigratedDataStore) -> String {
+        guard store.isDeviceTripOwner else {
+            return "Trip already in progress. This device already has an active trip. Sign back in as the operator who started it, or finish that trip before starting another."
+        }
         let name = store.deviceOwnedTrip.flatMap { trip in
             store.vineyards.first(where: { $0.id == trip.vineyardId })?.name
         } ?? "another vineyard"

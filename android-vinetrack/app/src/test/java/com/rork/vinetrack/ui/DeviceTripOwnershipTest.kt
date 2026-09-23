@@ -49,6 +49,34 @@ class DeviceTripOwnershipTest {
         assertFalse(switched.trips.any { it.id == "B" })
     }
 
+    @Test fun secondSignedInUserCannotReplaceDeviceClaimAndOriginalOwnerCanRestoreIt() {
+        val storage = MemoryStorage()
+        val firstSession = ActiveTripStore(storage)
+        assertTrue(firstSession.claimIfAvailable("operator-A", "vineyard-1", a))
+        val secondSession = ActiveTripStore(storage)
+        assertTrue(secondSession.hasActiveClaim())
+        assertFalse(secondSession.claimIfAvailable("operator-B", "vineyard-2",
+            Trip(id = "other", vineyardId = "vineyard-2", isActive = true)))
+        assertEquals("A", secondSession.load()?.trip?.id)
+        assertEquals("operator-A", secondSession.load()?.ownerUserId)
+        val originalSession = ActiveTripStore(storage).load()!!
+        assertEquals("operator-A", originalSession.ownerUserId)
+        assertEquals("A", AppUiState(selectedVineyardId = "vineyard-1", trips = listOf(originalSession.trip),
+            deviceActiveTripId = originalSession.trip.id).activeTrip?.id)
+    }
+
+    @Test fun vineyardSwitchAndUnrelatedEndedTripDoNotReleaseDeviceClaim() {
+        val storage = MemoryStorage()
+        val store = ActiveTripStore(storage)
+        assertTrue(store.claimIfAvailable("operator-A", "vineyard-1", a))
+        val switched = AppUiState(selectedVineyardId = "vineyard-2",
+            trips = listOf(b.copy(isActive = false)), deviceActiveTripId = "A")
+        assertNull(switched.activeTrip)
+        assertEquals("A", switched.deviceActiveTripId)
+        assertTrue(store.hasActiveClaim())
+        assertEquals("A", ActiveTripStore(storage).load()?.trip?.id)
+    }
+
     private class MemoryStorage : ActiveTripSnapshotStorage {
         private var value: String? = null
         override fun read(): String? = value

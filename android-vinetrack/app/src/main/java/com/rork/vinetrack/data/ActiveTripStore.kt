@@ -44,6 +44,15 @@ class ActiveTripStore internal constructor(
         @SerialName("saved_at") val savedAt: Long,
     )
 
+    /** A stored active claim blocks a new trip on this device, regardless of signed-in user. */
+    fun hasActiveClaim(): Boolean = load()?.trip?.isActive == true
+
+    /** Claim only when no active trip is already stored; never replace another operator's claim. */
+    fun claimIfAvailable(ownerUserId: String, vineyardId: String, trip: Trip): Boolean {
+        if (hasActiveClaim()) return false
+        return saveDurably(ownerUserId, vineyardId, trip)
+    }
+
     /** Persist (replace) the active-trip snapshot for the given owner/vineyard. */
     fun save(ownerUserId: String, vineyardId: String, trip: Trip) {
         val snapshot = Snapshot(ownerUserId, vineyardId, trip, System.currentTimeMillis())
@@ -64,6 +73,6 @@ class ActiveTripStore internal constructor(
         return runCatching { json.decodeFromString(Snapshot.serializer(), raw) }.getOrNull()
     }
 
-    /** Remove the persisted snapshot (trip ended/deleted, sign-out, or invalid). */
+    /** Remove the persisted snapshot (trip ended/deleted or invalid). */
     fun clear() = storage.remove()
 }

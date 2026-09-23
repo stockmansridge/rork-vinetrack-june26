@@ -4771,7 +4771,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { pendingWrites.clearAll() }
             runCatching { pendingPhotos.clearAll() }
             runCatching { domainCache.clearAll() }
-            runCatching { activeTripStore.clear() }
+            // Keep the device-wide active-trip claim across account switches;
+            // restore still checks ownerUserId before exposing trip controls.
             // Best-effort: clear Credential Manager sign-in state so a signed-out
             // (or switched) user isn't silently re-selected by Google next time.
             runCatching {
@@ -8039,17 +8040,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun canStartDeviceTrip(onBlocked: (String) -> Unit): Boolean {
         val snapshot = runCatching { activeTripStore.load() }.getOrNull()
-        val owned = snapshot?.takeIf { it.ownerUserId == session.userId }
+        val owned = snapshot?.takeIf { it.trip.isActive }
         if (owned == null && _ui.value.deviceActiveTripId == null) return true
-        val vineyardId = owned?.vineyardId
-        val name = _ui.value.vineyards.firstOrNull { it.id == vineyardId }?.name ?: "another vineyard"
+        if (owned != null && owned.ownerUserId != session.userId) {
+            onBlocked("Trip already in progress. This device already has an active trip. Sign back in as the operator who started it, or finish that trip before starting another.")
+            return false
+        }
+        val name = _ui.value.vineyards.firstOrNull { it.id == owned?.vineyardId }?.name ?: "another vineyard"
         onBlocked("Trip already in progress. You already have an active trip in $name. Finish or return to that trip before starting another.")
         return false
     }
 
     private fun claimDeviceTrip(trip: Trip): Boolean {
         val owner = session.userId ?: return false
-        val saved = runCatching { activeTripStore.saveDurably(owner, trip.vineyardId, trip) }.getOrDefault(false)
+        val saved = runCatching { activeTripStore.claimIfAvailable(owner, trip.vineyardId, trip) }.getOrDefault(false)
         if (saved) _ui.update { it.copy(deviceActiveTripId = trip.id) }
         return saved
     }
