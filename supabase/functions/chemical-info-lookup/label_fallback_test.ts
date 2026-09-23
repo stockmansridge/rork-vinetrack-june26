@@ -17,6 +17,8 @@ Deno.test("photo identity uses the whole label rather than WARNING or CAUTION", 
     assertEquals(confirmedOCRName("Invented chemical name", ocr), null);
   }
   assertEquals(confirmedOCRName("DITHANE RAINSHIELD", "WARNING\nDITHANE RAINSHIELD"), null);
+  assertEquals(confirmedOCRName("CAUTION WARNING", "CAUTION WARNING\nFUNGICIDE"), null);
+  assertEquals(confirmedOCRName("UNKNOWN FUNGICIDE", "CAUTION\nFUNGICIDE"), null);
 });
 
 Deno.test("only unambiguous APVMA identities and direct official PDFs pass", () => {

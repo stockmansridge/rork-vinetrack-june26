@@ -346,9 +346,12 @@ struct ChemicalSearchV2View: View {
     @Environment(\.dismiss) private var dismiss
 
     let onOpenExisting: (SavedChemical) -> Void
+    let onSaved: (SavedChemical) -> Void
 
-    init(onOpenExisting: @escaping (SavedChemical) -> Void = { _ in }) {
+    init(prefillQuery: String = "", onOpenExisting: @escaping (SavedChemical) -> Void = { _ in }, onSaved: @escaping (SavedChemical) -> Void = { _ in }) {
         self.onOpenExisting = onOpenExisting
+        self.onSaved = onSaved
+        _query = State(initialValue: prefillQuery)
     }
 
     @State private var query: String = ""
@@ -465,6 +468,9 @@ struct ChemicalSearchV2View: View {
                         review = nil
                         dismiss()
                         onOpenExisting(existing)
+                    },
+                    onSaved: { chemical in
+                        onSaved(chemical)
                     }
                 ) { outcome in
                     message = outcome
@@ -618,17 +624,20 @@ private struct ChemicalSearchV2ReviewView: View {
     @State private var duplicate: SavedChemical?
     let photoData: Data?
     let onOpenExisting: (SavedChemical) -> Void
+    let onSaved: (SavedChemical) -> Void
     let onComplete: (String) -> Void
 
     init(
         draft: ChemicalSearchV2View.ReviewDraft,
         photoData: Data?,
         onOpenExisting: @escaping (SavedChemical) -> Void,
+        onSaved: @escaping (SavedChemical) -> Void,
         onComplete: @escaping (String) -> Void
     ) {
         _draft = State(initialValue: draft)
         self.photoData = photoData
         self.onOpenExisting = onOpenExisting
+        self.onSaved = onSaved
         self.onComplete = onComplete
     }
 
@@ -671,7 +680,7 @@ private struct ChemicalSearchV2ReviewView: View {
                         LabeledContent("Active ingredients", value: draft.intelligence.activeIngredients.map(\.name).joined(separator: ", ").ifEmpty("—"))
                         if !draft.intelligence.productCategory.isEmpty { LabeledContent("Category", value: draft.intelligence.productCategory.capitalized) }
                         if let label = draft.intelligence.registration?.labelReference,
-                           let url = URL(string: label), url.scheme == "https", url.host == "elabels.apvma.gov.au",
+                           let url = URL(string: label), url.scheme == "https", url.host != nil,
                            url.path.lowercased().hasSuffix(".pdf") {
                             Link("Official Label", destination: url)
                         }
@@ -860,6 +869,12 @@ private struct ChemicalSearchV2ReviewView: View {
             entrySource: draft.isManual ? "manual_v2" : (draft.master == nil ? "label_lookup_v2" : "master_catalogue_v2")
         )
         store.addSavedChemical(chemical)
+        guard store.savedChemicals.contains(where: { $0.id == chemical.id }) else {
+            isSaving = false
+            notice = "Couldn't save the chemical. Please try again."
+            return
+        }
+        onSaved(chemical)
         guard let photoData else { onComplete("Saved \(chemical.name)"); return }
         Task {
             do {

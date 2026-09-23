@@ -12012,6 +12012,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Returns the server-created record itself, never an inferred match from the UI list. */
+    fun createSavedChemicalV2(input: SavedChemicalRepository.ChemicalInput, onResult: (SavedChemical?) -> Unit) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(null); return }
+        viewModelScope.launch {
+            _ui.update { it.copy(sprayError = null) }
+            try {
+                val created = savedChemicalRepo.create(vineyardId, input)
+                _ui.update { st ->
+                    st.copy(savedChemicals = (st.savedChemicals + created).sortedBy { it.displayName.lowercase() })
+                }
+                onResult(created)
+            } catch (e: BackendError.Unauthorized) {
+                onUnauthorized("createSavedChemicalV2"); onResult(null)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(sprayError = friendlyWriteError(e.code)) }
+                onResult(null)
+            } catch (e: Exception) {
+                _ui.update { it.copy(sprayError = "Couldn't save the chemical. Check your connection.") }
+                onResult(null)
+            }
+        }
+    }
+
     /** Edit an existing saved chemical, reconciling with the server-resolved row. */
     fun updateSavedChemical(id: String, input: SavedChemicalRepository.ChemicalInput, onResult: (Boolean) -> Unit) {
         val previous = _ui.value.savedChemicals

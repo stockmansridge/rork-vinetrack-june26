@@ -151,6 +151,7 @@ internal fun ChemicalSearchV2Sheet(
     state: AppUiState,
     onDismiss: () -> Unit,
     onOpenExisting: (SavedChemical) -> Unit = {},
+    onSaved: (SavedChemical) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -357,6 +358,7 @@ internal fun ChemicalSearchV2Sheet(
                     onBack = { review = null },
                     onDone = onDismiss,
                     onOpenExisting = onOpenExisting,
+                    onSaved = onSaved,
                 )
             }
         }
@@ -373,6 +375,7 @@ private fun ChemicalReviewV2(
     onBack: () -> Unit,
     onDone: () -> Unit,
     onOpenExisting: (SavedChemical) -> Unit,
+    onSaved: (SavedChemical) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
@@ -411,7 +414,7 @@ private fun ChemicalReviewV2(
         draft.intelligence.productCategory.takeIf(String::isNotBlank)?.let { Text("Category: $it") }
         draft.intelligence.registration?.labelReference?.takeIf { label ->
             runCatching { java.net.URI(label) }.getOrNull()?.let { uri ->
-                uri.scheme == "https" && uri.host == "elabels.apvma.gov.au" && uri.path.endsWith(".pdf", ignoreCase = true)
+                uri.scheme == "https" && uri.host != null && uri.path.endsWith(".pdf", ignoreCase = true)
             } == true
         }?.let { label ->
             TextButton(onClick = { uriHandler.openUri(label) }) { Text("Official Label") }
@@ -599,20 +602,17 @@ private fun ChemicalReviewV2(
                     ),
                     entrySource = if (draft.isManual) "manual_v2" else if (draft.master == null) "label_lookup_v2" else "master_catalogue_v2",
                 )
-                vm.createSavedChemical(input) { ok ->
+                vm.createSavedChemicalV2(input) { created ->
                     saving = false
-                    if (!ok) return@createSavedChemical
-                    val created = vm.ui.value.savedChemicals.firstOrNull {
-                        (draft.master != null && it.masterChemicalId == draft.master.id) ||
-                            ChemicalStoreMatching.namesMatch(it.displayName, draft.productName)
-                    }
-                    if (photoBytes == null || created == null) { onDone(); return@createSavedChemical }
+                    if (created == null) return@createSavedChemicalV2
+                    onSaved(created)
+                    if (photoBytes == null) { onDone(); return@createSavedChemicalV2 }
                     scope.launch {
                         try {
                             ChemicalLabelAttachmentV2Repository().upload(photoBytes, vineyardId, created.id)
                         } catch (_: Exception) {
                             Log.w("ChemicalSearchV2", "chemical saved but label photo upload failed")
-                            notice = "Chemical saved, but the label photo could not be uploaded."
+                            onDone()
                             return@launch
                         }
                         onDone()

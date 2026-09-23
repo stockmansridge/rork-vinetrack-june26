@@ -36,6 +36,8 @@ export function confirmedOCRName(name: unknown, ocr: string): string | null {
   // Require a specific product identity, not a generic single-word regulatory header.
   if (value.split(" ").length < 2 && !/\d/.test(value)) return null;
   if (/^(?:safety directions|directions for use|keep out of reach|active constituent|net contents?|first aid|read (?:the )?label|batch (?:no|number)|manufactur(?:ed|ing) (?:date|by))$/i.test(value)) return null;
+  const generic = new Set(["warning", "caution", "danger", "poison", "fungicide", "herbicide", "insecticide", "label", "registered", "product", "safety", "directions", "for", "use"]);
+  if (value.toLowerCase().split(/\s+/).every((word) => generic.has(word))) return null;
   // The model must choose a literal line, supported by surrounding product/label context.
   if (!/(?:fungicide|herbicide|insecticide|miticide|adjuvant|fertilis[ez]r|active constituent|apvma|registration|grapevine|vineyards)/i.test(ocr)) return null;
   return value;

@@ -1270,14 +1270,76 @@ Deno.serve(async (req: Request) => {
       if (discovered.outcome !== "resolved" || !reg || reg.registration_number !== candidate.registration_number) {
         return json({ error: "The APVMA could not verify this exact product. Refine your search or add it manually." }, 422);
       }
+      if (reg.active_ingredients.length === 0) {
+        return json({ error: "The APVMA did not provide active ingredient evidence for this product. Add it manually after checking its label." }, 422);
+      }
       const result = buildRegisterOnlyStructured(reg, ACTIVITY_GROUP_TABLE_VERSION);
-      const label = directOfficialLabelURL(result.registration?.regulator_label_url, reg.registration_number) ??
+      const regulatorLabel = directOfficialLabelURL(result.registration?.regulator_label_url, reg.registration_number) ??
         directOfficialLabelURL(result.registration?.label_reference, reg.registration_number);
+      let manufacturerLabel: string | null = null;
+      // The fallback is restricted to the ONE identity already resolved by APVMA.
+      // Research supplies leads only: the server inspects the registrant's product
+      // page and fetches/reads its linked label before accepting the document.
+      if (!regulatorLabel && apiKey && readResearchConfig().enabled) {
+        const research = await runChemicalResearch({
+          query: reg.registered_product_name, countryCode: "AU", countryLabel,
+          mode: "product_enrichment", apiKey, fetchFn: fetch,
+          config: readResearchConfig(), registerResolved: true,
+          labelMissingForResolvedRegistration: true,
+          lockedIdentity: {
+            registeredProductName: reg.registered_product_name,
+            registrationNumber: reg.registration_number,
+            scheme: reg.scheme,
+            registrant: reg.registrant,
+          },
+        });
+        if (research.research) {
+          const leads = [
+            ...research.research.documents.product_page_candidates.map((d) => d.url),
+            ...research.research.documents.official_label_candidates.map((d) => d.linked_from_url ?? ""),
+          ].filter((url) => url.length > 0);
+          const inspected = await inspectCandidateProductPages(deps, leads, "AU");
+          const projection = projectResearch(
+            research.research, "AU", reg.scheme, reg.registered_product_name, inspected.pages,
+          );
+          if (projection.manufacturerLabelCandidate) {
+            const sourcePage = inspected.pages.find((page) =>
+              page.finalUrl === projection.manufacturerLabelCandidate?.url ||
+              page.links.some((link) => link.url === projection.manufacturerLabelCandidate?.url)
+            )?.finalUrl ?? null;
+            const enrichment = await enrichFromManufacturerLabel({
+              deps, manufacturerLabelUrl: projection.manufacturerLabelCandidate.url,
+              sourcePageUrl: sourcePage, regulatorUses: result.registered_uses ?? [],
+              product: { country: "AU", scheme: reg.scheme, registration_number: reg.registration_number },
+              registeredProductName: reg.registered_product_name,
+            });
+            manufacturerLabel = verifiedManufacturerLabelUrl(enrichment);
+            if (manufacturerLabel) {
+              applyManufacturerEnrichment(result, enrichment, {
+                manufacturerLabelUrl: manufacturerLabel,
+                manufacturerProductUrl: projection.productPageCandidate?.url ?? null,
+              });
+            }
+          }
+        }
+      }
+      const label = regulatorLabel ?? manufacturerLabel;
       if (!label) return json({ error: "No direct official product label could be verified. Try again or add it manually." }, 422);
       result.registration.label_reference = label;
-      result.registration.regulator_label_url = label;
-      result.registration.manufacturer_label_url = null;
-      result.registration.manufacturer_product_url = null;
+      result.registration.regulator_label_url = regulatorLabel;
+      result.registration.manufacturer_label_url = manufacturerLabel;
+      result.registration.manufacturer_product_url = manufacturerLabel ? (result.registration.manufacturer_product_url ?? null) : null;
+      result.label_urls = {
+        regulator_label_url: regulatorLabel,
+        manufacturer_label_url: manufacturerLabel,
+        product_url: result.registration.manufacturer_product_url,
+      };
+      result.field_provenance = { ...result.field_provenance,
+        label_reference: regulatorLabel ? "official_register" : "manufacturer_label" };
+      if (manufacturerLabel) result.verification.sources.push({
+        kind: "manufacturer_label", name: reg.registrant ?? "Verified registrant label",
+        reference: manufacturerLabel, retrieved_at: new Date().toISOString(),
+      });
       applyRateIdentities(result);
       applyDefaultRateOptions(result);
       return json({ ...result, match_source: "authoritative_candidate", jurisdiction: jurEnv });
