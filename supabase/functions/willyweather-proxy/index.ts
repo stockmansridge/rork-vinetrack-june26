@@ -26,7 +26,7 @@
 // deno-lint-ignore-file no-explicit-any no-import-prefix no-inner-declarations
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { normaliseForecast } from "./forecast.ts";
+import { normaliseForecast, rollingRainTotals } from "./forecast.ts";
 
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -35,7 +35,7 @@ const CORS: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const PROXY_VERSION = "willyweather-proxy-2026-09-22-detail";
+const PROXY_VERSION = "willyweather-proxy-2026-09-23-forecast-parity";
 const WW_BASE = "https://api.willyweather.com.au/v2";
 const PROVIDER = "willyweather";
 
@@ -170,6 +170,30 @@ async function wwForecastType(apiKey: string, locationId: string, days: number, 
     // Optional detail calls deliberately fail soft. Do not log the request URL:
     // the WillyWeather key is embedded in its path.
     return { status: 0, ok: false, body: null };
+  }
+}
+
+// Only supplement missing hourly precipitation; never overwrite WillyWeather daily facts.
+async function supplementaryHourlyRain(lat: number, lon: number): Promise<Array<{ dateTime: string; amount: number | null }>> {
+  try {
+    const url = new URL("https://api.open-meteo.com/v1/forecast");
+    url.searchParams.set("latitude", String(lat));
+    url.searchParams.set("longitude", String(lon));
+    url.searchParams.set("hourly", "precipitation");
+    url.searchParams.set("forecast_days", "4");
+    url.searchParams.set("timezone", "UTC");
+    const response = await fetch(url.toString(), { signal: AbortSignal.timeout(8000) });
+    if (!response.ok) return [];
+    const data = await response.json();
+    const times: unknown[] = Array.isArray(data?.hourly?.time) ? data.hourly.time : [];
+    const values: unknown[] = Array.isArray(data?.hourly?.precipitation) ? data.hourly.precipitation : [];
+    return times.flatMap((time, index) => {
+      const amount = num(values[index]);
+      return typeof time === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d$/.test(time) && amount != null
+        ? [{ dateTime: `${time}:00Z`, amount }] : [];
+    });
+  } catch {
+    return [];
   }
 }
 
@@ -453,13 +477,47 @@ Deno.serve(async (req: Request) => {
       if (!norm.ok) {
         return json({ error: "WillyWeather forecast could not be parsed", reason: norm.error }, 502);
       }
+      let rollingRain: {
+        next24hMm: number | null; next48hMm: number | null;
+        next24hSource: string | null; next48hSource: string | null;
+        source: string | null; asOf: string;
+      } | undefined;
+      if (includeDetail) {
+        const now = new Date();
+        const providerEntries = norm.days.flatMap((day) => (day.rainfallEntries ?? []).map((entry) => ({
+          dateTime: String(entry.dateTime), amount: num(entry.rainMaxMm),
+        })));
+        const primary = rollingRainTotals(providerEntries, now);
+        let totals = primary;
+        let source: string | null = primary.next48hMm != null ? "WillyWeather" : null;
+        if (primary.next48hMm == null) {
+          const latitude = loc.lat ?? num(norm.providerLocation?.latitude);
+          const longitude = loc.lon ?? num(norm.providerLocation?.longitude);
+          if (latitude != null && longitude != null) {
+            const supplementary = await supplementaryHourlyRain(latitude, longitude);
+            const alternate = rollingRainTotals(supplementary, now);
+            if (alternate.next48hMm != null) {
+              totals = { next24hMm: primary.next24hMm ?? alternate.next24hMm, next48hMm: alternate.next48hMm };
+              source = primary.next24hMm != null ? "WillyWeather + Open-Meteo" : "Open-Meteo";
+            }
+          }
+        }
+        rollingRain = {
+          ...totals,
+          next24hSource: totals.next24hMm == null ? null : (primary.next24hMm != null ? "WillyWeather" : "Open-Meteo"),
+          next48hSource: totals.next48hMm == null ? null : (primary.next48hMm != null ? "WillyWeather" : "Open-Meteo"),
+          source,
+          asOf: now.toISOString(),
+        };
+      }
       return json({
         success: true,
         source: "WillyWeather",
         location_id: loc.id,
         location_name: loc.name,
         days: norm.days,
-        ...(includeDetail && norm.timezone ? { timezone: norm.timezone } : {}),
+        ...(norm.timezone ? { timezone: norm.timezone } : {}),
+        ...(rollingRain ? { rollingRain } : {}),
         ...(includeDetail && norm.providerLocation ? { providerLocation: norm.providerLocation } : {}),
         ...(includeDetail ? { detailAvailability: norm.detailAvailability } : {}),
       });

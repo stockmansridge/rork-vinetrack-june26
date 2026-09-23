@@ -11,6 +11,9 @@ export interface ForecastNormaliseOptions {
 export interface NormalisedForecastDay {
   date: string;
   rain_mm: number | null;
+  /** Provider daily range; rain_mm remains the legacy conservative upper bound. */
+  rain_min_mm: number | null;
+  rain_max_mm: number | null;
   rain_probability: number | null;
   temp_min_c: number | null;
   temp_max_c: number | null;
@@ -19,8 +22,10 @@ export interface NormalisedForecastDay {
   temperatureEntries?: Array<Record<string, unknown>>;
   windEntries?: Array<Record<string, unknown>>;
   humidityEntries?: Array<Record<string, unknown>>;
+  rainfallEntries?: Array<Record<string, unknown>>;
   precis?: string;
   precisCode?: string;
+  condition_key?: string;
   rainfall_mm?: number | null;
   probability_pct?: number | null;
   wind_max_kmh?: number | null;
@@ -91,6 +96,51 @@ export function aggregateRainfallEntries(entries: any[]): number | null {
     count += 1;
   }
   return count > 0 ? Math.round(total * 100) / 100 : null;
+}
+
+function rainfallLowerBound(entry: any): number | null {
+  const lower = num(entry?.startRange);
+  if (lower != null) return Math.max(0, lower);
+  const upper = num(entry?.endRange);
+  if (upper != null) return 0; // 'up to X' has no stated positive minimum
+  const amount = num(entry?.amount ?? entry?.rainfall);
+  return amount == null ? null : Math.max(0, amount);
+}
+
+function aggregateRainfallLower(entries: any[]): number | null {
+  const distinct = new Map<string, any>();
+  entries.forEach((entry: any, index: number) => {
+    const key = text(entry?.dateTime) ?? `untimed:${index}`;
+    if (!distinct.has(key)) distinct.set(key, entry);
+  });
+  const values = [...distinct.values()].map(rainfallLowerBound).filter((v): v is number => v != null);
+  return values.length ? Math.round(values.reduce((sum, v) => sum + v, 0) * 100) / 100 : null;
+}
+
+/** Rolling forecast from real hourly samples; missing hours produce null, never zero. */
+export function rollingRainTotals(
+  entries: Array<{ dateTime: string; amount: number | null }>,
+  now: Date,
+): { next24hMm: number | null; next48hMm: number | null } {
+  const byHour = new Map<number, number>();
+  for (const entry of entries) {
+    const at = Date.parse(entry.dateTime);
+    if (!Number.isFinite(at) || at % 3_600_000 !== 0 || entry.amount == null || !Number.isFinite(entry.amount)) continue;
+    if (!byHour.has(at)) byHour.set(at, Math.max(0, entry.amount));
+  }
+  // Each sample is the provider's forecast for its timestamped hourly period.
+  // The first eligible sample is the next whole hour; never split daily totals.
+  const first = Math.ceil(now.getTime() / 3_600_000) * 3_600_000;
+  const sum = (hours: number): number | null => {
+    let total = 0;
+    for (let i = 0; i < hours; i++) {
+      const value = byHour.get(first + i * 3_600_000);
+      if (value == null) return null;
+      total += value;
+    }
+    return Math.round(total * 100) / 100;
+  };
+  return { next24hMm: sum(24), next48hMm: sum(48) };
 }
 
 function estimateET0(tmin: number | null, tmax: number | null): number | null {
@@ -176,6 +226,18 @@ function firstCondition(entries: any[]): { precis?: string; precisCode?: string 
   return {};
 }
 
+/** Provider-neutral icon category from genuine condition, never rainfall quantity. */
+export function conditionKey(precis?: string, code?: string): string | undefined {
+  if (!precis && !code) return undefined;
+  const value = `${code ?? ""} ${precis ?? ""}`.toLowerCase();
+  if (/thunder|storm|lightning/.test(value)) return "storm";
+  if (/partly|mostly sunny|sunny intervals/.test(value)) return "partly_cloudy";
+  if (/shower|rain|drizzle/.test(value)) return "rain";
+  if (/cloud|overcast/.test(value)) return "cloudy";
+  if (/sun|clear|fine/.test(value)) return "clear";
+  return "unknown";
+}
+
 function optionalPayload(options: ForecastNormaliseOptions, type: string): any {
   return options.optionalForecasts?.[type] ?? null;
 }
@@ -198,6 +260,8 @@ export function normaliseForecast(
   interface DayBucket {
     date: string;
     rainMm: number | null;
+    rainMinMm: number | null;
+    rainfallEntries: Array<Record<string, unknown>>;
     probability: number | null;
     tmin: number | null;
     tmax: number | null;
@@ -218,6 +282,8 @@ export function normaliseForecast(
     const created: DayBucket = {
       date,
       rainMm: null,
+      rainMinMm: null,
+      rainfallEntries: [],
       probability: null,
       tmin: null,
       tmax: null,
@@ -232,7 +298,20 @@ export function normaliseForecast(
 
   for (const day of forecastDays(raw, "rainfall")) {
     const target = bucket(day?.dateTime);
-    if (target) target.rainMm = aggregateRainfallEntries(entriesForDay(day));
+    if (target) {
+      const entries = entriesForDay(day);
+      target.rainMm = aggregateRainfallEntries(entries);
+      target.rainMinMm = aggregateRainfallLower(entries);
+      if (options.includeDetail) {
+        const seen = new Set<string>();
+        target.rainfallEntries = entries.flatMap((entry: any) => {
+          const dateTime = text(entry?.dateTime);
+          if (!dateTime || seen.has(dateTime)) return [];
+          seen.add(dateTime);
+          return [{ dateTime, rainMinMm: rainfallLowerBound(entry), rainMaxMm: rainfallUpperBound(entry) }];
+        });
+      }
+    }
   }
 
   for (const day of forecastDays(raw, "rainfallprobability")) {
@@ -283,10 +362,22 @@ export function normaliseForecast(
       for (const day of forecastDays(payload, type)) {
         const target = existingBucket(day?.dateTime);
         if (!target) continue;
-        const condition = firstCondition(entriesForDay(day));
+        const condition = firstCondition([day, ...entriesForDay(day)]);
         if (!target.precis && condition.precis) target.precis = condition.precis;
         if (!target.precisCode && condition.precisCode) target.precisCode = condition.precisCode;
       }
+    }
+  }
+
+  // Conditions are supplied only by the provider; never derive them from rain.
+  // A combined payload may already include weather/precis on its days.
+  for (const type of ["weather", "precis"]) {
+    for (const day of forecastDays(raw, type)) {
+      const target = bucket(day?.dateTime);
+      if (!target) continue;
+      const condition = firstCondition([day, ...entriesForDay(day)]);
+      target.precis ??= condition.precis;
+      target.precisCode ??= condition.precisCode;
     }
   }
 
@@ -298,13 +389,20 @@ export function normaliseForecast(
     const daily: NormalisedForecastDay = {
       date: value.date,
       rain_mm: value.rainMm,
+      rain_min_mm: value.rainMinMm,
+      rain_max_mm: value.rainMm,
       rain_probability: value.probability,
       temp_min_c: value.tmin,
       temp_max_c: value.tmax,
       wind_kmh_max: value.windKmh,
       et0_mm: estimateET0(value.tmin, value.tmax),
     };
-    if (!options.includeDetail) return daily;
+    if (!options.includeDetail) return {
+      ...daily,
+      ...(value.precis ? { precis: value.precis } : {}),
+      ...(value.precisCode ? { precisCode: value.precisCode } : {}),
+      ...(conditionKey(value.precis, value.precisCode) ? { condition_key: conditionKey(value.precis, value.precisCode) } : {}),
+    };
     return {
       ...daily,
       rainfall_mm: value.rainMm,
@@ -313,12 +411,15 @@ export function normaliseForecast(
       temperatureEntries: value.temperatureEntries,
       windEntries: value.windEntries,
       humidityEntries: value.humidityEntries,
+      rainfallEntries: value.rainfallEntries,
       ...(value.precis ? { precis: value.precis } : {}),
       ...(value.precisCode ? { precisCode: value.precisCode } : {}),
+      ...(conditionKey(value.precis, value.precisCode) ? { condition_key: conditionKey(value.precis, value.precisCode) } : {}),
     };
   });
 
-  if (!options.includeDetail) return { ok: true, days: normalisedDays };
+  const timezone = timezoneFrom(raw, ...Object.values(options.optionalForecasts ?? {}));
+  if (!options.includeDetail) return { ok: true, days: normalisedDays, ...(timezone ? { timezone } : {}) };
 
   const optionals = options.optionalForecasts ?? {};
   const humidityAvailable = forecastDays(optionals.humidity, "humidity").length > 0 ||
@@ -333,7 +434,6 @@ export function normaliseForecast(
     precis: forecastDays(optionals.precis, "precis").length > 0,
     dewpoint: forecastDays(optionals.dewpoint, "dewpoint").length > 0,
   };
-  const timezone = timezoneFrom(raw, ...Object.values(optionals));
   const providerLocation = providerLocationFrom(raw);
   return {
     ok: true,

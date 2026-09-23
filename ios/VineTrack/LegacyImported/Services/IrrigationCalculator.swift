@@ -7,6 +7,12 @@ nonisolated struct ForecastDay: Sendable, Hashable, Identifiable {
     let forecastWindKmhMax: Double?
     let forecastTempMaxC: Double?
     let forecastTempMinC: Double?
+    let condition: String?
+    let conditionCode: String?
+    let conditionKey: String?
+    let rainMinMm: Double?
+    let rainMaxMm: Double?
+    let rainProbabilityPct: Double?
 
     var id: Date { date }
 
@@ -16,7 +22,13 @@ nonisolated struct ForecastDay: Sendable, Hashable, Identifiable {
         forecastRainMm: Double,
         forecastWindKmhMax: Double? = nil,
         forecastTempMaxC: Double? = nil,
-        forecastTempMinC: Double? = nil
+        forecastTempMinC: Double? = nil,
+        condition: String? = nil,
+        conditionCode: String? = nil,
+        conditionKey: String? = nil,
+        rainMinMm: Double? = nil,
+        rainMaxMm: Double? = nil,
+        rainProbabilityPct: Double? = nil
     ) {
         self.date = date
         self.forecastEToMm = forecastEToMm
@@ -24,6 +36,12 @@ nonisolated struct ForecastDay: Sendable, Hashable, Identifiable {
         self.forecastWindKmhMax = forecastWindKmhMax
         self.forecastTempMaxC = forecastTempMaxC
         self.forecastTempMinC = forecastTempMinC
+        self.condition = condition
+        self.conditionCode = conditionCode
+        self.conditionKey = conditionKey
+        self.rainMinMm = rainMinMm
+        self.rainMaxMm = rainMaxMm
+        self.rainProbabilityPct = rainProbabilityPct
     }
 }
 

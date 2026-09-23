@@ -18,6 +18,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 
 /** A WillyWeather forecast location returned by the proxy search. */
 @Serializable
@@ -43,11 +46,45 @@ data class WillyWeatherForecastDay(
     /** Local calendar day, "yyyy-MM-dd". */
     val date: String,
     @SerialName("rain_mm") val rainMm: Double? = null,
+    @SerialName("rain_min_mm") val rainMinMm: Double? = null,
+    @SerialName("rain_max_mm") val rainMaxMm: Double? = null,
+    val precis: String? = null,
+    val precisCode: String? = null,
+    @SerialName("condition_key") val conditionKey: String? = null,
     @SerialName("rain_probability") val rainProbability: Double? = null,
     @SerialName("temp_min_c") val tempMinC: Double? = null,
     @SerialName("temp_max_c") val tempMaxC: Double? = null,
     @SerialName("wind_kmh_max") val windKmhMax: Double? = null,
     @SerialName("et0_mm") val et0Mm: Double? = null,
+)
+
+/** Preserve every provider fact in the Rain & Forecast presentation model. */
+fun WillyWeatherForecastDay.toRainDay(timezone: String?): RainDay? {
+    val dateEpochMs = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+        isLenient = false
+        timeZone = TimeZone.getTimeZone(timezone ?: "UTC")
+    }.parse(date)?.time ?: return null
+    return RainDay(
+        dateEpochMs = dateEpochMs,
+        rainMm = rainMm ?: 0.0,
+        windKmhMax = windKmhMax,
+        condition = precis,
+        conditionCode = precisCode,
+        conditionKey = conditionKey,
+        tempMinC = tempMinC,
+        tempMaxC = tempMaxC,
+        rainMinMm = rainMinMm,
+        rainMaxMm = rainMaxMm,
+        rainProbabilityPct = rainProbability,
+    )
+}
+
+@Serializable
+data class WillyWeatherRollingRain(
+    val next24hMm: Double? = null,
+    val next48hMm: Double? = null,
+    val source: String? = null,
+    val asOf: String? = null,
 )
 
 /** Result of the `fetch_forecast` proxy action. Mirrors iOS `WillyWeatherForecastResult`. */
@@ -57,6 +94,8 @@ data class WillyWeatherForecastResult(
     @SerialName("location_id") val locationId: String? = null,
     @SerialName("location_name") val locationName: String? = null,
     val days: List<WillyWeatherForecastDay> = emptyList(),
+    val timezone: String? = null,
+    val rollingRain: WillyWeatherRollingRain? = null,
 )
 
 /**
@@ -151,6 +190,11 @@ class WillyWeatherRepository(private val session: SessionStore) {
                 put("vineyardId", JsonPrimitive(vineyardId))
                 put("action", JsonPrimitive("fetch_forecast"))
                 put("days", JsonPrimitive(days.coerceIn(1, 7)))
+                put("includeDetail", JsonPrimitive(true))
+                put("forecastTypes", kotlinx.serialization.json.buildJsonArray {
+                    add(JsonPrimitive("weather"))
+                    add(JsonPrimitive("precis"))
+                })
             })
             SupabaseClient.json.decodeFromString(WillyWeatherForecastResult.serializer(), body)
         }

@@ -12,6 +12,11 @@ nonisolated struct WillyWeatherForecastDay: Sendable, Equatable {
     public let tempMaxC: Double?
     public let windKmhMax: Double?
     public let et0Mm: Double?
+    public let rainMinMm: Double?
+    public let rainMaxMm: Double?
+    public let condition: String?
+    public let conditionCode: String?
+    public let conditionKey: String?
 }
 
 nonisolated struct WillyWeatherForecastResult: Sendable, Equatable {
@@ -19,6 +24,10 @@ nonisolated struct WillyWeatherForecastResult: Sendable, Equatable {
     public let locationId: String?
     public let locationName: String?
     public let days: [WillyWeatherForecastDay]
+    public let timezone: String?
+    public let rolling24hMm: Double?
+    public let rolling48hMm: Double?
+    public let rollingRainSource: String?
 }
 
 nonisolated struct WillyWeatherLocation: Sendable, Equatable, Identifiable, Hashable {
@@ -176,11 +185,20 @@ nonisolated enum VineyardWillyWeatherProxyService {
             "vineyardId": vineyardId.uuidString,
             "action": "fetch_forecast",
             "days": clamped,
+            "includeDetail": true,
+            "forecastTypes": ["weather", "precis"],
         ])
+        return decodeForecast(json)
+    }
+
+    /** Parse the same canonical proxy payload on every device timezone. */
+    static func decodeForecast(_ json: [String: Any]) -> WillyWeatherForecastResult {
         let rawDays = json["days"] as? [[String: Any]] ?? []
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"
-        fmt.timeZone = TimeZone.current
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        let zone = (json["timezone"] as? String).flatMap(TimeZone.init(identifier:)) ?? TimeZone(secondsFromGMT: 0)!
+        fmt.timeZone = zone
         let parsedDays: [WillyWeatherForecastDay] = rawDays.compactMap { d in
             guard let dateStr = d["date"] as? String,
                   let date = fmt.date(from: dateStr) else { return nil }
@@ -191,14 +209,23 @@ nonisolated enum VineyardWillyWeatherProxyService {
                 tempMinC: doubleVal(d["temp_min_c"]),
                 tempMaxC: doubleVal(d["temp_max_c"]),
                 windKmhMax: doubleVal(d["wind_kmh_max"]),
-                et0Mm: doubleVal(d["et0_mm"])
+                et0Mm: doubleVal(d["et0_mm"]),
+                rainMinMm: doubleVal(d["rain_min_mm"]),
+                rainMaxMm: doubleVal(d["rain_max_mm"]),
+                condition: d["precis"] as? String,
+                conditionCode: d["precisCode"] as? String,
+                conditionKey: d["condition_key"] as? String
             )
         }
         return WillyWeatherForecastResult(
             source: (json["source"] as? String) ?? "WillyWeather",
             locationId: json["location_id"] as? String,
             locationName: json["location_name"] as? String,
-            days: parsedDays
+            days: parsedDays,
+            timezone: json["timezone"] as? String,
+            rolling24hMm: doubleVal((json["rollingRain"] as? [String: Any])?["next24hMm"]),
+            rolling48hMm: doubleVal((json["rollingRain"] as? [String: Any])?["next48hMm"]),
+            rollingRainSource: (json["rollingRain"] as? [String: Any])?["source"] as? String
         )
     }
 

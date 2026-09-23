@@ -25,22 +25,22 @@ nonisolated struct PersistedRainfallDay: Sendable, Hashable {
 @MainActor
 enum PersistedRainfallService {
     /// Fetch persisted daily rainfall in `[from, to]` (inclusive). Dates
-    /// are interpreted in the device's current calendar timezone.
+    /// use the supplied vineyard timezone when available; other callers retain device defaults.
     static func fetchDailyRainfall(
         vineyardId: UUID,
         from: Date,
-        to: Date
+        to: Date,
+        timezone: TimeZone? = nil
     ) async throws -> [PersistedRainfallDay] {
         let provider = SupabaseClientProvider.shared
         guard provider.isConfigured else { return [] }
 
-        // Outgoing date strings: format using the device's local timezone so
-        // the SQL date matches what the user sees on screen (e.g. "today"
-        // in the local calendar).
+        // The forecast page supplies the vineyard timezone for its today-so-far
+        // query. Other rainfall-history callers retain their existing timezone.
         let outFmt = DateFormatter()
         outFmt.calendar = Calendar.current
         outFmt.locale = Locale(identifier: "en_US_POSIX")
-        outFmt.timeZone = Calendar.current.timeZone
+        outFmt.timeZone = timezone ?? Calendar.current.timeZone
         outFmt.dateFormat = "yyyy-MM-dd"
 
         // Incoming date strings ("YYYY-MM-DD" from PostgREST): parse as UTC

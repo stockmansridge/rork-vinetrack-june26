@@ -24,6 +24,14 @@ data class RainDay(
     val dateEpochMs: Long,
     val rainMm: Double,
     val windKmhMax: Double?,
+    val condition: String? = null,
+    val conditionCode: String? = null,
+    val conditionKey: String? = null,
+    val tempMinC: Double? = null,
+    val tempMaxC: Double? = null,
+    val rainMinMm: Double? = null,
+    val rainMaxMm: Double? = null,
+    val rainProbabilityPct: Double? = null,
 )
 
 /** Combined rainfall history + forecast bundle returned to the Rain page. */
@@ -33,6 +41,7 @@ data class RainForecastBundle(
     /** Today + future days, used as the forecast. */
     val forecast: List<RainDay>,
     val source: String,
+    val timezone: String = "UTC",
 ) {
     /** Today's recorded/forecast rain (the day whose date matches today). */
     val todayMm: Double?
@@ -73,15 +82,16 @@ class RainForecastRepository {
             ?: throw IllegalStateException("Rain forecast response could not be parsed.")
         val rains = daily["precipitation_sum"]?.jsonArray
         val winds = daily["wind_speed_10m_max"]?.jsonArray
+        val timezone = root["timezone"]?.jsonPrimitive?.content?.let(TimeZone::getTimeZone) ?: TimeZone.getTimeZone("UTC")
 
         // Open-Meteo daily times are local "yyyy-MM-dd".
         val formatter = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
-            timeZone = TimeZone.getDefault()
+            timeZone = timezone
         }
 
-        // Start of today in local time, used to split history vs forecast.
+        // Start of today in vineyard time, used to split history vs forecast.
         val startOfToday = run {
-            val cal = java.util.Calendar.getInstance()
+            val cal = java.util.Calendar.getInstance(timezone)
             cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
             cal.set(java.util.Calendar.MINUTE, 0)
             cal.set(java.util.Calendar.SECOND, 0)
@@ -106,6 +116,7 @@ class RainForecastRepository {
             history = history.sortedBy { it.dateEpochMs },
             forecast = forecast.sortedBy { it.dateEpochMs },
             source = "Open-Meteo",
+            timezone = timezone.id,
         )
     }
 

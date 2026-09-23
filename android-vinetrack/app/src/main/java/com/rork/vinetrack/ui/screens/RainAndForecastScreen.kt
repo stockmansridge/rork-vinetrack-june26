@@ -61,6 +61,7 @@ import com.rork.vinetrack.data.RainForecastRepository
 import com.rork.vinetrack.data.VineyardWeatherIntegrationRepository
 import com.rork.vinetrack.data.WeatherIntegrationProvider
 import com.rork.vinetrack.data.WillyWeatherRepository
+import com.rork.vinetrack.data.toRainDay
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.BackNavIcon
@@ -72,6 +73,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.roundToInt
 
 /**
@@ -148,6 +150,10 @@ private fun RainAndForecastContent(
     // forecast days. Mirrors iOS `IrrigationForecastService`.
     var wwForecast by remember { mutableStateOf<List<RainDay>?>(null) }
     var wwSource by remember { mutableStateOf<String?>(null) }
+    var wwTimezone by remember { mutableStateOf<String?>(null) }
+    var rolling24hMm by remember { mutableStateOf<Double?>(null) }
+    var rolling48hMm by remember { mutableStateOf<Double?>(null) }
+    var rollingSource by remember { mutableStateOf<String?>(null) }
     // Non-blocking reason the forecast fell back to Open-Meteo, if any.
     var fallbackNote by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
@@ -167,6 +173,10 @@ private fun RainAndForecastContent(
             errorMessage = null
             wwForecast = null
             wwSource = null
+            wwTimezone = null
+            rolling24hMm = null
+            rolling48hMm = null
+            rollingSource = null
             fallbackNote = null
 
             // 1. Try WillyWeather first when the shared server-side provider
@@ -185,19 +195,14 @@ private fun RainAndForecastContent(
                     if (shouldTryWilly) {
                         try {
                             val result = wwRepo.fetchForecast(vid, days = 7)
-                            val dayFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-                            val mapped = result.days.mapNotNull { d ->
-                                val date = runCatching { dayFmt.parse(d.date) }.getOrNull()
-                                    ?: return@mapNotNull null
-                                RainDay(
-                                    dateEpochMs = date.time,
-                                    rainMm = d.rainMm ?: 0.0,
-                                    windKmhMax = d.windKmhMax,
-                                )
-                            }
+                            val mapped = result.days.mapNotNull { it.toRainDay(result.timezone) }
                             if (mapped.isNotEmpty()) {
                                 wwForecast = mapped
                                 wwSource = result.source
+                                wwTimezone = result.timezone
+                                rolling24hMm = result.rollingRain?.next24hMm
+                                rolling48hMm = result.rollingRain?.next48hMm
+                                rollingSource = result.rollingRain?.source
                             } else {
                                 fallbackNote = "WillyWeather returned no forecast days — using Open-Meteo."
                             }
@@ -226,8 +231,10 @@ private fun RainAndForecastContent(
             var todayPersisted: Double? = null
             if (vid != null) {
                 try {
-                    val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-                    val cal = Calendar.getInstance()
+                    val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+                        timeZone = TimeZone.getTimeZone(wwTimezone ?: bundle?.timezone ?: "UTC")
+                    }
+                    val cal = Calendar.getInstance(fmt.timeZone)
                     val todayKey = fmt.format(cal.time)
                     cal.add(Calendar.DAY_OF_YEAR, -29)
                     val fromKey = fmt.format(cal.time)
@@ -274,14 +281,16 @@ private fun RainAndForecastContent(
         // WillyWeather forecast wins when available; Open-Meteo is the fallback.
         val days = wwForecast ?: bundle?.forecast ?: emptyList()
         val forecastSource = if (wwForecast != null) wwSource else bundle?.source
-        val rain24h = days.firstOrNull()?.rainMm ?: 0.0
-        val rain48h = days.take(2).sumOf { it.rainMm }
+        val rain24h = rolling24hMm ?: 0.0
+        val rain48h = rolling48hMm ?: 0.0
         val rain7d = days.take(7).sumOf { it.rainMm }
-        // Prefer the recorded station rainfall for today (like iOS), falling
-        // back to the forecast value.
-        val todayMm = persistedTodayMm ?: days.firstOrNull()?.rainMm
+        // Today so far is observed/persisted rain, never forecast today.
+        val todayMm = persistedTodayMm
+        val zone = TimeZone.getTimeZone(wwTimezone ?: bundle?.timezone ?: "UTC")
         val hasLocation = location != null
-        val fallbackKeyFmt = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US) }
+        val fallbackKeyFmt = remember(zone.id) {
+            SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = zone }
+        }
         val historyDays: List<HistoryDay> = persistedHistory
             ?: (bundle?.history ?: emptyList()).map {
                 HistoryDay(fallbackKeyFmt.format(Date(it.dateEpochMs)), it.rainMm, "open_meteo")
@@ -299,9 +308,10 @@ private fun RainAndForecastContent(
             item {
                 StatusBanner(
                     todayMm = todayMm,
-                    rain24h = rain24h,
-                    rain48h = rain48h,
+                    rain24h = rolling24hMm,
+                    rain48h = rolling48hMm,
                     rain7d = rain7d,
+                    isRange = forecastSource.equals("WillyWeather", ignoreCase = true),
                     hasLocation = hasLocation,
                     hasLoaded = hasLoaded,
                 )
@@ -325,13 +335,17 @@ private fun RainAndForecastContent(
                     rain24h = rain24h,
                     rain48h = rain48h,
                     rain7d = rain7d,
+                    isRange = forecastSource.equals("WillyWeather", ignoreCase = true),
                     hasLoaded = hasLoaded && hasLocation,
+                    rollingAvailable = rolling24hMm != null && rolling48hMm != null,
+                    rollingSource = rollingSource,
                 )
             }
 
             item {
                 DailyForecastSection(
                     days = days,
+                    timezone = zone,
                     source = forecastSource,
                     fallbackNote = fallbackNote,
                     hasLocation = hasLocation,
@@ -396,36 +410,37 @@ private fun CalendarLinkCard(onClick: () -> Unit) {
 @Composable
 private fun StatusBanner(
     todayMm: Double?,
-    rain24h: Double,
-    rain48h: Double,
+    rain24h: Double?,
+    rain48h: Double?,
     rain7d: Double,
+    isRange: Boolean,
     hasLocation: Boolean,
     hasLoaded: Boolean,
 ) {
     val fmt = regionFormatter
     val tint = when {
-        (todayMm ?: 0.0) > 0 || rain24h >= 5 -> VineColors.Info
-        rain24h >= 1 || rain48h >= 1 -> VineColors.Cyan
+        (todayMm ?: 0.0) > 0 || (rain24h ?: 0.0) >= 5 -> VineColors.Info
+        (rain24h ?: 0.0) >= 1 || (rain48h ?: 0.0) >= 1 -> VineColors.Cyan
         rain7d >= 1 -> VineColors.LeafGreen
         else -> VineColors.Orange
     }
     val icon = when {
         (todayMm ?: 0.0) > 0 -> Icons.Filled.WaterDrop
-        rain24h >= 1 -> Icons.Filled.Grain
+        (rain24h ?: 0.0) >= 1 -> Icons.Filled.Grain
         rain7d >= 1 -> Icons.Filled.Cloud
         else -> Icons.Filled.WbSunny
     }
     val title = when {
         todayMm != null && todayMm > 0 -> "Rain recorded today: ${fmt.formatRainfall(todayMm)}"
-        rain24h >= 1 -> "Rain expected in next 24h"
-        rain48h >= 1 -> "Rain possible in next 48h"
+        (rain24h ?: 0.0) >= 1 -> "Rain expected in next 24h"
+        (rain48h ?: 0.0) >= 1 -> "Rain possible in next 48h"
         rain7d >= 1 -> "Rain possible this week"
         else -> "No rain forecast"
     }
     val subtitle = when {
         !hasLocation -> "Set vineyard location to enable forecast."
         !hasLoaded -> "Loading forecast…"
-        else -> "Today ${fmt.formatRainfall(todayMm ?: 0.0)} · 24h ${fmt.formatRainfall(rain24h)} · 7d ${fmt.formatRainfall(rain7d)}"
+        else -> "Today ${formatMm(fmt, todayMm)} · 24h ${formatMm(fmt, rain24h)} · 7d ${if (isRange) "up to " else ""}${fmt.formatRainfall(rain7d)}"
     }
 
     Row(
@@ -454,17 +469,23 @@ private fun ForecastSummaryGrid(
     rain24h: Double,
     rain48h: Double,
     rain7d: Double,
+    isRange: Boolean,
     hasLoaded: Boolean,
+    rollingAvailable: Boolean,
+    rollingSource: String?,
 ) {
     val fmt = regionFormatter
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             SummaryTile("Today so far", formatMm(fmt, todayMm), Icons.Filled.WaterDrop, VineColors.Info, Modifier.weight(1f))
-            SummaryTile("Next 24h", if (hasLoaded) fmt.formatRainfall(rain24h) else "—", Icons.Filled.Grain, VineColors.Cyan, Modifier.weight(1f))
+            SummaryTile("Next 24h", if (hasLoaded && rollingAvailable) fmt.formatRainfall(rain24h) else "—", Icons.Filled.Grain, VineColors.Cyan, Modifier.weight(1f))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            SummaryTile("Next 48h", if (hasLoaded) fmt.formatRainfall(rain48h) else "—", Icons.Filled.Cloud, VineColors.Indigo, Modifier.weight(1f))
-            SummaryTile("Next 7 days", if (hasLoaded) fmt.formatRainfall(rain7d) else "—", Icons.Filled.CalendarMonth, VineColors.Primary, Modifier.weight(1f))
+            SummaryTile("Next 48h", if (hasLoaded && rollingAvailable) fmt.formatRainfall(rain48h) else "—", Icons.Filled.Cloud, VineColors.Indigo, Modifier.weight(1f))
+            SummaryTile("Next 7 days", if (hasLoaded) (if (isRange) "Up to " else "") + fmt.formatRainfall(rain7d) else "—", Icons.Filled.CalendarMonth, VineColors.Primary, Modifier.weight(1f))
+        }
+        if (rollingSource != null && rollingSource != "WillyWeather") {
+            Text("Rolling rain detail: $rollingSource", fontSize = 11.sp, color = LocalVineColors.current.textSecondary)
         }
     }
 }
@@ -492,6 +513,7 @@ private fun SummaryTile(title: String, value: String, icon: ImageVector, tint: C
 @Composable
 private fun DailyForecastSection(
     days: List<RainDay>,
+    timezone: TimeZone,
     source: String?,
     fallbackNote: String?,
     hasLocation: Boolean,
@@ -529,7 +551,7 @@ private fun DailyForecastSection(
                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(vine.cardBackground),
             ) {
                 days.forEachIndexed { index, day ->
-                    ForecastRow(day, warningThresholdKmh, cautionThresholdKmh)
+                    ForecastRow(day, timezone, source)
                     if (index < days.lastIndex) {
                         HorizontalDivider(color = vine.cardBorder, modifier = Modifier.padding(start = 12.dp))
                     }
@@ -540,7 +562,7 @@ private fun DailyForecastSection(
 }
 
 @Composable
-private fun ForecastRow(day: RainDay, warningThresholdKmh: Double, cautionThresholdKmh: Double) {
+private fun ForecastRow(day: RainDay, timezone: TimeZone, source: String?) {
     val vine = LocalVineColors.current
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
@@ -548,28 +570,33 @@ private fun ForecastRow(day: RainDay, warningThresholdKmh: Double, cautionThresh
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Column(modifier = Modifier.width(104.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(dayLabel(day.dateEpochMs), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-            Text(dateLabel(day.dateEpochMs), fontSize = 11.sp, color = vine.textSecondary)
+            Text(dayLabel(day.dateEpochMs, timezone), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+            Text(dateLabel(day.dateEpochMs, timezone), fontSize = 11.sp, color = vine.textSecondary)
         }
-        Icon(rainIcon(day.rainMm), contentDescription = null, tint = rainTint(day.rainMm), modifier = Modifier.size(20.dp))
-        Box(modifier = Modifier.weight(1f))
-        val wind = day.windKmhMax
-        if (wind != null) {
-            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Icon(Icons.Filled.Air, contentDescription = null, tint = windTint(wind, warningThresholdKmh, cautionThresholdKmh), modifier = Modifier.size(13.dp))
-                    Text(regionFormatter.formatSpeed(wind, 0), fontSize = 13.sp, color = windTint(wind, warningThresholdKmh, cautionThresholdKmh))
-                }
-                Text("Forecast wind", fontSize = 10.sp, color = vine.textSecondary)
+        if (day.conditionKey == "partly_cloudy") {
+            Box(modifier = Modifier.size(24.dp)) {
+                Icon(Icons.Filled.WbSunny, contentDescription = day.condition ?: "Partly cloudy", tint = VineColors.Orange, modifier = Modifier.size(17.dp))
+                Icon(Icons.Filled.Cloud, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.align(Alignment.BottomEnd).size(17.dp))
             }
+        } else {
+            Icon(conditionIcon(day), contentDescription = day.condition ?: "Condition unavailable", tint = vine.textSecondary, modifier = Modifier.size(20.dp))
         }
-        Text(
-            regionFormatter.formatRainfall(day.rainMm),
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = if (day.rainMm >= 1) vine.textPrimary else vine.textSecondary,
-            modifier = Modifier.width(64.dp),
-        )
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(day.condition ?: "Condition unavailable", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = vine.textPrimary)
+            if (day.tempMinC != null && day.tempMaxC != null) {
+                Text("${day.tempMinC.roundToInt()}–${day.tempMaxC.roundToInt()}°C", fontSize = 11.sp, color = vine.textSecondary)
+            }
+            val rain = if (day.rainMinMm != null && day.rainMaxMm != null) {
+                "${regionFormatter.formatRainfall(day.rainMinMm)}–${regionFormatter.formatRainfall(day.rainMaxMm)}"
+            } else if (source.equals("WillyWeather", ignoreCase = true)) {
+                "Rain range unavailable"
+            } else regionFormatter.formatRainfall(day.rainMm)
+            day.windKmhMax?.let {
+                Text("Wind ${regionFormatter.formatSpeed(it, 0)}", fontSize = 10.sp, color = vine.textSecondary)
+            }
+            val chance = day.rainProbabilityPct?.let { " · ${it.roundToInt()}% chance" }.orEmpty()
+            Text("$rain$chance", fontSize = 10.sp, color = vine.textSecondary)
+        }
     }
 }
 
@@ -771,20 +798,21 @@ private fun formatMm(fmt: RegionFormatter, mm: Double?): String {
     return fmt.formatRainfall(mm)
 }
 
-private fun dayLabel(epochMs: Long): String {
-    val cal = Calendar.getInstance()
-    val today = startOfDay(cal.timeInMillis)
-    val target = startOfDay(epochMs)
-    val dayMs = 24L * 60 * 60 * 1000
+private fun dayLabel(epochMs: Long, timezone: TimeZone): String {
+    val cal = Calendar.getInstance(timezone)
+    val today = startOfDay(cal.timeInMillis, timezone)
+    val target = startOfDay(epochMs, timezone)
+    cal.timeInMillis = today
+    cal.add(Calendar.DAY_OF_YEAR, 1)
     return when (target) {
         today -> "Today"
-        today + dayMs -> "Tomorrow"
-        else -> SimpleDateFormat("EEEE", Locale.getDefault()).format(Date(epochMs))
+        cal.timeInMillis -> "Tomorrow"
+        else -> SimpleDateFormat("EEEE", Locale.getDefault()).apply { timeZone = timezone }.format(Date(epochMs))
     }
 }
 
-private fun dateLabel(epochMs: Long): String =
-    SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(epochMs))
+private fun dateLabel(epochMs: Long, timezone: TimeZone): String =
+    SimpleDateFormat("d MMM", Locale.getDefault()).apply { timeZone = timezone }.format(Date(epochMs))
 
 /** Formats a "yyyy-MM-dd" calendar-day key as "dd/MM/yyyy" for display. */
 private fun displayDateKey(dateKey: String): String = try {
@@ -794,8 +822,8 @@ private fun displayDateKey(dateKey: String): String = try {
     dateKey
 }
 
-private fun startOfDay(epochMs: Long): Long {
-    val cal = Calendar.getInstance()
+private fun startOfDay(epochMs: Long, timezone: TimeZone): Long {
+    val cal = Calendar.getInstance(timezone)
     cal.timeInMillis = epochMs
     cal.set(Calendar.HOUR_OF_DAY, 0)
     cal.set(Calendar.MINUTE, 0)
@@ -804,11 +832,14 @@ private fun startOfDay(epochMs: Long): Long {
     return cal.timeInMillis
 }
 
-private fun rainIcon(mm: Double): ImageVector = when {
-    mm >= 10 -> Icons.Filled.Grain
-    mm >= 1 -> Icons.Filled.WaterDrop
-    mm > 0 -> Icons.Filled.Cloud
-    else -> Icons.Filled.WbSunny
+private fun conditionIcon(day: RainDay): ImageVector {
+    return when (day.conditionKey) {
+        "storm" -> Icons.Filled.Grain
+        "rain" -> Icons.Filled.WaterDrop
+        "cloudy" -> Icons.Filled.Cloud
+        "clear" -> Icons.Filled.WbSunny
+        else -> Icons.Filled.Cloud
+    }
 }
 
 private fun rainTint(mm: Double): Color = when {

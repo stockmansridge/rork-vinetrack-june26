@@ -1,8 +1,40 @@
 import Foundation
 
+nonisolated extension WillyWeatherForecastDay {
+    func asForecastDay() -> ForecastDay {
+        ForecastDay(
+            date: date,
+            forecastEToMm: et0Mm ?? 0,
+            forecastRainMm: rainMm ?? 0,
+            forecastWindKmhMax: windKmhMax,
+            forecastTempMaxC: tempMaxC,
+            forecastTempMinC: tempMinC,
+            condition: condition,
+            conditionCode: conditionCode,
+            conditionKey: conditionKey,
+            rainMinMm: rainMinMm,
+            rainMaxMm: rainMaxMm,
+            rainProbabilityPct: rainProbability
+        )
+    }
+}
+
 nonisolated struct IrrigationForecast: Sendable, Hashable {
     let days: [ForecastDay]
     let source: String
+    let timezone: String?
+    let rolling24hMm: Double?
+    let rolling48hMm: Double?
+    let rollingRainSource: String?
+
+    init(days: [ForecastDay], source: String, timezone: String? = nil, rolling24hMm: Double? = nil, rolling48hMm: Double? = nil, rollingRainSource: String? = nil) {
+        self.days = days
+        self.source = source
+        self.timezone = timezone
+        self.rolling24hMm = rolling24hMm
+        self.rolling48hMm = rolling48hMm
+        self.rollingRainSource = rollingRainSource
+    }
 }
 
 @Observable
@@ -88,18 +120,9 @@ class IrrigationForecastService {
                 do {
                     let result = try await VineyardWillyWeatherProxyService
                         .fetchForecast(vineyardId: vid, days: clampedDays)
-                    let mapped: [ForecastDay] = result.days.map { d in
-                        ForecastDay(
-                            date: d.date,
-                            forecastEToMm: d.et0Mm ?? 0,
-                            forecastRainMm: d.rainMm ?? 0,
-                            forecastWindKmhMax: d.windKmhMax,
-                            forecastTempMaxC: d.tempMaxC,
-                            forecastTempMinC: d.tempMinC
-                        )
-                    }
+                    let mapped: [ForecastDay] = result.days.map { $0.asForecastDay() }
                     if !mapped.isEmpty {
-                        forecast = IrrigationForecast(days: mapped, source: result.source)
+                        forecast = IrrigationForecast(days: mapped, source: result.source, timezone: result.timezone, rolling24hMm: result.rolling24hMm, rolling48hMm: result.rolling48hMm, rollingRainSource: result.rollingRainSource)
                         isLoading = false
                         return
                     }
@@ -153,7 +176,7 @@ class IrrigationForecastService {
 
             let formatter = DateFormatter()
             formatter.dateFormat = "yyyy-MM-dd"
-            formatter.timeZone = TimeZone.current
+            formatter.timeZone = (json["timezone"] as? String).flatMap(TimeZone.init(identifier:)) ?? TimeZone(secondsFromGMT: 0)!
 
             var outDays: [ForecastDay] = []
             let count = min(times.count, min(etoValues.count, rainValues.count))
@@ -174,7 +197,7 @@ class IrrigationForecastService {
                 ))
             }
 
-            forecast = IrrigationForecast(days: outDays, source: "Open-Meteo")
+            forecast = IrrigationForecast(days: outDays, source: "Open-Meteo", timezone: json["timezone"] as? String)
         } catch {
             errorMessage = "Could not load forecast: \(error.localizedDescription)"
         }

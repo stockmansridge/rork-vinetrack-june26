@@ -12,6 +12,10 @@ struct RainAndForecastView: View {
     @State private var todayMm: Double?
     @State private var forecastDays: [ForecastDay] = []
     @State private var forecastSource: String?
+    @State private var forecastTimezone: TimeZone = TimeZone(secondsFromGMT: 0)!
+    @State private var rolling24hMm: Double?
+    @State private var rolling48hMm: Double?
+    @State private var rollingRainSource: String?
     @State private var isLoadingForecast: Bool = false
     @State private var hasLoadedForecast: Bool = false
 
@@ -47,6 +51,10 @@ struct RainAndForecastView: View {
                     windWarningBanner(warning)
                 }
                 forecastSummaryGrid
+                if let rollingRainSource, rollingRainSource != forecastSource {
+                    Text("Rolling rain detail: \(rollingRainSource)")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
                 dailyForecastSection
                 rainfallHistorySection
                 calendarLink
@@ -110,7 +118,9 @@ struct RainAndForecastView: View {
     private var statusSubtitle: String {
         if !hasLocation { return "Set vineyard location to enable forecast." }
         if !hasLoadedForecast { return "Loading forecast…" }
-        return "Today \(fmt.formatRainfall(mm: todayMm ?? 0)) · 24h \(fmt.formatRainfall(mm: rain24h)) · 7d \(fmt.formatRainfall(mm: rain7d))"
+        let week = forecastSource?.lowercased() == "willyweather"
+            ? "up to \(fmt.formatRainfall(mm: rain7d))" : fmt.formatRainfall(mm: rain7d)
+        return "Today \(formatMm(todayMm)) · 24h \(formatMm(rolling24hMm)) · 7d \(week)"
     }
 
     private var statusIcon: String {
@@ -136,15 +146,15 @@ struct RainAndForecastView: View {
                         icon: "cloud.rain",
                         tint: .blue)
             summaryTile(title: "Next 24h",
-                        value: hasLoadedForecast ? fmt.formatRainfall(mm: rain24h) : "—",
+                        value: formatMm(rolling24hMm),
                         icon: "clock",
                         tint: .teal)
             summaryTile(title: "Next 48h",
-                        value: hasLoadedForecast ? fmt.formatRainfall(mm: rain48h) : "—",
+                        value: formatMm(rolling48hMm),
                         icon: "calendar.badge.clock",
                         tint: .indigo)
             summaryTile(title: "Next 7 days",
-                        value: hasLoadedForecast ? fmt.formatRainfall(mm: rain7d) : "—",
+                        value: hasLoadedForecast ? (forecastSource?.lowercased() == "willyweather" ? "Up to \(fmt.formatRainfall(mm: rain7d))" : fmt.formatRainfall(mm: rain7d)) : "—",
                         icon: "calendar",
                         tint: .purple)
         }
@@ -230,36 +240,27 @@ struct RainAndForecastView: View {
             }
             .frame(width: 110, alignment: .leading)
 
-            Image(systemName: rainIcon(mm: day.forecastRainMm))
-                .font(.subheadline)
-                .foregroundStyle(rainTint(mm: day.forecastRainMm))
-                .frame(width: 22)
-
-            Spacer(minLength: 0)
-
-            if let wind = day.forecastWindKmhMax {
-                VStack(alignment: .trailing, spacing: 1) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "wind")
-                            .font(.caption2)
-                            .foregroundStyle(windTint(kmh: wind))
-                        Text(fmt.formatSpeed(kmh: wind, fractionDigits: 0))
-                            .font(.subheadline)
-                            .monospacedDigit()
-                            .foregroundStyle(windTint(kmh: wind))
-                    }
-                    Text("Forecast wind")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+            Image(systemName: conditionIcon(day))
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: 28)
+                .accessibilityLabel(day.condition ?? "Condition unavailable")
+            VStack(alignment: .leading, spacing: 3) {
+                Text(day.condition ?? "Condition unavailable")
+                    .font(.caption.weight(.medium))
+                if let low = day.forecastTempMinC, let high = day.forecastTempMaxC {
+                    Text("\(low.formatted(.number.precision(.fractionLength(0))))–\(high.formatted(.number.precision(.fractionLength(0))))°C")
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
-                .frame(minWidth: 70, alignment: .trailing)
+                if let wind = day.forecastWindKmhMax {
+                    Text("Wind \(fmt.formatSpeed(kmh: wind, fractionDigits: 0))")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                Text("\(rainLabel(day))\(day.rainProbabilityPct.map { " · \(Int($0.rounded()))% chance" } ?? "")")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-
-            Text(fmt.formatRainfall(mm: day.forecastRainMm))
-                .font(.subheadline.weight(.semibold))
-                .monospacedDigit()
-                .foregroundStyle(day.forecastRainMm >= 1 ? .primary : .secondary)
-                .frame(minWidth: 64, alignment: .trailing)
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -501,13 +502,8 @@ struct RainAndForecastView: View {
 
     // MARK: - Computed sums
 
-    private var rain24h: Double {
-        guard let first = forecastDays.first else { return 0 }
-        return first.forecastRainMm
-    }
-    private var rain48h: Double {
-        forecastDays.prefix(2).map(\.forecastRainMm).reduce(0, +)
-    }
+    private var rain24h: Double { rolling24hMm ?? 0 }
+    private var rain48h: Double { rolling48hMm ?? 0 }
     private var rain7d: Double {
         forecastDays.prefix(7).map(\.forecastRainMm).reduce(0, +)
     }
@@ -521,12 +517,14 @@ struct RainAndForecastView: View {
     }
 
     private func dayLabel(_ date: Date) -> String {
-        let cal = Calendar.current
-        if cal.isDateInToday(date) { return "Today" }
-        if cal.isDateInTomorrow(date) { return "Tomorrow" }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = forecastTimezone
+        if cal.isDate(date, inSameDayAs: Date()) { return "Today" }
+        if let tomorrow = cal.date(byAdding: .day, value: 1, to: Date()), cal.isDate(date, inSameDayAs: tomorrow) { return "Tomorrow" }
         let f = DateFormatter()
         f.locale = Locale.current
         f.dateFormat = "EEEE"
+        f.timeZone = forecastTimezone
         return f.string(from: date)
     }
 
@@ -534,14 +532,27 @@ struct RainAndForecastView: View {
         let f = DateFormatter()
         f.locale = Locale.current
         f.dateFormat = "d MMM"
+        f.timeZone = forecastTimezone
         return f.string(from: date)
     }
 
-    private func rainIcon(mm: Double) -> String {
-        if mm >= 10 { return "cloud.heavyrain.fill" }
-        if mm >= 1 { return "cloud.rain.fill" }
-        if mm > 0 { return "cloud.drizzle" }
-        return "sun.max"
+    private func conditionIcon(_ day: ForecastDay) -> String {
+        switch day.conditionKey {
+        case "storm": return "cloud.bolt.rain.fill"
+        case "rain": return "cloud.rain.fill"
+        case "partly_cloudy": return "cloud.sun.fill"
+        case "cloudy": return "cloud.fill"
+        case "clear": return "sun.max.fill"
+        default: return "cloud"
+        }
+    }
+
+    private func rainLabel(_ day: ForecastDay) -> String {
+        if let low = day.rainMinMm, let high = day.rainMaxMm {
+            return "\(fmt.formatRainfall(mm: low))–\(fmt.formatRainfall(mm: high))"
+        }
+        return forecastSource?.lowercased() == "willyweather"
+            ? "Rain range unavailable" : fmt.formatRainfall(mm: day.forecastRainMm)
     }
 
     private func windTint(kmh: Double) -> Color {
@@ -593,8 +604,8 @@ struct RainAndForecastView: View {
 
     private func reload() async {
         await loadWindThreshold()
-        await loadToday()
         await loadForecast()
+        await loadToday()
         await loadHistory()
     }
 
@@ -613,10 +624,11 @@ struct RainAndForecastView: View {
             resolved = r
         }
         if resolved == nil {
-            let cal = Calendar.current
+            var cal = Calendar(identifier: .gregorian)
+            cal.timeZone = forecastTimezone
             let start = cal.startOfDay(for: Date())
             if let rows = try? await PersistedRainfallService.fetchDailyRainfall(
-                vineyardId: vid, from: start, to: start
+                vineyardId: vid, from: start, to: start, timezone: forecastTimezone
             ), let r = rows.first?.rainfallMm {
                 resolved = r
             }
@@ -635,6 +647,10 @@ struct RainAndForecastView: View {
         await svc.fetchForecast(latitude: lat, longitude: lon, days: 7, vineyardId: store.selectedVineyardId)
         forecastDays = svc.forecast?.days ?? []
         forecastSource = svc.forecast?.source
+        forecastTimezone = svc.forecast?.timezone.flatMap(TimeZone.init(identifier:)) ?? TimeZone(secondsFromGMT: 0)!
+        rolling24hMm = svc.forecast?.rolling24hMm
+        rolling48hMm = svc.forecast?.rolling48hMm
+        rollingRainSource = svc.forecast?.rollingRainSource
         hasLoadedForecast = true
         isLoadingForecast = false
     }
