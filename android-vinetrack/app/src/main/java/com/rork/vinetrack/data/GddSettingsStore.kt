@@ -41,8 +41,9 @@ enum class GddResetMode(val storageKey: String, val displayName: String) {
 
 /** Effective calculation mode; a valid per-block override wins over the vineyard default. */
 fun Paddock.effectiveCalculationMode(defaultMode: GddCalculationMode): GddCalculationMode =
-    calculationModeOverride?.trim()?.takeIf(String::isNotEmpty)
-        ?.let(GddCalculationMode::fromKey) ?: defaultMode
+    calculationModeOverride?.trim()?.let { key ->
+        GddCalculationMode.entries.firstOrNull { it.storageKey == key }
+    } ?: defaultMode
 
 /** Effective reset mode; a valid per-block override wins over the vineyard default. */
 fun Paddock.effectiveResetMode(defaultMode: GddResetMode): GddResetMode =
@@ -69,9 +70,8 @@ data class GddSettings(
     val hasExplicitCalculationMode: Boolean = false,
 )
 
-/** Davis Optimal Ripeness historically uses canonical standard GDD unless the user explicitly selected BEDD. */
-fun GddSettings.calculationModeForSource(sourceKey: String?): GddCalculationMode =
-    if (sourceKey?.startsWith("davis:") == true && !hasExplicitCalculationMode) GddCalculationMode.GDD else calculationMode
+/** Weather source cannot change a saved calculation preference or the common BEDD default. */
+fun GddSettings.calculationModeForSource(@Suppress("UNUSED_PARAMETER") sourceKey: String?): GddCalculationMode = calculationMode
 
 /** Persists [GddSettings] locally via SharedPreferences. */
 class GddSettingsStore(context: Context) {

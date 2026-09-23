@@ -96,7 +96,7 @@ struct VarietyGDDDetailView: View {
                 points: points,
                 resetDate: resetDate,
                 total: points.last?.cumulative ?? 0,
-                isIncomplete: points.contains(where: \.interpolated)
+                isIncomplete: points.contains(where: \.interpolated) || degreeDayService.isDavisDataUnverified(forKey: stationId)
             ))
         }
         return result
@@ -294,7 +294,7 @@ struct VarietyGDDDetailView: View {
                     Image(systemName: "thermometer.sun.fill")
                         .font(.caption2)
                         .foregroundStyle(.orange)
-                    Text("GDD source: \(source.displayName)")
+                    Text("GDD source: \(source.displayName) · Default: \(store.settings.calculationMode.rawValue.uppercased())")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -531,7 +531,7 @@ struct VarietyGDDDetailView: View {
                         Text(String(format: "Min %.2f°C · Max %.2f°C", temperature.low, temperature.high))
                     }
                     Text("Base 10°C · BEDD cap 19°C")
-                    Text(weatherSource?.displayName ?? "Weather source unavailable")
+                    Text("\(weatherSource?.displayName ?? "Weather source unavailable") · Default \(store.settings.calculationMode.shortName)")
                     Text(point.interpolated ? "Estimated" : "Reported")
                     if let source = weatherSource,
                        let refreshed = degreeDayService.lastUpdated ?? degreeDayService.lastSuccessfulRefresh(for: source) {
@@ -597,7 +597,7 @@ struct VarietyGDDDetailView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text("\(Int(series.total)) GDD")
+                        Text("\(Int(series.total)) · \(series.block.effectiveCalculationMode(defaultMode: store.settings.calculationMode).shortName)")
                             .font(.subheadline.monospacedDigit().weight(.semibold))
                             .foregroundStyle(progressColorFor(total: series.total))
                     }

@@ -12,8 +12,8 @@ class DavisOptimalRipenessParityTest {
     private val zone = TimeZone.getTimeZone("Australia/Sydney")
 
     @Test
-    fun `captured Davis extrema decode to canonical iOS daily and cumulative GDD`() {
-        val fixture = SupabaseClient.json.parseToJsonElement(CAPTURED_DAVIS_RESPONSE).jsonObject
+    fun `synthetic Davis extrema decode to matching daily and cumulative GDD`() {
+        val fixture = SupabaseClient.json.parseToJsonElement(SYNTHETIC_DAVIS_RESPONSE).jsonObject
         val parsed = parseDavisHistoricTemperatures(requireNotNull(fixture["sensors"]).jsonArray, zone)
         val service = DegreeDayService(timeZone = zone)
         val source = DegreeDayService.davisKey("123345")
@@ -29,7 +29,7 @@ class DavisOptimalRipenessParityTest {
         val expected = listOf(8.0, 7.0, 6.0, 6.0, 5.0, 5.0)
         assertEquals(expected.size, points.size)
         expected.zip(points).forEach { (value, point) -> assertEquals(value, point.daily, 0.000_001) }
-        assertEquals(37.0, points.sumOf { it.daily }, 0.000_001)
+        assertEquals(expected.sum(), points.sumOf { it.daily }, 0.01)
         assertEquals(points.sumOf { it.daily }, points.last().cumulative, 0.000_001)
         assertEquals(6, parsed.records.size)
         assertTrue(parsed.records.all { it.highField == "temp_hi" && it.lowField == "temp_lo" })
@@ -37,13 +37,13 @@ class DavisOptimalRipenessParityTest {
 
     @Test
     fun `missing average current and indoor values are never used as Davis extrema`() {
-        val fixture = SupabaseClient.json.parseToJsonElement(CAPTURED_DAVIS_RESPONSE).jsonObject
+        val fixture = SupabaseClient.json.parseToJsonElement(SYNTHETIC_DAVIS_RESPONSE).jsonObject
         val parsed = parseDavisHistoricTemperatures(requireNotNull(fixture["sensors"]).jsonArray, zone)
 
         assertEquals(6, parsed.dailyTemps.size)
         assertTrue(parsed.records.none { it.sensorType == 27 })
         assertEquals(
-            GddCalculationMode.GDD,
+            GddCalculationMode.BEDD,
             GddSettings(hasExplicitCalculationMode = false).calculationModeForSource("davis:123345"),
         )
         assertEquals(
@@ -52,8 +52,14 @@ class DavisOptimalRipenessParityTest {
         )
     }
 
+    @Test
+    fun `synthetic non-temperature sensor timestamp never becomes zero Fahrenheit`() {
+        val sensors = SupabaseClient.json.parseToJsonElement("""[{"sensor_type":23,"data":[{"ts":1789480800,"rainfall_in":0.3,"wind_speed_hi":14}]}]""").jsonArray
+        assertTrue(parseDavisHistoricTemperatures(sensors, zone).dailyTemps.isEmpty())
+    }
+
     companion object {
-        private val CAPTURED_DAVIS_RESPONSE = """
+        private val SYNTHETIC_DAVIS_RESPONSE = """
             {"sensors":[
               {"sensor_type":23,"data":[
                 {"ts":1789480800,"temp_hi":77.0,"temp_lo":51.8},

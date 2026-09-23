@@ -88,7 +88,7 @@ struct OptimalRipenessHubView: View {
                 )
                 total = series.last?.cumulative ?? 0
                 hasData = true
-                isIncomplete = series.contains(where: \.interpolated)
+                isIncomplete = series.contains(where: \.interpolated) || degreeDayService.isDavisDataUnverified(forKey: source.sourceKey)
             }
 
             // One row per allocation so multi-variety blocks surface each

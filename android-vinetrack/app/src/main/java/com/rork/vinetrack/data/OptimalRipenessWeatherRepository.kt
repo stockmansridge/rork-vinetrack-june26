@@ -31,6 +31,8 @@ data class OptimalRipenessWeatherResult(
     val hadUsableLocalData: Boolean,
     val hasUsableData: Boolean,
     val requestedWindows: List<WeatherDateWindow>,
+    val missingDates: List<String> = emptyList(),
+    val coverageVerified: Boolean = false,
 )
 
 /**
@@ -43,6 +45,21 @@ class OptimalRipenessWeatherRepository(
     private val davisRepository: DavisWeatherLinkRepository,
 ) {
     companion object {
+        /** Check the fetched response, not the old cache, before accepting a replacement. */
+        internal fun missingDates(temperatures: Map<String, DailyTemp>, fromMs: Long, toMs: Long, zone: java.util.TimeZone): List<String> {
+            val format = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).apply { timeZone = zone }
+            val calendar = java.util.Calendar.getInstance(zone).apply { timeInMillis = optimalRipenessStartOfDay(fromMs, zone) }
+            val end = optimalRipenessStartOfDay(toMs, zone)
+            val missing = mutableListOf<String>()
+            while (calendar.timeInMillis < end) {
+                val day = format.format(calendar.time)
+                val temp = temperatures[day]
+                if (temp == null || !temp.high.isFinite() || !temp.low.isFinite()) missing += day
+                calendar.add(java.util.Calendar.DAY_OF_YEAR, 1)
+            }
+            return missing
+        }
+
         private const val REFRESH_THROTTLE_MS: Long = 15 * 60 * 1000L
         private val lock = Any()
         private val inFlight = mutableMapOf<String, CompletableDeferred<OptimalRipenessWeatherResult>>()
@@ -60,6 +77,9 @@ class OptimalRipenessWeatherRepository(
         timeZoneId: String = java.util.TimeZone.getDefault().id,
         forceRefresh: Boolean = false,
     ): OptimalRipenessWeatherResult {
+        val zone = java.util.TimeZone.getTimeZone(timeZoneId)
+        val normalizedFrom = optimalRipenessStartOfDay(fromEpochMs, zone)
+        val normalizedTo = optimalRipenessStartOfDay(toEpochMs, zone)
         val completedCalendarEnd = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).apply {
             timeZone = java.util.TimeZone.getTimeZone(timeZoneId)
         }.format(java.util.Date(toEpochMs))
@@ -93,10 +113,10 @@ class OptimalRipenessWeatherRepository(
         }
         return try {
             val result = refreshUncoordinated(
-                vineyardId, latitude, longitude, fromEpochMs, toEpochMs,
+                vineyardId, latitude, longitude, normalizedFrom, normalizedTo,
                 cachedSourceFingerprint, timeZoneId, forceRefresh,
             )
-            synchronized(lock) { recent[requestKey] = System.currentTimeMillis() to result }
+            if (result.coverageVerified) synchronized(lock) { recent[requestKey] = System.currentTimeMillis() to result }
             task.complete(result)
             result
         } catch (error: Throwable) {
@@ -131,7 +151,7 @@ class OptimalRipenessWeatherRepository(
             if (forceRefresh) {
                 throw IllegalStateException("Configured primary weather source could not be resolved")
             }
-            return OptimalRipenessWeatherResult(source, hadLocal, hadLocal, emptyList())
+            return OptimalRipenessWeatherResult(source, hadLocal, hadLocal, emptyList(), coverageVerified = false)
         }
 
         val windows = if (forceRefresh) {
@@ -143,6 +163,7 @@ class OptimalRipenessWeatherRepository(
                 toMs = toEpochMs,
             )
         }
+        var missing = emptyList<String>()
         if (windows.isNotEmpty()) {
             when (source) {
                 is OptimalRipenessWeatherSource.Davis -> {
@@ -158,21 +179,26 @@ class OptimalRipenessWeatherRepository(
                             timeZone = java.util.TimeZone.getTimeZone(timeZoneId),
                         ))
                     }
-                    if (forceRefresh && fetched.isEmpty()) {
-                        throw IllegalStateException("Primary Davis source returned no reported days")
-                    }
-                    degreeDays.installDailyTemps(source.sourceKey, fetched)
+                    // Require every requested date in the new response. Old rows cannot
+                    // certify a partial replacement, including on manual recheck.
+                    missing = degreeDays.installCompleteWindows(source.sourceKey, fetched, windows)
                 }
                 is OptimalRipenessWeatherSource.OpenMeteo -> {
-                    degreeDays.fetchOpenMeteoWindows(source.latitude, source.longitude, windows)
+                    val fetched = degreeDays.fetchOpenMeteoWindows(source.latitude, source.longitude, windows)
+                    missing = degreeDays.installCompleteWindows(source.sourceKey, fetched, windows)
                 }
             }
+        }
+        if (missing.isEmpty() && !degreeDays.hasCompleteData(source.sourceKey, fromEpochMs, toEpochMs)) {
+            missing = missingDates(degreeDays.observedTemps(source.sourceKey), fromEpochMs, toEpochMs, java.util.TimeZone.getTimeZone(timeZoneId))
         }
         return OptimalRipenessWeatherResult(
             source = source,
             hadUsableLocalData = hadLocal,
             hasUsableData = degreeDays.hasUsableData(source.sourceKey),
             requestedWindows = windows,
+            missingDates = missing,
+            coverageVerified = missing.isEmpty() && degreeDays.hasCompleteData(source.sourceKey, fromEpochMs, toEpochMs),
         )
     }
 }

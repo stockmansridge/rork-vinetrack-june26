@@ -171,7 +171,7 @@ enum RipenessMath {
         return BlockTotal(
             total: total,
             series: series,
-            isIncomplete: series.contains(where: \.interpolated)
+            isIncomplete: series.contains(where: \.interpolated) || degreeDayService.isDavisDataUnverified(forKey: stationId)
         )
     }
 

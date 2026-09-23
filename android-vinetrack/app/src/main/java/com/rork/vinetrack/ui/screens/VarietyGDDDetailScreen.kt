@@ -56,6 +56,7 @@ import com.rork.vinetrack.data.GddResetMode
 import com.rork.vinetrack.data.calculateOptimalRipenessBlock
 import com.rork.vinetrack.data.GddSettingsStore
 import com.rork.vinetrack.data.calculationModeForSource
+import com.rork.vinetrack.data.effectiveCalculationMode
 import com.rork.vinetrack.data.OperationPrefsStore
 import com.rork.vinetrack.data.DailyWeatherCacheStore
 import com.rork.vinetrack.data.DavisWeatherLinkRepository
@@ -197,6 +198,12 @@ fun VarietyGDDDetailScreen(
                 sourceConfigured = result.sourceConfigured,
                 sourceLabel = result.sourceLabel,
             )
+            Text(
+                "Calculation: ${gddSettings.calculationMode.displayName}" +
+                    if (allocatedBlocks.any { it.calculationModeOverride != null })
+                        " · block overrides shown per block" else "",
+                color = vine.textSecondary, fontSize = 12.sp,
+            )
             if (series.any { it.isIncomplete }) {
                 Text(
                     "Incomplete weather data",
@@ -233,7 +240,10 @@ fun VarietyGDDDetailScreen(
                         fetchedAtMs = weather.lastRefreshMs,
                     )
                     SectionHeader("Blocks", onLight = true)
-                    series.forEach { bs -> BlockBreakdownRow(bs, target) }
+                    series.forEach { bs ->
+                        Text("${bs.block.name}: ${bs.block.effectiveCalculationMode(gddSettings.calculationMode).shortName}", color = vine.textSecondary, fontSize = 12.sp)
+                        BlockBreakdownRow(bs, target)
+                    }
                     PhenologyMilestonesCard(blocks = allocatedBlocks)
                 }
             }

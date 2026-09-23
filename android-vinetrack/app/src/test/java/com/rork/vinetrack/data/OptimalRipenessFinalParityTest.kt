@@ -142,6 +142,69 @@ class OptimalRipenessFinalParityTest {
     }
 
     @Test
+    fun `mode precedence is independent of provider and tolerates invalid override`() {
+        val block = Paddock("b", "v", "North")
+        val defaults = GddSettings()
+        assertEquals(GddCalculationMode.BEDD, defaults.calculationModeForSource("davis:123345"))
+        assertEquals(GddCalculationMode.BEDD, defaults.calculationModeForSource("openmeteo:1,2"))
+        for (preference in GddCalculationMode.entries) {
+            val saved = GddSettings(preference, hasExplicitCalculationMode = true)
+            assertEquals(preference, block.effectiveCalculationMode(saved.calculationModeForSource("davis:123345")))
+            val override = if (preference == GddCalculationMode.GDD) "bedd" else "gdd"
+            assertEquals(GddCalculationMode.fromKey(override), block.copy(calculationModeOverride = override).effectiveCalculationMode(preference))
+            assertEquals(preference, block.copy(calculationModeOverride = "invalid").effectiveCalculationMode(preference))
+        }
+    }
+
+    @Test
+    fun `non midnight budburst requests Sydney midnight and excludes unfinished day`() {
+        val zone = TimeZone.getTimeZone("Australia/Sydney")
+        val budburst = Instant.parse("2026-09-16T06:13:00Z").toEpochMilli()
+        val beginning = Instant.parse("2026-09-15T14:00:00Z").toEpochMilli()
+        val today = Instant.parse("2026-09-23T10:00:00Z").toEpochMilli()
+        assertEquals(beginning, OptimalRipenessWeatherCoordinator.completedCalendarDayStart(budburst, zone))
+        assertEquals(Instant.parse("2026-09-22T14:00:00Z").toEpochMilli(), OptimalRipenessWeatherCoordinator.completedCalendarDayStart(today, zone))
+        val request = OptimalRipenessWeatherRequest("v", -33.28, 149.10, zone, beginning, listOf(Paddock("b", "v", "North", budburstDate = "2026-09-16T06:13:00Z")), GddResetMode.BUDBURST)
+        assertEquals(budburst, request.paddocks.single().resetDateMs(GddResetMode.BUDBURST, beginning))
+        assertTrue(OptimalRipenessWeatherCoordinator.refreshIdentity(request, "davis:s", budburst, today).contains("|$beginning|"))
+    }
+
+    @Test
+    fun `partial replacement cannot use obsolete cached day to certify success`() {
+        val zone = TimeZone.getTimeZone("Australia/Sydney")
+        val start = Instant.parse("2026-09-15T14:00:00Z").toEpochMilli()
+        val end = Instant.parse("2026-09-18T14:00:00Z").toEpochMilli()
+        val service = DegreeDayService(timeZone = zone)
+        val source = DegreeDayService.davisKey("s")
+        service.installDailyTemps(source, mapOf("20260916" to DailyTemp(30.0, 10.0), "20260917" to DailyTemp(30.0, 10.0), "20260918" to DailyTemp(30.0, 10.0)))
+        val fetched = mapOf("20260917" to DailyTemp(20.0, 10.0), "20260918" to DailyTemp(20.0, 10.0))
+        assertEquals(listOf("20260916"), service.installCompleteWindows(source, fetched, listOf(WeatherDateWindow(start, end))))
+        assertEquals(30.0, service.observedTemps(source)["20260916"]?.high ?: -1.0, 0.0)
+    }
+
+    @Test
+    fun `matching modes yield identical unrounded daily and cumulative values`() {
+        val service = DegreeDayService(timeZone = utc)
+        val davis = DegreeDayService.davisKey("synthetic")
+        val archive = DegreeDayService.openMeteoKey(-33.28, 149.10)
+        val temps = mapOf("20260901" to DailyTemp(23.33, 10.11), "20260902" to DailyTemp(19.21, 7.37))
+        service.installDailyTemps(davis, temps)
+        service.installDailyTemps(archive, temps)
+        GddCalculationMode.entries.forEach { mode ->
+            val left = service.dailyGddSeries(davis, start, Instant.parse("2026-09-03T00:00:00Z").toEpochMilli(), -33.28, mode.useBEDD)
+            val right = service.dailyGddSeries(archive, start, Instant.parse("2026-09-03T00:00:00Z").toEpochMilli(), -33.28, mode.useBEDD)
+            left.zip(right).forEach { (a, b) ->
+                assertEquals(a.daily, b.daily, 0.01)
+                assertEquals(a.cumulative, b.cumulative, 0.01)
+            }
+            val expectedDaily = if (mode == GddCalculationMode.GDD) listOf(6.72, 3.29) else listOf(4.34836, 3.01330)
+            left.zip(expectedDaily).forEach { (point, expected) -> assertEquals(expected, point.daily, 0.01) }
+            assertEquals(expectedDaily.sum(), left.last().cumulative, 0.01)
+            assertEquals(left.sumOf { it.daily }, left.last().cumulative, 0.01)
+        }
+    }
+
+    @Test
     fun `startup owns one coordinator and UI surfaces construct no weather repositories`() {
         val root = File("src/main/java/com/rork/vinetrack")
         val app = File(root, "ui/AppViewModel.kt").readText()

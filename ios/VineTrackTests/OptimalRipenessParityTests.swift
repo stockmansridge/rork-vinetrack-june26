@@ -138,7 +138,7 @@ final class OptimalRipenessParityTests: XCTestCase {
         XCTAssertEqual(service.dailyTemp(forKey: "20260905", source: source)?.high, 20)
     }
 
-    func testCapturedDavisResponseMatchesAndroidDailyAndCumulativeGDD() throws {
+    func testSyntheticDavisResponseMatchesAndroidDailyAndCumulativeGDD() throws {
         let service = DegreeDayService(timeZone: try XCTUnwrap(TimeZone(identifier: "Australia/Sydney")))
         let source = GDDSource.davisWeatherLink(stationId: "123345")
         let fixture: [[String: Any]] = [
@@ -187,8 +187,68 @@ final class OptimalRipenessParityTests: XCTestCase {
         for (point, value) in zip(points, expected) {
             XCTAssertEqual(point.daily, value, accuracy: 0.000_001)
         }
-        XCTAssertEqual(points.reduce(0) { $0 + $1.daily }, 37, accuracy: 0.000_001)
+        XCTAssertEqual(points.reduce(0) { $0 + $1.daily }, expected.reduce(0, +), accuracy: 0.01)
         XCTAssertEqual(points.last?.cumulative ?? -1, points.reduce(0) { $0 + $1.daily }, accuracy: 0.000_001)
+    }
+
+    func testModeDefaultsPreferencesAndBlockOverrides() throws {
+        var block = Paddock(name: "Synthetic Block")
+        XCTAssertEqual(AppSettings().calculationMode, .bedd)
+        XCTAssertEqual(AppSettings(calculationMode: .gdd).calculationMode, .gdd)
+        XCTAssertEqual(AppSettings(calculationMode: .bedd).calculationMode, .bedd)
+        XCTAssertEqual(block.effectiveCalculationMode(defaultMode: .gdd), .gdd)
+        block.calculationModeOverride = .bedd
+        XCTAssertEqual(block.effectiveCalculationMode(defaultMode: .gdd), .bedd)
+        block.calculationModeOverride = .gdd
+        XCTAssertEqual(block.effectiveCalculationMode(defaultMode: .bedd), .gdd)
+    }
+
+    func testSyntheticNonTemperatureSensorDoesNotCreateZeroFahrenheit() {
+        let fixture: [[String: Any]] = [["sensor_type": 23, "data": [["ts": 1_789_480_800, "rainfall_in": 0.3, "wind_speed_hi": 14]]]]
+        XCTAssertTrue(DavisWeatherLinkService.parseHistoricTemperatures(sensorsArr: fixture).isEmpty)
+    }
+
+    func testLegacyDavisCacheRequiresOldDatesAndFailedRefreshKeepsDataUnverified() throws {
+        let service = DegreeDayService(timeZone: TimeZone(identifier: "UTC")!)
+        let davis = GDDSource.davisWeatherLink(stationId: "synthetic-\(UUID().uuidString)")
+        let other = GDDSource.openMeteoArchive(latitude: -34, longitude: 149)
+        let values = Dictionary(uniqueKeysWithValues: (1...10).map { day in
+            (String(format: "202609%02d", day), DailyTemp(high: 20, low: 10))
+        })
+        service.installDailyTemps(values, for: davis)
+        service.installDailyTemps(values, for: other)
+        let start = try date("2026-09-01T00:00:00Z")
+        let end = try date("2026-09-11T00:00:00Z")
+        XCTAssertTrue(service.isDavisDataUnverified(forKey: davis.sourceKey))
+        XCTAssertEqual(service.refreshDates(forKey: davis.sourceKey, coveringFrom: start, to: end).map(dayKey), (1...10).map { String(format: "202609%02d", $0) })
+        XCTAssertEqual(service.refreshDates(forKey: other.sourceKey, coveringFrom: start, to: end).map(dayKey), ["20260908", "20260909", "20260910"])
+        service.applyRefreshOutcome(nil, for: davis)
+        XCTAssertEqual(service.dailyTemp(forKey: "20260901", source: davis)?.high, 20)
+        XCTAssertFalse(service.hasCompleteData(forKey: davis.sourceKey, coveringFrom: start, to: end))
+        XCTAssertTrue(service.isDavisDataUnverified(forKey: davis.sourceKey))
+    }
+
+    func testSyntheticMatchingModesAccumulateUnroundedAcrossProviders() throws {
+        let service = DegreeDayService(timeZone: TimeZone(identifier: "UTC")!)
+        let davis = GDDSource.davisWeatherLink(stationId: "synthetic-\(UUID().uuidString)")
+        let values = ["20260901": DailyTemp(high: 23.33, low: 10.11), "20260902": DailyTemp(high: 19.21, low: 7.37)]
+        service.installDailyTemps(values, for: davis)
+        service.installDailyTemps(values, for: source)
+        let start = try date("2026-09-01T00:00:00Z")
+        let end = try date("2026-09-03T00:00:00Z")
+        for mode in GDDCalculationMode.allCases {
+            let left = service.dailyGDDSeries(stationId: davis.sourceKey, from: start, to: end, latitude: -33.28, useBEDD: mode.useBEDD)
+            let right = service.dailyGDDSeries(stationId: source.sourceKey, from: start, to: end, latitude: -33.28, useBEDD: mode.useBEDD)
+            XCTAssertEqual(left.count, right.count)
+            for (a, b) in zip(left, right) {
+                XCTAssertEqual(a.daily, b.daily, accuracy: 0.01)
+                XCTAssertEqual(a.cumulative, b.cumulative, accuracy: 0.01)
+            }
+            let expectedDaily = mode == .gdd ? [6.72, 3.29] : [4.34836, 3.01330]
+            for (point, expected) in zip(left, expectedDaily) { XCTAssertEqual(point.daily, expected, accuracy: 0.01) }
+            XCTAssertEqual(left.last?.cumulative ?? -1, expectedDaily.reduce(0, +), accuracy: 0.01)
+            XCTAssertEqual(left.last?.cumulative ?? -1, left.reduce(0) { $0 + $1.daily }, accuracy: 0.01)
+        }
     }
 
     private func date(_ value: String) throws -> Date {

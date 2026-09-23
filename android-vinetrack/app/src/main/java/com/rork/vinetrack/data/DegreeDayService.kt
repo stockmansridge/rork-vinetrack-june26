@@ -131,6 +131,9 @@ class DegreeDayService(
         tempsBySource[sourceKey] = durable.toMutableMap()
     }
 
+    /** Provider-reported days only; used to validate a refresh without interpolation. */
+    fun observedTemps(sourceKey: String): Map<String, DailyTemp> = sourceTemps(sourceKey).toMap()
+
     /** Exact observed coverage, excluding interpolation. */
     fun hasCompleteData(sourceKey: String, fromMs: Long, toMs: Long): Boolean {
         val rows = sourceTemps(sourceKey)
@@ -181,6 +184,15 @@ class DegreeDayService(
         return windows
     }
 
+    /** Commit only if the new response covers every requested local day; never certify with old rows. */
+    fun installCompleteWindows(sourceKey: String, fetched: Map<String, DailyTemp>, windows: List<WeatherDateWindow>): List<String> {
+        val missing = windows.flatMap { window ->
+            OptimalRipenessWeatherRepository.missingDates(fetched, window.startEpochMs, window.endEpochMs, timeZone)
+        }
+        if (missing.isEmpty() && windows.isNotEmpty()) installDailyTemps(sourceKey, fetched)
+        return missing
+    }
+
     /** Installs daily data fetched through the canonical provider repository. */
     fun installDailyTemps(sourceKey: String, temperatures: Map<String, DailyTemp>): Boolean {
         val merged = sourceTemps(sourceKey)
@@ -206,11 +218,10 @@ class DegreeDayService(
         latitude: Double,
         longitude: Double,
         windows: List<WeatherDateWindow>,
-    ): Boolean {
-        val key = openMeteoKey(latitude, longitude)
+    ): Map<String, DailyTemp> {
         val today = startOfDay(System.currentTimeMillis())
         val archiveCutoff = addDays(today, -6)
-        val station = sourceTemps(key)
+        val fetched = mutableMapOf<String, DailyTemp>()
         val isoFmt = isoFormatter(timeZone)
         isLoading = true
         try {
@@ -223,7 +234,7 @@ class DegreeDayService(
                         "&start_date=${isoFmt.format(Date(window.startEpochMs))}" +
                         "&end_date=${isoFmt.format(Date(archiveEnd))}" +
                         "&daily=temperature_2m_max,temperature_2m_min&timezone=auto"
-                    runCatching { applyDaily(fetchJson(url), station) }
+                    runCatching { applyDaily(fetchJson(url), fetched) }
                 }
             }
             val firstRecentDay = addDays(archiveCutoff, 1)
@@ -237,13 +248,11 @@ class DegreeDayService(
                     "?latitude=$latitude&longitude=$longitude" +
                     "&daily=temperature_2m_max,temperature_2m_min" +
                     "&past_days=$pastDays&forecast_days=1&timezone=auto"
-                runCatching { applyDaily(fetchJson(url), station) }
+                runCatching { applyDaily(fetchJson(url), fetched) }
             }
-            lastSourceKey = key
-            if (station.isNotEmpty()) persistentCache?.save(key, timeZone.id, key, station)
-            return station.isNotEmpty()
+            return fetched
         } catch (_: Exception) {
-            return station.isNotEmpty()
+            return fetched
         } finally {
             isLoading = false
         }

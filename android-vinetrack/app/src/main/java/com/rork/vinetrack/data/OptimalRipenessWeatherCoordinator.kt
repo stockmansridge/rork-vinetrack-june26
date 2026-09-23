@@ -72,7 +72,7 @@ class OptimalRipenessWeatherCoordinator(
         val hasCache = sourceKey != null && service.hasUsableData(sourceKey)
         val earliest = request.paddocks.mapNotNull { block ->
             block.resetDateMs(block.effectiveResetMode(request.globalResetMode), request.seasonStartMs)
-        }.minOrNull()
+        }.minOrNull()?.let { optimalRipenessStartOfDay(it, request.timeZone) }
         val completedEnd = completedCalendarDayStart(System.currentTimeMillis(), request.timeZone)
         _state.value = OptimalRipenessWeatherState(
             vineyardId = request.vineyardId,
@@ -154,9 +154,9 @@ class OptimalRipenessWeatherCoordinator(
                 sourceLabel = weather.source.label,
                 hasCachedData = weather.hasUsableData,
                 isUpdating = false,
-                lastRefreshMs = System.currentTimeMillis(),
-                refreshMessage = if (weather.hasUsableData) "Weather data refreshed from ${weather.source.label}." else null,
-                error = if (weather.hasUsableData) null else "Weather history could not be updated. Existing data was kept.",
+                lastRefreshMs = if (weather.coverageVerified) System.currentTimeMillis() else _state.value.lastRefreshMs,
+                refreshMessage = if (weather.coverageVerified) "Weather data refreshed from ${weather.source.label}." else null,
+                error = if (weather.coverageVerified) null else "Weather coverage incomplete: ${weather.missingDates.joinToString()}. Existing data was kept (unverified).",
             )
         }.onFailure {
             _state.value = _state.value.copy(
