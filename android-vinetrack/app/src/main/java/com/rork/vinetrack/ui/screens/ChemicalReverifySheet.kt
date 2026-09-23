@@ -225,7 +225,7 @@ internal fun ChemicalReverifySheet(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text(
-                "Re-verify Chemical",
+                "Find Missing Information",
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
                 color = vine.textPrimary,

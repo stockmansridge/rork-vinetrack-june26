@@ -273,6 +273,8 @@ struct EditSavedChemicalSheet: View {
     @State private var activeSheet: ChemicalEditorSheet?
     @State private var linkAlertMessage: String?
     @State private var showLinkAlert: Bool = false
+    @State private var hasProposedLookup: Bool = false
+    @State private var confirmProposedLookup: Bool = false
     /// Registration plumbing stays collapsed. A grower edits agronomy; the
     /// identity fields underneath are VineTrack's problem unless they ask.
     @State private var showTechnicalDetails: Bool = false
@@ -339,8 +341,15 @@ struct EditSavedChemicalSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                if store.settings.aiSuggestionsEnabled {
-                    lookupSection
+                topActionsSection
+                if hasProposedLookup {
+                    Section {
+                        Label("NEW · Proposed information", systemImage: "sparkles")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Review the product details below. These findings will not replace your saved chemical unless you confirm and save.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 // Task §7 information architecture. The order is the WORKFLOW:
                 // identify the product → confirm its chemistry and resistance
@@ -356,7 +365,13 @@ struct EditSavedChemicalSheet: View {
                 if !session.isCreatingManual {
                     activeIngredientsSection
                 }
-                // 3. The registered rate.
+                // 3. Grapevine uses and registered label rates.
+                if !session.isCreatingManual {
+                    registeredUsesSection
+                    if showsProductRates { productRatesSection }
+                }
+                if !session.hasStructuredUses { legacyUseSection }
+                // 4. The optional operational default.
                 //
                 // While ADDING a product to the Chemical Store this is a
                 // read-only statement of what the label registers. It used to
@@ -384,36 +399,17 @@ struct EditSavedChemicalSheet: View {
                         defaultRatesSection
                     }
                 }
-                // Structured registered uses remain intact for catalogue,
-                // lookup and existing records, but manual creation never asks
-                // the operator to recreate them.
-                if !session.isCreatingManual {
-                    registeredUsesSection
-                    if showsProductRates {
-                        productRatesSection
-                    }
-                }
-                if !session.hasStructuredUses {
-                    legacyUseSection
-                }
-                // 4. Labels & References
+                // 5. Labels & References
                 labelsSection
-                // Fertiliser pack/N-P-K stays with the operational data it
-                // belongs to, not among the label evidence.
+                // 6. Purchase & Inventory
                 if session.productCategory?.isFertiliser == true {
                     fertiliserSection
                 }
-                // 5. Purchase / Pricing
-                if canViewFinancials {
-                    purchaseSection
-                }
-                // 6. Notes
+                if canViewFinancials { purchaseSection }
+                // 7. Notes
                 notesSection
-                // 7. Advanced / Verification Evidence — collapsed by default
+                // 8. Advanced / Verification Evidence — collapsed by default
                 advancedSection
-                if chemical != nil {
-                    reverifySection
-                }
                 if chemical != nil {
                     dangerZoneSection
                 }
@@ -449,6 +445,7 @@ struct EditSavedChemicalSheet: View {
                             fallbackCountry: resolvedCountry
                         )
                         lookupCoordinator.finishReview()
+                        hasProposedLookup = chemical != nil
                         activeSheet = nil
                     }
                 case .reverify:
@@ -468,11 +465,20 @@ struct EditSavedChemicalSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        if let saved = save() { onSaved?(saved) }
-                        dismiss()
+                        if hasProposedLookup {
+                            confirmProposedLookup = true
+                        } else {
+                            saveAndDismiss()
+                        }
                     }
                     .disabled(!session.isValid)
                 }
+            }
+            .confirmationDialog("Apply proposed information?", isPresented: $confirmProposedLookup) {
+                Button("Apply & Save") { saveAndDismiss() }
+                Button("Keep editing", role: .cancel) {}
+            } message: {
+                Text("This replaces the saved product details with the NEW information you reviewed above.")
             }
             .alert("Link", isPresented: $showLinkAlert, presenting: linkAlertMessage) { _ in
                 Button("OK", role: .cancel) {}
@@ -501,16 +507,35 @@ struct EditSavedChemicalSheet: View {
     /// the same `ChemicalReviewMerge`, then replaces this session's product data
     /// with the result. What the operator owns — price, pack, stock, notes — is
     /// left alone: re-identifying a product says nothing about what it cost.
-    private var lookupSection: some View {
+    private var topActionsSection: some View {
         Section {
+            if let label = preferredLabelURL {
+                Link(destination: label) {
+                    Label("View Label", systemImage: "doc.text")
+                }
+            } else {
+                Label("View Label · No label available", systemImage: "doc.text")
+                    .foregroundStyle(.secondary)
+            }
             Button {
-                activeSheet = .search
+                if let chemical,
+                   ChemicalReverification.isOffered(for: chemical, fallbackCountry: resolvedCountry) {
+                    activeSheet = .reverify
+                } else {
+                    activeSheet = .search
+                }
             } label: {
-                Label(lookupActionTitle, systemImage: lookupActionSymbol)
+                Label("Find Missing Information", systemImage: "magnifyingglass")
             }
         } footer: {
-            Text(lookupActionFooter)
+            Text("Review any new information before applying it. Nothing changes just by opening a label or starting a check.")
         }
+    }
+
+    private var preferredLabelURL: URL? {
+        let candidates = [session.manufacturerLabelURL, session.labelURL]
+        return candidates.compactMap { URL(string: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            .first { $0.scheme?.lowercased() == "https" || $0.scheme?.lowercased() == "http" }
     }
 
     /// What the lookup action IS, in the operator's situation.
@@ -616,7 +641,7 @@ struct EditSavedChemicalSheet: View {
     /// fertiliser/nutrient categories so ordinary spray chemicals stay clean.
     private var fertiliserSection: some View {
         Group {
-            Section("Pack & Inventory") {
+            Section("Purchase & Inventory") {
                 Toggle("Organic certified", isOn: $session.organicCertified)
                 LabeledContent("Pack size (\(session.formType == .liquid ? "L" : "kg"))") {
                     TextField("25", text: $session.packSizeText)
@@ -771,26 +796,6 @@ struct EditSavedChemicalSheet: View {
                     )
                 }
             }
-            if nonVineyardUseCount > 0 {
-                DisclosureGroup(isExpanded: $showsNonVineyardUses) {
-                    ForEach($session.chemistryDraft.uses) { $use in
-                        if !use.isViticultural {
-                            ChemicalManualUseEditor(
-                                use: $use,
-                                onRemove: {
-                                    session.chemistryDraft.uses.removeAll { $0.id == use.id }
-                                }
-                            )
-                        }
-                    }
-                } label: {
-                    Label(
-                        "Other crops on this label (\(nonVineyardUseCount))",
-                        systemImage: "list.bullet.rectangle"
-                    )
-                    .font(.subheadline)
-                }
-            }
             // The missing-rate notice belongs to Default Rates, which owns the
             // rate decision. It is repeated here ONLY when that section is off
             // screen (no grapevine registration), so it is shown exactly once
@@ -814,11 +819,9 @@ struct EditSavedChemicalSheet: View {
                 Label("Add Registered Use", systemImage: "plus.circle.fill")
             }
         } header: {
-            Text("Grapevine Uses & Rates")
+            Text("Grapevine Uses & Registered Rates")
         } footer: {
-            Text(vineyardUseCount > 0 && nonVineyardUseCount > 0
-                ? "A use is a crop and a target the product is registered against, with the rate as the label states it and any withholding or re-entry period. The basis is kept exactly as printed — a per-100 L rate is never restated per hectare. Grapevine uses are shown first; the label's other crops are kept in full under “Other crops”."
-                : "A use is a crop and a target the product is registered against, with the rate as the label states it and any withholding or re-entry period. The basis is kept exactly as printed — a per-100 L rate is never restated per hectare.")
+            Text("Grapevine uses and their label rates are shown here. Other crops are not vineyard directions; they remain on the saved record but are not shown as spray guidance.")
         }
     }
 
@@ -861,30 +864,12 @@ struct EditSavedChemicalSheet: View {
                     .font(.callout)
                 }
             }
-            if nonVineyardUseCount > 0 {
-                DisclosureGroup(isExpanded: $showsNonVineyardUses) {
-                    // Read-only too: still on the record, still saved, but not
-                    // something to edit while confirming a lookup.
-                    ForEach(session.chemistryDraft.uses.filter { !$0.isViticultural }) { use in
-                        Text(reviewedOtherCropSummary(use))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                } label: {
-                    Label(
-                        "Other crops on this label (\(nonVineyardUseCount))",
-                        systemImage: "list.bullet.rectangle"
-                    )
-                    .font(.subheadline)
-                }
-            }
             if !defaultRatesSectionIsVisible {
                 ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "rates"))
             }
             ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "registered_uses"))
         } header: {
-            Text("Registered grapevine uses (\(targets.count))")
+            Text("Grapevine Uses & Registered Rates")
         } footer: {
             Text("What the register lists this product against on grapevines. The rate the label registers is shown above and is saved with this chemical.")
         }
@@ -963,7 +948,7 @@ struct EditSavedChemicalSheet: View {
             }
             ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "rates"))
         } header: {
-            Text("Default rate *")
+            Text("Operational Rate *")
         } footer: {
             Text("Required for spray calculations. Enter the rate from the bottle or label; no registered-use or verification step is required.")
         }
@@ -983,7 +968,7 @@ struct EditSavedChemicalSheet: View {
                 Label("Add Label Rate", systemImage: "plus.circle.fill")
             }
         } header: {
-            Text("Product Label Rates")
+            Text("Other Registered Label Rates")
         } footer: {
             Text("Rates the label states for the product as a whole. This is not your spray rate or carrier volume — those belong to each spray job.")
         }
@@ -1002,7 +987,7 @@ struct EditSavedChemicalSheet: View {
                 TextField("e.g. Powdery Mildew", text: $session.problem)
             }
         } header: {
-            Text("Use")
+            Text("Grapevine Uses & Registered Rates")
         } footer: {
             Text("No registered use is on record for this product yet. Adding one above records the crop, target, rate, withholding period and re-entry period properly — these two boxes cannot.")
         }
@@ -1050,7 +1035,7 @@ struct EditSavedChemicalSheet: View {
             // the save and this is where the operator is told so.
             ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "rates"))
         } header: {
-            Text("Registered rate")
+            Text("Operational Rate")
         } footer: {
             Text("The registered label rate is saved with this chemical. Choose the exact rate being applied when planning each spray.")
         }
@@ -1108,7 +1093,7 @@ struct EditSavedChemicalSheet: View {
             // control that was never there.
             ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "rates"))
         } header: {
-            Text("Default Rates")
+            Text("Operational Rate")
         } footer: {
             Text(defaultRatesFooter)
         }
@@ -1239,7 +1224,7 @@ struct EditSavedChemicalSheet: View {
                     .foregroundStyle(.secondary)
             }
         } header: {
-            Text("Advanced")
+            Text("Advanced / Verification Evidence")
         } footer: {
             Text("Research provenance, source URLs and extraction details are kept for auditing. You should not need them for normal use.")
         }
@@ -1397,7 +1382,7 @@ struct EditSavedChemicalSheet: View {
                 }
             }
         } header: {
-            Text("Purchase Tracking")
+            Text("Purchase & Inventory")
         } footer: {
             Text("Used to calculate chemical cost in spray reports. AI does not fill in pricing — enter it from your invoice.")
         }
@@ -1461,6 +1446,12 @@ struct EditSavedChemicalSheet: View {
             }
             .padding(.vertical, 4)
         }
+    }
+
+    private func saveAndDismiss() {
+        guard session.isValid else { return }
+        if let saved = save() { onSaved?(saved) }
+        dismiss()
     }
 
     /// - Returns: the product as the store now holds it, so a caller can select

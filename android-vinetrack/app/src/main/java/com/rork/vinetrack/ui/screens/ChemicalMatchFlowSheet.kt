@@ -426,7 +426,7 @@ internal fun ChemicalMatchFlowSheet(
                 when {
                     samePrompt.isNotEmpty() -> "Already in your Chemical Store"
                     step == MatchStep.SEARCH ->
-                        if (existing == null) "Add Chemical" else "Match & Verify"
+                        if (existing == null) "Add Chemical" else "Find Missing Information"
                     else -> "Review Chemical"
                 },
                 fontSize = 20.sp,

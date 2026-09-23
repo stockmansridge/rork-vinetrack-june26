@@ -84,7 +84,7 @@ struct ChemicalReverifyFlowView: View {
                     failureResult(message)
                 }
             }
-            .navigationTitle("Re-verify Chemical")
+            .navigationTitle("Find Missing Information")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

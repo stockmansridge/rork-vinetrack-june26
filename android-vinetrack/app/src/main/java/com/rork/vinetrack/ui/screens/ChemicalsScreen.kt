@@ -671,7 +671,7 @@ private fun ChemicalRow(
                         contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
                     ) {
                         Text(
-                            "Re-verify Chemical",
+                            "Find Missing Information",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = ChemTint,
@@ -685,7 +685,7 @@ private fun ChemicalRow(
                         contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
                     ) {
                         Text(
-                            "Match & Verify",
+                            "Find Missing Information",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = ChemTint,
@@ -897,6 +897,7 @@ internal fun ChemicalFormSheet(
     // and matching flow Add Chemical uses. There is no second lookup here.
     var showRegisterSearch by remember { mutableStateOf(false) }
     var showChemistryEditor by remember { mutableStateOf(false) }
+    var showDetailedUses by remember { mutableStateOf(false) }
     // The country a manual entry defaults to, from the vineyard profile. Applied
     // only when the record does not already name one, so an imported product's
     // own country is never overwritten on open.
@@ -1200,6 +1201,17 @@ internal fun ChemicalFormSheet(
                 color = vine.textPrimary,
             )
 
+            // Product evidence actions are available without opening another editor.
+            val preferredLabel = existing?.storedIntelligence?.registration?.primaryLabelUrl
+                ?.takeIf { resolveUrl(it) != null }
+                ?: labelUrl.takeIf { resolveUrl(it) != null }
+            OutlinedButton(
+                onClick = { preferredLabel?.let { url ->
+                    resolveUrl(url)?.let { opened -> runCatching { uriHandler.openUri(opened) } }
+                } },
+                enabled = preferredLabel != null,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("View Label") }
             // Re-run the product lookup from inside the editor.
             //
             // This is NOT a second pipeline. It opens the SAME register search
@@ -1212,7 +1224,14 @@ internal fun ChemicalFormSheet(
             // only its blurb was.
             if (state != null) {
                 OutlinedButton(
-                    onClick = { showRegisterSearch = true },
+                    onClick = {
+                        val target = existing
+                        if (target != null && ChemicalReverification.isOffered(target, manualCountry)) {
+                            reverifyTarget = target
+                        } else {
+                            showRegisterSearch = true
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(
@@ -1222,22 +1241,19 @@ internal fun ChemicalFormSheet(
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.size(8.dp))
-                    // Same two titles iOS uses, chosen the same way.
-                    Text(
-                        if (name.trim().isEmpty()) "Search for this product"
-                        else "Search the register again",
-                    )
+                    Text("Find Missing Information")
                 }
                 Text(
-                    "Looks this product up on the official register and reviews what " +
-                        "it finds before anything is written. Confirming a match there " +
-                        "saves the product and closes this form, so finish any edits " +
-                        "here first.",
+                    "Review new information before applying it. Checking does not change this chemical.",
                     fontSize = 11.sp,
                     color = vine.textSecondary,
                 )
             }
 
+            if (pendingIntelligence != null) {
+                Text("NEW · Proposed information", fontWeight = FontWeight.SemiBold, color = ChemTint)
+                Text("Review the updated fields below before saving. Nothing changes until you confirm the update.", fontSize = 11.sp, color = vine.textSecondary)
+            }
             SectionLabel("Product")
             OutlinedTextField(
                 value = name,
@@ -1254,67 +1270,6 @@ internal fun ChemicalFormSheet(
                 )
             }
 
-            // Re-verify Chemical, or an honest explanation of why it is not
-            // available. Both the eligibility and the reason come from
-            // ChemicalReverification, so this action can never appear on a record
-            // the flow would refuse to run on.
-            if (existing != null && state != null) {
-                val reverifyCountry = ChemicalRegistration.normaliseCountry(
-                    ChemicalInfoService.resolveCountry(
-                        state.vineyards
-                            .firstOrNull { it.id == state.selectedVineyardId }?.country,
-                    ),
-                )
-                SectionLabel("Chemical intelligence")
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(
-                        "Verification",
-                        fontSize = 12.sp,
-                        color = vine.textSecondary,
-                        modifier = Modifier.width(96.dp),
-                    )
-                    ChemicalVerificationBadge(existing.verificationStatus)
-                }
-                // Registration identity vs the CURRENT vineyard's jurisdiction.
-                // The record keeps its own country — it is never re-keyed — but
-                // a foreign label must never read as valid vineyard guidance.
-                val formSuitability = ChemicalJurisdiction.suitability(existing, reverifyCountry)
-                if (formSuitability is ChemicalJurisdictionSuitability.Mismatch) {
-                    ChemicalJurisdictionMismatchBanner(
-                        formSuitability.registrationCountry,
-                        formSuitability.vineyardCountry,
-                    )
-                }
-                if (ChemicalReverification.isOffered(existing, reverifyCountry)) {
-                    OutlinedButton(
-                        onClick = { reverifyTarget = existing },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(
-                            Icons.Filled.Sync,
-                            contentDescription = null,
-                            tint = ChemTint,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(Modifier.size(8.dp))
-                        Text("Re-verify Chemical")
-                    }
-                    Text(
-                        "Re-checks this product against the register using the registration " +
-                            "details VineTrack already holds. Nothing is changed until you " +
-                            "review and accept it.",
-                        fontSize = 11.sp,
-                        color = vine.textSecondary,
-                    )
-                } else {
-                    ChemicalReverification.unavailableReason(existing, reverifyCountry)?.let {
-                        Text(it, fontSize = 11.sp, color = vine.textSecondary)
-                    }
-                }
-            }
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                 listOf("Liquid", "Solid").forEachIndexed { index, f ->
                     SegmentedButton(
@@ -1340,6 +1295,16 @@ internal fun ChemicalFormSheet(
                 onExpandedChange = { categoryMenu = it },
                 onSelect = { category = it; categoryMenu = false },
             )
+            OutlinedTextField(
+                value = manufacturer,
+                onValueChange = { manufacturer = it },
+                label = { Text("Manufacturer / registrant") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            chemistryDraft.registrationNumber.takeIf { it.isNotBlank() }?.let { number ->
+                Text("Registration: ${chemistryDraft.registrationScheme?.label.orEmpty()} $number", fontSize = 12.sp, color = vine.textSecondary)
+            }
             Text(
                 "Fertiliser and nutrient categories unlock pack, N-P-K and inventory fields used by the Fertiliser Calculator.",
                 fontSize = 11.sp,
@@ -1347,7 +1312,7 @@ internal fun ChemicalFormSheet(
             )
 
             if (ProductCategories.isFertiliser(category)) {
-                SectionLabel("Pack & inventory")
+                SectionLabel("Purchase & Inventory")
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text("Organic certified", fontSize = 15.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
                     Switch(checked = organicCertified, onCheckedChange = { organicCertified = it })
@@ -1449,7 +1414,7 @@ internal fun ChemicalFormSheet(
             val groupSummary = ChemicalManualEntry.groupSummary(chemistryDraft)
             val labelRateCount = chemistryDraft.productRates.size +
                 chemistryDraft.uses.sumOf { it.rates.size }
-            SectionLabel("Active ingredients")
+            SectionLabel("Active Ingredients & Resistance")
             if (structuredActives.isEmpty()) {
                 Text(
                     "No active ingredients recorded",
@@ -1535,8 +1500,8 @@ internal fun ChemicalFormSheet(
                 )
                 Spacer(Modifier.size(8.dp))
                 Text(
-                    if (structuredActives.isEmpty()) "Enter chemistry & identity"
-                    else "Edit chemistry & identity",
+                    if (structuredActives.isEmpty()) "Add Active Ingredients & Resistance"
+                    else "Edit Active Ingredients & Resistance",
                 )
             }
             // A legacy record's free-text chemistry, shown read-only so the
@@ -1557,7 +1522,7 @@ internal fun ChemicalFormSheet(
             Text(
                 "Each active ingredient carries its own resistance group, so a two-active " +
                     "product belongs to both groups independently. Anything you enter " +
-                    "yourself stays unverified until Match & Verify or Re-verify confirms it.",
+                    "yourself stays unverified until you find and confirm supporting information.",
                 fontSize = 11.sp,
                 color = vine.textSecondary,
             )
@@ -1654,8 +1619,8 @@ internal fun ChemicalFormSheet(
             val displayUses = ChemicalVineyardScope.operationalUses(
                 displayIntelligence.registeredUses,
             )
+            SectionLabel("Grapevine Uses & Registered Rates")
             if (displayUses.isNotEmpty()) {
-                SectionLabel("Grapevine uses & safety")
                 // The registered rate, stated ONCE at the top — then the
                 // compact target list. The full per-target crop/rate/WHP/
                 // re-entry/restrictions cards repeated the same printed
@@ -1671,9 +1636,22 @@ internal fun ChemicalFormSheet(
                         )
                     }
                 ChemicalCompactRegisteredUsesView(displayUses)
+                if (displayUses.any { it.isViticultural }) {
+                    TextButton(onClick = { showDetailedUses = !showDetailedUses }) {
+                        Text(if (showDetailedUses) "Hide WHP, REI & restrictions" else "Show WHP, REI & restrictions")
+                    }
+                    if (showDetailedUses) {
+                        com.rork.vinetrack.ui.components.ChemicalRegisteredUsesView(
+                            uses = displayUses.filter { it.isViticultural },
+                            hasManufacturerLabelSource = displayIntelligence.registration
+                                ?.manufacturerLabelUrl?.isNotBlank() == true,
+                        )
+                    }
+                }
+            } else {
+                Text("No grapevine uses or registered rates established. Check the label before applying.", fontSize = 12.sp, color = VineColors.Warning)
             }
 
-            SectionLabel("Details")
             // States the trust consequence of a resistance-critical correction
             // without blocking it. Absent unless verification actually falls.
             editOutcome?.warning?.let { warning ->
@@ -1694,83 +1672,24 @@ internal fun ChemicalFormSheet(
                     Text(warning, fontSize = 12.sp, color = vine.textSecondary)
                 }
             }
-            OutlinedTextField(
-                value = use,
-                onValueChange = { use = it },
-                label = { Text("Use (e.g. Fungicide)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = problem,
-                onValueChange = { problem = it },
-                label = { Text("Target problem (e.g. Powdery Mildew)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = manufacturer,
-                onValueChange = { manufacturer = it },
-                label = { Text("Manufacturer") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            UrlField(
-                label = "Official label URL",
-                value = labelUrl,
-                onValueChange = { labelUrl = it },
-                onOpen = { resolveUrl(labelUrl)?.let { runCatching { uriHandler.openUri(it) } } },
-            )
-            UrlField(
-                label = "Product page URL",
-                value = productUrl,
-                onValueChange = { productUrl = it },
-                onOpen = { resolveUrl(productUrl)?.let { runCatching { uriHandler.openUri(it) } } },
-            )
-            // The MANUFACTURER-hosted label, when research established one that
-            // is a genuinely different document from the two fields above.
-            //
-            // All three link concepts have always persisted on Android inside
-            // the structured registration; only this one had no read surface,
-            // so a label the resolver found and validated arrived on device and
-            // was never shown. It is read-only on purpose: which document is
-            // the manufacturer's label is something the register lookup
-            // establishes, and a typed URL is not evidence of that.
-            val manufacturerLabelUrl = displayIntelligence.registration
-                ?.manufacturerLabelUrl
-                ?.trim()
-                ?.takeIf { it.isNotEmpty() }
-                // Never render the same document twice under two names.
-                ?.takeIf { it != labelUrl.trim() && it != productUrl.trim() }
-            manufacturerLabelUrl?.let { url ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+            if (displayUses.none { it.isViticultural }) {
+                OutlinedTextField(
+                    value = use,
+                    onValueChange = { use = it },
+                    label = { Text("Use (legacy text)") },
+                    singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Manufacturer label", fontSize = 12.sp, color = vine.textSecondary)
-                        Text(url, fontSize = 12.sp, color = vine.textPrimary, maxLines = 2)
-                    }
-                    resolveUrl(url)?.let { opened ->
-                        IconButton(onClick = { runCatching { uriHandler.openUri(opened) } }) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.OpenInNew,
-                                contentDescription = "Open manufacturer label",
-                                tint = ChemTint,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                    }
-                }
+                )
+                OutlinedTextField(
+                    value = problem,
+                    onValueChange = { problem = it },
+                    label = { Text("Target problem (legacy text)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
-            Text(
-                "Use the label URL only for the official product label. Product pages are for manufacturer info and are never shown as the label.",
-                fontSize = 11.sp,
-                color = vine.textSecondary,
-            )
-
             if (isCreatingManual) {
-                SectionLabel("Default rate *")
+                SectionLabel("Operational Rate *")
                 SimpleManualRateEditor(
                     rate = chemistryDraft.productRates.firstOrNull() ?: ChemicalManualRateDraft(),
                     onChange = { updated ->
@@ -1786,7 +1705,7 @@ internal fun ChemicalFormSheet(
                     color = vine.textSecondary,
                 )
             } else {
-            SectionLabel("Rates")
+            SectionLabel("Operational Rate")
 
             // A STRUCTURED product's operational rate is its confirmed
             // default, and only that. The legacy boxes below stay editable for
@@ -1877,7 +1796,7 @@ internal fun ChemicalFormSheet(
                             color = VineColors.Warning,
                         )
                         Text(
-                            "Use “Search the register again” above to review this product's " +
+                            "Use “Find Missing Information” above to review this product's " +
                                 "registered rates and confirm the one this vineyard uses.",
                             fontSize = 11.sp,
                             color = vine.textSecondary,
@@ -1973,8 +1892,32 @@ internal fun ChemicalFormSheet(
             )
             }
 
+            SectionLabel("Labels & References")
+            val manufacturerLabelUrl = displayIntelligence.registration?.manufacturerLabelUrl
+                ?.trim()?.takeIf { it.isNotEmpty() }
+                ?.takeIf { it != labelUrl.trim() && it != productUrl.trim() }
+            manufacturerLabelUrl?.let { url ->
+                Text("Manufacturer label", fontSize = 12.sp, color = vine.textSecondary)
+                TextButton(onClick = { resolveUrl(url)?.let { opened ->
+                    runCatching { uriHandler.openUri(opened) }
+                } }) { Text(url, maxLines = 2) }
+            }
+            UrlField(
+                label = "Official regulator label",
+                value = labelUrl,
+                onValueChange = { labelUrl = it },
+                onOpen = { resolveUrl(labelUrl)?.let { runCatching { uriHandler.openUri(it) } } },
+            )
+            UrlField(
+                label = "Manufacturer product page (optional)",
+                value = productUrl,
+                onValueChange = { productUrl = it },
+                onOpen = { resolveUrl(productUrl)?.let { runCatching { uriHandler.openUri(it) } } },
+            )
+            Text("Product pages are not approved labels.", fontSize = 11.sp, color = vine.textSecondary)
+
             if (canViewFinancials) {
-                SectionLabel("Purchase tracking")
+                SectionLabel("Purchase & Inventory")
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text("Track purchase info", fontSize = 15.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
                     Switch(checked = trackPurchase, onCheckedChange = { trackPurchase = it })
@@ -2025,6 +1968,23 @@ internal fun ChemicalFormSheet(
                 minLines = 3,
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            SectionLabel("Advanced / Verification Evidence")
+            if (existing != null && state != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Verification", color = vine.textSecondary, modifier = Modifier.width(96.dp))
+                    ChemicalVerificationBadge(existing.verificationStatus)
+                }
+                val formSuitability = ChemicalJurisdiction.suitability(existing, manualCountry)
+                if (formSuitability is ChemicalJurisdictionSuitability.Mismatch) {
+                    ChemicalJurisdictionMismatchBanner(
+                        formSuitability.registrationCountry, formSuitability.vineyardCountry,
+                    )
+                }
+            } else {
+                Text("Unverified until supporting information is confirmed.", color = vine.textSecondary)
+            }
+            Text("Information from a label is only applied after you review and confirm it.", fontSize = 11.sp, color = vine.textSecondary)
 
             Spacer(Modifier.height(4.dp))
             // What is still missing, said as the next action rather than as an

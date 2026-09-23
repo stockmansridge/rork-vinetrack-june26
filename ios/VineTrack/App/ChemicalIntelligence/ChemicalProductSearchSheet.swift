@@ -107,7 +107,7 @@ struct ChemicalProductSearchSheet: View {
                 }
                 }
             }
-            .navigationTitle(existing == nil ? "Add Chemical" : "Match & Verify")
+            .navigationTitle(existing == nil ? "Add Chemical" : "Find Missing Information")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

@@ -167,7 +167,7 @@ internal fun ChemicalManualEditorSheet(
             }
             Text(
                 "Information you enter yourself is recorded as unverified. It stays that " +
-                    "way until Match & Verify or Re-verify confirms it against a register — " +
+                    "way until Find Missing Information confirms it against a register — " +
                     "completing every field does not make it verified.",
                 fontSize = 11.sp,
                 color = vine.textSecondary,
@@ -238,7 +238,7 @@ internal fun ChemicalManualEditorSheet(
             )
             Text(
                 "A registration number you type is recorded as your own entry, not as " +
-                    "confirmed identity. It is the first thing Match & Verify and Re-verify " +
+                    "confirmed identity. It is the first thing Find Missing Information " +
                     "will use when they check this product against the register later.",
                 fontSize = 11.sp,
                 color = vine.textSecondary,

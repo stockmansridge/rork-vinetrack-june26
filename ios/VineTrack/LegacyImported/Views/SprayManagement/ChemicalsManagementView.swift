@@ -156,14 +156,14 @@ struct ChemicalsManagementView: View {
                             Button {
                                 reverifyingChemical = chemical
                             } label: {
-                                Label("Re-verify", systemImage: "arrow.triangle.2.circlepath")
+                                Label("Find Missing Information", systemImage: "arrow.triangle.2.circlepath")
                             }
                             .tint(VineyardTheme.info)
                         } else if chemical.verificationStatus != .verified {
                             Button {
                                 matchingChemical = chemical
                             } label: {
-                                Label("Match & Verify", systemImage: "checkmark.seal")
+                                Label("Find Missing Information", systemImage: "checkmark.seal")
                             }
                             .tint(VineyardTheme.info)
                         }
