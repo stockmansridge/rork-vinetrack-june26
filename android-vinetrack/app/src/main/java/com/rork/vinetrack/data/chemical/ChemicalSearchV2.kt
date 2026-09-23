@@ -174,12 +174,30 @@ object ChemicalSearchV2Rank {
 }
 
 object ChemicalSearchV2Duplicate {
+    fun localMatches(query: String, chemicals: List<SavedChemical>): List<SavedChemical> {
+        val trimmed = query.trim()
+        val registration = trimmed.filter(Char::isDigit)
+        if (registration.isNotEmpty() && (registration == trimmed || trimmed.equals("APVMA $registration", ignoreCase = true))) {
+            val matches = chemicals.filter {
+                it.isActive && it.resolvedIntelligence.registration?.registrationNumber == registration &&
+                    it.resolvedIntelligence.registration?.countryCode?.equals("AU", ignoreCase = true) == true &&
+                    it.resolvedIntelligence.registration?.scheme == ChemicalRegistrationScheme.APVMA
+            }
+            if (matches.isNotEmpty()) return matches
+        }
+        return ChemicalStoreMatching.findByProductName(chemicals, trimmed)
+    }
+
     fun existing(master: MasterChemicalV2?, intelligence: ChemicalIntelligence, name: String, chemicals: List<SavedChemical>): SavedChemical? {
         master?.let { candidate ->
             chemicals.firstOrNull { it.isActive && it.masterChemicalId == candidate.id }?.let { return it }
         }
         ChemicalStoreMatching.findByRegistrationIdentity(chemicals, intelligence.registration)?.let { return it }
-        return chemicals.firstOrNull { it.isActive && ChemicalStoreMatching.namesMatch(it.displayName, name) }
+        val incomingIdentity = intelligence.registration?.identityKey
+        return chemicals.firstOrNull {
+            it.isActive && ChemicalStoreMatching.namesMatch(it.displayName, name) &&
+                (incomingIdentity == null || it.resolvedIntelligence.registration?.identityKey == null)
+        }
     }
 }
 
@@ -234,12 +252,15 @@ object ChemicalLabelIdentityOCR {
     suspend fun recognise(context: Context, uri: Uri): ChemicalLabelIdentityEvidence {
         val image = InputImage.fromFilePath(context, uri)
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-        val text = suspendCancellableCoroutine<String> { continuation ->
-            recognizer.process(image)
-                .addOnSuccessListener { result -> if (continuation.isActive) continuation.resume(result.text) }
-                .addOnFailureListener { error -> if (continuation.isActive) continuation.resumeWithException(error) }
+        val text = try {
+            suspendCancellableCoroutine<String> { continuation ->
+                recognizer.process(image)
+                    .addOnSuccessListener { result -> if (continuation.isActive) continuation.resume(result.text) }
+                    .addOnFailureListener { error -> if (continuation.isActive) continuation.resumeWithException(error) }
+            }
+        } finally {
+            recognizer.close()
         }
-        recognizer.close()
         val number = apvmaNumber(text)
         return ChemicalLabelIdentityEvidence(text, number, number)
     }

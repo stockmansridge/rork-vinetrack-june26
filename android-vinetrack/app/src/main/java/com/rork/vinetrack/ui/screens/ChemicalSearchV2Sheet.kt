@@ -161,6 +161,7 @@ internal fun ChemicalSearchV2Sheet(
     val externalService = remember { ChemicalInfoService() }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<MasterChemicalV2>>(emptyList()) }
+    var savedMatches by remember { mutableStateOf<List<SavedChemical>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
@@ -171,6 +172,7 @@ internal fun ChemicalSearchV2Sheet(
     var photoBusy by remember { mutableStateOf(false) }
     var proposedIdentity by remember { mutableStateOf<String?>(null) }
     var photoRegistration by remember { mutableStateOf<String?>(null) }
+    var photoProductName by remember { mutableStateOf<String?>(null) }
     var externalJob by remember { mutableStateOf<Job?>(null) }
     var photoJob by remember { mutableStateOf<Job?>(null) }
     DisposableEffect(Unit) {
@@ -188,6 +190,11 @@ internal fun ChemicalSearchV2Sheet(
     )
 
     fun openMaster(master: MasterChemicalV2) {
+        ChemicalSearchV2Duplicate.existing(master, master.intelligence, master.registeredProductName, state.savedChemicals)?.let {
+            savedMatches = listOf(it)
+            results = emptyList()
+            return
+        }
         val automatic = ChemicalSearchV2OperationalDefaults.unambiguousRates(master.viticultureRates)
         val selected = automatic[ChemicalDefaultRateBasis.PER_HECTARE]
             ?: automatic[ChemicalDefaultRateBasis.PER_100_LITRES]
@@ -219,6 +226,14 @@ internal fun ChemicalSearchV2Sheet(
         val trimmed = searchQuery.trim()
         if (trimmed.length < 2) return
         searchJob?.cancel()
+        requestId = null
+        results = emptyList()
+        savedMatches = ChemicalSearchV2Duplicate.localMatches(trimmed, state.savedChemicals)
+        if (savedMatches.isNotEmpty()) {
+            searching = false
+            message = "This chemical is already saved. Use the existing record without creating another copy."
+            return
+        }
         val token = UUID.randomUUID().toString()
         requestId = token
         searching = true
@@ -228,7 +243,7 @@ internal fun ChemicalSearchV2Sheet(
                 val found = repository.search(trimmed)
                 if (requestId != token) return@launch
                 results = found
-                message = if (found.isEmpty()) "No Master Catalogue match. Use a deliberate fallback below." else null
+                message = if (found.isEmpty()) "No VineTrack match found. Search for the product label, or create manually." else null
             } catch (_: CancellationException) {
             } catch (error: Exception) {
                 if (requestId == token) { results = emptyList(); message = error.message ?: "Master search failed." }
@@ -241,14 +256,18 @@ internal fun ChemicalSearchV2Sheet(
     fun acceptPhoto(uri: Uri) {
         photoJob?.cancel()
         photoBusy = true
+        photoBytes = null
+        photoRegistration = null
+        photoProductName = null
         proposedIdentity = null
         message = null
         photoJob = scope.launch {
             try {
                 photoBytes = PinPhotoImageUtil.compress(context, uri)
                 val evidence = ChemicalLabelIdentityOCR.recognise(context, uri)
-                val name = if (evidence.apvmaNumber == null) externalService.identifyLabel(evidence.text) else null
+                val name = runCatching { externalService.identifyLabel(evidence.text) }.getOrNull()
                 photoRegistration = evidence.apvmaNumber
+                photoProductName = name
                 val identity = ChemicalLabelIdentityOCR.proposedQuery(evidence.apvmaNumber, name)
                 if (identity == null) {
                     message = "No confident identity found. Enter the product name to search VineTrack Master."
@@ -274,20 +293,29 @@ internal fun ChemicalSearchV2Sheet(
             modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Chemical Search V2", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text("Add Chemical", fontSize = 22.sp, fontWeight = FontWeight.Bold)
             if (review == null) {
                 OutlinedTextField(
-                    value = query, onValueChange = { query = it },
+                    value = query, onValueChange = {
+                        query = it
+                        requestId = null
+                        searchJob?.cancel()
+                        externalJob?.cancel()
+                        results = emptyList()
+                        savedMatches = emptyList()
+                        searching = false
+                        externalBusy = false
+                    },
                     label = { Text("Product, APVMA number, active or manufacturer") },
                     modifier = Modifier.fillMaxWidth(), singleLine = true,
                 )
                 Button(onClick = { runSearch() }, enabled = query.trim().length >= 2 && !searching, modifier = Modifier.fillMaxWidth()) {
-                    if (searching) CircularProgressIndicator() else Text("Search VineTrack Master")
+                    if (searching) CircularProgressIndicator() else Text("Find Chemical")
                 }
                 OutlinedButton(onClick = ::openManual, modifier = Modifier.fillMaxWidth()) {
-                    Text("+ Add manually")
+                    Text("Create Manually")
                 }
-                Text("Master Catalogue only. No AI or external lookup runs during normal search.", fontSize = 12.sp)
+                Text("First checks chemicals saved in this vineyard, then VineTrack's catalogue. Online label search is available if needed.", fontSize = 12.sp)
                 if (photoBusy) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp)); Text("Identifying product on label…")
                 }
@@ -300,6 +328,14 @@ internal fun ChemicalSearchV2Sheet(
                     }
                 }
                 message?.let { Text(it, fontSize = 13.sp) }
+                if (savedMatches.isNotEmpty()) {
+                    Text("Already in your Chemical Store", fontWeight = FontWeight.SemiBold)
+                    savedMatches.forEach { chemical ->
+                        Button(onClick = { onSaved(chemical); onDismiss() }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Use Chemical — ${chemical.displayName}")
+                        }
+                    }
+                }
                 results.forEach { result ->
                     HorizontalDivider()
                     Text(result.registeredProductName, fontWeight = FontWeight.SemiBold)
@@ -314,12 +350,20 @@ internal fun ChemicalSearchV2Sheet(
                     onClick = {
                         val trimmed = query.trim()
                         if (trimmed.length < 2 || externalBusy) return@TextButton
+                        val local = ChemicalSearchV2Duplicate.localMatches(trimmed, state.savedChemicals)
+                        if (local.isNotEmpty()) { savedMatches = local; results = emptyList(); return@TextButton }
                         externalBusy = true
                         Log.d("ChemicalSearchV2", "fallback_invoked=true type=label_lookup")
                         message = null
                         externalJob = scope.launch {
                             try {
-                                val lookup = externalService.discoverLabel(trimmed)
+                                val lookup = try {
+                                    externalService.discoverLabel(trimmed)
+                                } catch (error: Exception) {
+                                    val name = photoProductName
+                                    if (trimmed != photoRegistration || name.isNullOrBlank()) throw error
+                                    externalService.discoverLabel(name)
+                                }
                                 val intel = lookup.intelligence()
                                 val viticultureRates = ViticultureRates.fromRegisteredUses(intel.registeredUses)
                                 val automatic = ChemicalSearchV2OperationalDefaults.unambiguousRates(viticultureRates)
@@ -336,11 +380,7 @@ internal fun ChemicalSearchV2Sheet(
                                 Log.d("ChemicalSearchV2", "external_lookup=success")
                             } catch (_: CancellationException) {
                             } catch (error: Exception) {
-                                message = if (error.message?.contains("APVMA registration not verified", ignoreCase = true) == true ||
-                                    error.message?.contains("No unique APVMA product found", ignoreCase = true) == true) {
-                                    openManual()
-                                    null
-                                } else "Label search unavailable. Try again or add manually."
+                                message = "No credible label found. Create manually with the product name you entered, or try again."
                                 Log.d("ChemicalSearchV2", "external_lookup=failure")
                             } finally { externalBusy = false }
                         }
@@ -348,7 +388,7 @@ internal fun ChemicalSearchV2Sheet(
                     enabled = query.trim().length >= 2 && !externalBusy,
                 ) {
                     if (externalBusy) { CircularProgressIndicator(modifier = Modifier.size(20.dp)); Text("Searching for official product label…") }
-                    else Text(if (results.isEmpty() && photoRegistration != null) "Search official label for \"$query\"" else "Can't find it? Search label online")
+                    else Text("Search for product label")
                 }
                 OutlinedButton(onClick = capture.takePhoto, modifier = Modifier.fillMaxWidth()) { Text("Take Photo of Label") }
                 OutlinedButton(onClick = capture.chooseFromGallery, modifier = Modifier.fillMaxWidth()) { Text("Choose Label Photo") }
@@ -413,21 +453,30 @@ private fun ChemicalReviewV2(
     if (draft.isManual) {
         Text("Manual vineyard chemical · Unverified", fontSize = 12.sp)
     } else {
-        Text("Registrant: ${draft.intelligence.registration?.registrant ?: "—"}")
-        Text("APVMA: ${if (draft.intelligence.hasEvidencedRegistration) draft.intelligence.registration?.registrationNumber ?: "—" else "Registration not verified"}")
-        Text("Active ingredients: ${draft.intelligence.activeIngredients.joinToString { it.name }.ifBlank { "—" }}")
-        draft.intelligence.productCategory.takeIf(String::isNotBlank)?.let { Text("Category: $it") }
-        draft.intelligence.registration?.labelReference?.takeIf { label ->
-            runCatching { java.net.URI(label) }.getOrNull()?.let { uri ->
+        Text("Registrant: ${draft.intelligence.registration?.registrant?.takeIf(String::isNotBlank) ?: "Not found — check label"}")
+        Text("APVMA: ${if (draft.intelligence.hasEvidencedRegistration) draft.intelligence.registration?.registrationNumber ?: "—" else "APVMA registration not verified"}")
+        Text("Active ingredients: ${draft.intelligence.activeIngredients.joinToString { it.name }.ifBlank { "Not found — check label" }}")
+        Text("Category: ${draft.intelligence.productCategory.ifBlank { "Not found — check label" }}")
+        Text("Product form: ${draft.formType?.takeIf(String::isNotBlank) ?: "Not found — check label"}")
+        val label = listOfNotNull(
+            draft.intelligence.registration?.regulatorLabelUrl,
+            draft.intelligence.registration?.manufacturerLabelUrl,
+            draft.intelligence.registration?.labelReference,
+        ).firstOrNull { url ->
+            runCatching { java.net.URI(url) }.getOrNull()?.let { uri ->
                 uri.scheme == "https" && uri.host != null && uri.path.endsWith(".pdf", ignoreCase = true)
             } == true
-        }?.let { label ->
-            TextButton(onClick = { uriHandler.openUri(label) }) { Text("Official Label") }
+        }
+        if (label != null) {
+            TextButton(onClick = { uriHandler.openUri(label) }) { Text("View Label") }
+        } else Text("Label not found — check product packaging", fontSize = 12.sp)
+        draft.intelligence.verification.unresolvedFields.forEach { field ->
+            Text("$field: Needs confirmation", fontSize = 12.sp)
         }
 
         Text("Registered vineyard rates", fontWeight = FontWeight.Bold)
         if (registeredRates.isEmpty()) {
-            Text("Grapevine use or rate was not established. Check the label before entering a deliberate manual default; VineTrack will not invent one.", fontSize = 13.sp)
+            Text("Grapevine use / rate: Not found — check label. Enter a rate from the label below; VineTrack will not invent one.", fontSize = 13.sp)
         }
         if (draft.viticultureRates.perHectare.isNotEmpty()) {
             Text("Per hectare", fontWeight = FontWeight.SemiBold)
@@ -518,7 +567,7 @@ private fun ChemicalReviewV2(
             }
         }
     }
-    Text("Rate bases are stored exactly as entered and are never converted.", fontSize = 12.sp)
+    Text("If rate is not found, check the label and enter the correct vineyard rate here. Rate bases are stored exactly as entered and never converted.", fontSize = 12.sp)
     if (draft.isManual) {
         TextButton(onClick = { optionalExpanded = !optionalExpanded }, modifier = Modifier.fillMaxWidth()) {
             Text(if (optionalExpanded) "Hide optional details" else "Optional details")
@@ -533,7 +582,7 @@ private fun ChemicalReviewV2(
     evaluation.violations.forEach { Text(it.message, color = com.rork.vinetrack.ui.theme.VineColors.Warning, fontSize = 12.sp) }
     duplicate?.let { existing ->
         Text("${existing.displayName} already exists in this vineyard.", color = com.rork.vinetrack.ui.theme.VineColors.Warning)
-        OutlinedButton(onClick = { onOpenExisting(existing) }, modifier = Modifier.fillMaxWidth()) { Text("Open existing record") }
+        OutlinedButton(onClick = { onSaved(existing); onDone() }, modifier = Modifier.fillMaxWidth()) { Text("Use Chemical") }
     }
     notice?.let { Text(it, color = com.rork.vinetrack.ui.theme.VineColors.Warning) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

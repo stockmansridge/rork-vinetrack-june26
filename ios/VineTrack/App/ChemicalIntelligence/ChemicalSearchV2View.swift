@@ -185,6 +185,20 @@ nonisolated enum ChemicalSearchV2Rank {
 }
 
 nonisolated enum ChemicalSearchV2Duplicate {
+    static func localMatches(query: String, in chemicals: [SavedChemical]) -> [SavedChemical] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let registration = trimmed.filter(\.isNumber)
+        if !registration.isEmpty && (registration == trimmed || trimmed.uppercased() == "APVMA \(registration)") {
+            let matches = chemicals.filter {
+                $0.isActive && $0.resolvedIntelligence.registration?.registrationNumber == registration &&
+                $0.resolvedIntelligence.registration?.countryCode.uppercased() == "AU" &&
+                $0.resolvedIntelligence.registration?.scheme == .apvma
+            }
+            if !matches.isEmpty { return matches }
+        }
+        return ChemicalStoreMatching.findByProductName(in: chemicals, query: trimmed)
+    }
+
     static func existing(master: MasterChemicalV2?, intelligence: ChemicalIntelligence, name: String, in chemicals: [SavedChemical]) -> SavedChemical? {
         if let master, let found = chemicals.first(where: { $0.isActive && $0.masterChemicalId == master.id }) {
             return found
@@ -192,7 +206,11 @@ nonisolated enum ChemicalSearchV2Duplicate {
         if let found = ChemicalStoreMatching.findByRegistrationIdentity(
             in: chemicals, registration: intelligence.registration
         ) { return found }
-        return chemicals.first { $0.isActive && ChemicalStoreMatching.namesMatch($0.name, name) }
+        let incomingIdentity = intelligence.registration?.identityKey
+        return chemicals.first {
+            $0.isActive && ChemicalStoreMatching.namesMatch($0.name, name) &&
+            (incomingIdentity == nil || $0.resolvedIntelligence.registration?.identityKey == nil)
+        }
     }
 }
 
@@ -344,6 +362,7 @@ enum ChemicalLabelIdentityOCR {
 @MainActor
 struct ChemicalSearchV2View: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(MigratedDataStore.self) private var store
 
     let onOpenExisting: (SavedChemical) -> Void
     let onSaved: (SavedChemical) -> Void
@@ -356,6 +375,7 @@ struct ChemicalSearchV2View: View {
 
     @State private var query: String = ""
     @State private var results: [MasterChemicalV2] = []
+    @State private var savedMatches: [SavedChemical] = []
     @State private var isSearching: Bool = false
     @State private var message: String?
     @State private var requestID: UUID?
@@ -367,6 +387,7 @@ struct ChemicalSearchV2View: View {
     @State private var isReadingPhoto: Bool = false
     @State private var proposedIdentity: String?
     @State private var photoRegistration: String?
+    @State private var photoProductName: String?
     @State private var externalRequestID: UUID?
     @State private var photoRequestID: UUID?
     @State private var diagnostics = ChemicalSearchV2Diagnostics()
@@ -398,17 +419,24 @@ struct ChemicalSearchV2View: View {
                         .textInputAutocapitalization(.never)
                         .submitLabel(.search)
                         .onSubmit(search)
+                        .onChange(of: query) { _, _ in
+                            requestID = nil
+                            externalRequestID = nil
+                            results = []
+                            savedMatches = []
+                            isSearching = false
+                        }
                     Button(action: search) {
                         if isSearching { ProgressView().frame(maxWidth: .infinity) }
-                        else { Label("Search VineTrack Master", systemImage: "magnifyingglass").frame(maxWidth: .infinity) }
+                        else { Label("Find Chemical", systemImage: "magnifyingglass").frame(maxWidth: .infinity) }
                     }
                     .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || isSearching)
                     Button(action: openManual) {
-                        Label("Add manually", systemImage: "plus").frame(maxWidth: .infinity)
+                        Label("Create Manually", systemImage: "plus").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                 } footer: {
-                    Text("Master Catalogue only. No AI, web search or label lookup runs while you type or search here.")
+                    Text("First checks chemicals saved in this vineyard, then VineTrack's catalogue. Online label search is available if needed.")
                 }
 
                 if isReadingPhoto { HStack { ProgressView(); Text("Identifying product on label…") } }
@@ -425,6 +453,17 @@ struct ChemicalSearchV2View: View {
                 }
                 if let message { Text(message).foregroundStyle(.secondary) }
 
+                if !savedMatches.isEmpty {
+                    Section("Already in your Chemical Store") {
+                        ForEach(savedMatches) { chemical in
+                            Button("Use Chemical — \(chemical.name)") {
+                                onSaved(chemical)
+                                dismiss()
+                            }
+                        }
+                    }
+                }
+
                 ForEach(results) { result in
                     Section {
                         VStack(alignment: .leading, spacing: 5) {
@@ -440,11 +479,11 @@ struct ChemicalSearchV2View: View {
                     }
                 }
 
-                Section("Fallbacks") {
+                Section(results.isEmpty ? "No VineTrack match found" : "Other options") {
                     if isExternalLookupRunning {
                         HStack { ProgressView(); Text("Searching for official product label…") }
                     } else {
-                        Button(results.isEmpty && photoRegistration != nil ? "Search official label for \"\(query)\"" : "Can't find it? Search label online", action: searchOnline)
+                        Button("Search for product label", action: searchOnline)
                             .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
                     }
                     Button("Take Photo of Label") { isShowingCamera = true }
@@ -453,7 +492,7 @@ struct ChemicalSearchV2View: View {
                     }
                 }
             }
-            .navigationTitle("Chemical Search V2")
+            .navigationTitle("Add Chemical")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { externalRequestID = nil; photoRequestID = nil; dismiss() } } }
             .onDisappear { externalRequestID = nil; photoRequestID = nil }
@@ -475,7 +514,7 @@ struct ChemicalSearchV2View: View {
                 ) { outcome in
                     message = outcome
                     review = nil
-                    if outcome.hasPrefix("Saved") { dismiss() }
+                    if outcome.hasPrefix("Saved") || outcome.hasPrefix("Used") { dismiss() }
                 }
             }
             .onChange(of: photoItem) { _, item in
@@ -491,6 +530,14 @@ struct ChemicalSearchV2View: View {
     private func search() {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2 else { return }
+        requestID = nil
+        results = []
+        savedMatches = ChemicalSearchV2Duplicate.localMatches(query: trimmed, in: store.savedChemicals)
+        if !savedMatches.isEmpty {
+            isSearching = false
+            message = "This chemical is already saved. Use the existing record without creating another copy."
+            return
+        }
         let token = UUID(); requestID = token; isSearching = true; message = nil
         let started = Date()
         Task {
@@ -508,13 +555,18 @@ struct ChemicalSearchV2View: View {
                     externalLookupSucceeded: diagnostics.externalLookupSucceeded
                 )
                 print("[ChemicalSearchV2] query=\(trimmed) duration_ms=\(diagnostics.durationMilliseconds) results=\(found.count) master_hit=\(!found.isEmpty)")
-                if found.isEmpty { message = "No Master Catalogue match. Use a deliberate fallback below." }
+                if found.isEmpty { message = "No VineTrack match found. Search for the product label, or create manually." }
             } catch { if requestID == token { message = error.localizedDescription; results = [] } }
             if requestID == token { isSearching = false }
         }
     }
 
     private func openMaster(_ master: MasterChemicalV2) {
+        if let existing = ChemicalSearchV2Duplicate.existing(master: master, intelligence: master.intelligence, name: master.registeredProductName, in: store.savedChemicals) {
+            savedMatches = [existing]
+            results = []
+            return
+        }
         let automatic = ChemicalSearchV2OperationalDefaults.unambiguousRates(from: master.viticultureRates)
         let selected = automatic[.perHectare] ?? automatic[.per100Litres]
         let initial = selected.map(draftRate) ?? ChemicalManualRateDraft()
@@ -545,12 +597,21 @@ struct ChemicalSearchV2View: View {
     private func searchOnline() {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2, !isExternalLookupRunning else { return }
+        let local = ChemicalSearchV2Duplicate.localMatches(query: trimmed, in: store.savedChemicals)
+        if !local.isEmpty { savedMatches = local; results = []; return }
         let token = UUID(); externalRequestID = token
         isExternalLookupRunning = true; message = nil; diagnostics.fallbackInvoked = true
         print("[ChemicalSearchV2] fallback_invoked=true type=label_lookup")
         Task {
             do {
-                let lookup = try await externalService.discoverLabel(query: trimmed)
+                let lookup: ChemicalStructuredLookup
+                do {
+                    lookup = try await externalService.discoverLabel(query: trimmed)
+                } catch {
+                    guard trimmed == photoRegistration, let photoProductName,
+                          !ChemicalStoreMatching.namesMatch(trimmed, photoProductName) else { throw error }
+                    lookup = try await externalService.discoverLabel(query: photoProductName)
+                }
                 guard externalRequestID == token else { return }
                 let intel = lookup.intelligence()
                 let viticultureRates = ViticultureRates.fromRegisteredUses(intel.registeredUses)
@@ -567,12 +628,8 @@ struct ChemicalSearchV2View: View {
             } catch {
                 if externalRequestID == token {
                     diagnostics.externalLookupSucceeded = false
-                    if error.localizedDescription.localizedCaseInsensitiveContains("APVMA registration not verified") ||
-                        error.localizedDescription.localizedCaseInsensitiveContains("No unique APVMA product found") {
-                        openManual()
-                    } else {
-                        message = "Label search unavailable. Try again or add manually."
-                    }
+                    message = "No credible label found. Create manually with the product name you entered, or try again."
+
                 }
             }
             if externalRequestID == token { isExternalLookupRunning = false; externalRequestID = nil }
@@ -581,13 +638,14 @@ struct ChemicalSearchV2View: View {
 
     private func acceptPhoto(_ data: Data) {
         let token = UUID(); photoRequestID = token
-        photoData = data; proposedIdentity = nil; isReadingPhoto = true; message = nil
+        photoData = data; photoRegistration = nil; photoProductName = nil; proposedIdentity = nil; isReadingPhoto = true; message = nil
         Task {
             do {
                 let evidence = try await ChemicalLabelIdentityOCR.recognise(data)
-                let name = evidence.apvmaNumber == nil ? try await externalService.identifyLabel(ocrText: evidence.text) : nil
+                let name = try? await externalService.identifyLabel(ocrText: evidence.text)
                 guard photoRequestID == token else { return }
                 photoRegistration = evidence.apvmaNumber
+                photoProductName = name
                 if let identity = ChemicalLabelIdentityOCR.proposedQuery(apvma: evidence.apvmaNumber, identifiedName: name) {
                     proposedIdentity = name ?? "APVMA \(identity)"
                     query = identity
@@ -680,20 +738,28 @@ private struct ChemicalSearchV2ReviewView: View {
                     Section("Source") { Label(draft.source, systemImage: "checkmark.seal") }
                     Section("Product") {
                         TextField("Chemical / product name *", text: $draft.productName)
-                        LabeledContent("Registrant", value: draft.intelligence.registration?.registrant ?? "—")
+                        LabeledContent("Registrant", value: draft.intelligence.registration?.registrant?.ifEmpty("Not found — check label") ?? "Not found — check label")
                         LabeledContent("APVMA", value: draft.intelligence.hasEvidencedRegistration
-                            ? (draft.intelligence.registration?.registrationNumber ?? "—") : "Registration not verified")
-                        LabeledContent("Active ingredients", value: draft.intelligence.activeIngredients.map(\.name).joined(separator: ", ").ifEmpty("—"))
-                        if !draft.intelligence.productCategory.isEmpty { LabeledContent("Category", value: draft.intelligence.productCategory.capitalized) }
-                        if let label = draft.intelligence.registration?.labelReference,
-                           let url = URL(string: label), url.scheme == "https", url.host != nil,
-                           url.path.lowercased().hasSuffix(".pdf") {
-                            Link("Official Label", destination: url)
+                            ? (draft.intelligence.registration?.registrationNumber ?? "Not found — check label") : "APVMA registration not verified")
+                        LabeledContent("Active ingredients", value: draft.intelligence.activeIngredients.map(\.name).joined(separator: ", ").ifEmpty("Not found — check label"))
+                        LabeledContent("Category", value: draft.intelligence.productCategory.isEmpty ? "Not found — check label" : draft.intelligence.productCategory.capitalized)
+                        LabeledContent("Product form", value: draft.formType?.ifEmpty("Not found — check label") ?? "Not found — check label")
+                        if let label = [draft.intelligence.registration?.regulatorLabelURL,
+                                        draft.intelligence.registration?.manufacturerLabelURL,
+                                        draft.intelligence.registration?.labelReference]
+                            .compactMap({ $0 }).compactMap(URL.init(string:))
+                            .first(where: { $0.scheme == "https" && $0.host != nil && $0.path.lowercased().hasSuffix(".pdf") }) {
+                            Link("View Label", destination: label)
+                        } else {
+                            Text("Label not found — check product packaging").foregroundStyle(.secondary)
+                        }
+                        ForEach(draft.intelligence.verification.unresolvedFields, id: \.self) { field in
+                            Text("\(field): Needs confirmation").font(.caption).foregroundStyle(.orange)
                         }
                     }
                     Section("Registered vineyard rates") {
                         if draft.viticultureRates.all.isEmpty {
-                            Text("Grapevine use or rate was not established. Check the label before entering a deliberate manual default; VineTrack will not invent one.")
+                            Text("Grapevine use / rate: Not found — check label. Enter a rate from the label below; VineTrack will not invent one.")
                                 .foregroundStyle(.secondary)
                         }
                         if !draft.viticultureRates.perHectare.isEmpty {
@@ -749,7 +815,7 @@ private struct ChemicalSearchV2ReviewView: View {
                 } header: {
                     Text("Operational Default Rate *")
                 } footer: {
-                    Text("Editable vineyard-level default. Rate bases are stored exactly as entered and are never converted.")
+                    Text("If rate is not found, check the label and enter the correct vineyard rate here. Rate bases are stored exactly as entered and never converted.")
                 }
                 if draft.isManual {
                     Section {
@@ -791,7 +857,7 @@ private struct ChemicalSearchV2ReviewView: View {
                     Section {
                         Text("\(duplicate.name) already exists in this vineyard.")
                             .foregroundStyle(.orange)
-                        Button("Open existing record") { onOpenExisting(duplicate) }
+                        Button("Use Chemical") { onSaved(duplicate); onComplete("Used \(duplicate.name)") }
                     }
                 }
                 if let notice { Text(notice).foregroundStyle(.orange) }

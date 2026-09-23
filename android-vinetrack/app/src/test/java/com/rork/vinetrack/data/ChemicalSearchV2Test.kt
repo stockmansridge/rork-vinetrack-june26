@@ -206,6 +206,25 @@ class ChemicalSearchV2Test {
         assertTrue(evaluation.violations.toString(), evaluation.isSatisfied)
     }
 
+    @Test fun savedFirstDithaneMatchesLocallyWithoutFuzzyMerging() {
+        val saved = SavedChemical(id = "same-id", vineyardId = "vineyard", name = "DITHANE RAINSHIELD")
+        assertEquals(saved, ChemicalSearchV2Duplicate.localMatches("dithane-rainshield", listOf(saved)).single())
+        assertTrue(ChemicalSearchV2Duplicate.localMatches("DITHANE RAINSHIELD PLUS", listOf(saved)).isEmpty())
+        assertTrue(ChemicalSearchV2Duplicate.localMatches("WARNING", listOf(saved)).isEmpty())
+        assertTrue(ChemicalSearchV2Duplicate.localMatches("59688", listOf(saved)).isEmpty())
+    }
+
+    @Test fun savedFirstRegistrationRequiresAustralianApvmaIdentity() {
+        val saved = SavedChemical(
+            id = "registered-id", vineyardId = "vineyard", name = "Different Display Name",
+            registrationCountry = "AU", registrationScheme = "apvma", registrationNumber = "59688",
+        )
+        assertEquals(saved, ChemicalSearchV2Duplicate.localMatches("APVMA 59688", listOf(saved)).single())
+        assertTrue(ChemicalSearchV2Duplicate.localMatches("59689", listOf(saved)).isEmpty())
+        val other = ChemicalIntelligence(registration = ChemicalRegistration(countryCode = "AU", scheme = ChemicalRegistrationScheme.APVMA, registrationNumber = "59689"))
+        assertNull(ChemicalSearchV2Duplicate.existing(null, other, saved.name, listOf(saved)))
+    }
+
     @Test fun manualDuplicateUsesExactNormalisedVineyardNameOnly() {
         val existing = SavedChemical(id = "existing", vineyardId = "vineyard", name = "Wettable Sulphur")
         val intelligence = com.rork.vinetrack.data.chemical.ChemicalIntelligence(

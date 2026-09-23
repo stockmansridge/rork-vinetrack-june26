@@ -299,7 +299,9 @@ final class SavedChemicalSyncService {
         let createdBy = auth?.userId
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
-            let byId = Dictionary(store.savedChemicals.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            // A queued ID may belong to a different vineyard than the visible slice.
+            // Rebuild its payload from the persisted record and preserve its UUID.
+            let byId = Dictionary(store.sprayRepo.loadAllChemicals().map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendSavedChemicalUpsert] = []
             var pushed: [UUID] = []
             var orphans: [UUID] = []

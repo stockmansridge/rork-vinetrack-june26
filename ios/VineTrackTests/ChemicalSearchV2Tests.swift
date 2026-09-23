@@ -177,6 +177,26 @@ struct ChemicalSearchV2Tests {
         #expect(SavedChemicalEntrySource.repaired(nil, intelligence: verified) == nil)
     }
 
+    @Test func savedFirstFindsDithaneWithoutNetworkAndDoesNotMatchHeadingsOrVariants() {
+        let saved = SavedChemical(name: "DITHANE RAINSHIELD")
+        let candidates = [saved]
+        #expect(ChemicalSearchV2Duplicate.localMatches(query: "dithane-rainshield", in: candidates).first?.id == saved.id)
+        #expect(ChemicalSearchV2Duplicate.localMatches(query: "DITHANE RAINSHIELD PLUS", in: candidates).isEmpty)
+        #expect(ChemicalSearchV2Duplicate.localMatches(query: "WARNING", in: candidates).isEmpty)
+        #expect(ChemicalSearchV2Duplicate.localMatches(query: "59688", in: candidates).isEmpty)
+    }
+
+    @Test func savedFirstRegistrationUsesCountryAndScheme() {
+        var saved = SavedChemical(name: "Different Display Name")
+        saved.chemicalIntelligence = ChemicalIntelligence(
+            registration: ChemicalRegistration(countryCode: "AU", scheme: .apvma, registrationNumber: "59688")
+        )
+        #expect(ChemicalSearchV2Duplicate.localMatches(query: "APVMA 59688", in: [saved]).first?.id == saved.id)
+        #expect(ChemicalSearchV2Duplicate.localMatches(query: "59689", in: [saved]).isEmpty)
+        let other = ChemicalIntelligence(registration: ChemicalRegistration(countryCode: "AU", scheme: .apvma, registrationNumber: "59689"))
+        #expect(ChemicalSearchV2Duplicate.existing(master: nil, intelligence: other, name: saved.name, in: [saved]) == nil)
+    }
+
     @Test func manualDuplicateUsesExactNormalisedVineyardNameOnly() {
         let existing = SavedChemical(name: "Wettable Sulphur")
         let intelligence = ChemicalIntelligence(verification: .manual())

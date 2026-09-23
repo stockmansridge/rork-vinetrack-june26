@@ -1285,12 +1285,8 @@ Deno.serve(async (req: Request) => {
         const label = await labelFallback();
         return label ? json({ ...label, jurisdiction: jurEnv }) : json({ error: "APVMA registration not verified. Review the name or add the chemical manually." }, 422);
       }
-      if (reg.active_ingredients.length === 0) {
-        // Registration identity is resolved, but missing chemistry is a review gap,
-        // not a reason to block creation or invent an active ingredient.
-        const incomplete = buildRegisterOnlyStructured(reg, ACTIVITY_GROUP_TABLE_VERSION);
-        return json({ ...incomplete, match_source: "authoritative_candidate", jurisdiction: jurEnv });
-      }
+      // Missing chemistry is a Review gap, not a reason to skip the actual
+      // label. Continue through label discovery without inventing actives.
       const result = buildRegisterOnlyStructured(reg, ACTIVITY_GROUP_TABLE_VERSION);
       const regulatorLabel = directOfficialLabelURL(result.registration?.regulator_label_url, reg.registration_number) ??
         directOfficialLabelURL(result.registration?.label_reference, reg.registration_number);
