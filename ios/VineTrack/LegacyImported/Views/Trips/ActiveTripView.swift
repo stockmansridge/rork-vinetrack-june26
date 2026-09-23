@@ -30,6 +30,7 @@ struct ActiveTripView: View {
     @State private var showEndConfirmation: Bool = false
     @State private var showEndReview: Bool = false
     @State private var showAddBlocks: Bool = false
+    @State private var showChangeRoute: Bool = false
     @State private var showSummary: Bool = false
     @State private var showRepairs: Bool = false
     @State private var showGrowth: Bool = false
@@ -600,6 +601,11 @@ struct ActiveTripView: View {
             EndTripReviewSheet(trip: tracking.activeTrip ?? trip)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showChangeRoute) {
+            ChangeTripRouteSheet()
+                .presentationDetents([.large])
+                .presentationContentInteraction(.scrolls)
         }
         .sheet(isPresented: $showAddBlocks) {
             AddBlocksToTripSheet()
@@ -1737,6 +1743,15 @@ struct ActiveTripView: View {
     // MARK: - Trip controls
 
     private var tripControls: some View {
+        VStack(spacing: 4) {
+            Button {
+                showChangeRoute = true
+            } label: {
+                Label("Change Route", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.bordered)
         HStack(spacing: 8) {
             if !trip.rowSequence.isEmpty && !trip.isPaused {
                 // Compact undo/done pair — secondary to the live GPS
@@ -1872,6 +1887,7 @@ struct ActiveTripView: View {
             } message: { message in
                 Text(message)
             }
+        }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)

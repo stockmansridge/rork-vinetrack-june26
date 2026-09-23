@@ -183,6 +183,7 @@ class TripDeleteSync(
             PendingEntityType.TRIP_START,
             PendingEntityType.TRIP_METADATA,
             PendingEntityType.TRIP_GPS,
+            PendingEntityType.TRIP_ROW_PLAN,
             PendingEntityType.TRIP_ROW,
             PendingEntityType.TRIP_TANK,
             PendingEntityType.TRIP_END,

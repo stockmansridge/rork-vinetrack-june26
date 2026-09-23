@@ -182,6 +182,14 @@ struct EndTripReviewSheet: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
+            .alert("Can't end the trip yet", isPresented: Binding(
+                get: { finishBlockedMessage != nil },
+                set: { if !$0 { finishBlockedMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) { finishBlockedMessage = nil }
+            } message: {
+                Text(finishBlockedMessage ?? "")
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }

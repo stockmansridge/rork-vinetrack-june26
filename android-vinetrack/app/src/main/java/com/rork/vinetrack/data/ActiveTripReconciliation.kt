@@ -24,6 +24,7 @@ object ActiveTripReconciliation {
             sequenceIndex = local.sequenceIndex,
             currentRowNumber = local.currentRowNumber,
             nextRowNumber = local.nextRowNumber,
+            manualCorrectionEvents = (server.manualCorrectionEvents.orEmpty() + local.manualCorrectionEvents.orEmpty()).distinct(),
             tankSessions = local.tankSessions,
             activeTankNumber = local.activeTankNumber,
             isFillingTank = local.isFillingTank,

@@ -400,6 +400,81 @@ final class TripTrackingService {
         beginTracking()
     }
 
+    /// Replan only the remaining guidance on the live trip. Historical coverage,
+    /// route points and operational records remain on the same trip.
+    func changeActiveRoute(pattern: TrackingPattern, startPath: Double, higherFirst: Bool) throws {
+        guard let store, var trip = activeTrip else { throw TripEndPersistenceError.tripUnavailable }
+        let ids = Set(trip.paddockIds + (trip.paddockId.map { [$0] } ?? []))
+        let paddocks = store.paddocks.filter { ids.contains($0.id) }
+        let paths = TripRowSequencePlanner.availablePaths(in: paddocks)
+        guard pattern == .freeDrive || paths.contains(where: { abs($0 - startPath) < 0.01 }) else {
+            throw ActiveRouteError.invalidPath
+        }
+        let visited = Set(trip.completedPaths + trip.skippedPaths)
+        guard pattern == .freeDrive || !visited.contains(where: { abs($0 - startPath) < 0.01 }) else {
+            throw ActiveRouteError.alreadyCovered
+        }
+        let generated = TripRowSequencePlanner.generateSequence(
+            paddocks: paddocks, pattern: pattern, startPath: startPath, directionHigherFirst: higherFirst
+        )
+        guard pattern == .freeDrive || generated.first.map({ abs($0 - startPath) < 0.01 }) == true else {
+            throw ActiveRouteError.invalidPath
+        }
+        let remaining = generated.filter { path in !visited.contains(where: { abs($0 - path) < 0.01 }) }
+        let oldDirection = trip.rowSequence.count > 1 && trip.rowSequence[1] < trip.rowSequence[0]
+            ? "higherToLower" : "lowerToHigher"
+        let oldStart = trip.rowSequence.indices.contains(trip.sequenceIndex)
+            ? TripRowSequencePlanner.formatPath(trip.rowSequence[trip.sequenceIndex]) : "none"
+        let note = "route_replanned: \(trip.trackingPattern.rawValue) \(oldStart) \(oldDirection) -> \(pattern.rawValue) \(TripRowSequencePlanner.formatPath(startPath)) \(higherFirst ? "lowerToHigher" : "higherToLower")"
+        trip.trackingPattern = pattern
+        trip.rowSequence = remaining
+        trip.sequenceIndex = 0
+        trip.currentRowNumber = remaining.first ?? 0.5 // Trip stores non-optional row scalars; Free Drive has no planned sequence.
+        trip.nextRowNumber = remaining.dropFirst().first ?? trip.currentRowNumber
+        let event = "\(ISO8601DateFormatter().string(from: Date())) \(note)"
+        var events = trip.manualCorrectionEvents
+        for entry in diagManualCorrectionEvents + [event] where !events.contains(entry) { events.append(entry) }
+        trip.manualCorrectionEvents = events
+        try store.updateTripOrThrow(trip)
+        diagManualCorrectionEvents = trip.manualCorrectionEvents
+        pathDistanceMap.removeAll()
+        lastTrackingLocation = nil
+        lastAutoCompletePath = nil
+        lastAutoCompleteAt = nil
+        lastLivePathInCorridor = nil
+        freeDriveSamples.removeAll()
+        freeDriveStablePath = nil
+        lockedPath = nil
+        lockedPathSince = nil
+        lockedPaddockId = nil
+        lastInCorridorOnLockedAt = nil
+        candidatePath = nil
+        candidateInCorridorCount = 0
+        candidateSince = nil
+        autoRealignSuggestedPath = nil
+        lastDismissedRealignPath = nil
+        lastAutoRealignShownAt = nil
+        previousOnPlannedInCorridor = false
+        lastAutoSequenceRecoverPath = nil
+        lastAutoSequenceRecoverAt = nil
+        diagLockedPath = nil
+        diagLockedPaddockId = nil
+        diagLockConfirmedAt = nil
+        diagLockConfidence = 0
+        diagLockDwellSeconds = 0
+        diagNearRowEnd = false
+        diagPlannedCompletionPercent = 0
+        diagWrongRowSuppressedReason = nil
+        diagLiveDetectedPath = nil
+        diagDistanceToPath = nil
+        diagInCorridor = false
+        diagPathMatch = false
+        diagAccumulatedMeters = 0
+        currentRowNumber = nil
+        currentRowDistance = nil
+        errorMessage = nil
+    }
+
     // MARK: - Pause / Resume
 
     func pauseTrip() {
@@ -454,7 +529,9 @@ final class TripTrackingService {
         // saved record (and the Trip Report) reflects every override that
         // happened during the live trip.
         if !diagManualCorrectionEvents.isEmpty {
-            trip.manualCorrectionEvents = diagManualCorrectionEvents
+            for event in diagManualCorrectionEvents where !trip.manualCorrectionEvents.contains(event) {
+                trip.manualCorrectionEvents.append(event)
+            }
             store?.updateTrip(trip)
         }
 

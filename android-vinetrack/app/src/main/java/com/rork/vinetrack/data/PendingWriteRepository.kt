@@ -66,6 +66,27 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
         return write
     }
 
+    /** Atomically replace one unresolved marker's payload, keeping its identity and earliest baseline. */
+    fun upsertCoalesced(entityType: String, clientId: String, payloadJson: String): PendingWrite {
+        val now = System.currentTimeMillis()
+        val existing = _writes.value.firstOrNull {
+            it.entityType == entityType && it.clientId == clientId &&
+                it.opType == com.rork.vinetrack.data.model.PendingOpType.UPDATE &&
+                it.status in PendingWriteStatus.unresolved
+        }
+        val next = existing?.copy(payloadJson = payloadJson, status = PendingWriteStatus.PENDING,
+            lastError = null, updatedAt = now) ?: PendingWrite(
+            id = UUID.randomUUID().toString(), entityType = entityType,
+            opType = com.rork.vinetrack.data.model.PendingOpType.UPDATE,
+            payloadJson = payloadJson, clientId = clientId, createdAt = now, updatedAt = now,
+        )
+        check(update { rows -> rows.filterNot { it.entityType == entityType && it.clientId == clientId &&
+            it.opType == next.opType && it.status in PendingWriteStatus.unresolved } + next }) {
+            "Pending write could not be committed durably."
+        }
+        return next
+    }
+
     /** Update the status and optional error of a pending write by id. */
     fun updateStatus(id: String, status: String, lastError: String? = null) {
         val now = System.currentTimeMillis()

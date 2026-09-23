@@ -961,6 +961,7 @@ private fun TripDetailView(
     val trip = state.trips.firstOrNull { it.id == tripId }
     var confirmDelete by remember { mutableStateOf(false) }
     var ending by remember { mutableStateOf(false) }
+    var changingRoute by remember { mutableStateOf(false) }
     var editingSeeding by remember { mutableStateOf(false) }
     var editingCostLinks by remember { mutableStateOf(false) }
     var exportMenuOpen by remember { mutableStateOf(false) }
@@ -999,6 +1000,7 @@ private fun TripDetailView(
             onBack = onBack,
             onShowDetails = { showLiveHud = false },
             onEndConfirmed = { ending = true },
+            onChangeRoute = { changingRoute = true },
             hudLauncherMode = hudLauncherMode,
             onHudLauncherModeChange = onHudLauncherModeChange,
             onGoHome = onGoHome,
@@ -1715,6 +1717,9 @@ private fun TripDetailView(
         )
     }
 
+    if (changingRoute && trip.isActive) {
+        ChangeTripRouteSheet(vm, trip, state.paddocks, onDismiss = { changingRoute = false })
+    }
     if (ending) {
         EndTripSheet(
             vm = vm,
@@ -1742,6 +1747,7 @@ private fun ActiveTripHud(
     onBack: () -> Unit,
     onShowDetails: () -> Unit,
     onEndConfirmed: () -> Unit,
+    onChangeRoute: () -> Unit,
     hudLauncherMode: String?,
     onHudLauncherModeChange: (String?) -> Unit,
     onGoHome: () -> Unit = {},
@@ -2164,6 +2170,10 @@ private fun ActiveTripHud(
                             nextPath = nextPlanned,
                             lockConfident = state.rowLockIsConfident,
                         )
+                    }
+                    OutlinedButton(onClick = onChangeRoute, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Filled.Route, contentDescription = null)
+                        Text("  Change Route")
                     }
                     if (!state.isTracking) {
                         Text(
@@ -4375,6 +4385,83 @@ private fun StartTripAddFunctionDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChangeTripRouteSheet(
+    vm: AppViewModel, trip: Trip, paddocks: List<Paddock>, onDismiss: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val selected = remember(paddocks, trip.effectivePaddockIds) {
+        paddocks.filter { it.id in trip.effectivePaddockIds }.sortedWith(TripRowSequencePlanner.rowOrderComparator)
+    }
+    val paths = remember(selected) { TripRowSequencePlanner.availablePaths(selected) }
+    val visited = remember(trip.completedPaths, trip.skippedPaths) {
+        trip.completedPaths.orEmpty().toSet() + trip.skippedPaths.orEmpty().toSet()
+    }
+    var pattern by remember(trip.id) { mutableStateOf(TrackingPattern.fromRaw(trip.trackingPattern)) }
+    var startPath by remember(trip.id) {
+        mutableStateOf(trip.rowSequence.getOrNull(trip.sequenceIndex) ?: paths.firstOrNull() ?: 0.5)
+    }
+    var higherFirst by remember(trip.id) {
+        mutableStateOf(trip.rowSequence.getOrNull(trip.sequenceIndex + 1)?.let {
+            it > (trip.rowSequence.getOrNull(trip.sequenceIndex) ?: it)
+        } ?: true)
+    }
+    var pathMenu by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val proposed = remember(selected, pattern, startPath, higherFirst, visited) {
+        TripRowSequencePlanner.generateSequence(selected, pattern, startPath, higherFirst).filterNot { it in visited }
+    }
+    val startVisited = pattern != TrackingPattern.FREE_DRIVE && startPath in visited
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Change Route", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Tracking Pattern", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                TrackingPattern.entries.forEach { option ->
+                    StartTripPatternCard(pattern = option, selected = pattern == option) { pattern = option }
+                }
+                if (pattern != TrackingPattern.FREE_DRIVE) {
+                    Text("Starting path / row", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    Box {
+                        StartTripSelectorCard(icon = Icons.Filled.Route, tint = VineColors.Info,
+                            title = "Starting path", subtitle = TripRowSequencePlanner.pathMenuLabel(startPath, selected),
+                            onClick = { pathMenu = true })
+                        DropdownMenu(expanded = pathMenu, onDismissRequest = { pathMenu = false }) {
+                            paths.forEach { path ->
+                                StartTripMenuItem(TripRowSequencePlanner.pathMenuLabel(path, selected), path == startPath) {
+                                    startPath = path; pathMenu = false
+                                }
+                            }
+                        }
+                    }
+                    if (startVisited) Text("That path is already completed or skipped. Choose an unfinished path.",
+                        color = VineColors.Destructive)
+                    Text("Direction", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StartTripDirectionChip("Lower to higher", higherFirst, Modifier.weight(1f)) { higherFirst = true }
+                        StartTripDirectionChip("Higher to lower", !higherFirst, Modifier.weight(1f)) { higherFirst = false }
+                    }
+                }
+                Text("Proposed remaining route", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                Text(if (pattern == TrackingPattern.FREE_DRIVE) "Free Drive — no planned route. Existing coverage stays."
+                    else TripRowSequencePlanner.sequencePreviewText(proposed), color = vine.textSecondary)
+                Text("${proposed.size} paths remaining · prior completed and skipped paths stay recorded.",
+                    fontSize = 12.sp, color = vine.textSecondary)
+            }
+            error?.let { Text(it, color = VineColors.Destructive) }
+            Button(onClick = {
+                vm.changeActiveTripRoute(pattern, startPath, higherFirst) { ok ->
+                    if (ok) onDismiss() else error = vm.ui.value.tripError ?: "Couldn't save this route."
+                }
+            }, enabled = !startVisited && (pattern == TrackingPattern.FREE_DRIVE || proposed.isNotEmpty()),
+                modifier = Modifier.fillMaxWidth()) { Text("Save Route") }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

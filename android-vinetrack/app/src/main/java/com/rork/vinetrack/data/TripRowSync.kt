@@ -162,6 +162,12 @@ class TripRowSync(
                     )
                     continue
                 }
+                if (pending.list().any { marker -> marker.clientId == payload.tripId &&
+                        marker.entityType == PendingEntityType.TRIP_ROW_PLAN &&
+                        marker.status in PendingWriteStatus.unresolved }) {
+                    pending.updateStatus(write.id, PendingWriteStatus.FAILED, "Waiting for the changed route to sync.")
+                    continue
+                }
                 // The captured coverage lives in the Stage A snapshot. No matching
                 // snapshot means there is no local work to replay (e.g. ended on
                 // this device, or a different trip is now active) — remove the

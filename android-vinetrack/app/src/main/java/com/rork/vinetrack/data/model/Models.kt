@@ -639,6 +639,8 @@ data class Trip(
     @SerialName("sequence_index") val sequenceIndex: Int = 0,
     @SerialName("current_row_number") val currentRowNumber: Double? = null,
     @SerialName("next_row_number") val nextRowNumber: Double? = null,
+    /** Existing trip correction history, retained in the local active snapshot. */
+    @SerialName("manual_correction_events") val manualCorrectionEvents: List<String>? = null,
     /**
      * Optional engine-hour readings (Stage 3F-1), mirroring the iOS `Trip`
      * `start_engine_hours` / `end_engine_hours` columns. Captured manually at

@@ -199,6 +199,9 @@ import com.rork.vinetrack.data.YieldSessionSaveSync
 import com.rork.vinetrack.data.TripGpsSync
 import com.rork.vinetrack.data.TripMetadataSync
 import com.rork.vinetrack.data.TripSeedingSync
+import com.rork.vinetrack.data.TripRowPlanSync
+import com.rork.vinetrack.data.TripRowSequencePlanner
+import com.rork.vinetrack.data.TrackingPattern
 import com.rork.vinetrack.data.TripRowSync
 import com.rork.vinetrack.data.TripTankSync
 import com.rork.vinetrack.data.TripAuditRepository
@@ -2140,6 +2143,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * from the other replay coordinators.
      */
     private val tripRowSync = TripRowSync(tripRepo, pendingWrites, activeTripStore)
+    private val tripRowPlanSync = TripRowPlanSync(tripRepo, pendingWrites)
 
     /**
      * Offline replay coordinator for trip tank/fill progress only (Tier-A Stage
@@ -3001,7 +3005,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!preserveAffectedRecoveryEvidence().didRun) return
         viewModelScope.launch {
             tripMetadataSync.replayAll { trip ->
-                _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == trip.id) trip else it }) }
+                _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == trip.id) trip.copy(manualCorrectionEvents =
+                    (trip.manualCorrectionEvents.orEmpty() + it.manualCorrectionEvents.orEmpty()).distinct()) else it }) }
                 persistActiveTripSnapshot()
             }
         }
@@ -3019,7 +3024,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!preserveAffectedRecoveryEvidence().didRun) return
         viewModelScope.launch {
             tripSeedingSync.replayAll { trip ->
-                _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == trip.id) trip else it }) }
+                _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == trip.id) trip.copy(manualCorrectionEvents =
+                    (trip.manualCorrectionEvents.orEmpty() + it.manualCorrectionEvents.orEmpty()).distinct()) else it }) }
                 persistActiveTripSnapshot()
             }
         }
@@ -3044,6 +3050,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }) }
                     persistActiveTripSnapshot()
                 }
+                tripRowPlanSync.replayAll { _ ->
+                    // The durable local trip is authoritative for live GPS and
+                    // coverage; a replay response must not rewind its row pointer.
+                }
                 // A spray record may depend on a queued spray job; both parents
                 // must exist before tank-session state is attempted.
                 sprayJobCreateSync.replayAll()
@@ -3057,8 +3067,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 tripTankSync.replayAll { trip ->
                     _ui.update { st -> st.copy(trips = st.trips.map { existing ->
                         if (existing.id != trip.id) existing
-                        else if ((trip.pathPoints?.size ?: 0) >= (existing.pathPoints?.size ?: 0)) trip
-                        else trip.copy(pathPoints = existing.pathPoints, totalDistance = existing.totalDistance)
+                        else if ((trip.pathPoints?.size ?: 0) >= (existing.pathPoints?.size ?: 0))
+                            trip.copy(manualCorrectionEvents = (trip.manualCorrectionEvents.orEmpty() + existing.manualCorrectionEvents.orEmpty()).distinct())
+                        else trip.copy(pathPoints = existing.pathPoints, totalDistance = existing.totalDistance,
+                            manualCorrectionEvents = (trip.manualCorrectionEvents.orEmpty() + existing.manualCorrectionEvents.orEmpty()).distinct())
                     }) }
                     persistActiveTripSnapshot()
                 }
@@ -3080,7 +3092,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 tripEndSync.replayAll { trip ->
                     _ui.update { st -> st.copy(
-                        trips = st.trips.map { if (it.id == trip.id) trip else it },
+                        trips = st.trips.map { if (it.id == trip.id)
+                            trip.copy(manualCorrectionEvents = (trip.manualCorrectionEvents.orEmpty() + it.manualCorrectionEvents.orEmpty()).distinct()) else it },
                         locallyEndedTripIds = st.locallyEndedTripIds - trip.id,
                     ) }
                     persistActiveTripSnapshot()
@@ -3129,13 +3142,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                 val existingCount = existing.pathPoints?.size ?: 0
                                 val returnedCount = trip.pathPoints?.size ?: 0
                                 if (returnedCount >= existingCount) {
-                                    trip
+                                    trip.copy(manualCorrectionEvents = (trip.manualCorrectionEvents.orEmpty() + existing.manualCorrectionEvents.orEmpty()).distinct())
                                 } else {
                                     // Don't let a replay reconcile shrink a path the
                                     // live tracker has grown past since the PATCH.
                                     trip.copy(
                                         pathPoints = existing.pathPoints,
                                         totalDistance = existing.totalDistance,
+                                        manualCorrectionEvents = (trip.manualCorrectionEvents.orEmpty() + existing.manualCorrectionEvents.orEmpty()).distinct(),
                                     )
                                 }
                             }
@@ -3171,7 +3185,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                 val existingCount = existing.pathPoints?.size ?: 0
                                 val returnedCount = trip.pathPoints?.size ?: 0
                                 if (returnedCount >= existingCount) {
-                                    trip
+                                    trip.copy(manualCorrectionEvents = (trip.manualCorrectionEvents.orEmpty() + existing.manualCorrectionEvents.orEmpty()).distinct())
                                 } else {
                                     // The coverage PATCH returns the server's path,
                                     // which can lag the live tracker — keep the
@@ -3179,6 +3193,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                     trip.copy(
                                         pathPoints = existing.pathPoints,
                                         totalDistance = existing.totalDistance,
+                                        manualCorrectionEvents = (trip.manualCorrectionEvents.orEmpty() + existing.manualCorrectionEvents.orEmpty()).distinct(),
                                     )
                                 }
                             }
@@ -8301,6 +8316,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val tripId = trip.id
         val capturedPoints = tracker?.points?.toList() ?: trip.pathPoints ?: emptyList()
         val capturedDistance = tracker?.distanceMetres ?: trip.totalDistance ?: 0.0
+        val owner = session.userId
+        val vineyard = _ui.value.selectedVineyardId
+        if (owner == null || vineyard == null || runCatching { activeTripStore.saveDurably(
+                owner, vineyard, trip.copy(pathPoints = capturedPoints, totalDistance = capturedDistance)) }.getOrDefault(false) == false) {
+            _ui.update { it.copy(tripError = "Couldn't save the finished trip to this device. It's still running; please free up storage and retry.") }
+            onResult(false)
+            return
+        }
         val requestedEndInstant = java.time.Instant.now()
         val requestedEndTime = requestedEndInstant.toString()
         if (trip.tripFunction == "spraying") {
@@ -8330,6 +8353,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     ((write.clientId == tripId && write.entityType in setOf(
                         com.rork.vinetrack.data.model.PendingEntityType.TRIP_START,
                         com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK,
+                        com.rork.vinetrack.data.model.PendingEntityType.TRIP_ROW_PLAN,
                     )) || (write.entityType == com.rork.vinetrack.data.model.PendingEntityType.SPRAY_RECORD &&
                         write.opType == com.rork.vinetrack.data.model.PendingOpType.CREATE &&
                         _ui.value.sprayRecords.any { it.id == write.clientId && it.tripId == tripId }))
@@ -8346,7 +8370,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val ended = tripRepo.endTrip(tripId, capturedPoints, capturedDistance, cleanNotes, endEngineHours)
                 _ui.update { st ->
                     st.copy(
-                        trips = st.trips.map { if (it.id == tripId) ended else it },
+                        trips = st.trips.map { if (it.id == tripId)
+                            ended.copy(manualCorrectionEvents =
+                                (ended.manualCorrectionEvents.orEmpty() + it.manualCorrectionEvents.orEmpty()).distinct()) else it },
                         locallyEndedTripIds = st.locallyEndedTripIds - tripId,
                         tripBusy = false,
                     )
@@ -8393,7 +8419,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 locallyEndedTripIds = it.locallyEndedTripIds + tripId,
                 tripBusy = false,
-                tripError = "Trip ended offline — it'll finish syncing when connection returns.",
+                tripError = if (it.isOnline)
+                    "Trip ended on this device — waiting for the changed route and other trip data to sync."
+                else "Trip ended offline — it'll finish syncing when connection returns.",
             )
         }
     }
@@ -8903,6 +8931,66 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 rowLockIsConfident = rowLockTracker.isConfident,
             )
         }
+    }
+
+    /** Replan the remaining route without ending or restarting GPS capture. */
+    fun changeActiveTripRoute(
+        pattern: TrackingPattern, startPath: Double, higherFirst: Boolean,
+        onResult: (Boolean) -> Unit,
+    ) {
+        val state = _ui.value
+        val before = state.activeTrip
+        if (before == null) {
+            _ui.update { it.copy(tripError = "This trip is no longer active.") }
+            onResult(false)
+            return
+        }
+        val blocks = state.paddocks.filter { it.id in before.effectivePaddockIds }
+        val available = TripRowSequencePlanner.availablePaths(blocks)
+        val visited = before.completedPaths.orEmpty().toSet() + before.skippedPaths.orEmpty().toSet()
+        if (pattern != TrackingPattern.FREE_DRIVE && (startPath !in available || startPath in visited)) {
+            _ui.update { it.copy(tripError = "Choose an unfinished starting path in the selected blocks.") }
+            onResult(false)
+            return
+        }
+        val generated = TripRowSequencePlanner.generateSequence(blocks, pattern, startPath, higherFirst)
+        if (pattern != TrackingPattern.FREE_DRIVE && generated.firstOrNull() != startPath) {
+            _ui.update { it.copy(tripError = "Choose a valid starting path for this route.") }
+            onResult(false)
+            return
+        }
+        val remaining = generated.filterNot { it in visited }
+        val oldPath = before.rowSequence.getOrNull(before.sequenceIndex)?.let(TripRowSequencePlanner::formatPath) ?: "none"
+        val oldDirection = if (before.rowSequence.getOrNull(before.sequenceIndex + 1)?.let {
+                it < (before.rowSequence.getOrNull(before.sequenceIndex) ?: it) } == true) "higherToLower" else "lowerToHigher"
+        val event = "${java.time.Instant.now()} route_replanned: ${before.trackingPattern} $oldPath $oldDirection -> ${pattern.rawValue} ${TripRowSequencePlanner.formatPath(startPath)} ${if (higherFirst) "lowerToHigher" else "higherToLower"}"
+        val after = before.copy(
+            trackingPattern = pattern.rawValue, rowSequence = remaining, sequenceIndex = 0,
+            currentRowNumber = remaining.firstOrNull(), nextRowNumber = remaining.getOrNull(1),
+            manualCorrectionEvents = before.manualCorrectionEvents.orEmpty() + event,
+        )
+        val owner = session.userId
+        val vineyard = state.selectedVineyardId
+        if (owner == null || vineyard == null || runCatching {
+                activeTripStore.saveDurably(owner, vineyard, after)
+            }.getOrDefault(false) == false) {
+            _ui.update { it.copy(tripError = "Couldn't save the route to this device. Trip is unchanged.") }
+            onResult(false)
+            return
+        }
+        try {
+            tripRowPlanSync.enqueue(before, after)
+        } catch (_: Exception) {
+            runCatching { activeTripStore.saveDurably(owner, vineyard, before) }
+            _ui.update { it.copy(tripError = "Couldn't queue the changed route. Trip is unchanged.") }
+            onResult(false)
+            return
+        }
+        _ui.update { it.copy(trips = it.trips.map { trip -> if (trip.id == after.id) after else trip }, tripError = null) }
+        rowLockTracker.reset()
+        _ui.update { it.copy(currentDrivingPathNumber = null, rowLockConfidence = 0.0, rowLockIsConfident = false) }
+        if (state.isOnline) replayPhase5Writes()
+        onResult(true)
     }
 
     /** Reset live movement + row-lock state when tracking stops. */

@@ -93,6 +93,8 @@ object PendingEntityType {
      * summaries are NOT carried here.
      */
     const val TRIP_ROW = "trip_row"
+    /** Coalesced active route-plan edit, replayed after START and before row coverage/END. */
+    const val TRIP_ROW_PLAN = "trip_row_plan"
     /**
      * Coalesced tank/fill marker for an existing active server trip (Tier-A
      * Stage E-1). Exactly one unresolved marker per trip
