@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.fragment.app.FragmentActivity
 import com.rork.vinetrack.data.auth.BiometricAuth
+import com.rork.vinetrack.data.auth.BiometricEnrollmentEligibility
 import com.rork.vinetrack.data.auth.BiometricResult
 import kotlinx.coroutines.launch
 import com.rork.vinetrack.ui.theme.VineColors
@@ -399,10 +400,12 @@ private fun BiometricEnrollmentPrompt(vm: AppViewModel) {
 
     var visible by remember {
         mutableStateOf(
-            capability.canUseAnyAuth &&
-                !vm.biometricEnabled &&
-                !vm.biometricEnrollmentPromptShown &&
-                activity != null,
+            BiometricEnrollmentEligibility.shouldOffer(
+                isInMainShell = true,
+                supportsDeviceAuth = capability.canUseAnyAuth && activity != null,
+                isEnabled = vm.biometricEnabled,
+                hasPrompted = vm.biometricEnrollmentPromptShown,
+            ),
         )
     }
     var isWorking by remember { mutableStateOf(false) }
@@ -419,7 +422,7 @@ private fun BiometricEnrollmentPrompt(vm: AppViewModel) {
         icon = { Icon(Icons.Filled.Fingerprint, contentDescription = null, tint = VineColors.LeafGreen) },
         title = { Text("Use biometric unlock?") },
         text = {
-            Text("Sign in faster without retyping your password. Biometric login uses your device's secure authentication \u2014 your password is never stored.")
+            Text("Use your fingerprint, face or device authentication to open VineTrack faster. Your VineTrack password is never stored.")
         },
         confirmButton = {
             TextButton(

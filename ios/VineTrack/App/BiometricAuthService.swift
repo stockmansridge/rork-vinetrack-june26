@@ -54,7 +54,7 @@ final class BiometricAuthService {
         case .faceID: return "Face ID"
         case .touchID: return "Touch ID"
         case .opticID: return "Optic ID"
-        case .none: return "Biometrics"
+        case .none: return "device authentication"
         }
     }
 
@@ -172,7 +172,11 @@ final class BiometricAuthService {
     /// After Supabase restores the session, lock the UI if the user has
     /// opted into biometric login on this device.
     func lockIfEnabled() {
-        if isEnabled && (deviceSupportsBiometrics || deviceSupportsAnyAuth) {
+        if BiometricEnrollmentEligibility.shouldLock(
+            hasRestoredSession: true,
+            isEnabled: isEnabled,
+            supportsDeviceAuth: deviceSupportsBiometrics || deviceSupportsAnyAuth
+        ) {
             requiresUnlock = true
         } else {
             requiresUnlock = false

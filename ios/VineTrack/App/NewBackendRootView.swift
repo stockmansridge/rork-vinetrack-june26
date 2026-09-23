@@ -10,9 +10,12 @@ struct NewBackendRootView: View {
     @Environment(VineyardInsightsService.self) private var vineyardInsights
     @Environment(CanopyReferenceImageRepository.self) private var canopyReferenceImages
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
 
     @State private var didAttemptRestore: Bool = false
     @State private var showBiometricEnrollment: Bool = false
+    @State private var enrollmentOfferScheduled: Bool = false
+    @State private var releasePolicy = AppReleasePolicyService()
     @State private var lastSignedInState: Bool = false
     @State private var onboardingCompleted: Bool = OnboardingState.isCompleted
     @State private var disclaimerAccepted: Bool = false
@@ -110,6 +113,30 @@ struct NewBackendRootView: View {
                 }
             }
         }
+        .alert(
+            releasePolicy.decision == .required ? "VineTrack update required" : "Update available",
+            isPresented: Binding(
+                get: { releasePolicy.prompt != nil && didAttemptRestore && !showBiometricEnrollment && !biometric.requiresUnlock && (!auth.isSignedIn || didApplyDefaultVineyard) },
+                set: { _ in }
+            )
+        ) {
+            if let url = releasePolicy.prompt?.officialStoreURL {
+                Button("Update VineTrack") {
+                    openURL(url)
+                    releasePolicy.dismissOptional()
+                }
+            }
+            if releasePolicy.decision == .optional {
+                Button("Later", role: .cancel) { releasePolicy.later() }
+            }
+        } message: {
+            if releasePolicy.decision == .required {
+                Text("Your version of VineTrack is no longer supported. Please update to continue using the latest fixes and services.")
+            } else if let policy = releasePolicy.prompt {
+                Text("A newer version of VineTrack is available.\n\nInstalled: \(AppBuildInfo.version)\nLatest: \(policy.latestVersion)")
+            }
+        }
+        .task { await releasePolicy.refreshIfNeeded() }
         .onChange(of: currentRoute) { _, newRoute in
             StartupDiagnostics.route(newRoute)
         }
@@ -164,6 +191,9 @@ struct NewBackendRootView: View {
         }
         .onChange(of: isInMainAppShell) { _, _ in
             evaluateInvitationsSheet()
+        }
+        .onChange(of: isBiometricEnrollmentReady) { _, isReady in
+            if isReady { evaluateBiometricEnrollment() }
         }
         .task(id: auth.isSignedIn) {
             // Only react to a confirmed signed-in transition AFTER session
@@ -273,6 +303,9 @@ struct NewBackendRootView: View {
                 Task { await ClientTelemetryService.shared.reportActivity(vineyardId: store.selectedVineyardId) }
                 Task { await canopyReferenceImages.refresh() }
             }
+            if newPhase == .active {
+                Task { await releasePolicy.refreshIfNeeded() }
+            }
             lastScenePhase = newPhase
         }
     }
@@ -284,21 +317,28 @@ struct NewBackendRootView: View {
         if newValue {
             // User just signed in.
             biometric.updateSavedEmailIfEnabled(auth.userEmail)
-            // Offer biometric enrollment once if supported and not enabled.
-            if (biometric.deviceSupportsBiometrics || biometric.deviceSupportsAnyAuth),
-               !biometric.isEnabled,
-               !biometric.hasShownEnrollmentPrompt {
-                // Defer slightly so the login screen dismiss animation completes.
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(450))
-                    if auth.isSignedIn && !biometric.isEnabled {
-                        showBiometricEnrollment = true
-                    }
-                }
-            }
         } else {
             // Signed out — clear the unlock gate so a future sign-in starts fresh.
             biometric.markUnlocked()
+        }
+    }
+
+    private func evaluateBiometricEnrollment() {
+        biometric.refreshCapability()
+        guard !enrollmentOfferScheduled, !showBiometricEnrollment,
+              BiometricEnrollmentEligibility.shouldOffer(
+                  isInMainShell: isBiometricEnrollmentReady,
+                  supportsDeviceAuth: biometric.deviceSupportsBiometrics || biometric.deviceSupportsAnyAuth,
+                  isEnabled: biometric.isEnabled,
+                  hasPrompted: biometric.hasShownEnrollmentPrompt
+              ) else { return }
+        enrollmentOfferScheduled = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(450))
+            if isBiometricEnrollmentReady && !biometric.isEnabled && !biometric.hasShownEnrollmentPrompt {
+                showBiometricEnrollment = true
+            }
+            enrollmentOfferScheduled = false
         }
     }
 
@@ -393,6 +433,12 @@ struct NewBackendRootView: View {
         vineyardLoadFailedNoCache = false
         didApplyDefaultVineyard = false
         await loadVineyardsAndApplyDefault()
+    }
+
+    private var isBiometricEnrollmentReady: Bool {
+        didAttemptRestore && auth.isSignedIn && !biometric.requiresUnlock
+            && onboardingCompleted && didApplyDefaultVineyard && !isLoadingVineyards
+            && (store.selectedVineyard == nil || (didCheckDisclaimer && disclaimerAccepted))
     }
 
     /// True once the user has cleared auth/onboarding/disclaimer/vineyard

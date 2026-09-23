@@ -181,6 +181,7 @@ fun RootScreen() {
             else MainScaffold(vm, state, work)
     }
     }
+    ReleasePolicyPrompt(state.route)
 }
 
 @Composable

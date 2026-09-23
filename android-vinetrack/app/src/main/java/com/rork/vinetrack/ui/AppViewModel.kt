@@ -4585,7 +4585,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
             }
-            if (biometricStore.isEnabled) {
+            if (com.rork.vinetrack.data.auth.BiometricEnrollmentEligibility.shouldLock(
+                    hasRestoredSession = true, isEnabled = biometricStore.isEnabled,
+                )) {
                 // Session restored, but the user gated this device behind a
                 // biometric/device-credential unlock (parity with iOS
                 // BiometricLockView). Hold here until they pass the prompt.
