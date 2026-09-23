@@ -68,6 +68,7 @@ struct ELRipenessHeatmapContent: View {
 
     @State private var selectedObservation: ELRipeness.Observation?
     @State private var isShowingInfo: Bool = false
+    @State private var showObservations: Bool = true
 
     /// Playback tick. Reduce Motion steps observation-to-observation, so it
     /// wants a slower cadence than the day-by-day sweep.
@@ -183,6 +184,7 @@ struct ELRipenessHeatmapContent: View {
                 blocks: model.heatModel?.blocks ?? [],
                 allBlocks: model.blocks,
                 annotations: observationAnnotations,
+                showObservations: showObservations,
                 labels: blockLabels,
                 selectedBlockId: model.selectedBlockId,
                 isOnline: isOnline,
@@ -270,6 +272,10 @@ struct ELRipenessHeatmapContent: View {
                 .padding(.vertical, 1)
             }
             .scrollIndicators(.hidden)
+
+            Toggle("Show observations", isOn: $showObservations)
+                .font(.subheadline)
+                .controlSize(.small)
         }
     }
 

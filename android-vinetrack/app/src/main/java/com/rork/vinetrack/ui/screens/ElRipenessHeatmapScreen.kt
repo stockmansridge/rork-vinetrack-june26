@@ -40,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -211,6 +212,7 @@ fun ElRipenessHeatmapContent(
     }
 
     var sheetObservation by remember { mutableStateOf<ElRipenessHeatmap.Observation?>(null) }
+    var showObservations by remember { mutableStateOf(true) }
 
     Column(modifier = modifier.fillMaxSize()) {
         when (val load = ui.loadState) {
@@ -269,8 +271,17 @@ fun ElRipenessHeatmapContent(
                 VintageBar(ui, model, vine.textPrimary)
                 DevelopmentPhaseBar(ui, model)
                 BlockFilterBar(ui, model)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Show observations", fontSize = 14.sp, color = vine.textPrimary)
+                    Switch(checked = showObservations, onCheckedChange = { showObservations = it })
+                }
                 HeatMap(
                     ui = ui,
+                    showObservations = showObservations,
                     modifier = Modifier.fillMaxWidth().height(320.dp),
                     onObservationTap = { sheetObservation = it },
                 )
@@ -407,6 +418,7 @@ private fun BlockFilterBar(ui: ElRipenessUiState, model: ElRipenessHeatmapViewMo
 @Composable
 private fun HeatMap(
     ui: ElRipenessUiState,
+    showObservations: Boolean,
     modifier: Modifier = Modifier,
     onObservationTap: (ElRipenessHeatmap.Observation) -> Unit,
 ) {
@@ -490,16 +502,18 @@ private fun HeatMap(
                 }
 
                 // Observation pins, above the surface.
-                heat?.blocks?.forEach { block ->
-                    block.influencing.filter(::hasUsableMapCoordinate).forEach {
-                        ObservationPin(it, PinStyle.CURRENT, ui.selectedPhase, onObservationTap)
+                if (showObservations) {
+                    heat?.blocks?.forEach { block ->
+                        block.influencing.filter(::hasUsableMapCoordinate).forEach {
+                            ObservationPin(it, PinStyle.CURRENT, ui.selectedPhase, onObservationTap)
+                        }
+                        block.stale.filter(::hasUsableMapCoordinate).forEach {
+                            ObservationPin(it, PinStyle.STALE, ui.selectedPhase, onObservationTap)
+                        }
                     }
-                    block.stale.filter(::hasUsableMapCoordinate).forEach {
-                        ObservationPin(it, PinStyle.STALE, ui.selectedPhase, onObservationTap)
+                    heat?.unassigned?.filter(::hasUsableMapCoordinate)?.forEach {
+                        ObservationPin(it, PinStyle.UNASSIGNED, ui.selectedPhase, onObservationTap)
                     }
-                }
-                heat?.unassigned?.filter(::hasUsableMapCoordinate)?.forEach {
-                    ObservationPin(it, PinStyle.UNASSIGNED, ui.selectedPhase, onObservationTap)
                 }
 
                 // Block name plates carrying the influencing-only median.

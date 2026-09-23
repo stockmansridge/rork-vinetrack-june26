@@ -79,6 +79,7 @@ struct ELRipenessMapView: UIViewRepresentable {
     /// with no observations are still outlined and still count towards the fit.
     let allBlocks: [ELRipeness.BlockInput]
     let annotations: [ELRipenessObservationAnnotation]
+    let showObservations: Bool
     let labels: [ELRipenessBlockLabelAnnotation]
     let selectedBlockId: String?
     /// Basemap tiles need a network. Offline we drop to a plain background and
@@ -124,7 +125,9 @@ struct ELRipenessMapView: UIViewRepresentable {
         }
 
         mapView.addAnnotations(labels)
-        mapView.addAnnotations(annotations)
+        if showObservations {
+            mapView.addAnnotations(annotations)
+        }
 
         let focusKey = "\(selectedBlockId ?? "all")-\(allBlocks.map(\.id).joined(separator: ","))"
         if context.coordinator.focusKey != focusKey {
