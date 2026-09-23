@@ -228,6 +228,45 @@ final class OptimalRipenessParityTests: XCTestCase {
         XCTAssertTrue(service.isDavisDataUnverified(forKey: davis.sourceKey))
     }
 
+    func testDavisVerificationTracksOnlyRefreshedDatesAcrossExpandedWindowAndRestart() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let davis = GDDSource.davisWeatherLink(stationId: "partial-verification-\(UUID().uuidString)")
+        let legacy = Dictionary(uniqueKeysWithValues: (1...10).map { day in
+            (String(format: "202609%02d", day), DailyTemp(high: 20, low: 10))
+        })
+        let service = DegreeDayService(timeZone: zone)
+        service.installDailyTemps(legacy, for: davis)
+        // A pre-existing station-wide v5 marker must not certify any retained day.
+        UserDefaults.standard.set(5, forKey: "vinetrack_gdd_davis_parser_version_\(davis.sourceKey)")
+        let narrowStart = try date("2026-09-05T00:00:00Z")
+        let wideStart = try date("2026-09-01T00:00:00Z")
+        let end = try date("2026-09-11T00:00:00Z")
+        let refreshed = Dictionary(uniqueKeysWithValues: (5...10).map { day in
+            (String(format: "202609%02d", day), DailyTemp(high: 26, low: 12))
+        })
+        XCTAssertFalse(service.hasCompleteData(forKey: davis.sourceKey, coveringFrom: narrowStart, to: end))
+        XCTAssertTrue(service.commitDavisRefresh(refreshed, requestedKeys: Set(refreshed.keys), for: davis))
+        XCTAssertTrue(service.hasCompleteData(forKey: davis.sourceKey, coveringFrom: narrowStart, to: end))
+        XCTAssertFalse(service.hasCompleteData(forKey: davis.sourceKey, coveringFrom: wideStart, to: end))
+        XCTAssertEqual(service.refreshDates(forKey: davis.sourceKey, coveringFrom: wideStart, to: end).map(dayKey),
+                       ["20260901", "20260902", "20260903", "20260904", "20260908", "20260909", "20260910"])
+
+        let restarted = DegreeDayService(timeZone: zone)
+        XCTAssertEqual(restarted.dailyTemp(forKey: "20260901", source: davis)?.high, 20)
+        XCTAssertEqual(restarted.dailyTemp(forKey: "20260905", source: davis)?.high, 26)
+        XCTAssertFalse(restarted.hasCompleteData(forKey: davis.sourceKey, coveringFrom: wideStart, to: end))
+        XCTAssertEqual(Array(restarted.refreshDates(forKey: davis.sourceKey, coveringFrom: wideStart, to: end).map(dayKey).prefix(4)),
+                       ["20260901", "20260902", "20260903", "20260904"])
+        let pending = Set(["20260901", "20260902", "20260903", "20260904"])
+        XCTAssertFalse(restarted.commitDavisRefresh(nil, requestedKeys: pending, for: davis))
+        XCTAssertFalse(restarted.commitDavisRefresh(["20260901": DailyTemp(high: 30, low: 15)], requestedKeys: pending, for: davis))
+        XCTAssertEqual(restarted.dailyTemp(forKey: "20260901", source: davis)?.high, 20)
+        XCTAssertFalse(restarted.hasCompleteData(forKey: davis.sourceKey, coveringFrom: wideStart, to: end))
+        XCTAssertEqual(Array(restarted.refreshDates(forKey: davis.sourceKey, coveringFrom: wideStart, to: end).map(dayKey).prefix(4)),
+                       ["20260901", "20260902", "20260903", "20260904"])
+        UserDefaults.standard.removeObject(forKey: "vinetrack_gdd_davis_parser_version_\(davis.sourceKey)")
+    }
+
     func testSyntheticMatchingModesAccumulateUnroundedAcrossProviders() throws {
         let service = DegreeDayService(timeZone: TimeZone(identifier: "UTC")!)
         let davis = GDDSource.davisWeatherLink(stationId: "synthetic-\(UUID().uuidString)")

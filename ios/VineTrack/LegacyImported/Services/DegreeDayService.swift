@@ -101,17 +101,21 @@ class DegreeDayService {
     // vineyard-timezone provenance; the normal online load repopulates them.
     private var cacheKey: String { "vinetrack_gdd_temps_cache_v4" }
     private let lastDailySyncKey = "vinetrack_gdd_last_daily_sync"
-    private let davisParserVersion = 5
-
-    private func davisValidationKey(_ sourceKey: String) -> String {
-        "vinetrack_gdd_davis_parser_version_\(sourceKey)"
+    private func davisVerifiedDatesKey(_ sourceKey: String) -> String {
+        "vinetrack_gdd_davis_verified_dates_v6_\(sourceKey)"
     }
 
-    /// Legacy v4 Davis rows may contain fabricated 0°F extrema. Keep them offline,
-    /// but require a full, observed season replacement before marking them verified.
+    private func verifiedDavisDates(forKey key: String) -> Set<String> {
+        // Station-wide v5 flags cannot prove which retained dates were refreshed.
+        Set(UserDefaults.standard.stringArray(forKey: davisVerifiedDatesKey(key)) ?? [])
+    }
+
+    /// Cached Davis rows without per-date provider evidence remain usable offline,
+    /// but must be requested again before the required window is complete.
     func needsDavisRevalidation(forKey key: String) -> Bool {
-        key.hasPrefix("davis:") && !((temps[key] ?? [:]).isEmpty) &&
-            UserDefaults.standard.integer(forKey: davisValidationKey(key)) < davisParserVersion
+        guard key.hasPrefix("davis:") else { return false }
+        let verified = verifiedDavisDates(forKey: key)
+        return (temps[key] ?? [:]).keys.contains { !verified.contains($0) }
     }
 
     func isDavisDataUnverified(forKey key: String) -> Bool {
@@ -203,6 +207,10 @@ class DegreeDayService {
     /// another provider's cache.
     func installDailyTemps(_ values: [String: DailyTemp], for source: GDDSource) {
         temps[source.sourceKey] = values
+        if case .davisWeatherLink = source {
+            // Imported/fixture values have no provider verification evidence.
+            UserDefaults.standard.removeObject(forKey: davisVerifiedDatesKey(source.sourceKey))
+        }
         lastSource = source
         saveCache()
     }
@@ -234,11 +242,12 @@ class DegreeDayService {
     /// percentage threshold: partial data may be displayed as incomplete,
     /// but it must not suppress attempts to fetch the remaining days.
     func hasCompleteData(forKey key: String, coveringFrom start: Date, to end: Date) -> Bool {
-        if needsDavisRevalidation(forKey: key) { return false }
         let requiredDates = dates(from: start, to: end)
         guard !requiredDates.isEmpty, let cached = temps[key] else { return false }
+        let verified = key.hasPrefix("davis:") ? verifiedDavisDates(forKey: key) : []
         return requiredDates.allSatisfy { day in
-            cached[compactKey(for: day)] != nil
+            let dayKey = compactKey(for: day)
+            return cached[dayKey] != nil && (!key.hasPrefix("davis:") || verified.contains(dayKey))
         }
     }
 
@@ -262,10 +271,11 @@ class DegreeDayService {
         guard !requiredDates.isEmpty else { return [] }
         let cached = temps[key] ?? [:]
         let recentDates = Set(requiredDates.suffix(Self.recentCompletedDayRefreshCount).map(compactKey(for:)))
+        let verified = key.hasPrefix("davis:") ? verifiedDavisDates(forKey: key) : []
         return requiredDates.filter { day in
-            if needsDavisRevalidation(forKey: key) { return true }
             let dayKey = compactKey(for: day)
-            return cached[dayKey] == nil || recentDates.contains(dayKey)
+            return cached[dayKey] == nil || recentDates.contains(dayKey) ||
+                (key.hasPrefix("davis:") && !verified.contains(dayKey))
         }
     }
 
@@ -278,6 +288,27 @@ class DegreeDayService {
         temps[source.sourceKey] = cached
         lastSource = source
         saveCache()
+    }
+
+    /// Commits a complete, successful Davis response and certifies only requested days.
+    /// A failed or incomplete response leaves both values and verification unchanged.
+    @discardableResult
+    func commitDavisRefresh(_ fetched: [String: DailyTemp]?, requestedKeys: Set<String>, for source: GDDSource) -> Bool {
+        guard case .davisWeatherLink = source, !requestedKeys.isEmpty, let fetched,
+              requestedKeys.allSatisfy({ key in
+                  guard let value = fetched[key] else { return false }
+                  return value.high.isFinite && value.low.isFinite
+              }) else { return false }
+        let key = source.sourceKey
+        var cached = temps[key] ?? [:]
+        for dayKey in requestedKeys { cached[dayKey] = fetched[dayKey] }
+        temps[key] = cached
+        lastSource = source
+        saveCache()
+        var verified = verifiedDavisDates(forKey: key)
+        verified.formUnion(requestedKeys)
+        UserDefaults.standard.set(verified.sorted(), forKey: davisVerifiedDatesKey(key))
+        return true
     }
 
     func dailyTemp(forKey dayKey: String, source: GDDSource) -> DailyTemp? {
@@ -415,7 +446,6 @@ class DegreeDayService {
            let last = lastSource,
            candidates.contains(where: { $0.source == last }),
            hasCompleteData(forKey: last.sourceKey, coveringFrom: seasonStart, to: Date()),
-           !needsDavisRevalidation(forKey: last.sourceKey),
            !needsDailyRefresh(for: last.sourceKey) {
             return
         }
@@ -969,8 +999,7 @@ class DegreeDayService {
             dates.append(d)
             d = cal.date(byAdding: .day, value: 1, to: d) ?? today
         }
-        let revalidatingLegacyCache = needsDavisRevalidation(forKey: key)
-        let refreshDates = forceAllDates || revalidatingLegacyCache
+        let refreshDates = forceAllDates
             ? dates
             : refreshDates(forKey: key, coveringFrom: start, to: today)
         diagnostics.append("Season dates: \(dates.count) \u{2022} missing/recent refresh: \(refreshDates.count)")
@@ -1029,27 +1058,19 @@ class DegreeDayService {
                     isLoading = false
                     return
                 }
+                var fetched: [String: DailyTemp] = [:]
                 for (day, hi) in result.dailyHighC {
                     let k = compactKey(for: day)
                     guard requestedKeys.contains(k) else { continue }
                     guard let lo = result.dailyLowC[day], hi.isFinite, lo.isFinite else { continue }
-                    stationTemps[k] = DailyTemp(high: hi, low: lo)
+                    fetched[k] = DailyTemp(high: hi, low: lo)
                 }
-                if revalidatingLegacyCache {
-                    // Remove obsolete legacy dates only after every requested day
-                    // has been returned; keep unrelated seasons and providers.
-                    for date in dates { stationTemps.removeValue(forKey: compactKey(for: date)) }
-                    for (day, hi) in result.dailyHighC {
-                        guard let lo = result.dailyLowC[day], hi.isFinite, lo.isFinite else { continue }
-                        let k = compactKey(for: day)
-                        if requestedKeys.contains(k) { stationTemps[k] = DailyTemp(high: hi, low: lo) }
-                    }
+                guard commitDavisRefresh(fetched, requestedKeys: requestedKeys, for: source) else {
+                    errorMessage = "Davis temperatures unverified. Existing data was kept."
+                    isLoading = false
+                    return
                 }
-                temps[key] = stationTemps
-                saveCache()
-                if revalidatingLegacyCache || (stationTemps.count == dates.count && dates.allSatisfy { stationTemps[compactKey(for: $0)] != nil }) {
-                    UserDefaults.standard.set(davisParserVersion, forKey: davisValidationKey(key))
-                }
+                stationTemps = temps[key] ?? [:]
                 lastFetchSucceeded = returnedKeys.count
                 diagnostics.append("Davis archive rows: \(result.recordCount), days written: \(result.dailyHighC.count)")
             } catch {
@@ -1080,7 +1101,7 @@ class DegreeDayService {
             errorMessage = "Davis returned no usable temperatures for this season."
         }
         lastDiagnostics = diagnostics.joined(separator: "\n")
-        if !needsDavisRevalidation(forKey: key) { markDailyRefresh(for: key) }
+        if hasCompleteData(forKey: key, coveringFrom: start, to: today) { markDailyRefresh(for: key) }
         isLoading = false
     }
 
