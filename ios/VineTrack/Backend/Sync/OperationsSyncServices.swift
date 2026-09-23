@@ -223,9 +223,9 @@ final class WorkTaskSyncService {
         }
     }
 
-    init(repository: (any WorkTaskSyncRepositoryProtocol)? = nil) {
+    init(repository: (any WorkTaskSyncRepositoryProtocol)? = nil, metadata: OperationsSyncMetadata? = nil) {
         self.repository = repository ?? SupabaseWorkTaskSyncRepository()
-        self.metadata = OperationsSyncMetadata(key: "vinetrack_work_task_sync_metadata")
+        self.metadata = metadata ?? OperationsSyncMetadata(key: "vinetrack_work_task_sync_metadata")
 
         // One-time recovery: re-attempt initial seed push for rows that
         // pre-date sync wiring but never reached Supabase.
@@ -344,10 +344,13 @@ final class WorkTaskSyncService {
         if let firstDeleteError { throw firstDeleteError }
     }
 
-    private func pull(vineyardId: UUID) async throws {
+    func pull(vineyardId: UUID) async throws {
         guard let store else { return }
         let lastSync = metadata.lastSync(for: vineyardId)
-        let remote = try await repository.fetch(vineyardId: vineyardId, since: lastSync)
+        // A device-clock cursor can permanently miss portal rows committed while
+        // a pull is in flight. Reconcile the full vineyard slice on every sweep,
+        // as the Work Task labour and machine line services already do.
+        let remote = try await repository.fetch(vineyardId: vineyardId, since: nil)
         if lastSync == nil {
             let remoteIds = Set(remote.map { $0.id })
             let local = store.workTasks.filter { $0.vineyardId == vineyardId }
