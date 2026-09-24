@@ -34,6 +34,13 @@
 			remoteGlobalIDString = 105FC5792E9EAD3100EA8BCF;
 			remoteInfo = VineTrack;
 		};
+	AB0000010000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 105FC5722E9EAD3100EA8BCF /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 105FC5792E9EAD3100EA8BCF;
+			remoteInfo = VineTrack;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
@@ -41,6 +48,7 @@
 		105FC5892E9EAD3200EA8BCF /* VineTrackTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VineTrackTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		105FC5932E9EAD3200EA8BCF /* VineTrackUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VineTrackUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9F0000010000000000000001 /* VineTrackInsightsTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VineTrackInsightsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB0000020000000000000002 /* VineTrackTripTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VineTrackTripTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -64,6 +72,7 @@
 			path = VineTrackInsightsTests;
 			sourceTree = "<group>";
 		};
+		AB0000030000000000000003 /* VineTrackTripTests */ = {isa = PBXFileSystemSynchronizedRootGroup; path = VineTrackTripTests; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -98,6 +107,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AB0000040000000000000004 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -108,6 +118,7 @@
 				105FC58C2E9EAD3200EA8BCF /* VineTrackTests */,
 				105FC5962E9EAD3200EA8BCF /* VineTrackUITests */,
 				9F0000020000000000000002 /* VineTrackInsightsTests */,
+				AB0000030000000000000003 /* VineTrackTripTests */,
 				105FC57B2E9EAD3100EA8BCF /* Products */,
 			);
 			sourceTree = "<group>";
@@ -119,6 +130,7 @@
 				105FC5892E9EAD3200EA8BCF /* VineTrackTests.xctest */,
 				105FC5932E9EAD3200EA8BCF /* VineTrackUITests.xctest */,
 				9F0000010000000000000001 /* VineTrackInsightsTests.xctest */,
+				AB0000020000000000000002 /* VineTrackTripTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -220,6 +232,19 @@
 			productReference = 105FC5932E9EAD3200EA8BCF /* VineTrackUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		AB0000050000000000000005 /* VineTrackTripTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AB00000A000000000000000A /* Build configuration list for PBXNativeTarget "VineTrackTripTests" */;
+			buildPhases = (AB0000060000000000000006 /* Sources */, AB0000040000000000000004 /* Frameworks */, AB0000070000000000000007 /* Resources */);
+			buildRules = ();
+			dependencies = (AB0000080000000000000008 /* PBXTargetDependency */);
+			fileSystemSynchronizedGroups = (AB0000030000000000000003 /* VineTrackTripTests */);
+			name = VineTrackTripTests;
+			packageProductDependencies = ();
+			productName = VineTrackTripTests;
+			productReference = AB0000020000000000000002 /* VineTrackTripTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -242,6 +267,10 @@
 						TestTargetID = 105FC5792E9EAD3100EA8BCF;
 					};
 					9F0000060000000000000006 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = 105FC5792E9EAD3100EA8BCF;
+					};
+					AB0000050000000000000005 = {
 						CreatedOnToolsVersion = 26.0;
 						TestTargetID = 105FC5792E9EAD3100EA8BCF;
 					};
@@ -270,6 +299,7 @@
 				105FC5882E9EAD3200EA8BCF /* VineTrackTests */,
 				105FC5922E9EAD3200EA8BCF /* VineTrackUITests */,
 				9F0000060000000000000006 /* VineTrackInsightsTests */,
+				AB0000050000000000000005 /* VineTrackTripTests */,
 			);
 		};
 /* End PBXProject section */
@@ -303,6 +333,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AB0000070000000000000007 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -334,6 +365,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AB0000060000000000000006 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -352,6 +384,7 @@
 			target = 105FC5792E9EAD3100EA8BCF /* VineTrack */;
 			targetProxy = 9F0000070000000000000007 /* PBXContainerItemProxy */;
 		};
+		AB0000080000000000000008 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 105FC5792E9EAD3100EA8BCF /* VineTrack */; targetProxy = AB0000010000000000000001 /* PBXContainerItemProxy */; };
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
@@ -690,6 +723,50 @@
 			};
 			name = Release;
 		};
+		AB00000B000000000000000B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 3.1.3;
+				PRODUCT_BUNDLE_IDENTIFIER = app.rork.nt0v48tayl7v8noxcfe74.triptests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/VineTrack.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/VineTrack";
+			};
+			name = Debug;
+		};
+		AB00000C000000000000000C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 3.1.3;
+				PRODUCT_BUNDLE_IDENTIFIER = app.rork.nt0v48tayl7v8noxcfe74.triptests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/VineTrack.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/VineTrack";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -735,6 +812,12 @@
 				105FC5A42E9EAD3200EA8BCF /* Debug */,
 				105FC5A52E9EAD3200EA8BCF /* Release */,
 			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AB00000A000000000000000A /* Build configuration list for PBXNativeTarget "VineTrackTripTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (AB00000B000000000000000B /* Debug */, AB00000C000000000000000C /* Release */);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};

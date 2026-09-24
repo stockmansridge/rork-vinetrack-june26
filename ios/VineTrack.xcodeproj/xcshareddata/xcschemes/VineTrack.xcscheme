@@ -27,9 +27,9 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "9F0000060000000000000006"
-               BuildableName = "VineTrackInsightsTests.xctest"
-               BlueprintName = "VineTrackInsightsTests"
+               BlueprintIdentifier = "AB0000050000000000000005"
+               BuildableName = "VineTrackTripTests.xctest"
+               BlueprintName = "VineTrackTripTests"
                ReferencedContainer = "container:VineTrack.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -45,9 +45,9 @@
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "9F0000060000000000000006"
-               BuildableName = "VineTrackInsightsTests.xctest"
-               BlueprintName = "VineTrackInsightsTests"
+               BlueprintIdentifier = "AB0000050000000000000005"
+               BuildableName = "VineTrackTripTests.xctest"
+               BlueprintName = "VineTrackTripTests"
                ReferencedContainer = "container:VineTrack.xcodeproj">
             </BuildableReference>
          </TestableReference>
