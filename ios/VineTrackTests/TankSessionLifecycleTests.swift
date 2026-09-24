@@ -250,6 +250,40 @@ final class TankSessionLifecycleTests: XCTestCase {
         XCTAssertEqual(current, afterFirstConfirmation)
     }
 
+    func testEndedTankStaleRuntimeStateReconcilesWithoutChangingSessions() {
+        let ended = TankSession(id: sessionID, tankNumber: 1, startTime: sprayStart, endTime: sprayEnd)
+        let stale = trip(sessions: [ended], activeTankNumber: 1, isFilling: true, fillingTankNumber: 1)
+        let repaired = TankSessionLifecycle.reconciled(stale)
+        XCTAssertNil(repaired.activeTankNumber)
+        XCTAssertFalse(repaired.isFillingTank)
+        XCTAssertNil(repaired.fillingTankNumber)
+        XCTAssertEqual(repaired.tankSessions, stale.tankSessions)
+        XCTAssertEqual(TankSessionLifecycle.reconciled(repaired), repaired)
+        XCTAssertEqual(TripEndGate.evaluate(trip: repaired), .allowed)
+        let next = TankSessionLifecycle.startResult(trip: repaired, at: sprayEnd.addingTimeInterval(1), currentRow: nil, plannedTankNumbers: [1, 2])
+        XCTAssertEqual(next?.tankNumber, 2)
+    }
+
+    func testOpenTankAndOpenFillCannotBeReconciledAway() {
+        let open = TankSession(id: sessionID, tankNumber: 1, startTime: sprayStart)
+        let running = trip(sessions: [open], activeTankNumber: 1)
+        XCTAssertEqual(TankSessionLifecycle.reconciled(running), running)
+        XCTAssertEqual(TripEndGate.evaluate(trip: running), .blocked(.activeTank(tankNumber: 1)))
+        var fill = TankSession(id: sessionID, tankNumber: 1, startTime: sprayStart, endTime: sprayEnd)
+        fill.fillStartTime = sprayStart
+        let filling = trip(sessions: [fill], activeTankNumber: 1, isFilling: true, fillingTankNumber: 1)
+        XCTAssertEqual(TankSessionLifecycle.reconciled(filling), filling)
+        XCTAssertEqual(TripEndGate.evaluate(trip: filling), .blocked(.fillingTank(tankNumber: 1)))
+    }
+
+    func testFreeDriveSprayStartedFromFinishedFillRemainsOpenEvenWithoutRuntimeFlag() {
+        let filled = TankSession(id: sessionID, tankNumber: 1, startTime: sprayStart,
+                                 fillStartTime: fillStart, fillEndTime: fillEnd)
+        let lostFlag = trip(sessions: [filled])
+        XCTAssertEqual(TripEndGate.evaluate(trip: lostFlag), .blocked(.activeTank(tankNumber: 1)))
+        XCTAssertNil(TankSessionLifecycle.startResult(trip: lostFlag, at: sprayEnd, currentRow: nil))
+    }
+
     @MainActor
     func testRelaunchOfflinePayloadAndCanonicalContractPreserveReusedClosedSession() throws {
         let directory = FileManager.default.temporaryDirectory
@@ -288,7 +322,8 @@ final class TankSessionLifecycleTests: XCTestCase {
         let sessions = try XCTUnwrap(json["tank_sessions"] as? [[String: Any]])
         XCTAssertEqual(sessions.count, 1)
         XCTAssertEqual(sessions[0]["tankNumber"] as? Int, 1)
-        XCTAssertEqual(json["active_tank_number"] as? Int, nil)
+        XCTAssertTrue(json["active_tank_number"] is NSNull)
+        XCTAssertTrue(json["filling_tank_number"] is NSNull)
         XCTAssertEqual(json["is_filling_tank"] as? Bool, false)
     }
 }

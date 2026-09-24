@@ -112,7 +112,13 @@ nonisolated enum TripEndGate {
 
     /// Convenience overload taking the trip itself.
     static func evaluate(trip: Trip) -> TripEndDecision {
-        evaluate(
+        if let open = trip.tankSessions.first(where: { TankSessionLifecycle.isOpenSpray($0) }) {
+            return .blocked(.activeTank(tankNumber: open.tankNumber))
+        }
+        if let fill = trip.tankSessions.first(where: { $0.fillStartTime != nil && $0.fillEndTime == nil }) {
+            return .blocked(.fillingTank(tankNumber: fill.tankNumber))
+        }
+        return evaluate(
             activeTankNumber: trip.activeTankNumber,
             isFillingTank: trip.isFillingTank,
             fillingTankNumber: trip.fillingTankNumber

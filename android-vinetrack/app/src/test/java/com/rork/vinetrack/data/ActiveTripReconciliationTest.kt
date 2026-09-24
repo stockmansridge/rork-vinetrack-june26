@@ -37,6 +37,22 @@ class ActiveTripReconciliationTest {
         assertEquals(server.totalDistance, reconciled.totalDistance)
     }
 
+    @Test
+    fun addedFreeDriveBlocksAndRecordedPathSurviveServerRefresh() {
+        val route = makeRoute(12)
+        val local = activeTrip(route, 135.0).copy(
+            trackingPattern = "freeDrive", paddockIds = listOf("block-1", "block-2", "block-3"),
+        )
+        val server = activeTrip(route.take(3), 30.0).copy(
+            trackingPattern = "freeDrive", paddockIds = listOf("block-1"),
+        )
+        val refreshed = ActiveTripReconciliation.mergeProgress(server, local)
+        assertEquals(listOf("block-1", "block-2", "block-3"), refreshed.effectivePaddockIds)
+        assertEquals(route, refreshed.pathPoints)
+        assertEquals(135.0, refreshed.totalDistance)
+        assertEquals(emptyList<Double>(), refreshed.rowSequence)
+    }
+
     private fun activeTrip(path: List<CoordinatePoint>, distance: Double): Trip = Trip(
         id = "active-trip",
         vineyardId = "vineyard-1",

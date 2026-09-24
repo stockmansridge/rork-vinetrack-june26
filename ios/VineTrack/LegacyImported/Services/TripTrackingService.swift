@@ -242,11 +242,23 @@ final class TripTrackingService {
     @inline(__always) private func breadcrumb(_ message: @autoclosure () -> String) {}
     #endif
 
+    private(set) var lastReconciledTankTripId: UUID?
+    private(set) var lastServerCompletedTripId: UUID?
+
     // MARK: - Configuration
 
     func configure(store: MigratedDataStore, locationService: LocationService) {
         self.store = store
         self.locationService = locationService
+        store.onOwnedTripCompletedByServer = { [weak self] tripId in
+            self?.lastServerCompletedTripId = tripId
+            self?.stopTrackingLoops(stopLocation: true)
+            self?.sprayWeatherTask?.cancel()
+            self?.sprayWeatherTask = nil
+            self?.isTracking = false
+            self?.isPaused = false
+            self?.errorMessage = "This trip was finished on the server. Your saved trip history remains available."
+        }
         startTankCommitCoordinator.recover(store: store)
         resumeIfNeeded()
     }
@@ -519,7 +531,19 @@ final class TripTrackingService {
     /// exactly like any other trip.
     @discardableResult
     func endTrip() -> TripEndOutcome {
-        guard let gateTrip = activeTrip else { return .noActiveTrip }
+        guard let current = activeTrip else { return .noActiveTrip }
+        let gateTrip = TankSessionLifecycle.reconciled(current)
+        if gateTrip != current {
+            do {
+                try store?.updateTripOrThrow(gateTrip)
+                lastReconciledTankTripId = gateTrip.id
+                breadcrumb("reconciled ended tank before End Trip")
+            } catch {
+                let detail = (error as NSError).localizedDescription
+                errorMessage = TripEndOutcome.persistenceFailed(detail).operatorMessage
+                return .persistenceFailed(detail)
+            }
+        }
 
         // The ONLY legitimate blockers are unfinished records that ending
         // would corrupt: an open tank session or a running fill timer. Both
@@ -843,9 +867,24 @@ final class TripTrackingService {
         let result: TankStartResult
     }
 
-    /// Preview the exact next tank selected by the production lifecycle without mutating state.
+    /// Repair stale runtime flags durably before presenting another tank.
+    private func reconciledActiveTankTrip() -> Trip? {
+        guard let trip = activeTrip else { return nil }
+        let repaired = TankSessionLifecycle.reconciled(trip)
+        guard repaired != trip else { return trip }
+        do {
+            try store?.updateTripOrThrow(repaired)
+            lastReconciledTankTripId = trip.id
+            return repaired
+        } catch {
+            errorMessage = "Tank state could not be saved on this device. Please retry."
+            return nil
+        }
+    }
+
+    /// Preview the exact next tank selected by the production lifecycle.
     func pendingTankStart() -> PendingTankStart? {
-        guard let trip = activeTrip,
+        guard let trip = reconciledActiveTankTrip(),
               let record = TankMixPresentation.linkedRecord(for: trip.id, in: store?.sprayRecords ?? []),
               let result = TankSessionLifecycle.startResult(
                 trip: trip,
@@ -947,7 +986,7 @@ final class TripTrackingService {
 
     /// Explicit legacy fallback. It creates no fabricated actual-use record.
     func startTankWithoutRecordedMix() {
-        guard let trip = activeTrip else { return }
+        guard let trip = reconciledActiveTankTrip() else { return }
         let operationRow = trip.trackingPattern == .freeDrive
             ? currentRowNumber
             : currentRowNumber ?? trip.currentRowNumber
@@ -972,7 +1011,11 @@ final class TripTrackingService {
             currentRow: operationRow
         )
         guard updated != trip else { return }
-        store?.updateTrip(updated)
+        do {
+            try store?.updateTripOrThrow(updated)
+        } catch {
+            errorMessage = "Tank could not be saved on this device. Please retry End Tank."
+        }
     }
 
     /// Start the fill timer for the next (or current) tank.
@@ -1029,7 +1072,17 @@ final class TripTrackingService {
     // MARK: - Resume after launch
 
     func resumeIfNeeded() {
-        guard activeTrip != nil, !isTracking else { return }
+        guard let trip = activeTrip, !isTracking else { return }
+        let repaired = TankSessionLifecycle.reconciled(trip)
+        if repaired != trip {
+            do {
+                try store?.updateTripOrThrow(repaired)
+                lastReconciledTankTripId = repaired.id
+                breadcrumb("reconciled ended tank on recovery")
+            } catch {
+                errorMessage = "Tank state could not be saved on this device. Please free up storage and retry."
+            }
+        }
         if activeTrip?.isPaused == true {
             isPaused = true
             return
@@ -2127,11 +2180,14 @@ final class TripTrackingService {
     /// coverage. New paddocks' rows are appended to the planned sequence so
     /// the operator can continue into them after resuming. Records an audit
     /// event in diagnostics.
-    func addPaddocksToActiveTrip(_ ids: [UUID]) {
-        guard let store, var trip = activeTrip else { return }
+    @discardableResult
+    func addPaddocksToActiveTrip(_ ids: [UUID]) -> Bool {
+        guard let store, var trip = activeTrip, trip.isPaused else { return false }
         let existing = Set(trip.paddockIds)
-        let newIds = ids.filter { !existing.contains($0) }
-        guard !newIds.isEmpty else { return }
+        let newIds = Array(Set(ids)).filter { !existing.contains($0) }
+        guard !newIds.isEmpty,
+              newIds.allSatisfy({ id in store.paddocks.contains(where: { $0.id == id && $0.vineyardId == trip.vineyardId }) })
+        else { return false }
         trip.paddockIds.append(contentsOf: newIds)
 
         if !trip.rowSequence.isEmpty {
@@ -2146,11 +2202,17 @@ final class TripTrackingService {
                 }
             }
         }
-        store.updateTrip(trip)
-        cachedRowIndex = nil
-        cachedRowIndexKey = []
-        let names = newIds.compactMap { id in store.paddocks.first(where: { $0.id == id })?.name }
-        recordCorrection("paddocks_added: \(names.joined(separator: ", "))")
+        do {
+            try store.updateTripOrThrow(trip)
+            cachedRowIndex = nil
+            cachedRowIndexKey = []
+            let names = newIds.compactMap { id in store.paddocks.first(where: { $0.id == id })?.name }
+            recordCorrection("paddocks_added: \(names.joined(separator: ", "))")
+            return true
+        } catch {
+            errorMessage = "Couldn't save the added blocks on this device. Please retry."
+            return false
+        }
     }
 
     /// Final-pass completion review used by the End Trip Review sheet

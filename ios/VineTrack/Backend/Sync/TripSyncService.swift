@@ -571,6 +571,14 @@ final class TripSyncService {
         let createdBy = auth?.userId
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
+            // An admin end wins over an offline active snapshot regardless of its
+            // client timestamp. Read before replay; do not upload that snapshot.
+            let endedOnServer = try await repository.fetchAllTrips(vineyardId: vineyardId)
+                .filter { dirty[$0.id] != nil && ($0.isActive == false || $0.endTime != nil) }
+            let endedIds = Set(endedOnServer.map(\.id))
+            for ended in endedOnServer {
+                applyRemote(ended, vineyardId: vineyardId, store: store)
+            }
             let byId = Dictionary(store.trips.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             // Build a paddockId -> vineyardId lookup for repair inference.
             let paddockVineyard = Dictionary(
@@ -583,6 +591,7 @@ final class TripSyncService {
             var orphans: [UUID] = []
             var deferredEndIds: Set<UUID> = []
             for (tripId, ts) in dirty {
+                if endedIds.contains(tripId) { continue }
                 // Reclaim queue entries with no local trip — they can never
                 // upload and used to sit in the queue forever.
                 guard var trip = byId[tripId] else { orphans.append(tripId); continue }
@@ -746,6 +755,9 @@ final class TripSyncService {
                     localForVineyard.append(repaired)
                 }
             }
+            // An empty remote result is not evidence that an old active cache
+            // is safe to recreate. New active trips use the explicit dirty queue.
+            localForVineyard.removeAll(where: { $0.isActive || $0.endTime != nil })
             if !localForVineyard.isEmpty {
                 let now = Date()
                 let createdBy = auth?.userId
@@ -772,16 +784,38 @@ final class TripSyncService {
             return
         }
 
-        // Last-write-wins: only apply remote if it's newer than the local pending change.
-        if let pendingDirtyAt = metadata.pendingUpserts[backendTrip.id] {
+        // Server completion is authoritative even against a newer queued device edit.
+        let serverCompleted = backendTrip.isActive == false || backendTrip.endTime != nil
+        if !serverCompleted, let pendingDirtyAt = metadata.pendingUpserts[backendTrip.id] {
             let remoteAt = backendTrip.clientUpdatedAt ?? backendTrip.updatedAt ?? .distantPast
             if pendingDirtyAt > remoteAt { return }
         }
 
         metadata.markParentsEstablished([backendTrip.id])
-        let mapped = backendTrip.toTrip()
+        var mapped = backendTrip.toTrip()
+        if serverCompleted { mapped.isActive = false }
         let local = store.trips.first { $0.id == mapped.id }
-        let reconciled = ActiveTripPathReconciler.reconcile(local: local, remote: mapped)
+            ?? store.deviceOwnedTrip.flatMap { $0.id == mapped.id ? $0 : nil }
+        var reconciled = ActiveTripPathReconciler.reconcile(local: local, remote: mapped)
+        if serverCompleted, let local {
+            // Preserve device-recorded history even when the admin finished the
+            // server row before the last offline route/tank payload arrived.
+            if local.pathPoints.count > reconciled.pathPoints.count {
+                reconciled.pathPoints = local.pathPoints
+                reconciled.totalDistance = local.totalDistance
+            }
+            for session in local.tankSessions {
+                if let index = reconciled.tankSessions.firstIndex(where: { $0.id == session.id }) {
+                    if reconciled.tankSessions[index].endTime == nil && session.endTime != nil {
+                        reconciled.tankSessions[index] = session
+                    }
+                } else {
+                    reconciled.tankSessions.append(session)
+                }
+            }
+            let existingIds = Set(reconciled.paddockIds)
+            reconciled.paddockIds.append(contentsOf: local.paddockIds.filter { !existingIds.contains($0) })
+        }
         store.applyRemoteTripUpsert(reconciled)
         metadata.clearDirty([backendTrip.id])
     }

@@ -9,6 +9,7 @@ struct AddBlocksToTripSheet: View {
 
     @State private var selectedIds: Set<UUID> = []
     @State private var searchText: String = ""
+    @State private var saveFailed: Bool = false
 
     private var existingIds: Set<UUID> {
         guard let trip = tracking.activeTrip else { return [] }
@@ -19,7 +20,7 @@ struct AddBlocksToTripSheet: View {
 
     private var availablePaddocks: [Paddock] {
         let all = store.paddocks
-            .filter { !existingIds.contains($0.id) }
+            .filter { !existingIds.contains($0.id) && $0.vineyardId == tracking.activeTrip?.vineyardId }
             .sorted(by: StartTripSheet.rowOrderSort)
         guard !searchText.isEmpty else { return all }
         return all.filter { $0.name.localizedStandardContains(searchText) }
@@ -73,6 +74,11 @@ struct AddBlocksToTripSheet: View {
                     .searchable(text: $searchText, prompt: "Search blocks")
                 }
             }
+            .alert("Blocks not saved", isPresented: $saveFailed) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("Keep this trip paused and try again. No blocks were changed.")
+            }
             .navigationTitle("Add Blocks")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -81,8 +87,8 @@ struct AddBlocksToTripSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
-                        tracking.addPaddocksToActiveTrip(Array(selectedIds))
-                        dismiss()
+                        if tracking.addPaddocksToActiveTrip(Array(selectedIds)) { dismiss() }
+                        else { saveFailed = true }
                     }
                     .fontWeight(.semibold)
                     .disabled(selectedIds.isEmpty)

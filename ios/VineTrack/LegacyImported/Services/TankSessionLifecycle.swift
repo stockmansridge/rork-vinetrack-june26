@@ -33,7 +33,9 @@ nonisolated enum TankSessionLifecycle {
         plannedTankNumbers: [Int]? = nil,
         makeID: () -> UUID = UUID.init
     ) -> TankStartResult? {
-        guard trip.activeTankNumber == nil else { return nil }
+        guard trip.isActive, trip.endTime == nil, trip.activeTankNumber == nil,
+              !trip.tankSessions.contains(where: isOpenSpray)
+        else { return nil }
         guard let target = startTarget(in: trip, plannedTankNumbers: plannedTankNumbers) else { return nil }
 
         var updated = trip
@@ -78,7 +80,30 @@ nonisolated enum TankSessionLifecycle {
         updated.tankSessions[sessionIndex].endTime = timestamp
         updated.tankSessions[sessionIndex].endRow = currentRow
         updated.activeTankNumber = nil
+        if !updated.tankSessions.contains(where: { $0.fillStartTime != nil && $0.fillEndTime == nil }) {
+            updated.isFillingTank = false
+            updated.fillingTankNumber = nil
+        }
         return updated
+    }
+
+    /// Repairs only an ended active tank with no other open spray or fill. Never changes session data.
+    static func reconciled(_ trip: Trip) -> Trip {
+        guard let number = trip.activeTankNumber,
+              trip.tankSessions.contains(where: { $0.tankNumber == number && $0.endTime != nil }),
+              !trip.tankSessions.contains(where: { isOpenSpray($0) || ($0.fillStartTime != nil && $0.fillEndTime == nil) })
+        else { return trip }
+        var repaired = trip
+        repaired.activeTankNumber = nil
+        repaired.isFillingTank = false
+        repaired.fillingTankNumber = nil
+        return repaired
+    }
+
+    static func isOpenSpray(_ session: TankSession) -> Bool {
+        guard session.endTime == nil else { return false }
+        return session.fillStartTime == nil || session.startRow != nil ||
+            (session.fillEndTime.map { session.startTime >= $0 } ?? false)
     }
 
     private static func startTarget(in trip: Trip, plannedTankNumbers: [Int]?) -> StartTarget? {

@@ -28,7 +28,8 @@ object TankSessionLifecycle {
         plannedTankNumbers: List<Int>? = null,
         makeId: () -> String = { java.util.UUID.randomUUID().toString() },
     ): TankStartResult? {
-        if (trip.activeTankNumber != null) return null
+        if (!trip.isActive || trip.endTime != null || trip.activeTankNumber != null ||
+            trip.tankSessions.any(::isOpenSpray)) return null
         val target = startTarget(trip, plannedTankNumbers) ?: return null
 
         val sessions = trip.tankSessions.toMutableList()
@@ -72,7 +73,27 @@ object TankSessionLifecycle {
 
         val sessions = trip.tankSessions.toMutableList()
         sessions[sessionIndex] = sessions[sessionIndex].copy(endTime = timestamp, endRow = currentRow)
-        return trip.copy(tankSessions = sessions, activeTankNumber = null)
+        val hasOpenFill = sessions.any { it.fillStartTime != null && it.fillEndTime == null }
+        return trip.copy(
+            tankSessions = sessions, activeTankNumber = null,
+            isFillingTank = if (hasOpenFill) trip.isFillingTank else false,
+            fillingTankNumber = if (hasOpenFill) trip.fillingTankNumber else null,
+        )
+    }
+
+    /** Repair only an ended active tank with no other open spray or fill; preserve every session. */
+    fun reconciled(trip: Trip): Trip {
+        val number = trip.activeTankNumber ?: return trip
+        if (trip.tankSessions.none { it.tankNumber == number && it.endTime != null } ||
+            trip.tankSessions.any { isOpenSpray(it) || (it.fillStartTime != null && it.fillEndTime == null) }) return trip
+        return trip.copy(activeTankNumber = null, isFillingTank = false, fillingTankNumber = null)
+    }
+
+    fun isOpenSpray(session: TankSession): Boolean {
+        if (session.endTime != null) return false
+        if (session.fillStartTime == null || session.startRow != null || session.startTime == null) return true
+        val fillEnd = session.fillEndEpochMs ?: return false
+        return (session.startEpochMs ?: Long.MIN_VALUE) >= fillEnd
     }
 
     private fun startTarget(trip: Trip, plannedTankNumbers: List<Int>?): StartTarget? {

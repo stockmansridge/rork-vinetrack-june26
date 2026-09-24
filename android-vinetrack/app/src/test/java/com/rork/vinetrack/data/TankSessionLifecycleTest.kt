@@ -238,6 +238,41 @@ class TankSessionLifecycleTest {
     }
 
     @Test
+    fun `ended tank stale runtime state is idempotently repaired without changing the session`() {
+        val ended = TankSession(id = "tank-session-1", tankNumber = 1, startTime = sprayStart, endTime = sprayEnd)
+        val stale = trip(listOf(ended), activeTankNumber = 1, isFilling = true, fillingTankNumber = 1)
+        val repaired = TankSessionLifecycle.reconciled(stale)
+        assertNull(repaired.activeTankNumber)
+        assertFalse(repaired.isFillingTank)
+        assertNull(repaired.fillingTankNumber)
+        assertEquals(stale.tankSessions, repaired.tankSessions)
+        assertEquals(repaired, TankSessionLifecycle.reconciled(repaired))
+        assertTrue(TripEndGate.evaluate(repaired).isAllowed)
+        assertEquals(2, TankSessionLifecycle.startResult(repaired, sprayEnd, null, listOf(1, 2))?.tankNumber)
+    }
+
+    @Test
+    fun `real open tank and running fill still block ending`() {
+        val open = TankSession(id = "tank-session-1", tankNumber = 1, startTime = sprayStart)
+        val running = trip(listOf(open), activeTankNumber = 1)
+        assertEquals(running, TankSessionLifecycle.reconciled(running))
+        assertEquals(TripEndBlocker.ActiveTank(1), (TripEndGate.evaluate(running) as TripEndDecision.Blocked).blocker)
+        val fill = open.copy(endTime = sprayEnd, fillStartTime = sprayStart)
+        val filling = trip(listOf(fill), activeTankNumber = 1, isFilling = true, fillingTankNumber = 1)
+        assertEquals(filling, TankSessionLifecycle.reconciled(filling))
+        assertEquals(TripEndBlocker.FillingTank(1), (TripEndGate.evaluate(filling) as TripEndDecision.Blocked).blocker)
+    }
+
+    @Test
+    fun `Free Drive spray from completed fill stays open even when runtime flag is lost`() {
+        val filled = TankSession(id = "tank-session-1", tankNumber = 1, startTime = sprayStart,
+            fillStartTime = fillStart, fillEndTime = fillEnd)
+        val lostFlag = trip(listOf(filled))
+        assertEquals(TripEndBlocker.ActiveTank(1), (TripEndGate.evaluate(lostFlag) as TripEndDecision.Blocked).blocker)
+        assertNull(TankSessionLifecycle.startResult(lostFlag, sprayEnd, null))
+    }
+
+    @Test
     fun `relaunch offline payload and canonical contract preserve reused closed session`() {
         val closed = TankSessionLifecycle.end(
             TankSessionLifecycle.start(

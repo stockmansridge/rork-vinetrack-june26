@@ -19,6 +19,7 @@ object ActiveTripReconciliation {
             resumeTimestamps = local.resumeTimestamps,
             completedPaths = local.completedPaths,
             skippedPaths = local.skippedPaths,
+            paddockIds = (server.effectivePaddockIds + local.effectivePaddockIds).distinct(),
             trackingPattern = local.trackingPattern,
             rowSequence = local.rowSequence,
             sequenceIndex = local.sequenceIndex,

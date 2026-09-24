@@ -3,6 +3,8 @@ package com.rork.vinetrack.ui
 import com.rork.vinetrack.data.ActiveTripSnapshotStorage
 import com.rork.vinetrack.data.ActiveTripStore
 import com.rork.vinetrack.data.model.Trip
+import com.rork.vinetrack.data.model.TankSession
+import com.rork.vinetrack.data.model.CoordinatePoint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -75,6 +77,25 @@ class DeviceTripOwnershipTest {
         assertEquals("A", switched.deviceActiveTripId)
         assertTrue(store.hasActiveClaim())
         assertEquals("A", ActiveTripStore(storage).load()?.trip?.id)
+    }
+
+    @Test fun adminCompletedSnapshotReleasesClaimButRetainsRouteAndTanksOnRelaunch() {
+        val storage = MemoryStorage()
+        val store = ActiveTripStore(storage)
+        val active = a.copy(
+            paddockIds = listOf("block-1", "block-2"),
+            pathPoints = listOf(CoordinatePoint(latitude = -33.1, longitude = 149.2)),
+            tankSessions = listOf(TankSession(id = "tank-1", tankNumber = 1,
+                startTime = "2026-09-24T11:00:00Z", endTime = "2026-09-24T11:30:00Z")),
+        )
+        assertTrue(store.claimIfAvailable("operator", "vineyard-1", active))
+        val completed = active.copy(isActive = false, endTime = "2026-09-24T12:00:00Z")
+        assertTrue(store.saveDurably("operator", "vineyard-1", completed))
+        assertFalse(ActiveTripStore(storage).hasActiveClaim())
+        assertEquals(completed, ActiveTripStore(storage).load()?.trip)
+        assertNull(AppUiState(selectedVineyardId = "vineyard-1", trips = listOf(completed),
+            deviceActiveTripId = null).activeTrip)
+        assertTrue(store.claimIfAvailable("operator", "vineyard-1", b))
     }
 
     private class MemoryStorage : ActiveTripSnapshotStorage {

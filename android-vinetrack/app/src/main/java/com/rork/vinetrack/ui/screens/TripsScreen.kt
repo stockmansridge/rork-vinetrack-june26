@@ -1,6 +1,9 @@
 package com.rork.vinetrack.ui.screens
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -970,6 +973,8 @@ private fun TripDetailView(
     var confirmDelete by remember { mutableStateOf(false) }
     var ending by remember { mutableStateOf(false) }
     var changingRoute by remember { mutableStateOf(false) }
+    var addingBlocks by remember { mutableStateOf(false) }
+    var selectedAdditionalBlocks by remember { mutableStateOf<Set<String>>(emptySet()) }
     var editingSeeding by remember { mutableStateOf(false) }
     var editingCostLinks by remember { mutableStateOf(false) }
     var exportMenuOpen by remember { mutableStateOf(false) }
@@ -1010,6 +1015,7 @@ private fun TripDetailView(
             onShowDetails = { showLiveHud = false },
             onEndConfirmed = { ending = true },
             onChangeRoute = { changingRoute = true },
+            onAddBlocks = { selectedAdditionalBlocks = emptySet(); addingBlocks = true },
             hudLauncherMode = hudLauncherMode,
             onHudLauncherModeChange = onHudLauncherModeChange,
             onGoHome = onGoHome,
@@ -1026,6 +1032,26 @@ private fun TripDetailView(
                     }
                 },
                 actions = {
+                    IconButton(onClick = {
+                        val spray = state.sprayRecords.firstOrNull { it.tripId == trip.id }
+                        val plannedIds = spray?.applicationBlocks?.map { it.blockId } ?: spray?.blockIds.orEmpty()
+                        val text = buildString {
+                            appendLine("Trip ID: ${trip.id}")
+                            appendLine("Local active: ${trip.isActive}; server active: not independently fetched in this snapshot")
+                            appendLine("Device-owned Trip ID: ${state.deviceActiveTripId ?: "none"}")
+                            appendLine("Active tank: ${trip.activeTankNumber ?: "none"}; filling: ${trip.isFillingTank}; filling tank: ${trip.fillingTankNumber ?: "none"}")
+                            appendLine("Sessions: ${trip.tankSessions.joinToString { "${it.tankNumber}:start=${it.startTime},end=${it.endTime ?: "open"}" }}")
+                            appendLine("Actual tanks: ${state.sprayTankActuals.filter { it.tripId == trip.id }.map { it.tankNumber }.distinct().sorted()}")
+                            appendLine("Planned tanks: ${spray?.tanks.orEmpty().map { it.tankNumber }.sorted()}")
+                            appendLine("Trip blocks (${trip.effectivePaddockIds.size}): ${trip.effectivePaddockIds.joinToString()}")
+                            appendLine("Linked Spray Record blocks (${plannedIds.size}): ${plannedIds.joinToString()}")
+                            appendLine("Tank reconciliation occurred: ${state.lastReconciledTankTripId == trip.id}")
+                            appendLine("Server completion displaced local state: ${state.lastServerCompletedTripId == trip.id}")
+                        }
+                        (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)
+                            ?.setPrimaryClip(ClipData.newPlainText("Trip diagnostics", text))
+                        Toast.makeText(context, "Trip diagnostics copied", Toast.LENGTH_SHORT).show()
+                    }) { Icon(Icons.Filled.ContentCopy, contentDescription = "Copy Trip diagnostics") }
                     if (isDeviceTrip) {
                         IconButton(onClick = { showLiveHud = true }) {
                             Icon(Icons.Filled.NearMe, contentDescription = "Live map")
@@ -1728,6 +1754,38 @@ private fun TripDetailView(
         )
     }
 
+    if (addingBlocks && isDeviceTrip && trip.isPaused && trip.trackingPattern == "freeDrive") {
+        val options = state.paddocks.filter { it.vineyardId == trip.vineyardId && it.id !in trip.effectivePaddockIds }
+        AlertDialog(
+            onDismissRequest = { addingBlocks = false },
+            title = { Text("Add blocks to Trip") },
+            text = {
+                Column(Modifier.heightIn(max = 350.dp).verticalScroll(rememberScrollState())) {
+                    Text("Adds blocks to this Trip's operating scope. The original Spray Plan is unchanged.")
+                    options.forEach { block ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                selectedAdditionalBlocks = if (block.id in selectedAdditionalBlocks)
+                                    selectedAdditionalBlocks - block.id else selectedAdditionalBlocks + block.id
+                            }, verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(checked = block.id in selectedAdditionalBlocks, onCheckedChange = { checked ->
+                                selectedAdditionalBlocks = if (checked) selectedAdditionalBlocks + block.id else selectedAdditionalBlocks - block.id
+                            })
+                            Text(block.name)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (vm.addBlocksToActiveTrip(trip.id, selectedAdditionalBlocks.toList())) addingBlocks = false
+                    else Toast.makeText(context, "Blocks not saved. Keep the Trip paused and retry.", Toast.LENGTH_LONG).show()
+                }, enabled = selectedAdditionalBlocks.isNotEmpty()) { Text("Add") }
+            },
+            dismissButton = { TextButton(onClick = { addingBlocks = false }) { Text("Cancel") } },
+        )
+    }
     if (changingRoute && isDeviceTrip) {
         ChangeTripRouteSheet(vm, trip, state.paddocks, onDismiss = { changingRoute = false })
     }
@@ -1759,6 +1817,7 @@ private fun ActiveTripHud(
     onShowDetails: () -> Unit,
     onEndConfirmed: () -> Unit,
     onChangeRoute: () -> Unit,
+    onAddBlocks: () -> Unit,
     hudLauncherMode: String?,
     onHudLauncherModeChange: (String?) -> Unit,
     onGoHome: () -> Unit = {},
@@ -2185,6 +2244,12 @@ private fun ActiveTripHud(
                     OutlinedButton(onClick = onChangeRoute, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Filled.Route, contentDescription = null)
                         Text("  Change Route")
+                    }
+                    if (trip.isPaused && trip.trackingPattern == "freeDrive") {
+                        OutlinedButton(onClick = onAddBlocks, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Filled.Add, contentDescription = null)
+                            Text("  Add blocks")
+                        }
                     }
                     if (!state.isTracking) {
                         Text(

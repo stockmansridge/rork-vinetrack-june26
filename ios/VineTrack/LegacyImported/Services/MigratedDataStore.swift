@@ -25,6 +25,7 @@ final class MigratedDataStore {
         let userId: UUID?
     }
     private var deviceTripOwnership: DeviceTripOwnership?
+    @ObservationIgnored var onOwnedTripCompletedByServer: ((UUID) -> Void)?
     var deviceActiveTripId: UUID? { deviceTripOwnership?.tripId }
     var isDeviceTripOwner: Bool {
         guard let ownership = deviceTripOwnership else { return false }
@@ -1489,7 +1490,11 @@ final class MigratedDataStore {
             }
             tripRepo.replace(all.filter { $0.vineyardId == trip.vineyardId }, for: trip.vineyardId)
         }
-        if !trip.isActive { releaseDeviceTrip(trip.id) }
+        if !trip.isActive || trip.endTime != nil {
+            let wasOwned = deviceActiveTripId == trip.id
+            releaseDeviceTrip(trip.id)
+            if wasOwned { onOwnedTripCompletedByServer?(trip.id) }
+        }
     }
 
     /// Apply a trip deletion that originated from a remote sync pull.

@@ -222,6 +222,56 @@ nonisolated struct BackendTripUpsert: Encodable, Sendable {
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
     }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(vineyardId, forKey: .vineyardId)
+        try c.encodeIfPresent(paddockId, forKey: .paddockId)
+        try c.encode(paddockIds, forKey: .paddockIds)
+        try c.encode(paddockName, forKey: .paddockName)
+        try c.encodeIfPresent(trackingPattern, forKey: .trackingPattern)
+        try c.encode(startTime, forKey: .startTime)
+        try c.encodeIfPresent(endTime, forKey: .endTime)
+        try c.encode(isActive, forKey: .isActive)
+        try c.encode(isPaused, forKey: .isPaused)
+        try c.encode(totalDistance, forKey: .totalDistance)
+        try c.encode(currentPathDistance, forKey: .currentPathDistance)
+        try c.encode(currentRowNumber, forKey: .currentRowNumber)
+        try c.encode(nextRowNumber, forKey: .nextRowNumber)
+        try c.encode(sequenceIndex, forKey: .sequenceIndex)
+        try c.encode(rowSequence, forKey: .rowSequence)
+        try c.encode(pathPoints, forKey: .pathPoints)
+        try c.encode(completedPaths, forKey: .completedPaths)
+        try c.encode(skippedPaths, forKey: .skippedPaths)
+        try c.encode(pinIds, forKey: .pinIds)
+        try c.encode(tankSessions, forKey: .tankSessions)
+        // These two runtime columns must be explicitly cleared by End Tank.
+        // Synthesized Encodable omits nil and left the old server tank active.
+        if let activeTankNumber { try c.encode(activeTankNumber, forKey: .activeTankNumber) }
+        else { try c.encodeNil(forKey: .activeTankNumber) }
+        try c.encode(totalTanks, forKey: .totalTanks)
+        try c.encode(pauseTimestamps, forKey: .pauseTimestamps)
+        try c.encode(resumeTimestamps, forKey: .resumeTimestamps)
+        try c.encode(isFillingTank, forKey: .isFillingTank)
+        if let fillingTankNumber { try c.encode(fillingTankNumber, forKey: .fillingTankNumber) }
+        else { try c.encodeNil(forKey: .fillingTankNumber) }
+        try c.encode(personName, forKey: .personName)
+        try c.encodeIfPresent(machineId, forKey: .machineId)
+        try c.encodeIfPresent(tractorId, forKey: .tractorId)
+        try c.encodeIfPresent(operatorUserId, forKey: .operatorUserId)
+        try c.encodeIfPresent(operatorCategoryId, forKey: .operatorCategoryId)
+        try c.encodeIfPresent(startEngineHours, forKey: .startEngineHours)
+        try c.encodeIfPresent(endEngineHours, forKey: .endEngineHours)
+        try c.encodeIfPresent(tripFunction, forKey: .tripFunction)
+        try c.encodeIfPresent(tripTitle, forKey: .tripTitle)
+        try c.encodeIfPresent(seedingDetails, forKey: .seedingDetails)
+        try c.encodeIfPresent(manualCorrectionEvents, forKey: .manualCorrectionEvents)
+        try c.encodeIfPresent(completionNotes, forKey: .completionNotes)
+        try c.encodeIfPresent(workTaskId, forKey: .workTaskId)
+        try c.encodeIfPresent(createdBy, forKey: .createdBy)
+        try c.encode(clientUpdatedAt, forKey: .clientUpdatedAt)
+    }
 }
 
 extension BackendTrip {

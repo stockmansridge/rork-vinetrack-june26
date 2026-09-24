@@ -895,6 +895,8 @@ data class AppUiState(
     val locallyEndedTripIds: Set<String> = emptySet(),
     /** Exactly one locally claimed trip UUID; never inferred from server trip ordering. */
     val deviceActiveTripId: String? = null,
+    val lastReconciledTankTripId: String? = null,
+    val lastServerCompletedTripId: String? = null,
     /**
      * Trip ids this device deleted (optimistically hidden, possibly with a
      * queued offline TRIP/DELETE marker still to replay). In-memory only.
@@ -3071,6 +3073,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 tripTankSync.replayAll { trip ->
                     _ui.update { st -> st.copy(trips = st.trips.map { existing ->
+                        if (existing.id == trip.id && (existing.tankSessions != trip.tankSessions ||
+                            existing.activeTankNumber != trip.activeTankNumber || existing.isFillingTank != trip.isFillingTank)) {
+                            return@map existing
+                        }
                         if (existing.id != trip.id) existing
                         else if ((trip.pathPoints?.size ?: 0) >= (existing.pathPoints?.size ?: 0))
                             trip.copy(manualCorrectionEvents = (trip.manualCorrectionEvents.orEmpty() + existing.manualCorrectionEvents.orEmpty()).distinct())
@@ -8190,6 +8196,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         beginTracking(provisional)
     }
 
+    /** Add operating-scope blocks to a paused Free Drive trip without editing the frozen spray plan. */
+    fun addBlocksToActiveTrip(tripId: String, blockIds: List<String>): Boolean {
+        val state = _ui.value
+        val trip = state.activeTrip?.takeIf { it.id == tripId && it.isPaused && it.trackingPattern == "freeDrive" }
+            ?: return false
+        val additional = blockIds.distinct().filter { id ->
+            id !in trip.effectivePaddockIds && state.paddocks.any { it.id == id && it.vineyardId == trip.vineyardId }
+        }
+        if (additional.isEmpty()) return false
+        val owner = session.userId ?: return false
+        val expanded = trip.copy(paddockIds = trip.effectivePaddockIds + additional)
+        if (!runCatching { activeTripStore.saveDurably(owner, trip.vineyardId, expanded) }.getOrDefault(false)) {
+            _ui.update { it.copy(tripError = "Couldn't save the added blocks on this device. Please retry.") }
+            return false
+        }
+        _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == tripId) expanded else it }) }
+        tripMetadataSync.enqueue(expanded)
+        if (state.isOnline) replayAllPendingWrites()
+        return true
+    }
+
     /** Edit an active or finished trip's job details (no progress changes). */
     fun updateTripMetadata(
         tripId: String,
@@ -8348,18 +8375,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Only unfinished records that ending would corrupt may hold a trip
         // open. The gate takes no planned-path input at all, so a Free Drive
         // trip with no row sequence and 0% planned progress ends normally.
-        val endDecision = com.rork.vinetrack.data.TripEndGate.evaluate(
-            activeTankNumber = trip.activeTankNumber,
-            isFillingTank = trip.isFillingTank,
-            fillingTankNumber = trip.fillingTankNumber,
-        )
+        val repaired = TankSessionLifecycle.reconciled(trip)
+        if (repaired != trip) {
+            val ownerId = session.userId
+            val vineyardId = _ui.value.selectedVineyardId
+            if (ownerId == null || vineyardId == null ||
+                !runCatching { activeTripStore.saveDurably(ownerId, vineyardId, repaired) }.getOrDefault(false)) {
+                _ui.update { it.copy(tripError = "Couldn't save the tank repair on this device. Please free up storage and retry.") }
+                onResult(false)
+                return
+            }
+            _ui.update { st -> st.copy(
+                trips = st.trips.map { if (it.id == trip.id) repaired else it },
+                lastReconciledTankTripId = trip.id,
+            ) }
+            tripTankSync.enqueue(repaired)
+        }
+        val endDecision = com.rork.vinetrack.data.TripEndGate.evaluate(repaired)
         if (endDecision is com.rork.vinetrack.data.TripEndDecision.Blocked) {
             _ui.update { it.copy(tripError = endDecision.blocker.message) }
             onResult(false)
             return
         }
-        val tripId = trip.id
-        val capturedPoints = tracker?.points?.toList() ?: trip.pathPoints ?: emptyList()
+        val tripId = repaired.id
+        val capturedPoints = tracker?.points?.toList() ?: repaired.pathPoints ?: emptyList()
         val capturedDistance = tracker?.distanceMetres ?: trip.totalDistance ?: 0.0
         val owner = session.userId
         val vineyard = _ui.value.selectedVineyardId
@@ -9186,6 +9225,41 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (snapshot.ownerUserId != userId) return loadedTrips
         if (snapshot.vineyardId != vineyardId) return loadedTrips
         val saved = snapshot.trip
+        val completedServer = if (tripsFromServer) loadedTrips.firstOrNull {
+            it.id == saved.id && (!it.isActive || it.endTime != null)
+        } else null
+        if (completedServer != null) {
+            tracker?.stop()
+            tracker = null
+            sprayWeatherJob?.cancel()
+            sprayWeatherJob = null
+            clearRowLockState()
+            val completedLocal = completedServer.copy(
+                pathPoints = if (saved.pathPoints.orEmpty().size > completedServer.pathPoints.orEmpty().size) saved.pathPoints else completedServer.pathPoints,
+                totalDistance = if (saved.pathPoints.orEmpty().size > completedServer.pathPoints.orEmpty().size) saved.totalDistance else completedServer.totalDistance,
+                tankSessions = completedServer.tankSessions + saved.tankSessions.filter { local ->
+                    completedServer.tankSessions.none { server -> server.id == local.id }
+                },
+                isActive = false,
+            )
+            if (!runCatching { activeTripStore.saveDurably(userId, vineyardId, completedLocal) }.getOrDefault(false)) {
+                _ui.update { it.copy(tripError = "Trip finished on the server, but its local history could not be saved. Free up storage and retry sync.") }
+                return loadedTrips
+            }
+            pendingWrites.list().filter { it.clientId == saved.id &&
+                it.entityType.startsWith("trip_") }.forEach { pendingWrites.remove(it.id) }
+            _ui.update { it.copy(deviceActiveTripId = null, isTracking = false,
+                lastServerCompletedTripId = saved.id,
+                tripError = "This trip was finished on the server. Its history remains available.") }
+            return loadedTrips.map { if (it.id == saved.id) completedLocal else it }
+        }
+        val repairedSaved = TankSessionLifecycle.reconciled(saved)
+        if (repairedSaved != saved && repairedSaved.isActive) {
+            if (runCatching { activeTripStore.saveDurably(userId, vineyardId, repairedSaved) }.getOrDefault(false)) {
+                _ui.update { it.copy(lastReconciledTankTripId = saved.id) }
+                tripTankSync.enqueue(repairedSaved)
+            } else return loadedTrips
+        }
         if (pendingWrites.list().any { it.clientId == saved.id &&
                 it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_END &&
                 it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved }) {
@@ -9194,20 +9268,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         _ui.update { it.copy(deviceActiveTripId = saved.id) }
         if (!saved.isActive) {
-            runCatching { activeTripStore.clear() }
             _ui.update { it.copy(deviceActiveTripId = null) }
-            return loadedTrips
+            return loadedTrips.map { server -> if (server.id == saved.id && (!server.isActive || server.endTime != null)) {
+                server.copy(
+                    pathPoints = if (saved.pathPoints.orEmpty().size > server.pathPoints.orEmpty().size) saved.pathPoints else server.pathPoints,
+                    totalDistance = if (saved.pathPoints.orEmpty().size > server.pathPoints.orEmpty().size) saved.totalDistance else server.totalDistance,
+                    tankSessions = server.tankSessions + saved.tankSessions.filter { local -> server.tankSessions.none { it.id == local.id } },
+                    isActive = false,
+                )
+            } else server }
         }
         val index = loadedTrips.indexOfFirst { it.id == saved.id }
         if (index >= 0) {
             val server = loadedTrips[index]
-            if (!server.isActive) {
+            if (!server.isActive || server.endTime != null) {
                 // Ended/deleted elsewhere — server wins.
                 runCatching { activeTripStore.clear() }
                 _ui.update { it.copy(deviceActiveTripId = null) }
                 return loadedTrips
             }
-            val merged = ActiveTripReconciliation.mergeProgress(server, saved)
+            // Reconstruct a lost marker if the process died after committing the
+            // complete tank snapshot but before queueing its replay marker.
+            if (com.rork.vinetrack.data.TankSessionReplayMerge.merge(server, repairedSaved)
+                    ?.addsSomething(server) == true &&
+                pendingWrites.list().none { it.clientId == saved.id &&
+                    it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK &&
+                    it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved }) {
+                tripTankSync.enqueue(repairedSaved)
+            }
+            val merged = ActiveTripReconciliation.mergeProgress(server, repairedSaved)
             return loadedTrips.toMutableList().also { it[index] = merged }
         }
         // Absent from the loaded list.
@@ -9217,7 +9306,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // fresh server list) so the active-trip view and its queued GPS/row/tank
         // work survive a restart instead of being wiped.
         if (TripStartSync.Dependency.hasUnresolvedStart(pendingWrites, saved.id)) {
-            return listOf(saved) + loadedTrips
+            return listOf(repairedSaved) + loadedTrips
         }
         return if (tripsFromServer) {
             // Fresh server list without it — the trip is gone; don't resurrect.
@@ -11317,9 +11406,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // MARK: - Live tank sessions (Stage 3F-2b)
 
-    /** Returns the exact next planned tank selected by the production lifecycle without mutating state. */
+    private fun reconciledTankTripForStart(tripId: String): Trip? {
+        val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return null
+        val repaired = TankSessionLifecycle.reconciled(trip)
+        if (repaired == trip) return trip
+        val owner = session.userId ?: return null
+        if (!runCatching { activeTripStore.saveDurably(owner, trip.vineyardId, repaired) }.getOrDefault(false)) {
+            _ui.update { it.copy(tripError = "Couldn't save the tank repair on this device. Please retry.") }
+            return null
+        }
+        _ui.update { state -> state.copy(
+            trips = state.trips.map { if (it.id == tripId) repaired else it },
+            lastReconciledTankTripId = tripId,
+        ) }
+        tripTankSync.enqueue(repaired)
+        if (_ui.value.isOnline) replayAllPendingWrites()
+        return repaired
+    }
+
+    /** Returns the exact next planned tank selected by the production lifecycle. */
     fun pendingTankStart(tripId: String): PendingTankStart? {
-        val trip = _ui.value.trips.firstOrNull { it.id == tripId && it.isActive } ?: return null
+        val trip = reconciledTankTripForStart(tripId) ?: return null
         val record = TankMixPresentation.linkedRecord(trip.id, _ui.value.sprayRecords) ?: return null
         val result = TankSessionLifecycle.startResult(
             trip, java.time.Instant.now().toString(), null, record.tanks.orEmpty().map { it.tankNumber }
@@ -11425,31 +11532,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun syncCommittedTankTrip(committedTrip: Trip) {
-        val marker = pendingWrites.list().firstOrNull {
-            it.clientId == committedTrip.id &&
-                it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK &&
-                it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
-        }
-        if (!_ui.value.isOnline) return
-        viewModelScope.launch {
-            runCatching {
-                tripRepo.updateTripTankSessions(
-                    committedTrip.id, committedTrip.tankSessions, committedTrip.activeTankNumber,
-                    committedTrip.isFillingTank, committedTrip.fillingTankNumber,
-                )
-            }.onSuccess {
-                marker?.let { pendingWrites.remove(it.id) }
-                replayAllPendingWrites()
-            }.onFailure {
-                marker?.let { pendingWrites.updateStatus(it.id, com.rork.vinetrack.data.model.PendingWriteStatus.FAILED, "Tank session is waiting to sync.") }
-            }
-        }
+        // The recoverable commit already queued TRIP_TANK. Never launch a competing
+        // whole-array PATCH: an earlier Start response could overwrite End Tank.
+        if (_ui.value.isOnline) replayAllPendingWrites()
     }
 
     /** Explicit legacy fallback; no zero actual quantities are fabricated. */
     fun startTankWithoutRecordedMix(tripId: String) {
         if (_ui.value.activeTrip?.id != tripId) return
-        val trip = _ui.value.trips.firstOrNull { it.id == tripId && it.isActive } ?: return
+        val trip = reconciledTankTripForStart(tripId) ?: return
         val result = TankSessionLifecycle.startResult(
             trip, java.time.Instant.now().toString(),
             trip.currentRowNumber ?: trip.rowSequence.getOrNull(trip.sequenceIndex), null
@@ -11560,8 +11651,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // ended locally (its TRIP_END marker is queued) — no new tank work may
         // accrue after a local end.
         if (tripId in _ui.value.locallyEndedTripIds || _ui.value.activeTrip?.id != tripId) return
-        val previous = _ui.value.trips
-        // Optimistic local update so the controls reflect the action immediately.
+        val current = _ui.value.trips.firstOrNull { it.id == tripId } ?: return
+        val ownerId = session.userId ?: return
+        val vineyardId = _ui.value.selectedVineyardId ?: return
+        val durable = current.copy(
+            tankSessions = sessions, activeTankNumber = activeTankNumber,
+            isFillingTank = isFillingTank, fillingTankNumber = fillingTankNumber,
+        )
+        if (!runCatching { activeTripStore.saveDurably(ownerId, vineyardId, durable) }.getOrDefault(false)) {
+            _ui.update { it.copy(tripError = "Tank changes could not be saved on this device. Please retry.") }
+            return
+        }
+        // Optimistic local update only after the complete transition is durable.
         _ui.update { st ->
             st.copy(
                 trips = st.trips.map {
@@ -11574,44 +11675,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 },
             )
         }
-        // Durable local snapshot before the network round-trip so tank/fill work
-        // survives a process death even if the server write later fails.
-        persistActiveTripSnapshot()
+        // The complete tank transition was saved durably before the UI changed.
         // Stage E-1: when known offline, keep the optimistic tank/fill change
         // (don't roll it back just because there's no network), queue/refresh a
         // coalesced TRIP_TANK marker, and surface a friendly offline message.
         // The tank state already lives in the Stage A snapshot; the marker only
         // flags that this active server trip has unsynced tank work to merge.
-        val optimisticTrip = _ui.value.trips.firstOrNull { it.id == tripId }
-        if (!_ui.value.isOnline) {
-            if (optimisticTrip != null && optimisticTrip.isActive) tripTankSync.enqueue(optimisticTrip)
-            _ui.update { it.copy(tripError = "Tank changes saved offline — they'll sync when connection returns.") }
-            return
-        }
-        viewModelScope.launch {
-            try {
-                val updated = tripRepo.updateTripTankSessions(
-                    tripId,
-                    sessions,
-                    activeTankNumber,
-                    isFillingTank,
-                    fillingTankNumber,
-                )
-                _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == tripId) updated else it }) }
-                persistActiveTripSnapshot()
-            } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(trips = previous) }; onUnauthorized("persistTankSessions")
-            } catch (e: Exception) {
-                // Server write failed while we believed we were online. Keep the
-                // optimistic tank state and queue a coalesced marker so the tank
-                // action is merged/replayed on reconnect rather than rolled back
-                // and lost. Coalesced by trip id, so repeated failures never
-                // bloat the outbox.
-                val current2 = _ui.value.trips.firstOrNull { it.id == tripId }
-                if (current2 != null && current2.isActive) tripTankSync.enqueue(current2)
-                _ui.update { it.copy(tripError = "Tank changes saved offline — they'll sync when connection returns.") }
-            }
-        }
+        tripTankSync.enqueue(durable)
+        if (_ui.value.isOnline) replayAllPendingWrites()
+        else _ui.update { it.copy(tripError = "Tank changes saved offline — they'll sync when connection returns.") }
     }
 
     /**

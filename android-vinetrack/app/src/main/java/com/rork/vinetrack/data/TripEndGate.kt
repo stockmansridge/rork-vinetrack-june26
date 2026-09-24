@@ -1,5 +1,7 @@
 package com.rork.vinetrack.data
 
+import com.rork.vinetrack.data.model.Trip
+
 /**
  * Why a manual End Trip request cannot proceed yet.
  *
@@ -67,6 +69,17 @@ sealed interface TripEndDecision {
  * both are clearable by the operator from the tank controls.
  */
 object TripEndGate {
+    /** Session evidence takes precedence over missing or stale runtime scalars. */
+    fun evaluate(trip: Trip): TripEndDecision {
+        trip.tankSessions.firstOrNull { TankSessionLifecycle.isOpenSpray(it) }?.let {
+            return TripEndDecision.Blocked(TripEndBlocker.ActiveTank(it.tankNumber))
+        }
+        trip.tankSessions.firstOrNull { it.fillStartTime != null && it.fillEndTime == null }?.let {
+            return TripEndDecision.Blocked(TripEndBlocker.FillingTank(it.tankNumber))
+        }
+        return evaluate(trip.activeTankNumber, trip.isFillingTank, trip.fillingTankNumber)
+    }
+
 
     /**
      * Decide whether a manual End Trip may proceed.
