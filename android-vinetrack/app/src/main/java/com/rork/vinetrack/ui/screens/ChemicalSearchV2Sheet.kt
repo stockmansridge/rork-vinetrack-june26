@@ -42,7 +42,6 @@ import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.ChemicalInfoService
 import com.rork.vinetrack.data.PinPhotoImageUtil
 import com.rork.vinetrack.data.SavedChemicalRepository
-import com.rork.vinetrack.data.chemical.ChemicalLabelAttachmentV2Repository
 import com.rork.vinetrack.data.chemical.ChemicalLabelIdentityOCR
 import com.rork.vinetrack.data.chemical.ChemicalLabelRate
 import com.rork.vinetrack.data.chemical.ChemicalLabelRateBasis
@@ -663,17 +662,10 @@ private fun ChemicalReviewV2(
                         return@createSavedChemicalV2
                     }
                     onSaved(created)
-                    if (photoBytes == null) { onDone(); return@createSavedChemicalV2 }
-                    scope.launch {
-                        try {
-                            ChemicalLabelAttachmentV2Repository().upload(photoBytes, vineyardId, created.id)
-                        } catch (_: Exception) {
-                            Log.w("ChemicalSearchV2", "chemical saved but label photo upload failed")
-                            onDone()
-                            return@launch
-                        }
-                        onDone()
-                    }
+                    // The chemical is already durably saved. Photo transfer is optional
+                    // and cannot hold the Save result or the spray handoff hostage.
+                    photoBytes?.let { bytes -> vm.uploadSavedChemicalLabelPhoto(bytes, vineyardId, created.id) }
+                    onDone()
                 }
             },
             modifier = Modifier.fillMaxWidth(),

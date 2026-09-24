@@ -160,6 +160,9 @@ import com.rork.vinetrack.data.OperatorCategoryRepository
 import com.rork.vinetrack.data.VineyardTripFunctionRepository
 import com.rork.vinetrack.data.ChemicalInfoService
 import com.rork.vinetrack.data.SavedChemicalRepository
+import com.rork.vinetrack.data.SavedChemicalCreateSync
+import com.rork.vinetrack.data.SavedChemicalLocalStore
+import com.rork.vinetrack.data.chemical.ChemicalLabelAttachmentV2Repository
 import com.rork.vinetrack.data.SavedInputRepository
 import com.rork.vinetrack.data.SavedSprayPresetRepository
 import com.rork.vinetrack.data.SavedTripActivation
@@ -1645,6 +1648,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * count stays 0 in production.
      */
     private val pendingWrites = PendingWriteRepository(app)
+    private val savedChemicalCreateSync = SavedChemicalCreateSync(
+        savedChemicalRepo, pendingWrites, SavedChemicalLocalStore(app), { session.userId },
+    )
 
     /**
      * Local store for pin photos retained when they can't upload immediately
@@ -3480,6 +3486,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * in every replay pipeline. Skipped when offline or with no session so it
      * can't fire during early startup.
      */
+    private val unsentChemicalLabelPhotos = mutableMapOf<String, Pair<String, ByteArray>>()
+
+    /** Label photo uses the same chemical UUID, but never gates local chemical creation. */
+    fun uploadSavedChemicalLabelPhoto(bytes: ByteArray, vineyardId: String, chemicalId: String) {
+        unsentChemicalLabelPhotos[chemicalId] = vineyardId to bytes.copyOf()
+        if (_ui.value.isOnline && session.accessToken != null && pendingWrites.list().none {
+                it.entityType == PendingEntityType.SAVED_CHEMICAL && it.clientId == chemicalId
+            }) {
+            uploadSyncedChemicalPhoto(chemicalId)
+        }
+    }
+
+    private fun uploadSyncedChemicalPhoto(chemicalId: String) {
+        val (vineyardId, bytes) = unsentChemicalLabelPhotos.remove(chemicalId) ?: return
+        viewModelScope.launch {
+            runCatching { ChemicalLabelAttachmentV2Repository().upload(bytes, vineyardId, chemicalId) }
+        }
+    }
+
+    private fun replayPendingSavedChemicalCreates() {
+        if (session.accessToken == null || !_ui.value.isOnline) return
+        viewModelScope.launch {
+            savedChemicalCreateSync.replayAll { saved ->
+                uploadSyncedChemicalPhoto(saved.id)
+                if (_ui.value.selectedVineyardId == saved.vineyardId) {
+                    _ui.update { state -> state.copy(savedChemicals =
+                        (state.savedChemicals.filterNot { it.id == saved.id } + saved)
+                            .sortedBy { it.displayName.lowercase() }) }
+                }
+            }
+        }
+    }
+
     private fun replayPendingWorkTaskCreates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
         viewModelScope.launch {
@@ -4360,6 +4399,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingFuelDeletes()
         replayPendingSprayUpdates()
         replayPendingSprayDeletes()
+        replayPendingSavedChemicalCreates()
         replayPendingWorkTaskCreates()
         replayPendingWorkTaskUpdates()
         replayPendingWorkTaskLabour()
@@ -4437,6 +4477,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingFuelDeletes()
         replayPendingSprayUpdates()
         replayPendingSprayDeletes()
+        replayPendingSavedChemicalCreates()
         replayPendingWorkTaskCreates()
         replayPendingWorkTaskUpdates()
         replayPendingWorkTaskLabour()
@@ -4515,6 +4556,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     replayPendingSprayCreates()
                     replayPendingSprayUpdates()
                     replayPendingSprayDeletes()
+                    replayPendingSavedChemicalCreates()
                     replayPendingWorkTaskCreates()
                     replayPendingWorkTaskUpdates()
                     replayPendingWorkTaskLabour()
@@ -5025,6 +5067,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingFuelDeletes()
         replayPendingSprayUpdates()
         replayPendingSprayDeletes()
+        replayPendingSavedChemicalCreates()
         replayPendingWorkTaskCreates()
         replayPendingWorkTaskUpdates()
         replayPendingWorkTaskLabour()
@@ -5976,6 +6019,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(
                     vineyards = vineyards,
                     selectedVineyardId = selected,
+                    savedChemicals = selected?.let { vineyard -> session.userId?.let { owner ->
+                        savedChemicalCreateSync.rows(owner, vineyard) } } ?: emptyList(),
                     selectedVineyardLogo = if (it.selectedVineyardId == selected) {
                         it.selectedVineyardLogo
                     } else {
@@ -6028,6 +6073,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 replayPendingSprayCreates()
                 replayPendingSprayUpdates()
                 replayPendingSprayDeletes()
+                replayPendingSavedChemicalCreates()
                 replayPendingWorkTaskCreates()
                 replayPendingWorkTaskUpdates()
                 replayPendingWorkTaskLabour()
@@ -6148,6 +6194,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 vineyards = cached,
                 selectedVineyardId = selected,
+                savedChemicals = selected?.let { vineyard -> userId?.let { owner ->
+                    savedChemicalCreateSync.rows(owner, vineyard) } } ?: emptyList(),
                 defaultVineyardId = defaultId,
                 currentUserId = userId,
                 isUsingCachedFieldData = true,
@@ -6267,7 +6315,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         loadedLogoKey = null
         // Apply the cached region settings instantly so units/currency render
         // correctly on first paint, then refresh from the backend below.
-        _ui.update { it.copy(regionSettings = regionSettingsStore.load(id)) }
+        _ui.update { it.copy(regionSettings = regionSettingsStore.load(id),
+            savedChemicals = session.userId?.let { owner -> savedChemicalCreateSync.rows(owner, id) } ?: emptyList()) }
         refreshSelectedVineyardLogo()
         refreshGrowthStageImages()
         refreshRegionSettings(id)
@@ -12059,47 +12108,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // MARK: - Saved chemicals (owner/manager-managed library)
 
-    /** Create a saved chemical, optimistically inserting it in name order. */
+    /** Both entry points use the same durable local-first create. */
     fun createSavedChemical(input: SavedChemicalRepository.ChemicalInput, onResult: (Boolean) -> Unit) {
-        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
-        viewModelScope.launch {
-            _ui.update { it.copy(sprayError = null) }
-            try {
-                val created = savedChemicalRepo.create(vineyardId, input)
-                _ui.update { st ->
-                    st.copy(savedChemicals = (st.savedChemicals + created).sortedBy { it.displayName.lowercase() })
-                }
-                onResult(true)
-            } catch (e: BackendError.Unauthorized) {
-                onUnauthorized("createSavedChemical"); onResult(false)
-            } catch (e: BackendError.Server) {
-                _ui.update { it.copy(sprayError = friendlyWriteError(e.code)) }
-                onResult(false)
-            } catch (e: Exception) {
-                _ui.update { it.copy(sprayError = "Couldn't save the chemical. Check your connection.") }
-                onResult(false)
-            }
-        }
+        createSavedChemicalV2(input) { onResult(it != null) }
     }
 
-    /** Returns the server-created record itself, never an inferred match from the UI list. */
+    /** Returns the exact locally committed record, never an inferred match from the UI list. */
     fun createSavedChemicalV2(input: SavedChemicalRepository.ChemicalInput, onResult: (SavedChemical?) -> Unit) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(null); return }
         viewModelScope.launch {
             _ui.update { it.copy(sprayError = null) }
             try {
-                val created = savedChemicalRepo.create(vineyardId, input)
+                val created = savedChemicalCreateSync.save(vineyardId, input)
                 _ui.update { st ->
-                    st.copy(savedChemicals = (st.savedChemicals + created).sortedBy { it.displayName.lowercase() })
+                    st.copy(savedChemicals = (st.savedChemicals.filterNot { it.id == created.id } + created)
+                        .sortedBy { it.displayName.lowercase() })
                 }
                 onResult(created)
+                if (_ui.value.isOnline && session.accessToken != null) replayPendingSavedChemicalCreates()
             } catch (e: BackendError.Unauthorized) {
                 onUnauthorized("createSavedChemicalV2"); onResult(null)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(sprayError = friendlyWriteError(e.code)) }
                 onResult(null)
             } catch (e: Exception) {
-                _ui.update { it.copy(sprayError = "Couldn't save the chemical. Check your connection.") }
+                _ui.update { it.copy(sprayError = "Couldn't save the chemical locally. Free some storage and try again.") }
                 onResult(null)
             }
         }
@@ -12113,6 +12146,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val updated = savedChemicalRepo.update(id, input)
                 _ui.update { st ->
+                    session.userId?.let { owner -> savedChemicalCreateSync.mergeRemote(owner, updated.vineyardId,
+                        st.savedChemicals.map { if (it.id == id) updated else it }) }
                     st.copy(savedChemicals = st.savedChemicals.map { if (it.id == id) updated else it }
                         .sortedBy { it.displayName.lowercase() })
                 }
@@ -12136,6 +12171,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 savedChemicalRepo.softDelete(id)
+                session.userId?.let { owner -> previous.firstOrNull { it.id == id }?.let { row ->
+                    savedChemicalCreateSync.removeLocal(owner, row.vineyardId, id) } }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 onUnauthorized("deleteSavedChemical"); onResult(false)
@@ -12167,6 +12204,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (outcome is SavedChemicalRepository.HardDeleteOutcome.InUse) {
                     // Server kept the row — restore it locally so the list stays truthful.
                     _ui.update { it.copy(savedChemicals = previous) }
+                } else {
+                    session.userId?.let { owner -> previous.firstOrNull { it.id == id }?.let { row ->
+                        savedChemicalCreateSync.removeLocal(owner, row.vineyardId, id) } }
                 }
                 onResult(outcome)
             } catch (e: BackendError.Unauthorized) {
@@ -15997,9 +16037,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Saved chemicals back the spray-form chemical picker + costing prefill;
         // optional reference list, soft-fail to the existing list (or empty).
         val savedChemicals = try {
-            repo.listSavedChemicals(vineyardId)
+            val remote = repo.listSavedChemicals(vineyardId)
+            userId?.let { savedChemicalCreateSync.mergeRemote(it, vineyardId, remote) } ?: remote
         } catch (e: Exception) {
-            _ui.value.savedChemicals
+            userId?.let { savedChemicalCreateSync.rows(it, vineyardId) } ?: _ui.value.savedChemicals
         }
         // Saved inputs back the seeding-trip cost-per-unit resolution + the
         // Saved Inputs management list; optional reference, soft-fail to existing.

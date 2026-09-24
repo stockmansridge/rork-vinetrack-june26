@@ -168,6 +168,8 @@ object PendingEntityType {
      */
     const val TRIP_SEEDING = "trip_seeding"
     const val SPRAY_RECORD = "spray_record"
+    /** Full saved_chemicals INSERT with a locally minted final UUID; CREATE only. */
+    const val SAVED_CHEMICAL = "saved_chemical"
     /**
      * A spray job created FROM a resistance plan position, queued offline
      * (sql/201, Stage 5B). CREATE only — the payload carries the full insert

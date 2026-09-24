@@ -246,6 +246,7 @@ if (providers.gradleProperty("editChemicalFocusedTests").orNull == "true") {
                 include("**/ChemicalSaveContractTest.kt")
                 include("**/ChemicalReverificationTest.kt")
                 include("**/ChemicalManualEntryTest.kt")
+                include("**/SavedChemicalCreateSyncTest.kt")
             })
         }
     }

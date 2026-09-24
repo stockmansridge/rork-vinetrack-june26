@@ -17,6 +17,7 @@ import com.rork.vinetrack.data.model.SavedChemical
 import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.headers
+import io.ktor.client.request.get
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -33,7 +34,6 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import java.time.Instant
-import java.util.UUID
 
 /**
  * Write path for the shared saved-chemicals library, mirroring the iOS
@@ -48,7 +48,7 @@ import java.util.UUID
  * costing. All payloads use the iOS-compatible shapes so values round-trip
  * across platforms.
  */
-class SavedChemicalRepository(private val session: SessionStore) {
+class SavedChemicalRepository(private val session: SessionStore? = null) {
 
     /**
      * Editable fields surfaced by the Android management form. The form builds
@@ -180,7 +180,7 @@ class SavedChemicalRepository(private val session: SessionStore) {
     }
 
     @Serializable
-    private data class ChemicalInsert(
+    internal data class ChemicalInsert(
         val id: String,
         @SerialName("vineyard_id") val vineyardId: String,
         val name: String,
@@ -376,13 +376,11 @@ class SavedChemicalRepository(private val session: SessionStore) {
         )?.scalar
     }
 
-    suspend fun create(vineyardId: String, input: ChemicalInput): SavedChemical =
-        withContext(Dispatchers.IO) {
-            requireConfig()
-            val token = session.accessToken ?: throw BackendError.Unauthorized
+    /** Build the exact immutable INSERT before any network request. */
+    internal fun prepareCreate(vineyardId: String, input: ChemicalInput, id: String, clientUpdatedAt: String): ChemicalInsert {
             val intel = IntelFields(input.intelligence)
-            val body = ChemicalInsert(
-                id = UUID.randomUUID().toString(),
+            return ChemicalInsert(
+                id = id,
                 vineyardId = vineyardId,
                 name = input.name,
                 unit = input.unit,
@@ -414,8 +412,7 @@ class SavedChemicalRepository(private val session: SessionStore) {
                 inventoryQuantity = input.inventoryQuantity,
                 inventoryUnit = input.inventoryUnit,
                 applicationNotes = input.applicationNotes,
-                createdBy = session.userId,
-                clientUpdatedAt = nowIso(),
+                clientUpdatedAt = clientUpdatedAt,
                 activeIngredients = intel.activeIngredients,
                 activityGroups = intel.activityGroups,
                 activityGroupScheme = intel.activityGroupScheme,
@@ -440,19 +437,47 @@ class SavedChemicalRepository(private val session: SessionStore) {
                 masterSourceRevision = input.masterSourceRevision,
                 entrySource = SavedChemicalEntrySource.repaired(input.entrySource, input.intelligence),
             )
+    }
+
+    /** Local row is decoded from the INSERT itself, preventing local/server field drift. */
+    internal fun localCreate(body: ChemicalInsert): SavedChemical = SupabaseClient.json.decodeFromString(
+        SavedChemical.serializer(), SupabaseClient.json.encodeToString(ChemicalInsert.serializer(), body)
+    )
+
+    /** Replay the original INSERT with its client ID and timestamp; auth is resolved now. */
+    internal suspend fun create(body: ChemicalInsert): SavedChemical = withContext(Dispatchers.IO) {
+            requireConfig()
+            val token = session?.accessToken ?: throw BackendError.Unauthorized
+            val repaired = body.copy(entrySource = SavedChemicalEntrySource.repaired(
+                body.entrySource, localCreate(body).resolvedIntelligence,
+            ))
             val response = SupabaseClient.http.post(SupabaseClient.restUrl("saved_chemicals")) {
                 authHeaders(token)
                 headers { append("Prefer", "return=representation") }
                 contentType(ContentType.Application.Json)
-                setBody(body)
+                setBody(repaired.copy(createdBy = session?.userId))
             }
             firstRow(response)
         }
 
+    /** Verify a duplicate insert by primary key, never by product name. */
+    internal suspend fun findById(id: String): SavedChemical? = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session?.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.get(SupabaseClient.restUrl("saved_chemicals?id=eq.$id&select=*")) {
+            authHeaders(token)
+        }
+        when {
+            response.status.isSuccess() -> response.body<List<SavedChemical>>().firstOrNull()
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
+
     suspend fun update(id: String, input: ChemicalInput): SavedChemical =
         withContext(Dispatchers.IO) {
             requireConfig()
-            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val token = session?.accessToken ?: throw BackendError.Unauthorized
             val intel = IntelFields(input.intelligence)
             val patch = ChemicalPatch(
                 name = input.name,
@@ -522,7 +547,7 @@ class SavedChemicalRepository(private val session: SessionStore) {
     /** Archive (soft-delete) via the owner/manager-gated server RPC. */
     suspend fun softDelete(id: String) = withContext(Dispatchers.IO) {
         requireConfig()
-        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val token = session?.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("soft_delete_saved_chemicals")) {
             authHeaders(token)
             contentType(ContentType.Application.Json)
@@ -544,7 +569,7 @@ class SavedChemicalRepository(private val session: SessionStore) {
      */
     suspend fun hardDeleteUnused(id: String): HardDeleteOutcome = withContext(Dispatchers.IO) {
         requireConfig()
-        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val token = session?.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("hard_delete_unused_saved_chemical")) {
             authHeaders(token)
             contentType(ContentType.Application.Json)
