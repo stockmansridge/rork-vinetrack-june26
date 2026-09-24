@@ -395,15 +395,15 @@ fun ChemicalConflictCard(
                 modifier = Modifier.size(16.dp),
             )
             Text(
-                "Verification conflict",
+                "CONFLICT · Conflict — needs review",
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = VineColors.Destructive,
             )
         }
         Text(
-            "The extracted product information and the activity-group classification " +
-                "do not agree. This product cannot be verified until the disagreement is resolved.",
+            "The evidence cannot be safely reconciled. Your existing value is preserved " +
+                "and no update is applied until the conflict is resolved.",
             fontSize = 12.sp,
             color = vine.textSecondary,
         )

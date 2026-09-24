@@ -240,13 +240,13 @@ struct ChemicalReverifyFlowView: View {
                 } else {
                     // Identity matching is not the same as agreement. A conflicted
                     // candidate must never open with a green confirmation.
-                    Label("Needs review", systemImage: "exclamationmark.triangle.fill")
+                    Label("Conflict — needs review", systemImage: "exclamationmark.triangle.fill")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.red)
                 }
                 Text(conflicts.isEmpty
                      ? "Review what has changed before updating this chemical."
-                     : "The re-check returned information that disagrees with the reference classification. Review it before updating.")
+                     : "The evidence cannot be safely reconciled. Your existing value is preserved; no updates can be applied until the conflict is resolved.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if diff.hasResistanceCriticalChanges {
@@ -269,7 +269,7 @@ struct ChemicalReverifyFlowView: View {
             ForEach(diff.populatedSections, id: \.rawValue) { section in
                 Section {
                     ForEach(diff.changes(in: section)) { change in
-                        changeRow(change)
+                        changeRow(change, conflicts: conflicts)
                     }
                 } header: {
                     HStack(spacing: 6) {
@@ -317,7 +317,7 @@ struct ChemicalReverifyFlowView: View {
                 }
                 .disabled(isWriting || !conflicts.isEmpty)
                 if !conflicts.isEmpty {
-                    Text("Needs review: existing values are kept. Resolve the conflicting evidence before applying these changes.")
+                    Text("Conflict — needs review. Your existing value is preserved. Cancel, correct the chemical manually, resolve the evidence where available, or rerun Find Missing Information. No updates are applied while a conflict remains.")
                         .font(.caption)
                         .foregroundStyle(VineyardTheme.warning)
                 }
@@ -344,7 +344,17 @@ struct ChemicalReverifyFlowView: View {
 
     /// One change, in the shape an operator reads: what it is, then current, then
     /// updated. Resistance-critical rows carry the emphasis.
-    private func changeRow(_ change: ChemicalIntelligenceChange) -> some View {
+    private func changeRow(
+        _ change: ChemicalIntelligenceChange,
+        conflicts: [ChemicalVerificationConflict]
+    ) -> some View {
+        let isConflicted = conflicts.contains { conflict in
+            let sameField = conflict.field == change.field.rawValue
+                || (conflict.field == "activity_group"
+                    && (change.field == .activityGroupCode || change.field == .activityGroupScheme))
+            return sameField && (conflict.activeIngredientName == nil
+                || conflict.activeIngredientName?.localizedCaseInsensitiveCompare(change.subject ?? "") == .orderedSame)
+        }
         let tint: Color = change.isResistanceCritical ? VineyardTheme.warning : .secondary
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -352,7 +362,7 @@ struct ChemicalReverifyFlowView: View {
                     .font(change.isResistanceCritical
                           ? .subheadline.weight(.bold)
                           : .subheadline.weight(.medium))
-                Text(change.kind.label.uppercased())
+                Text(isConflicted ? "CONFLICT" : (change.kind == .added ? "NEW" : "CHANGED"))
                     .font(.caption2.weight(.semibold))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
@@ -364,7 +374,7 @@ struct ChemicalReverifyFlowView: View {
                 valueLine("Existing", current, emphasised: false)
             }
             if let candidate = change.candidateValue {
-                valueLine("Proposed", candidate, emphasised: change.isResistanceCritical)
+                valueLine(isConflicted ? "Disputed" : "Proposed", candidate, emphasised: change.isResistanceCritical)
             }
         }
         .padding(.vertical, 2)

@@ -344,7 +344,7 @@ struct EditSavedChemicalSheet: View {
                 topActionsSection
                 if hasProposedLookup {
                     Section {
-                        Label("NEW · Proposed information", systemImage: "sparkles")
+                        Label("Proposed information", systemImage: "sparkles")
                             .font(.subheadline.weight(.semibold))
                         Text("Review the product details below. These findings will not replace your saved chemical unless you confirm and save.")
                             .font(.caption)
@@ -408,10 +408,7 @@ struct EditSavedChemicalSheet: View {
                 // 5. Labels & References
                 labelsSection
                 // 6. Purchase & Inventory
-                if session.productCategory?.isFertiliser == true {
-                    fertiliserSection
-                }
-                if canViewFinancials { purchaseSection }
+                purchaseSection
                 // 7. Notes
                 notesSection
                 // 8. Advanced / Verification Evidence — collapsed by default
@@ -485,7 +482,7 @@ struct EditSavedChemicalSheet: View {
                 Button("Apply Confirmed Updates") { saveAndDismiss() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This replaces the saved product details with the NEW information you reviewed above.")
+                Text("This applies the NEW and CHANGED information you reviewed above. Cancel leaves this chemical unchanged.")
             }
             .alert("Link", isPresented: $showLinkAlert, presenting: linkAlertMessage) { _ in
                 Button("OK", role: .cancel) {}
@@ -653,9 +650,8 @@ struct EditSavedChemicalSheet: View {
 
     /// Pack, nutrient analysis and inventory inputs — shown only for
     /// fertiliser/nutrient categories so ordinary spray chemicals stay clean.
-    private var fertiliserSection: some View {
+    private var fertiliserFields: some View {
         Group {
-            Section("Purchase & Inventory") {
                 Toggle("Organic certified", isOn: $session.organicCertified)
                 LabeledContent("Pack size (\(session.formType == .liquid ? "L" : "kg"))") {
                     TextField("25", text: $session.packSizeText)
@@ -681,9 +677,9 @@ struct EditSavedChemicalSheet: View {
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                 }
-            }
-
-            Section {
+                Text("Nutrient analysis (%)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 LabeledContent("Nitrogen (N) %") {
                     TextField("0", text: $session.nitrogenText)
                         .keyboardType(.decimalPad)
@@ -704,16 +700,11 @@ struct EditSavedChemicalSheet: View {
                         Text(option.label).tag(option)
                     }
                 }
-            } header: {
-                Text("Nutrient Analysis")
-            } footer: {
                 Text("Record whether the label lists elemental P/K or oxide (P\u{2082}O\u{2085}/K\u{2082}O) values — mixing them up causes major rate errors.")
-            }
-
-            Section("Application Notes") {
-                TextField("Optional notes", text: $session.applicationNotes, axis: .vertical)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("Application notes (optional)", text: $session.applicationNotes, axis: .vertical)
                     .lineLimit(2...4)
-            }
         }
     }
 
@@ -1368,8 +1359,13 @@ struct EditSavedChemicalSheet: View {
 
     private var purchaseSection: some View {
         Section {
-            Toggle("Track Purchase Info", isOn: $session.trackPurchase.animation())
-            if session.trackPurchase {
+            if session.productCategory?.isFertiliser == true {
+                fertiliserFields
+            }
+            if canViewFinancials {
+                Toggle("Track Purchase Info", isOn: $session.trackPurchase.animation())
+            }
+            if canViewFinancials && session.trackPurchase {
                 HStack {
                     Text("Container Size")
                     Spacer()

@@ -140,11 +140,11 @@ struct ChemicalConflictCard: View {
     var body: some View {
         if !conflicts.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Label("Verification conflict", systemImage: "exclamationmark.triangle.fill")
+                Label("CONFLICT · Conflict — needs review", systemImage: "exclamationmark.triangle.fill")
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.red)
 
-                Text("The extracted product information and the activity-group classification do not agree. This product cannot be verified until the disagreement is resolved.")
+                Text("The evidence cannot be safely reconciled. Your existing value is preserved and no update is applied until the conflict is resolved.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

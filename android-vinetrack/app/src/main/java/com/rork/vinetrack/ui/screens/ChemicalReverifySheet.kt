@@ -423,15 +423,15 @@ internal fun ChemicalReverifySheet(
                                 modifier = Modifier.size(18.dp),
                             )
                             Text(
-                                "Needs review",
+                                "Conflict — needs review",
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = VineColors.Destructive,
                             )
                         }
                         Text(
-                            "The re-check returned information that disagrees with the " +
-                                "reference classification. Review it before updating.",
+                            "The evidence cannot be safely reconciled. Your existing value is " +
+                                "preserved; no updates can be applied until the conflict is resolved.",
                             fontSize = 12.sp,
                             color = vine.textSecondary,
                         )
@@ -482,7 +482,7 @@ internal fun ChemicalReverifySheet(
                                 )
                             }
                         }
-                        sectionChanges.forEach { ChangeRow(it) }
+                        sectionChanges.forEach { ChangeRow(it, conflicts) }
                     }
 
                     HorizontalDivider()
@@ -522,7 +522,7 @@ internal fun ChemicalReverifySheet(
                         enabled = conflicts.isEmpty(),
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Review Proposed Updates") }
-                    if (conflicts.isNotEmpty()) Text("Needs review: existing values are kept. Resolve conflicting evidence before applying these changes.", fontSize = 12.sp, color = VineColors.Warning)
+                    if (conflicts.isNotEmpty()) Text("Conflict — needs review. Your existing value is preserved. Cancel, correct the chemical manually, resolve the evidence where available, or rerun Find Missing Information. No updates are applied while a conflict remains.", fontSize = 12.sp, color = VineColors.Warning)
                     OutlinedButton(
                         onClick = onDismiss,
                         modifier = Modifier.fillMaxWidth(),
@@ -599,8 +599,19 @@ internal fun ChemicalReverifySheet(
  * updated. Resistance-critical rows carry the emphasis.
  */
 @Composable
-private fun ChangeRow(change: ChemicalIntelligenceChange) {
+private fun ChangeRow(
+    change: ChemicalIntelligenceChange,
+    conflicts: List<com.rork.vinetrack.data.chemical.ChemicalVerificationConflict>,
+) {
     val vine = LocalVineColors.current
+    val isConflicted = conflicts.any { conflict ->
+        val sameField = conflict.field == change.field.raw ||
+            (conflict.field == "activity_group" &&
+                (change.field == com.rork.vinetrack.data.chemical.ChemicalIntelligenceDiffField.ACTIVITY_GROUP_CODE ||
+                    change.field == com.rork.vinetrack.data.chemical.ChemicalIntelligenceDiffField.ACTIVITY_GROUP_SCHEME))
+        sameField && (conflict.activeIngredientName == null ||
+            conflict.activeIngredientName.equals(change.subject, ignoreCase = true))
+    }
     val tint: Color = if (change.isResistanceCritical) VineColors.Warning else vine.textSecondary
     Column(
         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
@@ -618,7 +629,7 @@ private fun ChangeRow(change: ChemicalIntelligenceChange) {
                 color = vine.textPrimary,
             )
             Text(
-                change.kind.label,
+                if (isConflicted) "CONFLICT" else if (change.kind == com.rork.vinetrack.data.chemical.ChemicalIntelligenceChangeKind.ADDED) "NEW" else "CHANGED",
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = tint,
@@ -630,7 +641,7 @@ private fun ChangeRow(change: ChemicalIntelligenceChange) {
         }
         change.currentValue?.let { ValueLine("Current", it, emphasised = false) }
         change.candidateValue?.let {
-            ValueLine("Updated", it, emphasised = change.isResistanceCritical)
+            ValueLine(if (isConflicted) "Disputed" else "Updated", it, emphasised = change.isResistanceCritical)
         }
     }
 }

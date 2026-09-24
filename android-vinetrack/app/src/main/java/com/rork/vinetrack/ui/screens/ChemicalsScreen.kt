@@ -1156,6 +1156,36 @@ internal fun ChemicalFormSheet(
         }
     }
 
+    // Keep the same save evaluation available to each section for in-place guidance.
+    val displayIntelligence = remember(chemistryDraft, existing?.id) {
+        ChemicalVineyardScope.scoped(
+            ChemicalManualEntry.proposedIntelligence(chemistryDraft, existing?.storedIntelligence),
+        )
+    }
+    val unresolvedStaleBases = staleDefaultBases.filter { defaultRatesDraft?.slot(it) != null }
+    val saveEvaluation = remember(
+        name, unit, category, displayIntelligence, unresolvedStaleBases, isCreatingManual,
+    ) {
+        if (isCreatingManual) {
+            ChemicalSaveContract.evaluateMinimumOperational(
+                productName = name,
+                productUnit = unit,
+                rates = displayIntelligence.registeredUses
+                    .filter(ChemicalManualEntry::isProductRateCarrier)
+                    .flatMap { it.rates },
+            )
+        } else {
+            ChemicalSaveContract.evaluate(
+                productName = name,
+                productCategory = category,
+                intelligence = displayIntelligence,
+                staleDefaultBases = unresolvedStaleBases,
+            )
+        }
+    }
+    val blockingViolations = ChemicalSaveContract.blockingViolations(saveEvaluation, baselineViolationCodes)
+    val carriedOverViolations = ChemicalSaveContract.carriedOverViolations(saveEvaluation, baselineViolationCodes)
+
     reverifyTarget?.let { target ->
         if (state != null) {
             // Closing this form after a re-verification is not cosmetic. These
@@ -1260,7 +1290,7 @@ internal fun ChemicalFormSheet(
             }
 
             if (pendingIntelligence != null) {
-                Text("NEW · Proposed information", fontWeight = FontWeight.SemiBold, color = ChemTint)
+                Text("Proposed information", fontWeight = FontWeight.SemiBold, color = ChemTint)
                 Text("Review the updated fields below before saving. Nothing changes until you confirm the update.", fontSize = 11.sp, color = vine.textSecondary)
             }
             SectionLabel("Product")
@@ -1271,13 +1301,7 @@ internal fun ChemicalFormSheet(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-            if (isCreatingManual && name.trim().isEmpty()) {
-                Text(
-                    "Enter the chemical / product name.",
-                    fontSize = 12.sp,
-                    color = VineColors.Warning,
-                )
-            }
+            ChemicalFieldGuidance("product_name", blockingViolations, carriedOverViolations)
 
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                 listOf("Liquid", "Solid").forEachIndexed { index, f ->
@@ -1304,6 +1328,7 @@ internal fun ChemicalFormSheet(
                 onExpandedChange = { categoryMenu = it },
                 onSelect = { category = it; categoryMenu = false },
             )
+            ChemicalFieldGuidance("product_category", blockingViolations, carriedOverViolations)
             OutlinedTextField(
                 value = manufacturer,
                 onValueChange = { manufacturer = it },
@@ -1314,6 +1339,7 @@ internal fun ChemicalFormSheet(
             chemistryDraft.registrationNumber.takeIf { it.isNotBlank() }?.let { number ->
                 Text("Registration: ${chemistryDraft.registrationScheme?.label.orEmpty()} $number", fontSize = 12.sp, color = vine.textSecondary)
             }
+            ChemicalFieldGuidance("registration", blockingViolations, carriedOverViolations)
             Text(
                 "Fertiliser and nutrient categories unlock pack, N-P-K and inventory fields used by the Fertiliser Calculator.",
                 fontSize = 11.sp,
@@ -1324,8 +1350,13 @@ internal fun ChemicalFormSheet(
             // Edit the structured active rows in the section itself; no second editor.
             val structuredActives = chemistryDraft.actives.filter { it.name.isNotBlank() }
             val groupSummary = ChemicalManualEntry.groupSummary(chemistryDraft)
+            // The summary describes only directions this vineyard can act on.
+            // Do not mutate the draft: other-crop registrations are still retained.
+            val grapevineDraftUses = chemistryDraft.uses.filter {
+                com.rork.vinetrack.data.chemical.ChemicalGrapevineCrop.matches(it.crop)
+            }
             val labelRateCount = chemistryDraft.productRates.size +
-                chemistryDraft.uses.sumOf { it.rates.size }
+                grapevineDraftUses.sumOf { it.rates.size }
             SectionLabel("Active Ingredients & Resistance")
             if (structuredActives.isEmpty()) {
                 Text(
@@ -1383,7 +1414,7 @@ internal fun ChemicalFormSheet(
                     )
                 }
             }
-            if (labelRateCount > 0 || chemistryDraft.uses.isNotEmpty()) {
+            if (labelRateCount > 0 || grapevineDraftUses.isNotEmpty()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "Label rates & uses",
@@ -1393,8 +1424,8 @@ internal fun ChemicalFormSheet(
                     )
                     Text(
                         "$labelRateCount rate${if (labelRateCount == 1) "" else "s"} · " +
-                            "${chemistryDraft.uses.size} use" +
-                            if (chemistryDraft.uses.size == 1) "" else "s",
+                            "${grapevineDraftUses.size} use" +
+                            if (grapevineDraftUses.size == 1) "" else "s",
                         fontSize = 13.sp,
                         color = vine.textSecondary,
                     )
@@ -1410,6 +1441,7 @@ internal fun ChemicalFormSheet(
                 )
             }
             OutlinedButton(onClick = { chemistryDraft = chemistryDraft.copy(actives = chemistryDraft.actives + ChemicalManualActiveDraft()) }, modifier = Modifier.fillMaxWidth()) { Text("Add Active Ingredient") }
+            ChemicalFieldGuidance("active_ingredients", blockingViolations, carriedOverViolations)
             // A legacy record's free-text chemistry, shown read-only so the
             // operator can see what the old columns hold while they restate it as
             // structure. Nothing calculates from these strings.
@@ -1466,57 +1498,6 @@ internal fun ChemicalFormSheet(
             // is a contract about a different record.
             //
             // Scoping is presentation-only: non-vineyard uses remain stored.
-            val displayIntelligence = remember(chemistryDraft, existing?.id) {
-                ChemicalVineyardScope.scoped(
-                    ChemicalManualEntry.proposedIntelligence(
-                        chemistryDraft,
-                        existing?.storedIntelligence,
-                    ),
-                )
-            }
-
-            // The mandatory save contract, re-measured as the operator types.
-            //
-            // Same rules, same messages and same order as the iOS editor and
-            // the edge function's `save_contract.ts`, because a record one
-            // client refuses must not be a record another client writes.
-            // A stale slot is one whose cited registered rate has vanished from
-            // the refreshed label. Clearing the default resolves it; nothing
-            // here ever picks a replacement.
-            val unresolvedStaleBases = staleDefaultBases.filter {
-                defaultRatesDraft?.slot(it) != null
-            }
-            val saveEvaluation = remember(
-                name,
-                unit,
-                category,
-                displayIntelligence,
-                unresolvedStaleBases,
-                isCreatingManual,
-            ) {
-                if (isCreatingManual) {
-                    ChemicalSaveContract.evaluateMinimumOperational(
-                        productName = name,
-                        productUnit = unit,
-                        rates = displayIntelligence.registeredUses
-                            .filter(ChemicalManualEntry::isProductRateCarrier)
-                            .flatMap { it.rates },
-                    )
-                } else {
-                    ChemicalSaveContract.evaluate(
-                        productName = name,
-                        productCategory = category,
-                        intelligence = displayIntelligence,
-                        staleDefaultBases = unresolvedStaleBases,
-                    )
-                }
-            }
-            // What THIS edit would add, versus what the record arrived with.
-            val blockingViolations =
-                ChemicalSaveContract.blockingViolations(saveEvaluation, baselineViolationCodes)
-            val carriedOverViolations =
-                ChemicalSaveContract.carriedOverViolations(saveEvaluation, baselineViolationCodes)
-
             // Already scoped above; asked again so this render site states its
             // own rule rather than depending on an upstream one staying true.
             val displayUses = ChemicalVineyardScope.operationalUses(
@@ -1549,6 +1530,7 @@ internal fun ChemicalFormSheet(
             } else {
                 Text("No grapevine uses or registered rates established. Check the label before applying.", fontSize = 12.sp, color = VineColors.Warning)
             }
+            ChemicalFieldGuidance("registered_uses", blockingViolations, carriedOverViolations)
 
             // States the trust consequence of a resistance-critical correction
             // without blocking it. Absent unless verification actually falls.
@@ -1594,9 +1576,7 @@ internal fun ChemicalFormSheet(
                         chemistryDraft = chemistryDraft.copy(productRates = listOf(updated))
                     },
                 )
-                blockingViolations.filter { it.field == "rates" }.forEach { issue ->
-                    Text(issue.message, fontSize = 12.sp, color = VineColors.Warning)
-                }
+                ChemicalFieldGuidance("rates", blockingViolations, carriedOverViolations)
                 Text(
                     "Required for spray calculations. Enter the rate from the bottle or label; no registered-use or verification step is required.",
                     fontSize = 11.sp,
@@ -1604,6 +1584,13 @@ internal fun ChemicalFormSheet(
                 )
             } else {
             SectionLabel("Operational Rate")
+            ChemicalFieldGuidance("rates", blockingViolations, carriedOverViolations)
+            blockingViolations.filter { it.field.startsWith("default_rate_") }.forEach { issue ->
+                Text(issue.message, fontSize = 12.sp, color = VineColors.Warning)
+            }
+            carriedOverViolations.filter { it.field.startsWith("default_rate_") }.forEach { issue ->
+                Text(issue.message, fontSize = 12.sp, color = vine.textSecondary)
+            }
 
             // A STRUCTURED product's operational rate is its confirmed
             // default, and only that. The legacy boxes below stay editable for
@@ -1813,6 +1800,7 @@ internal fun ChemicalFormSheet(
                 onOpen = { resolveUrl(productUrl)?.let { runCatching { uriHandler.openUri(it) } } },
             )
             Text("Product pages are not approved labels.", fontSize = 11.sp, color = vine.textSecondary)
+            ChemicalFieldGuidance("label_reference", blockingViolations, carriedOverViolations)
 
             SectionLabel("Purchase & Inventory")
             if (ProductCategories.isFertiliser(category)) {
@@ -2064,6 +2052,22 @@ private fun SimpleManualRateEditor(
             onSelect = { onChange(rate.copy(unit = it)); unitMenu = false },
             modifier = Modifier.fillMaxWidth(),
         )
+    }
+}
+
+@Composable
+private fun ChemicalFieldGuidance(
+    field: String,
+    blocking: List<ChemicalSaveViolation>,
+    carriedOver: List<ChemicalSaveViolation>,
+) {
+    val blockingHere = blocking.filter { it.field == field }
+    val guidanceHere = carriedOver.filter { it.field == field }
+    if (blockingHere.isNotEmpty()) {
+        ChemicalSaveIssueNotice("Before this can be saved", blockingHere, VineColors.Warning)
+    }
+    if (guidanceHere.isNotEmpty()) {
+        ChemicalSaveIssueNotice("Still to complete on this product", guidanceHere, ChemTint)
     }
 }
 
