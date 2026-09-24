@@ -239,6 +239,18 @@ if (providers.gradleProperty("materialCostsFocusedTests").orNull == "true") {
     }
 }
 
+if (providers.gradleProperty("editChemicalFocusedTests").orNull == "true") {
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/ChemicalSaveContractTest.kt")
+                include("**/ChemicalReverificationTest.kt")
+                include("**/ChemicalManualEntryTest.kt")
+            })
+        }
+    }
+}
+
 if (providers.gradleProperty("tripLifecycleFocusedTests").orNull == "true") {
     afterEvaluate {
         tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {

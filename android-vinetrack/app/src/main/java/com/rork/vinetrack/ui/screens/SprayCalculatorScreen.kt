@@ -2591,6 +2591,7 @@ private fun AddChemicalToSprayFlow(
             existing = draft.chemical,
             canViewFinancials = canEditCost,
             onDismiss = { reverifyDraft = null },
+            onReverifyDraft = { reverifyDraft = it },
             state = state,
             // Carried explicitly: opened on the draft, the editor's own "has
             // anything changed?" test would compare the draft against itself

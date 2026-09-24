@@ -17,13 +17,8 @@ import SwiftUI
 /// "Mark Verified" button to be found anywhere.
 struct ChemicalReverifyFlowView: View {
     let chemical: SavedChemical
-    /// Called only when a write actually happened.
-    ///
-    /// The edit sheet uses this to close itself: it captured its form fields from
-    /// the record at init, and letting a stale form Save over a freshly
-    /// re-verified record would silently undo the update the operator just
-    /// accepted.
-    var onCompleted: () -> Void = {}
+    /// Returns a reviewed proposal to the Edit Chemical form; this screen never writes.
+    var onProposed: (SavedChemical) -> Void = { _ in }
 
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -171,8 +166,7 @@ struct ChemicalReverifyFlowView: View {
         // The status shown is the one the record will actually hold: the refreshed
         // evidence when there is a structured record, otherwise what it already
         // resolves to. Never the lookup's own claim about itself.
-        let resolved = (refreshed ?? currentIntelligence)?.resolvedVerificationStatus
-            ?? chemical.verificationStatus
+        let resolved = chemical.verificationStatus
         return Group {
             Section {
                 Label("Chemical information is current", systemImage: "checkmark.circle.fill")
@@ -203,21 +197,6 @@ struct ChemicalReverifyFlowView: View {
                 Text(resolved.detail)
             }
 
-            if let refreshed {
-                Section {
-                    ChemicalVerificationEvidenceView(
-                        verification: refreshed.verification,
-                        resolvedStatus: resolved
-                    )
-                } header: {
-                    Text("Verification details")
-                } footer: {
-                    // Be explicit that only provenance moved. A "check date"
-                    // is not a product change and must not read like one.
-                    Text("Only the record of when this was last checked and which sources were consulted has been updated. No chemistry, rate or registered use was changed.")
-                }
-            }
-
             if !candidate.verification.conflicts.isEmpty {
                 Section {
                     ChemicalConflictCard(conflicts: candidate.verification.conflicts)
@@ -230,7 +209,7 @@ struct ChemicalReverifyFlowView: View {
                 Button {
                     confirmCurrent(refreshed)
                 } label: {
-                    Text(refreshed == nil ? "Close" : "Done")
+                    Text("Close")
                         .frame(maxWidth: .infinity)
                         .fontWeight(.semibold)
                 }
@@ -332,11 +311,16 @@ struct ChemicalReverifyFlowView: View {
                 Button {
                     accept(outcome)
                 } label: {
-                    Text("Apply verified changes")
+                    Text("Review Proposed Updates")
                         .frame(maxWidth: .infinity)
                         .fontWeight(.semibold)
                 }
-                .disabled(isWriting)
+                .disabled(isWriting || !conflicts.isEmpty)
+                if !conflicts.isEmpty {
+                    Text("Needs review: existing values are kept. Resolve the conflicting evidence before applying these changes.")
+                        .font(.caption)
+                        .foregroundStyle(VineyardTheme.warning)
+                }
                 // The second decision is a DECISION, not an escape hatch.
                 //
                 // This used to be `Cancel`, which asks the operator to read
@@ -351,9 +335,9 @@ struct ChemicalReverifyFlowView: View {
                 // incoming value is partially applied, because a record half
                 // from the old research and half from the new is a chemistry
                 // nobody verified.
-                Button("Keep what I have", role: .cancel) { dismiss() }
+                Button("Cancel", role: .cancel) { dismiss() }
             } footer: {
-                Text("Applying changes updates this Chemical Store record only. Keeping what you have writes nothing at all — no part of the update is applied. Completed spray records keep the chemical information that was captured at the time they were applied.")
+                Text("Reviewing proposes changes only. Apply Confirmed Updates in Edit Chemical to save them; Cancel leaves this chemical unchanged.")
             }
         }
     }
@@ -368,7 +352,7 @@ struct ChemicalReverifyFlowView: View {
                     .font(change.isResistanceCritical
                           ? .subheadline.weight(.bold)
                           : .subheadline.weight(.medium))
-                Text(change.kind.label)
+                Text(change.kind.label.uppercased())
                     .font(.caption2.weight(.semibold))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
@@ -377,10 +361,10 @@ struct ChemicalReverifyFlowView: View {
                     .clipShape(Capsule())
             }
             if let current = change.currentValue {
-                valueLine("Current", current, emphasised: false)
+                valueLine("Existing", current, emphasised: false)
             }
             if let candidate = change.candidateValue {
-                valueLine("Updated", candidate, emphasised: change.isResistanceCritical)
+                valueLine("Proposed", candidate, emphasised: change.isResistanceCritical)
             }
         }
         .padding(.vertical, 2)
@@ -481,8 +465,8 @@ struct ChemicalReverifyFlowView: View {
     private func accept(_ outcome: ChemicalEditOutcome) {
         guard !isWriting else { return }
         isWriting = true
-        store.updateSavedChemical(ChemicalReverifyFlow.accepted(chemical, with: outcome))
-        onCompleted()
+        guard outcome.intelligence.verification.conflicts.isEmpty else { isWriting = false; return }
+        onProposed(ChemicalReverifyFlow.accepted(chemical, with: outcome))
         dismiss()
     }
 
@@ -494,8 +478,8 @@ struct ChemicalReverifyFlowView: View {
         }
         guard !isWriting else { return }
         isWriting = true
-        store.updateSavedChemical(ChemicalReverifyFlow.confirmed(chemical, with: refreshed))
-        onCompleted()
+        // No product change: a lookup alone must not restamp persisted evidence.
+        _ = refreshed
         dismiss()
     }
 }

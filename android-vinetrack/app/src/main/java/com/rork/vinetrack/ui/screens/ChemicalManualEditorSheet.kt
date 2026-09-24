@@ -395,7 +395,7 @@ internal fun ChemicalManualEditorSheet(
 
 /** One active ingredient, with its own concentration and its own group. */
 @Composable
-private fun ManualActiveEditor(
+internal fun ManualActiveEditor(
     active: ChemicalManualActiveDraft,
     canRemove: Boolean,
     onChange: (ChemicalManualActiveDraft) -> Unit,

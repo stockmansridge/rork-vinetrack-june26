@@ -368,9 +368,8 @@ struct EditSavedChemicalSheet: View {
                 // 3. Grapevine uses and registered label rates.
                 if !session.isCreatingManual {
                     registeredUsesSection
-                    if showsProductRates { productRatesSection }
                 }
-                if !session.hasStructuredUses { legacyUseSection }
+                if session.isCreatingManual { legacyUseSection }
                 // 4. The optional operational default.
                 //
                 // While ADDING a product to the Chemical Store this is a
@@ -398,6 +397,13 @@ struct EditSavedChemicalSheet: View {
                     } else {
                         defaultRatesSection
                     }
+                } else {
+                    Section("Operational Rate") {
+                        Text("No grapevine rate established — enter from the label.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "rates"))
+                    }
                 }
                 // 5. Labels & References
                 labelsSection
@@ -410,9 +416,6 @@ struct EditSavedChemicalSheet: View {
                 notesSection
                 // 8. Advanced / Verification Evidence — collapsed by default
                 advancedSection
-                if chemical != nil {
-                    dangerZoneSection
-                }
             }
             .navigationTitle(reviewTitle)
             .navigationBarTitleDisplayMode(.inline)
@@ -455,7 +458,11 @@ struct EditSavedChemicalSheet: View {
                         // when the editor opened, so a Save afterwards would write
                         // the pre-check values straight back over the update just
                         // accepted.
-                        ChemicalReverifyFlowView(chemical: chemical) { dismiss() }
+                        ChemicalReverifyFlowView(chemical: chemical) { proposed in
+                            session.apply(reviewed: proposed, fallbackCountry: resolvedCountry)
+                            hasProposedLookup = true
+                            activeSheet = nil
+                        }
                     }
                 }
             }
@@ -464,7 +471,7 @@ struct EditSavedChemicalSheet: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
+                    Button(hasProposedLookup ? "Apply Confirmed Updates" : "Save") {
                         if hasProposedLookup {
                             confirmProposedLookup = true
                         } else {
@@ -475,8 +482,8 @@ struct EditSavedChemicalSheet: View {
                 }
             }
             .confirmationDialog("Apply proposed information?", isPresented: $confirmProposedLookup) {
-                Button("Apply & Save") { saveAndDismiss() }
-                Button("Keep editing", role: .cancel) {}
+                Button("Apply Confirmed Updates") { saveAndDismiss() }
+                Button("Cancel", role: .cancel) {}
             } message: {
                 Text("This replaces the saved product details with the NEW information you reviewed above.")
             }
@@ -509,17 +516,26 @@ struct EditSavedChemicalSheet: View {
     /// left alone: re-identifying a product says nothing about what it cost.
     private var topActionsSection: some View {
         Section {
+            HStack {
+                Text("Verification status")
+                Spacer()
+                ChemicalVerificationBadge(status: session.editOutcome?.resolvedStatus ?? chemical?.verificationStatus ?? .unverified)
+            }
+            if !session.blockingViolations.isEmpty || !session.carriedOverViolations.isEmpty {
+                Text("Needs attention: check incomplete product, active ingredient or grapevine rate details below.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if let label = preferredLabelURL {
                 Link(destination: label) {
                     Label("View Label", systemImage: "doc.text")
                 }
             } else {
-                Label("View Label · No label available", systemImage: "doc.text")
+                Label("Label not found", systemImage: "doc.text")
                     .foregroundStyle(.secondary)
             }
             Button {
-                if let chemical,
-                   ChemicalReverification.isOffered(for: chemical, fallbackCountry: resolvedCountry) {
+                if chemical != nil {
                     activeSheet = .reverify
                 } else {
                     activeSheet = .search
@@ -533,7 +549,7 @@ struct EditSavedChemicalSheet: View {
     }
 
     private var preferredLabelURL: URL? {
-        let candidates = [session.manufacturerLabelURL, session.labelURL]
+        let candidates = [session.labelURL, session.manufacturerLabelURL]
         return candidates.compactMap { URL(string: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }
             .first { $0.scheme?.lowercased() == "https" || $0.scheme?.lowercased() == "http" }
     }
@@ -546,9 +562,7 @@ struct EditSavedChemicalSheet: View {
     /// So the action says plainly that it changes the product.
     private var lookupActionTitle: String {
         if session.isReviewingLookup { return "Change Product" }
-        return session.name.trimmingCharacters(in: .whitespaces).isEmpty
-            ? "Search for this product"
-            : "Search the register again"
+        return "Find Missing Information"
     }
 
     private var lookupActionSymbol: String {
@@ -804,6 +818,11 @@ struct EditSavedChemicalSheet: View {
                 ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "rates"))
             }
             ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "registered_uses"))
+            if showsProductRates { productRatesSection }
+            if !session.hasStructuredUses {
+                TextField("Use / Problem", text: $session.use)
+                TextField("Target Problem", text: $session.problem)
+            }
 
             // Valid label rates whose governing condition the label never
             // attributed (task §5). The numbers are authoritative; the
@@ -955,7 +974,9 @@ struct EditSavedChemicalSheet: View {
     }
 
     private var productRatesSection: some View {
-        Section {
+        Group {
+            Text("Product-level registered label rates")
+                .font(.subheadline.weight(.semibold))
             ForEach($session.chemistryDraft.productRates) { $rate in
                 ChemicalManualRateEditor(
                     rate: $rate,
@@ -967,10 +988,6 @@ struct EditSavedChemicalSheet: View {
             } label: {
                 Label("Add Label Rate", systemImage: "plus.circle.fill")
             }
-        } header: {
-            Text("Other Registered Label Rates")
-        } footer: {
-            Text("Rates the label states for the product as a whole. This is not your spray rate or carrier volume — those belong to each spray job.")
         }
     }
 
@@ -1133,24 +1150,9 @@ struct EditSavedChemicalSheet: View {
     /// fields and not one "link".
     private var labelsSection: some View {
         Section {
-            // MANUFACTURER LABEL FIRST.
-            //
-            // This is the label a grower physically holds and the one whose
-            // rate table VineTrack reads. The regulator's copy stays directly
-            // beneath it and is never replaced — leading with the practical
-            // document is not the same as discarding the authoritative one.
+            // Official regulator document is primary; manufacturer evidence is secondary.
             LabeledURLField(
-                label: "Manufacturer label",
-                placeholder: "https://...",
-                text: $session.manufacturerLabelURL,
-                onOpenFailure: { message in
-                    linkAlertMessage = message
-                    showLinkAlert = true
-                }
-            )
-
-            LabeledURLField(
-                label: officialLabelFieldLabel,
+                label: "Official regulator label",
                 placeholder: "https://...",
                 text: $session.labelURL,
                 onOpenFailure: { message in
@@ -1158,10 +1160,23 @@ struct EditSavedChemicalSheet: View {
                     showLinkAlert = true
                 }
             )
+
+            if session.manufacturerLabelURL != session.labelURL {
+                LabeledURLField(
+                    label: "Manufacturer label",
+                    placeholder: "https://...",
+                    text: $session.manufacturerLabelURL,
+                    onOpenFailure: { message in
+                        linkAlertMessage = message
+                        showLinkAlert = true
+                    }
+                )
+            }
             ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "label_reference"))
 
+            if session.productURL != session.labelURL && session.productURL != session.manufacturerLabelURL {
             LabeledURLField(
-                label: "Manufacturer product page (optional)",
+                label: "Product page (optional)",
                 placeholder: "https://...",
                 text: $session.productURL,
                 onOpenFailure: { message in
@@ -1169,6 +1184,7 @@ struct EditSavedChemicalSheet: View {
                     showLinkAlert = true
                 }
             )
+            }
         } header: {
             Text("Labels & References")
         } footer: {
@@ -1271,8 +1287,7 @@ struct EditSavedChemicalSheet: View {
                     .padding(.vertical, 4)
             }
             if !intelligence.verification.unresolvedFields.isEmpty {
-                Text("Not established: "
-                     + intelligence.verification.unresolvedFields.joined(separator: ", "))
+                Text("Information still to check against the label")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }

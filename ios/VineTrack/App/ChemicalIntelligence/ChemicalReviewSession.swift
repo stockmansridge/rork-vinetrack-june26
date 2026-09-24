@@ -138,6 +138,8 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// a register-confirmed product would save with its authoritative citations
     /// withdrawn simply because the operator pressed Save without editing.
     let seedIntelligence: ChemicalIntelligence?
+    /// An explicitly reviewed lookup is the evidence baseline after proposal, not the old product.
+    var acceptedLookupIntelligence: ChemicalIntelligence? = nil
     /// The record's original free-text chemistry, kept ONLY so a product with
     /// no structured chemistry at all is not blanked by the act of saving it.
     let seedActiveIngredientText: String
@@ -719,6 +721,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         // label link, actives, uses and rates in one assignment — there are no
         // separate copies of those to keep in step.
         chemistryDraft = refreshed.chemistryDraft
+        acceptedLookupIntelligence = reviewed.chemicalIntelligence
         formType = refreshed.formType
         unit = refreshed.unit
         modeOfAction = refreshed.modeOfAction.trimmedNonEmpty ?? modeOfAction
@@ -795,14 +798,15 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
 
     var hasAuthoredChemistry: Bool {
         !ChemicalManualEntry
-            .proposedIntelligence(from: chemistryDraft, existing: seedIntelligence)
+            .proposedIntelligence(from: chemistryDraft, existing: acceptedLookupIntelligence ?? seedIntelligence)
             .isEmpty
     }
 
     var editOutcome: ChemicalEditOutcome? {
         guard hasAuthoredChemistry else { return nil }
-        let outcome = ChemicalManualEntry.outcome(for: chemistryDraft, existing: seedIntelligence)
-        if let stored = seedIntelligence, stored == outcome.intelligence { return nil }
+        let current = acceptedLookupIntelligence ?? seedIntelligence
+        let outcome = ChemicalManualEntry.outcome(for: chemistryDraft, existing: current)
+        if let current, current == outcome.intelligence { return nil }
         return outcome
     }
 
@@ -812,7 +816,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// is nil in that case because there is nothing NEW to reconcile, and
     /// without this an entire looked-up record would save as an empty shell.
     var intelligenceToPersist: ChemicalIntelligence? {
-        editOutcome?.intelligence ?? seedIntelligence
+        editOutcome?.intelligence ?? acceptedLookupIntelligence ?? seedIntelligence
     }
 
     // MARK: - Derived: registration identity
@@ -872,7 +876,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// The intelligence the draft currently proposes. One computation, reused.
     private var proposedIntelligence: ChemicalIntelligence {
         ChemicalManualEntry.proposedIntelligence(
-            from: chemistryDraft, existing: seedIntelligence
+            from: chemistryDraft, existing: acceptedLookupIntelligence ?? seedIntelligence
         )
     }
 

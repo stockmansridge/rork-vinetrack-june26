@@ -152,21 +152,12 @@ struct ChemicalsManagementView: View {
                         // with nothing but a typed name has no identity to
                         // re-check, so the domain sends it to Match & Verify
                         // instead of quietly running a brand-name search.
-                        if canReverify(chemical) {
-                            Button {
-                                reverifyingChemical = chemical
-                            } label: {
-                                Label("Find Missing Information", systemImage: "arrow.triangle.2.circlepath")
-                            }
-                            .tint(VineyardTheme.info)
-                        } else if chemical.verificationStatus != .verified {
-                            Button {
-                                matchingChemical = chemical
-                            } label: {
-                                Label("Find Missing Information", systemImage: "checkmark.seal")
-                            }
-                            .tint(VineyardTheme.info)
+                        Button {
+                            editingChemical = chemical
+                        } label: {
+                            Label("Find Missing Information", systemImage: "magnifyingglass")
                         }
+                        .tint(VineyardTheme.info)
                     }
                 }
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -253,9 +244,6 @@ struct ChemicalsManagementView: View {
         }
         .sheet(item: $matchingChemical) { chem in
             ChemicalMatchFlowView(existing: chem, prefillQuery: chem.name)
-        }
-        .sheet(item: $reverifyingChemical) { chem in
-            ChemicalReverifyFlowView(chemical: chem)
         }
         .sheet(item: $editingChemical) { chem in
             EditSavedChemicalSheet(chemical: chem)

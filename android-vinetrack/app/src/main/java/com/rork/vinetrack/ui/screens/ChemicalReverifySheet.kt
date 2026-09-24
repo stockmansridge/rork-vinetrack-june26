@@ -298,9 +298,8 @@ internal fun ChemicalReverifySheet(
                 }
 
                 is ReverifyPhase.Current -> {
-                    val shown = current.refreshed ?: currentIntelligence
-                    val resolved = shown?.resolvedVerificationStatus
-                        ?: chemical.verificationStatus
+                    val shown = currentIntelligence
+                    val resolved = chemical.verificationStatus
 
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -367,7 +366,7 @@ internal fun ChemicalReverifySheet(
                     Button(
                         onClick = onDismiss,
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Keep what I have") }
+                    ) { Text("Cancel") }
                     // A no-change result is not an occasion to write anything,
                     // including a fresh "last checked" stamp: running a check
                     // is not new information about the product.
@@ -520,18 +519,16 @@ internal fun ChemicalReverifySheet(
                                 ChemicalReverifyFlow.draftFor(chemical, current.outcome),
                             )
                         },
+                        enabled = conflicts.isEmpty(),
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Use updated information") }
+                    ) { Text("Review Proposed Updates") }
+                    if (conflicts.isNotEmpty()) Text("Needs review: existing values are kept. Resolve conflicting evidence before applying these changes.", fontSize = 12.sp, color = VineColors.Warning)
                     OutlinedButton(
                         onClick = onDismiss,
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Keep what I have") }
+                    ) { Text("Cancel") }
                     Text(
-                        "Nothing has been saved yet. “Use updated information” opens this " +
-                            "chemical for review with the changes applied — they are only " +
-                            "stored when you press Save Chemical there. Completed spray " +
-                            "records keep the chemical information that was captured at the " +
-                            "time they were applied.",
+                        "Reviewing proposes changes only. Apply Confirmed Updates in Edit Chemical to save them; Cancel leaves this chemical unchanged.",
                         fontSize = 11.sp,
                         color = vine.textSecondary,
                     )
