@@ -118,7 +118,7 @@ class TankSessionLifecycleTest {
 
     @Test
     fun `planned start ignores stale out-of-plan session`() {
-        val stale = TankSession("stale", 99, fillStart)
+        val stale = TankSession("stale", 99, fillStart, endTime = fillEnd)
         val started = TankSessionLifecycle.start(
             trip(listOf(stale)),
             sprayStart,

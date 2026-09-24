@@ -239,6 +239,19 @@ if (providers.gradleProperty("materialCostsFocusedTests").orNull == "true") {
     }
 }
 
+if (providers.gradleProperty("tripLifecycleFocusedTests").orNull == "true") {
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/TankSessionLifecycleTest.kt")
+                include("**/ActiveTripReconciliationTest.kt")
+                include("**/TripEndGateTest.kt")
+                include("**/DeviceTripOwnershipTest.kt")
+            })
+        }
+    }
+}
+
 if (providers.gradleProperty("canopyReferenceFocusedTests").orNull == "true") {
     afterEvaluate {
         tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
