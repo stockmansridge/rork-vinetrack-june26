@@ -259,6 +259,7 @@ if (providers.gradleProperty("tripLifecycleFocusedTests").orNull == "true") {
                 include("**/ActiveTripReconciliationTest.kt")
                 include("**/TripEndGateTest.kt")
                 include("**/DeviceTripOwnershipTest.kt")
+                include("**/TripTankAuthorityQueueTest.kt")
             })
         }
     }

@@ -2,6 +2,22 @@ import Foundation
 import XCTest
 @testable import VineTrack
 
+actor AuthoritativeCompletionRepository: TripSyncRepositoryProtocol {
+    private let completed: BackendTrip
+    private(set) var uploaded: [BackendTripUpsert] = []
+
+    init(completed: BackendTrip) { self.completed = completed }
+
+    func upsertTrips(_ trips: [BackendTripUpsert]) async throws { uploaded += trips }
+    func upsertTrip(_ trip: BackendTripUpsert) async throws { uploaded.append(trip) }
+    func fetchTrips(vineyardId: UUID, since: Date?) async throws -> [BackendTrip] { [completed] }
+    func fetchAllTrips(vineyardId: UUID) async throws -> [BackendTrip] { [completed] }
+    func fetchAllAccessibleTrips() async throws -> [BackendTrip] { [completed] }
+    func updateTripVineyardAssignment(id: UUID, vineyardId: UUID, paddockId: UUID?) async throws {}
+    func updateTripWorkTaskLink(id: UUID, workTaskId: UUID?) async throws {}
+    func softDeleteTrip(id: UUID) async throws {}
+}
+
 @MainActor
 final class TripStabilisationTests: XCTestCase {
     private let vineyardId = UUID(uuidString: "81000000-0000-4000-8000-000000000001")!
@@ -92,6 +108,81 @@ final class TripStabilisationTests: XCTestCase {
         let reloaded = try XCTUnwrap(TripRepository(persistence: PersistenceStore(directory: directory)).load(for: vineyardId).first { $0.id == trip.id })
         XCTAssertEqual(Set(reloaded.paddockIds), Set(blocks.map(\.id)))
         XCTAssertEqual(reloaded.paddockId, blocks[0].id)
+    }
+
+    func testDirtyActiveTripYieldsToServerCompletionAndNeverReopens() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = PersistenceStore(directory: directory)
+        let store = MigratedDataStore(persistence: persistence)
+        store.selectedVineyardId = vineyardId
+        let blockA = UUID()
+        let blockB = UUID()
+        var local = activeTrip()
+        local.paddockId = blockA
+        local.paddockIds = [blockA, blockB]
+        local.pathPoints = [CoordinatePoint(latitude: -41.0, longitude: 174.0), CoordinatePoint(latitude: -41.1, longitude: 174.1)]
+        local.totalDistance = 810
+        local.tankSessions = [TankSession(tankNumber: 1, startTime: startedAt, endTime: endedAt)]
+        local.completedPaths = [0.5]
+        local.skippedPaths = [1.5]
+        store.startTrip(local)
+        store.claimDeviceTrip(tripId)
+        let metadata = TripSyncMetadata(persistence: persistence)
+        metadata.markDirty(tripId, at: endedAt.addingTimeInterval(300))
+
+        var server = local
+        server.isActive = false
+        server.endTime = endedAt
+        server.pathPoints = []
+        server.totalDistance = 0
+        server.tankSessions = []
+        server.paddockIds = [blockA]
+        let serverRow = try JSONDecoder().decode(BackendTrip.self, from: JSONEncoder().encode(
+            BackendTrip.upsert(from: server, createdBy: nil, clientUpdatedAt: endedAt)
+        ))
+        let repository = AuthoritativeCompletionRepository(completed: serverRow)
+        let service = TripSyncService(repository: repository, metadata: metadata)
+        let auth = NewBackendAuthService()
+        auth.isSignedIn = true
+        service.configure(store: store, auth: auth)
+
+        try await service.pushLocalTrips(vineyardId: vineyardId)
+        let completed = try XCTUnwrap(store.trips.first { $0.id == tripId })
+        XCTAssertFalse(completed.isActive)
+        XCTAssertEqual(completed.endTime, endedAt)
+        XCTAssertEqual(completed.pathPoints, local.pathPoints)
+        XCTAssertEqual(completed.totalDistance, local.totalDistance)
+        XCTAssertEqual(completed.tankSessions, local.tankSessions)
+        XCTAssertEqual(completed.completedPaths, local.completedPaths)
+        XCTAssertEqual(completed.skippedPaths, local.skippedPaths)
+        XCTAssertEqual(Set(completed.paddockIds), Set(local.paddockIds))
+        XCTAssertNil(store.deviceActiveTripId)
+        XCTAssertNil(metadata.pendingUpserts[tripId])
+        XCTAssertFalse(metadata.failedUpsertIds.contains(tripId))
+        let firstUploads = await repository.uploaded
+        XCTAssertTrue(firstUploads.isEmpty)
+
+        try await service.pushLocalTrips(vineyardId: vineyardId)
+        let replayUploads = await repository.uploaded
+        XCTAssertTrue(replayUploads.isEmpty)
+        XCTAssertNil(TripSyncMetadata(persistence: PersistenceStore(directory: directory)).pendingUpserts[tripId])
+        let reloaded = try XCTUnwrap(TripRepository(persistence: PersistenceStore(directory: directory)).load(for: vineyardId).first { $0.id == tripId })
+        XCTAssertEqual(reloaded.pathPoints, local.pathPoints)
+        XCTAssertEqual(reloaded.tankSessions, local.tankSessions)
+        XCTAssertNil(MigratedDataStore(persistence: PersistenceStore(directory: directory)).deviceActiveTripId)
+
+        let next = Trip(id: UUID(), vineyardId: vineyardId, paddockName: "Next test block", isActive: true, totalTanks: 1)
+        store.startTrip(next)
+        store.claimDeviceTrip(next.id)
+        XCTAssertEqual(store.deviceActiveTripId, next.id)
+        metadata.markDirty(next.id, at: Date())
+        try await service.pushLocalTrips(vineyardId: vineyardId)
+        let uploaded = await repository.uploaded
+        XCTAssertEqual(uploaded.map(\.id), [next.id])
+        XCTAssertTrue(uploaded[0].isActive)
+        XCTAssertNil(metadata.pendingUpserts[next.id])
     }
 
     func testAuthoritativeServerCompletionReleasesOwnedTripAndRetainsHistory() throws {

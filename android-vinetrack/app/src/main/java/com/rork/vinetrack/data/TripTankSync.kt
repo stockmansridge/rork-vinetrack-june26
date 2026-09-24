@@ -52,9 +52,14 @@ import kotlinx.serialization.json.Json
  * cap; permanent failures and corrupt payloads block.
  */
 class TripTankSync(
-    private val tripRepo: TripRepository,
+    private val tripRepo: TripRepository?,
     private val pending: PendingWriteRepository,
     private val activeTripStore: ActiveTripStore,
+    private val fetchTrip: suspend (String) -> Trip? = { requireNotNull(tripRepo).fetchTrip(it) },
+    private val saveTankSessions: suspend (String, List<TankSession>, Int?, Boolean, Int?) -> Trip =
+        { id, sessions, active, filling, fillingNumber ->
+            requireNotNull(tripRepo).updateTripTankSessions(id, sessions, active, filling, fillingNumber)
+        },
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -173,7 +178,7 @@ class TripTankSync(
                     continue
                 }
                 try {
-                    val server = tripRepo.fetchTrip(payload.tripId)
+                    val server = fetchTrip(payload.tripId)
                     if (server == null) {
                         pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "This trip no longer exists.")
                         continue
@@ -202,12 +207,9 @@ class TripTankSync(
                         pending.remove(write.id)
                         continue
                     }
-                    val trip = tripRepo.updateTripTankSessions(
-                        id = payload.tripId,
-                        tankSessions = merged.sessions,
-                        activeTankNumber = merged.activeTankNumber,
-                        isFillingTank = merged.isFillingTank,
-                        fillingTankNumber = merged.fillingTankNumber,
+                    val trip = saveTankSessions(
+                        payload.tripId, merged.sessions, merged.activeTankNumber,
+                        merged.isFillingTank, merged.fillingTankNumber,
                     )
                     pending.remove(write.id)
                     onSynced(trip)
