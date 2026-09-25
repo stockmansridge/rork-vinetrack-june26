@@ -5,6 +5,10 @@ import Charts
 /// Botrytis risk based on weather conditions and (estimated/measured) wetness.
 struct DiseaseRiskAdvisorView: View {
     @Environment(MigratedDataStore.self) private var store
+    @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
+    @State private var blockStages: [DiseaseBlockStage] = []
+    @State private var growthAdjustmentApplied: Bool = false
+    @State private var environmentalAssessments: [DiseaseRiskAssessment] = []
 
     @State private var hourlyService = WeatherHourlyService()
     @State private var assessments: [DiseaseRiskAssessment] = []
@@ -79,10 +83,15 @@ struct DiseaseRiskAdvisorView: View {
         .refreshable {
             await refresh()
         }
-        .task {
-            if !hasLoadedOnce {
-                await refresh()
-            }
+        .task(id: store.selectedVineyardId) {
+            hours = []
+            assessments = []
+            dailyScores = []
+            hasLoadedOnce = false
+            await refresh()
+        }
+        .onChange(of: growthStageRecordSync.records) { _, _ in
+            if !hours.isEmpty { recalculate(hours: hours) }
         }
     }
 
@@ -103,7 +112,7 @@ struct DiseaseRiskAdvisorView: View {
                     .font(.headline)
                 Spacer()
             }
-            Text("Forecast risk for Downy, Powdery and Botrytis based on weather conditions and wetness estimates.")
+            Text("Forecast risk for Downy, Powdery and Botrytis based on weather conditions, wetness estimates and current-season observed growth stages.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -391,6 +400,10 @@ struct DiseaseRiskAdvisorView: View {
                 .foregroundStyle(.primary.opacity(0.85))
                 .fixedSize(horizontal: false, vertical: true)
             breakdownView(for: assessment.model, level: level)
+            if let base = environmentalAssessments.first(where: { $0.model == assessment.model }) {
+                Text("Weather pressure: \(riskLevel(for: base.severity).label) · Observed-stage risk: \(level.label)")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
             nextStepView(for: level)
             if assessment.model != .powderyMildew, !assessment.usedMeasuredWetness {
                 Text("Based on estimated wetness (no measured leaf wetness sensor).")
@@ -593,7 +606,7 @@ struct DiseaseRiskAdvisorView: View {
         var id: Date { date }
     }
 
-    private func computeDailyScores(hours: [WeatherHour]) -> [DailyDiseaseScore] {
+    private func computeDailyScores(hours: [WeatherHour], stages: [DiseaseBlockStage]) -> [DailyDiseaseScore] {
         guard !hours.isEmpty else { return [] }
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
@@ -607,9 +620,9 @@ struct DiseaseRiskAdvisorView: View {
             let botrytis = DiseaseRiskCalculator.botrytis(hours: hours, now: endOfDay)
             rows.append(DailyDiseaseScore(
                 date: day,
-                downy: scoreFor(downy),
-                powdery: scoreFor(powdery),
-                botrytis: scoreFor(botrytis)
+                downy: scoreFor(DiseaseGrowthStagePolicy.adjust(downy, stages: stages)),
+                powdery: scoreFor(DiseaseGrowthStagePolicy.adjust(powdery, stages: stages)),
+                botrytis: scoreFor(DiseaseGrowthStagePolicy.adjust(botrytis, stages: stages))
             ))
         }
         return rows
@@ -617,13 +630,40 @@ struct DiseaseRiskAdvisorView: View {
 
     // MARK: - Refresh
 
+    private func recalculate(hours: [WeatherHour]) {
+        let now = Date()
+        if let vineyardId = store.selectedVineyardId {
+            blockStages = DiseaseGrowthStagePolicy.resolve(
+                records: growthStageRecordSync.records, vineyardId: vineyardId,
+                season: store.settings.seasonWindow(containing: now), now: now
+            )
+        } else {
+            blockStages = []
+        }
+        environmentalAssessments = DiseaseRiskCalculator.assess(hours: hours)
+        assessments = environmentalAssessments.map { DiseaseGrowthStagePolicy.adjust($0, stages: blockStages) }
+        dailyScores = computeDailyScores(hours: hours, stages: blockStages)
+        let currentChanged = zip(environmentalAssessments, assessments).contains { pair in
+            DiseaseGrowthStagePolicy.changed(pair.0, pair.1)
+        }
+        let unadjustedDays = computeDailyScores(hours: hours, stages: [])
+        let forecastChanged = zip(unadjustedDays, dailyScores).contains { pair in
+            pair.0.downy != pair.1.downy || pair.0.powdery != pair.1.powdery || pair.0.botrytis != pair.1.botrytis
+        }
+        growthAdjustmentApplied = currentChanged || forecastChanged
+    }
+
     private func refresh() async {
         hasLoadedOnce = true
+        blockStages = []
+        growthAdjustmentApplied = false
+        environmentalAssessments = []
         guard let lat = latitude, let lon = longitude else {
             assessments = []
             dailyScores = []
             return
         }
+        await growthStageRecordSync.syncForSelectedVineyard()
         await hourlyService.fetchWithDavisOverride(
             latitude: lat,
             longitude: lon,
@@ -637,8 +677,7 @@ struct DiseaseRiskAdvisorView: View {
             return
         }
         hours = forecast.hours
-        assessments = DiseaseRiskCalculator.assess(hours: forecast.hours)
-        dailyScores = computeDailyScores(hours: forecast.hours)
+        recalculate(hours: forecast.hours)
         lastCalculated = Date()
     }
 
@@ -674,10 +713,14 @@ struct DiseaseRiskAdvisorView: View {
                 Text("Last updated: \(lastCalculated?.formatted(.relative(presentation: .named)) ?? "—")")
                     .font(.caption2)
                 Spacer()
-                Image(systemName: "leaf").font(.caption2)
-                Text("Growth stage adjustment: Not applied")
-                    .font(.caption2)
             }
+            HStack(spacing: 6) {
+                Image(systemName: "leaf").font(.caption2)
+                Text("Growth stage: \(DiseaseGrowthStagePolicy.stageText(blockStages))")
+                Spacer()
+                Text("Growth stage adjustment: \(growthAdjustmentApplied ? "Applied" : "Not applied")")
+            }
+            .font(.caption2)
             .foregroundStyle(.secondary)
         }
         .padding(12)

@@ -57,6 +57,10 @@ import com.rork.vinetrack.data.DailyDiseaseScore
 import com.rork.vinetrack.data.DiseaseModel
 import com.rork.vinetrack.data.DiseaseRiskAssessment
 import com.rork.vinetrack.data.DiseaseRiskCalculator
+import com.rork.vinetrack.data.DiseaseGrowthStagePolicy
+import com.rork.vinetrack.data.DiseaseBlockStage
+import com.rork.vinetrack.data.SeasonWindow
+import com.rork.vinetrack.data.WeatherHour
 import com.rork.vinetrack.data.DiseaseSeverity
 import com.rork.vinetrack.data.WeatherHourlyRepository
 import com.rork.vinetrack.data.VineyardWeatherIntegration
@@ -83,8 +87,8 @@ import java.util.Locale
  * Disease Risk Advisor — a read-only tool surfacing Downy, Powdery and Botrytis
  * pressure from free Open-Meteo hourly weather and an estimated leaf-wetness
  * proxy. Mirrors the iOS `DiseaseRiskAdvisorView` MVP: risk is computed entirely
- * on-device and nothing is persisted. Growth stage, spray history and variety
- * susceptibility are not applied.
+ * on-device and nothing is persisted. Observed growth stage adjusts weather
+ * pressure separately; spray history and variety susceptibility are not applied.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -115,6 +119,10 @@ fun DiseaseRiskScreen(
     }
 
     var assessments by remember { mutableStateOf<List<DiseaseRiskAssessment>>(emptyList()) }
+    var environmentalAssessments by remember { mutableStateOf<List<DiseaseRiskAssessment>>(emptyList()) }
+    var forecastHours by remember { mutableStateOf<List<WeatherHour>>(emptyList()) }
+    var blockStages by remember { mutableStateOf<List<DiseaseBlockStage>>(emptyList()) }
+    var growthAdjustmentApplied by remember { mutableStateOf(false) }
     var dailyScores by remember { mutableStateOf<List<DailyDiseaseScore>>(emptyList()) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -130,6 +138,8 @@ fun DiseaseRiskScreen(
             hasLoadedOnce = true
             assessments = emptyList()
             dailyScores = emptyList()
+            forecastHours = emptyList()
+            growthAdjustmentApplied = false
             return
         }
         scope.launch {
@@ -137,13 +147,30 @@ fun DiseaseRiskScreen(
             errorMessage = null
             try {
                 val forecast = weatherRepo.fetch(loc.first, loc.second, pastDays = 3, forecastDays = 5)
-                assessments = DiseaseRiskCalculator.assess(forecast.hours)
-                dailyScores = computeDailyDiseaseScores(forecast.hours)
+                forecastHours = forecast.hours
+                val now = System.currentTimeMillis()
+                val vid = state.selectedVineyardId
+                val stages = if (vid == null) emptyList() else DiseaseGrowthStagePolicy.resolve(
+                    state.growthRecords, vid,
+                    SeasonWindow.containing(java.time.Instant.ofEpochMilli(now).atZone(state.seasonZone).toLocalDate(), state.seasonStartMonth, state.seasonStartDay),
+                    state.seasonZone, now, state.pendingGrowthDeleteIds,
+                )
+                blockStages = stages
+                environmentalAssessments = DiseaseRiskCalculator.assess(forecast.hours, now)
+                assessments = environmentalAssessments.map { DiseaseGrowthStagePolicy.adjust(it, stages) }
+                dailyScores = computeDailyDiseaseScores(forecast.hours, stages)
+                val currentChanged = environmentalAssessments.zip(assessments).any { (base, final) -> DiseaseGrowthStagePolicy.changed(base, final) }
+                val forecastChanged = computeDailyDiseaseScores(forecast.hours).zip(dailyScores).any { (before, after) ->
+                    before.downy != after.downy || before.powdery != after.powdery || before.botrytis != after.botrytis
+                }
+                growthAdjustmentApplied = currentChanged || forecastChanged
                 lastUpdated = System.currentTimeMillis()
             } catch (e: Exception) {
                 errorMessage = e.message ?: "Could not load weather data."
                 assessments = emptyList()
                 dailyScores = emptyList()
+                forecastHours = emptyList()
+                growthAdjustmentApplied = false
             } finally {
                 isLoading = false
                 hasLoadedOnce = true
@@ -151,8 +178,35 @@ fun DiseaseRiskScreen(
         }
     }
 
-    LaunchedEffect(location) {
-        if (!hasLoadedOnce) refresh()
+    LaunchedEffect(state.selectedVineyardId, location) {
+        assessments = emptyList()
+        environmentalAssessments = emptyList()
+        forecastHours = emptyList()
+        blockStages = emptyList()
+        growthAdjustmentApplied = false
+        hasLoadedOnce = false
+        refresh()
+    }
+
+    LaunchedEffect(state.growthRecords, state.pendingGrowthDeleteIds, state.seasonStartMonth, state.seasonStartDay, state.seasonZone) {
+        val vid = state.selectedVineyardId ?: return@LaunchedEffect
+        val now = System.currentTimeMillis()
+        val stages = DiseaseGrowthStagePolicy.resolve(
+            state.growthRecords, vid,
+            SeasonWindow.containing(java.time.Instant.ofEpochMilli(now).atZone(state.seasonZone).toLocalDate(), state.seasonStartMonth, state.seasonStartDay),
+            state.seasonZone, now, state.pendingGrowthDeleteIds,
+        )
+        blockStages = stages
+        if (forecastHours.isNotEmpty()) {
+            environmentalAssessments = DiseaseRiskCalculator.assess(forecastHours, now)
+            assessments = environmentalAssessments.map { DiseaseGrowthStagePolicy.adjust(it, stages) }
+            dailyScores = computeDailyDiseaseScores(forecastHours, stages)
+            val currentChanged = environmentalAssessments.zip(assessments).any { (base, final) -> DiseaseGrowthStagePolicy.changed(base, final) }
+            val forecastChanged = computeDailyDiseaseScores(forecastHours).zip(dailyScores).any { (before, after) ->
+                before.downy != after.downy || before.powdery != after.powdery || before.botrytis != after.botrytis
+            }
+            growthAdjustmentApplied = currentChanged || forecastChanged
+        }
     }
 
     // Resolve the vineyard's configured weather source so the advisor reflects
@@ -197,7 +251,7 @@ fun DiseaseRiskScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            item { HeaderCard(lastUpdated, sourceStatus) }
+            item { HeaderCard(lastUpdated, sourceStatus, DiseaseGrowthStagePolicy.stageText(blockStages)) }
 
             when {
                 isLoading && assessments.isEmpty() -> item { LoadingCard() }
@@ -207,7 +261,7 @@ fun DiseaseRiskScreen(
                 location == null && hasLoadedOnce -> item { NoLocationCard() }
                 assessments.isEmpty() && hasLoadedOnce -> item { EmptyRiskCard() }
                 else -> {
-                    item { DataQualityCard(lastUpdated, sourceStatus) }
+                    item { DataQualityCard(lastUpdated, sourceStatus, growthAdjustmentApplied) }
                     item { SectionHeader("Current Risk", onLight = true) }
                     items(assessments) { a -> SummaryCard(a) }
                     if (dailyScores.isNotEmpty()) {
@@ -215,7 +269,7 @@ fun DiseaseRiskScreen(
                         item { SevenDayChart(dailyScores) }
                     }
                     item { SectionHeader("Details", onLight = true) }
-                    items(assessments) { a -> DetailCard(a, lastUpdated) }
+                    items(assessments) { a -> DetailCard(a, lastUpdated, environmentalAssessments.firstOrNull { it.model == a.model }) }
                     item { DisclaimerCard() }
                     if (onOpenTool != null) {
                         item {
@@ -356,7 +410,7 @@ private fun SourceBadge(model: DiseaseModel) {
 // MARK: - Cards
 
 @Composable
-private fun HeaderCard(lastUpdated: Long?, source: WeatherSourceStatus) {
+private fun HeaderCard(lastUpdated: Long?, source: WeatherSourceStatus, growthStage: String) {
     val vine = LocalVineColors.current
     VineyardCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -383,7 +437,7 @@ private fun HeaderCard(lastUpdated: Long?, source: WeatherSourceStatus) {
             if (source.hasLeafWetness) "Davis leaf-wetness sensor connected"
             else "Estimated from rain / RH / dew point",
         )
-        SourceRow("Growth stage", "Not applied")
+        SourceRow("Growth stage", growthStage)
         if (lastUpdated != null) {
             Box(Modifier.height(6.dp))
             Text(
@@ -435,7 +489,7 @@ private fun SummaryCard(assessment: DiseaseRiskAssessment) {
 }
 
 @Composable
-private fun DataQualityCard(lastUpdated: Long?, source: WeatherSourceStatus) {
+private fun DataQualityCard(lastUpdated: Long?, source: WeatherSourceStatus, growthApplied: Boolean) {
     val vine = LocalVineColors.current
     val isLocal = source.quality != SourceQuality.ForecastOnly
     val badgeColor = if (source.quality == SourceQuality.LocalStationMeasuredWetness) VineColors.LeafGreen else vine.textSecondary
@@ -462,7 +516,7 @@ private fun DataQualityCard(lastUpdated: Long?, source: WeatherSourceStatus) {
                 "Last updated: ${if (lastUpdated != null) timeFmt.format(Date(lastUpdated)) else "—"}",
                 fontSize = 11.sp, color = vine.textSecondary, modifier = Modifier.weight(1f),
             )
-            Text("Growth stage adjustment: Not applied", fontSize = 11.sp, color = vine.textSecondary)
+            Text("Growth stage adjustment: ${if (growthApplied) "Applied" else "Not applied"}", fontSize = 11.sp, color = vine.textSecondary)
         }
     }
 }
@@ -478,7 +532,7 @@ private fun RiskPill(level: RiskLevel) {
 }
 
 @Composable
-private fun DetailCard(assessment: DiseaseRiskAssessment, lastUpdated: Long?) {
+private fun DetailCard(assessment: DiseaseRiskAssessment, lastUpdated: Long?, environmental: DiseaseRiskAssessment?) {
     val vine = LocalVineColors.current
     val level = riskLevel(assessment.severity)
     VineyardCard {
@@ -492,6 +546,9 @@ private fun DetailCard(assessment: DiseaseRiskAssessment, lastUpdated: Long?) {
         Text(driverText(assessment.model, regionFormatter), fontSize = 12.sp, color = vine.textSecondary)
         Box(Modifier.height(6.dp))
         Text("Current assessment: ${level.label}. ${assessment.summary}", fontSize = 12.sp, color = vine.textPrimary)
+        if (environmental != null) {
+            Text("Weather pressure: ${riskLevel(environmental.severity).label} · Observed-stage risk: ${level.label}", fontSize = 11.sp, color = vine.textSecondary)
+        }
 
         if (assessment.breakdown.isNotEmpty()) {
             Box(Modifier.height(10.dp))

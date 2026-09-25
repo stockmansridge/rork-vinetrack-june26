@@ -37,8 +37,8 @@ data class DiseaseRiskAssessment(
  *
  * The wetness signal is an estimated proxy (see [WeatherHour.isWetHour]). The
  * models are intentionally simplified versions of well-known viticulture rules
- * so they stay useful with widely available forecast data. Growth stage, spray
- * history and variety susceptibility are NOT applied, matching the iOS MVP.
+ * so they stay useful with widely available forecast data. This is BASE weather
+ * pressure; the operational screen applies DiseaseGrowthStagePolicy separately.
  */
 object DiseaseRiskCalculator {
 
@@ -188,7 +188,7 @@ data class DailyDiseaseScore(
  * re-running each model with `now` pinned to the end of each day. Matches the
  * iOS `computeDailyScores`.
  */
-fun computeDailyDiseaseScores(hours: List<WeatherHour>): List<DailyDiseaseScore> {
+fun computeDailyDiseaseScores(hours: List<WeatherHour>, stages: List<DiseaseBlockStage> = emptyList()): List<DailyDiseaseScore> {
     if (hours.isEmpty()) return emptyList()
     val cal = Calendar.getInstance().apply {
         set(Calendar.HOUR_OF_DAY, 0)
@@ -204,9 +204,9 @@ fun computeDailyDiseaseScores(hours: List<WeatherHour>): List<DailyDiseaseScore>
         rows.add(
             DailyDiseaseScore(
                 epochMs = day,
-                downy = DiseaseRiskCalculator.downyMildew(hours, endOfDay).score,
-                powdery = DiseaseRiskCalculator.powderyMildew(hours, endOfDay).score,
-                botrytis = DiseaseRiskCalculator.botrytis(hours, endOfDay).score,
+                downy = DiseaseGrowthStagePolicy.adjust(DiseaseRiskCalculator.downyMildew(hours, endOfDay), stages).score,
+                powdery = DiseaseGrowthStagePolicy.adjust(DiseaseRiskCalculator.powderyMildew(hours, endOfDay), stages).score,
+                botrytis = DiseaseGrowthStagePolicy.adjust(DiseaseRiskCalculator.botrytis(hours, endOfDay), stages).score,
             )
         )
     }
