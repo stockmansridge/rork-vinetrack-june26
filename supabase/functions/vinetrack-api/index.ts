@@ -86,6 +86,7 @@
 //     refresh the per-vineyard forecast cache — never exposed in responses)
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { normaliseApiWillyWeatherForecast, type ForecastDay } from "./forecast.ts";
 import {
   areSprayTankActualsComplete,
   buildSprayActualResponse,
@@ -3734,6 +3735,8 @@ async function handlePinGet(
 // ---------------------------------------------------------------------------
 const CURRENT_WEATHER_STALE_MS = 20 * 60_000; // canonical (sql/026)
 const FORECAST_CACHE_TTL_MS = 3 * 3_600_000;
+// Reject pre-range forecast cache rows without deleting unrelated environment caches.
+const FORECAST_CONTRACT_VERSION = 2;
 const FORECAST_HORIZON_DAYS = 7;
 const DISEASE_CACHE_TTL_MS = 30 * 60_000;
 const DISEASE_STALE_FALLBACK_MAX_MS = 24 * 3_600_000;
@@ -3955,121 +3958,10 @@ async function loadCurrentWeather(db: SupabaseClient, vineyardId: string): Promi
 }
 
 // --- Forecast (provider-abstracted, cached) ----------------------------------
-interface ForecastDay {
-  date: string;
-  rain_mm: number | null;
-  rain_probability_percent: number | null;
-  temp_min_c: number | null;
-  temp_max_c: number | null;
-  wind_speed_max_kmh: number | null;
-  et0_mm: number | null;
-}
-
 interface ForecastResult {
   days: ForecastDay[];
   status: "ok" | "stale" | "unavailable" | "not_configured";
   source: Record<string, unknown> | null;
-}
-
-/** Hargreaves ET0 estimate — ported 1:1 from the willyweather-proxy. */
-function estimateHargreavesET0(tmin: number | null, tmax: number | null): number | null {
-  if (tmin === null || tmax === null || tmax <= tmin) return null;
-  const tmean = (tmin + tmax) / 2;
-  const et0 = 0.0023 * (tmean + 17.8) * Math.sqrt(tmax - tmin) * (15 / 2.45);
-  return Math.max(0, Math.round(et0 * 100) / 100);
-}
-
-/** Midpoint of a WillyWeather rainfall range entry (proxy-canonical rule). */
-// deno-lint-ignore no-explicit-any
-function wwRainfallMidpoint(entry: any): number | null {
-  const s = coerceNum(entry?.startRange);
-  const e = coerceNum(entry?.endRange);
-  if (s !== null && e !== null) return (s + e) / 2;
-  if (e !== null) return e / 2;
-  if (s !== null) return s;
-  return null;
-}
-
-/**
- * Normalise the WillyWeather combined forecast payload into the
- * VineTrack-normalised external contract. Ported 1:1 from the
- * willyweather-proxy normaliseForecast(). Provider field names never leak.
- */
-// deno-lint-ignore no-explicit-any
-function normaliseWillyWeatherForecast(raw: any): ForecastDay[] | null {
-  const forecasts = raw?.forecasts;
-  if (!forecasts || typeof forecasts !== "object") return null;
-
-  interface Bucket { date: string; rain: number | null; prob: number | null; tmin: number | null; tmax: number | null; wind: number | null }
-  const byDate: Record<string, Bucket> = {};
-  const bucket = (dt: unknown): Bucket => {
-    const date = String(dt ?? "").slice(0, 10);
-    if (!byDate[date]) byDate[date] = { date, rain: null, prob: null, tmin: null, tmax: null, wind: null };
-    return byDate[date];
-  };
-
-  const rainDays = forecasts?.rainfall?.days;
-  if (Array.isArray(rainDays)) {
-    for (const d of rainDays) {
-      const b = bucket(d?.dateTime);
-      const entries = Array.isArray(d?.entries) ? d.entries : [];
-      if (entries.length > 0) b.rain = wwRainfallMidpoint(entries[0]);
-    }
-  }
-  const probDays = forecasts?.rainfallprobability?.days;
-  if (Array.isArray(probDays)) {
-    for (const d of probDays) {
-      const b = bucket(d?.dateTime);
-      const entries = Array.isArray(d?.entries) ? d.entries : [];
-      if (entries.length > 0) b.prob = coerceNum(entries[0]?.probability);
-    }
-  }
-  const tempDays = forecasts?.temperature?.days;
-  if (Array.isArray(tempDays)) {
-    for (const d of tempDays) {
-      const b = bucket(d?.dateTime);
-      const entries = Array.isArray(d?.entries) ? d.entries : [];
-      let lo: number | null = null;
-      let hi: number | null = null;
-      for (const e of entries) {
-        const t = coerceNum(e?.temperature);
-        if (t === null) continue;
-        if (lo === null || t < lo) lo = t;
-        if (hi === null || t > hi) hi = t;
-      }
-      b.tmin = lo;
-      b.tmax = hi;
-    }
-  }
-  const windDays = forecasts?.wind?.days;
-  if (Array.isArray(windDays)) {
-    for (const d of windDays) {
-      const b = bucket(d?.dateTime);
-      const entries = Array.isArray(d?.entries) ? d.entries : [];
-      let maxSpd: number | null = null;
-      for (const e of entries) {
-        const s = coerceNum(e?.speed);
-        if (s === null) continue;
-        if (maxSpd === null || s > maxSpd) maxSpd = s;
-      }
-      b.wind = maxSpd;
-    }
-  }
-
-  const sorted = Object.values(byDate)
-    .filter((b) => DATE_RE.test(b.date))
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(0, FORECAST_HORIZON_DAYS);
-  if (sorted.length === 0) return null;
-  return sorted.map((b) => ({
-    date: b.date,
-    rain_mm: b.rain,
-    rain_probability_percent: b.prob,
-    temp_min_c: b.tmin,
-    temp_max_c: b.tmax,
-    wind_speed_max_kmh: b.wind,
-    et0_mm: estimateHargreavesET0(b.tmin, b.tmax),
-  }));
 }
 
 async function fetchWillyWeatherForecast(apiKey: string, locationId: string): Promise<ForecastDay[] | null> {
@@ -4084,7 +3976,19 @@ async function fetchWillyWeatherForecast(apiKey: string, locationId: string): Pr
       console.error("[vinetrack-api] willyweather forecast upstream status:", res.status);
       return null;
     }
-    return normaliseWillyWeatherForecast(await res.json());
+    const raw = await res.json();
+    // Condition endpoints are optional on some WillyWeather plans. Fail soft,
+    // exactly as the proxy does, and never infer condition from rainfall.
+    const optionalForecasts: Record<string, unknown> = {};
+    await Promise.all(["weather", "precis"].map(async (type) => {
+      const detailUrl = new URL(u);
+      detailUrl.searchParams.set("forecasts", type);
+      try {
+        const detail = await fetch(detailUrl.toString(), { signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
+        if (detail.ok) optionalForecasts[type] = await detail.json();
+      } catch { /* Unsupported optional condition does not discard the daily forecast. */ }
+    }));
+    return normaliseApiWillyWeatherForecast(raw, FORECAST_HORIZON_DAYS, optionalForecasts);
   } catch (e) {
     console.error("[vinetrack-api] willyweather forecast fetch failed:", e instanceof Error ? e.name : String(e));
     return null;
@@ -4116,7 +4020,11 @@ async function fetchOpenMeteoDailyForecast(lat: number, lon: number): Promise<Fo
     return time.slice(0, FORECAST_HORIZON_DAYS).map((t, i) => ({
       date: String(t).slice(0, 10),
       rain_mm: pick("precipitation_sum", i),
+      rain_min_mm: pick("precipitation_sum", i),
+      rain_max_mm: pick("precipitation_sum", i),
       rain_probability_percent: null,
+      condition_key: null,
+      condition_description: null,
       temp_min_c: pick("temperature_2m_min", i),
       temp_max_c: pick("temperature_2m_max", i),
       wind_speed_max_kmh: pick("wind_speed_10m_max", i),
@@ -4172,7 +4080,10 @@ async function loadForecast(db: SupabaseClient, vineyardId: string): Promise<For
 
   // Serve from cache while fresh (cache is invalidated by provider switch).
   const cached = await readEnvCache(db, vineyardId, "forecast");
-  const providerCache = cached && String(cached.payload?.provider ?? "") === provider ? cached : null;
+  const providerCache = cached && String(cached.payload?.provider ?? "") === provider &&
+    cached.payload?.forecast_contract_version === FORECAST_CONTRACT_VERSION &&
+    (provider !== "willyweather" || cached.payload?.location_id === wwLocationId)
+    ? cached : null;
   if (providerCache && Date.now() - Date.parse(providerCache.fetched_at) < FORECAST_CACHE_TTL_MS) {
     return forecastFromPayload(providerCache.payload, providerCache.fetched_at, false, "ok");
   }
@@ -4209,6 +4120,8 @@ async function loadForecast(db: SupabaseClient, vineyardId: string): Promise<For
   if (fresh) {
     const payload: Record<string, unknown> = {
       provider,
+      forecast_contract_version: FORECAST_CONTRACT_VERSION,
+      location_id: provider === "willyweather" ? wwLocationId : null,
       horizon_days: FORECAST_HORIZON_DAYS,
       location: fresh.location,
       days: fresh.days,

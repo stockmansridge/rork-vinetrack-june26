@@ -253,6 +253,16 @@ if (providers.gradleProperty("editChemicalFocusedTests").orNull == "true") {
     }
 }
 
+if (providers.gradleProperty("forecastParityFocusedTests").orNull == "true") {
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/ForecastParityContractTest.kt")
+            })
+        }
+    }
+}
+
 if (providers.gradleProperty("tripLifecycleFocusedTests").orNull == "true") {
     afterEvaluate {
         tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {

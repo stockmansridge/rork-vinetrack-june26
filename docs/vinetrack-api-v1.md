@@ -1035,7 +1035,11 @@ GET /v1/weather?vineyard_id=<uuid>
       {
         "date": "2026-08-10",
         "rain_mm": 2.5,
+        "rain_min_mm": 1,
+        "rain_max_mm": 4,
         "rain_probability_percent": 70,
+        "condition_key": "partly_cloudy",
+        "condition_description": "Partly cloudy",
         "temp_min_c": 6.1,
         "temp_max_c": 15.4,
         "wind_speed_max_kmh": 32,
@@ -1089,11 +1093,15 @@ one ambiguous list.
   otherwise Open-Meteo.
 - Horizon: up to **7 days** (`horizon_days`), each item with an explicit
   ISO `date`.
-- `rain_probability_percent` is available from WillyWeather only
+- `rain_min_mm` and `rain_max_mm` are the provider-neutral daily rainfall range. For WillyWeather, distinct timestamped period lower and upper bounds are summed respectively (a 0–1 mm period plus a 1–3 mm period gives 1–4 mm); duplicate timestamps count once. For Open-Meteo's single daily precipitation amount, both bounds equal that amount. First-party clients should consume these fields, not `rain_mm`.
+- `rain_mm` is a **legacy compatibility field**, not the canonical range: for WillyWeather it remains the midpoint of the **first** rainfall period (including half the upper bound when no lower bound is supplied); for Open-Meteo it remains the daily precipitation sum. It must not be used to infer the provider's full daily range.
+- `condition_key` and `condition_description` are sourced from WillyWeather weather/precis when available; they are `null` when the provider does not supply a condition (including the current Open-Meteo gateway mapping). No condition is derived from rain amount.
+- `rain_probability_percent` is the maximum of WillyWeather's reported daily periods and is available from WillyWeather only
   (Open-Meteo forecast items carry `null`). `et0_mm` provenance differs
   by provider: Open-Meteo supplies FAO ET0 directly; for WillyWeather it
   is VineTrack's deterministic Hargreaves estimate from tmin/tmax (the
   same calculation the apps use).
+- Older forecast cache payloads without the explicit range contract are bypassed on the next request; WillyWeather cache entries also require the current saved location ID. No other environment cache is invalidated.
 - Freshness: forecasts are served from a server-side cache with a
   **3-hour TTL** — API traffic can trigger at most one upstream provider
   request per vineyard per window. `forecast_status`: `ok` (fresh),
