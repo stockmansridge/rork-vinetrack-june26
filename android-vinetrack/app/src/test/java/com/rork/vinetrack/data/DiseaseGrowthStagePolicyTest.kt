@@ -37,6 +37,24 @@ class DiseaseGrowthStagePolicyTest {
         assertEquals("No current-season observation", DiseaseGrowthStagePolicy.stageText(resolve(listOf(old))))
     }
 
+    @Test fun statusParityForCurrentAndSevenDay() {
+        val base = weather()
+        val cases = listOf(
+            emptyList<DiseaseBlockStage>() to DiseaseGrowthAdjustmentStatus.NOT_APPLIED,
+            resolve(listOf(row("flower", blockA, "EL19", "2026-09-20T12:00:00Z"))) to DiseaseGrowthAdjustmentStatus.APPLIED_NO_CHANGE,
+            resolve(listOf(row("early", blockA, "EL12", "2026-09-10T12:00:00Z"))) to DiseaseGrowthAdjustmentStatus.APPLIED_RISK_ADJUSTED,
+        )
+        cases.forEach { (stages, expected) ->
+            val current = DiseaseGrowthStagePolicy.adjust(base, stages)
+            val sevenDay = (0 until 7).map { DiseaseGrowthStagePolicy.adjust(base, stages) }
+            val changed = DiseaseGrowthStagePolicy.changed(base, current) || sevenDay.any { DiseaseGrowthStagePolicy.changed(base, it) }
+            assertEquals(expected, DiseaseGrowthAdjustmentStatus.result(stages.isNotEmpty(), changed))
+            assertTrue(sevenDay.all { it.severity == current.severity })
+        }
+        assertEquals(DiseaseGrowthAdjustmentStatus.NOT_APPLIED, DiseaseGrowthAdjustmentStatus.result(false, true))
+        assertEquals("Applied — no change", DiseaseGrowthAdjustmentStatus.APPLIED_NO_CHANGE.label)
+    }
+
     @Test fun deletedLatestAndEditedOldObservationCannotWin() {
         val old = row("old", blockA, "EL19", "2025-06-30T12:00:00Z", "2026-09-25T09:00:00Z")
         val first = row("first", blockA, "EL12", "2026-09-10T12:00:00Z")

@@ -36,6 +36,24 @@ import Testing
         #expect(DiseaseGrowthStagePolicy.stageText(resolve([old])) == "No current-season observation")
     }
 
+    @Test func statusParityForCurrentAndSevenDay() {
+        let base = weather()
+        let noStage = resolve([])
+        let flowering = resolve([record("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", blockA, "EL19", "2026-09-20T12:00:00Z")])
+        let early = resolve([record("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", blockA, "EL12", "2026-09-10T12:00:00Z")])
+        for stages in [noStage, flowering, early] {
+            let current = DiseaseGrowthStagePolicy.adjust(base, stages: stages)
+            let sevenDay = (0..<7).map { _ in DiseaseGrowthStagePolicy.adjust(base, stages: stages) }
+            let changed = DiseaseGrowthStagePolicy.changed(base, current) || sevenDay.contains { DiseaseGrowthStagePolicy.changed(base, $0) }
+            let status = DiseaseGrowthAdjustmentStatus.result(evaluated: !stages.isEmpty, changed: changed)
+            let expected: DiseaseGrowthAdjustmentStatus = stages.isEmpty ? .notApplied : stages[0].el == 19 ? .appliedNoChange : .appliedRiskAdjusted
+            #expect(status == expected)
+            #expect(sevenDay.allSatisfy { $0.severity == current.severity })
+        }
+        #expect(DiseaseGrowthAdjustmentStatus.result(evaluated: false, changed: true) == .notApplied)
+        #expect(DiseaseGrowthAdjustmentStatus.appliedNoChange.label == "Applied — no change")
+    }
+
     @Test func observationTimeWinsOverEditsAndMirrorsAreSingleObservation() {
         let old = record("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", blockA, "EL19", "2025-06-30T12:00:00Z", updated: "2026-09-25T09:00:00Z")
         let pin = UUID()
@@ -77,7 +95,6 @@ import Testing
         #expect(DiseaseGrowthStagePolicy.adjust(weather(.downyMildew), stages: early).severity == .warning)
         #expect(DiseaseGrowthStagePolicy.adjust(weather(.powderyMildew), stages: late).severity == .warning)
         #expect(DiseaseGrowthStagePolicy.adjust(weather(.downyMildew, .critical), stages: flowering).severity == .critical)
-        // No phenological progression is inferred from future weather dates.
         #expect(DiseaseGrowthStagePolicy.adjust(weather(), stages: early).severity == nil)
         #expect(DiseaseGrowthStagePolicy.changed(weather(), DiseaseGrowthStagePolicy.adjust(weather(), stages: early)))
     }

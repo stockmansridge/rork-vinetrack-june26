@@ -16,6 +16,21 @@ data class DiseaseBlockStage(
     val el: Int,
 )
 
+/** Whether resolved phenology participated and whether the displayed risk changed. */
+enum class DiseaseGrowthAdjustmentStatus(val label: String) {
+    NOT_APPLIED("Not applied"),
+    APPLIED_NO_CHANGE("Applied — no change"),
+    APPLIED_RISK_ADJUSTED("Applied — risk adjusted");
+
+    companion object {
+        fun result(evaluated: Boolean, changed: Boolean): DiseaseGrowthAdjustmentStatus = when {
+            !evaluated -> NOT_APPLIED
+            changed -> APPLIED_RISK_ADJUSTED
+            else -> APPLIED_NO_CHANGE
+        }
+    }
+}
+
 /**
  * Operational advisory, NOT an infection model or spray recommendation.
  * Exact parity with iOS DiseaseGrowthStagePolicy: inclusive E-L intervals,

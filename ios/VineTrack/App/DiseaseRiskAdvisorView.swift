@@ -7,7 +7,7 @@ struct DiseaseRiskAdvisorView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
     @State private var blockStages: [DiseaseBlockStage] = []
-    @State private var growthAdjustmentApplied: Bool = false
+    @State private var growthAdjustmentStatus: DiseaseGrowthAdjustmentStatus = .notApplied
     @State private var environmentalAssessments: [DiseaseRiskAssessment] = []
 
     @State private var hourlyService = WeatherHourlyService()
@@ -650,13 +650,21 @@ struct DiseaseRiskAdvisorView: View {
         let forecastChanged = zip(unadjustedDays, dailyScores).contains { pair in
             pair.0.downy != pair.1.downy || pair.0.powdery != pair.1.powdery || pair.0.botrytis != pair.1.botrytis
         }
-        growthAdjustmentApplied = currentChanged || forecastChanged
+        let currentEvaluated = environmentalAssessments.contains { $0.summary != "Insufficient hourly data to assess." }
+        let forecastEvaluated = dailyScores.contains { day in
+            let end = Calendar.current.date(byAdding: .day, value: 1, to: day.date) ?? day.date
+            return hours.contains { $0.date <= end && $0.date >= end.addingTimeInterval(-48 * 3600) }
+        }
+        growthAdjustmentStatus = .result(
+            evaluated: !blockStages.isEmpty && (currentEvaluated || forecastEvaluated),
+            changed: currentChanged || forecastChanged
+        )
     }
 
     private func refresh() async {
         hasLoadedOnce = true
         blockStages = []
-        growthAdjustmentApplied = false
+        growthAdjustmentStatus = .notApplied
         environmentalAssessments = []
         guard let lat = latitude, let lon = longitude else {
             assessments = []
@@ -718,7 +726,7 @@ struct DiseaseRiskAdvisorView: View {
                 Image(systemName: "leaf").font(.caption2)
                 Text("Growth stage: \(DiseaseGrowthStagePolicy.stageText(blockStages))")
                 Spacer()
-                Text("Growth stage adjustment: \(growthAdjustmentApplied ? "Applied" : "Not applied")")
+                Text("Growth stage adjustment: \(growthAdjustmentStatus.label)")
             }
             .font(.caption2)
             .foregroundStyle(.secondary)

@@ -12,6 +12,26 @@ nonisolated struct DiseaseBlockStage: Sendable, Equatable {
     let el: Int
 }
 
+/// Whether resolved phenology participated and whether the displayed risk changed.
+nonisolated enum DiseaseGrowthAdjustmentStatus: Equatable {
+    case notApplied
+    case appliedNoChange
+    case appliedRiskAdjusted
+
+    var label: String {
+        switch self {
+        case .notApplied: return "Not applied"
+        case .appliedNoChange: return "Applied — no change"
+        case .appliedRiskAdjusted: return "Applied — risk adjusted"
+        }
+    }
+
+    static func result(evaluated: Bool, changed: Bool) -> Self {
+        guard evaluated else { return .notApplied }
+        return changed ? .appliedRiskAdjusted : .appliedNoChange
+    }
+}
+
 /// Advisory, not an infection model or a product recommendation. Parity contract:
 /// Android DiseaseGrowthStagePolicy uses the same inclusive E-L intervals and
 /// one-tier reduction outside them; never increases environmental pressure.

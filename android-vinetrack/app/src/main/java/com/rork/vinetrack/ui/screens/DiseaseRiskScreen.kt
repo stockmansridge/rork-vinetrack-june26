@@ -57,6 +57,7 @@ import com.rork.vinetrack.data.DailyDiseaseScore
 import com.rork.vinetrack.data.DiseaseModel
 import com.rork.vinetrack.data.DiseaseRiskAssessment
 import com.rork.vinetrack.data.DiseaseRiskCalculator
+import com.rork.vinetrack.data.DiseaseGrowthAdjustmentStatus
 import com.rork.vinetrack.data.DiseaseGrowthStagePolicy
 import com.rork.vinetrack.data.DiseaseBlockStage
 import com.rork.vinetrack.data.SeasonWindow
@@ -122,7 +123,7 @@ fun DiseaseRiskScreen(
     var environmentalAssessments by remember { mutableStateOf<List<DiseaseRiskAssessment>>(emptyList()) }
     var forecastHours by remember { mutableStateOf<List<WeatherHour>>(emptyList()) }
     var blockStages by remember { mutableStateOf<List<DiseaseBlockStage>>(emptyList()) }
-    var growthAdjustmentApplied by remember { mutableStateOf(false) }
+    var growthAdjustmentStatus by remember { mutableStateOf(DiseaseGrowthAdjustmentStatus.NOT_APPLIED) }
     var dailyScores by remember { mutableStateOf<List<DailyDiseaseScore>>(emptyList()) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -139,7 +140,7 @@ fun DiseaseRiskScreen(
             assessments = emptyList()
             dailyScores = emptyList()
             forecastHours = emptyList()
-            growthAdjustmentApplied = false
+            growthAdjustmentStatus = DiseaseGrowthAdjustmentStatus.NOT_APPLIED
             return
         }
         scope.launch {
@@ -163,14 +164,20 @@ fun DiseaseRiskScreen(
                 val forecastChanged = computeDailyDiseaseScores(forecast.hours).zip(dailyScores).any { (before, after) ->
                     before.downy != after.downy || before.powdery != after.powdery || before.botrytis != after.botrytis
                 }
-                growthAdjustmentApplied = currentChanged || forecastChanged
+                growthAdjustmentStatus = DiseaseGrowthAdjustmentStatus.result(
+                    evaluated = stages.isNotEmpty() && (
+                    environmentalAssessments.any { it.summary != "Insufficient hourly data to assess." } ||
+                        dailyScores.any { day -> forecastHours.any { it.epochMs in (day.epochMs - 86_400_000L)..(day.epochMs + 86_400_000L) } }
+                ),
+                    changed = currentChanged || forecastChanged,
+                )
                 lastUpdated = System.currentTimeMillis()
             } catch (e: Exception) {
                 errorMessage = e.message ?: "Could not load weather data."
                 assessments = emptyList()
                 dailyScores = emptyList()
                 forecastHours = emptyList()
-                growthAdjustmentApplied = false
+                growthAdjustmentStatus = DiseaseGrowthAdjustmentStatus.NOT_APPLIED
             } finally {
                 isLoading = false
                 hasLoadedOnce = true
@@ -183,7 +190,7 @@ fun DiseaseRiskScreen(
         environmentalAssessments = emptyList()
         forecastHours = emptyList()
         blockStages = emptyList()
-        growthAdjustmentApplied = false
+        growthAdjustmentStatus = DiseaseGrowthAdjustmentStatus.NOT_APPLIED
         hasLoadedOnce = false
         refresh()
     }
@@ -205,7 +212,13 @@ fun DiseaseRiskScreen(
             val forecastChanged = computeDailyDiseaseScores(forecastHours).zip(dailyScores).any { (before, after) ->
                 before.downy != after.downy || before.powdery != after.powdery || before.botrytis != after.botrytis
             }
-            growthAdjustmentApplied = currentChanged || forecastChanged
+            growthAdjustmentStatus = DiseaseGrowthAdjustmentStatus.result(
+                    evaluated = stages.isNotEmpty() && (
+                    environmentalAssessments.any { it.summary != "Insufficient hourly data to assess." } ||
+                        dailyScores.any { day -> forecastHours.any { it.epochMs in (day.epochMs - 86_400_000L)..(day.epochMs + 86_400_000L) } }
+                ),
+                    changed = currentChanged || forecastChanged,
+                )
         }
     }
 
@@ -261,7 +274,7 @@ fun DiseaseRiskScreen(
                 location == null && hasLoadedOnce -> item { NoLocationCard() }
                 assessments.isEmpty() && hasLoadedOnce -> item { EmptyRiskCard() }
                 else -> {
-                    item { DataQualityCard(lastUpdated, sourceStatus, growthAdjustmentApplied) }
+                    item { DataQualityCard(lastUpdated, sourceStatus, growthAdjustmentStatus) }
                     item { SectionHeader("Current Risk", onLight = true) }
                     items(assessments) { a -> SummaryCard(a) }
                     if (dailyScores.isNotEmpty()) {
@@ -489,7 +502,7 @@ private fun SummaryCard(assessment: DiseaseRiskAssessment) {
 }
 
 @Composable
-private fun DataQualityCard(lastUpdated: Long?, source: WeatherSourceStatus, growthApplied: Boolean) {
+private fun DataQualityCard(lastUpdated: Long?, source: WeatherSourceStatus, growthStatus: DiseaseGrowthAdjustmentStatus) {
     val vine = LocalVineColors.current
     val isLocal = source.quality != SourceQuality.ForecastOnly
     val badgeColor = if (source.quality == SourceQuality.LocalStationMeasuredWetness) VineColors.LeafGreen else vine.textSecondary
@@ -516,7 +529,7 @@ private fun DataQualityCard(lastUpdated: Long?, source: WeatherSourceStatus, gro
                 "Last updated: ${if (lastUpdated != null) timeFmt.format(Date(lastUpdated)) else "—"}",
                 fontSize = 11.sp, color = vine.textSecondary, modifier = Modifier.weight(1f),
             )
-            Text("Growth stage adjustment: ${if (growthApplied) "Applied" else "Not applied"}", fontSize = 11.sp, color = vine.textSecondary)
+            Text("Growth stage adjustment: ${growthStatus.label}", fontSize = 11.sp, color = vine.textSecondary)
         }
     }
 }
