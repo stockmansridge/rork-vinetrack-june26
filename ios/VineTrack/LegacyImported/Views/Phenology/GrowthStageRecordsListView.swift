@@ -152,9 +152,17 @@ struct GrowthStageRecordsListView: View {
     private var summaryList: some View {
         List {
             Section {
-                summaryCard
-                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                    .listRowBackground(Color.clear)
+                HStack {
+                    Label(feed.selectedVintage.map(VintageYearText.label) ?? "Vintage —", systemImage: "calendar")
+                    Spacer()
+                }
+                if feed.availableVintages.count > 1 {
+                    Picker("Vintage", selection: vintageBinding) {
+                        ForEach(feed.availableVintages, id: \.self) { vintage in
+                            Text(verbatim: VintageYearText.format(vintage)).tag(vintage)
+                        }
+                    }
+                }
             }
 
             if let message = feedProblem {
@@ -165,29 +173,56 @@ struct GrowthStageRecordsListView: View {
                 }
             }
 
-            if filteredRecords.isEmpty {
-                Section {
-                    emptyState
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 24)
-                        .listRowBackground(Color.clear)
+            Section("Blocks") {
+                if feed.blocks.isEmpty {
+                    Text("No blocks in this vineyard yet.").foregroundStyle(.secondary)
                 }
-            } else {
-                Section {
-                    ForEach(filteredRecords) { record in
-                        recordRow(record)
+                ForEach(feed.blocks, id: \.id) { block in
+                    let stage = currentEL(for: block.id)
+                    NavigationLink(value: block.id) {
+                        HStack(spacing: 14) {
+                            Image(systemName: "leaf.fill")
+                                .foregroundStyle(stage.map { Color(uiColor: ELRipenessPinFactory.uiColour(for: $0)) } ?? .secondary)
+                                .frame(width: 32, height: 44)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(block.name ?? "Block").font(.headline)
+                                Text(stage.map(ELRipeness.formatEl) ?? "No current stage")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(stage.map { Color(uiColor: ELRipenessPinFactory.uiColour(for: $0)) } ?? .secondary)
+                            }
+                            Spacer()
+                        }
+                        .padding(.vertical, 6)
                     }
-                } header: {
-                    Text("Records (\(filteredRecords.count))")
                 }
             }
         }
         .listStyle(.insetGrouped)
-        .searchable(text: $searchText, prompt: "Search variety, block, stage, notes")
+        .navigationDestination(for: String.self) { blockId in
+            if let block = feed.blocks.first(where: { $0.id == blockId }) {
+                GrowthStageBlockDetailView(
+                    blockName: block.name ?? "Block",
+                    currentEl: currentEL(for: blockId),
+                    records: vineyardRecords.filter { $0.paddockId?.uuidString.lowercased() == blockId.lowercased() && $0.observedAt <= Date() },
+                    formatter: fmt
+                )
+            }
+        }
         .refreshable {
             await growthStageRecordSync.syncForSelectedVineyard()
             await load(force: true)
         }
+    }
+
+    private func currentEL(for blockId: String) -> Double? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        let today = formatter.string(from: Date())
+        return feed.vintageObservations
+            .filter { $0.paddockId?.lowercased() == blockId.lowercased() && ELRipeness.isInfluencing($0, atDateISO: today) }
+            .map(\.el).max()
     }
 
     /// A load problem worth telling the operator about, phrased for the

@@ -44,8 +44,23 @@ import kotlinx.coroutines.withContext
  */
 class VineyardRepository(private val session: SessionStore) {
 
+    @Serializable
+    private data class PickerMembership(
+        @SerialName("vineyard_id") val vineyardId: String,
+        val role: String,
+    )
+
     suspend fun listMyVineyards(): List<Vineyard> = withContext(Dispatchers.IO) {
-        get("vineyards?select=*&deleted_at=is.null&order=name.asc")
+        val userId = session.userId ?: throw BackendError.Unauthorized
+        // Explicit membership intersection keeps admin-support visibility out of
+        // the ordinary picker, even if the vineyards RLS grants wider reads.
+        val memberships: List<PickerMembership> = get("vineyard_members?select=vineyard_id,role&user_id=eq.$userId")
+        val allowed = memberships.filter { it.role in setOf("owner", "operator", "supervisor", "manager") }
+            .map { it.vineyardId }.toSet()
+        if (allowed.isEmpty()) emptyList() else {
+            val vineyards: List<Vineyard> = get("vineyards?select=*&deleted_at=is.null&order=name.asc")
+            vineyards.filter { it.id in allowed }
+        }
     }
 
     /**

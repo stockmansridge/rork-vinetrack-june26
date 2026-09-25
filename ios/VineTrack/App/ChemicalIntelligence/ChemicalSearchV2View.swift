@@ -375,7 +375,7 @@ struct ChemicalSearchV2View: View {
 
     @State private var query: String = ""
     @State private var results: [MasterChemicalV2] = []
-    @State private var onlineCandidates: [ChemicalSearchResult] = []
+    @State private var onlineCandidates: [ChemicalInfoService.WebV2Candidate] = []
     @State private var savedMatches: [SavedChemical] = []
     @State private var isSearching: Bool = false
     @State private var message: String?
@@ -483,12 +483,11 @@ struct ChemicalSearchV2View: View {
                 }
 
                 if !onlineCandidates.isEmpty {
-                    Section("Official product candidates — choose the exact registration") {
+                    Section("Agricultural products — choose your product") {
                         ForEach(onlineCandidates) { candidate in
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(candidate.name).font(.headline)
-                                if let number = candidate.registrationNumber { Text("APVMA \(number)").font(.caption.monospaced()) }
-                                if let registrant = candidate.registrant, !registrant.isEmpty { Text(registrant).font(.subheadline) }
+                                if !candidate.brand.isEmpty { Text(candidate.brand).font(.subheadline) }
                                 if !candidate.activeIngredient.isEmpty { Text(candidate.activeIngredient).font(.caption) }
                                 if let category = candidate.productCategory, !category.isEmpty { Text(category.capitalized).font(.caption) }
                                 Button("Use this chemical") { openOnlineCandidate(candidate) }.buttonStyle(.borderedProminent)
@@ -499,9 +498,9 @@ struct ChemicalSearchV2View: View {
 
                 Section(results.isEmpty ? "No VineTrack match found" : "Other options") {
                     if isExternalLookupRunning {
-                        HStack { ProgressView(); Text("Searching for official product label…") }
+                        HStack { ProgressView(); Text("Finding agricultural product and reading label…") }
                     } else {
-                        Button("Search for product label", action: searchOnline)
+                        Button("Search Online", action: searchOnline)
                             .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
                     }
                     Button("Take Photo of Label") { isShowingCamera = true }
@@ -624,62 +623,50 @@ struct ChemicalSearchV2View: View {
         isExternalLookupRunning = true; message = nil; onlineCandidates = []; diagnostics.fallbackInvoked = true
         Task {
             do {
-                let response = try await externalService.searchResponse(query: trimmed, country: "AU")
+                let response = try await externalService.lookupWebV2(query: trimmed)
                 guard externalRequestID == token else { return }
-                onlineCandidates = response.results.filter {
-                    $0.isAuthoritativeCandidate && $0.countryCode?.uppercased() != "NZ" &&
-                    $0.registrationScheme?.lowercased() == "apvma" &&
-                    !($0.registrationNumber ?? "").isEmpty
-                }
-                message = onlineCandidates.isEmpty
-                    ? "No official registration found. Try another name or create manually."
-                    : "Choose the exact product before reading its registered label."
-                diagnostics.externalLookupSucceeded = !onlineCandidates.isEmpty
+                onlineCandidates = response.candidates
+                if let detail = response.detail { openWebReview(detail, fallbackName: response.candidates.first?.name ?? trimmed) }
+                message = response.detail != nil ? nil : onlineCandidates.isEmpty
+                    ? "No reliable agricultural source found. Check the name or create manually."
+                    : "Choose the agricultural product you use."
+                diagnostics.externalLookupSucceeded = response.detail != nil || !onlineCandidates.isEmpty
             } catch {
                 if externalRequestID == token {
                     diagnostics.externalLookupSucceeded = false
-                    message = "Official search is unavailable. Try again or create manually."
+                    message = "Online search is unavailable. Try again or create manually."
                 }
             }
             if externalRequestID == token { isExternalLookupRunning = false; externalRequestID = nil }
         }
     }
 
-    private func openOnlineCandidate(_ candidate: ChemicalSearchResult) {
-        guard let number = candidate.registrationNumber,
-              candidate.registrationScheme?.lowercased() == "apvma" else { return }
+    private func openWebReview(_ lookup: ChemicalStructuredLookup, fallbackName: String) {
+        let intel = lookup.intelligence()
+        let rates = ViticultureRates.fromRegisteredUses(intel.registeredUses)
+        let automatic: [ChemicalDefaultRateBasis: ChemicalLabelRate] = rates.all.count > 1
+            ? [:] : ChemicalSearchV2OperationalDefaults.unambiguousRates(from: rates)
+        let selected = automatic[.perHectare] ?? automatic[.per100Litres]
+        let initial = selected.map(draftRate) ?? ChemicalManualRateDraft()
+        review = ReviewDraft(
+            source: "Product label / web", master: nil, intelligence: intel,
+            formType: lookup.formType, productName: lookup.productName ?? fallbackName,
+            unit: unit(for: initial.unit), rate: initial, viticultureRates: rates,
+            selectedRegisteredRateID: selected?.id, automaticRates: automatic
+        )
+    }
+
+    private func openOnlineCandidate(_ candidate: ChemicalInfoService.WebV2Candidate) {
         let token = UUID(); externalRequestID = token
-        isExternalLookupRunning = true; message = "Reading APVMA \(number)…"
+        isExternalLookupRunning = true; message = "Reading product label…"
         Task {
             do {
-                let request = ChemicalStructuredLookupRequest(selected: candidate, country: "AU")
-                let lookup = try await externalService.lookupStructured(request)
+                let response = try await externalService.lookupWebV2(query: query, selectedName: candidate.name)
                 guard externalRequestID == token else { return }
-                guard lookup.matchSource == "master" || lookup.matchSource == "authoritative_candidate",
-                      lookup.registration?.countryCode == "AU",
-                      lookup.registration?.scheme == .apvma,
-                      lookup.registration?.registrationNumber == number else {
-                    message = "APVMA \(number) could not be verified. Choose another product or create manually."
-                    return
-                }
-                let intel = lookup.intelligence()
-                let rates = ViticultureRates.fromRegisteredUses(intel.registeredUses)
-                let automatic: [ChemicalDefaultRateBasis: ChemicalLabelRate] = rates.all.count > 1
-                    ? [:] : ChemicalSearchV2OperationalDefaults.unambiguousRates(from: rates)
-                let selected = automatic[.perHectare] ?? automatic[.per100Litres]
-                let initial = selected.map(draftRate) ?? ChemicalManualRateDraft()
-                // A photograph bearing another registration is not evidence for this product.
-                if photoRegistration != nil && photoRegistration != number { photoData = nil }
-                review = ReviewDraft(
-                    source: lookup.matchSource == "master" ? "VineTrack Master" : "Official register",
-                    master: nil, intelligence: intel, formType: lookup.formType,
-                    productName: lookup.registration?.registeredProductName ?? candidate.name,
-                    unit: unit(for: initial.unit), rate: initial, viticultureRates: rates,
-                    selectedRegisteredRateID: selected?.id, automaticRates: automatic,
-                    masterMatch: lookup.matchSource == "master" ? lookup.master : nil
-                )
+                if let detail = response.detail { openWebReview(detail, fallbackName: candidate.name) }
+                else { message = "No reliable product source found. Check details or create manually." }
             } catch {
-                if externalRequestID == token { message = "Could not read APVMA \(number). Try again or choose another product." }
+                if externalRequestID == token { message = "Could not read this product. Try again or create manually." }
             }
             if externalRequestID == token { isExternalLookupRunning = false; externalRequestID = nil }
         }
@@ -790,11 +777,11 @@ private struct ChemicalSearchV2ReviewView: View {
                         LabeledContent("Registrant", value: draft.intelligence.registration?.registrant?.ifEmpty("Not found — check label") ?? "Not found — check label")
                         LabeledContent("APVMA", value: draft.intelligence.hasEvidencedRegistration
                             ? (draft.intelligence.registration?.registrationNumber ?? "Not found — check label") : "APVMA registration not verified")
-                        LabeledContent("Active ingredients", value: draft.intelligence.activeIngredients.map(\.name).joined(separator: ", ").ifEmpty("Not found — check label"))
+                        LabeledContent("Active ingredients", value: draft.intelligence.activeIngredients.map(\.displayLabelWithGroup).joined(separator: ", ").ifEmpty("Needs confirmation — check label"))
                         LabeledContent("Category", value: draft.intelligence.productCategory.isEmpty ? "Not found — check label" : draft.intelligence.productCategory.capitalized)
-                        LabeledContent("Product form", value: draft.formType?.ifEmpty("Not found — check label") ?? "Not found — check label")
-                        if let label = [draft.intelligence.registration?.regulatorLabelURL,
-                                        draft.intelligence.registration?.manufacturerLabelURL,
+                        LabeledContent("Product form", value: draft.formType?.ifEmpty("Needs confirmation") ?? "Needs confirmation")
+                        if let label = [draft.intelligence.registration?.manufacturerLabelURL,
+                                        draft.intelligence.registration?.regulatorLabelURL,
                                         draft.intelligence.registration?.labelReference]
                             .compactMap({ $0 }).compactMap(URL.init(string:))
                             .first(where: { $0.scheme == "https" && $0.host != nil && $0.path.lowercased().hasSuffix(".pdf") }) {
@@ -803,7 +790,7 @@ private struct ChemicalSearchV2ReviewView: View {
                             Text("Label not found — check product packaging").foregroundStyle(.secondary)
                         }
                     }
-                    Section("Registered vineyard rates") {
+                    Section(draft.source == "Product label / web" ? "Vineyard label rates" : "Registered vineyard rates") {
                         if draft.viticultureRates.all.isEmpty {
                             Text("Grapevine use / rate not found — check label.")
                                 .foregroundStyle(.secondary)
@@ -819,6 +806,18 @@ private struct ChemicalSearchV2ReviewView: View {
                             LabeledContent("Per 100 L") {
                                 VStack(alignment: .trailing) {
                                     ForEach(draft.viticultureRates.per100Litres) { Text($0.displayRate) }
+                                }
+                            }
+                        }
+                        if draft.source == "Product label / web" {
+                            ForEach(draft.intelligence.registeredUses.filter(\.isViticultural)) { use in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(use.targetRaw.isEmpty ? use.crop : "\(use.crop) · \(use.targetRaw)")
+                                        .font(.subheadline.weight(.semibold))
+                                    ForEach(use.rates) { rate in Text(rate.displayRate).font(.caption) }
+                                    if let days = use.withholdingPeriodDays { Text("Withholding: \(days) days").font(.caption) }
+                                    if let reEntry = use.reEntryStatement { Text("Re-entry: \(reEntry)").font(.caption) }
+                                    if let restrictions = use.restrictions { Text(restrictions).font(.caption).foregroundStyle(.secondary) }
                                 }
                             }
                         }

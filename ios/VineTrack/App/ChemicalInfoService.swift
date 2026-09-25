@@ -906,6 +906,30 @@ nonisolated struct ChemicalInfoService: Sendable {
         return try JSONDecoder().decode(LabelIdentityResponse.self, from: data).productName
     }
 
+    struct WebV2Candidate: Decodable, Identifiable {
+        let name: String
+        let brand: String
+        let activeIngredient: String
+        let productCategory: String?
+        var id: String { name }
+        enum CodingKeys: String, CodingKey {
+            case name, brand, activeIngredient
+            case productCategory = "product_category"
+        }
+    }
+
+    struct WebV2Lookup: Decodable {
+        let candidates: [WebV2Candidate]
+        let detail: ChemicalStructuredLookup?
+    }
+
+    func lookupWebV2(query: String, selectedName: String? = nil) async throws -> WebV2Lookup {
+        var payload: [String: Any] = ["action": "web_lookup_v2", "query": query, "country": "AU"]
+        if let selectedName { payload["selectedName"] = selectedName }
+        let data = try await postEdge(path: "chemical-info-lookup", payload: payload, timeout: 110)
+        return try JSONDecoder().decode(WebV2Lookup.self, from: data)
+    }
+
     func discoverLabel(query: String) async throws -> ChemicalStructuredLookup {
         let data = try await postEdge(path: "chemical-info-lookup", payload: [
             "action": "discover_label", "query": query, "country": "AU"

@@ -311,6 +311,32 @@ class ChemicalInfoService {
         ).productName
     }
 
+    @Serializable
+    data class WebV2Candidate(
+        val name: String,
+        val brand: String = "",
+        val activeIngredient: String = "",
+        @SerialName("product_category") val productCategory: String? = null,
+    )
+
+    @Serializable
+    data class WebV2Lookup(
+        val candidates: List<WebV2Candidate> = emptyList(),
+        val detail: ChemicalStructuredLookup? = null,
+    )
+
+    suspend fun lookupWebV2(query: String, selectedName: String? = null): WebV2Lookup = withContext(Dispatchers.IO) {
+        val payload = buildMap {
+            put("action", "web_lookup_v2")
+            put("query", query)
+            put("country", "AU")
+            if (selectedName != null) put("selectedName", selectedName)
+        }
+        SupabaseClient.json.decodeFromString<WebV2Lookup>(
+            withTimeout(110_000L) { postEdge(payload) },
+        )
+    }
+
     suspend fun discoverLabel(query: String): ChemicalStructuredLookup = withContext(Dispatchers.IO) {
         SupabaseClient.json.decodeFromString<ChemicalStructuredLookup>(
             withTimeout(75_000L) { postEdge(mapOf("action" to "discover_label", "query" to query, "country" to "AU")) },

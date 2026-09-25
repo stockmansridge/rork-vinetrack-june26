@@ -92,6 +92,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.ripeness.ElRipenessHeatmap
 import com.rork.vinetrack.data.GrowthStageRecordRepository
 import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.PinCaptureContext
@@ -308,6 +309,11 @@ private fun GrowthListView(
         visibleGrowthRecords
     }
     var viewMode by remember { mutableStateOf(GrowthRecordsViewMode.SUMMARY) }
+    var selectedBlockId by remember(state.selectedVineyardId) { mutableStateOf<String?>(null) }
+    BackHandler(enabled = selectedBlockId != null) { selectedBlockId = null }
+    val todayIso = remember(timeZone.id) {
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { this.timeZone = timeZone }.format(Date())
+    }
     var exporting by remember { mutableStateOf(false) }
 
     /**
@@ -328,6 +334,23 @@ private fun GrowthListView(
             logo = state.selectedVineyardLogo,
         )
         exporting = false
+    }
+    val blockId = selectedBlockId
+    if (blockId != null) {
+        val block = heatmapUi.blocks.firstOrNull { it.id == blockId }
+        if (block != null) {
+            GrowthStageBlockDetailScreen(
+                vm = vm,
+                state = state,
+                blockName = block.name ?: "Block",
+                currentEl = heatmapModel.currentBlockEl(blockId, todayIso),
+                records = resolvedRecords.filter { it.paddockId.equals(blockId, ignoreCase = true) &&
+                    (it.observedAt?.take(10) ?: "") <= todayIso },
+                onBack = { selectedBlockId = null },
+                onUpdate = onCreate,
+            )
+            return
+        }
     }
     Scaffold(
         topBar = {
@@ -392,25 +415,26 @@ private fun GrowthListView(
                     }
                 }
 
-                item {
-                    SectionHeader("Observations · ${records.size}", onLight = true)
-                }
-                if (records.isNotEmpty()) {
-                    item {
-                        GrowthSummaryCard(
-                            total = records.size,
-                            fromPins = records.count { it.isFromPin },
-                            withPhotos = records.count { it.hasPhotos },
-                        )
+                item { SectionHeader("Blocks", onLight = true) }
+                items(heatmapUi.blocks.size, key = { heatmapUi.blocks[it].id }) { index ->
+                    val block = heatmapUi.blocks[index]
+                    val el = heatmapModel.currentBlockEl(block.id, todayIso)
+                    val rgb = el?.let(ElRipenessHeatmap::elColour)
+                    val tint = rgb?.let { Color(it.r, it.g, it.b) } ?: vine.textSecondary
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                            .background(vine.cardBackground).clickable { selectedBlockId = block.id }
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Icon(Icons.Filled.Spa, contentDescription = null, tint = tint)
+                        Column(Modifier.weight(1f)) {
+                            Text(block.name ?: "Block", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                            Text(el?.let(ElRipenessHeatmap::formatEl) ?: "No current stage", color = tint)
+                        }
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Open block growth stage", tint = vine.textSecondary)
                     }
-                }
-                items(records.size) { index ->
-                    val record = records[index]
-                    GrowthRecordCard(
-                        record = record,
-                        blockName = resolveGrowthRecordBlockName(record, state.paddocks),
-                        onClick = { onOpen(record) },
-                    )
                 }
             }
             }

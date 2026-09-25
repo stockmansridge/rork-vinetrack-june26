@@ -101,6 +101,8 @@ function sourcePolicyFor(countryCode: string): string {
   return GENERIC_SOURCE_POLICY;
 }
 
+const WEB_INPUT_INSTRUCTIONS = `You research agricultural and viticultural crop inputs using web search: herbicides, fungicides, fertilisers, foliar nutrients, biostimulants, adjuvants and biologicals. Search manufacturer product pages and their product label PDFs FIRST; use agricultural references next and a regulator label where relevant. Pesticide registration is OPTIONAL, never a prerequisite or search gate. Exclude veterinary, livestock, pet and human products that happen to share a name. Every fact needs a URL actually consulted in source_refs. Never invent a URL, identity, concentration, resistance group, rate, withholding period or re-entry instruction. A marketing page is not a label; an SDS is not a label. Preserve the printed label group notation and each vineyard direction's basis, unit, range and target context. Never convert /ha to /100 L, merge rates for unrelated targets or infer crop use from an active. Missing fields remain unresolved. If the manufacturer's product label contains the required information, stop searching.`;
+
 const BASE_INSTRUCTIONS =
   `You research agricultural and viticultural inputs — crop protection, fertilisers, foliar nutrients, biostimulants, adjuvants, surfactants and biological controls — including small specialty and regional brands, not just mainstream agrochemicals.
 
@@ -224,14 +226,20 @@ export function buildResearchPrompt(
   escalationReasons: EscalationReason[] = [],
   knownCandidates: KnownCandidate[] = [],
   lockedIdentity: LockedResearchIdentity | null = null,
+  webFirst = false,
 ): { instructions: string; input: string } {
-  const instructions = `${BASE_INSTRUCTIONS}\n\n${sourcePolicyFor(countryCode)}`;
+  const instructions = webFirst
+    ? WEB_INPUT_INSTRUCTIONS
+    : `${BASE_INSTRUCTIONS}\n\n${sourcePolicyFor(countryCode)}`;
 
   const country = countryLabel || countryCode || "the vineyard's country";
-  const scopeLine =
-    `The vineyard is in ${country} (${countryCode || "country unresolved"}). Research the product AS REGISTERED AND SOLD IN ${country}. Country is a hard boundary: never present another country's registration as this country's.`;
+  const scopeLine = webFirst
+    ? `The vineyard is in ${country} (${countryCode || "country unresolved"}). Search for the agricultural product sold there. Registration is not required; never substitute a veterinary product for a crop input.`
+    : `The vineyard is in ${country} (${countryCode || "country unresolved"}). Research the product AS REGISTERED AND SOLD IN ${country}. Country is a hard boundary: never present another country's registration as this country's.`;
 
-  const modeLine = mode === "candidate_discovery"
+  const modeLine = webFirst
+    ? `Identify the agricultural product the operator means. Read its own product label for each active and strength, resistance group, every vineyard use, distinct target and rate basis, withholding period, re-entry interval and restrictions. If this product has no pesticide registration, leave registration_candidates empty and still return sourced product information.`
+    : mode === "candidate_discovery"
     ? `The operator is still searching, so favour breadth and speed: identify which product or products they most likely mean, including for a misspelling or a partial name, and return the registration leads and identity. Deep label detail is not required at this stage — leave registered_uses empty rather than guessing at it.`
     : `The operator has selected this product, so favour depth: establish the full registered identity, the actives and their strengths, the official label document, the manufacturer's product page, and the registered uses with their crops, targets, rates, withholding periods, re-entry intervals and restrictions. Split the registered uses by use context: targets that take different rates must not share an entry.`;
 
@@ -518,6 +526,7 @@ export interface RunResearchOptions {
    * THIS product and the `query` survives only as provenance.
    */
   lockedIdentity?: LockedResearchIdentity | null;
+  webFirst?: boolean;
   now?: () => number;
   useCache?: boolean;
   includeSearchResults?: boolean;
@@ -547,6 +556,7 @@ async function runAttempt(
     escalationReasons,
     knownCandidates,
     opts.lockedIdentity ?? null,
+    opts.webFirst === true,
   );
 
   const timeoutMs = opts.mode === "candidate_discovery"
@@ -750,7 +760,9 @@ export async function runChemicalResearch(
   // escalate to. Running the recall rule there could only ever produce a
   // second serial call to the model that just answered.
   const isDiscovery = opts.mode === "candidate_discovery";
-  const escalation = isDiscovery
+  const escalation = opts.webFirst && primary.research
+    ? NO_DISCOVERY_ESCALATION
+    : isDiscovery
     ? (discoveryPlan?.kind === "single_capable_pass"
       ? NO_DISCOVERY_ESCALATION
       : decideCandidateDiscoveryEscalation({

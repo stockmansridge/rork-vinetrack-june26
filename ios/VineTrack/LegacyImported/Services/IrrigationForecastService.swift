@@ -146,7 +146,7 @@ class IrrigationForecastService {
     }
 
     private func fetchOpenMeteo(latitude: Double, longitude: Double, days: Int) async {
-        let urlString = "https://api.open-meteo.com/v1/forecast?latitude=\(latitude)&longitude=\(longitude)&daily=et0_fao_evapotranspiration,precipitation_sum,windspeed_10m_max,temperature_2m_max,temperature_2m_min&forecast_days=\(days)&timezone=auto&windspeed_unit=kmh"
+        let urlString = "https://api.open-meteo.com/v1/forecast?latitude=\(latitude)&longitude=\(longitude)&daily=et0_fao_evapotranspiration,precipitation_sum,windspeed_10m_max,temperature_2m_max,temperature_2m_min,weather_code&forecast_days=\(days)&timezone=auto&windspeed_unit=kmh"
 
         guard let url = URL(string: urlString) else {
             errorMessage = "Invalid forecast URL."
@@ -173,6 +173,7 @@ class IrrigationForecastService {
             let windValues = daily["windspeed_10m_max"] as? [Any] ?? []
             let tMaxValues = daily["temperature_2m_max"] as? [Any] ?? []
             let tMinValues = daily["temperature_2m_min"] as? [Any] ?? []
+            let weatherCodes = daily["weather_code"] as? [Any] ?? []
 
             let formatter = DateFormatter()
             formatter.dateFormat = "yyyy-MM-dd"
@@ -187,13 +188,25 @@ class IrrigationForecastService {
                 let wind = i < windValues.count ? Self.parseDouble(windValues[i]) : nil
                 let tMax = i < tMaxValues.count ? Self.parseDouble(tMaxValues[i]) : nil
                 let tMin = i < tMinValues.count ? Self.parseDouble(tMinValues[i]) : nil
+                let weatherCode = i < weatherCodes.count ? Self.parseDouble(weatherCodes[i]).map(Int.init) : nil
+                let conditionKey: String? = weatherCode.flatMap { code -> String? in
+                    switch code {
+                    case 0: return "clear"
+                    case 1...3: return "partly_cloudy"
+                    case 45...48: return "cloudy"
+                    case 51...67, 71...86: return "rain"
+                    case 95...99: return "storm"
+                    default: return nil
+                    }
+                }
                 outDays.append(ForecastDay(
                     date: date,
                     forecastEToMm: eto,
                     forecastRainMm: rain,
                     forecastWindKmhMax: wind,
                     forecastTempMaxC: tMax,
-                    forecastTempMinC: tMin
+                    forecastTempMinC: tMin,
+                    conditionKey: conditionKey
                 ))
             }
 

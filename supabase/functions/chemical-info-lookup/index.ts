@@ -128,6 +128,8 @@ import type { MasterOps, MasterRow } from "./ingestion/contract.ts";
 import { hasOfficialGrapevineRate } from "./ingestion/authoritative_completion.ts";
 import { chooseLabelCandidate, confirmedOCRName, directOfficialLabelURL } from "./label_fallback.ts";
 import { discoverUnverifiedLabel } from "./unverified_label_discovery.ts";
+import { nameCorresponds } from "./ingestion/matching.ts";
+import { agriculturalWebCandidates, labelHeaderFacts, readLabelWithResearchSchema, supportedWebResearch } from "./web_lookup.ts";
 import {
   buildCandidatePayload,
   buildFieldProvenance,
@@ -1257,6 +1259,111 @@ Deno.serve(async (req: Request) => {
       );
       const parsed = extractJSON(raw);
       return json({ product_name: confirmedOCRName(parsed?.product_name, ocr) });
+    }
+
+    if (action === "web_lookup_v2") {
+      const query = typeof body?.query === "string" ? body.query.trim() : "";
+      if (query.length < 2 || query.length > 200) return json({ error: "Enter a product name" }, 400);
+      if (!countryCode) return json({ error: "Select a vineyard country" }, 422);
+      const selectedName = typeof body?.selectedName === "string" ? body.selectedName.trim() : "";
+      const subject = selectedName || query;
+      const searchStarted = Date.now();
+      const outcome = await runChemicalResearch({
+        query: subject, countryCode, countryLabel, mode: "product_enrichment",
+        apiKey, fetchFn: fetch, config: readResearchConfig(), registerResolved: false,
+        webFirst: true, useCache: false,
+      });
+      const searchMs = Date.now() - searchStarted;
+      const research = outcome.research;
+      if (!research) return json({ error: "Web research is temporarily unavailable. Try again or enter details manually." }, 503);
+      const candidates = agriculturalWebCandidates(query, research, countryCode);
+      if (!selectedName && candidates.length > 1) {
+        return json({ candidates, detail: null, timings: { search_ms: searchMs, extraction_ms: 0 } });
+      }
+      if (!candidates.length) {
+        return json({ candidates: [], detail: null, timings: { search_ms: searchMs, extraction_ms: 0 } });
+      }
+      const detailStarted = Date.now();
+      const canonicalName = research.product.canonical_name ?? subject;
+      const leads = [
+        ...research.documents.product_page_candidates.map((d) => d.url),
+        ...research.documents.official_label_candidates.map((d) => d.linked_from_url ?? ""),
+      ].filter(Boolean);
+      const inspected = await inspectCandidateProductPages({ fetchFn: fetch, now: () => new Date() }, leads, countryCode);
+      const projection = projectResearch(research, countryCode, null, canonicalName, inspected.pages);
+      const acceptedLabel = projection.manufacturerLabelCandidate ?? projection.officialLabelCandidate;
+      const page = inspected.pages.find((p) => nameCorresponds(canonicalName, p.pageProductName) &&
+        p.links.some((link) => link.url === acceptedLabel?.url)) ??
+        inspected.pages.find((p) => nameCorresponds(canonicalName, p.pageProductName));
+      // A registrant-hosted direct PDF can be checked against its own bytes even
+      // if research found the document before finding its product page.
+      const labelSource = page?.finalUrl ?? (acceptedLabel?.trust === "registrant" ? acceptedLabel.url : null);
+      const enrichment = acceptedLabel && labelSource
+        ? await enrichFromManufacturerLabel({
+          deps: { fetchFn: fetch, now: () => new Date() },
+          manufacturerLabelUrl: acceptedLabel.url, sourcePageUrl: labelSource,
+          regulatorUses: [], registeredProductName: canonicalName,
+        }) : null;
+      const label = enrichment ? verifiedManufacturerLabelUrl(enrichment) : null;
+      const supported = supportedWebResearch(research, countryCode, label, page?.finalUrl ?? null);
+      const supportedProjection = projectResearch(supported, countryCode, null, canonicalName, inspected.pages);
+      const parsedVineyardRates = enrichment?.uses.some((use) =>
+        /grape|vineyard/i.test(String(use.crop ?? "")) && Array.isArray(use.rates) && use.rates.length > 0) ?? false;
+      const labelReading = label && enrichment?.labelText && !parsedVineyardRates
+        ? await readLabelWithResearchSchema({
+          text: enrichment.labelText, label, name: canonicalName, country: countryCode, apiKey,
+        }) : null;
+      const labelUses = labelReading ? projectResearch(labelReading, countryCode, null).extraction.registered_uses : null;
+      const facts = label && enrichment?.labelText ? labelHeaderFacts(enrichment.labelText) : null;
+      const foundActives = supportedProjection.extraction.active_ingredients as Record<string, unknown>[];
+      const labelText = enrichment?.labelText?.toLowerCase().replace(/[^a-z0-9]/g, "") ?? "";
+      const labelActives = labelReading?.active_ingredients.filter((active) =>
+        label !== null && active.source_refs.includes(label) && labelText.includes(active.name.toLowerCase().replace(/[^a-z0-9]/g, ""))) ?? [];
+      const labelProjected = labelReading && labelActives.length
+        ? projectResearch({ ...labelReading, active_ingredients: labelActives }, countryCode, null).extraction.active_ingredients as Record<string, unknown>[]
+        : [];
+      const allActives = [...foundActives, ...labelProjected.filter((candidate) =>
+        !foundActives.some((active) => String(active.name).toLowerCase() === String(candidate.name).toLowerCase()))];
+      const labelActive = facts?.active;
+      const actives = labelActive && !allActives.some((a) => String(a.name).toLowerCase() === labelActive.name.toLowerCase())
+        ? [...allActives, { name: labelActive.name, concentration: labelActive.concentration,
+          concentration_unit: labelActive.concentration_unit, activity_group_code: facts?.group?.code ?? null,
+          activity_group_scheme: facts?.group?.scheme ?? null }]
+        : allActives.map((a) => labelActive && String(a.name).toLowerCase() === labelActive.name.toLowerCase()
+          ? { ...a, concentration: labelActive.concentration, concentration_unit: labelActive.concentration_unit,
+            activity_group_code: facts?.group?.code ?? a.activity_group_code,
+            activity_group_scheme: facts?.group?.scheme ?? a.activity_group_scheme } : a);
+      const extraction = {
+        ...supportedProjection.extraction,
+        form_type: facts?.form ?? supportedProjection.extraction.form_type,
+        active_ingredients: actives,
+        registration_number: null,
+        label_reference: label,
+        manufacturer_label_url: label,
+        regulator_label_url: null,
+        productURL: page?.finalUrl ?? supportedProjection.productPageCandidate?.url ?? null,
+        registered_uses: parsedVineyardRates ? enrichment?.uses :
+          Array.isArray(labelUses) && labelUses.length ? labelUses :
+          label && enrichment?.uses.length ? enrichment.uses : supportedProjection.extraction.registered_uses,
+      };
+      const detail = buildStructuredResponse(extraction, countryCode, "Agricultural web and label research");
+      // Registration is optional; no number is copied from a model-suggested lead.
+      if (detail.registration) {
+        detail.registration.scheme = null;
+        detail.registration.registration_number = null;
+        detail.registration.label_reference = label;
+        detail.registration.manufacturer_label_url = label;
+        detail.registration.regulator_label_url = null;
+      }
+      if (label) {
+        detail.verification.sources.push({ kind: "manufacturer_label", name: "Product label", reference: label, retrieved_at: new Date().toISOString() });
+        detail.field_provenance = { label_reference: "manufacturer_label",
+          ...(detail.registered_uses.length ? { registered_uses: "manufacturer_label" } : {}) };
+      }
+      detail.match_source = "ai_candidate";
+      stripStructuredDirectionSeeds(detail);
+      applyDefaultRateOptions(detail);
+      return json({ candidates, detail, timings: { search_ms: searchMs, extraction_ms: Date.now() - detailStarted } });
     }
 
     if (action === "discover_label") {

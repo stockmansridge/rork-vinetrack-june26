@@ -195,6 +195,7 @@ export function isForeignRegulatorHost(host: string, countryCode: string): boole
 
 /** Registrant domains for the manufacturers VineTrack actually meets. */
 const REGISTRANT_HOSTS = [
+  "cropsure.com",
   "basf.com",
   "agro.basf.com",
   "crop-solutions.basf.com.au",

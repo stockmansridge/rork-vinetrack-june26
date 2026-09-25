@@ -63,6 +63,8 @@ export interface ManufacturerEnrichmentResult {
   source: PracticalSource;
   /** The manufacturer label URL actually fetched, after redirects. */
   fetchedUrl: string | null;
+  /** Readable PDF text for the request-local V2 label fact check; never sent to clients. */
+  labelText?: string;
   withholdingPeriodDays: number | null;
   diagnostics: ManufacturerEnrichmentDiagnostics;
 }
@@ -305,6 +307,7 @@ export async function enrichFromManufacturerLabel(input: {
     uses: chosen.uses,
     source: chosen.source,
     fetchedUrl: fetched.url,
+    labelText: documentText,
     withholdingPeriodDays: chosen.source === "manufacturer_label" ? whp : null,
     diagnostics: {
       manufacturer_label_fetch: "success",

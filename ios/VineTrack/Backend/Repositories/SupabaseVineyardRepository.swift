@@ -1,6 +1,16 @@
 import Foundation
 import Supabase
 
+private nonisolated struct VineyardPickerMembership: Decodable {
+    let vineyardId: UUID
+    let role: String
+
+    enum CodingKeys: String, CodingKey {
+        case vineyardId = "vineyard_id"
+        case role
+    }
+}
+
 final class SupabaseVineyardRepository: VineyardRepositoryProtocol {
     private let provider: SupabaseClientProvider
 
@@ -10,13 +20,27 @@ final class SupabaseVineyardRepository: VineyardRepositoryProtocol {
 
     func listMyVineyards() async throws -> [BackendVineyard] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        return try await provider.client
+        guard let userId = provider.client.auth.currentUser?.id else {
+            throw BackendRepositoryError.missingAuthenticatedUser
+        }
+        // RLS may expose admin-support vineyards. The normal picker uses only
+        // the caller's actual Portal-style operational memberships.
+        let memberships: [VineyardPickerMembership] = try await provider.client
+            .from("vineyard_members")
+            .select("vineyard_id,role")
+            .eq("user_id", value: userId.uuidString)
+            .execute()
+            .value
+        let allowed = Set(memberships.filter { ["owner", "operator", "supervisor", "manager"].contains($0.role) }.map(\.vineyardId))
+        guard !allowed.isEmpty else { return [] }
+        let vineyards: [BackendVineyard] = try await provider.client
             .from("vineyards")
             .select()
             .is("deleted_at", value: nil)
             .order("name", ascending: true)
             .execute()
             .value
+        return vineyards.filter { allowed.contains($0.id) }
     }
 
     func listAllAccessibleVineyards(includeDeleted: Bool) async throws -> [BackendVineyard] {

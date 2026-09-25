@@ -301,6 +301,11 @@ class ElRipenessHeatmapViewModel(
      * minimal record is synthesised from the observation so a remote-only row
      * is still listed rather than silently dropped.
      */
+    /** Current, eligible highest E-L across all phases, independent of map scrub/filter. */
+    fun currentBlockEl(blockId: String, atDateIso: String): Double? = vintageObservations
+        .filter { it.paddockId.equals(blockId, ignoreCase = true) && ElRipenessHeatmap.isInfluencing(it, atDateIso) }
+        .maxOfOrNull { it.el }
+
     fun summaryRecords(): List<GrowthStageRecord> = vintageObservations
         .map { observation ->
             enrichmentByRecordId[observation.id] ?: GrowthStageRecord(

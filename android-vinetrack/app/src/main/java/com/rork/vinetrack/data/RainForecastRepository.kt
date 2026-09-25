@@ -67,7 +67,7 @@ class RainForecastRepository {
         val ahead = forecastDays.coerceIn(1, 16)
         val url = "https://api.open-meteo.com/v1/forecast" +
             "?latitude=$latitude&longitude=$longitude" +
-            "&daily=precipitation_sum,wind_speed_10m_max" +
+            "&daily=precipitation_sum,wind_speed_10m_max,temperature_2m_min,temperature_2m_max,weather_code" +
             "&past_days=$past&forecast_days=$ahead&timezone=auto"
 
         val response = SupabaseClient.http.get(url)
@@ -82,6 +82,9 @@ class RainForecastRepository {
             ?: throw IllegalStateException("Rain forecast response could not be parsed.")
         val rains = daily["precipitation_sum"]?.jsonArray
         val winds = daily["wind_speed_10m_max"]?.jsonArray
+        val lows = daily["temperature_2m_min"]?.jsonArray
+        val highs = daily["temperature_2m_max"]?.jsonArray
+        val codes = daily["weather_code"]?.jsonArray
         val timezone = root["timezone"]?.jsonPrimitive?.content?.let(TimeZone::getTimeZone) ?: TimeZone.getTimeZone("UTC")
 
         // Open-Meteo daily times are local "yyyy-MM-dd".
@@ -108,6 +111,18 @@ class RainForecastRepository {
                 dateEpochMs = date.time,
                 rainMm = parseDoubleOrNull(rains, i) ?: 0.0,
                 windKmhMax = parseDoubleOrNull(winds, i),
+                tempMinC = parseDoubleOrNull(lows, i),
+                tempMaxC = parseDoubleOrNull(highs, i),
+                conditionKey = parseDoubleOrNull(codes, i)?.toInt()?.let { code ->
+                    when (code) {
+                        0 -> "clear"
+                        in 1..3 -> "partly_cloudy"
+                        in 45..48 -> "cloudy"
+                        in 51..67, in 71..86 -> "rain"
+                        in 95..99 -> "storm"
+                        else -> null
+                    }
+                },
             )
             if (date.time < startOfToday) history.add(day) else forecast.add(day)
         }

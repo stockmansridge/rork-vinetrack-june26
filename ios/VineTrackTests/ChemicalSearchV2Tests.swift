@@ -1,7 +1,15 @@
+import Foundation
 import Testing
 @testable import VineTrack
 
 struct ChemicalSearchV2Tests {
+    @Test func webCandidateWithoutAPVMANumberCanBeSelected() throws {
+        let payload = #"{"candidates":[{"name":"CropSure Beast 200 Herbicide","brand":"CropSure Pty Ltd","activeIngredient":"Glufosinate-ammonium","product_category":"herbicide","source":"research"}],"detail":null,"timings":{"search_ms":324,"extraction_ms":0}}"#
+        let response = try JSONDecoder().decode(ChemicalInfoService.WebV2Lookup.self, from: Data(payload.utf8))
+        #expect(response.candidates.first?.name == "CropSure Beast 200 Herbicide")
+        #expect(response.detail == nil)
+    }
+
     @Test func deterministicRankingCoversPrimaryAndSecondaryFields() {
         let common = ["kocide blue"]
         #expect(ChemicalSearchV2Rank.rank(query: "Kocide Blue Xtra", productName: "Kocide Blue Xtra", commonNames: common, registrationNumber: "62764", activeNames: ["copper hydroxide"], registrant: "Corteva") == 1)

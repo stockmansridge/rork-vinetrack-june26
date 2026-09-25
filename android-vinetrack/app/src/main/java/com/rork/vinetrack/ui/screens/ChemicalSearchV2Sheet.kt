@@ -163,7 +163,7 @@ internal fun ChemicalSearchV2Sheet(
     val externalService = remember { ChemicalInfoService() }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<MasterChemicalV2>>(emptyList()) }
-    var onlineCandidates by remember { mutableStateOf<List<ChemicalInfoService.ChemicalSearchResult>>(emptyList()) }
+    var onlineCandidates by remember { mutableStateOf<List<ChemicalInfoService.WebV2Candidate>>(emptyList()) }
     var savedMatches by remember { mutableStateOf<List<SavedChemical>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -259,41 +259,33 @@ internal fun ChemicalSearchV2Sheet(
         }
     }
 
-    fun openOnlineCandidate(candidate: ChemicalInfoService.ChemicalSearchResult) {
-        val number = candidate.registrationNumber ?: return
-        if (candidate.registrationScheme?.lowercase() != "apvma") return
+    fun openWebReview(lookup: ChemicalInfoService.ChemicalStructuredLookup, fallbackName: String) {
+        val intel = lookup.intelligence()
+        val rates = ViticultureRates.fromRegisteredUses(intel.registeredUses)
+        val automatic = if (rates.all.size > 1) emptyMap() else ChemicalSearchV2OperationalDefaults.unambiguousRates(rates)
+        val selected = automatic[ChemicalDefaultRateBasis.PER_HECTARE]
+            ?: automatic[ChemicalDefaultRateBasis.PER_100_LITRES]
+        val initial = selected?.let(::draftRate) ?: ChemicalManualRateDraft()
+        review = ChemicalReviewV2Draft(
+            source = "Product label / web", master = null, intelligence = intel,
+            formType = lookup.formType, productName = lookup.productName ?: fallbackName,
+            unit = initial.unit.toDisplayUnit(), rate = initial, viticultureRates = rates,
+            selectedRateId = selected?.id, automaticRates = automatic,
+        )
+    }
+
+    fun openOnlineCandidate(candidate: ChemicalInfoService.WebV2Candidate) {
         externalJob?.cancel()
         externalBusy = true
-        message = "Reading APVMA $number…"
+        message = "Reading product label…"
         externalJob = scope.launch {
             try {
-                val lookup = externalService.lookupStructured(candidate.name, "AU", number)
-                val registration = lookup.registration
-                if (lookup.matchSource != "master" && lookup.matchSource != "authoritative_candidate" ||
-                    registration?.countryCode != "AU" || registration.registrationNumber != number ||
-                    registration.scheme != ChemicalRegistrationScheme.APVMA
-                ) {
-                    message = "APVMA $number could not be verified. Choose another product or create manually."
-                    return@launch
-                }
-                val intel = lookup.intelligence()
-                val rates = ViticultureRates.fromRegisteredUses(intel.registeredUses)
-                val automatic = if (rates.all.size > 1) emptyMap() else ChemicalSearchV2OperationalDefaults.unambiguousRates(rates)
-                val selected = automatic[ChemicalDefaultRateBasis.PER_HECTARE]
-                    ?: automatic[ChemicalDefaultRateBasis.PER_100_LITRES]
-                val initial = selected?.let(::draftRate) ?: ChemicalManualRateDraft()
-                if (photoRegistration != null && photoRegistration != number) photoBytes = null
-                review = ChemicalReviewV2Draft(
-                    source = if (lookup.matchSource == "master") "VineTrack Master" else "Official register",
-                    master = null, intelligence = intel, formType = lookup.formType,
-                    productName = registration.registeredProductName ?: candidate.name,
-                    unit = initial.unit.toDisplayUnit(), rate = initial, viticultureRates = rates,
-                    selectedRateId = selected?.id, automaticRates = automatic,
-                    masterMatch = lookup.master.takeIf { lookup.matchSource == "master" },
-                )
+                val result = externalService.lookupWebV2(query, candidate.name)
+                if (result.detail != null) openWebReview(result.detail, candidate.name)
+                else message = "No reliable product source found. Check details or create manually."
             } catch (_: CancellationException) {
             } catch (_: Exception) {
-                message = "Could not read APVMA $number. Try again or choose another product."
+                message = "Could not read this product. Try again or create manually."
             } finally { externalBusy = false }
         }
     }
@@ -393,11 +385,10 @@ internal fun ChemicalSearchV2Sheet(
                 }
                 if (onlineCandidates.isNotEmpty()) {
                     HorizontalDivider()
-                    Text("Official product candidates — choose the exact registration", fontWeight = FontWeight.SemiBold)
+                    Text("Agricultural products — choose your product", fontWeight = FontWeight.SemiBold)
                     onlineCandidates.forEach { candidate ->
                         Text(candidate.name, fontWeight = FontWeight.SemiBold)
-                        Text("APVMA ${candidate.registrationNumber}", fontSize = 12.sp)
-                        candidate.registrant?.takeIf(String::isNotBlank)?.let { Text(it, fontSize = 13.sp) }
+                        candidate.brand.takeIf(String::isNotBlank)?.let { Text(it, fontSize = 13.sp) }
                         candidate.activeIngredient.takeIf(String::isNotBlank)?.let { Text(it, fontSize = 12.sp) }
                         candidate.productCategory?.takeIf(String::isNotBlank)?.let { Text(it, fontSize = 12.sp) }
                         Button(onClick = { openOnlineCandidate(candidate) }, enabled = !externalBusy) { Text("Use this chemical") }
@@ -415,22 +406,21 @@ internal fun ChemicalSearchV2Sheet(
                         onlineCandidates = emptyList()
                         externalJob = scope.launch {
                             try {
-                                onlineCandidates = externalService.searchChemicals(trimmed, "AU")
-                                    .filter { it.source == "official_register" || it.source == "master" }
-                                    .filter { it.registrationScheme?.lowercase() == "apvma" &&
-                                        it.registrationCountry?.uppercase() != "NZ" && !it.registrationNumber.isNullOrBlank() }
-                                message = if (onlineCandidates.isEmpty())
-                                    "No official registration found. Try another name or create manually."
-                                else "Choose the exact product before reading its registered label."
+                                val response = externalService.lookupWebV2(trimmed)
+                                onlineCandidates = response.candidates
+                                if (response.detail != null) openWebReview(response.detail, response.candidates.firstOrNull()?.name ?: trimmed)
+                                message = if (response.detail != null) null else if (onlineCandidates.isEmpty())
+                                    "No reliable agricultural source found. Check the name or create manually."
+                                else "Choose the agricultural product you use."
                             } catch (_: CancellationException) {
                             } catch (_: Exception) {
-                                message = "Official search is unavailable. Try again or create manually."
+                                message = "Online search is unavailable. Try again or create manually."
                             } finally { externalBusy = false }
                         }
                     },
                     enabled = query.trim().length >= 2 && !externalBusy,
                 ) {
-                    if (externalBusy) { CircularProgressIndicator(modifier = Modifier.size(20.dp)); Text("Searching official register…") }
+                    if (externalBusy) { CircularProgressIndicator(modifier = Modifier.size(20.dp)); Text("Finding product and reading label…") }
                     else Text("Search online")
                 }
                 OutlinedButton(onClick = capture.takePhoto, modifier = Modifier.fillMaxWidth()) { Text("Take Photo of Label") }
@@ -498,12 +488,12 @@ private fun ChemicalReviewV2(
     } else {
         Text("Registrant: ${draft.intelligence.registration?.registrant?.takeIf(String::isNotBlank) ?: "Not found — check label"}")
         Text("APVMA: ${if (draft.intelligence.hasEvidencedRegistration) draft.intelligence.registration?.registrationNumber ?: "—" else "APVMA registration not verified"}")
-        Text("Active ingredients: ${draft.intelligence.activeIngredients.joinToString { it.name }.ifBlank { "Not found — check label" }}")
+        Text("Active ingredients: ${draft.intelligence.activeIngredients.joinToString { it.displayLabelWithGroup }.ifBlank { "Needs confirmation — check label" }}")
         Text("Category: ${draft.intelligence.productCategory.ifBlank { "Not found — check label" }}")
-        Text("Product form: ${draft.formType?.takeIf(String::isNotBlank) ?: "Not found — check label"}")
+        Text("Product form: ${draft.formType?.takeIf(String::isNotBlank) ?: "Needs confirmation"}")
         val label = listOfNotNull(
-            draft.intelligence.registration?.regulatorLabelUrl,
             draft.intelligence.registration?.manufacturerLabelUrl,
+            draft.intelligence.registration?.regulatorLabelUrl,
             draft.intelligence.registration?.labelReference,
         ).firstOrNull { url ->
             runCatching { java.net.URI(url) }.getOrNull()?.let { uri ->
@@ -513,7 +503,7 @@ private fun ChemicalReviewV2(
         if (label != null) {
             TextButton(onClick = { uriHandler.openUri(label) }) { Text("View Label") }
         } else Text("Label not found — check product packaging", fontSize = 12.sp)
-        Text("Registered vineyard rates", fontWeight = FontWeight.Bold)
+        Text(if (draft.source == "Product label / web") "Vineyard label rates" else "Registered vineyard rates", fontWeight = FontWeight.Bold)
         if (registeredRates.isEmpty()) {
             Text("Grapevine use / rate not found — check label.", fontSize = 13.sp)
         }
@@ -524,6 +514,15 @@ private fun ChemicalReviewV2(
         if (draft.viticultureRates.per100Litres.isNotEmpty()) {
             Text("Per 100 L", fontWeight = FontWeight.SemiBold)
             draft.viticultureRates.per100Litres.forEach { Text(it.displayRate) }
+        }
+        if (draft.source == "Product label / web") {
+            draft.intelligence.registeredUses.filter { it.isViticultural }.forEach { use ->
+                Text("${use.crop} · ${use.targetRaw}", fontWeight = FontWeight.SemiBold)
+                use.rates.forEach { rate -> Text(rate.displayRate, fontSize = 13.sp) }
+                use.withholdingPeriodDays?.let { Text("Withholding: $it days", fontSize = 12.sp) }
+                use.reEntryStatement?.let { Text("Re-entry: $it", fontSize = 12.sp) }
+                use.restrictions?.let { Text(it, fontSize = 12.sp) }
+            }
         }
     }
     if (!draft.isManual && registeredRates.isNotEmpty()) {

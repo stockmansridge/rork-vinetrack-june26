@@ -31,6 +31,13 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ChemicalSearchV2Test {
+    @Test fun webCandidateWithoutAPVMANumberDecodesForReview() {
+        val payload = """{"candidates":[{"name":"CropSure Beast 200 Herbicide","brand":"CropSure Pty Ltd","activeIngredient":"Glufosinate-ammonium","product_category":"herbicide","source":"research"}],"detail":null,"timings":{"search_ms":324,"extraction_ms":0}}"""
+        val response = SupabaseClient.json.decodeFromString<ChemicalInfoService.WebV2Lookup>(payload)
+        assertEquals("CropSure Beast 200 Herbicide", response.candidates.single().name)
+        assertNull(response.detail)
+    }
+
     @Test fun onlineCandidatesKeepBothDithaneRegistrationsAndDisplayEvidence() {
         val rows = listOf(
             """{"name":"DITHANE RAINSHIELD NEO TEC FUNGICIDE","registration_number":"59688","registration_scheme":"apvma","registration_country":"AU","registrant":"UPL AUSTRALIA PTY LTD","activeIngredient":"Mancozeb 750 g/kg","source":"official_register"}""",
