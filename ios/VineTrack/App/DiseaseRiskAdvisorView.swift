@@ -653,7 +653,7 @@ struct DiseaseRiskAdvisorView: View {
         let currentEvaluated = environmentalAssessments.contains { $0.summary != "Insufficient hourly data to assess." }
         let forecastEvaluated = dailyScores.contains { day in
             let end = Calendar.current.date(byAdding: .day, value: 1, to: day.date) ?? day.date
-            return hours.contains { $0.date <= end && $0.date >= end.addingTimeInterval(-48 * 3600) }
+            return hours.contains { $0.date <= end && $0.date >= end.addingTimeInterval(-72 * 3600) }
         }
         growthAdjustmentStatus = .result(
             evaluated: !blockStages.isEmpty && (currentEvaluated || forecastEvaluated),

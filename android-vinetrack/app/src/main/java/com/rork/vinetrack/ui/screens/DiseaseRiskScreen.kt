@@ -167,7 +167,10 @@ fun DiseaseRiskScreen(
                 growthAdjustmentStatus = DiseaseGrowthAdjustmentStatus.result(
                     evaluated = stages.isNotEmpty() && (
                     environmentalAssessments.any { it.summary != "Insufficient hourly data to assess." } ||
-                        dailyScores.any { day -> forecastHours.any { it.epochMs in (day.epochMs - 86_400_000L)..(day.epochMs + 86_400_000L) } }
+                        dailyScores.any { day ->
+                            val endOfDay = day.epochMs + 86_400_000L
+                            forecastHours.any { it.epochMs in (endOfDay - 72 * 3_600_000L)..endOfDay }
+                        }
                 ),
                     changed = currentChanged || forecastChanged,
                 )
@@ -215,7 +218,10 @@ fun DiseaseRiskScreen(
             growthAdjustmentStatus = DiseaseGrowthAdjustmentStatus.result(
                     evaluated = stages.isNotEmpty() && (
                     environmentalAssessments.any { it.summary != "Insufficient hourly data to assess." } ||
-                        dailyScores.any { day -> forecastHours.any { it.epochMs in (day.epochMs - 86_400_000L)..(day.epochMs + 86_400_000L) } }
+                        dailyScores.any { day ->
+                            val endOfDay = day.epochMs + 86_400_000L
+                            forecastHours.any { it.epochMs in (endOfDay - 72 * 3_600_000L)..endOfDay }
+                        }
                 ),
                     changed = currentChanged || forecastChanged,
                 )
