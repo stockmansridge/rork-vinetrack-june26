@@ -753,13 +753,10 @@ private struct ChemicalSearchV2ReviewView: View {
                         } else {
                             Text("Label not found — check product packaging").foregroundStyle(.secondary)
                         }
-                        ForEach(draft.intelligence.verification.unresolvedFields, id: \.self) { field in
-                            Text("\(field): Needs confirmation").font(.caption).foregroundStyle(.orange)
-                        }
                     }
                     Section("Registered vineyard rates") {
                         if draft.viticultureRates.all.isEmpty {
-                            Text("Grapevine use / rate: Not found — check label. Enter a rate from the label below; VineTrack will not invent one.")
+                            Text("Grapevine use / rate not found — check label.")
                                 .foregroundStyle(.secondary)
                         }
                         if !draft.viticultureRates.perHectare.isEmpty {

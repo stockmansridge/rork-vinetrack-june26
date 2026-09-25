@@ -4,6 +4,7 @@ import android.net.Uri
 import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -33,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -469,13 +471,9 @@ private fun ChemicalReviewV2(
         if (label != null) {
             TextButton(onClick = { uriHandler.openUri(label) }) { Text("View Label") }
         } else Text("Label not found — check product packaging", fontSize = 12.sp)
-        draft.intelligence.verification.unresolvedFields.forEach { field ->
-            Text("$field: Needs confirmation", fontSize = 12.sp)
-        }
-
         Text("Registered vineyard rates", fontWeight = FontWeight.Bold)
         if (registeredRates.isEmpty()) {
-            Text("Grapevine use / rate: Not found — check label. Enter a rate from the label below; VineTrack will not invent one.", fontSize = 13.sp)
+            Text("Grapevine use / rate not found — check label.", fontSize = 13.sp)
         }
         if (draft.viticultureRates.perHectare.isNotEmpty()) {
             Text("Per hectare", fontWeight = FontWeight.SemiBold)
@@ -538,17 +536,27 @@ private fun ChemicalReviewV2(
         }
     }
     if (isRange) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                draft.rate.minText, { onDraft(draft.copy(rate = draft.rate.copy(minText = it.filterRateChars()))) },
-                label = { Text("Minimum *") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                draft.rate.maxText, { onDraft(draft.copy(rate = draft.rate.copy(maxText = it.filterRateChars()))) },
-                label = { Text("Maximum *") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.fillMaxWidth(),
-            )
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val stacked = maxWidth < 300.dp || LocalDensity.current.fontScale >= 1.4f
+            val minimum: @Composable (Modifier) -> Unit = { modifier ->
+                OutlinedTextField(
+                    draft.rate.minText, { onDraft(draft.copy(rate = draft.rate.copy(minText = it.filterRateChars()))) },
+                    label = { Text("Minimum *") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = modifier,
+                )
+            }
+            val maximum: @Composable (Modifier) -> Unit = { modifier ->
+                OutlinedTextField(
+                    draft.rate.maxText, { onDraft(draft.copy(rate = draft.rate.copy(maxText = it.filterRateChars()))) },
+                    label = { Text("Maximum *") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = modifier,
+                )
+            }
+            if (stacked) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                minimum(Modifier.fillMaxWidth()); maximum(Modifier.fillMaxWidth())
+            } else Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                minimum(Modifier.weight(1f)); maximum(Modifier.weight(1f))
+            }
         }
     } else {
         OutlinedTextField(
@@ -558,11 +566,23 @@ private fun ChemicalReviewV2(
         )
     }
     Text("Product / rate unit *")
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        listOf("L", "mL", "Kg", "g").forEach { unit ->
-            OutlinedButton(onClick = { onDraft(draft.copy(unit = unit, rate = draft.rate.copy(unit = unit.toRateToken()))) }) {
-                val label = if (unit == "Kg") "kg" else unit
-                Text(if (draft.unit == unit) "✓ $label" else label)
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val units = listOf("L", "mL", "Kg", "g")
+        val columns = if (maxWidth < 300.dp || LocalDensity.current.fontScale >= 1.4f) 2 else 4
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            units.chunked(columns).forEach { rowUnits ->
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    rowUnits.forEach { unit ->
+                        OutlinedButton(
+                            onClick = { onDraft(draft.copy(unit = unit, rate = draft.rate.copy(unit = unit.toRateToken()))) },
+                            modifier = Modifier.weight(1f),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp),
+                        ) {
+                            val label = if (unit == "Kg") "kg" else unit
+                            Text(if (draft.unit == unit) "✓ $label" else label)
+                        }
+                    }
+                }
             }
         }
     }
@@ -584,8 +604,8 @@ private fun ChemicalReviewV2(
         OutlinedButton(onClick = { onSaved(existing); onDone() }, modifier = Modifier.fillMaxWidth()) { Text("Use Chemical") }
     }
     notice?.let { Text(it, color = com.rork.vinetrack.ui.theme.VineColors.Warning) }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back") }
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextButton(onClick = onBack, modifier = Modifier.weight(1f)) { Text("Back") }
         Button(
             enabled = evaluation.isSatisfied && !saving,
             onClick = {
@@ -665,7 +685,7 @@ private fun ChemicalReviewV2(
                     onDone()
                 }
             },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.weight(1f),
         ) { Text("Save") }
     }
 }
