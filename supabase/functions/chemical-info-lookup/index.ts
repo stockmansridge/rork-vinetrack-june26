@@ -125,6 +125,7 @@ import {
   reconcileGroup,
 } from "./ingestion/activity_groups.ts";
 import type { MasterOps, MasterRow } from "./ingestion/contract.ts";
+import { hasOfficialGrapevineRate } from "./ingestion/authoritative_completion.ts";
 import { chooseLabelCandidate, confirmedOCRName, directOfficialLabelURL } from "./label_fallback.ts";
 import { discoverUnverifiedLabel } from "./unverified_label_discovery.ts";
 import {
@@ -1589,7 +1590,11 @@ Deno.serve(async (req: Request) => {
         reason: discovery.reason,
       }));
 
-      if (!shouldResearch && authoritative.length) {
+      // Two strong official registrations are already a complete choice set.
+      // Research cannot settle which one the grower holds; waiting for it can
+      // exhaust the mobile search deadline before either choice is shown.
+      if (authoritative.length && (!shouldResearch ||
+        (!wantsBroaderResults && discovery.summary.strong_official_candidate_count >= 2))) {
         return servedSearch(authoritative, deterministicMethod());
       }
 
@@ -2006,7 +2011,15 @@ Deno.serve(async (req: Request) => {
         stageB.enrichment_query_name = lockedIdentity.registeredProductName;
       }
 
-      if (researchConfig.enabled) {
+      // A byte-verified, parsed official label with a bound grapevine rate
+      // already supplies the operational answer. Do not block it behind a
+      // manufacturer web search (which cannot improve its authority).
+      const officialGrapevineRateReady = discovery.outcome === "resolved" &&
+        hasOfficialGrapevineRate(discovery.registration);
+      if (officialGrapevineRateReady) {
+        stageB.product_enrichment_skip_reason = "official_label_grapevine_rate_ready";
+      }
+      if (researchConfig.enabled && !officialGrapevineRateReady) {
         // Live web research. Never throws: a provider outage returns a null
         // result and the register path below carries the lookup alone.
         researchOutcome = await runChemicalResearch({

@@ -49,6 +49,10 @@ class ChemicalInfoService {
          * register before anything binds. Mirrors iOS `ChemicalSearchResult`.
          */
         @SerialName("registration_number") val registrationNumber: String? = null,
+        @SerialName("registration_scheme") val registrationScheme: String? = null,
+        @SerialName("registration_country") val registrationCountry: String? = null,
+        val registrant: String? = null,
+        @SerialName("product_category") val productCategory: String? = null,
         /** "master" | "official_register" | null (AI suggestion / older server). */
         val source: String? = null,
     )

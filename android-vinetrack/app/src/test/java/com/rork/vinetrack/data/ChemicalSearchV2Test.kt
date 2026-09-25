@@ -31,6 +31,17 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ChemicalSearchV2Test {
+    @Test fun onlineCandidatesKeepBothDithaneRegistrationsAndDisplayEvidence() {
+        val rows = listOf(
+            """{"name":"DITHANE RAINSHIELD NEO TEC FUNGICIDE","registration_number":"59688","registration_scheme":"apvma","registration_country":"AU","registrant":"UPL AUSTRALIA PTY LTD","activeIngredient":"Mancozeb 750 g/kg","source":"official_register"}""",
+            """{"name":"Dithane Rainshield Neo Tec Fungicide FB","registration_number":"97592","registration_scheme":"apvma","registration_country":"AU","registrant":"UPL AUSTRALIA PTY LTD","activeIngredient":"Mancozeb 750 g/kg","source":"official_register"}""",
+        ).map { SupabaseClient.json.decodeFromString<ChemicalInfoService.ChemicalSearchResult>(it) }
+        assertEquals(listOf("59688", "97592"), rows.map { it.registrationNumber })
+        assertTrue(rows.all { it.registrationScheme == "apvma" && it.registrationCountry == "AU" })
+        assertTrue(rows.all { it.registrant == "UPL AUSTRALIA PTY LTD" && it.activeIngredient == "Mancozeb 750 g/kg" })
+        assertTrue(rows[0].name != rows[1].name)
+    }
+
     @Test fun addNewAlwaysUsesV2OfflineUnlessExplicitEmergencyRollback() {
         // Connectivity is deliberately not an input to the shared route policy.
         assertTrue(ChemicalCreationRouting.usesV2(emptyMap()))

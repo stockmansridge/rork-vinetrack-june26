@@ -142,6 +142,7 @@ private data class ChemicalReviewV2Draft(
     val viticultureRates: ViticultureRates,
     val selectedRateId: String? = null,
     val automaticRates: Map<ChemicalDefaultRateBasis, ChemicalLabelRate> = emptyMap(),
+    val masterMatch: ChemicalInfoService.ChemicalMasterMatch? = null,
     val isManual: Boolean = false,
     val manualDetails: ChemicalSearchV2ManualDetails = ChemicalSearchV2ManualDetails(),
 )
@@ -162,6 +163,7 @@ internal fun ChemicalSearchV2Sheet(
     val externalService = remember { ChemicalInfoService() }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<MasterChemicalV2>>(emptyList()) }
+    var onlineCandidates by remember { mutableStateOf<List<ChemicalInfoService.ChemicalSearchResult>>(emptyList()) }
     var savedMatches by remember { mutableStateOf<List<SavedChemical>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -196,7 +198,8 @@ internal fun ChemicalSearchV2Sheet(
             results = emptyList()
             return
         }
-        val automatic = ChemicalSearchV2OperationalDefaults.unambiguousRates(master.viticultureRates)
+        val automatic = if (master.viticultureRates.all.size > 1) emptyMap() else ChemicalSearchV2OperationalDefaults.unambiguousRates(master.viticultureRates)
+        if (photoRegistration != master.registrationNumber) photoBytes = null
         val selected = automatic[ChemicalDefaultRateBasis.PER_HECTARE]
             ?: automatic[ChemicalDefaultRateBasis.PER_100_LITRES]
         val initial = selected?.let(::draftRate) ?: ChemicalManualRateDraft()
@@ -229,6 +232,8 @@ internal fun ChemicalSearchV2Sheet(
         searchJob?.cancel()
         requestId = null
         results = emptyList()
+        onlineCandidates = emptyList()
+        externalJob?.cancel()
         savedMatches = ChemicalSearchV2Duplicate.localMatches(trimmed, state.savedChemicals)
         if (savedMatches.isNotEmpty()) {
             searching = false
@@ -251,6 +256,45 @@ internal fun ChemicalSearchV2Sheet(
             } finally {
                 if (requestId == token) searching = false
             }
+        }
+    }
+
+    fun openOnlineCandidate(candidate: ChemicalInfoService.ChemicalSearchResult) {
+        val number = candidate.registrationNumber ?: return
+        if (candidate.registrationScheme?.lowercase() != "apvma") return
+        externalJob?.cancel()
+        externalBusy = true
+        message = "Reading APVMA $number…"
+        externalJob = scope.launch {
+            try {
+                val lookup = externalService.lookupStructured(candidate.name, "AU", number)
+                val registration = lookup.registration
+                if (lookup.matchSource != "master" && lookup.matchSource != "authoritative_candidate" ||
+                    registration?.countryCode != "AU" || registration.registrationNumber != number ||
+                    registration.scheme != ChemicalRegistrationScheme.APVMA
+                ) {
+                    message = "APVMA $number could not be verified. Choose another product or create manually."
+                    return@launch
+                }
+                val intel = lookup.intelligence()
+                val rates = ViticultureRates.fromRegisteredUses(intel.registeredUses)
+                val automatic = if (rates.all.size > 1) emptyMap() else ChemicalSearchV2OperationalDefaults.unambiguousRates(rates)
+                val selected = automatic[ChemicalDefaultRateBasis.PER_HECTARE]
+                    ?: automatic[ChemicalDefaultRateBasis.PER_100_LITRES]
+                val initial = selected?.let(::draftRate) ?: ChemicalManualRateDraft()
+                if (photoRegistration != null && photoRegistration != number) photoBytes = null
+                review = ChemicalReviewV2Draft(
+                    source = if (lookup.matchSource == "master") "VineTrack Master" else "Official register",
+                    master = null, intelligence = intel, formType = lookup.formType,
+                    productName = registration.registeredProductName ?: candidate.name,
+                    unit = initial.unit.toDisplayUnit(), rate = initial, viticultureRates = rates,
+                    selectedRateId = selected?.id, automaticRates = automatic,
+                    masterMatch = lookup.master.takeIf { lookup.matchSource == "master" },
+                )
+            } catch (_: CancellationException) {
+            } catch (_: Exception) {
+                message = "Could not read APVMA $number. Try again or choose another product."
+            } finally { externalBusy = false }
         }
     }
 
@@ -303,6 +347,7 @@ internal fun ChemicalSearchV2Sheet(
                         searchJob?.cancel()
                         externalJob?.cancel()
                         results = emptyList()
+                        onlineCandidates = emptyList()
                         savedMatches = emptyList()
                         searching = false
                         externalBusy = false
@@ -346,6 +391,18 @@ internal fun ChemicalSearchV2Sheet(
                     result.productCategory?.takeIf(String::isNotBlank)?.let { Text(it.replaceFirstChar(Char::uppercase), fontSize = 12.sp) }
                     Button(onClick = { openMaster(result) }) { Text("Use this chemical") }
                 }
+                if (onlineCandidates.isNotEmpty()) {
+                    HorizontalDivider()
+                    Text("Official product candidates — choose the exact registration", fontWeight = FontWeight.SemiBold)
+                    onlineCandidates.forEach { candidate ->
+                        Text(candidate.name, fontWeight = FontWeight.SemiBold)
+                        Text("APVMA ${candidate.registrationNumber}", fontSize = 12.sp)
+                        candidate.registrant?.takeIf(String::isNotBlank)?.let { Text(it, fontSize = 13.sp) }
+                        candidate.activeIngredient.takeIf(String::isNotBlank)?.let { Text(it, fontSize = 12.sp) }
+                        candidate.productCategory?.takeIf(String::isNotBlank)?.let { Text(it, fontSize = 12.sp) }
+                        Button(onClick = { openOnlineCandidate(candidate) }, enabled = !externalBusy) { Text("Use this chemical") }
+                    }
+                }
                 HorizontalDivider()
                 TextButton(
                     onClick = {
@@ -354,42 +411,27 @@ internal fun ChemicalSearchV2Sheet(
                         val local = ChemicalSearchV2Duplicate.localMatches(trimmed, state.savedChemicals)
                         if (local.isNotEmpty()) { savedMatches = local; results = emptyList(); return@TextButton }
                         externalBusy = true
-                        Log.d("ChemicalSearchV2", "fallback_invoked=true type=label_lookup")
                         message = null
+                        onlineCandidates = emptyList()
                         externalJob = scope.launch {
                             try {
-                                val lookup = try {
-                                    externalService.discoverLabel(trimmed)
-                                } catch (error: Exception) {
-                                    val name = photoProductName
-                                    if (trimmed != photoRegistration || name.isNullOrBlank()) throw error
-                                    externalService.discoverLabel(name)
-                                }
-                                val intel = lookup.intelligence()
-                                val viticultureRates = ViticultureRates.fromRegisteredUses(intel.registeredUses)
-                                val automatic = ChemicalSearchV2OperationalDefaults.unambiguousRates(viticultureRates)
-                                val selected = automatic[ChemicalDefaultRateBasis.PER_HECTARE]
-                                    ?: automatic[ChemicalDefaultRateBasis.PER_100_LITRES]
-                                val initial = selected?.let(::draftRate) ?: ChemicalManualRateDraft()
-                                review = ChemicalReviewV2Draft(
-                                    source = "Label lookup", master = null, intelligence = intel,
-                                    formType = lookup.formType, productName = lookup.productName ?: trimmed,
-                                    unit = initial.unit.toDisplayUnit(), rate = initial,
-                                    viticultureRates = viticultureRates,
-                                    selectedRateId = selected?.id, automaticRates = automatic,
-                                )
-                                Log.d("ChemicalSearchV2", "external_lookup=success")
+                                onlineCandidates = externalService.searchChemicals(trimmed, "AU")
+                                    .filter { it.source == "official_register" || it.source == "master" }
+                                    .filter { it.registrationScheme?.lowercase() == "apvma" &&
+                                        it.registrationCountry?.uppercase() != "NZ" && !it.registrationNumber.isNullOrBlank() }
+                                message = if (onlineCandidates.isEmpty())
+                                    "No official registration found. Try another name or create manually."
+                                else "Choose the exact product before reading its registered label."
                             } catch (_: CancellationException) {
-                            } catch (error: Exception) {
-                                message = "No credible label found. Create manually with the product name you entered, or try again."
-                                Log.d("ChemicalSearchV2", "external_lookup=failure")
+                            } catch (_: Exception) {
+                                message = "Official search is unavailable. Try again or create manually."
                             } finally { externalBusy = false }
                         }
                     },
                     enabled = query.trim().length >= 2 && !externalBusy,
                 ) {
-                    if (externalBusy) { CircularProgressIndicator(modifier = Modifier.size(20.dp)); Text("Searching for official product label…") }
-                    else Text("Search for product label")
+                    if (externalBusy) { CircularProgressIndicator(modifier = Modifier.size(20.dp)); Text("Searching official register…") }
+                    else Text("Search online")
                 }
                 OutlinedButton(onClick = capture.takePhoto, modifier = Modifier.fillMaxWidth()) { Text("Take Photo of Label") }
                 OutlinedButton(onClick = capture.chooseFromGallery, modifier = Modifier.fillMaxWidth()) { Text("Choose Label Photo") }
@@ -497,8 +539,7 @@ private fun ChemicalReviewV2(
                         unit = rate.unit.ifBlank { "L" }, rawText = rate.rawText.orEmpty(),
                     ),
                     unit = rate.unit.toDisplayUnit(), selectedRateId = rate.id,
-                    automaticRates = if (basis == null) draft.automaticRates
-                    else draft.automaticRates + (basis to rate),
+                    automaticRates = if (basis == null) emptyMap() else mapOf(basis to rate),
                 ))
             }, modifier = Modifier.fillMaxWidth()) { Text(rate.displayRate) }
         }
@@ -669,11 +710,12 @@ private fun ChemicalReviewV2(
                     inventoryQuantity = if (draft.isManual) details.inventoryQuantity.toDoubleOrNull() else null,
                     inventoryUnit = if (draft.isManual) details.inventoryUnit else "",
                     intelligence = canonicalIntelligence,
-                    masterChemicalId = draft.master?.id, masterSourceRevision = draft.master?.catalogueVersion,
+                    masterChemicalId = draft.master?.id ?: draft.masterMatch?.masterChemicalId,
+                    masterSourceRevision = draft.master?.catalogueVersion ?: draft.masterMatch?.masterRevision,
                     defaultRates = ChemicalSearchV2OperationalDefaults.storedDefaults(
                         effectiveRates, java.time.Instant.now().toString(),
                     ),
-                    entrySource = SavedChemicalEntrySource.reviewed(draft.isManual, draft.master != null, canonicalIntelligence),
+                    entrySource = SavedChemicalEntrySource.reviewed(draft.isManual, draft.master != null || draft.masterMatch != null, canonicalIntelligence),
                 )
                 vm.createSavedChemicalV2(input, photoBytes) { created ->
                     saving = false
