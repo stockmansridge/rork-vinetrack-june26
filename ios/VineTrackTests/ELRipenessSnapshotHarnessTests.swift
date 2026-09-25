@@ -223,12 +223,12 @@ final class ELRipenessSnapshotHarnessTests: XCTestCase {
             for observation in model.heatModel?.unassigned ?? [] { drawPin(observation, .unassigned) }
             _ = dateISO
 
-            // Block name plates with the influencing-only median.
+            // Block name plates with the highest current recorded stage.
             for block in blocks where block.polygon.count >= 3 {
                 guard let centroid = ELRipenessGeometry.centroid(of: block.polygon) else { continue }
                 let plate = ELRipenessPinFactory.blockLabelImage(
                     name: block.paddockName ?? "Block",
-                    medianEl: block.medianEl,
+                    displayEl: block.displayEl,
                     mode: block.mode
                 )
                 let centre = project(centroid)

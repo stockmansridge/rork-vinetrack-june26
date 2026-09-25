@@ -598,7 +598,10 @@ object ElRipenessHeatmap {
         val diagonal: Double?,
         val maxInfluenceDeg: Double?,
         val points: List<WeightedPoint>,
-    )
+    ) {
+        /** Label-only maximum of current eligible observations; the raster still uses its original points. */
+        val displayEl: Double? get() = influencing.maxOfOrNull { it.el }
+    }
 
     data class HeatModel(
         val blocks: List<BlockHeat>,

@@ -516,7 +516,7 @@ private fun HeatMap(
                     }
                 }
 
-                // Block name plates carrying the influencing-only median.
+                // Block name plates carrying the highest current eligible recorded stage.
                 heat?.blocks?.forEach { block ->
                     val polygon = usablePolygon(block.polygon)
                     val centroid = ElRipenessGeometry.centroid(polygon)
@@ -633,12 +633,12 @@ private fun BlockLabel(
     block: ElRipenessHeatmap.BlockHeat,
     centroid: ElRipenessHeatmap.LatLng,
 ) {
-    val median = block.medianEl
+    val displayEl = block.displayEl
     val text = block.paddockName ?: "Block"
-    val medianText = if (median != null) ElRipenessHeatmap.formatEl(median) else "No current data"
+    val displayText = if (displayEl != null) ElRipenessHeatmap.formatEl(displayEl) else "No current data"
 
     MarkerComposable(
-        keys = arrayOf<Any>(block.paddockId, medianText, text),
+        keys = arrayOf<Any>(block.paddockId, displayText, text),
         state = rememberMarkerState(position = LatLng(centroid.lat, centroid.lng)),
         zIndex = 2.5f,
     ) {
@@ -647,11 +647,11 @@ private fun BlockLabel(
                 .clip(RoundedCornerShape(6.dp))
                 .background(Color.Black.copy(alpha = 0.62f))
                 .padding(horizontal = 8.dp, vertical = 4.dp)
-                .semantics { contentDescription = "$text, median $medianText" },
+                .semantics { contentDescription = "$text, highest recorded $displayText" },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(text, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-            Text(medianText, color = Color.White.copy(alpha = 0.85f), fontSize = 10.sp)
+            Text(displayText, color = Color.White.copy(alpha = 0.85f), fontSize = 10.sp)
         }
     }
 }

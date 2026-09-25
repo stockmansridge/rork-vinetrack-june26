@@ -515,7 +515,7 @@ struct ELRipenessHeatmapContent: View {
         )
     }
 
-    /// Block name plates carrying the influencing-only median.
+    /// Block name plates carrying the highest current eligible recorded stage.
     private var blockLabels: [ELRipenessBlockLabelAnnotation] {
         guard let heatModel = model.heatModel else { return [] }
         return heatModel.blocks.compactMap { block in
@@ -524,7 +524,7 @@ struct ELRipenessHeatmapContent: View {
             return ELRipenessBlockLabelAnnotation(
                 paddockId: block.paddockId,
                 name: block.paddockName ?? "Block",
-                medianEl: block.medianEl,
+                displayEl: block.displayEl,
                 mode: block.mode,
                 coordinate: centroid
             )

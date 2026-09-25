@@ -42,20 +42,19 @@ nonisolated final class ELRipenessObservationAnnotation: NSObject, MKAnnotation,
     }
 }
 
-/// A block's name and influencing-only median, floated at its centroid.
+/// A block's name and highest current recorded stage, floated at its centroid.
 nonisolated final class ELRipenessBlockLabelAnnotation: NSObject, MKAnnotation, @unchecked Sendable {
     let paddockId: String
     let name: String
-    /// Median of the **influencing** observations only. Stale observations are
-    /// visible on the map but must not move this number.
-    let medianEl: Double?
+    /// Maximum of the influencing observations only; stale pins do not change the label.
+    let displayEl: Double?
     let mode: ELRipeness.Mode
     let coordinate: CLLocationCoordinate2D
 
-    init(paddockId: String, name: String, medianEl: Double?, mode: ELRipeness.Mode, coordinate: CLLocationCoordinate2D) {
+    init(paddockId: String, name: String, displayEl: Double?, mode: ELRipeness.Mode, coordinate: CLLocationCoordinate2D) {
         self.paddockId = paddockId
         self.name = name
-        self.medianEl = medianEl
+        self.displayEl = displayEl
         self.mode = mode
         self.coordinate = coordinate
         super.init()
@@ -239,12 +238,12 @@ struct ELRipenessMapView: UIViewRepresentable {
             view.displayPriority = .defaultHigh
             view.image = ELRipenessPinFactory.blockLabelImage(
                 name: annotation.name,
-                medianEl: annotation.medianEl,
+                displayEl: annotation.displayEl,
                 mode: annotation.mode
             )
             view.accessibilityLabel = ELRipenessPinFactory.blockLabelAccessibility(
                 name: annotation.name,
-                medianEl: annotation.medianEl,
+                displayEl: annotation.displayEl,
                 mode: annotation.mode
             )
             return view

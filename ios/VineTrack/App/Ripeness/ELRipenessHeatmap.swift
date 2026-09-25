@@ -666,6 +666,8 @@ nonisolated enum ELRipeness {
         let stale: [Observation]
         let mode: Mode
         let medianEl: Double?
+        /// Label-only maximum of current, eligible observations; does not affect the heat surface.
+        var displayEl: Double? { influencing.map(\.el).max() }
         let grid: [[Double?]]?
         let weightGrid: [[Double?]]?
         let gridBounds: Bounds?

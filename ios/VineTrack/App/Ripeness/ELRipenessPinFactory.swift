@@ -84,10 +84,10 @@ nonisolated enum ELRipenessPinFactory {
         }
     }
 
-    /// Block name plus influencing-only median, drawn as a rounded plate.
-    static func blockLabelImage(name: String, medianEl: Double?, mode: ELRipeness.Mode) -> UIImage {
+    /// Block name plus highest current recorded stage, drawn as a rounded plate.
+    static func blockLabelImage(name: String, displayEl: Double?, mode: ELRipeness.Mode) -> UIImage {
         let title = name
-        let detail = medianDetail(medianEl: medianEl, mode: mode)
+        let detail = displayDetail(displayEl: displayEl, mode: mode)
 
         let titleFont = UIFont.systemFont(ofSize: 12, weight: .semibold)
         let detailFont = UIFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
@@ -111,7 +111,7 @@ nonisolated enum ELRipenessPinFactory {
                 at: CGPoint(x: (size.width - titleSize.width) / 2, y: 4),
                 withAttributes: [.font: titleFont, .foregroundColor: UIColor.white]
             )
-            let detailColour: UIColor = medianEl.map { uiColour(for: $0) } ?? UIColor.white.withAlphaComponent(0.7)
+            let detailColour: UIColor = displayEl.map { uiColour(for: $0) } ?? UIColor.white.withAlphaComponent(0.7)
             (detail as NSString).draw(
                 at: CGPoint(x: (size.width - detailSize.width) / 2, y: 4 + titleSize.height + 1),
                 withAttributes: [.font: detailFont, .foregroundColor: detailColour]
@@ -119,10 +119,9 @@ nonisolated enum ELRipenessPinFactory {
         }
     }
 
-    /// The median line under a block name. Never invents a number: a block with
-    /// no influencing observation says why instead of showing a stale median.
-    static func medianDetail(medianEl: Double?, mode: ELRipeness.Mode) -> String {
-        if let medianEl { return ELRipeness.formatEl(medianEl) }
+    /// Keep the existing no-data text when no current observation qualifies.
+    static func displayDetail(displayEl: Double?, mode: ELRipeness.Mode) -> String {
+        if let displayEl { return ELRipeness.formatEl(displayEl) }
         switch mode {
         case .stale: return "No current data"
         case .noPolygon: return "No boundary"
@@ -130,9 +129,9 @@ nonisolated enum ELRipenessPinFactory {
         }
     }
 
-    static func blockLabelAccessibility(name: String, medianEl: Double?, mode: ELRipeness.Mode) -> String {
-        if let medianEl {
-            return "\(name), median \(ELRipeness.formatEl(medianEl)) from influencing observations"
+    static func blockLabelAccessibility(name: String, displayEl: Double?, mode: ELRipeness.Mode) -> String {
+        if let displayEl {
+            return "\(name), highest recorded \(ELRipeness.formatEl(displayEl)) from current observations"
         }
         switch mode {
         case .stale: return "\(name), no current observations"

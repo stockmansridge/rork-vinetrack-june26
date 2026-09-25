@@ -266,6 +266,17 @@ if (providers.gradleProperty("chemicalV2FocusedTests").orNull == "true") {
     }
 }
 
+// Compile only the block-label regression while unrelated legacy JVM tests remain stale.
+if (providers.gradleProperty("ripenessBlockDisplayFocusedTests").orNull == "true") {
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/ElRipenessBlockDisplayTest.kt")
+            })
+        }
+    }
+}
+
 // Compile only Disease Risk regressions while unrelated legacy JVM tests remain stale.
 if (providers.gradleProperty("diseaseGrowthFocusedTests").orNull == "true") {
     afterEvaluate {
