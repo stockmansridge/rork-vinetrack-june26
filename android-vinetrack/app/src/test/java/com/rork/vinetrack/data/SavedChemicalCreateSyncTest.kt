@@ -10,6 +10,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
+import java.nio.file.Files
 
 class SavedChemicalCreateSyncTest {
     private val repository = SavedChemicalRepository()
@@ -57,6 +59,27 @@ class SavedChemicalCreateSyncTest {
         assertEquals(PendingWriteStatus.FAILED, PendingWriteRepository(pendingStore).list().single().status)
         assertEquals(original, ChemicalSearchV2Duplicate.localMatches("Example Fungicide", coordinator().rows("owner", "vineyard")).single())
         assertTrue(coordinator().rows("another owner", "vineyard").isEmpty())
+    }
+
+    @Test fun offlineChemicalAndLabelPhotoRestartTogetherWithSameUuid() {
+        val root = Files.createTempDirectory("chemical-label-together").toFile()
+        try {
+            val photoStore = object : ChemicalLabelPhotoStoring {
+                var rows: List<ChemicalLabelAttachment> = emptyList()
+                override fun load(): List<ChemicalLabelAttachment> = rows
+                override fun save(rows: List<ChemicalLabelAttachment>) { this.rows = rows }
+            }
+            val chemical = coordinator().save("vineyard", input)
+            val attachment = ChemicalLabelPhotoRepository(root, photoStore)
+                .enqueue("owner", chemical.vineyardId, chemical.id, byteArrayOf(1, 2, 3))
+            val resumedChemical = coordinator().rows("owner", "vineyard").single()
+            val resumedPhoto = ChemicalLabelPhotoRepository(root, photoStore).list().single()
+            assertEquals(chemical.id, resumedChemical.id)
+            assertEquals(resumedChemical.id, resumedPhoto.chemicalId)
+            assertEquals(attachment.id, resumedPhoto.id)
+            assertEquals(chemical.id, PendingWriteRepository(pendingStore).list().single().clientId)
+            assertTrue(File(resumedPhoto.localPath).exists())
+        } finally { root.deleteRecursively() }
     }
 
     @Test fun acknowledgementLossAnd409ReconcileOnlySameUuid() = runBlocking {

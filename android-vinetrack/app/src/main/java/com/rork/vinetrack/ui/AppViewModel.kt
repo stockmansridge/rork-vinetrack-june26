@@ -160,9 +160,11 @@ import com.rork.vinetrack.data.OperatorCategoryRepository
 import com.rork.vinetrack.data.VineyardTripFunctionRepository
 import com.rork.vinetrack.data.ChemicalInfoService
 import com.rork.vinetrack.data.SavedChemicalRepository
+import com.rork.vinetrack.data.ChemicalLabelAttachment
+import com.rork.vinetrack.data.ChemicalLabelPhotoRepository
+import com.rork.vinetrack.data.ChemicalLabelPhotoSync
 import com.rork.vinetrack.data.SavedChemicalCreateSync
 import com.rork.vinetrack.data.SavedChemicalLocalStore
-import com.rork.vinetrack.data.chemical.ChemicalLabelAttachmentV2Repository
 import com.rork.vinetrack.data.SavedInputRepository
 import com.rork.vinetrack.data.SavedSprayPresetRepository
 import com.rork.vinetrack.data.SavedTripActivation
@@ -322,6 +324,7 @@ import com.rork.vinetrack.ui.main.TripsListKnowledge
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -1651,6 +1654,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val savedChemicalCreateSync = SavedChemicalCreateSync(
         savedChemicalRepo, pendingWrites, SavedChemicalLocalStore(app), { session.userId },
     )
+    private val chemicalLabelPhotos = ChemicalLabelPhotoRepository(app)
+    private val chemicalLabelPhotoSync = ChemicalLabelPhotoSync(
+        chemicalLabelPhotos, pendingWrites, savedChemicalRepo, { session.userId },
+    )
 
     /**
      * Local store for pin photos retained when they can't upload immediately
@@ -2473,9 +2480,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun observePendingPhotos() {
         viewModelScope.launch {
-            pendingPhotos.attachments.collect { list ->
-                val pending = list.count { it.status in PendingPhotoStatus.unresolved }
-                val blocked = list.count { it.status == PendingPhotoStatus.BLOCKED }
+            combine(pendingPhotos.attachments, chemicalLabelPhotos.attachments) { pins, labels -> pins to labels }
+                .collect { (list, labels) ->
+                val currentLabels = labels.filter { it.ownerId == session.userId }
+                val pending = list.count { it.status in PendingPhotoStatus.unresolved } + currentLabels.size
+                val blocked = list.count { it.status == PendingPhotoStatus.BLOCKED } +
+                    currentLabels.count { it.status == ChemicalLabelAttachment.BLOCKED }
                 val pendingPhotoIds = list.filter { it.status in PendingPhotoStatus.unresolved }
                     .map { it.clientPinId }.toSet()
                 val blockedPhotoIds = list.filter { it.status == PendingPhotoStatus.BLOCKED }
@@ -3486,36 +3496,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * in every replay pipeline. Skipped when offline or with no session so it
      * can't fire during early startup.
      */
-    private val unsentChemicalLabelPhotos = mutableMapOf<String, Pair<String, ByteArray>>()
-
-    /** Label photo uses the same chemical UUID, but never gates local chemical creation. */
-    fun uploadSavedChemicalLabelPhoto(bytes: ByteArray, vineyardId: String, chemicalId: String) {
-        unsentChemicalLabelPhotos[chemicalId] = vineyardId to bytes.copyOf()
-        if (_ui.value.isOnline && session.accessToken != null && pendingWrites.list().none {
-                it.entityType == PendingEntityType.SAVED_CHEMICAL && it.clientId == chemicalId
-            }) {
-            uploadSyncedChemicalPhoto(chemicalId)
-        }
-    }
-
-    private fun uploadSyncedChemicalPhoto(chemicalId: String) {
-        val (vineyardId, bytes) = unsentChemicalLabelPhotos.remove(chemicalId) ?: return
-        viewModelScope.launch {
-            runCatching { ChemicalLabelAttachmentV2Repository().upload(bytes, vineyardId, chemicalId) }
-        }
-    }
-
     private fun replayPendingSavedChemicalCreates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
         viewModelScope.launch {
             savedChemicalCreateSync.replayAll { saved ->
-                uploadSyncedChemicalPhoto(saved.id)
                 if (_ui.value.selectedVineyardId == saved.vineyardId) {
                     _ui.update { state -> state.copy(savedChemicals =
                         (state.savedChemicals.filterNot { it.id == saved.id } + saved)
                             .sortedBy { it.displayName.lowercase() }) }
                 }
             }
+            chemicalLabelPhotoSync.replayAll()
         }
     }
 
@@ -4373,7 +4364,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!preserveAffectedRecoveryEvidence().didRun) return
         val hasPendingEvidence = pinEvidenceStore.pending().isNotEmpty()
         val reset = pendingWrites.resetFailedForRetry()
-        if (reset == 0 && !hasPendingEvidence) return
+        if (reset == 0 && !hasPendingEvidence && chemicalLabelPhotos.list().none {
+                it.ownerId == session.userId && it.status == ChemicalLabelAttachment.FAILED
+            }) return
         _ui.update { it.copy(isRetryingSync = true) }
         // Same safe order as reconnect/post-load. Evidence is independent and
         // deliberately allowed to arrive before its pin row.
@@ -4820,6 +4813,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // failures must never block sign-out, hence the runCatching guards.
             runCatching { pendingWrites.clearAll() }
             runCatching { pendingPhotos.clearAll() }
+            runCatching { chemicalLabelPhotos.clearAll() }
             runCatching { domainCache.clearAll() }
             // Keep the device-wide active-trip claim across account switches;
             // restore still checks ownerUserId before exposing trip controls.
@@ -12114,12 +12108,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Returns the exact locally committed record, never an inferred match from the UI list. */
-    fun createSavedChemicalV2(input: SavedChemicalRepository.ChemicalInput, onResult: (SavedChemical?) -> Unit) {
+    fun createSavedChemicalV2(input: SavedChemicalRepository.ChemicalInput, labelJpeg: ByteArray? = null, onResult: (SavedChemical?) -> Unit) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(null); return }
         viewModelScope.launch {
             _ui.update { it.copy(sprayError = null) }
             try {
                 val created = savedChemicalCreateSync.save(vineyardId, input)
+                labelJpeg?.let { jpeg ->
+                    runCatching { chemicalLabelPhotos.enqueue(requireNotNull(session.userId), vineyardId, created.id, jpeg) }
+                        .onFailure { _ui.update { state -> state.copy(sprayError =
+                            "Chemical saved, but its label photo couldn't be kept. Please reattach the photo.") } }
+                }
                 _ui.update { st ->
                     st.copy(savedChemicals = (st.savedChemicals.filterNot { it.id == created.id } + created)
                         .sortedBy { it.displayName.lowercase() })
@@ -12173,6 +12172,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 savedChemicalRepo.softDelete(id)
                 session.userId?.let { owner -> previous.firstOrNull { it.id == id }?.let { row ->
                     savedChemicalCreateSync.removeLocal(owner, row.vineyardId, id) } }
+                chemicalLabelPhotos.removeForChemical(id)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 onUnauthorized("deleteSavedChemical"); onResult(false)
@@ -12207,6 +12207,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 } else {
                     session.userId?.let { owner -> previous.firstOrNull { it.id == id }?.let { row ->
                         savedChemicalCreateSync.removeLocal(owner, row.vineyardId, id) } }
+                    chemicalLabelPhotos.removeForChemical(id)
                 }
                 onResult(outcome)
             } catch (e: BackendError.Unauthorized) {

@@ -655,16 +655,13 @@ private fun ChemicalReviewV2(
                     ),
                     entrySource = SavedChemicalEntrySource.reviewed(draft.isManual, draft.master != null, canonicalIntelligence),
                 )
-                vm.createSavedChemicalV2(input) { created ->
+                vm.createSavedChemicalV2(input, photoBytes) { created ->
                     saving = false
                     if (created == null) {
                         notice = "Couldn't save this chemical. Check your connection and try again."
                         return@createSavedChemicalV2
                     }
                     onSaved(created)
-                    // The chemical is already durably saved. Photo transfer is optional
-                    // and cannot hold the Save result or the spray handoff hostage.
-                    photoBytes?.let { bytes -> vm.uploadSavedChemicalLabelPhoto(bytes, vineyardId, created.id) }
                     onDone()
                 }
             },

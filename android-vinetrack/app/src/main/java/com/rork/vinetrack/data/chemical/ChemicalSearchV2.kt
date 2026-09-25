@@ -10,6 +10,7 @@ import com.rork.vinetrack.data.BackendError
 import com.rork.vinetrack.data.SupabaseClient
 import com.rork.vinetrack.data.model.SavedChemical
 import io.ktor.client.request.headers
+import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -24,7 +25,6 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import java.util.UUID
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -221,26 +221,47 @@ class MasterChemicalV2Repository {
 
 class ChemicalLabelAttachmentV2Repository {
     @Serializable
-    private data class AttachmentInsert(
+    internal data class AttachmentInsert(
+        val id: String,
         @SerialName("vineyard_id") val vineyardId: String,
         @SerialName("saved_chemical_id") val savedChemicalId: String,
         @SerialName("storage_path") val storagePath: String,
     )
 
-    suspend fun upload(jpeg: ByteArray, vineyardId: String, chemicalId: String) = withContext(Dispatchers.IO) {
-        val token = SupabaseClient.sessionRefresher?.sessionAccessToken ?: throw BackendError.Unauthorized
-        val path = "${vineyardId.lowercase()}/${chemicalId.lowercase()}/${UUID.randomUUID()}.jpg"
-        val upload = SupabaseClient.http.post(SupabaseClient.storageUrl("object/chemical-label-photos/$path")) {
-            headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
-            setBody(ByteArrayContent(jpeg, ContentType.Image.JPEG))
+    /** Same V2 bucket/table, but a stable object path and row id make lost acknowledgements retry-safe. */
+    suspend fun upload(jpeg: ByteArray, vineyardId: String, chemicalId: String, attachmentId: String, path: String) =
+        withContext(Dispatchers.IO) {
+            val token = SupabaseClient.sessionRefresher?.sessionAccessToken ?: throw BackendError.Unauthorized
+            val expected = "${vineyardId.lowercase()}/${chemicalId.lowercase()}/$attachmentId.jpg"
+            require(path == expected) { "Invalid chemical label attachment path." }
+            val headers: io.ktor.client.request.HttpRequestBuilder.() -> Unit = {
+                headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
+            }
+            // If a previous INSERT succeeded but its acknowledgement was lost, do not upload again.
+            if (attachmentExists(attachmentId, vineyardId, chemicalId, path, token)) return@withContext
+            val upload = SupabaseClient.http.post(SupabaseClient.storageUrl("object/chemical-label-photos/$path")) {
+                headers()
+                headers { append("x-upsert", "true") }
+                setBody(ByteArrayContent(jpeg, ContentType.Image.JPEG))
+            }
+            if (!upload.status.isSuccess()) throw BackendError.Server(upload.status.value, upload.bodyAsText())
+            val insert = SupabaseClient.http.post(SupabaseClient.restUrl("saved_chemical_attachments")) {
+                headers()
+                contentType(ContentType.Application.Json)
+                setBody(AttachmentInsert(attachmentId, vineyardId, chemicalId, path))
+            }
+            if (!insert.status.isSuccess() && !attachmentExists(attachmentId, vineyardId, chemicalId, path, token)) {
+                throw BackendError.Server(insert.status.value, insert.bodyAsText())
+            }
         }
-        if (!upload.status.isSuccess()) throw BackendError.Server(upload.status.value, upload.bodyAsText())
-        val insert = SupabaseClient.http.post(SupabaseClient.restUrl("saved_chemical_attachments")) {
+
+    private suspend fun attachmentExists(id: String, vineyardId: String, chemicalId: String, path: String, token: String): Boolean {
+        val response = SupabaseClient.http.get(SupabaseClient.restUrl("saved_chemical_attachments?id=eq.$id&select=id,vineyard_id,saved_chemical_id,storage_path")) {
             headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
-            contentType(ContentType.Application.Json)
-            setBody(AttachmentInsert(vineyardId, chemicalId, path))
         }
-        if (!insert.status.isSuccess()) throw BackendError.Server(insert.status.value, insert.bodyAsText())
+        if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
+        val rows = SupabaseClient.json.decodeFromString<List<AttachmentInsert>>(response.bodyAsText())
+        return rows.any { it.id == id && it.vineyardId == vineyardId && it.savedChemicalId == chemicalId && it.storagePath == path }
     }
 }
 
