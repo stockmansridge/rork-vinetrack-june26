@@ -14,6 +14,7 @@ import CoreLocation
 /// WeatherDataService imports.
 struct SprayCalculatorView: View {
     @Environment(MigratedDataStore.self) private var store
+    @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(TripTrackingService.self) private var tracking
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(BackendAccessControl.self) private var accessControl
@@ -858,7 +859,14 @@ struct SprayCalculatorView: View {
                 // Search → Select → Review → Save, the same single flow the
                 // Chemical Store and the Spray Program use. Adding a product
                 // starts with identifying it, never with a blank form.
-                ChemicalMatchFlowView()
+                if systemAdmin.usesChemicalSearchV2ForCreation {
+                    ChemicalSearchV2View(
+                        onOpenExisting: { existing in appendChemicalLine(for: existing) },
+                        onSaved: { saved in appendChemicalLine(for: saved) }
+                    )
+                } else {
+                    ChemicalMatchFlowView()
+                }
             }
             .sheet(isPresented: $showStartConfirmation) {
                 startConfirmationSheet

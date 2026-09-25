@@ -228,6 +228,13 @@ nonisolated enum AuthoritativeActivityGroups {
         let codeB = normaliseCode(b.code)
         guard !codeA.isEmpty, !codeB.isEmpty else { return false }
         if codeA == codeB { return true }
+        // FRAC multi-site labels use M2 in Australia and M02 globally.
+        // Only a whole M + decimal code may discard zero-padding.
+        if a.scheme == .frac,
+           let multiA = fracMultiSiteNumber(codeA),
+           let multiB = fracMultiSiteNumber(codeB) {
+            return multiA == multiB
+        }
         guard a.scheme == .hrac else { return false }
         let legacy = legacyCodes(forActiveNamed: name)
         guard !legacy.isEmpty else { return false }
@@ -235,6 +242,14 @@ nonisolated enum AuthoritativeActivityGroups {
         guard !current.isEmpty else { return false }
         let isCurrentOrLegacy: (String) -> Bool = { $0 == current || legacy.contains($0) }
         return isCurrentOrLegacy(codeA) && isCurrentOrLegacy(codeB)
+    }
+
+    private static func fracMultiSiteNumber(_ code: String) -> Int? {
+        guard code.first == "M" else { return nil }
+        let digits = code.dropFirst()
+        guard !digits.isEmpty, digits.allSatisfy({ $0.isASCII && $0.isNumber }),
+              let number = Int(digits), number > 0 else { return nil }
+        return number
     }
 
     private static func irac(_ code: String, _ name: String) -> ChemicalActivityGroup {

@@ -206,7 +206,7 @@ struct ChemicalsManagementView: View {
             if canManageSetup {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        if systemAdmin.isEnabled(SystemFeatureFlagKey.chemicalSearchV2) {
+                        if systemAdmin.usesChemicalSearchV2ForCreation {
                             showSearchV2 = true
                         } else {
                             showAddSheet = true

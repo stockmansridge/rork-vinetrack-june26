@@ -254,6 +254,13 @@ object AuthoritativeActivityGroups {
         val codeB = normaliseCode(b.code)
         if (codeA.isEmpty() || codeB.isEmpty()) return false
         if (codeA == codeB) return true
+        // Australian FRAC M2 and global FRAC M02 denote the same multi-site group.
+        // Never discard padding outside a whole FRAC M + decimal code.
+        if (a.scheme == ChemicalActivityGroupScheme.FRAC) {
+            val multiA = fracMultiSiteNumber(codeA)
+            val multiB = fracMultiSiteNumber(codeB)
+            if (multiA != null && multiB != null) return multiA == multiB
+        }
         if (a.scheme != ChemicalActivityGroupScheme.HRAC) return false
         val legacy = legacyCodesForActive(activeName)
         if (legacy.isEmpty()) return false
@@ -261,6 +268,13 @@ object AuthoritativeActivityGroups {
         if (current.isEmpty()) return false
         fun isCurrentOrLegacy(code: String) = code == current || legacy.contains(code)
         return isCurrentOrLegacy(codeA) && isCurrentOrLegacy(codeB)
+    }
+
+    private fun fracMultiSiteNumber(code: String): Int? {
+        if (!code.startsWith("M")) return null
+        val digits = code.drop(1)
+        if (digits.isEmpty() || !digits.all { it in '0'..'9' }) return null
+        return digits.toIntOrNull()?.takeIf { it > 0 }
     }
 
     private fun irac(code: String, name: String) =

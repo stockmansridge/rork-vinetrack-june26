@@ -105,6 +105,7 @@ import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_HECTARE
 import com.rork.vinetrack.data.model.GrowthStage
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.chemical.ChemicalAddFromSprayRouting
+import com.rork.vinetrack.data.chemical.ChemicalCreationRouting
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateDisplay
 import com.rork.vinetrack.data.chemical.ChemicalReverifyFlow
 import com.rork.vinetrack.data.chemical.ChemicalLabelRateNormalizer
@@ -2519,7 +2520,24 @@ private fun AddChemicalToSprayFlow(
     // A newly-armed snapshot starts a fresh run.
     LaunchedEffect(idsBeforeAdd) { if (idsBeforeAdd != null) created = false }
 
-    if (showRegisterFlow) {
+    if (showRegisterFlow && ChemicalCreationRouting.usesV2(state.systemFeatureFlags)) {
+        ChemicalSearchV2Sheet(
+            vm = vm,
+            state = state,
+            onDismiss = {
+                onDismissRegisterFlow()
+                if (!created) onCancelled()
+            },
+            onSaved = { saved ->
+                // V2 returns the actual local SavedChemical, including offline
+                // creations. Never search the store by name or wait for sync.
+                created = true
+                onAppend(saved)
+            },
+        )
+    }
+
+    if (showRegisterFlow && !ChemicalCreationRouting.usesV2(state.systemFeatureFlags)) {
         // The SAME workflow the Chemical Store uses: search the register,
         // review the grapevine information, confirm the default rate, save.
         //

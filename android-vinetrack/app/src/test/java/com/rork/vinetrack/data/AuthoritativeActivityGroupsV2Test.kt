@@ -173,6 +173,30 @@ class AuthoritativeActivityGroupsV2Test {
     }
 
     @Test
+    fun `FRAC multi-site Australian and global notation agrees without hiding real conflicts`() {
+        val examples = listOf("copper hydroxide" to "M1", "sulphur" to "M2", "mancozeb" to "M3")
+        for ((active, australian) in examples) {
+            val global = "M0${australian.drop(1)}"
+            val extracted = ChemicalActivityGroup.of(ChemicalActivityGroupScheme.FRAC, global, null)
+            assertTrue(active, AuthoritativeActivityGroups.groupsAreEquivalent(active, extracted,
+                ChemicalActivityGroup.of(ChemicalActivityGroupScheme.FRAC, australian, null)))
+            assertNull(active, AuthoritativeActivityGroups.reconcile(active, extracted,
+                ChemicalDataSourceKind.MANUAL_ENTRY).conflict)
+        }
+        for (number in 1..9) {
+            assertTrue(AuthoritativeActivityGroups.groupsAreEquivalent("sulphur",
+                ChemicalActivityGroup.of(ChemicalActivityGroupScheme.FRAC, "M$number", null),
+                ChemicalActivityGroup.of(ChemicalActivityGroupScheme.FRAC, "M0$number", null)))
+        }
+        assertNotNull(AuthoritativeActivityGroups.reconcile("sulphur",
+            ChemicalActivityGroup.of(ChemicalActivityGroupScheme.FRAC, "M3", null),
+            ChemicalDataSourceKind.MANUAL_ENTRY).conflict)
+        assertTrue(!AuthoritativeActivityGroups.groupsAreEquivalent("sulphur",
+            ChemicalActivityGroup.of(ChemicalActivityGroupScheme.FRAC, "M02", null),
+            ChemicalActivityGroup.of(ChemicalActivityGroupScheme.HRAC, "M2", null)))
+    }
+
+    @Test
     fun `a formulation suffix inherits both the current group and its legacy codes`() {
         assertEquals(
             "9",

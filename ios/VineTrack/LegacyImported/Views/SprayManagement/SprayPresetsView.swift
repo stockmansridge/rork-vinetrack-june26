@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SprayPresetsView: View {
     @Environment(MigratedDataStore.self) private var store
+    @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(\.accessControl) private var accessControl
     @State private var showAddChemical: Bool = false
     @State private var showAddPreset: Bool = false
@@ -22,7 +23,14 @@ struct SprayPresetsView: View {
             // Adding starts with identification, not a blank form: search the
             // register, pick the exact product, review what was found. Same
             // flow as the Chemical Store and the Spray Program.
-            ChemicalMatchFlowView()
+            if systemAdmin.usesChemicalSearchV2ForCreation {
+                ChemicalSearchV2View(
+                    onOpenExisting: { existing in editingChemical = existing },
+                    onSaved: { saved in editingChemical = saved }
+                )
+            } else {
+                ChemicalMatchFlowView()
+            }
         }
         .sheet(item: $editingChemical) { chem in
             EditSavedChemicalSheet(chemical: chem)

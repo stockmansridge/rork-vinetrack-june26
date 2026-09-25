@@ -59,6 +59,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import com.rork.vinetrack.data.chemical.ChemicalActivityGroup
 import com.rork.vinetrack.data.chemical.ChemicalActivityGroupScheme
+import com.rork.vinetrack.data.chemical.ChemicalCreationRouting
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateDisplay
 import com.rork.vinetrack.data.chemical.ChemicalEditOutcome
@@ -140,7 +141,7 @@ private val chemicalUnits: List<String> = listOf("Litres", "mL", "Kg", "g")
 fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
     val vine = LocalVineColors.current
     val canManage = state.currentRole == "owner" || state.currentRole == "manager"
-    val usesChemicalSearchV2 = state.systemFeatureFlags["chemical_search_v2"] == true
+    val usesChemicalSearchV2 = ChemicalCreationRouting.usesV2(state.systemFeatureFlags)
     // Cost editing/visibility mirrors the spray form's canViewFinancials gate.
     val canViewFinancials = canManage
 

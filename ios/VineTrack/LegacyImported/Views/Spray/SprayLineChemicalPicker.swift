@@ -29,6 +29,7 @@ struct SprayLineChemicalPicker: View {
     let onSelect: (SavedChemical?) -> Void
 
     @Environment(MigratedDataStore.self) private var store
+    @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(\.accessControl) private var accessControl
     @Environment(\.dismiss) private var dismiss
 
@@ -148,12 +149,25 @@ struct SprayLineChemicalPicker: View {
                 // Cancelling closes only this sheet, so whatever sent the
                 // operator here — a half-edited Program Step, a spray being
                 // recorded — is still sitting underneath, untouched.
-                ChemicalMatchFlowView(
-                    prefillQuery: query.trimmingCharacters(in: .whitespacesAndNewlines)
-                ) { created in
-                    // Bound by Saved Chemical ID, never by name.
-                    onSelect(created)
-                    dismiss()
+                if systemAdmin.usesChemicalSearchV2ForCreation {
+                    ChemicalSearchV2View(
+                        prefillQuery: query.trimmingCharacters(in: .whitespacesAndNewlines),
+                        onOpenExisting: { existing in
+                            onSelect(existing)
+                            dismiss()
+                        },
+                        onSaved: { created in
+                            onSelect(created)
+                            dismiss()
+                        }
+                    )
+                } else {
+                    ChemicalMatchFlowView(
+                        prefillQuery: query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    ) { created in
+                        onSelect(created)
+                        dismiss()
+                    }
                 }
             }
         }

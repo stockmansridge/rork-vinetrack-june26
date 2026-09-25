@@ -253,6 +253,19 @@ if (providers.gradleProperty("editChemicalFocusedTests").orNull == "true") {
     }
 }
 
+if (providers.gradleProperty("chemicalV2FocusedTests").orNull == "true") {
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/ChemicalSearchV2Test.kt")
+                include("**/AuthoritativeActivityGroupsV2Test.kt")
+                include("**/SavedChemicalCreateSyncTest.kt")
+                include("**/ChemicalLabelPhotoSyncTest.kt")
+            })
+        }
+    }
+}
+
 if (providers.gradleProperty("forecastParityFocusedTests").orNull == "true") {
     afterEvaluate {
         tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {

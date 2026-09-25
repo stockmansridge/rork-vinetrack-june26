@@ -1,5 +1,6 @@
 package com.rork.vinetrack.data
 
+import com.rork.vinetrack.data.chemical.ChemicalCreationRouting
 import com.rork.vinetrack.data.chemical.ChemicalLabelIdentityOCR
 import com.rork.vinetrack.data.chemical.ChemicalLabelRate
 import com.rork.vinetrack.data.chemical.ChemicalLabelRateBasis
@@ -30,6 +31,13 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ChemicalSearchV2Test {
+    @Test fun addNewAlwaysUsesV2OfflineUnlessExplicitEmergencyRollback() {
+        // Connectivity is deliberately not an input to the shared route policy.
+        assertTrue(ChemicalCreationRouting.usesV2(emptyMap()))
+        assertTrue(ChemicalCreationRouting.usesV2(mapOf("chemical_search_v2" to true)))
+        assertFalse(ChemicalCreationRouting.usesV2(mapOf("chemical_search_v2" to false)))
+    }
+
     @Test fun provenanceAndQueuedV2RepairUseEvidenceNotScreenVersion() {
         val unverified = ChemicalIntelligence()
         val verified = ChemicalIntelligence(

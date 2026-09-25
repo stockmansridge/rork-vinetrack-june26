@@ -171,6 +171,38 @@ struct AuthoritativeActivityGroupsV2Tests {
         )
     }
 
+    @Test("FRAC multi-site Australian and global notation agrees without hiding real conflicts")
+    func fracMultiSiteNotation() {
+        for (active, australian) in [("copper hydroxide", "M1"), ("sulphur", "M2"), ("mancozeb", "M3")] {
+            let global = "M0\(australian.dropFirst())"
+            let extracted = ChemicalActivityGroup(scheme: .frac, code: global, commonName: nil)
+            #expect(AuthoritativeActivityGroups.groupsAreEquivalent(
+                activeNamed: active, extracted,
+                ChemicalActivityGroup(scheme: .frac, code: australian, commonName: nil)
+            ))
+            #expect(AuthoritativeActivityGroups.reconcile(
+                activeNamed: active, extracted: extracted, extractedSource: .manualEntry
+            ).conflict == nil)
+        }
+        for number in 1...9 {
+            #expect(AuthoritativeActivityGroups.groupsAreEquivalent(
+                activeNamed: "sulphur",
+                ChemicalActivityGroup(scheme: .frac, code: "M\(number)", commonName: nil),
+                ChemicalActivityGroup(scheme: .frac, code: "M0\(number)", commonName: nil)
+            ))
+        }
+        #expect(AuthoritativeActivityGroups.reconcile(
+            activeNamed: "sulphur",
+            extracted: ChemicalActivityGroup(scheme: .frac, code: "M3", commonName: nil),
+            extractedSource: .manualEntry
+        ).conflict != nil)
+        #expect(!AuthoritativeActivityGroups.groupsAreEquivalent(
+            activeNamed: "sulphur",
+            ChemicalActivityGroup(scheme: .frac, code: "M02", commonName: nil),
+            ChemicalActivityGroup(scheme: .hrac, code: "M2", commonName: nil)
+        ))
+    }
+
     @Test("a formulation suffix inherits both the current group and its legacy codes")
     func saltFormsInherit() {
         #expect(

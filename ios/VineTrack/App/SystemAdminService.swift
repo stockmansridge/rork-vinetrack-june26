@@ -33,6 +33,13 @@ final class SystemAdminService {
         flags[key]?.isEnabled ?? false
     }
 
+    /// Add New Chemical is V2 even before flags load. An explicit OFF is the
+    /// single emergency rollback for every creation route; existing selection
+    /// and re-verification are never redirected.
+    var usesChemicalSearchV2ForCreation: Bool {
+        flags[SystemFeatureFlagKey.chemicalSearchV2]?.isEnabled ?? true
+    }
+
     var sortedFlags: [SystemFeatureFlag] {
         flags.values.sorted { lhs, rhs in
             let lc = lhs.category ?? "zzz"
