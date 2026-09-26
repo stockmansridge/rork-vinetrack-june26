@@ -338,7 +338,7 @@ object ChemicalStoreMatching {
         }
         if (form.contains("solid") || form.contains("granul") || form.contains("powder") ||
             form.contains("wettable") || form.contains("wdg") || form.contains("wg") ||
-            form.contains("pellet")
+            form.split(Regex("[^a-z0-9]+")).contains("wp") || form.contains("pellet")
         ) {
             return "solid"
         }

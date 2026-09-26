@@ -18,6 +18,7 @@ struct ChemicalSearchV2Tests {
             name: "Spray", category: "fungicide", form: "liquid", intelligence: intel,
             labelURL: "https://example.com/label.pdf", hasDefaultRate: true, hasLabelRate: true
         )
+        #expect(intel.resolvedVerificationStatus == .unverified)
         #expect(complete.title == "Complete details")
         #expect(complete.missingText == nil)
         let basic = ChemicalDetailsCompleteness.assess(
@@ -48,6 +49,38 @@ struct ChemicalSearchV2Tests {
         #expect(result.title == "Review required")
         #expect(result.missing.contains("product form"))
     }
+    @Test func formulationAndCategorySynonymsCountAsApplicableDetails() {
+        let herbicide = ChemicalIntelligence(productCategory: "non-selective herbicide")
+        let liquid = ChemicalDetailsCompleteness.assess(
+            name: "Herbicide", category: "Non-selective herbicide", form: "Suspension concentrate",
+            intelligence: herbicide, labelURL: "https://example.com/label", hasDefaultRate: true, hasLabelRate: false
+        )
+        #expect(!liquid.missing.contains("product form"))
+        #expect(liquid.missing.contains("active ingredients"))
+        #expect(liquid.missing.contains("HRAC group"))
+        let solid = ChemicalDetailsCompleteness.assess(
+            name: "Herbicide", category: "herbicide", form: "WP",
+            intelligence: herbicide, labelURL: "https://example.com/label", hasDefaultRate: true, hasLabelRate: false
+        )
+        #expect(!solid.missing.contains("product form"))
+        for form in ["Wettable powder", "WG", "granule"] {
+            #expect(!ChemicalDetailsCompleteness.assess(
+                name: "Herbicide", category: "herbicide", form: form,
+                intelligence: herbicide, labelURL: "https://example.com/label", hasDefaultRate: true, hasLabelRate: false
+            ).missing.contains("product form"))
+        }
+        for category in ["Plant growth regulator", "PGR"] {
+            let result = ChemicalDetailsCompleteness.assess(
+                name: "Regulator", category: category, form: "Soluble concentrate",
+                intelligence: ChemicalIntelligence(productCategory: category), labelURL: "https://example.com/label",
+                hasDefaultRate: true, hasLabelRate: false
+            )
+            #expect(result.missing.contains("active ingredients"))
+            #expect(result.missing.contains("label rate"))
+            #expect(!result.missing.contains("product form"))
+        }
+    }
+
     @Test func webCandidateWithoutAPVMANumberCanBeSelected() throws {
         let payload = #"{"candidates":[{"name":"CropSure Beast 200 Herbicide","brand":"CropSure Pty Ltd","activeIngredient":"Glufosinate-ammonium","product_category":"herbicide","source":"research"}],"detail":null,"timings":{"search_ms":324,"extraction_ms":0}}"#
         let response = try JSONDecoder().decode(ChemicalInfoService.WebV2Lookup.self, from: Data(payload.utf8))

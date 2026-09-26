@@ -639,6 +639,7 @@ nonisolated enum ChemicalReviewMerge {
         }
         if form.contains("solid") || form.contains("granul") || form.contains("powder")
             || form.contains("wettable") || form.contains("wdg") || form.contains("wg")
+            || form.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).contains("wp")
             || form.contains("pellet") {
             return "solid"
         }

@@ -52,6 +52,7 @@ class ChemicalRateGateAddendumTest {
         )
         val complete = ChemicalDetailsCompleteness.assess("Spray", "fungicide", "liquid", intel,
             "https://example.com/label.pdf", true, true)
+        assertEquals(ChemicalVerificationStatus.UNVERIFIED, intel.resolvedVerificationStatus)
         assertEquals("Complete details", complete.title)
         val basic = ChemicalDetailsCompleteness.assess("Spray", "fungicide", "", intel,
             "", true, false)
@@ -72,6 +73,39 @@ class ChemicalRateGateAddendumTest {
         val result = ChemicalDetailsCompleteness.assess("Spray", "fungicide", "", intel, "", false, false)
         assertEquals("Review required", result.title)
         assertTrue("product form" in result.missing)
+    }
+
+    @Test fun `category and formulation variants use applicable completeness fields`() {
+        val intel = ChemicalIntelligence(productCategory = "non-selective herbicide")
+        val liquid = ChemicalDetailsCompleteness.assess("Spray", "Non-selective herbicide",
+            "Suspension concentrate", intel, "https://example.com/label", true, false)
+        assertFalse("product form" in liquid.missing)
+        assertTrue("active ingredients" in liquid.missing)
+        assertTrue("HRAC group" in liquid.missing)
+        for (form in listOf("Wettable powder", "WG", "WP", "granule")) {
+            val solid = ChemicalDetailsCompleteness.assess("Spray", "herbicide", form, intel,
+                "https://example.com/label", true, false)
+            assertFalse("$form should be solid", "product form" in solid.missing)
+        }
+        for (category in listOf("Plant growth regulator", "PGR")) {
+            val regulator = ChemicalDetailsCompleteness.assess("Spray", category, "Soluble concentrate",
+                ChemicalIntelligence(productCategory = category), "https://example.com/label", true, false)
+            assertTrue("active ingredients" in regulator.missing)
+            assertTrue("label rate" in regulator.missing)
+            assertFalse("product form" in regulator.missing)
+        }
+    }
+
+    @Test fun `badge uses completeness even for unverified chemical and sources header has no badge`() {
+        val ui = source("src/main/java/com/rork/vinetrack/ui/components/ChemicalIntelligenceUi.kt")
+        val badge = ui.substringAfter("fun ChemicalVerificationBadge(").substringBefore("fun ChemicalJurisdictionMismatchBanner(")
+        assertTrue(badge.contains("ChemicalDetailsCompleteness.assess(chemical)"))
+        assertTrue(badge.contains("\"Complete details\" -> Icons.Filled.Verified to VineColors.Success"))
+        assertTrue(badge.contains("\"Review required\" -> Icons.Filled.Warning to VineColors.Destructive"))
+        assertTrue(badge.contains("Icons.Filled.Info to VineColors.Info"))
+        assertFalse(badge.contains("chemicalVerificationIcon(status)"))
+        val sources = ui.substringAfter("fun ChemicalVerificationEvidenceView(").substringBefore("fun ChemicalLabelRatesView(")
+        assertFalse(sources.contains("ChemicalVerificationBadge("))
     }
 
     // ---- Fixtures ----------------------------------------------------------
@@ -383,15 +417,12 @@ class ChemicalRateGateAddendumTest {
         assertTrue(store.contains("1 chemical needs attention"))
         assertFalse(store.contains("chemicals need verification"))
 
-        // Status wording itself, at the source of truth.
-        assertEquals("Basic details", ChemicalVerificationStatus.VERIFIED.label)
-        assertEquals(
-            "Basic details",
-            ChemicalVerificationStatus.PARTIALLY_VERIFIED.label,
-        )
-        assertEquals("Basic details", ChemicalVerificationStatus.UNVERIFIED.label)
-        assertEquals("Basic details", ChemicalVerificationStatus.NEEDS_MATCH.label)
-        assertEquals("Review required", ChemicalVerificationStatus.CONFLICT.label)
+        // Evidence wording is not the customer-facing completeness status.
+        assertEquals("Sources confirmed", ChemicalVerificationStatus.VERIFIED.label)
+        assertEquals("Some sources unconfirmed", ChemicalVerificationStatus.PARTIALLY_VERIFIED.label)
+        assertEquals("Sources not confirmed", ChemicalVerificationStatus.UNVERIFIED.label)
+        assertEquals("Identity not matched", ChemicalVerificationStatus.NEEDS_MATCH.label)
+        assertEquals("Sources disagree", ChemicalVerificationStatus.CONFLICT.label)
         assertEquals(
             "Check the product details and source information before use.",
             ChemicalVerificationStatus.PARTIALLY_VERIFIED.detail,

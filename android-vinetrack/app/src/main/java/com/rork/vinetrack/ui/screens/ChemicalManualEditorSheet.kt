@@ -127,23 +127,7 @@ internal fun ChemicalManualEditorSheet(
             // make it. There is no control here: verification is the conclusion
             // the evidence reaches, so the only honest thing a manual editor can
             // do about it is report it.
-            SectionLabel("Verification")
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text("Current", fontSize = 13.sp, color = vine.textSecondary, modifier = Modifier.width(96.dp))
-                ChemicalVerificationBadge(
-                    existing?.resolvedVerificationStatus ?: ChemicalVerificationStatus.UNVERIFIED,
-                )
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text("After saving", fontSize = 13.sp, color = vine.textSecondary, modifier = Modifier.width(96.dp))
-                ChemicalVerificationBadge(outcome.resolvedStatus)
-            }
+            SectionLabel("Source checks")
             outcome.warning?.let { warning ->
                 Column(
                     modifier = Modifier

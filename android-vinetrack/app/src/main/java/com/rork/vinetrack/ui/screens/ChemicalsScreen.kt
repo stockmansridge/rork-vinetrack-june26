@@ -560,7 +560,7 @@ private fun ChemicalRow(
                         color = vine.textPrimary,
                         fontSize = 16.sp,
                     )
-                    ChemicalVerificationBadge(status, chemical = chemical)
+                    ChemicalVerificationBadge(chemical)
                 }
                 com.rork.vinetrack.data.chemical.ChemicalDetailsCompleteness.assess(chemical).missingText?.let {
                     Text(it, fontSize = 11.sp, color = vine.textSecondary)
@@ -1230,7 +1230,7 @@ internal fun ChemicalFormSheet(
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Details", modifier = Modifier.weight(1f), color = vine.textSecondary)
-                ChemicalVerificationBadge(editOutcome?.resolvedStatus ?: existing?.verificationStatus ?: ChemicalVerificationStatus.UNVERIFIED, chemical = existing)
+                if (existing != null) ChemicalVerificationBadge(existing)
             }
             if (existing != null) {
                 val attention = ChemicalSaveContract.evaluate(
@@ -1882,7 +1882,7 @@ internal fun ChemicalFormSheet(
             if (existing != null && state != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Details", color = vine.textSecondary, modifier = Modifier.width(96.dp))
-                    ChemicalVerificationBadge(existing.verificationStatus, chemical = existing)
+                    ChemicalVerificationBadge(existing)
                 }
                 val formSuitability = ChemicalJurisdiction.suitability(existing, manualCountry)
                 if (formSuitability is ChemicalJurisdictionSuitability.Mismatch) {

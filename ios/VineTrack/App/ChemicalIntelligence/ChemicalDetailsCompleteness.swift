@@ -17,10 +17,16 @@ nonisolated struct ChemicalDetailsCompleteness: Sendable {
         if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { missing.append("product name") }
         let kind = category.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if kind.isEmpty { missing.append("product category") }
-        if !["liquid", "solid"].contains(form.lowercased()) { missing.append("product form") }
-        let scheme = ChemicalActivityGroupScheme.implied(byProductCategory: kind)
+        if ChemicalReviewMerge.formDescription(form).isEmpty { missing.append("product form") }
+        let tokens = kind.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        let categoryWords = Set(tokens + [tokens.joined()])
+        let protectionCategories: Set<String> = ["fungicide", "herbicide", "insecticide", "miticide", "acaricide", "nematicide"]
+        let isRegulator = categoryWords.contains("pgr") || categoryWords.contains("growthregulator")
+            || (categoryWords.contains("growth") && categoryWords.contains("regulator"))
+        let canonicalCategory = protectionCategories.first(where: categoryWords.contains) ?? (isRegulator ? "growthregulator" : kind)
+        let scheme = ChemicalActivityGroupScheme.implied(byProductCategory: canonicalCategory)
         // Only crop-protection categories need active chemistry and label directions.
-        let isProtection = ["fungicide", "herbicide", "insecticide", "miticide", "acaricide", "nematicide", "growthregulator"].contains(kind)
+        let isProtection = protectionCategories.contains(canonicalCategory) || isRegulator
         if isProtection {
             let actives = intelligence.activeIngredients.filter { !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             if actives.isEmpty { missing.append("active ingredients") }

@@ -54,8 +54,11 @@ nonisolated enum ChemicalVerificationStatus: String, Codable, Sendable, CaseIter
     /// documents; it does not certify products.
     nonisolated var label: String {
         switch self {
-        case .verified, .partiallyVerified, .unverified, .needsMatch: return "Basic details"
-        case .conflict: return "Review required"
+        case .verified: return "Sources confirmed"
+        case .partiallyVerified: return "Some sources unconfirmed"
+        case .unverified: return "Sources not confirmed"
+        case .needsMatch: return "Identity not matched"
+        case .conflict: return "Sources disagree"
         }
     }
 

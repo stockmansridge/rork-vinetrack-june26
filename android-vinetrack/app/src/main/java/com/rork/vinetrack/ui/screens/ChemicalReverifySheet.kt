@@ -343,7 +343,7 @@ internal fun ChemicalReverifySheet(
                             color = vine.textSecondary,
                             modifier = Modifier.width(96.dp),
                         )
-                        ChemicalVerificationBadge(resolved)
+                        ChemicalVerificationBadge(chemical)
                     }
                     Text(resolved.detail, fontSize = 11.sp, color = vine.textSecondary)
 
@@ -491,20 +491,7 @@ internal fun ChemicalReverifySheet(
                         current.outcome.intelligence.verification,
                         resolved,
                     )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            "After updating",
-                            fontSize = 12.sp,
-                            color = vine.textSecondary,
-                            modifier = Modifier.width(96.dp),
-                        )
-                        ChemicalVerificationBadge(resolved)
-                    }
-                    // The status is computed from the merged evidence. Say so, so
-                    // nobody reads the badge as something this screen chose.
+                    // Evidence confidence is separate from the saved chemical's completeness.
                     Text(
                         "${resolved.detail} This status is derived from the evidence behind " +
                             "each value — it is not set by accepting this update.",
@@ -574,7 +561,7 @@ internal fun ChemicalReverifySheet(
                             color = vine.textSecondary,
                             modifier = Modifier.width(96.dp),
                         )
-                        ChemicalVerificationBadge(chemical.verificationStatus)
+                        ChemicalVerificationBadge(chemical)
                     }
 
                     HorizontalDivider()

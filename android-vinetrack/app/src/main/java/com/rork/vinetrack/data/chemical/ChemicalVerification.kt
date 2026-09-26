@@ -124,24 +124,24 @@ fun List<ChemicalDataSource>.strongest(): ChemicalDataSource? = maxByOrNull { it
 @Serializable
 enum class ChemicalVerificationStatus(val raw: String, val label: String) {
     @SerialName("verified")
-    VERIFIED("verified", "Basic details"),
+    VERIFIED("verified", "Sources confirmed"),
 
     @SerialName("partially_verified")
-    PARTIALLY_VERIFIED("partially_verified", "Basic details"),
+    PARTIALLY_VERIFIED("partially_verified", "Some sources unconfirmed"),
 
     @SerialName("unverified")
-    UNVERIFIED("unverified", "Basic details"),
+    UNVERIFIED("unverified", "Sources not confirmed"),
 
     /**
      * A legacy record that has never been put through the match step. It has
      * data, but nobody has yet confirmed WHICH registered product it is.
      */
     @SerialName("needs_match")
-    NEEDS_MATCH("needs_match", "Basic details"),
+    NEEDS_MATCH("needs_match", "Identity not matched"),
 
     /** Sources disagree. Never silently resolved — a human decides. */
     @SerialName("conflict")
-    CONFLICT("conflict", "Review required"),
+    CONFLICT("conflict", "Sources disagree"),
     ;
 
     /**

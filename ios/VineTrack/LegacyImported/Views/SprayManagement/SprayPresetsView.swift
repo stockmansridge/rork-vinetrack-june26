@@ -1219,9 +1219,9 @@ struct EditSavedChemicalSheet: View {
         Section {
             // The RESULT of verification stays visible — that is what the
             // operator needs. The machinery that produced it goes inside.
-            if let intelligence = session.editOutcome?.intelligence ?? session.seedIntelligence {
-                LabeledContent("Verification") {
-                    Text(intelligence.resolvedVerificationStatus.label)
+            if let chemical {
+                LabeledContent("Details") {
+                    Text(ChemicalDetailsCompleteness.assess(chemical).title)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }

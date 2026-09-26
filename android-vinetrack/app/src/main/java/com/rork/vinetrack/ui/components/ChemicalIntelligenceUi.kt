@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Help
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Shield
@@ -92,21 +93,6 @@ fun chemicalVerificationTint(status: ChemicalVerificationStatus): Color = when (
 }
 
 /**
- * The Chemical Store filter's wording for a stored status.
- *
- * Shorter than [ChemicalVerificationStatus.label] because a filter pill sits in
- * a horizontal row beside its count and has to stay readable at a glance — but
- * it says the same thing, and it never reintroduces "Partially verified".
- *
- * `NEEDS_MATCH` and `UNVERIFIED` deliberately share "Not checked": they are
- * different internal situations but the same fact for an operator, so they read
- * alike while remaining separate filters over separate counts. The underlying
- * enum and the database values are untouched.
- */
-fun chemicalVerificationFilterLabel(status: ChemicalVerificationStatus): String =
-    if (status == ChemicalVerificationStatus.CONFLICT) "Review required" else "Basic details"
-
-/**
  * The Chemical Store's customer-facing filters.
  *
  * One pill per thing an operator can act on — NOT one per stored status.
@@ -130,17 +116,16 @@ enum class ChemicalStoreFilter(val label: String) {
 /** Compact trust chip used in lists and pickers. */
 @Composable
 fun ChemicalVerificationBadge(
-    status: ChemicalVerificationStatus,
+    chemical: SavedChemical,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
-    chemical: SavedChemical? = null,
 ) {
-    val label = if (status == ChemicalVerificationStatus.CONFLICT) "Review required"
-        else chemical?.let { ChemicalDetailsCompleteness.assess(it).title } ?: "Basic details"
-    val tint = when (label) {
-        "Complete details" -> VineColors.Success
-        "Review required" -> VineColors.Destructive
-        else -> VineColors.Info
+    val completeness = ChemicalDetailsCompleteness.assess(chemical)
+    val label = completeness.title
+    val (icon, tint) = when (label) {
+        "Complete details" -> Icons.Filled.Verified to VineColors.Success
+        "Review required" -> Icons.Filled.Warning to VineColors.Destructive
+        else -> Icons.Filled.Info to VineColors.Info
     }
     Row(
         modifier = modifier
@@ -151,7 +136,7 @@ fun ChemicalVerificationBadge(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Icon(
-            chemicalVerificationIcon(status),
+            icon,
             contentDescription = label,
             tint = tint,
             modifier = Modifier.size(12.dp),
@@ -422,7 +407,6 @@ fun ChemicalVerificationEvidenceView(
         ) {
             Text("Information sources", fontSize = 15.sp, color = vine.textPrimary)
             Spacer(Modifier.weight(1f))
-            ChemicalVerificationBadge(resolvedStatus)
             Icon(
                 if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                 contentDescription = null,
@@ -937,7 +921,7 @@ fun ChemicalPickerIntelligenceRow(
             horizontalArrangement = Arrangement.spacedBy(5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ChemicalVerificationBadge(chemical.verificationStatus, compact = true)
+            ChemicalVerificationBadge(chemical, compact = true)
             if (structuredGroups.isNotEmpty()) {
                 // e.g. "FRAC 3 + 11" — derived from the actives, never parsed back.
                 ChemicalPill(

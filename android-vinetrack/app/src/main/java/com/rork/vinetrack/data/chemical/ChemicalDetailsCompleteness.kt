@@ -17,13 +17,20 @@ data class ChemicalDetailsCompleteness(val missing: List<String>, val hasConflic
             if (name.isBlank()) missing += "product name"
             val kind = category.trim().lowercase()
             if (kind.isEmpty()) missing += "product category"
-            if (form.lowercase() !in setOf("liquid", "solid")) missing += "product form"
-            val protection = kind in setOf("fungicide", "herbicide", "insecticide", "miticide", "acaricide", "nematicide", "growthregulator")
+            if (ChemicalStoreMatching.formDescription(form).isEmpty()) missing += "product form"
+            val tokens = kind.split(Regex("[^a-z0-9]+")).filter { it.isNotEmpty() }
+            val categoryWords = (tokens + tokens.joinToString("")).toSet()
+            val protectionCategories = setOf("fungicide", "herbicide", "insecticide", "miticide", "acaricide", "nematicide")
+            val isRegulator = "pgr" in categoryWords || "growthregulator" in categoryWords ||
+                ("growth" in categoryWords && "regulator" in categoryWords)
+            val canonicalCategory = protectionCategories.firstOrNull { it in categoryWords }
+                ?: if (isRegulator) "growthregulator" else kind
+            val protection = canonicalCategory in protectionCategories || isRegulator
             if (protection) {
                 val actives = intelligence.activeIngredients.filter { it.name.isNotBlank() }
                 if (actives.isEmpty()) missing += "active ingredients"
                 if (actives.isNotEmpty() && actives.any { !it.hasConcentration }) missing += "active concentration"
-                val scheme = ChemicalActivityGroupScheme.impliedByProductCategory(kind)
+                val scheme = ChemicalActivityGroupScheme.impliedByProductCategory(canonicalCategory)
                 if (scheme != null && scheme != ChemicalActivityGroupScheme.NOT_APPLICABLE &&
                     (actives.isEmpty() || actives.any { it.activityGroup?.scheme != scheme || it.activityGroup?.isResistanceRelevant != true })) {
                     missing += "${scheme.label} group"

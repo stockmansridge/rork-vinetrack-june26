@@ -27,6 +27,20 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "105FC5882E9EAD3200EA8BCF"
+               BuildableName = "VineTrackTests.xctest"
+               BlueprintName = "VineTrackTests"
+               ReferencedContainer = "container:VineTrack.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "AB0000050000000000000005"
                BuildableName = "VineTrackTripTests.xctest"
                BlueprintName = "VineTrackTripTests"
@@ -41,6 +55,16 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES">
       <Testables>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "105FC5882E9EAD3200EA8BCF"
+               BuildableName = "VineTrackTests.xctest"
+               BlueprintName = "VineTrackTests"
+               ReferencedContainer = "container:VineTrack.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
          <TestableReference
             skipped = "NO">
             <BuildableReference

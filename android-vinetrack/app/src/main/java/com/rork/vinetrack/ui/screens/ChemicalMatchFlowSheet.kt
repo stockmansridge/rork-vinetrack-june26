@@ -667,18 +667,6 @@ internal fun ChemicalMatchFlowSheet(
                             ?.let {
                                 ChemicalLabelledLine("Formulation", lookupFormType.orEmpty())
                             }
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Text(
-                                "Verification",
-                                fontSize = 12.sp,
-                                color = vine.textSecondary,
-                                modifier = Modifier.width(96.dp),
-                            )
-                            ChemicalVerificationBadge(resolved)
-                        }
                         identityWarning?.let { WarningLine(it) }
 
                         // ---- Chemistry ----
