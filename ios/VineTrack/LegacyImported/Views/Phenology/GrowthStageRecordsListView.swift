@@ -179,7 +179,14 @@ struct GrowthStageRecordsListView: View {
                 }
                 ForEach(feed.blocks, id: \.id) { block in
                     let stage = currentEL(for: block.id)
-                    NavigationLink(value: block.id) {
+                    NavigationLink {
+                        GrowthStageBlockDetailView(
+                            blockName: block.name ?? "Block",
+                            currentEl: currentEL(for: block.id),
+                            records: vineyardRecords.filter { $0.paddockId?.uuidString.lowercased() == block.id.lowercased() && $0.observedAt <= Date() },
+                            formatter: fmt
+                        )
+                    } label: {
                         HStack(spacing: 14) {
                             Image(systemName: "leaf.fill")
                                 .foregroundStyle(stage.map { Color(uiColor: ELRipenessPinFactory.uiColour(for: $0)) } ?? .secondary)
@@ -198,16 +205,6 @@ struct GrowthStageRecordsListView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .navigationDestination(for: String.self) { blockId in
-            if let block = feed.blocks.first(where: { $0.id == blockId }) {
-                GrowthStageBlockDetailView(
-                    blockName: block.name ?? "Block",
-                    currentEl: currentEL(for: blockId),
-                    records: vineyardRecords.filter { $0.paddockId?.uuidString.lowercased() == blockId.lowercased() && $0.observedAt <= Date() },
-                    formatter: fmt
-                )
-            }
-        }
         .refreshable {
             await growthStageRecordSync.syncForSelectedVineyard()
             await load(force: true)
