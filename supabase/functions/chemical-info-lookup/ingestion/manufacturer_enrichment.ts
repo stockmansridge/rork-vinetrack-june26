@@ -49,6 +49,9 @@ export interface ManufacturerEnrichmentDiagnostics {
   /** Document size, for a sense of what was read. Never the contents. */
   manufacturer_label_bytes: number | null;
   manufacturer_label_sha256: string | null;
+  /** V2 diagnostics: network retrieval and local PDF parsing, measured independently. */
+  label_fetch_ms?: number;
+  label_parse_ms?: number;
   label_rows_found: number;
   grapevine_rows_found: number;
   grapevine_rates_found: number;
@@ -203,11 +206,13 @@ export async function enrichFromManufacturerLabel(input: {
     );
   }
 
+  const fetchStarted = Date.now();
   const fetched = await fetchManufacturerDocument(
     input.deps,
     input.manufacturerLabelUrl,
     input.sourcePageUrl,
   );
+  const labelFetchMs = Date.now() - fetchStarted;
 
   if (fetched.outcome !== "fetched" || !fetched.bytes) {
     // Fail closed: the regulator's rows stand exactly as they were.
@@ -235,6 +240,7 @@ export async function enrichFromManufacturerLabel(input: {
     };
   }
 
+  const parseStarted = Date.now();
   const items = await extractManufacturerDocumentText(input.deps, fetched.bytes);
   if (!items || items.length === 0) {
     return {
@@ -314,6 +320,8 @@ export async function enrichFromManufacturerLabel(input: {
       manufacturer_label_fetch_outcome: fetched.outcome,
       manufacturer_label_fetch_reason: fetched.reason,
       manufacturer_label_extract: parse.found ? "success" : "failure",
+      label_fetch_ms: labelFetchMs,
+      label_parse_ms: Date.now() - parseStarted,
       manufacturer_label_bytes: fetched.byteSize ?? null,
       manufacturer_label_sha256: fetched.sha256 ?? null,
       label_rows_found: manufacturerUses.length,

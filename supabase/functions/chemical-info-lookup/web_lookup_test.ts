@@ -1,5 +1,6 @@
 import { assertEquals } from "jsr:@std/assert";
-import { agriculturalWebCandidates, labelHeaderFacts, readLabelWithResearchSchema, supportedWebResearch } from "./web_lookup.ts";
+import { agriculturalWebCandidates, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch } from "./web_lookup.ts";
+import type { ManufacturerEnrichmentResult } from "./ingestion/manufacturer_enrichment.ts";
 import { cloneResearch, fakeFetch, jsonResponse, responsesEnvelope } from "./research/test_fixtures.ts";
 import { buildResearchPrompt } from "./research/research.ts";
 
@@ -24,6 +25,19 @@ Deno.test("Beast prefers label-backed crop herbicide over veterinary registratio
     active: { name: "GLUFOSINATE-AMMONIUM", concentration: 200, concentration_unit: "g/L" },
     group: { scheme: "hrac", code: "10" }, form: "liquid",
   });
+});
+
+Deno.test("only an accepted Australian document can contribute its printed APVMA evidence", () => {
+  const text = "CropSure Beast 200 Herbicide. APVMA Approval No. 90143/127764. GROUP 10 HERBICIDE";
+  assertEquals(labelApprovalNumber(text, "AU"), "90143/127764");
+  assertEquals(labelApprovalNumber(text, "NZ"), null);
+  assertEquals(labelApprovalNumber("Beast herbicide; candidate 90143/127764", "AU"), null);
+  assertEquals(labelApprovalNumber("APVMA Approval No. 90143/127764; APVMA Approval No. 88888", "AU"), null);
+  const document = { fetchedUrl: beastLabel, labelText: text,
+    diagnostics: { manufacturer_label_fetch_outcome: "fetched", manufacturer_label_extract: "failure" } } as ManufacturerEnrichmentResult;
+  assertEquals(readableV2Label(document), beastLabel);
+  assertEquals(readableV2Label({ ...document, fetchedUrl: null }), null);
+  assertEquals(readableV2Label({ ...document, labelText: undefined }), null);
 });
 
 Deno.test("Dithane label facts and separate printed rate bases survive without registration", () => {

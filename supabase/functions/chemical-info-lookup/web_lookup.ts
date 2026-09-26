@@ -1,10 +1,26 @@
 import type { ChemicalResearchResult } from "./research/schema.ts";
+import type { ManufacturerEnrichmentResult } from "./ingestion/manufacturer_enrichment.ts";
 import { classifyUrl } from "./research/classify.ts";
 import { callResponsesApi, DEFAULT_RESEARCH_MODEL } from "./research/responses_client.ts";
 import { parseChemicalResearchResult } from "./research/schema.ts";
 
 const ANIMAL_OR_HUMAN = /\b(veterinary|livestock|horse|equine|sheep|cattle|companion.animals?|dogs?|cats?|human|pet|parasiticide|drench)\b/i;
 const CROP_CONTEXT = /\b(agricultur\w*|vineyard\w*|grape\w*|herbicide|fungicide|insecticide|adjuvant|fertili[sz]er|biostimulant|crop|weed\w*|plant|foliar|horticultur\w*)\b/i;
+
+/** An APVMA number is evidence only when the fetched, identity-checked Australian label prints it. */
+/** V2 can read a verified document even when the table parser found no rows. */
+export function readableV2Label(result: ManufacturerEnrichmentResult | null): string | null {
+  return result?.fetchedUrl && result.labelText &&
+      result.diagnostics.manufacturer_label_fetch_outcome === "fetched"
+    ? result.fetchedUrl : null;
+}
+
+export function labelApprovalNumber(text: string, country: string): string | null {
+  if (country !== "AU") return null;
+  const matches = [...text.matchAll(/\bAPVMA\s+(?:APPROVAL|REGISTRATION)\s*(?:NO\.?|NUMBER)?\s*[:#-]?\s*(\d{4,7}(?:\s*\/\s*\d{4,7})?)(?!\d)/gi)];
+  const numbers = [...new Set(matches.map((match) => match[1].replace(/\s+/g, "")))];
+  return numbers.length === 1 ? numbers[0] : null;
+}
 
 export function labelHeaderFacts(text: string): {
   active: { name: string; concentration: number; concentration_unit: string } | null;

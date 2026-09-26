@@ -487,7 +487,12 @@ private fun ChemicalReviewV2(
         Text("Manual vineyard chemical · Unverified", fontSize = 12.sp)
     } else {
         Text("Registrant: ${draft.intelligence.registration?.registrant?.takeIf(String::isNotBlank) ?: "Not found — check label"}")
-        Text("APVMA: ${if (draft.intelligence.hasEvidencedRegistration) draft.intelligence.registration?.registrationNumber ?: "—" else "APVMA registration not verified"}")
+        val apvmaEvidence = if (draft.source == "Product label / web") {
+            draft.intelligence.registration?.registrationNumber?.let { "$it (on label; register not verified)" } ?: "Not stated on label"
+        } else if (draft.intelligence.hasEvidencedRegistration) {
+            draft.intelligence.registration?.registrationNumber ?: "—"
+        } else "APVMA registration not verified"
+        Text("APVMA: $apvmaEvidence")
         Text("Active ingredients: ${draft.intelligence.activeIngredients.joinToString { it.displayLabelWithGroup }.ifBlank { "Needs confirmation — check label" }}")
         Text("Category: ${draft.intelligence.productCategory.ifBlank { "Not found — check label" }}")
         Text("Product form: ${draft.formType?.takeIf(String::isNotBlank) ?: "Needs confirmation"}")

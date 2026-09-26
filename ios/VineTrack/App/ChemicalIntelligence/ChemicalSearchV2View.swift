@@ -775,8 +775,10 @@ private struct ChemicalSearchV2ReviewView: View {
                     Section("Product") {
                         TextField("Chemical / product name *", text: $draft.productName)
                         LabeledContent("Registrant", value: draft.intelligence.registration?.registrant?.ifEmpty("Not found — check label") ?? "Not found — check label")
-                        LabeledContent("APVMA", value: draft.intelligence.hasEvidencedRegistration
-                            ? (draft.intelligence.registration?.registrationNumber ?? "Not found — check label") : "APVMA registration not verified")
+                        LabeledContent("APVMA", value: draft.source == "Product label / web"
+                            ? (draft.intelligence.registration?.registrationNumber.map { "\($0) (on label; register not verified)" } ?? "Not stated on label")
+                            : (draft.intelligence.hasEvidencedRegistration
+                                ? (draft.intelligence.registration?.registrationNumber ?? "Not found — check label") : "APVMA registration not verified"))
                         LabeledContent("Active ingredients", value: draft.intelligence.activeIngredients.map(\.displayLabelWithGroup).joined(separator: ", ").ifEmpty("Needs confirmation — check label"))
                         LabeledContent("Category", value: draft.intelligence.productCategory.isEmpty ? "Not found — check label" : draft.intelligence.productCategory.capitalized)
                         LabeledContent("Product form", value: draft.formType?.ifEmpty("Needs confirmation") ?? "Needs confirmation")

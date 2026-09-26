@@ -129,7 +129,7 @@ import { hasOfficialGrapevineRate } from "./ingestion/authoritative_completion.t
 import { chooseLabelCandidate, confirmedOCRName, directOfficialLabelURL } from "./label_fallback.ts";
 import { discoverUnverifiedLabel } from "./unverified_label_discovery.ts";
 import { nameCorresponds } from "./ingestion/matching.ts";
-import { agriculturalWebCandidates, labelHeaderFacts, readLabelWithResearchSchema, supportedWebResearch } from "./web_lookup.ts";
+import { agriculturalWebCandidates, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch } from "./web_lookup.ts";
 import {
   buildCandidatePayload,
   buildFieldProvenance,
@@ -1298,17 +1298,20 @@ Deno.serve(async (req: Request) => {
       // A registrant-hosted direct PDF can be checked against its own bytes even
       // if research found the document before finding its product page.
       const labelSource = page?.finalUrl ?? (acceptedLabel?.trust === "registrant" ? acceptedLabel.url : null);
+      const labelStarted = Date.now();
       const enrichment = acceptedLabel && labelSource
         ? await enrichFromManufacturerLabel({
           deps: { fetchFn: fetch, now: () => new Date() },
           manufacturerLabelUrl: acceptedLabel.url, sourcePageUrl: labelSource,
           regulatorUses: [], registeredProductName: canonicalName,
         }) : null;
-      const label = enrichment ? verifiedManufacturerLabelUrl(enrichment) : null;
+      const labelMs = Date.now() - labelStarted;
+      const label = readableV2Label(enrichment);
       const supported = supportedWebResearch(research, countryCode, label, page?.finalUrl ?? null);
       const supportedProjection = projectResearch(supported, countryCode, null, canonicalName, inspected.pages);
       const parsedVineyardRates = enrichment?.uses.some((use) =>
         /grape|vineyard/i.test(String(use.crop ?? "")) && Array.isArray(use.rates) && use.rates.length > 0) ?? false;
+      const extractionStarted = Date.now();
       const labelReading = label && enrichment?.labelText && !parsedVineyardRates
         ? await readLabelWithResearchSchema({
           text: enrichment.labelText, label, name: canonicalName, country: countryCode, apiKey,
@@ -1333,11 +1336,15 @@ Deno.serve(async (req: Request) => {
           ? { ...a, concentration: labelActive.concentration, concentration_unit: labelActive.concentration_unit,
             activity_group_code: facts?.group?.code ?? a.activity_group_code,
             activity_group_scheme: facts?.group?.scheme ?? a.activity_group_scheme } : a);
+      const printedApproval = label && enrichment?.labelText ? labelApprovalNumber(enrichment.labelText, countryCode) : null;
+      const unresolvedWebFields = (supportedProjection.extraction.unresolved as string[]).filter((field) =>
+        !(printedApproval && field === "registration_number") && !(label && field === "label_reference"));
       const extraction = {
         ...supportedProjection.extraction,
+        unresolved: unresolvedWebFields,
         form_type: facts?.form ?? supportedProjection.extraction.form_type,
         active_ingredients: actives,
-        registration_number: null,
+        registration_number: printedApproval,
         label_reference: label,
         manufacturer_label_url: label,
         regulator_label_url: null,
@@ -1347,10 +1354,10 @@ Deno.serve(async (req: Request) => {
           label && enrichment?.uses.length ? enrichment.uses : supportedProjection.extraction.registered_uses,
       };
       const detail = buildStructuredResponse(extraction, countryCode, "Agricultural web and label research");
-      // Registration is optional; no number is copied from a model-suggested lead.
+      // This number was read from the accepted label, not resolved through the register.
+      // Keep scheme null so SavedChemical provenance remains label_lookup.
       if (detail.registration) {
         detail.registration.scheme = null;
-        detail.registration.registration_number = null;
         detail.registration.label_reference = label;
         detail.registration.manufacturer_label_url = label;
         detail.registration.regulator_label_url = null;
@@ -1358,12 +1365,19 @@ Deno.serve(async (req: Request) => {
       if (label) {
         detail.verification.sources.push({ kind: "manufacturer_label", name: "Product label", reference: label, retrieved_at: new Date().toISOString() });
         detail.field_provenance = { label_reference: "manufacturer_label",
+          ...(extraction.registration_number ? { registration_number: "manufacturer_label" } : {}),
           ...(detail.registered_uses.length ? { registered_uses: "manufacturer_label" } : {}) };
       }
       detail.match_source = "ai_candidate";
       stripStructuredDirectionSeeds(detail);
       applyDefaultRateOptions(detail);
-      return json({ candidates, detail, timings: { search_ms: searchMs, extraction_ms: Date.now() - detailStarted } });
+      const totalMs = Date.now() - searchStarted;
+      return json({ candidates, detail, timings: { search_ms: searchMs,
+        label_fetch_ms: enrichment?.diagnostics.label_fetch_ms ?? null,
+        label_parse_ms: enrichment?.diagnostics.label_parse_ms ?? null,
+        label_processing_ms: labelMs,
+        extraction_ms: Date.now() - extractionStarted, review_ready_ms: totalMs,
+        detail_ms: Date.now() - detailStarted } });
     }
 
     if (action === "discover_label") {
