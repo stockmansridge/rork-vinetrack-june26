@@ -1393,7 +1393,9 @@ final class OperatorCategorySyncService {
         self.repository = repository ?? SupabaseOperatorCategorySyncRepository()
         self.metadata = ManagementSyncMetadata(key: "vinetrack_operator_category_sync_metadata")
 
-        let migrationKey = "vinetrack_operator_category_sync_reset_v1"
+        // Earlier per-row decoding silently skipped valid timestamped records while
+        // still advancing the cursor. Re-fetch only this catalogue; pending writes remain.
+        let migrationKey = "vinetrack_operator_category_sync_reset_v2"
         if !UserDefaults.standard.bool(forKey: migrationKey) {
             self.metadata.resetAllLastSync()
             UserDefaults.standard.set(true, forKey: migrationKey)
@@ -1600,27 +1602,9 @@ final class OperatorCategorySyncService {
             print("[OperatorCategorySync]   remote id=\(item.id) name=\(item.name ?? "nil") cost=\(item.costPerHour ?? 0) deletedAt=\(item.deletedAt?.description ?? "nil")")
         }
         #endif
-        if lastSync == nil {
-            let remoteIds = Set(remote.map { $0.id })
-            let local = store.operatorCategories.filter { $0.vineyardId == vineyardId }
-            let missing = local.filter { !remoteIds.contains($0.id) }
-            if !missing.isEmpty {
-                let now = Date()
-                let createdBy = auth?.userId
-                let payloads = missing.map { BackendOperatorCategory.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now) }
-                do {
-                    try await repository.upsertMany(payloads)
-                    #if DEBUG
-                    print("[OperatorCategorySync] initial seed pushed \(payloads.count) local row(s) missing remotely")
-                    #endif
-                } catch {
-                    #if DEBUG
-                    print("[OperatorCategorySync] initial seed push failed: \(error.localizedDescription)")
-                    #endif
-                }
-            }
-            if remote.isEmpty { return }
-        }
+        // A full catalogue refresh is not permission to re-create cached rows
+        // missing on the server. Only explicitly queued local edits are pushed.
+        // In particular, an old cache must not resurrect archived worker types.
         for item in remote {
             if item.deletedAt != nil {
                 store.applyRemoteOperatorCategoryDelete(item.id)

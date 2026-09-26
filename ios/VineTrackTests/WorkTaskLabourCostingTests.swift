@@ -98,6 +98,19 @@ struct WorkTaskLabourCostingTests {
         #expect(WorkTaskLabourCosting.lineCost(stored) == 630)
     }
 
+    @Test func savedManagerRateTwoHoursRemainsSeventySixWithoutCatalogue() {
+        let stored = WorkTaskLabourLine(
+            id: lineId("38"), workTaskId: taskId, vineyardId: vineyard,
+            workDate: day(2026, 8, 4),
+            operatorCategoryId: UUID(uuidString: "14a43189-ebe4-4343-80d0-baa4a738b008"),
+            workerType: "Vineyard Manager (Mitch)", workerCount: 1,
+            hoursPerWorker: 2, hourlyRate: 38, notes: ""
+        )
+        #expect(WorkTaskLabourCosting.personHours(stored) == 2)
+        #expect(WorkTaskLabourCosting.lineCost(stored) == 76)
+        #expect(stored.operatorCategoryId == UUID(uuidString: "14a43189-ebe4-4343-80d0-baa4a738b008"))
+    }
+
     /// An already-aggregated elapsed duration is never multiplied by the crew.
     @Test
     func personHoursAreNeverDerivedFromElapsedDuration() {

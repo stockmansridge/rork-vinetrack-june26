@@ -221,49 +221,49 @@ final class SupabaseTractorFuelLogSyncRepository: TractorFuelLogSyncRepositoryPr
 
 // MARK: - Operator Categories
 
+private enum WorkerTypeCatalogueError: LocalizedError {
+    case incompleteActiveRow
+    var errorDescription: String? { "Worker types were incomplete. Saved types remain available; retry the refresh." }
+}
+
 final class SupabaseOperatorCategorySyncRepository: OperatorCategorySyncRepositoryProtocol {
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendOperatorCategory] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let q = provider.client.from("worker_types").select().eq("vineyard_id", value: vineyardId.uuidString)
-        let data: Data
-        if let since {
-            data = try await q.gte("updated_at", value: iso(since)).order("updated_at", ascending: true).execute().data
-        } else {
-            data = try await q.order("updated_at", ascending: true).execute().data
-        }
-        // Per-row resilient decode so a single bad row created in Lovable does
-        // not hide the entire vineyard's operator categories from iOS.
-        let decoder = JSONDecoder()
-        guard let array = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            #if DEBUG
-            print("[OperatorCategorySync] fetch: unexpected payload shape, falling back to typed decode")
-            #endif
-            if let since {
-                return try await q.gte("updated_at", value: iso(since)).order("updated_at", ascending: true).execute().value
-            }
-            return try await q.order("updated_at", ascending: true).execute().value
-        }
+        // Include tombstones, and page beyond PostgREST's default 1,000-row limit.
+        // A partial page or a malformed row must fail the pull so its cursor is not advanced.
+        let pageSize = 500
+        var offset = 0
         var records: [BackendOperatorCategory] = []
-        records.reserveCapacity(array.count)
-        for row in array {
-            let id = (row["id"] as? String) ?? "<unknown-id>"
-            do {
-                let rowData = try JSONSerialization.data(withJSONObject: row)
-                let record = try decoder.decode(BackendOperatorCategory.self, from: rowData)
-                records.append(record)
-            } catch {
-                #if DEBUG
-                print("[OperatorCategorySync] decode failed id=\(id) error=\(error)")
-                #endif
+        while true {
+            let q = provider.client.from("worker_types").select().eq("vineyard_id", value: vineyardId.uuidString)
+            let data: Data
+            if let since {
+                data = try await q.gte("updated_at", value: iso(since))
+                    .order("updated_at", ascending: true).order("id", ascending: true)
+                    .range(from: offset, to: offset + pageSize - 1).execute().data
+            } else {
+                data = try await q.order("updated_at", ascending: true).order("id", ascending: true)
+                    .range(from: offset, to: offset + pageSize - 1).execute().data
+            }
+            let page = try Self.decodeRows(data)
+            records.append(contentsOf: page)
+            if page.count < pageSize { return records }
+            offset += pageSize
+        }
+    }
+
+    static func decodeRows(_ data: Data) throws -> [BackendOperatorCategory] {
+        let rows = try RPCDecoding.decoder.decode([BackendOperatorCategory].self, from: data)
+        for row in rows where row.deletedAt == nil {
+            guard let name = row.name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let rate = row.costPerHour, rate.isFinite, rate >= 0 else {
+                throw WorkerTypeCatalogueError.incompleteActiveRow
             }
         }
-        #if DEBUG
-        print("[OperatorCategorySync] fetched \(array.count) row(s), decoded \(records.count) for vineyard \(vineyardId.uuidString)")
-        #endif
-        return records
+        return rows
     }
 
     func upsertMany(_ items: [BackendOperatorCategoryUpsert]) async throws {

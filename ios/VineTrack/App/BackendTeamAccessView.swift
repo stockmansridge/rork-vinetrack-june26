@@ -191,8 +191,10 @@ struct BackendTeamAccessView: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(roleColor(member.role).opacity(0.12), in: Capsule())
-                        if let categoryName = member.operatorCategoryName, !categoryName.isEmpty {
-                            Text(categoryName)
+                        if member.operatorCategoryId != nil {
+                            Text(member.operatorCategoryName?.isEmpty == false
+                                 ? (member.operatorCategoryName ?? "Saved worker type unavailable")
+                                 : (vineyardOperatorCategories.first { $0.id == member.operatorCategoryId }?.name ?? "Saved worker type unavailable"))
                                 .font(.caption2.weight(.medium))
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 6)
@@ -458,13 +460,20 @@ private struct EditMemberRoleSheet: View {
                             ForEach(operatorCategories) { cat in
                                 Text(cat.name).tag(UUID?.some(cat.id))
                             }
+                            if let savedId = member.operatorCategoryId,
+                               !operatorCategories.contains(where: { $0.id == savedId }) {
+                                Text(member.operatorCategoryName?.isEmpty == false
+                                     ? (member.operatorCategoryName ?? "Saved worker type unavailable")
+                                     : "Saved worker type unavailable")
+                                    .tag(UUID?.some(savedId))
+                            }
                         }
                         .disabled(!canManage)
                     } header: {
                         Text("Worker Type")
                     } footer: {
                         if operatorCategories.isEmpty {
-                            Text("Create worker types in Spray Management → Worker Types to assign hourly rates for trip cost calculations.")
+                            Text("Worker types are available in Team Operations → Worker Types. If a saved type is unavailable, its assignment is retained.")
                         } else {
                             Text("Used as the default for this member's labour cost on trips. Visible to owners and managers only.")
                         }

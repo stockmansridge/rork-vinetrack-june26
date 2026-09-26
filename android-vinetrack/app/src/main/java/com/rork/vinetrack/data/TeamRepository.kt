@@ -17,6 +17,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * Write path for vineyard team management, mirroring the iOS
@@ -24,6 +28,12 @@ import kotlinx.serialization.Serializable
  * RPCs (sql/079) which enforce owner/manager permission server-side, so the
  * Android UI only needs to gate visibility — the server stays authoritative.
  */
+internal fun workerTypeAssignmentArgs(vineyardId: String, userId: String, workerTypeId: String?) = buildJsonObject {
+    put("p_vineyard_id", vineyardId)
+    put("p_user_id", userId)
+    put("p_worker_type_id", workerTypeId?.let(::JsonPrimitive) ?: JsonNull)
+}
+
 class TeamRepository(private val session: SessionStore) {
 
     /** Pending invitations for a vineyard (joined to the vineyard name). */
@@ -122,8 +132,29 @@ class TeamRepository(private val session: SessionStore) {
     suspend fun updateMemberRole(vineyardId: String, userId: String, role: String) =
         rpc("update_member_role", UpdateRoleArgs(vineyardId, userId, role))
 
-    suspend fun updateMemberOperatorCategory(vineyardId: String, userId: String, operatorCategoryId: String?) =
-        rpc("update_member_worker_type", UpdateCategoryArgs(vineyardId, userId, operatorCategoryId))
+    suspend fun updateMemberOperatorCategory(vineyardId: String, userId: String, operatorCategoryId: String?): Unit =
+        withContext(Dispatchers.IO) {
+            requireConfig()
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("update_member_worker_type")) {
+                authHeaders(token)
+                contentType(ContentType.Application.Json)
+                // The shared Json configuration omits nullable properties. SQL NULL
+                // must be sent explicitly for an intentional "None" selection.
+                setBody(workerTypeAssignmentArgs(vineyardId, userId, operatorCategoryId))
+            }
+            when {
+                response.status.isSuccess() -> {
+                    val rows: List<PersistedWorkerTypeAssignment> = response.body()
+                    if (rows.size != 1 || rows[0].vineyardId != vineyardId ||
+                        rows[0].userId != userId || rows[0].workerTypeId != operatorCategoryId) {
+                        throw IllegalStateException("Worker type assignment could not be confirmed. Refresh and try again.")
+                    }
+                }
+                response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+                else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+            }
+        }
 
     suspend fun removeMember(vineyardId: String, userId: String) =
         rpc("remove_member", RemoveMemberArgs(vineyardId, userId))
@@ -241,10 +272,10 @@ class TeamRepository(private val session: SessionStore) {
     )
 
     @Serializable
-    private data class UpdateCategoryArgs(
-        @SerialName("p_vineyard_id") val vineyardId: String,
-        @SerialName("p_user_id") val userId: String,
-        @SerialName("p_worker_type_id") val operatorCategoryId: String?,
+    private data class PersistedWorkerTypeAssignment(
+        @SerialName("vineyard_id") val vineyardId: String,
+        @SerialName("user_id") val userId: String,
+        @SerialName("worker_type_id") val workerTypeId: String? = null,
     )
 
     @Serializable

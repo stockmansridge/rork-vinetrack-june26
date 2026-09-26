@@ -18,6 +18,18 @@ struct OperatorCategoriesView: View {
 
     var body: some View {
         List {
+            if let error = operatorCategorySync.errorMessage {
+                Section {
+                    Text("Worker types could not be refreshed. Saved types remain available. \(error)")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button("Retry Worker Types") {
+                        Task { await operatorCategorySync.syncForSelectedVineyard() }
+                    }
+                }
+            } else if vineyardCategories.isEmpty && operatorCategorySync.syncStatus == .syncing {
+                Section { ProgressView("Loading worker types…") }
+            }
             Section {
                 ForEach(vineyardCategories) { category in
                     Group {
@@ -62,6 +74,7 @@ struct OperatorCategoriesView: View {
         }
         .navigationTitle("Worker Types")
         .navigationBarTitleDisplayMode(.inline)
+        .task { await operatorCategorySync.syncForSelectedVineyard() }
         .refreshable {
             await operatorCategorySync.syncForSelectedVineyard()
         }

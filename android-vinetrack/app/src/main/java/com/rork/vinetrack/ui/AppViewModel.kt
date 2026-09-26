@@ -554,6 +554,8 @@ data class AppUiState(
     val membershipLoading: Boolean = false,
     val membershipError: String? = null,
     val operatorCategories: List<OperatorCategory> = emptyList(),
+    val operatorCategoriesLoading: Boolean = false,
+    val operatorCategoriesError: String? = null,
     /** Vineyard-scoped custom Trip Functions (active + archived) for the picker and Settings. */
     val vineyardTripFunctions: List<VineyardTripFunction> = emptyList(),
     val sprayRecords: List<SprayRecord> = emptyList(),
@@ -6305,7 +6307,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         reportClientTelemetry()
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), tripsListKnowledge = TripsListKnowledge.Unknown, machines = emptyList(), workTasks = emptyList(), members = emptyList(), membershipLoading = true, membershipError = null, operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), grapeVarieties = emptyList(), grapeVarietyReferenceLoading = true, grapeVarietyReferenceError = null, vineyardClones = emptyList(), vineyardRootstocks = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), grapeAllocations = emptyList(), grapePurchasers = emptyList(), grapeAllocationFinancialAccess = false, workTaskPaddocks = emptyList(), vineyardLabourLines = null, vineyardMachineLines = emptyList(), vineyardTaskMaterials = emptyList(), tripCostAllocations = emptyList(), growthStageImages = emptyList(), seasonYieldOverview = null, seasonYieldVintage = null, seasonYieldError = null) }
+        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), tripsListKnowledge = TripsListKnowledge.Unknown, machines = emptyList(), workTasks = emptyList(), members = emptyList(), membershipLoading = true, membershipError = null, operatorCategories = emptyList(), operatorCategoriesLoading = true, operatorCategoriesError = null, vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), grapeVarieties = emptyList(), grapeVarietyReferenceLoading = true, grapeVarietyReferenceError = null, vineyardClones = emptyList(), vineyardRootstocks = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), grapeAllocations = emptyList(), grapePurchasers = emptyList(), grapeAllocationFinancialAccess = false, workTaskPaddocks = emptyList(), vineyardLabourLines = null, vineyardMachineLines = emptyList(), vineyardTaskMaterials = emptyList(), tripCostAllocations = emptyList(), growthStageImages = emptyList(), seasonYieldOverview = null, seasonYieldVintage = null, seasonYieldError = null) }
         loadedLogoKey = null
         // Apply the cached region settings instantly so units/currency render
         // correctly on first paint, then refresh from the backend below.
@@ -12767,21 +12769,58 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Retry only the worker-type catalogue, without reloading tasks or members. */
+    fun refreshOperatorCategories() {
+        val vineyardId = _ui.value.selectedVineyardId ?: return
+        viewModelScope.launch {
+            _ui.update { it.copy(operatorCategoriesLoading = true, operatorCategoriesError = null) }
+            try {
+                val remote = repo.listOperatorCategories(vineyardId)
+                if (_ui.value.selectedVineyardId != vineyardId) return@launch
+                val cached = domainCache.loadOperatorCategories(session.userId, vineyardId)
+                if (remote.isEmpty() && (!cached.isNullOrEmpty() || _ui.value.members.any { it.operatorCategoryId != null })) {
+                    _ui.update { it.copy(operatorCategoriesLoading = false, operatorCategoriesError = "Worker types could not be confirmed. Saved assignments are retained; retry when online.") }
+                } else {
+                    domainCache.saveOperatorCategories(session.userId, vineyardId, remote)
+                    _ui.update { it.copy(operatorCategories = remote, operatorCategoriesLoading = false, operatorCategoriesError = null) }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (_ui.value.selectedVineyardId == vineyardId) {
+                    _ui.update { it.copy(operatorCategoriesLoading = false, operatorCategoriesError = "Worker types are unavailable. Retry when online.") }
+                }
+            }
+        }
+    }
+
     /** Update a member's role and/or operator category (owner/manager only). */
     fun updateMember(userId: String, role: String, operatorCategoryId: String?, onResult: (Boolean) -> Unit) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
         val current = _ui.value.members.firstOrNull { it.userId == userId }
+        if (current == null) {
+            _ui.update { it.copy(teamError = "Member details are unavailable. Refresh and try again.") }
+            onResult(false)
+            return
+        }
         viewModelScope.launch {
             _ui.update { it.copy(teamBusy = true, teamError = null) }
             try {
-                if (current?.role?.lowercase() != role.lowercase()) {
+                if (current.role?.lowercase() != role.lowercase()) {
                     teamRepo.updateMemberRole(vineyardId, userId, role)
                 }
-                if (current?.operatorCategoryId != operatorCategoryId) {
+                if (current.operatorCategoryId != operatorCategoryId) {
                     teamRepo.updateMemberOperatorCategory(vineyardId, userId, operatorCategoryId)
                 }
-                refreshTeamMembers()
-                _ui.update { it.copy(teamBusy = false) }
+                val refreshed = repo.listTeamMembers(vineyardId)
+                val persisted = refreshed.firstOrNull { it.userId == userId }
+                if (persisted == null || persisted.operatorCategoryId != operatorCategoryId ||
+                    persisted.role?.lowercase() != role.lowercase()) {
+                    throw IllegalStateException("Member assignment could not be confirmed")
+                }
+                if (_ui.value.selectedVineyardId == vineyardId) {
+                    _ui.update { it.copy(members = refreshed, teamBusy = false) }
+                }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 onUnauthorized("updateMember"); onResult(false)
@@ -15981,10 +16020,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             membershipError = "Couldn't confirm your vineyard role. Check your connection and retry."
             _ui.value.members
         }
+        var operatorCategoriesError: String? = null
+        val cachedCategories = domainCache.loadOperatorCategories(userId, vineyardId)
         val operatorCategories = try {
-            repo.listOperatorCategories(vineyardId)
+            val remote = repo.listOperatorCategories(vineyardId)
+            if (remote.isEmpty() && (!cachedCategories.isNullOrEmpty() || members.any { it.operatorCategoryId != null })) {
+                operatorCategoriesError = "Worker types could not be confirmed. Saved assignments are retained; retry when online."
+                cachedCategories ?: _ui.value.operatorCategories
+            } else {
+                domainCache.saveOperatorCategories(userId, vineyardId, remote)
+                remote
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            _ui.value.operatorCategories
+            operatorCategoriesError = "Worker types are unavailable. Showing saved types if available; retry when online."
+            _ui.value.operatorCategories.ifEmpty { cachedCategories ?: emptyList() }
         }
         // Custom trip functions are an optional reference list backing the trip
         // start picker + Settings; soft-fail to the existing list (or empty).
@@ -16325,6 +16376,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 membershipLoading = false,
                 membershipError = membershipError,
                 operatorCategories = operatorCategories,
+                operatorCategoriesLoading = false,
+                operatorCategoriesError = operatorCategoriesError,
                 vineyardTripFunctions = vineyardTripFunctions,
                 sprayRecords = overlaidSpray,
                 sprayJobTemplates = sprayJobTemplates,

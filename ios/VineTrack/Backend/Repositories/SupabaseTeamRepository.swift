@@ -36,13 +36,18 @@ final class SupabaseTeamRepository: TeamRepositoryProtocol {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         // Shared SQL 106 RPC. Owner/manager only; validates the worker type
         // belongs to the vineyard and is not soft-deleted.
-        try await provider.client
+        let response = try await provider.client
             .rpc("update_member_worker_type", params: UpdateMemberOperatorCategoryRequest(
                 vineyardId: vineyardId,
                 userId: userId,
                 operatorCategoryId: operatorCategoryId
             ))
             .execute()
+        let rows = try RPCDecoding.decoder.decode([PersistedWorkerTypeAssignment].self, from: response.data)
+        guard rows.count == 1, rows[0].vineyardId == vineyardId,
+              rows[0].userId == userId, rows[0].workerTypeId == operatorCategoryId else {
+            throw WorkerTypeAssignmentError.persistenceMismatch
+        }
     }
 
     func removeMember(vineyardId: UUID, userId: UUID) async throws {
@@ -184,6 +189,22 @@ nonisolated private struct UpdateMemberRoleRequest: Encodable, Sendable {
         case vineyardId = "p_vineyard_id"
         case userId = "p_user_id"
         case role = "p_role"
+    }
+}
+
+nonisolated private enum WorkerTypeAssignmentError: LocalizedError {
+    case persistenceMismatch
+    var errorDescription: String? { "Worker type assignment could not be confirmed. Refresh and try again." }
+}
+
+nonisolated private struct PersistedWorkerTypeAssignment: Decodable {
+    let vineyardId: UUID
+    let userId: UUID
+    let workerTypeId: UUID?
+    enum CodingKeys: String, CodingKey {
+        case vineyardId = "vineyard_id"
+        case userId = "user_id"
+        case workerTypeId = "worker_type_id"
     }
 }
 

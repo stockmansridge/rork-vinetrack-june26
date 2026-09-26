@@ -157,7 +157,13 @@ class VineyardRepository(private val session: SessionStore) {
     }
 
     suspend fun listOperatorCategories(vineyardId: String): List<OperatorCategory> = withContext(Dispatchers.IO) {
-        get("worker_types?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=name.asc")
+        val rows: List<OperatorCategory> =
+            get("worker_types?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=name.asc")
+        if (rows.any { it.vineyardId != vineyardId || it.deletedAt != null || it.name.isBlank() ||
+                it.costPerHour == null || !it.costPerHour.isFinite() || it.costPerHour < 0.0 }) {
+            throw IllegalStateException("Worker type response was incomplete")
+        }
+        rows
     }
 
     /**

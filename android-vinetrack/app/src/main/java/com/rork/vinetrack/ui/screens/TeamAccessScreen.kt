@@ -78,7 +78,7 @@ fun TeamAccessScreen(
     val canManage = role.canManageTeam
     val isOwner = role == TeamRole.Owner
 
-    LaunchedEffect(state.selectedVineyardId) { vm.loadPendingInvitations() }
+    LaunchedEffect(state.selectedVineyardId) { vm.loadPendingInvitations(); vm.refreshOperatorCategories() }
 
     var showInvite by remember { mutableStateOf(false) }
     var editMember by remember { mutableStateOf<VineyardMember?>(null) }
@@ -120,6 +120,7 @@ fun TeamAccessScreen(
                         state.members.forEachIndexed { index, member ->
                             MemberRow(
                                 member = member,
+                                categories = state.operatorCategories,
                                 isCurrentUser = member.userId == state.currentUserId,
                                 canManage = canManage,
                                 onClick = {
@@ -210,6 +211,10 @@ fun TeamAccessScreen(
                 }
             }
 
+            state.operatorCategoriesError?.let {
+                Text(it, fontSize = 12.sp, color = VineColors.Destructive)
+                TextButton(onClick = vm::refreshOperatorCategories, enabled = !state.operatorCategoriesLoading) { Text("Retry Worker Types") }
+            }
             state.teamError?.let { Text(it, fontSize = 12.sp, color = VineColors.Destructive) }
             state.teamNotice?.let { Text(it, fontSize = 12.sp, color = VineColors.Success) }
         }
@@ -234,8 +239,11 @@ fun TeamAccessScreen(
             busy = state.teamBusy,
             vineyardName = state.selectedVineyard?.name?.takeIf { it.isNotBlank() } ?: "this vineyard",
             onDismiss = { editMember = null },
-            onSave = { r ->
-                vm.updateMember(member.userId, r.raw, member.operatorCategoryId) { ok -> if (ok) editMember = null }
+            categories = state.operatorCategories.filter { it.deletedAt == null },
+            categoriesLoading = state.operatorCategoriesLoading,
+            categoriesError = state.operatorCategoriesError,
+            onSave = { r, categoryId ->
+                vm.updateMember(member.userId, r.raw, categoryId) { ok -> if (ok) editMember = null }
             },
             onRemove = {
                 vm.removeMember(member.userId) { ok -> if (ok) editMember = null }
@@ -260,6 +268,7 @@ fun TeamAccessScreen(
 @Composable
 private fun MemberRow(
     member: VineyardMember,
+    categories: List<OperatorCategory>,
     isCurrentUser: Boolean,
     canManage: Boolean,
     onClick: () -> Unit,
@@ -288,8 +297,10 @@ private fun MemberRow(
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 RoleChip(role)
-                member.operatorCategoryName?.takeIf { it.isNotBlank() }?.let {
-                    Text(it, fontSize = 11.sp, color = vine.textSecondary)
+                if (member.operatorCategoryId != null) {
+                    Text(member.operatorCategoryName?.takeIf { it.isNotBlank() }
+                        ?: categories.firstOrNull { it.id == member.operatorCategoryId }?.displayName
+                        ?: "Saved worker type unavailable", fontSize = 11.sp, color = vine.textSecondary)
                 }
             }
         }
@@ -336,11 +347,8 @@ private fun InviteMemberDialog(
     var categoryId by remember { mutableStateOf<String?>(null) }
     val emailValid = email.contains("@") && email.contains(".")
 
-    // Role and Default Worker Type are independent — changing the role never
-    // clears the selection. Only a reload that removes the selected type does.
-    LaunchedEffect(categories.map { it.id }) {
-        if (categoryId != null && categories.none { it.id == categoryId }) categoryId = null
-    }
+    // Keep an in-progress selection across catalogue refreshes. Only a tap on
+    // None explicitly clears it; the server validates availability at send.
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Invite Member") },
@@ -374,6 +382,9 @@ private fun InviteMemberDialog(
                         color = vine.textSecondary,
                     )
                 } else {
+                    if (categoryId != null && categories.none { it.id == categoryId }) {
+                        OperatorCategoryRow("Selected worker type unavailable", true, onClick = {})
+                    }
                     OperatorCategoryPicker(
                         categories = categories,
                         selected = categoryId,
@@ -442,12 +453,16 @@ private fun EditMemberDialog(
     member: VineyardMember,
     busy: Boolean,
     vineyardName: String,
+    categories: List<OperatorCategory>,
+    categoriesLoading: Boolean,
+    categoriesError: String?,
     onDismiss: () -> Unit,
-    onSave: (TeamRole) -> Unit,
+    onSave: (TeamRole, String?) -> Unit,
     onRemove: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    var role by remember { mutableStateOf(TeamRole.from(member.role)) }
+    var role by remember(member.userId) { mutableStateOf(TeamRole.from(member.role)) }
+    var categoryId by remember(member.userId) { mutableStateOf(member.operatorCategoryId) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit Member") },
@@ -466,12 +481,24 @@ private fun EditMemberDialog(
                 }
                 Text("CHANGE ROLE", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
                 RolePicker(selected = role, onSelect = { role = it })
+                Text("DEFAULT WORKER TYPE", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
+                if (categoriesLoading && categories.isEmpty()) Text("Loading worker types…", fontSize = 12.sp)
+                categoriesError?.let { Text(it, fontSize = 12.sp, color = vine.textSecondary) }
+                val saved = member.operatorCategoryId
+                if (saved != null && categories.none { it.id == saved }) {
+                    OperatorCategoryRow(
+                        label = member.operatorCategoryName?.takeIf { it.isNotBlank() } ?: "Saved worker type unavailable",
+                        isSelected = categoryId == saved,
+                        onClick = { categoryId = saved },
+                    )
+                }
+                OperatorCategoryPicker(categories = categories, selected = categoryId, onSelect = { categoryId = it })
                 TextButton(onClick = onRemove, enabled = !busy) {
                     Text("Remove from Vineyard", color = VineColors.Destructive)
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onSave(role) }, enabled = !busy) { Text("Save") } },
+        confirmButton = { TextButton(onClick = { onSave(role, categoryId) }, enabled = !busy && (role.raw != member.role || categoryId != member.operatorCategoryId)) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

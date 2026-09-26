@@ -36,6 +36,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -79,6 +80,8 @@ fun OperatorCategoriesScreen(vm: AppViewModel, state: AppUiState, modifier: Modi
     var editing by remember { mutableStateOf<OperatorCategory?>(null) }
     var pendingDelete by remember { mutableStateOf<OperatorCategory?>(null) }
 
+    LaunchedEffect(state.selectedVineyardId) { vm.refreshOperatorCategories() }
+
     Scaffold(
         modifier = modifier,
         containerColor = vine.appBackground,
@@ -102,14 +105,27 @@ fun OperatorCategoriesScreen(vm: AppViewModel, state: AppUiState, modifier: Modi
         if (state.operatorCategories.isEmpty()) {
             EmptyState(
                 icon = Icons.Filled.Person,
-                title = "No worker types yet",
-                message = if (canManage) {
-                    "Add worker types with hourly rates to calculate labour costs on trips and work tasks."
-                } else {
-                    "The vineyard owner or manager hasn't added any worker types yet."
+                title = when {
+                    state.operatorCategoriesLoading -> "Loading worker types…"
+                    state.operatorCategoriesError != null -> "Worker types unavailable"
+                    else -> "No worker types yet"
                 },
-                actionLabel = if (canManage) "Add worker type" else null,
-                onAction = if (canManage) ({ creating = true }) else null,
+                message = when {
+                    state.operatorCategoriesLoading -> "Checking this vineyard's worker types."
+                    state.operatorCategoriesError != null -> state.operatorCategoriesError
+                    canManage -> "Add worker types with hourly rates to calculate labour costs on trips and work tasks."
+                    else -> "The vineyard owner or manager hasn't added any worker types yet."
+                },
+                actionLabel = when {
+                    state.operatorCategoriesError != null -> "Retry"
+                    canManage && !state.operatorCategoriesLoading -> "Add worker type"
+                    else -> null
+                },
+                onAction = when {
+                    state.operatorCategoriesError != null -> ({ vm.refreshOperatorCategories() })
+                    canManage && !state.operatorCategoriesLoading -> ({ creating = true })
+                    else -> null
+                },
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
         } else {
@@ -118,6 +134,14 @@ fun OperatorCategoriesScreen(vm: AppViewModel, state: AppUiState, modifier: Modi
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                if (state.operatorCategoriesError != null) {
+                    item(key = "worker-types-error") {
+                        Column {
+                            Text(state.operatorCategoriesError, fontSize = 12.sp, color = vine.textSecondary)
+                            TextButton(onClick = vm::refreshOperatorCategories, enabled = !state.operatorCategoriesLoading) { Text("Retry Worker Types") }
+                        }
+                    }
+                }
                 if (!canManage) {
                     item(key = "locked-note") {
                         Row(

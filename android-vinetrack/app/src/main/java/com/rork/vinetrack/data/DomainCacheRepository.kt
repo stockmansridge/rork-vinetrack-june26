@@ -6,6 +6,7 @@ import com.rork.vinetrack.data.model.DamageRecord
 import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.HistoricalYieldRecord
 import com.rork.vinetrack.data.model.MaintenanceLog
+import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PickingRecord
 import com.rork.vinetrack.data.model.Pin
@@ -63,6 +64,18 @@ class DomainCacheRepository(context: Context) {
 
     fun vineyardsSyncedAt(userId: String?): Long? =
         if (ownerMatches(userId)) store.vineyardsSyncedAt() else null
+
+    // MARK: - Worker types by vineyard
+
+    fun saveOperatorCategories(userId: String?, vineyardId: String, rows: List<OperatorCategory>) {
+        ensureOwner(userId)
+        store.saveOperatorCategories(vineyardId, rows, System.currentTimeMillis())
+    }
+
+    fun loadOperatorCategories(userId: String?, vineyardId: String): List<OperatorCategory>? {
+        if (!ownerMatches(userId) || store.operatorCategoriesSyncedAt(vineyardId) == null) return null
+        return store.loadOperatorCategories(vineyardId)
+    }
 
     // MARK: - Paddocks by vineyard
 

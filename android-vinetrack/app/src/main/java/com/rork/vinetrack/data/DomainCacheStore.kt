@@ -7,6 +7,7 @@ import com.rork.vinetrack.data.model.DamageRecord
 import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.HistoricalYieldRecord
 import com.rork.vinetrack.data.model.MaintenanceLog
+import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PickingRecord
 import com.rork.vinetrack.data.model.Pin
@@ -63,6 +64,7 @@ class DomainCacheStore(context: Context) {
     private val spraySerializer = ListSerializer(SprayRecord.serializer())
     private val sprayTargetSerializer = ListSerializer(VineyardSprayTarget.serializer())
     private val sprayTargetOutboxSerializer = ListSerializer(VineyardSprayTargetCreateParams.serializer())
+    private val operatorCategorySerializer = ListSerializer(OperatorCategory.serializer())
     private val workTaskSerializer = ListSerializer(WorkTask.serializer())
     private val labourLineSerializer = ListSerializer(WorkTaskLabourLine.serializer())
     private val machineLineSerializer = ListSerializer(WorkTaskMachineLine.serializer())
@@ -95,6 +97,20 @@ class DomainCacheStore(context: Context) {
     }
 
     fun vineyardsSyncedAt(): Long? = readTimestamp(KEY_VINEYARDS_AT)
+
+    // MARK: - Worker types by vineyard
+
+    fun loadOperatorCategories(vineyardId: String): List<OperatorCategory> =
+        decode(prefs.getString("worker_types_$vineyardId", null), operatorCategorySerializer)
+
+    fun operatorCategoriesSyncedAt(vineyardId: String): Long? = readTimestamp("worker_types_at_$vineyardId")
+
+    fun saveOperatorCategories(vineyardId: String, rows: List<OperatorCategory>, syncedAt: Long) {
+        prefs.edit {
+            putString("worker_types_$vineyardId", json.encodeToString(operatorCategorySerializer, rows))
+            putLong("worker_types_at_$vineyardId", syncedAt)
+        }
+    }
 
     // MARK: - Paddocks by vineyard
 
