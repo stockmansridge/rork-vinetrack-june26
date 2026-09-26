@@ -62,6 +62,9 @@ import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.data.RainDay
 import com.rork.vinetrack.data.RainForecastBundle
 import com.rork.vinetrack.data.RainForecastRepository
+import com.rork.vinetrack.data.SprayForecastPeriod
+import com.rork.vinetrack.data.SprayForecastPeriodRepository
+import com.rork.vinetrack.data.SprayForecastWindows
 import com.rork.vinetrack.data.VineyardWeatherIntegrationRepository
 import com.rork.vinetrack.data.WeatherIntegrationProvider
 import com.rork.vinetrack.data.WillyWeatherRepository
@@ -148,6 +151,7 @@ private fun RainAndForecastContent(
     val windCautionThresholdKmh = 15.0
 
     var bundle by remember { mutableStateOf<RainForecastBundle?>(null) }
+    var sprayPeriods by remember { mutableStateOf<List<SprayForecastPeriod>>(emptyList()) }
     var persistedHistory by remember { mutableStateOf<List<HistoryDay>?>(null) }
     var persistedTodayMm by remember { mutableStateOf<Double?>(null) }
     var currentConditions by remember { mutableStateOf<ScoutWeatherSnapshot?>(null) }
@@ -170,6 +174,7 @@ private fun RainAndForecastContent(
         val loc = location ?: run {
             hasLoaded = true
             bundle = null
+            sprayPeriods = emptyList()
             persistedHistory = null
             persistedTodayMm = null
             currentConditions = null
@@ -179,6 +184,7 @@ private fun RainAndForecastContent(
             isLoading = true
             errorMessage = null
             wwForecast = null
+            sprayPeriods = emptyList()
             wwSource = null
             wwTimezone = null
             rolling24hMm = null
@@ -209,6 +215,7 @@ private fun RainAndForecastContent(
                             val mapped = result.days.mapNotNull { it.toRainDay(result.timezone) }
                             if (mapped.isNotEmpty()) {
                                 wwForecast = mapped
+                                sprayPeriods = SprayForecastPeriodRepository.willyWeather(result.days, TimeZone.getTimeZone(result.timezone ?: "UTC"))
                                 wwSource = result.source
                                 wwTimezone = result.timezone
                                 rolling24hMm = result.rollingRain?.next24hMm
@@ -234,6 +241,9 @@ private fun RainAndForecastContent(
                     errorMessage = e.message ?: "Could not load rain forecast."
                 }
             }
+            // Supplement only missing four-hour facts; daily provider selection is untouched.
+            val detail = runCatching { SprayForecastPeriodRepository.fetchOpenMeteo(loc.first, loc.second) }.getOrNull()
+            if (detail != null) sprayPeriods = SprayForecastWindows.supplement(sprayPeriods, detail.second)
             // Persisted station-sourced rainfall (`rainfall_daily`) — the same
             // shared records iOS and the portal show, with per-day source
             // labels (Manual/Davis/Wunderground/Open-Meteo). Falls back to the
@@ -369,6 +379,7 @@ private fun RainAndForecastContent(
                 )
             }
 
+            item { SprayWindowSection(sprayPeriods, zone, isLoading) }
             item { ConditionsCheckCard(currentConditions, windCautionThresholdKmh) }
 
             item {
@@ -448,7 +459,28 @@ private fun ConditionsCheckCard(snapshot: ScoutWeatherSnapshot?, windCautionKmh:
             CurrentMetric("Rain today", snapshot?.recentRainfallMm?.let { regionFormatter.formatRainfall(it) } ?: "—", Modifier.weight(1f))
             CurrentMetric("Humidity", snapshot?.humidityPercent?.let { "${it.roundToInt()}%" } ?: "—", Modifier.weight(1f))
         }
-        Text("Spray suitability cannot be qualified without the Portal thresholds and detailed forecast periods. Daily totals are not optimal-window evidence.", fontSize = 11.sp, color = vine.textSecondary)
+        Text("Spray windows use detailed four-hour forecasts. Always check conditions and product labels on-site.", fontSize = 11.sp, color = vine.textSecondary)
+    }
+}
+
+@Composable
+private fun SprayWindowSection(periods: List<SprayForecastPeriod>, timezone: TimeZone, isLoading: Boolean, modifier: Modifier = Modifier) {
+    val vine = LocalVineColors.current
+    val now = System.currentTimeMillis()
+    val windows = remember(periods, timezone.id, now / 60_000) { SprayForecastWindows.windows(periods, timezone, now) }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Spray Window", fontWeight = FontWeight.SemiBold, fontSize = 17.sp, color = vine.textPrimary)
+        if (windows.isEmpty()) {
+            Text(when {
+                isLoading && periods.isEmpty() -> "Loading detailed forecast…"
+                periods.isEmpty() -> "Detailed forecast data is currently unavailable for spray-window calculation."
+                else -> "No optimal spray windows in the next 5 days."
+            }, fontSize = 13.sp, color = vine.textSecondary)
+        } else windows.forEach { window ->
+            Text(window.label(timezone, now), modifier = Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp)).background(vine.cardBackground).padding(12.dp),
+                fontSize = 14.sp, color = if (window.kind == com.rork.vinetrack.data.SprayForecastWindow.Kind.OPTIMAL) vine.textPrimary else VineColors.Cyan)
+        }
     }
 }
 
@@ -602,7 +634,7 @@ private fun DailyForecastSection(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
-            Text("Spray Window Forecast", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, modifier = Modifier.weight(1f))
+            Text("Daily Forecast", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, modifier = Modifier.weight(1f))
             val sourceLabel = forecastSourceLabel(source)
             if (sourceLabel != null) {
                 Text("Forecast source: $sourceLabel", fontSize = 11.sp, color = vine.textSecondary, maxLines = 1)
@@ -622,7 +654,6 @@ private fun DailyForecastSection(
                     }
                 }
             }
-            Text("Daily outlook · detailed period qualification is not available in this view", fontSize = 11.sp, color = vine.textSecondary)
         }
         if (fallbackNote != null && days.isNotEmpty()) {
             Text(

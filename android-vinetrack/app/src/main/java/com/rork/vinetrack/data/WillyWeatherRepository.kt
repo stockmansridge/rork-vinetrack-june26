@@ -35,6 +35,22 @@ data class WillyWeatherLocation(
     val distanceKm: Double? = null,
 )
 
+@Serializable
+data class WillyWeatherDetailEntry(
+    val dateTime: String = "",
+    val temperature: Double? = null,
+    val speed: Double? = null,
+    val humidity: Double? = null,
+    val rainMaxMm: Double? = null,
+) {
+    fun value(field: String): Double? = when (field) {
+        "temperature" -> temperature
+        "speed" -> speed
+        "humidity" -> humidity
+        else -> rainMaxMm
+    }
+}
+
 /**
  * One day of normalised WillyWeather forecast data returned by the
  * `willyweather-proxy` edge function (`fetch_forecast` action). Mirrors the
@@ -56,6 +72,10 @@ data class WillyWeatherForecastDay(
     @SerialName("temp_max_c") val tempMaxC: Double? = null,
     @SerialName("wind_kmh_max") val windKmhMax: Double? = null,
     @SerialName("et0_mm") val et0Mm: Double? = null,
+    val temperatureEntries: List<WillyWeatherDetailEntry> = emptyList(),
+    val windEntries: List<WillyWeatherDetailEntry> = emptyList(),
+    val humidityEntries: List<WillyWeatherDetailEntry> = emptyList(),
+    val rainfallEntries: List<WillyWeatherDetailEntry> = emptyList(),
 )
 
 /** Preserve every provider fact in the Rain & Forecast presentation model. */

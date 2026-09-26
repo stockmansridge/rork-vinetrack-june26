@@ -28,6 +28,7 @@ nonisolated struct WillyWeatherForecastResult: Sendable, Equatable {
     public let rolling24hMm: Double?
     public let rolling48hMm: Double?
     public let rollingRainSource: String?
+    public let sprayPeriods: [SprayForecastPeriod]
 }
 
 nonisolated struct WillyWeatherLocation: Sendable, Equatable, Identifiable, Hashable {
@@ -225,7 +226,8 @@ nonisolated enum VineyardWillyWeatherProxyService {
             timezone: json["timezone"] as? String,
             rolling24hMm: doubleVal((json["rollingRain"] as? [String: Any])?["next24hMm"]),
             rolling48hMm: doubleVal((json["rollingRain"] as? [String: Any])?["next48hMm"]),
-            rollingRainSource: (json["rollingRain"] as? [String: Any])?["source"] as? String
+            rollingRainSource: (json["rollingRain"] as? [String: Any])?["source"] as? String,
+            sprayPeriods: SprayForecastPeriodService.willyWeather(days: rawDays, timezone: zone)
         )
     }
 

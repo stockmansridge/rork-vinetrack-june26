@@ -26,14 +26,16 @@ nonisolated struct IrrigationForecast: Sendable, Hashable {
     let rolling24hMm: Double?
     let rolling48hMm: Double?
     let rollingRainSource: String?
+    let sprayPeriods: [SprayForecastPeriod]
 
-    init(days: [ForecastDay], source: String, timezone: String? = nil, rolling24hMm: Double? = nil, rolling48hMm: Double? = nil, rollingRainSource: String? = nil) {
+    init(days: [ForecastDay], source: String, timezone: String? = nil, rolling24hMm: Double? = nil, rolling48hMm: Double? = nil, rollingRainSource: String? = nil, sprayPeriods: [SprayForecastPeriod] = []) {
         self.days = days
         self.source = source
         self.timezone = timezone
         self.rolling24hMm = rolling24hMm
         self.rolling48hMm = rolling48hMm
         self.rollingRainSource = rollingRainSource
+        self.sprayPeriods = sprayPeriods
     }
 }
 
@@ -122,7 +124,7 @@ class IrrigationForecastService {
                         .fetchForecast(vineyardId: vid, days: clampedDays)
                     let mapped: [ForecastDay] = result.days.map { $0.asForecastDay() }
                     if !mapped.isEmpty {
-                        forecast = IrrigationForecast(days: mapped, source: result.source, timezone: result.timezone, rolling24hMm: result.rolling24hMm, rolling48hMm: result.rolling48hMm, rollingRainSource: result.rollingRainSource)
+                        forecast = IrrigationForecast(days: mapped, source: result.source, timezone: result.timezone, rolling24hMm: result.rolling24hMm, rolling48hMm: result.rolling48hMm, rollingRainSource: result.rollingRainSource, sprayPeriods: result.sprayPeriods)
                         isLoading = false
                         return
                     }

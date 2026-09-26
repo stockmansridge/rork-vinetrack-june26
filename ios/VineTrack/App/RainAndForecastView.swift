@@ -13,6 +13,7 @@ struct RainAndForecastView: View {
     @State private var currentConditions: WeatherCurrentService.CachedSnapshot?
     @State private var selectedForecastDay: Int = 0
     @State private var forecastDays: [ForecastDay] = []
+    @State private var sprayPeriods: [SprayForecastPeriod] = []
     @State private var forecastSource: String?
     @State private var forecastTimezone: TimeZone = TimeZone(secondsFromGMT: 0)!
     @State private var rolling24hMm: Double?
@@ -59,6 +60,7 @@ struct RainAndForecastView: View {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 dailyForecastSection
+                sprayWindowSection
                 conditionsCheckSection
                 rainfallHistorySection
                 calendarLink
@@ -125,7 +127,7 @@ struct RainAndForecastView: View {
                 conditionMetric("Rain today", formatMm(todayMm), icon: "drop")
                 conditionMetric("Humidity", currentConditions?.humidityPct.map { "\(Int($0.rounded()))%" } ?? "—", icon: "humidity")
             }
-            Text("Spray suitability cannot be qualified without the Portal thresholds and detailed forecast periods. Daily totals are not optimal-window evidence.")
+            Text("Spray windows use detailed four-hour forecasts. Always check conditions and product labels on-site.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding(16)
@@ -252,7 +254,7 @@ struct RainAndForecastView: View {
     private var dailyForecastSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Spray Window Forecast")
+                Text("Daily Forecast")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
                 if let label = forecastSourceLabel {
@@ -283,9 +285,6 @@ struct RainAndForecastView: View {
                     }
                 }
                 .contentMargins(.horizontal, 4)
-                Text("Daily outlook · detailed period qualification is not available in this view")
-                    .font(.caption2).foregroundStyle(.secondary)
-                    .padding(.horizontal, 4)
             }
 
             if !hasLocation {
@@ -310,6 +309,35 @@ struct RainAndForecastView: View {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Color(.secondarySystemBackground))
                 )
+            }
+        }
+    }
+
+    private var sprayWindowSection: some View {
+        let windows = SprayForecastWindows.windows(sprayPeriods, timezone: forecastTimezone)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Spray Window").font(.headline)
+            if isLoadingForecast && sprayPeriods.isEmpty {
+                ProgressView("Loading detailed forecast…")
+            } else if sprayPeriods.isEmpty {
+                Text("Detailed forecast data is currently unavailable for spray-window calculation.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            } else if windows.isEmpty {
+                Text("No optimal spray windows in the next 5 days.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            } else {
+                ForEach(windows, id: \.start) { window in
+                    HStack(spacing: 10) {
+                        Image(systemName: window.kind == .optimal ? "leaf" : "humidity")
+                            .foregroundStyle(window.kind == .optimal ? .green : .teal)
+                        Text(window.label(in: forecastTimezone, now: Date()))
+                            .font(.subheadline).monospacedDigit()
+                        Spacer()
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 12))
+                }
             }
         }
     }
@@ -735,6 +763,7 @@ struct RainAndForecastView: View {
     private func loadForecast() async {
         guard let lat = latitude, let lon = longitude else {
             forecastDays = []
+            sprayPeriods = []
             hasLoadedForecast = true
             return
         }
@@ -742,6 +771,8 @@ struct RainAndForecastView: View {
         let svc = IrrigationForecastService()
         await svc.fetchForecast(latitude: lat, longitude: lon, days: 7, vineyardId: store.selectedVineyardId)
         forecastDays = svc.forecast?.days ?? []
+        let supplemental = await SprayForecastPeriodService.fetchOpenMeteo(latitude: lat, longitude: lon)
+        sprayPeriods = SprayForecastWindows.supplement(svc.forecast?.sprayPeriods ?? [], with: supplemental)
         selectedForecastDay = 0
         forecastSource = svc.forecast?.source
         forecastTimezone = svc.forecast?.timezone.flatMap(TimeZone.init(identifier:)) ?? TimeZone(secondsFromGMT: 0)!
