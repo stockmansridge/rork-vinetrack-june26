@@ -911,16 +911,62 @@ nonisolated struct ChemicalInfoService: Sendable {
         let brand: String
         let activeIngredient: String
         let productCategory: String?
-        var id: String { name }
+        let registrationNumber: String?
+        var id: String { "\(name)#\(registrationNumber ?? "")" }
         enum CodingKeys: String, CodingKey {
             case name, brand, activeIngredient
             case productCategory = "product_category"
+            case registrationNumber = "registration_number"
         }
     }
 
     struct WebV2Lookup: Decodable {
         let candidates: [WebV2Candidate]
         let detail: ChemicalStructuredLookup?
+    }
+
+    /// The catalogue has stricter eligibility than discovery. An official crop
+    /// registration can still be selected and have its label checked independently.
+    static func agriculturalRegisterCandidates(_ rows: [ChemicalSearchResult]) -> [WebV2Candidate] {
+        rows.filter { row in
+            guard row.source == ChemicalSearchResult.officialRegisterSource,
+                  let number = row.registrationNumber, !number.isEmpty,
+                  row.registrationScheme?.lowercased() == "apvma" else { return false }
+            let description = "\(row.name) \(row.productCategory ?? "")".lowercased()
+            let isCropInput = ["herbicide", "fungicide", "insecticide", "adjuvant", "fertiliser", "fertilizer", "biostimulant"].contains {
+                description.contains($0)
+            }
+            let isAnimalProduct = ["cattle", "horse", "sheep", "livestock", "pour-on", "drench", "veterinary"].contains {
+                description.contains($0)
+            }
+            return isCropInput && !isAnimalProduct
+        }.map { row in
+            WebV2Candidate(name: row.name, brand: row.brand,
+                           activeIngredient: row.activeIngredient, productCategory: row.productCategory,
+                           registrationNumber: row.registrationNumber)
+        }
+    }
+
+    func lookupOnlineCandidates(query: String) async throws -> WebV2Lookup {
+        // The existing official register search is fast for registered crops;
+        // keep web research for unregistered products or unresolved names.
+        if let response = try? await searchResponse(query: query, country: "AU") {
+            let candidates = Self.agriculturalRegisterCandidates(response.results)
+            if !candidates.isEmpty { return WebV2Lookup(candidates: candidates, detail: nil) }
+        }
+        return try await lookupWebV2(query: query)
+    }
+
+    func lookupSelectedOnlineCandidate(_ candidate: WebV2Candidate, query: String) async throws -> WebV2Lookup {
+        guard let number = candidate.registrationNumber else {
+            return try await lookupWebV2(query: query, selectedName: candidate.name)
+        }
+        let detail = try await discoverLabel(query: number)
+        guard detail.registration?.registrationNumber == number,
+              detail.productName?.localizedCaseInsensitiveCompare(candidate.name) == .orderedSame else {
+            throw ChemicalLookupError.parseFailed
+        }
+        return WebV2Lookup(candidates: [candidate], detail: detail)
     }
 
     func lookupWebV2(query: String, selectedName: String? = nil) async throws -> WebV2Lookup {

@@ -629,7 +629,7 @@ struct ChemicalSearchV2View: View {
         isExternalLookupRunning = true; message = nil; onlineCandidates = []; diagnostics.fallbackInvoked = true
         Task {
             do {
-                let response = try await externalService.lookupWebV2(query: trimmed)
+                let response = try await externalService.lookupOnlineCandidates(query: trimmed)
                 guard externalRequestID == token else { return }
                 onlineCandidates = response.candidates
                 if let detail = response.detail { openWebReview(detail, fallbackName: response.candidates.first?.name ?? trimmed) }
@@ -664,10 +664,11 @@ struct ChemicalSearchV2View: View {
 
     private func openOnlineCandidate(_ candidate: ChemicalInfoService.WebV2Candidate) {
         let token = UUID(); externalRequestID = token
-        isExternalLookupRunning = true; message = "Reading product label…"
+        isExternalLookupRunning = true
+        message = candidate.registrationNumber == nil ? "Reading product label…" : "Checking official product record…"
         Task {
             do {
-                let response = try await externalService.lookupWebV2(query: query, selectedName: candidate.name)
+                let response = try await externalService.lookupSelectedOnlineCandidate(candidate, query: query)
                 guard externalRequestID == token else { return }
                 if let detail = response.detail { openWebReview(detail, fallbackName: candidate.name) }
                 else { message = "No reliable product source found. Check details or create manually." }

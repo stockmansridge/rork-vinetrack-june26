@@ -2,7 +2,26 @@ import Foundation
 import Testing
 @testable import VineTrack
 
+@MainActor
 struct ChemicalSearchV2Tests {
+    @Test func onlineRegisterDiscoveryKeepsCropBeastAndRejectsVeterinaryNames() {
+        let rows = [
+            ChemicalSearchResult(name: "BEAST Pour-On For Cattle", registrationNumber: "92938",
+                                 registrationScheme: "apvma", source: "official_register"),
+            ChemicalSearchResult(name: "BEAST Pour-on for Horses", registrationNumber: "94555",
+                                 registrationScheme: "apvma", source: "official_register"),
+            ChemicalSearchResult(name: "CropSure Beast 200 Herbicide", activeIngredient: "Glufosinate-ammonium",
+                                 brand: "CROPSURE PTY LTD", registrationNumber: "90143",
+                                 registrationScheme: "apvma", productCategory: "herbicide", source: "official_register"),
+            ChemicalSearchResult(name: "Beast Herbicide", registrationNumber: "99999",
+                                 registrationScheme: "apvma", productCategory: "herbicide", source: "suggestion"),
+        ]
+        let candidates = ChemicalInfoService.agriculturalRegisterCandidates(rows)
+        #expect(candidates.map(\.name) == ["CropSure Beast 200 Herbicide"])
+        #expect(candidates.first?.registrationNumber == "90143")
+        #expect(candidates.first?.activeIngredient == "Glufosinate-ammonium")
+    }
+
     @Test func completenessUsesFieldsNotRegistrationOrEvidenceGrade() {
         let active = ChemicalActiveIngredient(
             name: "Tebuconazole", concentration: 200, concentrationUnit: .gramsPerLitre,
@@ -147,7 +166,7 @@ struct ChemicalSearchV2Tests {
 
     @Test func minimumReviewSaveDoesNotRequireRegisteredUse() {
         let rate = ChemicalLabelRate(basis: .perHectare, value: 2, unit: "L")
-        #expect(ChemicalSaveContract.evaluateMinimumOperational(productName: "Test", productUnit: "Litres", rates: [rate]).canSave)
+        #expect(ChemicalSaveContract.evaluateMinimumOperational(productName: "Test", productUnit: "Litres", rates: [rate]).isSatisfied)
     }
 
     @Test func photoRegistrationIdentityIsExtractedBeforeFallback() {
