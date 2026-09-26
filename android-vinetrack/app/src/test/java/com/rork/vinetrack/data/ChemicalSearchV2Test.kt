@@ -31,6 +31,18 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ChemicalSearchV2Test {
+    @Test fun registerFirstDiscoveryKeepsCropBeastButNotVeterinaryOrSuggestions() {
+        val rows = listOf(
+            ChemicalInfoService.ChemicalSearchResult(name = "BEAST Pour-On For Cattle", registrationNumber = "92938", registrationScheme = "apvma", source = "official_register"),
+            ChemicalInfoService.ChemicalSearchResult(name = "BEAST Pour-on for Horses", registrationNumber = "94555", registrationScheme = "apvma", source = "official_register"),
+            ChemicalInfoService.ChemicalSearchResult(name = "CropSure Beast 200 Herbicide", activeIngredient = "Glufosinate-ammonium", registrationNumber = "90143", registrationScheme = "apvma", productCategory = "herbicide", source = "official_register"),
+            ChemicalInfoService.ChemicalSearchResult(name = "Beast Herbicide", registrationNumber = "99999", registrationScheme = "apvma", productCategory = "herbicide", source = "suggestion"),
+        )
+        val candidates = ChemicalInfoService().agriculturalRegisterCandidates(rows)
+        assertEquals(listOf("CropSure Beast 200 Herbicide"), candidates.map { it.name })
+        assertEquals("90143", candidates.single().registrationNumber)
+    }
+
     @Test fun webCandidateWithoutAPVMANumberDecodesForReview() {
         val payload = """{"candidates":[{"name":"CropSure Beast 200 Herbicide","brand":"CropSure Pty Ltd","activeIngredient":"Glufosinate-ammonium","product_category":"herbicide","source":"research"}],"detail":null,"timings":{"search_ms":324,"extraction_ms":0}}"""
         val response = SupabaseClient.json.decodeFromString<ChemicalInfoService.WebV2Lookup>(payload)

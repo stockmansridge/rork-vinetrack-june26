@@ -434,18 +434,20 @@ struct ChemicalSearchV2View: View {
                             onlineCandidates = []
                             savedMatches = []
                             isSearching = false
+                            isExternalLookupRunning = false
+                            message = nil
                         }
                     Button(action: search) {
                         if isSearching { ProgressView().frame(maxWidth: .infinity) }
                         else { Label("Find Chemical", systemImage: "magnifyingglass").frame(maxWidth: .infinity) }
                     }
-                    .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || isSearching)
+                    .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || isSearching || isExternalLookupRunning)
                     Button(action: openManual) {
                         Label("Create Manually", systemImage: "plus").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                 } footer: {
-                    Text("First checks chemicals saved in this vineyard, then VineTrack's catalogue. Online label search is available if needed.")
+                    Text("Checks your Chemical Store, then VineTrack's catalogue. If there is no catalogue match, searches online automatically.")
                 }
 
                 if isReadingPhoto { HStack { ProgressView(); Text("Identifying product on label…") } }
@@ -502,11 +504,11 @@ struct ChemicalSearchV2View: View {
                     }
                 }
 
-                Section(results.isEmpty ? "No VineTrack match found" : "Other options") {
+                Section(results.isEmpty ? "More ways to find a product" : "Other options") {
                     if isExternalLookupRunning {
                         HStack { ProgressView(); Text("Finding agricultural product and reading label…") }
                     } else {
-                        Button("Search Online", action: searchOnline)
+                        Button("Search Online") { searchOnline() }
                             .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
                     }
                     Button("Take Photo of Label") { isShowingCamera = true }
@@ -555,6 +557,7 @@ struct ChemicalSearchV2View: View {
         guard trimmed.count >= 2 else { return }
         requestID = nil
         externalRequestID = nil
+        isExternalLookupRunning = false
         results = []
         onlineCandidates = []
         savedMatches = ChemicalSearchV2Duplicate.localMatches(query: trimmed, in: store.savedChemicals)
@@ -580,7 +583,10 @@ struct ChemicalSearchV2View: View {
                     externalLookupSucceeded: diagnostics.externalLookupSucceeded
                 )
                 print("[ChemicalSearchV2] query=\(trimmed) duration_ms=\(diagnostics.durationMilliseconds) results=\(found.count) master_hit=\(!found.isEmpty)")
-                if found.isEmpty { message = "No VineTrack match found. Search for the product label, or create manually." }
+                if found.isEmpty {
+                    isSearching = false
+                    searchOnline(automatically: true)
+                }
             } catch { if requestID == token { message = error.localizedDescription; results = [] } }
             if requestID == token { isSearching = false }
         }
@@ -620,13 +626,17 @@ struct ChemicalSearchV2View: View {
         )
     }
 
-    private func searchOnline() {
+    private func searchOnline(automatically: Bool = false) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2, !isExternalLookupRunning else { return }
         let local = ChemicalSearchV2Duplicate.localMatches(query: trimmed, in: store.savedChemicals)
         if !local.isEmpty { savedMatches = local; results = []; return }
+        requestID = nil
+        isSearching = false
         let token = UUID(); externalRequestID = token
-        isExternalLookupRunning = true; message = nil; onlineCandidates = []; diagnostics.fallbackInvoked = true
+        isExternalLookupRunning = true
+        message = automatically ? "No catalogue match. Searching the official register online…" : "Searching the official register online…"
+        onlineCandidates = []; diagnostics.fallbackInvoked = true
         Task {
             do {
                 let response = try await externalService.lookupOnlineCandidates(query: trimmed)
@@ -634,13 +644,13 @@ struct ChemicalSearchV2View: View {
                 onlineCandidates = response.candidates
                 if let detail = response.detail { openWebReview(detail, fallbackName: response.candidates.first?.name ?? trimmed) }
                 message = response.detail != nil ? nil : onlineCandidates.isEmpty
-                    ? "No reliable agricultural source found. Check the name or create manually."
-                    : "Choose the agricultural product you use."
+                    ? "No reliable agricultural source found online. Check the name or create manually."
+                    : automatically ? "No catalogue match. Choose an agricultural product found online." : "Choose the agricultural product you use."
                 diagnostics.externalLookupSucceeded = response.detail != nil || !onlineCandidates.isEmpty
             } catch {
                 if externalRequestID == token {
                     diagnostics.externalLookupSucceeded = false
-                    message = "Online search is unavailable. Try again or create manually."
+                    message = automatically ? "No catalogue match. Online search is unavailable; try again or create manually." : "Online search is unavailable. Try again or create manually."
                 }
             }
             if externalRequestID == token { isExternalLookupRunning = false; externalRequestID = nil }

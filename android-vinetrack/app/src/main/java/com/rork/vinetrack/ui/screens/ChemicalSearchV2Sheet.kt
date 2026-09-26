@@ -191,6 +191,7 @@ internal fun ChemicalSearchV2Sheet(
     var photoRegistration by remember { mutableStateOf<String?>(null) }
     var photoProductName by remember { mutableStateOf<String?>(null) }
     var externalJob by remember { mutableStateOf<Job?>(null) }
+    var externalRequestId by remember { mutableStateOf<String?>(null) }
     var photoJob by remember { mutableStateOf<Job?>(null) }
     DisposableEffect(Unit) {
         onDispose { externalJob?.cancel(); photoJob?.cancel(); searchJob?.cancel() }
@@ -240,39 +241,6 @@ internal fun ChemicalSearchV2Sheet(
         )
     }
 
-    fun runSearch(searchQuery: String = query) {
-        val trimmed = searchQuery.trim()
-        if (trimmed.length < 2) return
-        searchJob?.cancel()
-        requestId = null
-        results = emptyList()
-        onlineCandidates = emptyList()
-        externalJob?.cancel()
-        savedMatches = ChemicalSearchV2Duplicate.localMatches(trimmed, state.savedChemicals)
-        if (savedMatches.isNotEmpty()) {
-            searching = false
-            message = "This chemical is already saved. Use the existing record without creating another copy."
-            return
-        }
-        val token = UUID.randomUUID().toString()
-        requestId = token
-        searching = true
-        message = null
-        searchJob = scope.launch {
-            try {
-                val found = repository.search(trimmed)
-                if (requestId != token) return@launch
-                results = found
-                message = if (found.isEmpty()) "No VineTrack match found. Search for the product label, or create manually." else null
-            } catch (_: CancellationException) {
-            } catch (error: Exception) {
-                if (requestId == token) { results = emptyList(); message = error.message ?: "Master search failed." }
-            } finally {
-                if (requestId == token) searching = false
-            }
-        }
-    }
-
     fun openWebReview(lookup: ChemicalInfoService.ChemicalStructuredLookup, fallbackName: String) {
         val intel = lookup.intelligence()
         val rates = ViticultureRates.fromRegisteredUses(intel.registeredUses)
@@ -290,17 +258,94 @@ internal fun ChemicalSearchV2Sheet(
 
     fun openOnlineCandidate(candidate: ChemicalInfoService.WebV2Candidate) {
         externalJob?.cancel()
+        val token = UUID.randomUUID().toString()
+        externalRequestId = token
         externalBusy = true
-        message = "Reading product label…"
+        message = if (candidate.registrationNumber == null) "Reading product label…" else "Checking official product record…"
+        val selectedQuery = query.trim()
         externalJob = scope.launch {
             try {
-                val result = externalService.lookupWebV2(query, candidate.name)
+                val result = externalService.lookupSelectedOnlineCandidate(candidate, selectedQuery)
+                if (externalRequestId != token) return@launch
                 if (result.detail != null) openWebReview(result.detail, candidate.name)
                 else message = "No reliable product source found. Check details or create manually."
             } catch (_: CancellationException) {
             } catch (_: Exception) {
-                message = "Could not read this product. Try again or create manually."
-            } finally { externalBusy = false }
+                if (externalRequestId == token) message = "Could not read this product. Try again or create manually."
+            } finally {
+                if (externalRequestId == token) { externalBusy = false; externalRequestId = null }
+            }
+        }
+    }
+
+    fun runOnlineSearch(trimmed: String, automatically: Boolean = false) {
+        if (trimmed.length < 2) return
+        val local = ChemicalSearchV2Duplicate.localMatches(trimmed, state.savedChemicals)
+        if (local.isNotEmpty()) { savedMatches = local; results = emptyList(); return }
+        requestId = null
+        searching = false
+        externalJob?.cancel()
+        val token = UUID.randomUUID().toString()
+        externalRequestId = token
+        externalBusy = true
+        message = if (automatically) "No catalogue match. Searching the official register online…" else "Searching the official register online…"
+        onlineCandidates = emptyList()
+        externalJob = scope.launch {
+            try {
+                val response = externalService.lookupOnlineCandidates(trimmed)
+                if (externalRequestId != token) return@launch
+                onlineCandidates = response.candidates
+                response.detail?.let { openWebReview(it, response.candidates.firstOrNull()?.name ?: trimmed) }
+                message = if (response.detail != null) null else if (onlineCandidates.isEmpty())
+                    "No reliable agricultural source found online. Check the name or create manually."
+                else if (automatically) "No catalogue match. Choose an agricultural product found online."
+                else "Choose the agricultural product you use."
+            } catch (_: CancellationException) {
+            } catch (_: Exception) {
+                if (externalRequestId == token) message = if (automatically)
+                    "No catalogue match. Online search is unavailable; try again or create manually."
+                else "Online search is unavailable. Try again or create manually."
+            } finally {
+                if (externalRequestId == token) { externalBusy = false; externalRequestId = null }
+            }
+        }
+    }
+
+    fun runSearch(searchQuery: String = query) {
+        val trimmed = searchQuery.trim()
+        if (trimmed.length < 2) return
+        searchJob?.cancel()
+        requestId = null
+        results = emptyList()
+        onlineCandidates = emptyList()
+        externalRequestId = null
+        externalJob?.cancel()
+        externalBusy = false
+        savedMatches = ChemicalSearchV2Duplicate.localMatches(trimmed, state.savedChemicals)
+        if (savedMatches.isNotEmpty()) {
+            searching = false
+            message = "This chemical is already saved. Use the existing record without creating another copy."
+            return
+        }
+        val token = UUID.randomUUID().toString()
+        requestId = token
+        searching = true
+        message = null
+        searchJob = scope.launch {
+            try {
+                val found = repository.search(trimmed)
+                if (requestId != token) return@launch
+                results = found
+                if (found.isEmpty()) {
+                    searching = false
+                    runOnlineSearch(trimmed, automatically = true)
+                }
+            } catch (_: CancellationException) {
+            } catch (_: Exception) {
+                if (requestId == token) { results = emptyList(); message = "Catalogue search is unavailable. Try again or search online." }
+            } finally {
+                if (requestId == token) searching = false
+            }
         }
     }
 
@@ -351,23 +396,25 @@ internal fun ChemicalSearchV2Sheet(
                         query = it
                         requestId = null
                         searchJob?.cancel()
+                        externalRequestId = null
                         externalJob?.cancel()
                         results = emptyList()
                         onlineCandidates = emptyList()
                         savedMatches = emptyList()
                         searching = false
                         externalBusy = false
+                        message = null
                     },
                     label = { Text("Product, APVMA number, active or manufacturer") },
                     modifier = Modifier.fillMaxWidth(), singleLine = true,
                 )
-                Button(onClick = { runSearch() }, enabled = query.trim().length >= 2 && !searching, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = { runSearch() }, enabled = query.trim().length >= 2 && !searching && !externalBusy, modifier = Modifier.fillMaxWidth()) {
                     if (searching) CircularProgressIndicator() else Text("Find Chemical")
                 }
                 OutlinedButton(onClick = ::openManual, modifier = Modifier.fillMaxWidth()) {
                     Text("Create Manually")
                 }
-                Text("First checks chemicals saved in this vineyard, then VineTrack's catalogue. Online label search is available if needed.", fontSize = 12.sp)
+                Text("Checks your Chemical Store, then VineTrack's catalogue. If there is no catalogue match, searches online automatically.", fontSize = 12.sp)
                 if (photoBusy) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp)); Text("Identifying product on label…")
                 }
@@ -410,31 +457,10 @@ internal fun ChemicalSearchV2Sheet(
                 }
                 HorizontalDivider()
                 TextButton(
-                    onClick = {
-                        val trimmed = query.trim()
-                        if (trimmed.length < 2 || externalBusy) return@TextButton
-                        val local = ChemicalSearchV2Duplicate.localMatches(trimmed, state.savedChemicals)
-                        if (local.isNotEmpty()) { savedMatches = local; results = emptyList(); return@TextButton }
-                        externalBusy = true
-                        message = null
-                        onlineCandidates = emptyList()
-                        externalJob = scope.launch {
-                            try {
-                                val response = externalService.lookupWebV2(trimmed)
-                                onlineCandidates = response.candidates
-                                if (response.detail != null) openWebReview(response.detail, response.candidates.firstOrNull()?.name ?: trimmed)
-                                message = if (response.detail != null) null else if (onlineCandidates.isEmpty())
-                                    "No reliable agricultural source found. Check the name or create manually."
-                                else "Choose the agricultural product you use."
-                            } catch (_: CancellationException) {
-                            } catch (_: Exception) {
-                                message = "Online search is unavailable. Try again or create manually."
-                            } finally { externalBusy = false }
-                        }
-                    },
+                    onClick = { if (!externalBusy) runOnlineSearch(query.trim()) },
                     enabled = query.trim().length >= 2 && !externalBusy,
                 ) {
-                    if (externalBusy) { CircularProgressIndicator(modifier = Modifier.size(20.dp)); Text("Finding product and reading label…") }
+                    if (externalBusy) { CircularProgressIndicator(modifier = Modifier.size(20.dp)); Text("Finding agricultural product…") }
                     else Text("Search online")
                 }
                 OutlinedButton(onClick = capture.takePhoto, modifier = Modifier.fillMaxWidth()) { Text("Take Photo of Label") }
