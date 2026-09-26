@@ -49,6 +49,49 @@ struct ChemicalSearchV2Tests {
         #expect(result.title == "Review required")
         #expect(result.missing.contains("product form"))
     }
+    @Test func historicalFlumioxazinGroupWordingIsNotReviewRequired() {
+        let historical = ChemicalVerificationConflict(
+            field: "activity_group", activeIngredientName: "Flumioxazin",
+            extractedValue: "HRAC 14", authoritativeValue: "HRAC E"
+        )
+        let intel = ChemicalIntelligence(
+            activeIngredients: [ChemicalActiveIngredient(name: "Flumioxazin", activityGroup: ChemicalActivityGroup(scheme: .hrac, code: "14"))],
+            verification: ChemicalVerification(status: .conflict, conflicts: [historical]),
+            productCategory: "herbicide"
+        )
+        #expect(intel.verification.conflicts == [historical])
+        #expect(intel.resolvedVerificationStatus != .conflict)
+        let complete = ChemicalDetailsCompleteness.assess(
+            name: "Flumioxazin", category: "herbicide", form: "liquid", intelligence: intel,
+            labelURL: "https://example.com/label", hasDefaultRate: true, hasLabelRate: true
+        )
+        #expect(complete.title == "Basic details")
+        #expect(complete.missing.contains("active concentration"))
+        let basic = ChemicalDetailsCompleteness.assess(
+            name: "Flumioxazin", category: "herbicide", form: "", intelligence: intel,
+            labelURL: "", hasDefaultRate: false, hasLabelRate: false
+        )
+        #expect(basic.title == "Basic details")
+    }
+
+    @Test func genuineFlumioxazinGroupConflictRequiresReview() {
+        let genuine = ChemicalVerificationConflict(
+            field: "activity_group", activeIngredientName: "Flumioxazin",
+            extractedValue: "HRAC 2", authoritativeValue: "HRAC 14"
+        )
+        let intel = ChemicalIntelligence(
+            activeIngredients: [ChemicalActiveIngredient(name: "Flumioxazin", activityGroup: ChemicalActivityGroup(scheme: .hrac, code: "14"))],
+            verification: ChemicalVerification(status: .verified, conflicts: [genuine]),
+            productCategory: "herbicide"
+        )
+        #expect(intel.resolvedVerificationStatus == .conflict)
+        let result = ChemicalDetailsCompleteness.assess(
+            name: "Flumioxazin", category: "herbicide", form: "", intelligence: intel,
+            labelURL: "", hasDefaultRate: false, hasLabelRate: false
+        )
+        #expect(result.title == "Review required")
+    }
+
     @Test func formulationAndCategorySynonymsCountAsApplicableDetails() {
         let herbicide = ChemicalIntelligence(productCategory: "non-selective herbicide")
         let liquid = ChemicalDetailsCompleteness.assess(

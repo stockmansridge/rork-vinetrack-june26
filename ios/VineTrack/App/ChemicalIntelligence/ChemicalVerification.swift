@@ -146,6 +146,36 @@ nonisolated struct ChemicalVerificationConflict: Codable, Sendable, Hashable, Id
         authoritativeSource = ChemicalDataSourceKind(rawValue: au) ?? .authoritativeClassification
     }
 
+    /// Keep historical group aliases in evidence without treating them as a customer-visible disagreement.
+    nonisolated static func customerVisible(_ conflicts: [Self]) -> [Self] {
+        conflicts.filter { !$0.isHistoricalGroupEquivalence }
+    }
+
+    private var isHistoricalGroupEquivalence: Bool {
+        guard field.trimmingCharacters(in: .whitespacesAndNewlines) == "activity_group",
+              let active = activeIngredientName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !active.isEmpty else { return false }
+        let extracted = extractedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let authoritative = authoritativeValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let extractedScheme = Self.scheme(in: extracted)
+        let authoritativeScheme = Self.scheme(in: authoritative)
+        guard let scheme = extractedScheme ?? authoritativeScheme,
+              extractedScheme == nil || authoritativeScheme == nil || extractedScheme == authoritativeScheme else { return false }
+        let first = ChemicalActivityGroup(scheme: scheme, code: extracted)
+        let second = ChemicalActivityGroup(scheme: scheme, code: authoritative)
+        guard ChemicalActivityGroup.isPlausibleCode(first.code),
+              ChemicalActivityGroup.isPlausibleCode(second.code) else { return false }
+        return AuthoritativeActivityGroups.groupsAreEquivalent(activeNamed: active, first, second)
+    }
+
+    private static func scheme(in value: String) -> ChemicalActivityGroupScheme? {
+        let upper = value.uppercased()
+        if upper.hasPrefix("HRAC ") { return .hrac }
+        if upper.hasPrefix("FRAC ") { return .frac }
+        if upper.hasPrefix("IRAC ") { return .irac }
+        return nil
+    }
+
     /// One-line operator-facing summary.
     nonisolated var summary: String {
         let subject = activeIngredientName.map { "\($0): " } ?? ""
@@ -215,7 +245,7 @@ nonisolated struct ChemicalVerification: Codable, Sendable, Hashable {
         actives: [ChemicalActiveIngredient],
         hasRegistration: Bool
     ) -> ChemicalVerificationStatus {
-        if !conflicts.isEmpty { return .conflict }
+        if !ChemicalVerificationConflict.customerVisible(conflicts).isEmpty { return .conflict }
         if actives.isEmpty {
             return status == .needsMatch ? .needsMatch : .unverified
         }

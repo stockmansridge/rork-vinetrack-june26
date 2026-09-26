@@ -19,6 +19,7 @@ import com.rork.vinetrack.data.chemical.ChemicalSaveViolationCode
 import com.rork.vinetrack.data.chemical.ChemicalVerification
 import com.rork.vinetrack.data.chemical.ChemicalVerificationConflict
 import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
+import com.rork.vinetrack.data.model.SavedChemical
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -73,6 +74,50 @@ class ChemicalRateGateAddendumTest {
         val result = ChemicalDetailsCompleteness.assess("Spray", "fungicide", "", intel, "", false, false)
         assertEquals("Review required", result.title)
         assertTrue("product form" in result.missing)
+    }
+
+    @Test fun `historical flumioxazin group conflict does not require review in intelligence or saved chemical`() {
+        val historical = groupConflict("HRAC 14", "HRAC E")
+        val intel = ChemicalIntelligence(
+            activeIngredients = listOf(ChemicalActiveIngredient(
+                name = "Flumioxazin", activityGroup = ChemicalActivityGroup.of(ChemicalActivityGroupScheme.HRAC, "14"),
+            )),
+            verification = ChemicalVerification(status = ChemicalVerificationStatus.CONFLICT, conflicts = listOf(historical)),
+            productCategory = "herbicide",
+        )
+        assertEquals(listOf(historical), intel.verification.conflicts)
+        assertFalse(intel.resolvedVerificationStatus == ChemicalVerificationStatus.CONFLICT)
+        val basic = ChemicalDetailsCompleteness.assess("Flumioxazin", "herbicide", "", intel, "", false, false)
+        assertEquals("Basic details", basic.title)
+        val saved = SavedChemical(
+            id = "chemical-id", vineyardId = "vineyard-id", name = "Flumioxazin",
+            productCategory = "herbicide", productForm = "liquid", labelUrl = "https://example.com/label",
+            activeIngredients = intel.activeIngredients, verificationStatusRaw = "conflict",
+            verificationConflicts = listOf(historical),
+        )
+        assertEquals("Basic details", ChemicalDetailsCompleteness.assess(saved).title)
+    }
+
+    @Test fun `genuine flumioxazin group conflict requires review in intelligence and saved chemical`() {
+        val genuine = groupConflict("HRAC 2", "HRAC 14")
+        val intel = ChemicalIntelligence(
+            activeIngredients = listOf(ChemicalActiveIngredient(
+                name = "Flumioxazin", activityGroup = ChemicalActivityGroup.of(ChemicalActivityGroupScheme.HRAC, "14"),
+            )),
+            verification = ChemicalVerification(status = ChemicalVerificationStatus.VERIFIED, conflicts = listOf(genuine)),
+            productCategory = "herbicide",
+        )
+        assertEquals(ChemicalVerificationStatus.CONFLICT, intel.resolvedVerificationStatus)
+        assertEquals("Review required", ChemicalDetailsCompleteness.assess(
+            "Flumioxazin", "herbicide", "", intel, "", false, false,
+        ).title)
+        val saved = SavedChemical(
+            id = "chemical-id", vineyardId = "vineyard-id", name = "Flumioxazin",
+            productCategory = "herbicide", productForm = "liquid", labelUrl = "https://example.com/label",
+            activeIngredients = intel.activeIngredients, verificationStatusRaw = "verified",
+            verificationConflicts = listOf(genuine),
+        )
+        assertEquals("Review required", ChemicalDetailsCompleteness.assess(saved).title)
     }
 
     @Test fun `category and formulation variants use applicable completeness fields`() {

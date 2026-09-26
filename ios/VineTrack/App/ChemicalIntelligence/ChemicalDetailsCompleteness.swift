@@ -42,7 +42,7 @@ nonisolated struct ChemicalDetailsCompleteness: Sendable {
             guard let url = URL(string: $0), let scheme = url.scheme?.lowercased() else { return false }
             return (scheme == "https" || scheme == "http") && url.host != nil
         }) { missing.append("product label link") }
-        return Self(missing: missing, hasConflict: intelligence.resolvedVerificationStatus == .conflict || !intelligence.verification.conflicts.isEmpty)
+        return Self(missing: missing, hasConflict: !ChemicalVerificationConflict.customerVisible(intelligence.verification.conflicts).isEmpty)
     }
 
     static func assess(_ chemical: SavedChemical) -> Self {
@@ -55,7 +55,7 @@ nonisolated struct ChemicalDetailsCompleteness: Sendable {
             },
             hasLabelRate: intel.registeredUses.filter(\.isViticultural).flatMap(\.rates).contains(where: ChemicalSaveContract.isUsable)
         )
-        return Self(missing: details.missing,
-                    hasConflict: details.hasConflict || !(chemical.chemicalIntelligence?.verification.conflicts.isEmpty ?? true))
+        return Self(missing: details.missing, hasConflict: details.hasConflict ||
+                    !ChemicalVerificationConflict.customerVisible(chemical.chemicalIntelligence?.verification.conflicts ?? []).isEmpty)
     }
 }

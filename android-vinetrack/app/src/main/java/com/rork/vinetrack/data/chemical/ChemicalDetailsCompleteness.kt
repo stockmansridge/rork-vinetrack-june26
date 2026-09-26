@@ -44,7 +44,7 @@ data class ChemicalDetailsCompleteness(val missing: List<String>, val hasConflic
                 missing += "product label link"
             }
             return ChemicalDetailsCompleteness(missing,
-                intelligence.resolvedVerificationStatus == ChemicalVerificationStatus.CONFLICT || intelligence.verification.conflicts.isNotEmpty())
+                ChemicalConflictReconciliation.customerVisible(intelligence.verification.conflicts).isNotEmpty())
         }
 
         fun assess(chemical: SavedChemical): ChemicalDetailsCompleteness {
@@ -54,7 +54,8 @@ data class ChemicalDetailsCompleteness(val missing: List<String>, val hasConflic
                     ChemicalDefaultRateValidity.validSlot(chemical.defaultRates, it) != null
                 },
                 intel.registeredUses.filter { it.isViticultural }.flatMap { it.rates }.any(ChemicalSaveContract::isUsable))
-            return details.copy(hasConflict = details.hasConflict || !chemical.verificationConflicts.isNullOrEmpty())
+            return details.copy(hasConflict = details.hasConflict ||
+                ChemicalConflictReconciliation.customerVisible(chemical.verificationConflicts.orEmpty()).isNotEmpty())
         }
     }
 }
