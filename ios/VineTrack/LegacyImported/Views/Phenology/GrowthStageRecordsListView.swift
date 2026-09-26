@@ -177,7 +177,11 @@ struct GrowthStageRecordsListView: View {
                 if feed.blocks.isEmpty {
                     Text("No blocks in this vineyard yet.").foregroundStyle(.secondary)
                 }
-                ForEach(feed.blocks, id: \.id) { block in
+                ForEach(feed.blocks.sorted { left, right in
+                    let leftEL = currentEL(for: left.id) ?? -1
+                    let rightEL = currentEL(for: right.id) ?? -1
+                    return leftEL == rightEL ? (left.name ?? "") < (right.name ?? "") : leftEL > rightEL
+                }, id: \.id) { block in
                     let stage = currentEL(for: block.id)
                     NavigationLink {
                         GrowthStageBlockDetailView(
@@ -188,9 +192,22 @@ struct GrowthStageRecordsListView: View {
                         )
                     } label: {
                         HStack(spacing: 14) {
-                            Image(systemName: "leaf.fill")
-                                .foregroundStyle(stage.map { Color(uiColor: ELRipenessPinFactory.uiColour(for: $0)) } ?? .secondary)
-                                .frame(width: 32, height: 44)
+                            Color(.tertiarySystemGroupedBackground)
+                                .frame(width: 50, height: 50)
+                                .overlay {
+                                    if let stage,
+                                       let growthStage = GrowthStage.allStages.first(where: { Double($0.code.dropFirst(2)) == stage }),
+                                       let image = store.resolvedELStageImage(for: growthStage) {
+                                        Image(uiImage: image)
+                                            .resizable()
+                                            .scaledToFill()
+                                            .allowsHitTesting(false)
+                                    } else {
+                                        Image(systemName: "leaf.fill")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .clipShape(.rect(cornerRadius: 10))
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(block.name ?? "Block").font(.headline)
                                 Text(stage.map(ELRipeness.formatEl) ?? "No current stage")
