@@ -385,8 +385,8 @@ class ResistancePlannerPresentationTest {
         )
         val rows = state.timelines.single().rows
 
-        assertEquals("✓ Verified", rows[0].availabilityMark)
-        assertEquals("○ Unverified", rows[1].availabilityMark)
+        assertEquals("✓ Resistance data sourced", rows[0].availabilityMark)
+        assertEquals("○ Check resistance data", rows[1].availabilityMark)
     }
 
     @Test
@@ -612,10 +612,10 @@ class ResistancePlannerPresentationTest {
     fun `verification marks are identical on both platforms`() {
         // Held in the domain so the two phones cannot drift to different symbols for the
         // same evidence state.
-        assertEquals("✓ Verified", ChemicalIntelligenceAvailability.AVAILABLE_VERIFIED.plannerMark)
-        assertEquals("◐ Partially Verified", ChemicalIntelligenceAvailability.AVAILABLE_PARTIALLY_VERIFIED.plannerMark)
-        assertEquals("○ Unverified", ChemicalIntelligenceAvailability.AVAILABLE_UNVERIFIED.plannerMark)
-        assertEquals("⚠ Conflict", ChemicalIntelligenceAvailability.CONFLICT.plannerMark)
+        assertEquals("✓ Resistance data sourced", ChemicalIntelligenceAvailability.AVAILABLE_VERIFIED.plannerMark)
+        assertEquals("◐ Check resistance data", ChemicalIntelligenceAvailability.AVAILABLE_PARTIALLY_VERIFIED.plannerMark)
+        assertEquals("○ Check resistance data", ChemicalIntelligenceAvailability.AVAILABLE_UNVERIFIED.plannerMark)
+        assertEquals("⚠ Review required", ChemicalIntelligenceAvailability.CONFLICT.plannerMark)
         assertEquals("— No chemistry", ChemicalIntelligenceAvailability.UNAVAILABLE.plannerMark)
     }
 

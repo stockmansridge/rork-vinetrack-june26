@@ -1373,8 +1373,8 @@ class ResistanceEngineTest {
         assertEquals(ResistanceEvidenceQuality.QUALIFIED, result.evidenceQuality)
         assertFalse(result.isCleanResult)
         assertEquals(
-            "No strategy limit detected using the recorded groups; one or more chemical " +
-                "records are unverified.",
+            "No strategy limit detected using the recorded groups; some resistance " +
+                "group sources still need confirmation.",
             result.summary,
         )
     }
@@ -1392,7 +1392,7 @@ class ResistanceEngineTest {
         assertEquals(ResistanceEvaluationStatus.STRATEGY_EXCEEDED, result.status)
         assertEquals(ResistanceEvidenceQuality.QUALIFIED, table.evidenceQuality)
         // The warning must be qualified by the quality of its evidence.
-        assertTrue(table.explanation.contains("not been independently verified"))
+        assertTrue(table.explanation.contains("source still needs confirmation"))
     }
 
     @Test

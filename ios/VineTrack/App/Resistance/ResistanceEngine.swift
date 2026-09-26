@@ -1048,7 +1048,7 @@ nonisolated enum ResistanceEngine {
         var qualified = explanation
         if evidence == .qualified && status.isBreach {
             qualified = explanation
-                + " This is based on recorded groups that have not been independently verified."
+                + " This is based on recorded groups whose source still needs confirmation."
         }
 
         return ResistanceRuleResult(
@@ -1178,7 +1178,7 @@ nonisolated enum ResistanceEngine {
             case .high:
                 return "No \(label) resistance strategy limit is reached for this block."
             case .qualified:
-                return "No strategy limit detected using the recorded groups; one or more chemical records are unverified."
+                return "No strategy limit detected using the recorded groups; some resistance group sources still need confirmation."
             case .indeterminate:
                 return "No strategy limit detected using the recorded groups, but some applications could not be assessed."
             }

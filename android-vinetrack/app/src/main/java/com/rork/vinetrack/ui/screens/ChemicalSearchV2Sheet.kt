@@ -59,6 +59,14 @@ import com.rork.vinetrack.data.chemical.ChemicalSearchV2Duplicate
 import com.rork.vinetrack.data.chemical.ChemicalSearchV2OperationalDefaults
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
 import com.rork.vinetrack.data.chemical.ChemicalActivityGroupScheme
+import com.rork.vinetrack.data.chemical.ChemicalActivityGroup
+import com.rork.vinetrack.data.chemical.ChemicalActiveIngredient
+import com.rork.vinetrack.data.chemical.ChemicalConcentrationUnit
+import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
+import com.rork.vinetrack.data.chemical.ChemicalRegistration
+import com.rork.vinetrack.data.chemical.ChemicalEditReconciler
+import com.rork.vinetrack.data.chemical.ChemicalDataSourceKind
+import com.rork.vinetrack.data.chemical.ChemicalDetailsCompleteness
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalRegistrationScheme
 import com.rork.vinetrack.data.chemical.MasterChemicalV2
@@ -89,6 +97,8 @@ internal data class ChemicalSearchV2ManualDetails(
     val productCategory: String = "",
     val productForm: String = "",
     val activeIngredient: String = "",
+    val concentration: String = "",
+    val concentrationUnit: ChemicalConcentrationUnit? = null,
     val activityGroupScheme: ChemicalActivityGroupScheme? = null,
     val activityGroupCode: String = "",
     val labelUrl: String = "",
@@ -105,6 +115,8 @@ internal data class ChemicalSearchV2ManualDetails(
         val actives = names.mapIndexed { index, name ->
             ChemicalManualActiveDraft(
                 name = name,
+                concentrationText = if (index == 0) concentration else "",
+                concentrationUnit = if (index == 0) concentrationUnit else null,
                 scheme = if (index == 0) activityGroupScheme else null,
                 groupCode = if (index == 0) activityGroupCode else "",
             )
@@ -145,6 +157,8 @@ private data class ChemicalReviewV2Draft(
     val masterMatch: ChemicalInfoService.ChemicalMasterMatch? = null,
     val isManual: Boolean = false,
     val manualDetails: ChemicalSearchV2ManualDetails = ChemicalSearchV2ManualDetails(),
+    val enteredLabelRate: ChemicalManualRateDraft? = null,
+    val activeCorrections: Map<String, ChemicalManualActiveDraft> = emptyMap(),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -473,10 +487,56 @@ private fun ChemicalReviewV2(
     val evaluation = ChemicalSaveContract.evaluateMinimumOperational(
         draft.productName, draft.unit, effectiveRates,
     )
+    val enteredLabelRate = draft.enteredLabelRate?.let { rate ->
+        ChemicalManualEntry.proposedIntelligence(
+            ChemicalManualDraft(productName = draft.productName, productRates = listOf(rate)), null,
+        ).registeredUses.firstOrNull(ChemicalManualEntry::isProductRateCarrier)?.rates?.firstOrNull()
+    }
+    val reviewedIntelligence: ChemicalIntelligence = run {
+        val details = draft.manualDetails
+        var proposed = if (draft.isManual) details.intelligence(draft.productName, draft.rate) else draft.intelligence
+        if (!draft.isManual) {
+            if (proposed.productCategory.isBlank()) proposed = proposed.copy(productCategory = details.productCategory.trim())
+            if (proposed.activeIngredients.isEmpty() && details.activeIngredient.isNotBlank()) {
+                proposed = proposed.copy(activeIngredients = details.activeIngredient.split(',').mapNotNull { name ->
+                    name.trim().takeIf(String::isNotEmpty)?.let { ChemicalActiveIngredient(name = it, identitySource = ChemicalDataSourceKind.MANUAL_ENTRY) }
+                })
+            }
+            if (details.labelUrl.isNotBlank() && proposed.registration?.labelReference.isNullOrBlank()) {
+                proposed = proposed.copy(registration = (proposed.registration ?: ChemicalRegistration()).copy(labelReference = details.labelUrl.trim()))
+            }
+        }
+        proposed = proposed.copy(activeIngredients = proposed.activeIngredients.map { active ->
+            val edit = draft.activeCorrections[active.name] ?: return@map active
+            val concentration = edit.concentrationText.replace(',', '.').toDoubleOrNull()
+            val enteredGroup = edit.scheme?.takeIf { it != ChemicalActivityGroupScheme.NOT_APPLICABLE }
+                ?.let { scheme -> edit.groupCode.takeIf(String::isNotBlank)?.let { ChemicalActivityGroup(scheme, it) } }
+            active.copy(
+                concentration = if (!active.hasConcentration && concentration != null && edit.concentrationUnit != null) concentration else active.concentration,
+                concentrationUnit = if (!active.hasConcentration && concentration != null) edit.concentrationUnit else active.concentrationUnit,
+                activityGroup = if (active.activityGroup?.isResistanceRelevant != true) enteredGroup ?: active.activityGroup else active.activityGroup,
+            )
+        })
+        if (enteredLabelRate != null && proposed.registeredUses.filter { it.isViticultural }.flatMap { it.rates }.none(ChemicalSaveContract::isUsable)) {
+            proposed = proposed.copy(registeredUses = proposed.registeredUses + ChemicalRegisteredUse(
+                crop = "Grapes", targetRaw = "Entered manually from label", rates = listOf(enteredLabelRate),
+                provenance = mapOf("rates" to "manual_entry"),
+            ))
+        }
+        if (draft.isManual) proposed else ChemicalEditReconciler.reconcile(draft.intelligence, proposed).intelligence
+    }
+    val completeness = ChemicalDetailsCompleteness.assess(
+        draft.productName, reviewedIntelligence.productCategory,
+        draft.manualDetails.productForm.ifBlank { draft.formType.orEmpty() }, reviewedIntelligence,
+        draft.manualDetails.labelUrl, effectiveRates.isNotEmpty(),
+        reviewedIntelligence.registeredUses.filter { it.isViticultural }.flatMap { it.rates }.any(ChemicalSaveContract::isUsable),
+    )
     val registeredRates = draft.viticultureRates.all
 
     Text(if (draft.isManual) "Add Chemical Manually" else "Review Chemical", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-    Text(if (draft.isManual) "REQUIRED" else "Source: ${draft.source}", fontWeight = FontWeight.SemiBold)
+    Text(completeness.title, fontWeight = FontWeight.SemiBold)
+    completeness.missingText?.let { Text(it, fontSize = 12.sp) }
+    Text("Source: ${if (draft.isManual) "Entered manually" else if (draft.source == "VineTrack Master") "VineTrack Master" else if (reviewedIntelligence.registration?.labelReference.isNullOrBlank()) "Online lookup" else "Product label"}", fontSize = 12.sp)
     OutlinedTextField(
         value = draft.productName,
         onValueChange = { onDraft(draft.copy(productName = it)) },
@@ -484,18 +544,18 @@ private fun ChemicalReviewV2(
         modifier = Modifier.fillMaxWidth(),
     )
     if (draft.isManual) {
-        Text("Manual vineyard chemical · Unverified", fontSize = 12.sp)
+        Text("Enter the details you have; missing fields can be completed below.", fontSize = 12.sp)
     } else {
         Text("Registrant: ${draft.intelligence.registration?.registrant?.takeIf(String::isNotBlank) ?: "Not found — check label"}")
         val apvmaEvidence = if (draft.source == "Product label / web") {
-            draft.intelligence.registration?.registrationNumber?.let { "$it (on label; register not verified)" } ?: "Not stated on label"
+            draft.intelligence.registration?.registrationNumber?.let { "$it (from label)" } ?: "Not stated on label"
         } else if (draft.intelligence.hasEvidencedRegistration) {
             draft.intelligence.registration?.registrationNumber ?: "—"
-        } else "APVMA registration not verified"
+        } else "APVMA number not available"
         Text("APVMA: $apvmaEvidence")
         Text("Active ingredients: ${draft.intelligence.activeIngredients.joinToString { it.displayLabelWithGroup }.ifBlank { "Needs confirmation — check label" }}")
         Text("Category: ${draft.intelligence.productCategory.ifBlank { "Not found — check label" }}")
-        Text("Product form: ${draft.formType?.takeIf(String::isNotBlank) ?: "Needs confirmation"}")
+        Text("Product form: ${draft.manualDetails.productForm.ifBlank { draft.formType?.takeIf(String::isNotBlank) ?: "Needs confirmation" }}")
         val label = listOfNotNull(
             draft.intelligence.registration?.manufacturerLabelUrl,
             draft.intelligence.registration?.regulatorLabelUrl,
@@ -632,16 +692,68 @@ private fun ChemicalReviewV2(
         }
     }
     Text("If rate is not found, check the label and enter the correct vineyard rate here. Rate bases are stored exactly as entered and never converted.", fontSize = 12.sp)
-    if (draft.isManual) {
-        TextButton(onClick = { optionalExpanded = !optionalExpanded }, modifier = Modifier.fillMaxWidth()) {
-            Text(if (optionalExpanded) "Hide optional details" else "Optional details")
-        }
-        if (optionalExpanded) {
-            ChemicalManualOptionalDetails(
-                details = draft.manualDetails,
-                onDetails = { onDraft(draft.copy(manualDetails = it)) },
-            )
-        }
+    TextButton(onClick = { optionalExpanded = !optionalExpanded }, modifier = Modifier.fillMaxWidth()) {
+        Text(if (optionalExpanded) "Hide missing details" else "Fill missing details")
+    }
+    if (optionalExpanded) {
+            if (draft.isManual) {
+                ChemicalManualOptionalDetails(
+                    details = draft.manualDetails,
+                    onDetails = { onDraft(draft.copy(manualDetails = it)) },
+                )
+            } else {
+                OutlinedTextField(draft.manualDetails.productCategory, { onDraft(draft.copy(manualDetails = draft.manualDetails.copy(productCategory = it))) }, label = { Text("Category") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(draft.manualDetails.productForm, { onDraft(draft.copy(manualDetails = draft.manualDetails.copy(productForm = it))) }, label = { Text("Product form (liquid or solid)") }, modifier = Modifier.fillMaxWidth())
+                if (draft.intelligence.activeIngredients.isEmpty()) {
+                    OutlinedTextField(draft.manualDetails.activeIngredient, { onDraft(draft.copy(manualDetails = draft.manualDetails.copy(activeIngredient = it))) }, label = { Text("Active ingredient(s), comma separated") }, modifier = Modifier.fillMaxWidth())
+                }
+                OutlinedTextField(draft.manualDetails.labelUrl, { onDraft(draft.copy(manualDetails = draft.manualDetails.copy(labelUrl = it))) }, label = { Text("Product label link") }, modifier = Modifier.fillMaxWidth())
+            }
+            reviewedIntelligence.activeIngredients.filter {
+                !it.hasConcentration || (!draft.isManual && it.activityGroup?.isResistanceRelevant != true) || draft.activeCorrections.containsKey(it.name)
+            }.forEach { active ->
+                val edit = draft.activeCorrections[active.name] ?: ChemicalManualActiveDraft(name = active.name)
+                fun update(next: ChemicalManualActiveDraft) {
+                    onDraft(draft.copy(activeCorrections = draft.activeCorrections + (active.name to next)))
+                }
+                Text(active.name, fontWeight = FontWeight.SemiBold)
+                if (!active.hasConcentration || draft.activeCorrections.containsKey(active.name)) {
+                    OutlinedTextField(edit.concentrationText, { update(edit.copy(concentrationText = it.filterRateChars())) }, label = { Text("Active concentration") }, modifier = Modifier.fillMaxWidth())
+                    ChemicalConcentrationUnit.entries.forEach { unit ->
+                        TextButton(onClick = { update(edit.copy(concentrationUnit = unit)) }) {
+                            Text("${if (edit.concentrationUnit == unit) "✓ " else ""}${unit.label}")
+                        }
+                    }
+                }
+                if (!draft.isManual && active.activityGroup?.isResistanceRelevant != true) {
+                    ChemicalActivityGroupScheme.entries.filter { it != ChemicalActivityGroupScheme.NOT_APPLICABLE }.forEach { scheme ->
+                        TextButton(onClick = { update(edit.copy(scheme = scheme)) }) {
+                            Text("${if (edit.scheme == scheme) "✓ " else ""}${scheme.label}")
+                        }
+                    }
+                    OutlinedTextField(edit.groupCode, { update(edit.copy(groupCode = it)) }, label = { Text("Group code") }, modifier = Modifier.fillMaxWidth())
+                }
+            }
+            if (draft.enteredLabelRate != null) {
+                OutlinedTextField(draft.enteredLabelRate.valueText, { onDraft(draft.copy(enteredLabelRate = draft.enteredLabelRate.copy(valueText = it.filterRateChars()))) }, label = { Text("Vineyard label rate") }, modifier = Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(ChemicalLabelRateBasis.PER_HECTARE to "Per hectare", ChemicalLabelRateBasis.PER_100_LITRES to "Per 100 L").forEach { (basis, title) ->
+                        TextButton(onClick = { onDraft(draft.copy(enteredLabelRate = draft.enteredLabelRate.copy(basis = basis))) }) {
+                            Text("${if (draft.enteredLabelRate.basis == basis) "✓ " else ""}$title")
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf("L", "mL", "kg", "g").forEach { unit ->
+                        TextButton(onClick = { onDraft(draft.copy(enteredLabelRate = draft.enteredLabelRate.copy(unit = unit))) }) {
+                            Text("${if (draft.enteredLabelRate.unit == unit) "✓ " else ""}$unit")
+                        }
+                    }
+                }
+                Text("This rate was entered manually from your product label; VineTrack has not confirmed the direction.", fontSize = 12.sp)
+            } else if ("label rate" in completeness.missing) {
+                TextButton(onClick = { onDraft(draft.copy(enteredLabelRate = ChemicalManualRateDraft(basis = draft.rate.basis, unit = draft.rate.unit))) }) { Text("Enter vineyard rate from product label") }
+            }
     }
     evaluation.violations.forEach { Text(it.message, color = com.rork.vinetrack.ui.theme.VineColors.Warning, fontSize = 12.sp) }
     duplicate?.let { existing ->
@@ -654,11 +766,7 @@ private fun ChemicalReviewV2(
         Button(
             enabled = evaluation.isSatisfied && !saving,
             onClick = {
-                val saveIntelligence = if (draft.isManual) {
-                    draft.manualDetails.intelligence(draft.productName, draft.rate)
-                } else {
-                    draft.intelligence
-                }
+                val saveIntelligence = reviewedIntelligence
                 val existing = ChemicalSearchV2Duplicate.existing(
                     draft.master, saveIntelligence, draft.productName, state.savedChemicals,
                 )
@@ -703,11 +811,11 @@ private fun ChemicalReviewV2(
                     use = null, problem = null,
                     manufacturer = if (draft.isManual) details.manufacturer else draft.intelligence.registration?.registrant,
                     notes = if (draft.isManual) details.notes else null, modeOfAction = null,
-                    labelUrl = if (draft.isManual) details.labelUrl else draft.intelligence.registration?.labelReference,
+                    labelUrl = details.labelUrl.ifBlank { saveIntelligence.registration?.labelReference },
                     productUrl = if (draft.isManual) details.productUrl else draft.intelligence.registration?.manufacturerProductUrl,
                     purchase = purchase,
-                    productCategory = if (draft.isManual) details.productCategory else draft.intelligence.productCategory,
-                    productForm = if (draft.isManual) details.productForm else draft.formType.orEmpty(),
+                    productCategory = saveIntelligence.productCategory,
+                    productForm = details.productForm.ifBlank { draft.formType.orEmpty() },
                     packSize = if (draft.isManual) packSize else null,
                     packUnit = if (draft.isManual) details.packUnit else "",
                     pricePerPack = if (draft.isManual) pricePerPack else null,

@@ -341,7 +341,7 @@ struct SprayProgramStepEditView: View {
 
             if let saved {
                 HStack(spacing: 6) {
-                    ChemicalVerificationBadge(status: saved.verificationStatus, compact: true)
+                    ChemicalVerificationBadge(status: saved.verificationStatus, compact: true, chemical: saved)
                     let groups = saved.resolvedIntelligence.activityGroups
                     if !groups.isEmpty {
                         Text(groups.legacyGroupProjection)

@@ -33,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import com.rork.vinetrack.data.chemical.ChemicalConflictReconciliation
+import com.rork.vinetrack.data.chemical.ChemicalDetailsCompleteness
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -102,13 +103,8 @@ fun chemicalVerificationTint(status: ChemicalVerificationStatus): Color = when (
  * alike while remaining separate filters over separate counts. The underlying
  * enum and the database values are untouched.
  */
-fun chemicalVerificationFilterLabel(status: ChemicalVerificationStatus): String = when (status) {
-    ChemicalVerificationStatus.VERIFIED -> "Label checked"
-    ChemicalVerificationStatus.PARTIALLY_VERIFIED -> "Details unavailable"
-    ChemicalVerificationStatus.NEEDS_MATCH -> "Not checked"
-    ChemicalVerificationStatus.UNVERIFIED -> "Not checked"
-    ChemicalVerificationStatus.CONFLICT -> "Review required"
-}
+fun chemicalVerificationFilterLabel(status: ChemicalVerificationStatus): String =
+    if (status == ChemicalVerificationStatus.CONFLICT) "Review required" else "Basic details"
 
 /**
  * The Chemical Store's customer-facing filters.
@@ -125,42 +121,10 @@ fun chemicalVerificationFilterLabel(status: ChemicalVerificationStatus): String 
  * The stored enum is untouched. Each filter names the statuses it covers, so
  * the persisted values still do the selecting and nothing is rewritten.
  */
-enum class ChemicalStoreFilter(
-    val label: String,
-    val statuses: List<ChemicalVerificationStatus>,
-) {
-    LABEL_CHECKED("Label checked", listOf(ChemicalVerificationStatus.VERIFIED)),
-    DETAILS_UNAVAILABLE(
-        "Details unavailable",
-        listOf(ChemicalVerificationStatus.PARTIALLY_VERIFIED),
-    ),
-    NOT_CHECKED(
-        "Not checked",
-        listOf(
-            ChemicalVerificationStatus.NEEDS_MATCH,
-            ChemicalVerificationStatus.UNVERIFIED,
-        ),
-    ),
-    REVIEW_REQUIRED("Review required", listOf(ChemicalVerificationStatus.CONFLICT)),
-    ;
+enum class ChemicalStoreFilter(val label: String) {
+    COMPLETE("Complete details"), BASIC("Basic details"), REVIEW_REQUIRED("Review required");
 
-    /** Whether a record falls under this filter. */
-    fun matches(status: ChemicalVerificationStatus): Boolean = statuses.contains(status)
-
-    /** The status whose colour represents this filter. */
-    val tintStatus: ChemicalVerificationStatus get() = statuses.first()
-
-    companion object {
-        /**
-         * The statuses counted by the "need attention" banner.
-         *
-         * Deliberately excludes `partially_verified`: an optional label detail
-         * being unavailable is not something the operator can act on, and
-         * counting it would send them to a record with nothing to fix.
-         */
-        val needsAttention: List<ChemicalVerificationStatus> =
-            NOT_CHECKED.statuses + REVIEW_REQUIRED.statuses
-    }
+    fun matches(chemical: SavedChemical): Boolean = ChemicalDetailsCompleteness.assess(chemical).title == label
 }
 
 /** Compact trust chip used in lists and pickers. */
@@ -169,8 +133,15 @@ fun ChemicalVerificationBadge(
     status: ChemicalVerificationStatus,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    chemical: SavedChemical? = null,
 ) {
-    val tint = chemicalVerificationTint(status)
+    val label = if (status == ChemicalVerificationStatus.CONFLICT) "Review required"
+        else chemical?.let { ChemicalDetailsCompleteness.assess(it).title } ?: "Basic details"
+    val tint = when (label) {
+        "Complete details" -> VineColors.Success
+        "Review required" -> VineColors.Destructive
+        else -> VineColors.Info
+    }
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(50))
@@ -181,12 +152,12 @@ fun ChemicalVerificationBadge(
     ) {
         Icon(
             chemicalVerificationIcon(status),
-            contentDescription = status.label,
+            contentDescription = label,
             tint = tint,
             modifier = Modifier.size(12.dp),
         )
         if (!compact) {
-            Text(status.label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = tint)
+            Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = tint)
         }
     }
 }
@@ -449,7 +420,7 @@ fun ChemicalVerificationEvidenceView(
                 .padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Verification details", fontSize = 15.sp, color = vine.textPrimary)
+            Text("Information sources", fontSize = 15.sp, color = vine.textPrimary)
             Spacer(Modifier.weight(1f))
             ChemicalVerificationBadge(resolvedStatus)
             Icon(
@@ -465,7 +436,7 @@ fun ChemicalVerificationEvidenceView(
                 modifier = Modifier.padding(top = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text(resolvedStatus.detail, fontSize = 12.sp, color = vine.textSecondary)
+                Text(if (resolvedStatus == ChemicalVerificationStatus.CONFLICT) "Sources disagree about this product. Review the conflicting details." else "Product information and sources are shown separately from completeness.", fontSize = 12.sp, color = vine.textSecondary)
 
                 if (verification.sources.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -512,13 +483,13 @@ fun ChemicalVerificationEvidenceView(
                 if (verification.unresolvedFields.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
-                            "Not confirmed",
+                            "Additional source checks",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = vine.textPrimary,
                         )
                         verification.unresolvedFields.forEach {
-                            Text("• $it", fontSize = 11.sp, color = vine.textSecondary)
+                            Text("• ${it.replace('_', ' ')}", fontSize = 11.sp, color = vine.textSecondary)
                         }
                     }
                 }

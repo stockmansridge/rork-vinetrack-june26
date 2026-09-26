@@ -333,7 +333,7 @@ struct ResistancePlanEditorView: View {
             lines.append("\(check.unavailableCount) application\(check.unavailableCount == 1 ? "" : "s") with no usable chemistry")
         }
         if check.unverifiedCount > 0 {
-            lines.append("\(check.unverifiedCount) application\(check.unverifiedCount == 1 ? "" : "s") with unverified chemistry")
+            lines.append("\(check.unverifiedCount) application\(check.unverifiedCount == 1 ? "" : "s") with resistance groups needing source confirmation")
         }
         return lines
     }

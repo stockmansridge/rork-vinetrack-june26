@@ -969,7 +969,7 @@ class ResistancePlannerTest {
         assertNull(options[0].caveat)
         assertEquals("Registered use recorded for this disease", options[0].registeredUseNote)
         // The partially verified product keeps a visible caveat.
-        assertTrue(options[1].caveat!!.contains("partially verified"))
+        assertTrue(options[1].caveat!!.contains("check resistance group source"))
         // Unknown registered use is stated as unknown, never as a registration claim and
         // never inferred from the group.
         assertEquals("Registered use for this disease not known", options[1].registeredUseNote)

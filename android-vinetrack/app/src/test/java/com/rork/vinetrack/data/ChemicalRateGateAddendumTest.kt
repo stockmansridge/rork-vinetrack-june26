@@ -5,6 +5,8 @@ import com.rork.vinetrack.data.chemical.ChemicalActivityGroup
 import com.rork.vinetrack.data.chemical.ChemicalActivityGroupScheme
 import com.rork.vinetrack.data.chemical.ChemicalConflictReconciliation
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRate
+import com.rork.vinetrack.data.chemical.ChemicalDetailsCompleteness
+import com.rork.vinetrack.data.chemical.ChemicalConcentrationUnit
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateSelection
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
@@ -35,6 +37,42 @@ import java.io.File
  * action the screen did not provide, with no way forward.
  */
 class ChemicalRateGateAddendumTest {
+    @Test fun `customer completeness ignores registration but requires applicable fields`() {
+        val intel = ChemicalIntelligence(
+            activeIngredients = listOf(ChemicalActiveIngredient(
+                name = "Tebuconazole", concentration = 200.0,
+                concentrationUnit = ChemicalConcentrationUnit.GRAMS_PER_LITRE,
+                activityGroup = ChemicalActivityGroup(ChemicalActivityGroupScheme.FRAC, "3"),
+            )),
+            verification = ChemicalVerification(status = ChemicalVerificationStatus.UNVERIFIED),
+            registeredUses = listOf(ChemicalRegisteredUse(crop = "Grapes", targetRaw = "Mildew", rates = listOf(
+                ChemicalLabelRate(basis = ChemicalLabelRateBasis.PER_HECTARE, value = 2.0, unit = "L"),
+            ))),
+            productCategory = "fungicide",
+        )
+        val complete = ChemicalDetailsCompleteness.assess("Spray", "fungicide", "liquid", intel,
+            "https://example.com/label.pdf", true, true)
+        assertEquals("Complete details", complete.title)
+        val basic = ChemicalDetailsCompleteness.assess("Spray", "fungicide", "", intel,
+            "", true, false)
+        assertEquals("Basic details", basic.title)
+        assertEquals("Missing: product form, label rate, product label link", basic.missingText)
+    }
+
+    @Test fun `non protection product does not need actives groups or label rates`() {
+        val result = ChemicalDetailsCompleteness.assess("Seaweed", "seaweed", "liquid",
+            ChemicalIntelligence(productCategory = "seaweed"), "https://example.com/label", true, false)
+        assertEquals("Complete details", result.title)
+    }
+
+    @Test fun `genuine conflict is review required and missing values alone are not`() {
+        val intel = ChemicalIntelligence(verification = ChemicalVerification(conflicts = listOf(
+            ChemicalVerificationConflict(field = "activity_group", extractedValue = "3", authoritativeValue = "11"),
+        )))
+        val result = ChemicalDetailsCompleteness.assess("Spray", "fungicide", "", intel, "", false, false)
+        assertEquals("Review required", result.title)
+        assertTrue("product form" in result.missing)
+    }
 
     // ---- Fixtures ----------------------------------------------------------
 
@@ -331,9 +369,8 @@ class ChemicalRateGateAddendumTest {
     fun `10 and 11 - store filters and banner use the operator's language`() {
         val ui = source("src/main/java/com/rork/vinetrack/ui/components/ChemicalIntelligenceUi.kt")
         listOf(
-            "\"Label checked\"",
-            "\"Details unavailable\"",
-            "\"Not checked\"",
+            "\"Complete details\"",
+            "\"Basic details\"",
             "\"Review required\"",
         ).forEach { assertTrue("filter wording missing: $it", ui.contains(it)) }
         assertFalse(
@@ -347,17 +384,16 @@ class ChemicalRateGateAddendumTest {
         assertFalse(store.contains("chemicals need verification"))
 
         // Status wording itself, at the source of truth.
-        assertEquals("Official label checked", ChemicalVerificationStatus.VERIFIED.label)
+        assertEquals("Basic details", ChemicalVerificationStatus.VERIFIED.label)
         assertEquals(
-            "Label checked — details unavailable",
+            "Basic details",
             ChemicalVerificationStatus.PARTIALLY_VERIFIED.label,
         )
-        assertEquals("Not checked", ChemicalVerificationStatus.UNVERIFIED.label)
-        assertEquals("Not checked", ChemicalVerificationStatus.NEEDS_MATCH.label)
+        assertEquals("Basic details", ChemicalVerificationStatus.UNVERIFIED.label)
+        assertEquals("Basic details", ChemicalVerificationStatus.NEEDS_MATCH.label)
         assertEquals("Review required", ChemicalVerificationStatus.CONFLICT.label)
         assertEquals(
-            "VineTrack checked official product information, but some label details " +
-                "were unavailable.",
+            "Check the product details and source information before use.",
             ChemicalVerificationStatus.PARTIALLY_VERIFIED.detail,
         )
     }

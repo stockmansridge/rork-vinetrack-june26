@@ -74,10 +74,8 @@ data class ChemicalEditOutcome(
                     "Changing active ingredients or activity groups"
                 else -> "Changing this product's registered identity"
             }
-            return "$subject means this product can no longer keep its " +
-                "${previousStatus.label.lowercase()} status unless the new information is " +
-                "supported by verification evidence. It will be recorded as " +
-                "${resolvedStatus.label.lowercase()}."
+            return "$subject changes the evidence behind its resistance information. " +
+                "Check the new value against the product label before relying on resistance guidance."
         }
 }
 

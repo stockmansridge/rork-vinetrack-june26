@@ -1,45 +1,23 @@
 import SwiftUI
 
-/// Filter for the Chemical Store's verification audit.
-///
-/// Exists so a grower can work through "12 chemicals need verification"
-/// incrementally instead of being handed a wall of unmatched records. The
-/// counts come from `resolvedVerificationStatus`, not the stored column, so a
-/// record that has lost its evidence shows up in the right bucket immediately.
 private enum ChemicalVerificationFilter: String, CaseIterable, Identifiable {
-    case all
-    case verified
-    case partiallyVerified
-    case needsMatch
-    case conflict
-    case unverified
-
+    case all, complete, basic, review
     var id: String { rawValue }
-
     var label: String {
         switch self {
         case .all: return "All"
-        case .verified: return "Verified"
-        case .partiallyVerified: return "Partially verified"
-        case .needsMatch: return "Needs match"
-        case .conflict: return "Conflict"
-        case .unverified: return "Unverified"
+        case .complete: return "Complete details"
+        case .basic: return "Basic details"
+        case .review: return "Review required"
         }
     }
-
-    /// Each verification state gets its own bucket.
-    ///
-    /// Partially verified is deliberately NOT folded in with verified: they are
-    /// different promises about the same product, and a grower auditing their
-    /// store needs to see which records still have unconfirmed resistance data.
-    func matches(_ status: ChemicalVerificationStatus) -> Bool {
+    func matches(_ chemical: SavedChemical) -> Bool {
+        let details = ChemicalDetailsCompleteness.assess(chemical)
         switch self {
         case .all: return true
-        case .verified: return status == .verified
-        case .partiallyVerified: return status == .partiallyVerified
-        case .needsMatch: return status == .needsMatch
-        case .conflict: return status == .conflict
-        case .unverified: return status == .unverified
+        case .complete: return details.title == "Complete details"
+        case .basic: return details.title == "Basic details"
+        case .review: return details.hasConflict
         }
     }
 }
@@ -77,7 +55,7 @@ struct ChemicalsManagementView: View {
     }
 
     private var filteredChemicals: [SavedChemical] {
-        var list = store.savedChemicals.filter { filter.matches($0.verificationStatus) }
+        var list = store.savedChemicals.filter { filter.matches($0) }
         let trimmed = searchText.trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty {
             list = list.filter { chem in
@@ -89,11 +67,11 @@ struct ChemicalsManagementView: View {
     }
 
     private func count(for filter: ChemicalVerificationFilter) -> Int {
-        store.savedChemicals.filter { filter.matches($0.verificationStatus) }.count
+        store.savedChemicals.filter { filter.matches($0) }.count
     }
 
     private var needsAttentionCount: Int {
-        count(for: .needsMatch) + count(for: .conflict) + count(for: .unverified)
+        count(for: .basic) + count(for: .review)
     }
 
     var body: some View {
@@ -101,7 +79,7 @@ struct ChemicalsManagementView: View {
             if needsAttentionCount > 0 {
                 Section {
                     Label(
-                        "\(needsAttentionCount) chemical\(needsAttentionCount == 1 ? "" : "s") need verification",
+                        "\(needsAttentionCount) chemical\(needsAttentionCount == 1 ? "" : "s") need attention",
                         systemImage: "exclamationmark.circle"
                     )
                     .font(.caption.weight(.medium))
@@ -284,7 +262,10 @@ struct ChemicalDetailRow: View {
                     Text(chemical.name)
                         .font(.body.weight(.medium))
                         .foregroundStyle(.primary)
-                    ChemicalVerificationBadge(status: chemical.verificationStatus, compact: true)
+                    ChemicalVerificationBadge(status: chemical.verificationStatus, chemical: chemical)
+                }
+                if let missing = ChemicalDetailsCompleteness.assess(chemical).missingText {
+                    Text(missing).font(.caption2).foregroundStyle(.secondary)
                 }
 
                 // A verified FOREIGN registration must never read as verified

@@ -186,7 +186,7 @@ struct SprayLineChemicalPicker: View {
                         .lineLimit(2)
                 }
                 HStack(spacing: 6) {
-                    ChemicalVerificationBadge(status: chemical.verificationStatus)
+                    ChemicalVerificationBadge(status: chemical.verificationStatus, chemical: chemical)
                     let codes = chemical.activityGroupCodes
                     if !codes.isEmpty {
                         Text(codes.joined(separator: " + "))

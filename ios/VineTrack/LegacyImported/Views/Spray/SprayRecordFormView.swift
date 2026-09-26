@@ -528,7 +528,7 @@ struct SprayRecordFormView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(bound.name)
                         .font(.subheadline.weight(.medium))
-                    ChemicalVerificationBadge(status: bound.verificationStatus)
+                    ChemicalVerificationBadge(status: bound.verificationStatus, chemical: bound)
                     // A foreign registration on a spray line: the product record
                     // is usable, but its label rates/WHP/re-entry are another
                     // jurisdiction's law — marked so they never read as valid

@@ -182,20 +182,20 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
 
     // Counts come from each record's resolved verification status, so a stale
     // stored status can never inflate the "Verified" tally.
-    val statusCounts: Map<ChemicalVerificationStatus, Int> =
-        remember(state.savedChemicals) {
-            state.savedChemicals.groupingBy { it.verificationStatus }.eachCount()
-        }
-    val needsAttentionCount: Int = remember(statusCounts) {
-        ChemicalStoreFilter.needsAttention.sumOf { statusCounts[it] ?: 0 }
+    val statusCounts: Map<ChemicalStoreFilter, Int> = remember(state.savedChemicals) {
+        state.savedChemicals.groupingBy { chemical ->
+            ChemicalStoreFilter.entries.first { it.matches(chemical) }
+        }.eachCount()
     }
+    val needsAttentionCount: Int = (statusCounts[ChemicalStoreFilter.BASIC] ?: 0) +
+        (statusCounts[ChemicalStoreFilter.REVIEW_REQUIRED] ?: 0)
 
     val filteredChemicals = remember(state.savedChemicals, search, verificationFilter) {
         state.savedChemicals.filter { chem ->
             val matchesSearch = search.isBlank() ||
                 chem.displayName.contains(search.trim(), true) ||
                 chem.manufacturer.contains(search.trim(), true)
-            val matchesStatus = verificationFilter?.matches(chem.verificationStatus) ?: true
+            val matchesStatus = verificationFilter?.matches(chem) ?: true
             matchesSearch && matchesStatus
         }
     }
@@ -345,9 +345,9 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
                         ChemicalStoreFilter.entries.forEach { filter ->
                             VerificationFilterPill(
                                 label = filter.label,
-                                count = filter.statuses.sumOf { statusCounts[it] ?: 0 },
+                                count = statusCounts[filter] ?: 0,
                                 selected = verificationFilter == filter,
-                                tint = chemicalVerificationTint(filter.tintStatus),
+                                tint = if (filter == ChemicalStoreFilter.REVIEW_REQUIRED) VineColors.Destructive else ChemTint,
                             ) {
                                 verificationFilter =
                                     if (verificationFilter == filter) null else filter
@@ -560,7 +560,10 @@ private fun ChemicalRow(
                         color = vine.textPrimary,
                         fontSize = 16.sp,
                     )
-                    ChemicalVerificationBadge(status, compact = true)
+                    ChemicalVerificationBadge(status, chemical = chemical)
+                }
+                com.rork.vinetrack.data.chemical.ChemicalDetailsCompleteness.assess(chemical).missingText?.let {
+                    Text(it, fontSize = 11.sp, color = vine.textSecondary)
                 }
                 // A verified FOREIGN registration must never read as verified
                 // for this vineyard: its label facts belong to another country's
@@ -1226,8 +1229,8 @@ internal fun ChemicalFormSheet(
             )
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Verification status", modifier = Modifier.weight(1f), color = vine.textSecondary)
-                ChemicalVerificationBadge(editOutcome?.resolvedStatus ?: existing?.verificationStatus ?: ChemicalVerificationStatus.UNVERIFIED)
+                Text("Details", modifier = Modifier.weight(1f), color = vine.textSecondary)
+                ChemicalVerificationBadge(editOutcome?.resolvedStatus ?: existing?.verificationStatus ?: ChemicalVerificationStatus.UNVERIFIED, chemical = existing)
             }
             if (existing != null) {
                 val attention = ChemicalSaveContract.evaluate(
@@ -1878,8 +1881,8 @@ internal fun ChemicalFormSheet(
             SectionLabel("Advanced / Verification Evidence")
             if (existing != null && state != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Verification", color = vine.textSecondary, modifier = Modifier.width(96.dp))
-                    ChemicalVerificationBadge(existing.verificationStatus)
+                    Text("Details", color = vine.textSecondary, modifier = Modifier.width(96.dp))
+                    ChemicalVerificationBadge(existing.verificationStatus, chemical = existing)
                 }
                 val formSuitability = ChemicalJurisdiction.suitability(existing, manualCountry)
                 if (formSuitability is ChemicalJurisdictionSuitability.Mismatch) {
@@ -1888,7 +1891,7 @@ internal fun ChemicalFormSheet(
                     )
                 }
             } else {
-                Text("Unverified until supporting information is confirmed.", color = vine.textSecondary)
+                Text("Basic details — add missing information when available.", color = vine.textSecondary)
             }
             Text("Information from a label is only applied after you review and confirm it.", fontSize = 11.sp, color = vine.textSecondary)
 

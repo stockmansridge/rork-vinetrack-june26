@@ -34,14 +34,17 @@ nonisolated enum ChemicalVerificationPresentation {
 struct ChemicalVerificationBadge: View {
     let status: ChemicalVerificationStatus
     var compact: Bool = false
+    var chemical: SavedChemical? = nil
 
     var body: some View {
-        let tint = ChemicalVerificationPresentation.tint(for: status)
+        let label = status == .conflict ? "Review required"
+            : (chemical.map { ChemicalDetailsCompleteness.assess($0).title } ?? "Basic details")
+        let tint: Color = label == "Review required" ? .red : (label == "Complete details" ? VineyardTheme.success : VineyardTheme.info)
         HStack(spacing: 4) {
-            Image(systemName: ChemicalVerificationPresentation.icon(for: status))
+            Image(systemName: label == "Review required" ? "exclamationmark.triangle.fill" : "info.circle.fill")
                 .font(.caption2.weight(.semibold))
             if !compact {
-                Text(status.label)
+                Text(label)
                     .font(.caption2.weight(.semibold))
             }
         }
@@ -50,7 +53,7 @@ struct ChemicalVerificationBadge: View {
         .background(tint.opacity(0.12))
         .foregroundStyle(tint)
         .clipShape(Capsule())
-        .accessibilityLabel(Text(status.label))
+        .accessibilityLabel(Text(label))
     }
 }
 
@@ -190,7 +193,7 @@ struct ChemicalVerificationEvidenceView: View {
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 10) {
-                Text(resolvedStatus.detail)
+                Text(resolvedStatus == .conflict ? "Sources disagree about this product. Review the conflicting details." : "Product information and sources are shown separately from completeness.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -227,10 +230,10 @@ struct ChemicalVerificationEvidenceView: View {
 
                 if !verification.unresolvedFields.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Not confirmed")
+                        Text("Additional source checks")
                             .font(.caption.weight(.semibold))
                         ForEach(verification.unresolvedFields, id: \.self) { field in
-                            Text("• \(field)")
+                            Text("• \(field.replacingOccurrences(of: "_", with: " "))")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -246,10 +249,10 @@ struct ChemicalVerificationEvidenceView: View {
             .padding(.top, 6)
         } label: {
             HStack {
-                Text("Verification details")
+                Text("Information sources")
                     .font(.subheadline)
                 Spacer()
-                ChemicalVerificationBadge(status: resolvedStatus)
+                if resolvedStatus == .conflict { Text("Review required").font(.caption).foregroundStyle(.red) }
             }
         }
     }

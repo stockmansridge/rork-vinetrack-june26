@@ -102,7 +102,7 @@ struct ChemicalProductSearchSheet: View {
                     Section {
                         Button("Enter Manually") { onManualEntry() }
                     } footer: {
-                        Text("Manually entered products stay Unverified until they are matched to a registered product.")
+                        Text("Manually entered products can be saved with basic details. Add missing information when available.")
                     }
                 }
                 }

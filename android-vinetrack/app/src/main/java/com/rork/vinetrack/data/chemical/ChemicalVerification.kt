@@ -124,20 +124,20 @@ fun List<ChemicalDataSource>.strongest(): ChemicalDataSource? = maxByOrNull { it
 @Serializable
 enum class ChemicalVerificationStatus(val raw: String, val label: String) {
     @SerialName("verified")
-    VERIFIED("verified", "Official label checked"),
+    VERIFIED("verified", "Basic details"),
 
     @SerialName("partially_verified")
-    PARTIALLY_VERIFIED("partially_verified", "Label checked — details unavailable"),
+    PARTIALLY_VERIFIED("partially_verified", "Basic details"),
 
     @SerialName("unverified")
-    UNVERIFIED("unverified", "Not checked"),
+    UNVERIFIED("unverified", "Basic details"),
 
     /**
      * A legacy record that has never been put through the match step. It has
      * data, but nobody has yet confirmed WHICH registered product it is.
      */
     @SerialName("needs_match")
-    NEEDS_MATCH("needs_match", "Not checked"),
+    NEEDS_MATCH("needs_match", "Basic details"),
 
     /** Sources disagree. Never silently resolved — a human decides. */
     @SerialName("conflict")
@@ -173,14 +173,8 @@ enum class ChemicalVerificationStatus(val raw: String, val label: String) {
      */
     val detail: String
         get() = when (this) {
-            VERIFIED ->
-                "VineTrack checked the official product registration and label."
-            PARTIALLY_VERIFIED -> PARTIALLY_VERIFIED_SUPPORTING_TEXT
-            UNVERIFIED ->
-                "VineTrack has not checked this product against an official label. " +
-                    "It was entered manually or carried over from an older record."
-            NEEDS_MATCH ->
-                "VineTrack has not checked this product against an official label yet."
+            VERIFIED, PARTIALLY_VERIFIED, UNVERIFIED, NEEDS_MATCH ->
+                "Check the product details and source information before use."
             CONFLICT ->
                 "Official sources disagree about this product. Review it before " +
                     "relying on its resistance information."

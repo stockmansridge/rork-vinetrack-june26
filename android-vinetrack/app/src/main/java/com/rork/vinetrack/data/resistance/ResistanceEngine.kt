@@ -1062,8 +1062,7 @@ object ResistanceEngine {
 
         var qualified = explanation
         if (evidence == ResistanceEvidenceQuality.QUALIFIED && status.isBreach) {
-            qualified = "$explanation This is based on recorded groups that have not been " +
-                "independently verified."
+            qualified = "$explanation This is based on recorded groups whose source still needs confirmation."
         }
 
         return ResistanceRuleResult(
@@ -1221,8 +1220,8 @@ object ResistanceEngine {
                 ResistanceEvidenceQuality.HIGH ->
                     "No $label resistance strategy limit is reached for this block."
                 ResistanceEvidenceQuality.QUALIFIED ->
-                    "No strategy limit detected using the recorded groups; one or more chemical " +
-                        "records are unverified."
+                    "No strategy limit detected using the recorded groups; some resistance " +
+                        "group sources still need confirmation."
                 ResistanceEvidenceQuality.INDETERMINATE ->
                     "No strategy limit detected using the recorded groups, but some applications " +
                         "could not be assessed."

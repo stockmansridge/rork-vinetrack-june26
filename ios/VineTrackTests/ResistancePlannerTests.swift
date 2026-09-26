@@ -1016,13 +1016,13 @@ struct ResistancePlannerTests {
     func verificationMarks() {
         // Held in the domain so the two phones cannot drift to different symbols for the
         // same evidence state.
-        #expect(ChemicalIntelligenceAvailability.availableVerified.plannerMark == "✓ Verified")
+        #expect(ChemicalIntelligenceAvailability.availableVerified.plannerMark == "✓ Resistance data sourced")
         #expect(
             ChemicalIntelligenceAvailability.availablePartiallyVerified.plannerMark
-                == "◐ Partially Verified"
+                == "◐ Check resistance data"
         )
-        #expect(ChemicalIntelligenceAvailability.availableUnverified.plannerMark == "○ Unverified")
-        #expect(ChemicalIntelligenceAvailability.conflict.plannerMark == "⚠ Conflict")
+        #expect(ChemicalIntelligenceAvailability.availableUnverified.plannerMark == "○ Check resistance data")
+        #expect(ChemicalIntelligenceAvailability.conflict.plannerMark == "⚠ Review required")
         #expect(ChemicalIntelligenceAvailability.unavailable.plannerMark == "— No chemistry")
     }
 

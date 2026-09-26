@@ -522,9 +522,9 @@ struct EditSavedChemicalSheet: View {
     private var topActionsSection: some View {
         Section {
             HStack {
-                Text("Verification status")
+                Text("Details")
                 Spacer()
-                ChemicalVerificationBadge(status: session.editOutcome?.resolvedStatus ?? chemical?.verificationStatus ?? .unverified)
+                ChemicalVerificationBadge(status: session.editOutcome?.resolvedStatus ?? chemical?.verificationStatus ?? .unverified, chemical: chemical)
             }
             if !session.blockingViolations.isEmpty || !session.carriedOverViolations.isEmpty {
                 Text("Needs attention: check incomplete product, active ingredient or grapevine rate details below.")
@@ -1311,9 +1311,9 @@ struct EditSavedChemicalSheet: View {
         return Section {
             if let chemical {
                 HStack {
-                    Text("Verification")
+                    Text("Details")
                     Spacer()
-                    ChemicalVerificationBadge(status: chemical.verificationStatus)
+                    ChemicalVerificationBadge(status: chemical.verificationStatus, chemical: chemical)
                 }
                 // Registration identity vs the CURRENT vineyard's jurisdiction.
                 // The record keeps its own country — it is never re-keyed — but

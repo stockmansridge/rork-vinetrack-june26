@@ -3,6 +3,51 @@ import Testing
 @testable import VineTrack
 
 struct ChemicalSearchV2Tests {
+    @Test func completenessUsesFieldsNotRegistrationOrEvidenceGrade() {
+        let active = ChemicalActiveIngredient(
+            name: "Tebuconazole", concentration: 200, concentrationUnit: .gramsPerLitre,
+            activityGroup: ChemicalActivityGroup(scheme: .frac, code: "3")
+        )
+        let intel = ChemicalIntelligence(
+            activeIngredients: [active], verification: .manual(),
+            registeredUses: [ChemicalRegisteredUse(crop: "Grapes", targetRaw: "Mildew", rates: [
+                ChemicalLabelRate(basis: .perHectare, value: 2, unit: "L")
+            ])], productCategory: "fungicide"
+        )
+        let complete = ChemicalDetailsCompleteness.assess(
+            name: "Spray", category: "fungicide", form: "liquid", intelligence: intel,
+            labelURL: "https://example.com/label.pdf", hasDefaultRate: true, hasLabelRate: true
+        )
+        #expect(complete.title == "Complete details")
+        #expect(complete.missingText == nil)
+        let basic = ChemicalDetailsCompleteness.assess(
+            name: "Spray", category: "fungicide", form: "", intelligence: intel,
+            labelURL: "", hasDefaultRate: true, hasLabelRate: false
+        )
+        #expect(basic.title == "Basic details")
+        #expect(basic.missingText == "Missing: product form, label rate, product label link")
+    }
+
+    @Test func nonProtectionProductsDoNotNeedResistanceGroupsOrActives() {
+        let basic = ChemicalDetailsCompleteness.assess(
+            name: "Seaweed", category: "seaweed", form: "liquid",
+            intelligence: ChemicalIntelligence(productCategory: "seaweed"),
+            labelURL: "https://example.com/seaweed-label", hasDefaultRate: true, hasLabelRate: false
+        )
+        #expect(basic.title == "Complete details")
+        #expect(!basic.missing.contains("FRAC group"))
+    }
+
+    @Test func genuineConflictsTakePriorityOverMissingFields() {
+        let conflict = ChemicalVerificationConflict(field: "activity_group", extractedValue: "3", authoritativeValue: "11")
+        let intel = ChemicalIntelligence(verification: ChemicalVerification(conflicts: [conflict]))
+        let result = ChemicalDetailsCompleteness.assess(
+            name: "Spray", category: "fungicide", form: "", intelligence: intel,
+            labelURL: "", hasDefaultRate: false, hasLabelRate: false
+        )
+        #expect(result.title == "Review required")
+        #expect(result.missing.contains("product form"))
+    }
     @Test func webCandidateWithoutAPVMANumberCanBeSelected() throws {
         let payload = #"{"candidates":[{"name":"CropSure Beast 200 Herbicide","brand":"CropSure Pty Ltd","activeIngredient":"Glufosinate-ammonium","product_category":"herbicide","source":"research"}],"detail":null,"timings":{"search_ms":324,"extraction_ms":0}}"#
         let response = try JSONDecoder().decode(ChemicalInfoService.WebV2Lookup.self, from: Data(payload.utf8))

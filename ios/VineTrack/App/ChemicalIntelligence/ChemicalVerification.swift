@@ -54,24 +54,15 @@ nonisolated enum ChemicalVerificationStatus: String, Codable, Sendable, CaseIter
     /// documents; it does not certify products.
     nonisolated var label: String {
         switch self {
-        case .verified: return "Official label checked"
-        case .partiallyVerified: return "Label checked — details unavailable"
-        case .unverified: return "Not checked"
-        case .needsMatch: return "Not checked"
+        case .verified, .partiallyVerified, .unverified, .needsMatch: return "Basic details"
         case .conflict: return "Review required"
         }
     }
 
     nonisolated var detail: String {
         switch self {
-        case .verified:
-            return "VineTrack checked the official product registration and label."
-        case .partiallyVerified:
-            return Self.partiallyVerifiedSupportingText
-        case .unverified:
-            return "VineTrack has not checked this product against an official label. It was entered manually or carried over from an older record."
-        case .needsMatch:
-            return "VineTrack has not checked this product against an official label yet."
+        case .verified, .partiallyVerified, .unverified, .needsMatch:
+            return "Check the product details and source information before use."
         case .conflict:
             return "Official sources disagree about this product. Review it before relying on its resistance information."
         }

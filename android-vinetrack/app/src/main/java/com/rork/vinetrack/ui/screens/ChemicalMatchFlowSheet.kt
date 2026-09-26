@@ -578,8 +578,8 @@ internal fun ChemicalMatchFlowSheet(
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Enter Manually") }
                     Text(
-                        "Manually entered products stay Unverified until they are matched to a " +
-                            "registered product.",
+                        "Manually entered products can be saved with basic details. " +
+                            "Add missing information when available.",
                         fontSize = 11.sp,
                         color = vine.textSecondary,
                     )
@@ -655,8 +655,8 @@ internal fun ChemicalMatchFlowSheet(
                                     Icons.Filled.Help,
                                 )
                                 Text(
-                                    "No national registration was found. This product can be saved, " +
-                                        "but it cannot become Verified.",
+                                    "No national registration was found. This product can still be saved. " +
+                                        "Complete the available product details before use.",
                                     fontSize = 12.sp,
                                     color = vine.textSecondary,
                                 )

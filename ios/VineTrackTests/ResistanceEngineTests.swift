@@ -1023,7 +1023,7 @@ struct ResistanceEngineTests {
         #expect(result.isCleanResult == false)
         #expect(
             result.summary
-                == "No strategy limit detected using the recorded groups; one or more chemical records are unverified."
+                == "No strategy limit detected using the recorded groups; some resistance group sources still need confirmation."
         )
     }
 
@@ -1039,7 +1039,7 @@ struct ResistanceEngineTests {
         #expect(evaluation.status == .strategyExceeded)
         #expect(table.evidenceQuality == .qualified)
         // The warning must be qualified by the quality of its evidence.
-        #expect(table.explanation.contains("not been independently verified"))
+        #expect(table.explanation.contains("source still needs confirmation"))
     }
 
     @Test("Conflicting chemistry cannot be treated as reliable")

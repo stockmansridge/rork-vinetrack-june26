@@ -372,7 +372,7 @@ object ResistancePlannerPresentation {
             add("${check.unavailableCount} ${plural("application", check.unavailableCount)} with no usable chemistry")
         }
         if (check.unverifiedCount > 0) {
-            add("${check.unverifiedCount} ${plural("application", check.unverifiedCount)} with unverified chemistry")
+            add("${check.unverifiedCount} ${plural("application", check.unverifiedCount)} with resistance groups needing source confirmation")
         }
     }
 
@@ -535,9 +535,9 @@ object ResistancePlannerPresentation {
  */
 val ChemicalIntelligenceAvailability.plannerMark: String
     get() = when (this) {
-        ChemicalIntelligenceAvailability.AVAILABLE_VERIFIED -> "✓ Verified"
-        ChemicalIntelligenceAvailability.AVAILABLE_PARTIALLY_VERIFIED -> "◐ Partially Verified"
-        ChemicalIntelligenceAvailability.AVAILABLE_UNVERIFIED -> "○ Unverified"
-        ChemicalIntelligenceAvailability.CONFLICT -> "⚠ Conflict"
+        ChemicalIntelligenceAvailability.AVAILABLE_VERIFIED -> "✓ Resistance data sourced"
+        ChemicalIntelligenceAvailability.AVAILABLE_PARTIALLY_VERIFIED -> "◐ Check resistance data"
+        ChemicalIntelligenceAvailability.AVAILABLE_UNVERIFIED -> "○ Check resistance data"
+        ChemicalIntelligenceAvailability.CONFLICT -> "⚠ Review required"
         ChemicalIntelligenceAvailability.UNAVAILABLE -> "— No chemistry"
     }

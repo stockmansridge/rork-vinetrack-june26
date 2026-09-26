@@ -416,8 +416,14 @@ private fun GrowthListView(
                 }
 
                 item { SectionHeader("Blocks", onLight = true) }
-                items(heatmapUi.blocks.size, key = { heatmapUi.blocks[it].id }) { index ->
-                    val block = heatmapUi.blocks[index]
+                val sortedBlocks = heatmapUi.blocks.sortedWith { left, right ->
+                    val leftEl = heatmapModel.currentBlockEl(left.id, todayIso) ?: -1.0
+                    val rightEl = heatmapModel.currentBlockEl(right.id, todayIso) ?: -1.0
+                    val order = rightEl.compareTo(leftEl)
+                    if (order == 0) (left.name ?: "").compareTo(right.name ?: "") else order
+                }
+                items(sortedBlocks.size, key = { sortedBlocks[it].id }) { index ->
+                    val block = sortedBlocks[index]
                     val el = heatmapModel.currentBlockEl(block.id, todayIso)
                     val rgb = el?.let(ElRipenessHeatmap::elColour)
                     val tint = rgb?.let { Color(it.r, it.g, it.b) } ?: vine.textSecondary
@@ -428,7 +434,12 @@ private fun GrowthListView(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Icon(Icons.Filled.Spa, contentDescription = null, tint = tint)
+                        StageReferenceImage(
+                            vm = vm,
+                            state = state,
+                            code = el?.takeIf { it == it.toInt().toDouble() }?.let { "EL${it.toInt()}" } ?: "",
+                            modifier = Modifier.size(50.dp),
+                        )
                         Column(Modifier.weight(1f)) {
                             Text(block.name ?: "Block", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                             Text(el?.let(ElRipenessHeatmap::formatEl) ?: "No current stage", color = tint)

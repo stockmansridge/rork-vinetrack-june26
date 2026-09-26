@@ -489,9 +489,9 @@ nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashab
     /// is what made the Verify screen look like it had lost their data.
     var provenanceLabel: String {
         switch source {
-        case ChemicalSearchResult.masterSource: return "Verified catalogue"
-        case ChemicalSearchResult.officialRegisterSource: return "Official register"
-        default: return "Unverified suggestion"
+        case ChemicalSearchResult.masterSource: return "Source: VineTrack Master"
+        case ChemicalSearchResult.officialRegisterSource: return "Source: Official register"
+        default: return "Source: Online suggestion"
         }
     }
 

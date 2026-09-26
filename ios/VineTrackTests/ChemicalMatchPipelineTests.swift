@@ -236,8 +236,8 @@ struct ChemicalMatchPipelineTests {
     func searchRowsAreLabelledByProvenance() throws {
         let ai = try #require(try decodeSearch(dithaneSearchJSON).first)
         let register = try #require(try decodeSearch(confirmedSearchJSON).first)
-        #expect(ai.provenanceLabel == "Unverified suggestion")
-        #expect(register.provenanceLabel == "Official register")
+        #expect(ai.provenanceLabel == "Source: Online suggestion")
+        #expect(register.provenanceLabel == "Source: Official register")
     }
 
     // MARK: - E/F. The Dithane Rainshield regression

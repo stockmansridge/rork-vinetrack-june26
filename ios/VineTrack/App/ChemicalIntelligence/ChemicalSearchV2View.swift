@@ -226,6 +226,8 @@ nonisolated struct ChemicalSearchV2ManualDetails: Sendable, Hashable {
     var productCategory: String = ""
     var productForm: String = ""
     var activeIngredient: String = ""
+    var concentration: String = ""
+    var concentrationUnit: ChemicalConcentrationUnit?
     var activityGroupScheme: ChemicalActivityGroupScheme?
     var activityGroupCode: String = ""
     var labelURL: String = ""
@@ -244,6 +246,8 @@ nonisolated struct ChemicalSearchV2ManualDetails: Sendable, Hashable {
         let actives = activeNames.enumerated().map { index, name in
             ChemicalManualActiveDraft(
                 name: name,
+                concentrationText: index == 0 ? concentration : "",
+                concentrationUnit: index == 0 ? concentrationUnit : nil,
                 scheme: index == 0 ? activityGroupScheme : nil,
                 groupCode: index == 0 ? activityGroupCode : ""
             )
@@ -411,6 +415,8 @@ struct ChemicalSearchV2View: View {
         var masterMatch: ChemicalMasterMatch? = nil
         var isManual: Bool = false
         var manualDetails = ChemicalSearchV2ManualDetails()
+        var enteredLabelRate: ChemicalManualRateDraft?
+        var activeCorrections: [String: ChemicalManualActiveDraft] = [:]
     }
 
     var body: some View {
@@ -753,6 +759,71 @@ private struct ChemicalSearchV2ReviewView: View {
         )
     }
 
+    private var enteredLabelRate: ChemicalLabelRate? {
+        guard let rate = draft.enteredLabelRate else { return nil }
+        let proposal = ChemicalManualEntry.proposedIntelligence(
+            from: ChemicalManualDraft(productName: draft.productName, productRates: [rate]), existing: nil
+        )
+        return proposal.registeredUses.first(where: ChemicalManualEntry.isProductRateCarrier)?.rates.first
+    }
+
+    private var reviewIntelligence: ChemicalIntelligence {
+        var proposed = draft.isManual
+            ? draft.manualDetails.intelligence(productName: draft.productName, rate: draft.rate)
+            : draft.intelligence
+        let details = draft.manualDetails
+        if !draft.isManual {
+            if proposed.productCategory.isEmpty { proposed.productCategory = details.productCategory.trimmingCharacters(in: .whitespaces) }
+            if proposed.activeIngredients.isEmpty, !details.activeIngredient.trimmingCharacters(in: .whitespaces).isEmpty {
+                proposed.activeIngredients = details.activeIngredient.split(separator: ",").map {
+                    ChemicalActiveIngredient(name: String($0).trimmingCharacters(in: .whitespaces), identitySource: .manualEntry)
+                }
+            }
+            if !details.labelURL.trimmingCharacters(in: .whitespaces).isEmpty,
+               proposed.registration?.labelReference?.isEmpty ?? true {
+                var registration = proposed.registration ?? ChemicalRegistration(countryCode: "")
+                registration.labelReference = details.labelURL.trimmingCharacters(in: .whitespaces)
+                proposed.registration = registration
+            }
+        }
+        proposed.activeIngredients = proposed.activeIngredients.map { active in
+            guard let edit = draft.activeCorrections[active.name] else { return active }
+            var updated = active
+            if !active.hasConcentration,
+               let value = Double(edit.concentrationText.replacingOccurrences(of: ",", with: ".")),
+               let unit = edit.concentrationUnit {
+                updated.concentration = value
+                updated.concentrationUnit = unit
+            }
+            if active.activityGroup?.isResistanceRelevant != true,
+               let scheme = edit.scheme, scheme != .notApplicable,
+               !edit.groupCode.trimmingCharacters(in: .whitespaces).isEmpty {
+                updated.activityGroup = ChemicalActivityGroup(scheme: scheme, code: edit.groupCode)
+            }
+            return updated
+        }
+        if let enteredLabelRate,
+           !proposed.registeredUses.filter(\.isViticultural).flatMap(\.rates).contains(where: ChemicalSaveContract.isUsable) {
+            proposed.registeredUses.append(ChemicalRegisteredUse(
+                crop: "Grapes", targetRaw: "Entered manually from label", rates: [enteredLabelRate],
+                provenance: ["rates": "manual_entry"]
+            ))
+        }
+        return draft.isManual ? proposed : ChemicalEditReconciler.reconcile(existing: draft.intelligence, proposed: proposed).intelligence
+    }
+
+    private var completeness: ChemicalDetailsCompleteness {
+        ChemicalDetailsCompleteness.assess(
+            name: draft.productName,
+            category: reviewIntelligence.productCategory,
+            form: draft.manualDetails.productForm.isEmpty ? (draft.formType ?? "") : draft.manualDetails.productForm,
+            intelligence: reviewIntelligence,
+            labelURL: draft.manualDetails.labelURL,
+            hasDefaultRate: !effectiveRates.isEmpty,
+            hasLabelRate: reviewIntelligence.registeredUses.filter(\.isViticultural).flatMap(\.rates).contains(where: ChemicalSaveContract.isUsable)
+        )
+    }
+
     private var evaluation: ChemicalSaveEvaluation {
         ChemicalSaveContract.evaluateMinimumOperational(
             productName: draft.productName, productUnit: draft.unit.rawValue,
@@ -763,25 +834,30 @@ private struct ChemicalSearchV2ReviewView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Text(completeness.title).font(.headline)
+                    if let missing = completeness.missingText { Text(missing).font(.caption).foregroundStyle(.secondary) }
+                    Text("Source: \(draft.isManual ? "Entered manually" : draft.source == "VineTrack Master" ? "VineTrack Master" : reviewIntelligence.registration?.labelReference == nil ? "Online lookup" : "Product label")")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 if draft.isManual {
                     Section("Required") {
                         TextField("Chemical / product name *", text: $draft.productName)
-                        Label("Manual vineyard chemical · Unverified", systemImage: "info.circle")
+                        Label("Enter the details you have; missing fields can be completed below.", systemImage: "info.circle")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    Section("Source") { Label(draft.source, systemImage: "checkmark.seal") }
                     Section("Product") {
                         TextField("Chemical / product name *", text: $draft.productName)
                         LabeledContent("Registrant", value: draft.intelligence.registration?.registrant?.ifEmpty("Not found — check label") ?? "Not found — check label")
                         LabeledContent("APVMA", value: draft.source == "Product label / web"
-                            ? (draft.intelligence.registration?.registrationNumber.map { "\($0) (on label; register not verified)" } ?? "Not stated on label")
+                            ? (draft.intelligence.registration?.registrationNumber.map { "\($0) (from label)" } ?? "Not stated on label")
                             : (draft.intelligence.hasEvidencedRegistration
-                                ? (draft.intelligence.registration?.registrationNumber ?? "Not found — check label") : "APVMA registration not verified"))
+                                ? (draft.intelligence.registration?.registrationNumber ?? "Not found — check label") : "APVMA number not available"))
                         LabeledContent("Active ingredients", value: draft.intelligence.activeIngredients.map(\.displayLabelWithGroup).joined(separator: ", ").ifEmpty("Needs confirmation — check label"))
                         LabeledContent("Category", value: draft.intelligence.productCategory.isEmpty ? "Not found — check label" : draft.intelligence.productCategory.capitalized)
-                        LabeledContent("Product form", value: draft.formType?.ifEmpty("Needs confirmation") ?? "Needs confirmation")
+                        LabeledContent("Product form", value: draft.manualDetails.productForm.ifEmpty(draft.formType ?? "Needs confirmation"))
                         if let label = [draft.intelligence.registration?.manufacturerLabelURL,
                                         draft.intelligence.registration?.regulatorLabelURL,
                                         draft.intelligence.registration?.labelReference]
@@ -862,9 +938,18 @@ private struct ChemicalSearchV2ReviewView: View {
                 } footer: {
                     Text("If rate is not found, check the label and enter the correct vineyard rate here. Rate bases are stored exactly as entered and never converted.")
                 }
-                if draft.isManual {
-                    Section {
-                        DisclosureGroup("Optional details", isExpanded: $isOptionalDetailsExpanded) {
+                Section {
+                    DisclosureGroup("Fill missing details", isExpanded: $isOptionalDetailsExpanded) {
+                            if !draft.isManual {
+                                TextField("Category", text: $draft.manualDetails.productCategory)
+                                TextField("Product form (liquid or solid)", text: $draft.manualDetails.productForm)
+                                if draft.intelligence.activeIngredients.isEmpty {
+                                    TextField("Active ingredient(s), comma separated", text: $draft.manualDetails.activeIngredient)
+                                }
+                                TextField("Product label link", text: $draft.manualDetails.labelURL)
+                                    .textInputAutocapitalization(.never).keyboardType(.URL)
+                            }
+                            if draft.isManual {
                             TextField("Manufacturer / registrant", text: $draft.manualDetails.manufacturer)
                             TextField("APVMA registration number", text: $draft.manualDetails.registrationNumber)
                                 .keyboardType(.numberPad)
@@ -883,6 +968,35 @@ private struct ChemicalSearchV2ReviewView: View {
                             TextField("Label URL", text: $draft.manualDetails.labelURL)
                                 .textInputAutocapitalization(.never)
                                 .keyboardType(.URL)
+                            }
+                            ForEach(reviewIntelligence.activeIngredients.filter {
+                                !$0.hasConcentration || ($0.activityGroup?.isResistanceRelevant != true && !draft.isManual) || draft.activeCorrections[$0.name] != nil
+                            }, id: \.name) { active in
+                                VStack(alignment: .leading) {
+                                    Text(active.name).font(.subheadline.weight(.semibold))
+                                    let binding = Binding<ChemicalManualActiveDraft>(
+                                        get: { draft.activeCorrections[active.name] ?? ChemicalManualActiveDraft(name: active.name) },
+                                        set: { draft.activeCorrections[active.name] = $0 }
+                                    )
+                                    if !active.hasConcentration || draft.activeCorrections[active.name] != nil {
+                                        TextField("Concentration", text: binding.concentrationText).keyboardType(.decimalPad)
+                                        Picker("Concentration unit", selection: binding.concentrationUnit) {
+                                            Text("Choose unit").tag(ChemicalConcentrationUnit?.none)
+                                            ForEach(ChemicalConcentrationUnit.allCases, id: \.self) { Text($0.label).tag(Optional($0)) }
+                                        }
+                                    }
+                                    if !draft.isManual, active.activityGroup?.isResistanceRelevant != true {
+                                        Picker("Resistance group system", selection: binding.scheme) {
+                                            Text("Not stated").tag(ChemicalActivityGroupScheme?.none)
+                                            ForEach(ChemicalActivityGroupScheme.allCases, id: \.rawValue) { Text($0.label).tag(Optional($0)) }
+                                        }
+                                        if binding.wrappedValue.scheme != nil {
+                                            TextField("Group code", text: binding.groupCode)
+                                        }
+                                    }
+                                }
+                            }
+                            if draft.isManual {
                             TextField("Product URL", text: $draft.manualDetails.productURL)
                                 .textInputAutocapitalization(.never)
                                 .keyboardType(.URL)
@@ -895,8 +1009,16 @@ private struct ChemicalSearchV2ReviewView: View {
                             TextField("Inventory quantity", text: $draft.manualDetails.inventoryQuantity)
                                 .keyboardType(.decimalPad)
                             TextField("Inventory unit", text: $draft.manualDetails.inventoryUnit)
+                            }
+                            if draft.enteredLabelRate != nil {
+                                ChemicalManualRateEditor(rate: Binding(
+                                    get: { draft.enteredLabelRate ?? ChemicalManualRateDraft() },
+                                    set: { draft.enteredLabelRate = $0 }
+                                ), allowsRemoval: false, onRemove: {})
+                            } else if completeness.missing.contains("label rate") {
+                                Button("Enter vineyard rate from product label") { draft.enteredLabelRate = ChemicalManualRateDraft() }
+                            }
                         }
-                    }
                 }
                 if let duplicate {
                     Section {
@@ -919,9 +1041,7 @@ private struct ChemicalSearchV2ReviewView: View {
 
     private func save() {
         guard !isSaving, evaluation.isSatisfied, let rate = effectiveRates.first else { return }
-        let intelligence = draft.isManual
-            ? draft.manualDetails.intelligence(productName: draft.productName, rate: draft.rate)
-            : draft.intelligence
+        let intelligence = reviewIntelligence
         if let existing = ChemicalSearchV2Duplicate.existing(
             master: draft.master, intelligence: intelligence, name: draft.productName,
             in: store.savedChemicals
@@ -971,10 +1091,10 @@ private struct ChemicalSearchV2ReviewView: View {
             activeIngredient: canonicalIntelligence.legacyActiveIngredient,
             rates: legacyRates,
             purchase: purchase,
-            labelURL: draft.isManual ? details.labelURL : (draft.intelligence.registration?.labelReference ?? ""),
+            labelURL: details.labelURL.isEmpty ? (intelligence.registration?.labelReference ?? "") : details.labelURL,
             productURL: draft.isManual ? details.productURL : (draft.intelligence.registration?.manufacturerProductURL ?? ""),
-            productCategory: draft.isManual ? details.productCategory : draft.intelligence.productCategory,
-            productForm: draft.isManual ? details.productForm : (draft.formType ?? ""),
+            productCategory: intelligence.productCategory,
+            productForm: details.productForm.isEmpty ? (draft.formType ?? "") : details.productForm,
             packSize: draft.isManual ? packSize : nil,
             packUnit: draft.isManual ? details.packUnit : "",
             pricePerPack: draft.isManual ? pricePerPack : nil,

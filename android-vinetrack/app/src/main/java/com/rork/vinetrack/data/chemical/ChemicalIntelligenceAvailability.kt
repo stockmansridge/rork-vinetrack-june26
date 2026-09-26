@@ -26,21 +26,21 @@ enum class ChemicalIntelligenceAvailability(val raw: String, val label: String) 
      * established. Usable without qualification.
      */
     @SerialName("available_verified")
-    AVAILABLE_VERIFIED("available_verified", "Verified chemistry"),
+    AVAILABLE_VERIFIED("available_verified", "Resistance information sourced"),
 
     /**
      * The product is identified, but at least one resistance-relevant field is
      * unconfirmed. Usable, must be shown as partial.
      */
     @SerialName("available_partially_verified")
-    AVAILABLE_PARTIALLY_VERIFIED("available_partially_verified", "Partially verified chemistry"),
+    AVAILABLE_PARTIALLY_VERIFIED("available_partially_verified", "Resistance information needs checking"),
 
     /**
      * Chemistry is recorded but rests on operator entry or a legacy record. The
      * engine may reason from it, and must say so.
      */
     @SerialName("available_unverified")
-    AVAILABLE_UNVERIFIED("available_unverified", "Unverified chemistry"),
+    AVAILABLE_UNVERIFIED("available_unverified", "Resistance information needs checking"),
 
     /**
      * Sources disagreed about a resistance-critical field. Nothing here may be

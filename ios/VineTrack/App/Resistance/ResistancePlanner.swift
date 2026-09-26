@@ -61,7 +61,7 @@ nonisolated enum ResistanceHistoryConcern: String, Codable, Sendable, Hashable, 
 
     nonisolated var label: String {
         switch self {
-        case .unverifiedChemistry: return "Contains unverified chemistry"
+        case .unverifiedChemistry: return "Recorded resistance groups need source confirmation"
         case .unavailableChemistry: return "Contains unavailable chemistry"
         case .conflictingChemistry: return "Contains conflicting chemistry"
         case .unresolvedBlockAttribution: return "Historical block attribution incomplete"
@@ -235,9 +235,9 @@ nonisolated struct ResistancePlanProductOption: Sendable, Hashable, Identifiable
         case .availableVerified:
             return nil
         case .availablePartiallyVerified:
-            return "Recorded as \(candidate.groups.displayLabel) — chemical information partially verified"
+            return "Recorded as \(candidate.groups.displayLabel) — check resistance group source"
         case .availableUnverified:
-            return "Recorded as \(candidate.groups.displayLabel) — chemical information unverified"
+            return "Recorded as \(candidate.groups.displayLabel) — group entered manually or carried over"
         case .conflict:
             return "Sources disagree about this product's chemistry, so its \(candidate.groups.displayLabel) identity cannot be relied on"
         case .unavailable:
@@ -839,10 +839,10 @@ nonisolated extension ChemicalIntelligenceAvailability {
     /// on each.
     nonisolated var plannerMark: String {
         switch self {
-        case .availableVerified: return "✓ Verified"
-        case .availablePartiallyVerified: return "◐ Partially Verified"
-        case .availableUnverified: return "○ Unverified"
-        case .conflict: return "⚠ Conflict"
+        case .availableVerified: return "✓ Resistance data sourced"
+        case .availablePartiallyVerified: return "◐ Check resistance data"
+        case .availableUnverified: return "○ Check resistance data"
+        case .conflict: return "⚠ Review required"
         case .unavailable: return "— No chemistry"
         }
     }

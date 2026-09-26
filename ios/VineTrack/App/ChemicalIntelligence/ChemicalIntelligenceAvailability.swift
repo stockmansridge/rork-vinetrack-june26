@@ -30,9 +30,9 @@ nonisolated enum ChemicalIntelligenceAvailability: String, Codable, Sendable, Ha
 
     nonisolated var label: String {
         switch self {
-        case .availableVerified: return "Verified chemistry"
-        case .availablePartiallyVerified: return "Partially verified chemistry"
-        case .availableUnverified: return "Unverified chemistry"
+        case .availableVerified: return "Resistance information sourced"
+        case .availablePartiallyVerified: return "Resistance information needs checking"
+        case .availableUnverified: return "Resistance information needs checking"
         case .conflict: return "Conflicting chemistry"
         case .unavailable: return "Chemical intelligence unavailable"
         }

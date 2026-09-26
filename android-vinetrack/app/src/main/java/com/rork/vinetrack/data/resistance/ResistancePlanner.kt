@@ -58,7 +58,7 @@ enum class ResistancePlanPositionStatus(val raw: String, val label: String) {
 
 /** A specific, nameable gap in a block's recorded history. */
 enum class ResistanceHistoryConcern(val raw: String, val label: String) {
-    UNVERIFIED_CHEMISTRY("unverified_chemistry", "Contains unverified chemistry"),
+    UNVERIFIED_CHEMISTRY("unverified_chemistry", "Recorded resistance groups need source confirmation"),
     UNAVAILABLE_CHEMISTRY("unavailable_chemistry", "Contains unavailable chemistry"),
     CONFLICTING_CHEMISTRY("conflicting_chemistry", "Contains conflicting chemistry"),
     UNRESOLVED_BLOCK_ATTRIBUTION(
@@ -218,9 +218,9 @@ data class ResistancePlanProductOption(
         get() = when (candidate.availability) {
             ChemicalIntelligenceAvailability.AVAILABLE_VERIFIED -> null
             ChemicalIntelligenceAvailability.AVAILABLE_PARTIALLY_VERIFIED ->
-                "Recorded as ${candidate.groups.displayLabel} — chemical information partially verified"
+                "Recorded as ${candidate.groups.displayLabel} — check resistance group source"
             ChemicalIntelligenceAvailability.AVAILABLE_UNVERIFIED ->
-                "Recorded as ${candidate.groups.displayLabel} — chemical information unverified"
+                "Recorded as ${candidate.groups.displayLabel} — group entered manually or carried over"
             ChemicalIntelligenceAvailability.CONFLICT ->
                 "Sources disagree about this product's chemistry, so its ${candidate.groups.displayLabel} identity cannot be relied on"
             ChemicalIntelligenceAvailability.UNAVAILABLE ->
