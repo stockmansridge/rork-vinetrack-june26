@@ -3,6 +3,8 @@ package com.rork.vinetrack.data
 import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.VineyardMember
+import com.rork.vinetrack.data.model.Trip
+import com.rork.vinetrack.data.model.resolveTripOperatorCategory
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -62,6 +64,33 @@ class WorkerTypeIntegrityTest {
         assertEquals(JsonNull, cleared["p_worker_type_id"])
         val assigned = workerTypeAssignmentArgs("vineyard", "user", "14a43189-ebe4-4343-80d0-baa4a738b008")
         assertEquals("14a43189-ebe4-4343-80d0-baa4a738b008", assigned["p_worker_type_id"]?.jsonPrimitive?.content)
+    }
+
+    @Test fun `completed trip uses linked worker type for two hours and survives serialized reload`() {
+        val trip = Trip(id = "trip-fixture", vineyardId = "fixture-vineyard", operatorUserId = "fixture-worker",
+            operatorCategoryId = "fixture-type", startTime = "2026-09-01T08:00:00Z",
+            endTime = "2026-09-01T10:00:00Z", isActive = false)
+        val category = OperatorCategory(id = "fixture-type", vineyardId = "fixture-vineyard", name = "Fixture worker", costPerHour = 38.0)
+        val restored = SupabaseClient.json.decodeFromString(Trip.serializer(), SupabaseClient.json.encodeToString(Trip.serializer(), trip))
+        assertEquals("fixture-worker", restored.operatorUserId)
+        assertEquals("fixture-type", restored.operatorCategoryId)
+        assertEquals("fixture-type", resolveTripOperatorCategory(restored, listOf(category))?.id)
+        val estimate = TripCostEstimator.estimate(restored, null, listOf(category), emptyList(), emptyList())
+        assertEquals(2.0, estimate.labour.hours, 0.001)
+        assertEquals(38.0, estimate.labour.costPerHour!!, 0.001)
+        assertEquals(76.0, estimate.labour.cost, 0.001)
+        assertEquals(0.0, TripCostEstimator.estimate(restored, null, emptyList(), emptyList(), emptyList()).labour.cost, 0.001)
+    }
+
+    @Test fun `completed trip should retain original rate after catalogue changes`() {
+        val trip = Trip(id = "trip-fixture", vineyardId = "fixture-vineyard", operatorUserId = "fixture-worker",
+            operatorCategoryId = "fixture-type", startTime = "2026-09-01T08:00:00Z",
+            endTime = "2026-09-01T10:00:00Z", isActive = false)
+        val oldRate = OperatorCategory("fixture-type", "fixture-vineyard", "Fixture worker", 38.0)
+        val changedRate = oldRate.copy(costPerHour = 45.0)
+        assertEquals(76.0, TripCostEstimator.estimate(trip, null, listOf(oldRate), emptyList(), emptyList()).labour.cost, 0.001)
+        // Read-only estimate currently has no historical rate snapshot: regression stays red.
+        assertEquals(76.0, TripCostEstimator.estimate(trip, null, listOf(changedRate), emptyList(), emptyList()).labour.cost, 0.001)
     }
 
     @Test fun `saved two hours at thirty eight retains identity snapshot and seventy six cost`() {

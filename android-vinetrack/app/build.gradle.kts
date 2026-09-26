@@ -298,6 +298,17 @@ if (providers.gradleProperty("forecastParityFocusedTests").orNull == "true") {
     }
 }
 
+// Compile only the production-backed Worker Type fixture suite while unrelated legacy tests are stale.
+if (providers.gradleProperty("workerTypeFocusedTests").orNull == "true") {
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/WorkerTypeIntegrityTest.kt")
+            })
+        }
+    }
+}
+
 if (providers.gradleProperty("tripLifecycleFocusedTests").orNull == "true") {
     afterEvaluate {
         tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
