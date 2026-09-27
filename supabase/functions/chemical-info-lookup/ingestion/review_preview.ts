@@ -54,6 +54,7 @@ const STRING_KEYS: ReadonlySet<string> = new Set([
   "registered_product_name",
   "verification_status",
   "source_kind",
+  "resistance_classification_state",
 ]);
 
 const STRING_OR_NULL_KEYS: ReadonlySet<string> = new Set([
@@ -64,12 +65,17 @@ const STRING_OR_NULL_KEYS: ReadonlySet<string> = new Set([
   "label_reference",
   "source_reference",
   "retrieved_at",
+  "activity_group_scheme",
 ]);
 
 const ARRAY_KEYS: ReadonlySet<string> = new Set([
   "registered_uses",
   "label_rate_bases",
+  "active_ingredients",
+  "activity_groups",
 ]);
+
+const OBJECT_KEYS: ReadonlySet<string> = new Set(["viticulture_rates"]);
 
 const ARRAY_OR_NULL_KEYS: ReadonlySet<string> = new Set([
   "verification_sources",
@@ -77,19 +83,20 @@ const ARRAY_OR_NULL_KEYS: ReadonlySet<string> = new Set([
   "verification_unresolved_fields",
 ]);
 
-/** The 15 keys a stored resolver patch may write — and nothing else, ever. */
+/** The 20 keys a stored resolver patch may write — and nothing else, ever. */
 export const RESOLVER_PATCH_CONTRACT_KEYS: readonly string[] = [
   ...STRING_KEYS,
   ...STRING_OR_NULL_KEYS,
   ...ARRAY_KEYS,
   ...ARRAY_OR_NULL_KEYS,
+  ...OBJECT_KEYS,
 ];
 
 /**
  * Validate a resolver-built patch against the sql/203 resolver patch
  * contract (same per-key type rules the apply RPC enforces). Returns the
  * violation detail, or null when the patch conforms. Identity fields,
- * review_status, catalogue_version — anything outside the 15 contract keys —
+ * review_status, catalogue_version — anything outside the 20 contract keys —
  * is a violation: fail closed, store nothing.
  */
 export function validateResolverPatch(patch: unknown): string | null {
@@ -101,6 +108,12 @@ export function validateResolverPatch(patch: unknown): string | null {
   const entries = Object.entries(patch as Record<string, unknown>);
   if (!entries.length) return "proposed_patch must be a non-empty object";
   for (const [key, value] of entries) {
+    if (key === "resistance_classification_state" && !["classified", "not_applicable", "unresolved"].includes(String(value))) return "invalid resistance state";
+    if (key === "activity_group_scheme" && value !== null && !["frac", "hrac", "irac", "not_applicable"].includes(String(value))) return "invalid group scheme";
+    if (key === "viticulture_rates" && (value === null || typeof value !== "object" || Array.isArray(value) ||
+      !Array.isArray((value as Record<string, unknown>).per_hectare) || !Array.isArray((value as Record<string, unknown>).per_100_litres))) return "invalid viticulture_rates";
+    if (key === "active_ingredients" && (!Array.isArray(value) || value.some((a) => !a || typeof a !== "object" || typeof a.name !== "string"))) return "invalid active_ingredients";
+    if (key === "activity_groups" && (!Array.isArray(value) || value.some((g) => typeof g !== "string"))) return "invalid activity_groups";
     if (STRING_KEYS.has(key)) {
       if (typeof value !== "string") return `key ${key} must be a string`;
     } else if (STRING_OR_NULL_KEYS.has(key)) {
@@ -109,6 +122,8 @@ export function validateResolverPatch(patch: unknown): string | null {
       }
     } else if (ARRAY_KEYS.has(key)) {
       if (!Array.isArray(value)) return `key ${key} must be an array`;
+    } else if (OBJECT_KEYS.has(key)) {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) return `key ${key} must be an object`;
     } else if (ARRAY_OR_NULL_KEYS.has(key)) {
       if (value !== null && !Array.isArray(value)) {
         return `key ${key} must be an array or null`;
@@ -175,6 +190,11 @@ export function buildCurrentSnapshot(row: MasterRow): Record<string, Jsonish> {
     label_reference: row.label_reference ?? null,
     registered_uses: row.registered_uses ?? [],
     label_rate_bases: row.label_rate_bases ?? [],
+    active_ingredients: row.active_ingredients ?? [],
+    activity_groups: row.activity_groups ?? [],
+    activity_group_scheme: row.activity_group_scheme ?? null,
+    resistance_classification_state: row.resistance_classification_state ?? "unresolved",
+    viticulture_rates: row.viticulture_rates ?? { per_hectare: [], per_100_litres: [] },
     verification_status: row.verification_status,
     verification_sources: row.verification_sources ?? [],
     verification_conflicts: row.verification_conflicts ?? [],

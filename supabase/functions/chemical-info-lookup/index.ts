@@ -12,6 +12,9 @@
 //   { "action": "master_refresh", "masterChemicalId": uuid,
 //     "apply"?: boolean }               // system admins only (Stage 3)
 //   { "action": "master_review_preview", "masterChemicalId": uuid }
+//   { "action": "master_backfill_preview_v2", "masterChemicalId": uuid,
+//     "country": "AU", "dryRun"?: boolean } // admin-only, locked Master identity;
+//                                       // dryRun never stores a preview or cache
 //                                        // system admins only (Stage 2 R2-B)
 //                                        // — read-only refresh + SERVER-
 //                                        // stored resolver patch
@@ -135,6 +138,8 @@ import { nameCorresponds } from "./ingestion/matching.ts";
 import { labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardRateSummary, vineyardTableRate, withWebEnrichment } from "./web_lookup.ts";
 import { discoverManufacturerUrls, findWebMasterIdentities, identityCandidate, identityResearch, selectedIdentity, verifiedManufacturerLead, type WebIdentity } from "./web_identity.ts";
 import { classifyUrl } from "./research/classify.ts";
+import { buildMasterBackfillPatch, isIncompleteMaster, lockedWebIdentity } from "./ingestion/master_backfill.ts";
+import { buildCurrentSnapshot } from "./ingestion/review_preview.ts";
 import {
   buildCandidatePayload,
   buildFieldProvenance,
@@ -1369,26 +1374,70 @@ Deno.serve(async (req: Request) => {
       return json({ results });
     }
 
-    if (action === "web_lookup_v2") {
-      const query = typeof body?.query === "string" ? body.query.trim() : "";
+    if (action === "web_lookup_v2" || action === "master_backfill_preview_v2") {
+      const backfill = action === "master_backfill_preview_v2";
+      if (backfill && (body?.patch !== undefined || body?.proposed_patch !== undefined || body?.proposedPatch !== undefined || body?.apply !== undefined || body?.selectedName !== undefined || body?.query !== undefined))
+        return json({ error: "Backfill accepts only a Master id and dryRun" }, 400);
+      if (backfill && !(await isSystemAdmin(req))) return json({ error: "Not authorised" }, 403);
+      const adminId = backfill ? await authenticatedUserId(req) : null;
+      if (backfill && !adminId) return json({ error: "Not authorised" }, 403);
+      const masterId = typeof body?.masterChemicalId === "string" ? body.masterChemicalId : "";
+      if (backfill && !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(masterId)) return json({ error: "Invalid Master id" }, 400);
+      const masterRows = backfill ? await masterSelect(`select=*&id=eq.${encodeURIComponent(masterId)}&limit=1`) : null;
+      if (backfill && (!masterRows || masterRows.length !== 1)) return json({ error: "Master row not found" }, 404);
+      const backfillRow = backfill ? masterRows![0] as MasterRow : null;
+      if (backfillRow && (!lockedWebIdentity(backfillRow) || countryCode !== backfillRow.registration_country))
+        return json({ status: "identity_conflict", master_chemical_id: masterId, preview_id: null });
+      const dryRun = backfill && body?.dryRun === true;
+      const finishBackfill = async (payload: any) => {
+        if (!backfillRow || !adminId) return json(payload);
+        const base = { master_chemical_id: backfillRow.id, name: backfillRow.registered_product_name,
+          registration_identity_key: backfillRow.registration_identity_key, base_revision: backfillRow.catalogue_version,
+          review_status: backfillRow.review_status, current: buildCurrentSnapshot(backfillRow) };
+        if (payload?.identity_conflict) return json({ ...base, status: "identity_conflict", evidence: payload.identity_conflict, preview_id: null });
+        if (!payload?.detail) return json({ ...base, status: "manufacturer_label_not_found", preview_id: null });
+        const proposed = buildMasterBackfillPatch(backfillRow, payload.detail);
+        const findings = { classified: proposed.patch?.resistance_classification_state === "classified",
+          not_applicable: proposed.patch?.resistance_classification_state === "not_applicable",
+          vineyard_rates_added: Boolean(proposed.patch?.viticulture_rates),
+          no_vineyard_use: !payload.detail.registered_uses?.some((use: any) => /grape|vineyard|vine/i.test(String(use.crop ?? ""))) };
+        if (!proposed.patch) return json({ ...base, status: proposed.status, evidence: proposed.evidence, findings, preview_id: null });
+        if (dryRun) return json({ ...base, status: "preview_ready", proposed_patch: proposed.patch,
+          evidence: proposed.evidence, findings, preview_id: null, dry_run: true });
+        const stored = await previewStore.insertPreview({ master_chemical_id: backfillRow.id,
+          base_revision: backfillRow.catalogue_version ?? 1, outcome: "material_change",
+          proposed_patch: proposed.patch, changes: [], requested_by: adminId });
+        if (!stored?.id) return json({ ...base, error: "preview_store_failed", preview_id: null }, 503);
+        return json({ ...base, status: "preview_ready", proposed_patch: proposed.patch,
+          evidence: proposed.evidence, findings, preview_id: stored.id, expires_at: stored.expires_at ?? null });
+      };
+      if (backfillRow && !isIncompleteMaster(backfillRow)) return json({ master_chemical_id: masterId,
+        name: backfillRow.registered_product_name, registration_identity_key: backfillRow.registration_identity_key,
+        base_revision: backfillRow.catalogue_version, review_status: backfillRow.review_status,
+        current: buildCurrentSnapshot(backfillRow), proposed_patch: null,
+        status: "already_complete", preview_id: null });
+      const query = backfillRow?.registered_product_name ?? (typeof body?.query === "string" ? body.query.trim() : "");
       if (query.length < 2 || query.length > 200) return json({ error: "Enter a product name" }, 400);
       if (!countryCode) return json({ error: "Select a vineyard country" }, 422);
-      const selectedName = typeof body?.selectedName === "string" ? body.selectedName.trim() : "";
+      const selectedName = backfillRow?.registered_product_name ?? (typeof body?.selectedName === "string" ? body.selectedName.trim() : "");
       const subject = selectedName || query;
       const cachedWeb = await readWebV2Cache(countryCode, subject);
-      if (cachedWeb) return json(cachedWeb);
+      // A name cache is not an identity lock: accept it only when the label
+      // explicitly prints the exact registration number for this Master row.
+      if (cachedWeb && (!backfillRow || (cachedWeb.label_printed_registration_number === backfillRow.registration_number && cachedWeb.detail?.registration?.registration_number === backfillRow.registration_number)))
+        return backfill ? await finishBackfill(cachedWeb) : json(cachedWeb);
       const searchStarted = Date.now();
       // Identity lookup does NOT apply Master vineyard completeness or approval gates.
-      const identities = await findWebMasterIdentities(masterSelect, subject, countryCode);
-      let identity: WebIdentity | null = selectedName
+      const identities = backfillRow ? [] : await findWebMasterIdentities(masterSelect, subject, countryCode);
+      let identity: WebIdentity | null = backfillRow ? lockedWebIdentity(backfillRow) : selectedName
         ? selectedIdentity(identities, selectedName)
         : identities.length === 1 ? identities[0] : null;
       // List identities immediately. Selection, not search, initiates label work.
-      if (!selectedName && identities.length) {
+      if (!backfill && !selectedName && identities.length) {
         return json({ candidates: identities.map(identityCandidate), detail: null,
           resistance_classification_state: "unresolved", enrichment_incomplete: true, timings: { search_ms: Date.now() - searchStarted, extraction_ms: 0 } });
       }
-      if (identities.length && !identity) {
+      if (!backfill && identities.length && !identity) {
         return json({ candidates: identities.map(identityCandidate), detail: null,
           resistance_classification_state: "unresolved", enrichment_incomplete: true, timings: { search_ms: Date.now() - searchStarted, extraction_ms: 0 } });
       }
@@ -1416,7 +1465,7 @@ Deno.serve(async (req: Request) => {
       }
       const searchMs = Date.now() - searchStarted;
       const candidates = identity ? [identityCandidate(identity)] : [];
-      if (!identity) return json({ candidates, detail: null, resistance_classification_state: "unresolved", enrichment_incomplete: true,
+      if (!identity) return backfill ? await finishBackfill(null) : json({ candidates, detail: null, resistance_classification_state: "unresolved", enrichment_incomplete: true,
         timings: { search_ms: searchMs, extraction_ms: 0 } });
       const research = identityResearch(identity, query, countryCode,
         leads ?? { productUrl: null, labelUrl: null });
@@ -1481,6 +1530,9 @@ Deno.serve(async (req: Request) => {
             activity_group_scheme: facts?.group?.scheme ?? a.activity_group_scheme,
             group_evidence: facts?.group ? "manufacturer_label" : a.group_evidence } : a);
       const printedApproval = label && enrichment?.labelText ? labelApprovalNumber(enrichment.labelText, countryCode) : null;
+      if (backfillRow && printedApproval && printedApproval !== backfillRow.registration_number)
+        return { identity_conflict: { locked: backfillRow.registration_number, printed: printedApproval,
+          manufacturer_label_url: label }, detail: null };
       const unresolvedWebFields = (supportedProjection.extraction.unresolved as string[]).filter((field) =>
         !(printedApproval && field === "registration_number") && !(label && field === "label_reference"));
       // Only a positive statement on the fetched label can assert group-free;
@@ -1515,6 +1567,10 @@ Deno.serve(async (req: Request) => {
         })(),
       };
       const detail = buildStructuredResponse(extraction, countryCode, "Agricultural web and label research");
+      if (backfill && facts?.active) detail.active_ingredients = detail.active_ingredients.map((active: any) =>
+        String(active.name).toLowerCase() === facts.active!.name.toLowerCase() &&
+        active.concentration === facts.active!.concentration && active.concentration_unit === facts.active!.concentration_unit
+          ? { ...active, identity_source: "manufacturer_label" } : active);
       if (explicitGroupFree && !detail.active_ingredients.length) {
         detail.resistance_classification_state = "not_applicable";
         detail.activity_group_scheme = "not_applicable";
@@ -1522,7 +1578,7 @@ Deno.serve(async (req: Request) => {
       // This number was read from the accepted label, not resolved through the register.
       // Keep scheme null so SavedChemical provenance remains label_lookup.
       if (detail.registration) {
-        detail.registration.scheme = null;
+        detail.registration.scheme = backfill ? backfillRow!.registration_scheme : null;
         detail.registration.label_reference = label;
         detail.registration.manufacturer_label_url = label;
         detail.registration.regulator_label_url = null;
@@ -1535,12 +1591,13 @@ Deno.serve(async (req: Request) => {
           ...(detail.registered_uses.length ? { registered_uses: "manufacturer_label" } : {}) };
       }
       detail.match_source = "ai_candidate";
+      if (backfill) applyRateIdentities(detail); // original label direction seeds still present here
       stripStructuredDirectionSeeds(detail);
       applyDefaultRateOptions(detail);
       const totalMs = Date.now() - searchStarted;
       const vineyardRates = vineyardRateSummary(detail.registered_uses as Array<Record<string, unknown>>);
-      if (!vineyardRates.length) return null;
-      const payload = { candidates, detail,
+      if (!vineyardRates.length && !backfill) return null;
+      const payload = { candidates, detail, label_printed_registration_number: printedApproval,
         resistance_classification_state: detail.resistance_classification_state,
         vineyard_rate_summary: vineyardRates,
         timings: { search_ms: searchMs,
@@ -1549,7 +1606,7 @@ Deno.serve(async (req: Request) => {
         label_processing_ms: labelMs,
         extraction_ms: Date.now() - extractionStarted, review_ready_ms: totalMs,
         detail_ms: Date.now() - detailStarted } };
-      if (label && payload.vineyard_rate_summary.length && candidates.length === 1 &&
+      if (!backfill && label && payload.vineyard_rate_summary.length && candidates.length === 1 &&
           nameCorresponds(canonicalName, candidates[0].name)) {
         await writeWebV2Cache(countryCode, canonicalName, payload);
         if (!selectedName || (await findWebMasterIdentities(masterSelect, query, countryCode)).length === 1) {
@@ -1558,7 +1615,7 @@ Deno.serve(async (req: Request) => {
       }
       return payload;
       });
-      return json(result.detail ? result : { ...result, resistance_classification_state: "unresolved", enrichment_incomplete: true });
+      return backfill ? await finishBackfill(result) : json(result.detail ? result : { ...result, resistance_classification_state: "unresolved", enrichment_incomplete: true });
     }
 
     if (action === "discover_label") {

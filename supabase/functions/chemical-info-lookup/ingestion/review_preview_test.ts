@@ -474,6 +474,11 @@ Deno.test("P10: resolver patch contract validation matrix", () => {
     label_reference: "https://elabels.example.gov/label.pdf",
     registered_uses: [],
     label_rate_bases: ["per_hectare"],
+    active_ingredients: [{ name: "Example" }],
+    activity_groups: ["3"],
+    activity_group_scheme: "frac",
+    resistance_classification_state: "classified",
+    viticulture_rates: { per_hectare: [], per_100_litres: [] },
     verification_status: "partially_verified",
     verification_sources: [],
     verification_conflicts: null,
@@ -482,11 +487,11 @@ Deno.test("P10: resolver patch contract validation matrix", () => {
     source_kind: "official_register",
     source_reference: null,
   };
-  assertEquals(validateResolverPatch(full), null, "all 15 contract keys accepted");
+  assertEquals(validateResolverPatch(full), null, "all 20 contract keys accepted");
   assertEquals(
     Object.keys(full).length,
     RESOLVER_PATCH_CONTRACT_KEYS.length,
-    "the contract is exactly 15 keys",
+    "the contract is exactly 20 keys",
   );
 
   assertEquals(validateResolverPatch(null), "proposed_patch must be a non-empty object");
