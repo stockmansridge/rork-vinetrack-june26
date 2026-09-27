@@ -65,6 +65,10 @@ begin
     ('not_applicable', array[]::text[], 'not_applicable', '[]'::jsonb)
   ) as c(state, groups, scheme, actives) loop
     v_id := gen_random_uuid();
+    -- The synthetic search caller is not an auth.users row. Clear its claim
+    -- while inserting so the version-history trigger records changed_by NULL;
+    -- restore it before exercising the authenticated RPC.
+    perform set_config('request.jwt.claims', '{}', true);
     insert into public.master_chemicals (
       id, registration_country, registration_scheme, registration_number,
       registered_product_name, review_status, source_kind, verification_status,
@@ -76,6 +80,7 @@ begin
       v_case.actives, v_case.groups, v_case.scheme, v_case.state,
       '[{"crop":"Grapes"}]'::jsonb
     );
+    perform set_config('request.jwt.claims', '{"sub":"10000000-0000-4000-8000-000000000256","role":"authenticated"}', true);
     select * into v_row from public.search_master_chemicals_v2('T256 Resistance Fixture', 25)
       where id = v_id;
     if not found or v_row.resistance_classification_state is distinct from v_case.state
