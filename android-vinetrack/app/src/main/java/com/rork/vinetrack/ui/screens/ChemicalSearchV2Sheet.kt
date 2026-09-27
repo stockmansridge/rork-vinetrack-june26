@@ -272,7 +272,7 @@ internal fun ChemicalSearchV2Sheet(
                 val result = externalService.lookupSelectedOnlineCandidate(candidate, selectedQuery)
                 if (externalRequestId != token) return@launch
                 if (result.detail != null) openWebReview(result.detail, candidate.name)
-                else message = "No reliable product source found. Check details or create manually."
+                else message = "Product identified, but manufacturer label details could not be completed. Try again or create manually."
             } catch (_: CancellationException) {
             } catch (_: Exception) {
                 if (externalRequestId == token) message = "Could not read this product. Try again or create manually."
@@ -302,13 +302,10 @@ internal fun ChemicalSearchV2Sheet(
                 response.detail?.let { openWebReview(it, response.candidates.firstOrNull()?.name ?: trimmed) }
                 message = if (response.detail != null) null else if (onlineCandidates.isEmpty())
                     "No reliable agricultural source found online. Check the name or create manually."
-                else if (automatically) "No catalogue match. Choose an agricultural product found online."
-                else "Choose the agricultural product you use."
+                else "Choose the identified agricultural product to complete its manufacturer details."
             } catch (_: CancellationException) {
             } catch (_: Exception) {
-                if (externalRequestId == token) message = if (automatically)
-                    "No catalogue match. Online search is unavailable; try again or create manually."
-                else "Online search is unavailable. Try again or create manually."
+                if (externalRequestId == token) message = "Product lookup is unavailable. Try again or create manually."
             } finally {
                 if (externalRequestId == token) { externalBusy = false; externalRequestId = null }
             }

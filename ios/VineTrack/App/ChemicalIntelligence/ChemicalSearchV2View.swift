@@ -675,12 +675,12 @@ struct ChemicalSearchV2View: View {
                 if let detail = response.detail { openWebReview(detail, fallbackName: response.candidates.first?.name ?? trimmed) }
                 message = response.detail != nil ? nil : onlineCandidates.isEmpty
                     ? "No reliable agricultural source found online. Check the name or create manually."
-                    : automatically ? "No catalogue match. Choose an agricultural product found online." : "Choose the agricultural product you use."
+                    : "Choose the identified agricultural product to complete its manufacturer details."
                 diagnostics.externalLookupSucceeded = response.detail != nil || !onlineCandidates.isEmpty
             } catch {
                 if externalRequestID == token {
                     diagnostics.externalLookupSucceeded = false
-                    message = automatically ? "No catalogue match. Online search is unavailable; try again or create manually." : "Online search is unavailable. Try again or create manually."
+                    message = "Product lookup is unavailable. Try again or create manually."
                 }
             }
             if externalRequestID == token { isExternalLookupRunning = false; externalRequestID = nil }
@@ -711,7 +711,7 @@ struct ChemicalSearchV2View: View {
                 let response = try await externalService.lookupSelectedOnlineCandidate(candidate, query: query)
                 guard externalRequestID == token else { return }
                 if let detail = response.detail { openWebReview(detail, fallbackName: candidate.name) }
-                else { message = "No reliable product source found. Check details or create manually." }
+                else { message = "Product identified, but manufacturer label details could not be completed. Try again or create manually." }
             } catch {
                 if externalRequestID == token { message = "Could not read this product. Try again or create manually." }
             }

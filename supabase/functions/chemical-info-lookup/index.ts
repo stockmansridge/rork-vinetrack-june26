@@ -129,7 +129,9 @@ import { hasOfficialGrapevineRate } from "./ingestion/authoritative_completion.t
 import { chooseLabelCandidate, confirmedOCRName, directOfficialLabelURL } from "./label_fallback.ts";
 import { discoverUnverifiedLabel } from "./unverified_label_discovery.ts";
 import { nameCorresponds } from "./ingestion/matching.ts";
-import { agriculturalWebCandidates, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardRateSummary, vineyardTableRate, webResearchFailureDiagnostic, withWebEnrichment } from "./web_lookup.ts";
+import { labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardRateSummary, vineyardTableRate, withWebEnrichment } from "./web_lookup.ts";
+import { discoverManufacturerUrls, findWebMasterIdentities, identityCandidate, identityResearch, selectedIdentity, verifiedManufacturerLead, type WebIdentity } from "./web_identity.ts";
+import { classifyUrl } from "./research/classify.ts";
 import {
   buildCandidatePayload,
   buildFieldProvenance,
@@ -774,12 +776,14 @@ async function readWebV2Cache(country: string, name: string): Promise<any | null
 async function writeWebV2Cache(country: string, name: string, payload: Record<string, unknown>): Promise<void> {
   if (!masterConfigured()) return;
   try {
-    await fetch(`${WEB_V2_CACHE_URL}?on_conflict=key`, {
+    const response = await fetch(`${WEB_V2_CACHE_URL}?on_conflict=key`, {
       method: "POST", headers: { ...masterHeaders(), "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates,return=minimal" },
       body: JSON.stringify({ key: webV2CacheKey(country, name), payload,
         expires_at: new Date(Date.now() + 7 * 86400_000).toISOString() }),
     });
-  } catch { /* Cache never blocks live discovery. */ }
+    if (!response.ok) console.error(`web_lookup_v2 cache write failed: HTTP ${response.status}`);
+    await response.body?.cancel();
+  } catch { console.error("web_lookup_v2 cache write unavailable"); }
 }
 
 function masterConfigured(): boolean {
@@ -1352,32 +1356,53 @@ Deno.serve(async (req: Request) => {
       const cachedWeb = await readWebV2Cache(countryCode, subject);
       if (cachedWeb) return json(cachedWeb);
       const searchStarted = Date.now();
-      const outcome = await runChemicalResearch({
-        query: subject, countryCode, countryLabel, mode: "product_enrichment",
-        apiKey, fetchFn: fetch, config: readResearchConfig(), registerResolved: false,
-        webFirst: true, useCache: false,
-      });
+      // Identity lookup does NOT apply Master vineyard completeness or approval gates.
+      const identities = await findWebMasterIdentities(masterSelect, subject, countryCode);
+      let identity: WebIdentity | null = selectedName
+        ? selectedIdentity(identities, selectedName)
+        : identities.length === 1 ? identities[0] : null;
+      // List identities immediately. Selection, not search, initiates label work.
+      if (!selectedName && identities.length) {
+        return json({ candidates: identities.map(identityCandidate), detail: null,
+          enrichment_incomplete: true, timings: { search_ms: Date.now() - searchStarted, extraction_ms: 0 } });
+      }
+      if (identities.length && !identity) {
+        return json({ candidates: identities.map(identityCandidate), detail: null,
+          enrichment_incomplete: true, timings: { search_ms: Date.now() - searchStarted, extraction_ms: 0 } });
+      }
+      let leads = identity
+        ? { productUrl: identity.pageUrls[0] ?? null,
+          labelUrl: identity.labelUrls[0] ?? verifiedManufacturerLead(identity, countryCode) }
+        : await discoverManufacturerUrls({ identity, query: subject, country: countryCode, apiKey, fetchFn: fetch });
+      // Known identity with missing manufacturer leads: one bounded URL search, never a fallback model.
+      if (identity && !leads?.labelUrl) {
+        const discovered = await discoverManufacturerUrls({ identity, query: subject, country: countryCode, apiKey, fetchFn: fetch });
+        leads = { productUrl: leads?.productUrl ?? discovered?.productUrl ?? null,
+          labelUrl: leads?.labelUrl ?? discovered?.labelUrl ?? null };
+      }
+      if (!identity && leads?.productUrl) {
+        const discoveredPage = await inspectCandidateProductPages({ fetchFn: fetch }, [leads.productUrl], countryCode);
+        const page = discoveredPage.pages[0];
+        const cropName = page?.pageProductName ?? "";
+        if (page && query.length >= 3 && cropName.toLowerCase().includes(query.toLowerCase()) &&
+            /\b(herbicide|fungicide|insecticide|adjuvant|fertili[sz]er|biostimulant|foliar)\b/i.test(cropName) &&
+            !/\b(cattle|horse|sheep|livestock|veterinary|drench|pour-on)\b/i.test(cropName) &&
+            classifyUrl(page.finalUrl, countryCode).trust === "registrant") {
+          identity = { name: cropName, registrant: "", registrationNumber: null,
+            category: null, activeNames: "", pageUrls: [page.finalUrl], labelUrls: [] };
+        }
+      }
       const searchMs = Date.now() - searchStarted;
-      const research = outcome.research;
-      if (!research) {
-        console.error(JSON.stringify(webResearchFailureDiagnostic(subject, outcome, Date.now() - searchStarted)));
-        return json({ error: "Web research is temporarily unavailable. Try again or enter details manually." }, 503);
-      }
-      const candidates = agriculturalWebCandidates(query, research, countryCode);
-      if (!selectedName && candidates.length > 1) {
-        return json({ candidates, detail: null, timings: { search_ms: searchMs, extraction_ms: 0 } });
-      }
-      if (!candidates.length) {
-        return json({ candidates: [], detail: null, timings: { search_ms: searchMs, extraction_ms: 0 } });
-      }
+      const candidates = identity ? [identityCandidate(identity)] : [];
+      if (!identity) return json({ candidates, detail: null, enrichment_incomplete: true,
+        timings: { search_ms: searchMs, extraction_ms: 0 } });
+      const research = identityResearch(identity, query, countryCode,
+        leads ?? { productUrl: null, labelUrl: null });
       const result = await withWebEnrichment(candidates, searchMs, async () => {
       const detailStarted = Date.now();
       const canonicalName = research.product.canonical_name ?? subject;
-      const leads = [
-        ...research.documents.product_page_candidates.map((d) => d.url),
-        ...research.documents.official_label_candidates.map((d) => d.linked_from_url ?? ""),
-      ].filter(Boolean);
-      const inspected = await inspectCandidateProductPages({ fetchFn: fetch, now: () => new Date() }, leads, countryCode);
+      const pageLeads = research.documents.product_page_candidates.map((d) => d.url);
+      const inspected = await inspectCandidateProductPages({ fetchFn: fetch, now: () => new Date() }, pageLeads, countryCode);
       const projection = projectResearch(research, countryCode, null, canonicalName, inspected.pages);
       const acceptedLabel = projection.manufacturerLabelCandidate;
       const page = inspected.pages.find((p) => nameCorresponds(canonicalName, p.pageProductName) &&
@@ -1385,13 +1410,18 @@ Deno.serve(async (req: Request) => {
         inspected.pages.find((p) => nameCorresponds(canonicalName, p.pageProductName));
       // A registrant-hosted direct PDF can be checked against its own bytes even
       // if research found the document before finding its product page.
-      const labelSource = page?.finalUrl ?? (acceptedLabel?.trust === "registrant" ? acceptedLabel.url : null);
+      const directLabel = leads?.labelUrl && classifyUrl(leads.labelUrl, countryCode).trust === "registrant" &&
+        classifyUrl(leads.labelUrl, countryCode).kind === "label_document" ? leads.labelUrl : null;
+      const manufacturerLabel = acceptedLabel?.url ?? directLabel;
+      const labelSource = page?.finalUrl ?? directLabel;
       const labelStarted = Date.now();
-      const enrichment = acceptedLabel && labelSource
+      const enrichment = manufacturerLabel && labelSource
         ? await enrichFromManufacturerLabel({
           deps: { fetchFn: fetch, now: () => new Date() },
-          manufacturerLabelUrl: acceptedLabel.url, sourcePageUrl: labelSource,
+          manufacturerLabelUrl: manufacturerLabel, sourcePageUrl: labelSource,
           regulatorUses: [], registeredProductName: canonicalName,
+          ...(identity.registrationNumber ? { product: { country: countryCode,
+            scheme: "apvma", registration_number: identity.registrationNumber } } : {}),
         }) : null;
       const labelMs = Date.now() - labelStarted;
       const label = readableV2Label(enrichment);
@@ -1401,7 +1431,8 @@ Deno.serve(async (req: Request) => {
       const parsedVineyardRates = enrichment?.uses.some((use) =>
         /grape|vineyard/i.test(String(use.crop ?? "")) && Array.isArray(use.rates) && use.rates.length > 0) ?? false;
       const extractionStarted = Date.now();
-      const labelReading = label && enrichment?.labelText && !parsedVineyardRates
+      const tableRate = label && enrichment?.labelText ? vineyardTableRate(enrichment.labelText) : null;
+      const labelReading = label && enrichment?.labelText && !parsedVineyardRates && !tableRate
         ? await readLabelWithResearchSchema({
           text: enrichment.labelText, label, name: canonicalName, country: countryCode, apiKey,
         }) : null;
@@ -1433,24 +1464,26 @@ Deno.serve(async (req: Request) => {
         unresolved: unresolvedWebFields,
         form_type: facts?.form ?? supportedProjection.extraction.form_type,
         active_ingredients: actives,
-        registration_number: printedApproval,
+        registration_number: identity.registrationNumber ?? printedApproval,
+        registrant: identity.registrant,
         label_reference: label,
         manufacturer_label_url: label,
         regulator_label_url: null,
         productURL: page?.finalUrl ?? supportedProjection.productPageCandidate?.url ?? null,
-        registered_uses: label ? (parsedVineyardRates ? enrichment?.uses :
-          Array.isArray(labelUses) && labelUses.length ? labelUses : enrichment?.uses ?? []) : [],
+        registered_uses: (() => {
+          const uses = label ? (parsedVineyardRates ? enrichment?.uses :
+            Array.isArray(labelUses) && labelUses.length ? labelUses : enrichment?.uses ?? []) : [];
+          // Multi-column PDF text can split the vineyard crop and printed range.
+          if (tableRate && !uses?.some((use: any) => /grape|vineyard/i.test(String(use.crop ?? "")) &&
+            use.rates?.some((rate: any) => rate.basis === "range_per_hectare" &&
+              rate.min_value === (tableRate.rates as any[])[0].min_value &&
+              rate.max_value === (tableRate.rates as any[])[0].max_value))) {
+            return [...(uses ?? []), tableRate];
+          }
+          return uses ?? [];
+        })(),
       };
       const detail = buildStructuredResponse(extraction, countryCode, "Agricultural web and label research");
-      // A PDF's multi-column text can split the printed vineyard crop and range
-      // across separate lines. Preserve that exact table evidence as a use row.
-      const tableRate = label && enrichment?.labelText ? vineyardTableRate(enrichment.labelText) : null;
-      if (tableRate && !detail.registered_uses.some((use: any) =>
-        /grape|vineyard/i.test(String(use.crop ?? "")) && use.rates?.some((rate: any) =>
-          rate.basis === "range_per_hectare" && rate.min_value === (tableRate.rates as any[])[0].min_value &&
-          rate.max_value === (tableRate.rates as any[])[0].max_value))) {
-        detail.registered_uses.push(tableRate as any);
-      }
       // This number was read from the accepted label, not resolved through the register.
       // Keep scheme null so SavedChemical provenance remains label_lookup.
       if (detail.registration) {
@@ -1462,28 +1495,33 @@ Deno.serve(async (req: Request) => {
       if (label) {
         detail.verification.sources.push({ kind: "manufacturer_label", name: "Product label", reference: label, retrieved_at: new Date().toISOString() });
         detail.field_provenance = { label_reference: "manufacturer_label",
-          ...(extraction.registration_number ? { registration_number: "manufacturer_label" } : {}),
+          ...(extraction.registration_number ? { registration_number: identity.registrationNumber ? "master_catalogue" : "manufacturer_label" } : {}),
           ...(detail.registered_uses.length ? { registered_uses: "manufacturer_label" } : {}) };
       }
       detail.match_source = "ai_candidate";
       stripStructuredDirectionSeeds(detail);
       applyDefaultRateOptions(detail);
       const totalMs = Date.now() - searchStarted;
+      const vineyardRates = vineyardRateSummary(detail.registered_uses as Array<Record<string, unknown>>);
+      if (!vineyardRates.length) return null;
       const payload = { candidates, detail,
-        vineyard_rate_summary: label ? vineyardRateSummary(detail.registered_uses as Array<Record<string, unknown>>) : [],
+        vineyard_rate_summary: vineyardRates,
         timings: { search_ms: searchMs,
         label_fetch_ms: enrichment?.diagnostics.label_fetch_ms ?? null,
         label_parse_ms: enrichment?.diagnostics.label_parse_ms ?? null,
         label_processing_ms: labelMs,
         extraction_ms: Date.now() - extractionStarted, review_ready_ms: totalMs,
         detail_ms: Date.now() - detailStarted } };
-      if (label && candidates.length === 1 && nameCorresponds(canonicalName, candidates[0].name)) {
+      if (label && payload.vineyard_rate_summary.length && candidates.length === 1 &&
+          nameCorresponds(canonicalName, candidates[0].name)) {
         await writeWebV2Cache(countryCode, canonicalName, payload);
-        if (query.toLowerCase() === canonicalName.toLowerCase()) await writeWebV2Cache(countryCode, query, payload);
+        if (!selectedName || (await findWebMasterIdentities(masterSelect, query, countryCode)).length === 1) {
+          await writeWebV2Cache(countryCode, query, payload);
+        }
       }
       return payload;
       });
-      return json(result);
+      return json(result.detail ? result : { ...result, enrichment_incomplete: true });
     }
 
     if (action === "discover_label") {
