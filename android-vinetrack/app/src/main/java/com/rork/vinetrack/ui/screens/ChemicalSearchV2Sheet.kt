@@ -56,6 +56,7 @@ import com.rork.vinetrack.data.chemical.ChemicalManualDraft
 import com.rork.vinetrack.data.chemical.ChemicalManualEntry
 import com.rork.vinetrack.data.chemical.ChemicalManualRateDraft
 import com.rork.vinetrack.data.chemical.ChemicalSaveContract
+import com.rork.vinetrack.data.chemical.ChemicalResistanceState
 import com.rork.vinetrack.data.chemical.ChemicalStoreMatching
 import com.rork.vinetrack.data.chemical.SavedChemicalEntrySource
 import com.rork.vinetrack.data.chemical.ChemicalSearchV2Duplicate
@@ -555,7 +556,11 @@ private fun ChemicalReviewV2(
                 provenance = mapOf("rates" to "manual_entry"),
             ))
         }
-        if (draft.isManual) proposed else ChemicalEditReconciler.reconcile(draft.intelligence, proposed).intelligence
+        if (draft.isManual) proposed else ChemicalEditReconciler.reconcile(draft.intelligence, proposed).intelligence.let { reconciled ->
+            if (reconciled.activeIngredients != draft.intelligence.activeIngredients ||
+                reconciled.productCategory != draft.intelligence.productCategory
+            ) reconciled.copy(resistanceClassificationState = ChemicalResistanceState.UNRESOLVED) else reconciled
+        }
     }
     val completeness = ChemicalDetailsCompleteness.assess(
         draft.productName, reviewedIntelligence.productCategory,
@@ -567,6 +572,11 @@ private fun ChemicalReviewV2(
 
     Text(if (draft.isManual) "Add Chemical Manually" else "Review Chemical", fontSize = 22.sp, fontWeight = FontWeight.Bold)
     Text(completeness.title, fontWeight = FontWeight.SemiBold)
+    when (reviewedIntelligence.resistanceClassificationState) {
+        ChemicalResistanceState.UNRESOLVED -> Text("Resistance group is unknown — resistance rotation cannot be assessed for this product.")
+        ChemicalResistanceState.NOT_APPLICABLE -> Text("No resistance group applies")
+        else -> Unit
+    }
     completeness.missingText?.let { Text(it, fontSize = 12.sp) }
     Text("Source: ${if (draft.isManual) "Entered manually" else if (draft.source == "VineTrack Master") "VineTrack Master" else if (reviewedIntelligence.registration?.labelReference.isNullOrBlank()) "Online lookup" else "Product label"}", fontSize = 12.sp)
     OutlinedTextField(

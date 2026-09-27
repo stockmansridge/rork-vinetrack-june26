@@ -94,7 +94,7 @@ enum class ChemicalIntelligenceAvailability(val raw: String, val label: String) 
             CONFLICT ->
                 "Sources disagreed about this product's resistance information when it was applied."
             UNAVAILABLE ->
-                "No chemical intelligence was recorded for this application, so it cannot be fully assessed."
+                "Chemical resistance grouping is unavailable, so rotation cannot be fully assessed for this product."
         }
 
     /**
@@ -125,6 +125,11 @@ enum class ChemicalIntelligenceAvailability(val raw: String, val label: String) 
             // legacy-only line that preserved `"Group 3 + 11"` as display text
             // has no structured group and must not be mistaken for one.
             if (!snapshot.hasResistanceData) return UNAVAILABLE
+            // An unresolved product or partial mixture cannot yield a clean rotation result.
+            if (snapshot.resistanceClassificationState == ChemicalResistanceState.UNRESOLVED ||
+                (snapshot.resistanceClassificationState == null && snapshot.activeIngredients.isNotEmpty() &&
+                    ChemicalResistanceState.rollup(snapshot.activeIngredients) == ChemicalResistanceState.UNRESOLVED)
+            ) return UNAVAILABLE
             return from(snapshot.verificationStatus)
         }
 

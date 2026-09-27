@@ -298,6 +298,21 @@ function fakeSelect(
 // R01 — exact Master match
 // ===========================================================================
 
+Deno.test("Master state stays explicit; partial mixture and mislabeled regulator URL fail closed", () => {
+  const known = masterRow({ resistance_classification_state: "classified" });
+  assertEquals(buildMasterStructuredResponse(known).resistance_classification_state, "classified");
+  const partial = masterRow({ resistance_classification_state: "classified", activity_groups: ["3"],
+    active_ingredients: [...known.active_ingredients, { name: "Unlisted crop-protection active", activity_group: null }] });
+  assertEquals(buildMasterStructuredResponse(partial).resistance_classification_state, "unresolved");
+  const unknown = masterRow({ resistance_classification_state: "unresolved", active_ingredients: [], activity_groups: [] });
+  assertEquals(buildMasterStructuredResponse(unknown).resistance_classification_state, "unresolved");
+  const label = "https://cropsure.com/wp-content/uploads/2023/03/cropsure-beast-200-herbicide-label-v2.pdf";
+  const mislabeled = buildMasterStructuredResponse(masterRow({ label_reference: label, manufacturer_label_url: label }));
+  assertEquals(mislabeled.registration.regulator_label_url, null);
+  assertEquals(mislabeled.label_urls.regulator_label_url, null);
+  assertEquals(mislabeled.label_urls.manufacturer_label_url, label);
+});
+
 Deno.test("R01: exact Master match — approved, country-scoped, unique-or-nothing; identity hint outranks the name", async () => {
   // Exact registered name resolves the single approved row.
   const log: string[] = [];

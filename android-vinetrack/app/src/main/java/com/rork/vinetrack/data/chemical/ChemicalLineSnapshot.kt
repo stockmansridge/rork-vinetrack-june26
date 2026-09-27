@@ -45,6 +45,8 @@ data class ChemicalLineSnapshot(
      */
     @SerialName("verification_status")
     val verificationStatus: ChemicalVerificationStatus = ChemicalVerificationStatus.UNVERIFIED,
+    /** Frozen SQL 210 state; absent on older snapshots. */
+    @SerialName("resistance_classification_state") val resistanceClassificationState: ChemicalResistanceState? = null,
     /** The registered identity used, e.g. `"AU:apvma:62764"`. */
     @SerialName("registration_identity_key") val registrationIdentityKey: String? = null,
     @SerialName("country_code") val countryCode: String? = null,
@@ -103,7 +105,8 @@ data class ChemicalLineSnapshot(
 ) {
     /** Whether this snapshot carries anything the Resistance Engine could use. */
     val hasResistanceData: Boolean
-        get() = activityGroupCodes.isNotEmpty() || activeIngredients.any { it.name.isNotEmpty() }
+        get() = resistanceClassificationState == ChemicalResistanceState.NOT_APPLICABLE ||
+            activityGroupCodes.isNotEmpty() || activeIngredients.any { it.name.isNotEmpty() }
 
     /** True when the dose on this line came from a rate the operator typed. */
     val isUserEnteredRate: Boolean
@@ -175,6 +178,7 @@ data class ChemicalLineSnapshot(
                 // The RESOLVED status, not the stored one: a spray must never
                 // claim its product was verified when the evidence said otherwise.
                 verificationStatus = intelligence.resolvedVerificationStatus,
+                resistanceClassificationState = intelligence.resistanceClassificationState,
                 registrationIdentityKey = intelligence.registration?.identityKey,
                 countryCode = intelligence.registration?.countryCode,
                 schemaVersion = intelligence.schemaVersion,

@@ -18,7 +18,7 @@
 
 // deno-lint-ignore-file no-explicit-any
 
-import { ACTIVITY_GROUP_TABLE_VERSION } from "./activity_groups.ts";
+import { ACTIVITY_GROUP_TABLE_VERSION, resistanceClassificationState } from "./activity_groups.ts";
 import type { FieldProvenance } from "./ingest.ts";
 import { pruneAuthoritativelyResolvedFields } from "./ingest.ts";
 import {
@@ -259,6 +259,14 @@ function masterFieldProvenance(row: any): Record<string, FieldProvenance> {
  */
 export function buildMasterStructuredResponse(row: any): any {
   const registeredUses = Array.isArray(row.registered_uses) ? row.registered_uses : [];
+  const storedResistanceState = ["classified", "not_applicable", "unresolved"].includes(row.resistance_classification_state)
+    ? row.resistance_classification_state : "unresolved";
+  const storedActives = Array.isArray(row.active_ingredients) ? row.active_ingredients : [];
+  const evaluatedState = resistanceClassificationState(storedActives.map((active: any) => ({
+    activity_group: active.activity_group, group_source: "master_catalogue",
+  })), Array.isArray(row.verification_conflicts) ? row.verification_conflicts.filter((c: any) => c.field === "activity_group") : []);
+  const resistanceState = storedResistanceState !== "unresolved" && storedActives.length &&
+    evaluatedState !== storedResistanceState ? "unresolved" : storedResistanceState;
 
   // Grapevine-first projection, and the manufacturer/regulator label split.
   //
@@ -303,13 +311,16 @@ export function buildMasterStructuredResponse(row: any): any {
     // reads, so a screen wanting "the official label" does not have to know
     // the history of three column names to find it.
     label_urls: {
-      regulator_label_url: labelRefs.regulator_label_url ?? regulatorLabelUrl,
+      regulator_label_url: labelRefs.regulator_label_url,
       manufacturer_label_url: labelRefs.manufacturer_label_url,
       product_url: labelRefs.manufacturer_product_url ?? row.product_url ?? null,
     },
     active_ingredients: Array.isArray(row.active_ingredients) ? row.active_ingredients : [],
     activity_groups: Array.isArray(row.activity_groups) ? row.activity_groups : [],
     activity_group_scheme: row.activity_group_scheme ?? null,
+    // SQL 210 defaults historical rows to unresolved. Do not derive safety
+    // from empty group arrays or from the legacy chemical_group text.
+    resistance_classification_state: resistanceState,
     registered_uses: registeredUses,
     grapevine_uses: grapevine.grapevine_uses,
     other_crop_uses: grapevine.other_crop_uses,
@@ -406,6 +417,13 @@ export async function searchMaster(
           .filter((s: string) => s)
           .join(" + "),
         chemicalGroup: groups.join(" + "),
+        resistance_classification_state: ["classified", "not_applicable", "unresolved"].includes(row.resistance_classification_state) &&
+          (!actives.length ? row.resistance_classification_state !== "classified" :
+            row.resistance_classification_state === "unresolved" || resistanceClassificationState(
+              actives.map((a: any) => ({ activity_group: a.activity_group, group_source: "master_catalogue" })),
+              Array.isArray(row.verification_conflicts) ? row.verification_conflicts.filter((c: any) => c.field === "activity_group") : [],
+            ) === row.resistance_classification_state)
+          ? row.resistance_classification_state : "unresolved",
         brand: String(row.registrant ?? ""),
         primaryUse: firstUse
           ? [firstUse.target_raw, firstUse.crop ? `(${firstUse.crop})` : ""]

@@ -131,6 +131,7 @@ data class MasterChemicalV2(
     @SerialName("active_ingredients") val activeIngredients: List<ChemicalActiveIngredient> = emptyList(),
     @SerialName("activity_groups") val activityGroups: List<String> = emptyList(),
     @SerialName("activity_group_scheme") val activityGroupScheme: String? = null,
+    @SerialName("resistance_classification_state") val resistanceClassificationState: ChemicalResistanceState? = null,
     @SerialName("registered_uses") val registeredUses: List<ChemicalRegisteredUse> = emptyList(),
     @SerialName("viticulture_rates") val viticultureRates: ViticultureRates = ViticultureRates(),
     @SerialName("has_viticulture_evidence") val hasViticultureEvidence: Boolean = false,
@@ -174,6 +175,7 @@ data class MasterChemicalV2(
             ),
             registeredUses = registeredUses,
             productCategory = productCategory.orEmpty(),
+            resistanceClassificationState = resistanceClassificationState,
             activityGroupTableVersion = 0,
         )
 

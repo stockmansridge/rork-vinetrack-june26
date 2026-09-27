@@ -123,6 +123,9 @@ import {
   type GroupConflict,
   normaliseCode,
   reconcileGroup,
+  authoritativeGroup,
+  groupsAreEquivalent,
+  resistanceClassificationState,
 } from "./ingestion/activity_groups.ts";
 import type { MasterOps, MasterRow } from "./ingestion/contract.ts";
 import { hasOfficialGrapevineRate } from "./ingestion/authoritative_completion.ts";
@@ -540,9 +543,21 @@ function buildStructuredResponse(
 
     // THE cross-check. Whatever the model said, the authoritative table gets
     // the last word, and any disagreement is surfaced rather than resolved.
-    const { group, source, conflict } = reconcileGroup(name, extracted);
-    if (conflict) conflicts.push(conflict);
-    if (!group) unresolved.add(`activity_group:${name}`);
+    const reconciliation = reconcileGroup(name, extracted);
+    const labelPrinted = a?.group_evidence === "manufacturer_label";
+    const authoritative = authoritativeGroup(name);
+    const printedConflict = labelPrinted && extracted && authoritative &&
+      !groupsAreEquivalent(name, extracted, authoritative);
+    const conflict = reconciliation.conflict;
+    if (conflict) conflicts.push({ ...conflict,
+      extracted_source: labelPrinted ? "manufacturer_label" : conflict.extracted_source });
+    // AI alone cannot establish a group. A printed label can, unless it
+    // disagrees with the reference table (then both facts remain in conflict).
+    const group = authoritative ?? (labelPrinted && !printedConflict ? extracted : null) ??
+      (labelPrinted && scheme === "not_applicable" && categoryScheme === "not_applicable"
+        ? { scheme: "not_applicable" as const, code: "" } : null);
+    const source = authoritative ? "authoritative_classification" : group ? "manufacturer_label" : null;
+    if (!group || conflict) unresolved.add(`activity_group:${name}`);
 
     const concentration = parseNumber(a?.concentration);
     if (concentration === null) unresolved.add(`concentration:${name}`);
@@ -552,6 +567,7 @@ function buildStructuredResponse(
       concentration,
       concentration_unit: parseString(a?.concentration_unit),
       activity_group: group,
+      classification_state: conflict || !group ? "unresolved" : group.scheme === "not_applicable" ? "not_applicable" : "classified",
       group_source: source,
       identity_source: "ai_interpretation",
     });
@@ -682,7 +698,8 @@ function buildStructuredResponse(
           .filter((c: string | undefined): c is string => Boolean(c)),
       ),
     ),
-    activity_group_scheme: schemeUsed,
+    activity_group_scheme: schemeUsed ?? (resistanceClassificationState(actives, conflicts) === "not_applicable" ? "not_applicable" : null),
+    resistance_classification_state: resistanceClassificationState(actives, conflicts),
     // Full list, unchanged, for every existing reader.
     registered_uses: registeredUses,
     // Grapevine-first view for the review screen (task §3, §8).
@@ -753,7 +770,7 @@ const REVIEW_PREVIEWS_URL = (() => {
 })();
 const MASTER_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const WEB_V2_CACHE_URL = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "") + "/rest/v1/chemical_web_v2_cache";
-const WEB_V2_CACHE_VERSION = "manufacturer-v2-1";
+const WEB_V2_CACHE_VERSION = "manufacturer-v2-2-resistance";
 
 function webV2CacheKey(country: string, name: string): string {
   return `${WEB_V2_CACHE_VERSION}:${country}:${name.trim().toLowerCase().replace(/\s+/g, " ")}`;
@@ -769,7 +786,10 @@ async function readWebV2Cache(country: string, name: string): Promise<any | null
     const rows = await res.json();
     const payload = rows?.[0]?.payload;
     return payload?.detail?.registration?.manufacturer_label_url &&
-      payload.detail.registration.regulator_label_url == null ? payload : null;
+      payload.detail.registration.regulator_label_url == null &&
+      payload.detail.label_urls?.regulator_label_url == null &&
+      ["classified", "not_applicable", "unresolved"].includes(payload.detail.resistance_classification_state)
+      ? payload : null;
   } catch { return null; }
 }
 
@@ -1331,7 +1351,9 @@ Deno.serve(async (req: Request) => {
             registration_country: countryCode, registration_scheme: "apvma", registration_number: registration,
             registered_product_name: detail.product_name, common_names: [], registrant: detail.registration.registrant ?? null,
             product_category: detail.product_category ?? null, form_type: detail.form_type ?? null,
-            active_ingredients: detail.active_ingredients ?? [], activity_groups: [], activity_group_scheme: null,
+            active_ingredients: detail.active_ingredients ?? [],
+            activity_groups: detail.activity_groups ?? [], activity_group_scheme: detail.activity_group_scheme ?? null,
+            resistance_classification_state: detail.resistance_classification_state ?? "unresolved",
             registered_uses: rows, viticulture_rates: rates,
             label_rate_bases: [...new Set([...rates.per_hectare, ...rates.per_100_litres].map((r: any) => r.basis))],
             label_reference: label, label_version: null, manufacturer_label_url: label,
@@ -1364,11 +1386,11 @@ Deno.serve(async (req: Request) => {
       // List identities immediately. Selection, not search, initiates label work.
       if (!selectedName && identities.length) {
         return json({ candidates: identities.map(identityCandidate), detail: null,
-          enrichment_incomplete: true, timings: { search_ms: Date.now() - searchStarted, extraction_ms: 0 } });
+          resistance_classification_state: "unresolved", enrichment_incomplete: true, timings: { search_ms: Date.now() - searchStarted, extraction_ms: 0 } });
       }
       if (identities.length && !identity) {
         return json({ candidates: identities.map(identityCandidate), detail: null,
-          enrichment_incomplete: true, timings: { search_ms: Date.now() - searchStarted, extraction_ms: 0 } });
+          resistance_classification_state: "unresolved", enrichment_incomplete: true, timings: { search_ms: Date.now() - searchStarted, extraction_ms: 0 } });
       }
       let leads = identity
         ? { productUrl: identity.pageUrls[0] ?? null,
@@ -1394,7 +1416,7 @@ Deno.serve(async (req: Request) => {
       }
       const searchMs = Date.now() - searchStarted;
       const candidates = identity ? [identityCandidate(identity)] : [];
-      if (!identity) return json({ candidates, detail: null, enrichment_incomplete: true,
+      if (!identity) return json({ candidates, detail: null, resistance_classification_state: "unresolved", enrichment_incomplete: true,
         timings: { search_ms: searchMs, extraction_ms: 0 } });
       const research = identityResearch(identity, query, countryCode,
         leads ?? { productUrl: null, labelUrl: null });
@@ -1451,19 +1473,28 @@ Deno.serve(async (req: Request) => {
       const actives = labelActive && !allActives.some((a) => String(a.name).toLowerCase() === labelActive.name.toLowerCase())
         ? [...allActives, { name: labelActive.name, concentration: labelActive.concentration,
           concentration_unit: labelActive.concentration_unit, activity_group_code: facts?.group?.code ?? null,
-          activity_group_scheme: facts?.group?.scheme ?? null }]
+          activity_group_scheme: facts?.group?.scheme ?? null,
+          group_evidence: facts?.group ? "manufacturer_label" : null }]
         : allActives.map((a) => labelActive && String(a.name).toLowerCase() === labelActive.name.toLowerCase()
           ? { ...a, concentration: labelActive.concentration, concentration_unit: labelActive.concentration_unit,
             activity_group_code: facts?.group?.code ?? a.activity_group_code,
-            activity_group_scheme: facts?.group?.scheme ?? a.activity_group_scheme } : a);
+            activity_group_scheme: facts?.group?.scheme ?? a.activity_group_scheme,
+            group_evidence: facts?.group ? "manufacturer_label" : a.group_evidence } : a);
       const printedApproval = label && enrichment?.labelText ? labelApprovalNumber(enrichment.labelText, countryCode) : null;
       const unresolvedWebFields = (supportedProjection.extraction.unresolved as string[]).filter((field) =>
         !(printedApproval && field === "registration_number") && !(label && field === "label_reference"));
+      // Only a positive statement on the fetched label can assert group-free;
+      // neither an empty group list nor an AI category is sufficient.
+      const explicitGroupFree = /\b(?:no resistance (?:group|classification) applies|not subject to (?:frac|hrac|irac) classification)\b/i
+        .test(enrichment?.labelText ?? "") &&
+        schemeFromCategory(String(supportedProjection.extraction.product_category ?? "")) === "not_applicable";
       const extraction = {
         ...supportedProjection.extraction,
         unresolved: unresolvedWebFields,
         form_type: facts?.form ?? supportedProjection.extraction.form_type,
-        active_ingredients: actives,
+        active_ingredients: explicitGroupFree ? actives.map((active) => ({ ...active,
+          activity_group_code: null, activity_group_scheme: "not_applicable",
+          group_evidence: "manufacturer_label" })) : actives,
         registration_number: identity.registrationNumber ?? printedApproval,
         registrant: identity.registrant,
         label_reference: label,
@@ -1484,6 +1515,10 @@ Deno.serve(async (req: Request) => {
         })(),
       };
       const detail = buildStructuredResponse(extraction, countryCode, "Agricultural web and label research");
+      if (explicitGroupFree && !detail.active_ingredients.length) {
+        detail.resistance_classification_state = "not_applicable";
+        detail.activity_group_scheme = "not_applicable";
+      }
       // This number was read from the accepted label, not resolved through the register.
       // Keep scheme null so SavedChemical provenance remains label_lookup.
       if (detail.registration) {
@@ -1492,6 +1527,7 @@ Deno.serve(async (req: Request) => {
         detail.registration.manufacturer_label_url = label;
         detail.registration.regulator_label_url = null;
       }
+      detail.label_urls.regulator_label_url = null;
       if (label) {
         detail.verification.sources.push({ kind: "manufacturer_label", name: "Product label", reference: label, retrieved_at: new Date().toISOString() });
         detail.field_provenance = { label_reference: "manufacturer_label",
@@ -1505,6 +1541,7 @@ Deno.serve(async (req: Request) => {
       const vineyardRates = vineyardRateSummary(detail.registered_uses as Array<Record<string, unknown>>);
       if (!vineyardRates.length) return null;
       const payload = { candidates, detail,
+        resistance_classification_state: detail.resistance_classification_state,
         vineyard_rate_summary: vineyardRates,
         timings: { search_ms: searchMs,
         label_fetch_ms: enrichment?.diagnostics.label_fetch_ms ?? null,
@@ -1521,7 +1558,7 @@ Deno.serve(async (req: Request) => {
       }
       return payload;
       });
-      return json(result.detail ? result : { ...result, enrichment_incomplete: true });
+      return json(result.detail ? result : { ...result, resistance_classification_state: "unresolved", enrichment_incomplete: true });
     }
 
     if (action === "discover_label") {
@@ -1745,7 +1782,9 @@ Deno.serve(async (req: Request) => {
         const ranked = rankCandidates(rows ?? [], query, countryCode);
         return json(withDiagnostics(
           {
-            results: ranked.results,
+            results: ranked.results.map((candidate: any) => ({ ...candidate,
+              resistance_classification_state: ["classified", "not_applicable", "unresolved"].includes(candidate.resistance_classification_state)
+                ? candidate.resistance_classification_state : "unresolved" })),
             ranking: ranked.summary,
             jurisdiction: jurEnv,
           },

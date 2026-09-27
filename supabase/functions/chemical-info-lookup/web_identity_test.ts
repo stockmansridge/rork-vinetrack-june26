@@ -1,6 +1,8 @@
 import { assertEquals, assert } from "jsr:@std/assert";
 import { discoverManufacturerUrls, findWebMasterIdentities, identityCandidate, identityResearch, manufacturerUrlsFromMaster, selectedIdentity, verifiedManufacturerLead, type WebIdentity } from "./web_identity.ts";
-import { withWebEnrichment, vineyardTableRate, vineyardRateSummary, readableV2Label } from "./web_lookup.ts";
+import { withWebEnrichment, vineyardTableRate, vineyardRateSummary, readableV2Label, labelHeaderFacts } from "./web_lookup.ts";
+import { authoritativeGroup, resistanceClassificationState } from "./ingestion/activity_groups.ts";
+import { selectLabelReferences } from "./grapevine_label.ts";
 import { enrichFromManufacturerLabel } from "./ingestion/manufacturer_enrichment.ts";
 import { normaliseRegisteredUses } from "./registered_use_normaliser.ts";
 import { projectGrapevineUses } from "./grapevine_label.ts";
@@ -29,6 +31,7 @@ Deno.test("incomplete Master Beast remains an identity candidate; regulator URL 
   assertEquals(calls, 1);
   assertEquals(found.length, 1);
   assertEquals(identityCandidate(found[0]).registration_number, "90143");
+  assertEquals(identityCandidate(found[0]).resistance_classification_state, "unresolved");
   assertEquals(found[0].pageUrls, []);
   assertEquals(found[0].labelUrls, []);
   assertEquals(verifiedManufacturerLead(found[0], "AU"), label);
@@ -76,6 +79,15 @@ Deno.test("Beast manufacturer PDF fixture verifies identity and prints 1–5 L/h
   });
   assertEquals(readableV2Label(result), label);
   assert(result.labelText?.includes("Vineyards"));
+  const facts = labelHeaderFacts(result.labelText ?? "");
+  assertEquals(authoritativeGroup("Glufosinate-ammonium")?.code, "10");
+  assertEquals(facts.active?.concentration, 200);
+  assertEquals(facts.group, { scheme: "hrac", code: "10" });
+  assertEquals(resistanceClassificationState([{ activity_group: authoritativeGroup(facts.active?.name ?? "") }]), "classified");
+  assertEquals(selectLabelReferences({ manufacturerLabelUrl: label, regulatorLabelUrl: label }), {
+    manufacturer_label_url: label, regulator_label_url: null, manufacturer_product_url: null,
+    sds_url: null, label_reference: label,
+  });
   const row = vineyardTableRate(result.labelText ?? "");
   assert(row);
   const projected = projectGrapevineUses(normaliseRegisteredUses([row]));

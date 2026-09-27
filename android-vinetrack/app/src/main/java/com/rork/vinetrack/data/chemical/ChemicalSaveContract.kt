@@ -17,10 +17,11 @@ import com.rork.vinetrack.data.model.SavedChemical
  * The wire values match `sql/210`'s CHECK constraint, and the iOS
  * `ChemicalResistanceState`, exactly.
  */
+@kotlinx.serialization.Serializable
 enum class ChemicalResistanceState(val raw: String, val label: String) {
-    CLASSIFIED("classified", "Classified"),
-    NOT_APPLICABLE("not_applicable", "Not applicable"),
-    UNRESOLVED("unresolved", "Not established"),
+    @kotlinx.serialization.SerialName("classified") CLASSIFIED("classified", "Classified"),
+    @kotlinx.serialization.SerialName("not_applicable") NOT_APPLICABLE("not_applicable", "No resistance group applies"),
+    @kotlinx.serialization.SerialName("unresolved") UNRESOLVED("unresolved", "Resistance group unknown"),
     ;
 
     companion object {

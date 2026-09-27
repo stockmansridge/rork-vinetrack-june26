@@ -147,6 +147,7 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
     let registration: ChemicalRegistration?
     let activeIngredients: [ChemicalActiveIngredient]
     let activityGroups: [String]
+    let resistanceClassificationState: ChemicalResistanceState?
     let registeredUses: [ChemicalRegisteredUse]
     let labelRateBases: [String]
     let verification: ChemicalVerification
@@ -256,6 +257,7 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
         case registration
         case activeIngredients = "active_ingredients"
         case activityGroups = "activity_groups"
+        case resistanceClassificationState = "resistance_classification_state"
         case registeredUses = "registered_uses"
         case labelRateBases = "label_rate_bases"
         case verification
@@ -285,6 +287,7 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
         registration = try c.decodeIfPresent(ChemicalRegistration.self, forKey: .registration)
         activeIngredients = try c.decodeIfPresent([ChemicalActiveIngredient].self, forKey: .activeIngredients) ?? []
         activityGroups = try c.decodeIfPresent([String].self, forKey: .activityGroups) ?? []
+        resistanceClassificationState = try? c.decodeIfPresent(ChemicalResistanceState.self, forKey: .resistanceClassificationState)
         registeredUses = try c.decodeIfPresent([ChemicalRegisteredUse].self, forKey: .registeredUses) ?? []
         labelRateBases = try c.decodeIfPresent([String].self, forKey: .labelRateBases) ?? []
         verification = try c.decodeIfPresent(ChemicalVerification.self, forKey: .verification) ?? ChemicalVerification()
@@ -392,6 +395,7 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
             registeredUses: registeredUses,
             fieldProvenance: fieldProvenance,
             productCategory: productCategory ?? "",
+            resistanceClassificationState: resistanceClassificationState,
             activityGroupTableVersion: max(activityGroupTableVersion, AuthoritativeActivityGroups.tableVersion),
             schemaVersion: max(schemaVersion, ChemicalIntelligence.currentSchemaVersion)
         )

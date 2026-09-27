@@ -41,6 +41,7 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
     let activeIngredients: [ChemicalActiveIngredient]?
     let activityGroups: [String]?
     let activityGroupScheme: String?
+    let resistanceClassificationState: ChemicalResistanceState?
     let registrationCountry: String?
     let registrationScheme: String?
     let registrationNumber: String?
@@ -107,6 +108,7 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         case activeIngredients = "active_ingredients"
         case activityGroups = "activity_groups"
         case activityGroupScheme = "activity_group_scheme"
+        case resistanceClassificationState = "resistance_classification_state"
         case registrationCountry = "registration_country"
         case registrationScheme = "registration_scheme"
         case registrationNumber = "registration_number"
@@ -183,6 +185,7 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         self.activeIngredients = try? c.decodeIfPresent([ChemicalActiveIngredient].self, forKey: .activeIngredients)
         self.activityGroups = try? c.decodeIfPresent([String].self, forKey: .activityGroups)
         self.activityGroupScheme = try? c.decodeIfPresent(String.self, forKey: .activityGroupScheme)
+        self.resistanceClassificationState = try? c.decodeIfPresent(ChemicalResistanceState.self, forKey: .resistanceClassificationState)
         self.registrationCountry = try? c.decodeIfPresent(String.self, forKey: .registrationCountry)
         self.registrationScheme = try? c.decodeIfPresent(String.self, forKey: .registrationScheme)
         self.registrationNumber = try? c.decodeIfPresent(String.self, forKey: .registrationNumber)
@@ -285,6 +288,7 @@ nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
     let activeIngredients: [ChemicalActiveIngredient]?
     let activityGroups: [String]?
     let activityGroupScheme: String?
+    let resistanceClassificationState: ChemicalResistanceState?
     let registrationCountry: String?
     let registrationScheme: String?
     let registrationNumber: String?
@@ -353,6 +357,7 @@ nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
         case activeIngredients = "active_ingredients"
         case activityGroups = "activity_groups"
         case activityGroupScheme = "activity_group_scheme"
+        case resistanceClassificationState = "resistance_classification_state"
         case registrationCountry = "registration_country"
         case registrationScheme = "registration_scheme"
         case registrationNumber = "registration_number"
@@ -430,6 +435,7 @@ extension BackendSavedChemical {
             // text[] can never drift out of step with them.
             activityGroups: intel?.activityGroupCodes,
             activityGroupScheme: intel?.activityGroups.first?.scheme.rawValue,
+            resistanceClassificationState: intel?.resistanceClassificationState ?? .unresolved,
             registrationCountry: intel?.registration?.countryCode,
             registrationScheme: intel?.registration?.scheme?.rawValue,
             registrationNumber: intel?.registration?.registrationNumber,
@@ -501,6 +507,7 @@ extension BackendSavedChemical {
             verification: verification,
             registeredUses: uses,
             productCategory: productCategory ?? "",
+            resistanceClassificationState: resistanceClassificationState,
             activityGroupTableVersion: activityGroupTableVersion ?? 0,
             schemaVersion: intelligenceSchemaVersion ?? 0
         )

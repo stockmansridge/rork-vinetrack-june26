@@ -25,7 +25,21 @@ import {
   groupsAreEquivalent,
   legacyGroupCodes,
   reconcileGroup,
+  resistanceClassificationState,
 } from "./activity_groups.ts";
+
+Deno.test("resistance state: positively group-free adjuvant versus unknown fungicide and incomplete mixture", () => {
+  const wetter = { activity_group: { scheme: "not_applicable" as const, code: "" }, group_source: "manufacturer_label" };
+  const known = { activity_group: authoritativeGroup("tebuconazole"), group_source: "authoritative_classification" };
+  const unknown = { activity_group: authoritativeGroup("unlisted fungicide active"), group_source: null };
+  assertEquals(resistanceClassificationState([wetter]), "not_applicable");
+  assertEquals(resistanceClassificationState([unknown]), "unresolved");
+  assertEquals(resistanceClassificationState([known, unknown]), "unresolved");
+  assertEquals(resistanceClassificationState([known, wetter]), "classified");
+  assertEquals(resistanceClassificationState([known]), "classified");
+  assertEquals(resistanceClassificationState([]), "unresolved");
+  assertEquals(resistanceClassificationState([{ activity_group: { scheme: "frac", code: "99" }, group_source: "ai_interpretation" }]), "unresolved");
+});
 
 Deno.test("v2: the reference table version is bumped so a re-verification can tell which revision judged a product", () => {
   assertEquals(ACTIVITY_GROUP_TABLE_VERSION, 2);

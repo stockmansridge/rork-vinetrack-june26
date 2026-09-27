@@ -44,6 +44,8 @@ data class ChemicalIntelligence(
     val fieldProvenance: Map<String, String>? = null,
     /** Aligned with the existing `product_category` vocabulary. */
     @SerialName("product_category") val productCategory: String = "",
+    /** Backend-owned SQL 210 state; absent historical records remain unresolved. */
+    @SerialName("resistance_classification_state") val resistanceClassificationState: ChemicalResistanceState? = null,
     /** Version of [AuthoritativeActivityGroups] that judged this record. */
     @SerialName("activity_group_table_version") val activityGroupTableVersion: Int = 0,
     @SerialName("schema_version") val schemaVersion: Int = CURRENT_SCHEMA_VERSION,

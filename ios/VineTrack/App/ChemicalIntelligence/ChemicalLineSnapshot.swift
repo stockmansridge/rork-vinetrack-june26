@@ -29,6 +29,8 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
     /// recorded against an unverified product stays visibly unverified in
     /// history even if the product is verified later.
     var verificationStatus: ChemicalVerificationStatus
+    /// Frozen SQL 210 state; nil on older snapshots, never read from today's store.
+    var resistanceClassificationState: ChemicalResistanceState?
     /// The registered identity used, e.g. `"AU:apvma:62764"`.
     var registrationIdentityKey: String?
     /// Country the identity was scoped to.
@@ -80,6 +82,7 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
         activeIngredients: [ChemicalActiveIngredient] = [],
         activityGroupCodes: [String] = [],
         verificationStatus: ChemicalVerificationStatus = .unverified,
+        resistanceClassificationState: ChemicalResistanceState? = nil,
         registrationIdentityKey: String? = nil,
         countryCode: String? = nil,
         schemaVersion: Int = ChemicalIntelligence.currentSchemaVersion,
@@ -98,6 +101,7 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
         self.activeIngredients = activeIngredients
         self.activityGroupCodes = activityGroupCodes
         self.verificationStatus = verificationStatus
+        self.resistanceClassificationState = resistanceClassificationState
         self.registrationIdentityKey = registrationIdentityKey
         self.countryCode = countryCode
         self.schemaVersion = schemaVersion
@@ -232,7 +236,8 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
 
     /// Whether this snapshot carries anything the Resistance Engine could use.
     nonisolated var hasResistanceData: Bool {
-        !activityGroupCodes.isEmpty || activeIngredients.contains { !$0.name.isEmpty }
+        resistanceClassificationState == .notApplicable || !activityGroupCodes.isEmpty ||
+            activeIngredients.contains { !$0.name.isEmpty }
     }
 
     /// Freeze a saved chemical's current intelligence onto a spray line.
@@ -270,6 +275,7 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
             // The RESOLVED status, not the stored one: a spray must never claim
             // its product was verified when the evidence said otherwise.
             verificationStatus: intelligence.resolvedVerificationStatus,
+            resistanceClassificationState: intelligence.resistanceClassificationState,
             registrationIdentityKey: intelligence.registration?.identityKey,
             countryCode: intelligence.registration?.countryCode,
             schemaVersion: intelligence.schemaVersion,

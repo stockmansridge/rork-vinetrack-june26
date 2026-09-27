@@ -20,6 +20,27 @@ struct ChemicalProvenancePersistenceTests {
         try JSONDecoder().decode(SavedChemical.self, from: JSONEncoder().encode(chemical))
     }
 
+    @Test func backendResistanceStatePersistsAndUnresolvedSnapshotBlocksRotation() throws {
+        let lookup = try decodeLookup("""
+        {"product_name":"CropSure Beast 200 Herbicide", "product_category":"herbicide",
+         "resistance_classification_state":"classified",
+         "active_ingredients":[{"name":"Glufosinate-ammonium", "activity_group":{"scheme":"hrac","code":"10"}}]}
+        """)
+        let intel = lookup.intelligence()
+        #expect(intel.resistanceClassificationState == .classified)
+        #expect(intel.activityGroupCodes == ["10"])
+        let saved = SavedChemical(name: "CropSure Beast 200 Herbicide", chemicalIntelligence: intel)
+        let payload = BackendSavedChemical.upsert(from: saved, createdBy: nil, clientUpdatedAt: Date())
+        #expect(payload.resistanceClassificationState == .classified)
+        let reopened = try roundTrip(saved)
+        #expect(reopened.chemicalIntelligence?.resistanceClassificationState == .classified)
+        var partial = intel
+        partial.resistanceClassificationState = .unresolved
+        let frozen = try #require(ChemicalLineSnapshot.capture(from: partial, legacyChemicalGroup: "10"))
+        #expect(frozen.resistanceAvailability == .unavailable)
+        #expect(!frozen.resistanceAvailability.permitsCleanResult)
+    }
+
     // MARK: - Sprayseal 80160: label-backed rate + WHP survive save/reopen
 
     @Test func spraysealKeepsManufacturerLabelProvenanceThroughSave() throws {

@@ -415,8 +415,9 @@ export function selectLabelReferences(input: {
   const manufacturerIsRegulator = manufacturerRaw !== null &&
     isRegulatorHost(manufacturerRaw);
 
-  const regulator = regulatorFromInput ??
-    (manufacturerIsRegulator ? manufacturerRaw : null);
+  // A manufacturer-hosted legacy label_reference is never a regulator label.
+  const regulator = regulatorFromInput && isRegulatorHost(regulatorFromInput)
+    ? regulatorFromInput : (manufacturerIsRegulator ? manufacturerRaw : null);
   const manufacturer = manufacturerIsRegulator ? null : manufacturerRaw;
 
   return {

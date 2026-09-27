@@ -11,6 +11,7 @@ import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalRegistrationScheme
 import com.rork.vinetrack.data.chemical.ChemicalResistanceProfile
+import com.rork.vinetrack.data.chemical.ChemicalResistanceState
 import com.rork.vinetrack.data.chemical.StoredChemicalDefaultRates
 import com.rork.vinetrack.data.chemical.ChemicalVerification
 import com.rork.vinetrack.data.chemical.ChemicalVerificationConflict
@@ -2032,6 +2033,7 @@ data class SavedChemical(
     /** Derived, queryable group codes: `["3", "11"]` — never `["3 + 11"]`. */
     @SerialName("activity_groups") val activityGroups: List<String>? = null,
     @SerialName("activity_group_scheme") val activityGroupScheme: String? = null,
+    @SerialName("resistance_classification_state") val resistanceClassificationState: ChemicalResistanceState = ChemicalResistanceState.UNRESOLVED,
     @SerialName("registration_country") val registrationCountry: String? = null,
     @SerialName("registration_scheme") val registrationScheme: String? = null,
     @SerialName("registration_number") val registrationNumber: String? = null,
@@ -2203,6 +2205,7 @@ data class SavedChemical(
                 ),
                 registeredUses = uses,
                 productCategory = productCategory,
+                resistanceClassificationState = resistanceClassificationState,
                 activityGroupTableVersion = activityGroupTableVersion ?: 0,
                 schemaVersion = intelligenceSchemaVersion ?: 0,
             )

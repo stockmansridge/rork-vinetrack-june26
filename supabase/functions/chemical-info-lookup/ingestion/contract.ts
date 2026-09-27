@@ -490,6 +490,7 @@ export interface MasterRow {
   active_ingredients: WireActiveIngredient[];
   activity_groups: string[];
   activity_group_scheme: string | null;
+  resistance_classification_state?: "classified" | "not_applicable" | "unresolved";
   registered_uses: Jsonish[];
   viticulture_rates?: { per_hectare: WireLabelRate[]; per_100_litres: WireLabelRate[] };
   label_rate_bases: string[];
@@ -522,6 +523,7 @@ export interface CandidateRowPayload {
   active_ingredients: WireActiveIngredient[];
   activity_groups: string[];
   activity_group_scheme: string | null;
+  resistance_classification_state?: "classified" | "not_applicable" | "unresolved";
   registered_uses: Jsonish[];
   viticulture_rates?: { per_hectare: WireLabelRate[]; per_100_litres: WireLabelRate[] };
   label_rate_bases: string[];

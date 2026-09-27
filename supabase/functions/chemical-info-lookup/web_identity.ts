@@ -13,6 +13,7 @@ export interface WebIdentity {
   activeNames: string;
   pageUrls: string[];
   labelUrls: string[];
+  resistanceState?: "classified" | "not_applicable" | "unresolved";
 }
 
 const CROP = /\b(herbicide|fungicide|insecticide|miticide|fertili[sz]er|adjuvant|biostimulant|foliar|crop)\b/i;
@@ -55,7 +56,7 @@ export async function findWebMasterIdentities(
   const needle = query.trim().toLowerCase();
   const safe = needle.replace(/[\\%_*,().]/g, "").replace(/\s+/g, " ");
   if (safe.length < 2) return [];
-  const rows = await select(`select=registered_product_name,registration_number,registrant,registration_country,registration_scheme,product_category,active_ingredients,verification_status,verification_sources,source_kind,source_reference,review_status&registration_country=eq.${encodeURIComponent(country)}&registered_product_name=ilike.${encodeURIComponent(`*${safe}*`)}&limit=25`) ?? [];
+  const rows = await select(`select=registered_product_name,registration_number,registrant,registration_country,registration_scheme,product_category,active_ingredients,resistance_classification_state,verification_status,verification_sources,source_kind,source_reference,review_status&registration_country=eq.${encodeURIComponent(country)}&registered_product_name=ilike.${encodeURIComponent(`*${safe}*`)}&limit=25`) ?? [];
   return rows.filter((row) => {
     const name = String(row.registered_product_name ?? "");
     const category = String(row.product_category ?? "");
@@ -74,13 +75,16 @@ export async function findWebMasterIdentities(
     return { name: String(row.registered_product_name), registrant: String(row.registrant ?? ""),
       registrationNumber: String(row.registration_number), category: String(row.product_category ?? "") || null,
       activeNames: actives.map((a: unknown) => typeof a === "object" && a !== null ? String((a as Record<string, unknown>).name ?? "") : "").filter(Boolean).join(", "),
-      pageUrls: urls.pages, labelUrls: urls.labels };
+      pageUrls: urls.pages, labelUrls: urls.labels,
+      resistanceState: ["classified", "not_applicable", "unresolved"].includes(String(row.resistance_classification_state))
+        ? row.resistance_classification_state as WebIdentity["resistanceState"] : "unresolved" };
   });
 }
 
-export function identityCandidate(identity: WebIdentity): WebCandidate & { registration_number: string | null } {
+export function identityCandidate(identity: WebIdentity): WebCandidate & { registration_number: string | null; resistance_classification_state: string } {
   return { name: identity.name, brand: identity.registrant, activeIngredient: identity.activeNames,
-    product_category: identity.category, registration_number: identity.registrationNumber, source: "research" };
+    product_category: identity.category, registration_number: identity.registrationNumber, source: "research",
+    resistance_classification_state: identity.resistanceState ?? "unresolved" };
 }
 
 export function identityResearch(identity: WebIdentity, query: string, country: string, leads: ManufacturerLeads): ChemicalResearchResult {

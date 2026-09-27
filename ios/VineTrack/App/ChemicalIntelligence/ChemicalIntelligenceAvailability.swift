@@ -84,7 +84,7 @@ nonisolated enum ChemicalIntelligenceAvailability: String, Codable, Sendable, Ha
         case .conflict:
             return "Sources disagreed about this product's resistance information when it was applied."
         case .unavailable:
-            return "No chemical intelligence was recorded for this application, so it cannot be fully assessed."
+            return "Chemical resistance grouping is unavailable, so rotation cannot be fully assessed for this product."
         }
     }
 
@@ -115,6 +115,13 @@ nonisolated enum ChemicalIntelligenceAvailability: String, Codable, Sendable, Ha
         // legacy-only line that preserved `"Group 3 + 11"` as display text has
         // no structured group and must not be mistaken for one.
         guard snapshot.hasResistanceData else { return .unavailable }
+        // A partially classified mixture must never produce a clean rotation result.
+        if snapshot.resistanceClassificationState == .unresolved ||
+            (snapshot.resistanceClassificationState == nil &&
+             !snapshot.activeIngredients.isEmpty &&
+             ChemicalResistanceState.rollup(snapshot.activeIngredients) == .unresolved) {
+            return .unavailable
+        }
         return from(status: snapshot.verificationStatus)
     }
 

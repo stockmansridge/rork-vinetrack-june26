@@ -356,6 +356,20 @@ export function groupsAreEquivalent(
   return isCurrentOrLegacy(codeA) && isCurrentOrLegacy(codeB);
 }
 
+export type ResistanceClassificationState = "classified" | "not_applicable" | "unresolved";
+
+/** Roll up only positively established classifications; an unknown mixture remains unknown. */
+export function resistanceClassificationState(
+  actives: Array<{ activity_group?: ActivityGroup | null; group_source?: string | null }>,
+  conflicts: readonly GroupConflict[] = [],
+): ResistanceClassificationState {
+  if (conflicts.length || !actives.length) return "unresolved";
+  if (actives.some((active) => !active.activity_group || active.group_source === "ai_interpretation" ||
+    (active.activity_group.scheme !== "not_applicable" && !normaliseCode(active.activity_group.code)))) return "unresolved";
+  return actives.every((active) => active.activity_group?.scheme === "not_applicable")
+    ? "not_applicable" : "classified";
+}
+
 export interface GroupConflict {
   field: string;
   active_ingredient_name: string;

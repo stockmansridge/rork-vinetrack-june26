@@ -122,6 +122,7 @@ class ChemicalInfoService {
         @SerialName("active_ingredients")
         val activeIngredients: List<ChemicalActiveIngredient> = emptyList(),
         @SerialName("activity_groups") val activityGroups: List<String> = emptyList(),
+        @SerialName("resistance_classification_state") val resistanceClassificationState: com.rork.vinetrack.data.chemical.ChemicalResistanceState? = null,
         @SerialName("registered_uses") val registeredUses: List<ChemicalRegisteredUse> = emptyList(),
         @SerialName("label_rate_bases") val labelRateBases: List<String> = emptyList(),
         /**
@@ -216,6 +217,7 @@ class ChemicalInfoService {
                 // tier populated each field. Never derived or upgraded here.
                 fieldProvenance = fieldProvenance,
                 productCategory = productCategory.orEmpty(),
+                resistanceClassificationState = resistanceClassificationState,
                 activityGroupTableVersion = maxOf(
                     activityGroupTableVersion,
                     AuthoritativeActivityGroups.TABLE_VERSION,

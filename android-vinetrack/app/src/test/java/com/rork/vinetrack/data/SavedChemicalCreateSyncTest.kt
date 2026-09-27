@@ -1,6 +1,11 @@
 package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.chemical.ChemicalSearchV2Duplicate
+import com.rork.vinetrack.data.chemical.ChemicalResistanceState
+import com.rork.vinetrack.data.chemical.ChemicalIntelligenceAvailability
+import com.rork.vinetrack.data.chemical.ChemicalLineSnapshot
+import com.rork.vinetrack.data.chemical.resistanceAvailability
+import kotlinx.serialization.decodeFromString
 import com.rork.vinetrack.data.model.PendingEntityType
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import com.rork.vinetrack.data.model.SavedChemical
@@ -36,6 +41,24 @@ class SavedChemicalCreateSyncTest {
         upload: suspend (SavedChemicalRepository.ChemicalInsert) -> SavedChemical = { throw IllegalStateException("offline") },
         find: suspend (String) -> SavedChemical? = { null },
     ) = SavedChemicalCreateSync(repository, PendingWriteRepository(pendingStore), local, { "owner" }, upload, find)
+
+    @Test fun backendResistanceStateSurvivesInsertAndUnresolvedSnapshotBlocksRotation() {
+        val lookup = Json { ignoreUnknownKeys = true }.decodeFromString<ChemicalInfoService.ChemicalStructuredLookup>(
+            """{"product_name":"CropSure Beast 200 Herbicide","product_category":"herbicide",
+            "resistance_classification_state":"classified","active_ingredients":[{"name":"Glufosinate-ammonium",
+            "activity_group":{"scheme":"hrac","code":"10"}}]}"""
+        )
+        val intel = lookup.intelligence()
+        assertEquals(ChemicalResistanceState.CLASSIFIED, intel.resistanceClassificationState)
+        assertEquals(listOf("10"), intel.activityGroupCodes)
+        val body = repository.prepareCreate("vineyard", input.copy(intelligence = intel), "beast-id", "2026-09-27T00:00:00Z")
+        assertEquals(ChemicalResistanceState.CLASSIFIED, body.resistanceClassificationState)
+        assertEquals("classified", Json.encodeToString(SavedChemicalRepository.ChemicalInsert.serializer(), body)
+            .substringAfter("\"resistance_classification_state\":\"").substringBefore('"'))
+        val unresolved = ChemicalLineSnapshot.capture(intel.copy(resistanceClassificationState = ChemicalResistanceState.UNRESOLVED), "10")!!
+        assertEquals(ChemicalIntelligenceAvailability.UNAVAILABLE, unresolved.resistanceAvailability)
+        assertFalse(unresolved.resistanceAvailability.permitsCleanResult)
+    }
 
     @Test fun offlineSaveSurvivesRestartAndSavedFirstSearchUsesSameObject() = runBlocking {
         val original = coordinator().save("vineyard", input)

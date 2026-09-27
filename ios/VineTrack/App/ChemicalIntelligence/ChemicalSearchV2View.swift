@@ -105,6 +105,7 @@ nonisolated struct MasterChemicalV2: Codable, Identifiable, Sendable, Hashable {
     let activeIngredients: [ChemicalActiveIngredient]
     let activityGroups: [String]
     let activityGroupScheme: String?
+    let resistanceClassificationState: ChemicalResistanceState?
     let registeredUses: [ChemicalRegisteredUse]
     let viticultureRates: ViticultureRates
     let hasViticultureEvidence: Bool
@@ -128,6 +129,7 @@ nonisolated struct MasterChemicalV2: Codable, Identifiable, Sendable, Hashable {
         case id, registrant, commonNames = "common_names", productCategory = "product_category"
         case formType = "form_type", activeIngredients = "active_ingredients"
         case activityGroups = "activity_groups", activityGroupScheme = "activity_group_scheme"
+        case resistanceClassificationState = "resistance_classification_state"
         case registeredUses = "registered_uses", viticultureRates = "viticulture_rates"
         case hasViticultureEvidence = "has_viticulture_evidence", labelRateBases = "label_rate_bases"
         case labelReference = "label_reference", labelVersion = "label_version"
@@ -169,6 +171,7 @@ nonisolated struct MasterChemicalV2: Codable, Identifiable, Sendable, Hashable {
             ),
             registeredUses: registeredUses,
             productCategory: productCategory ?? "",
+            resistanceClassificationState: resistanceClassificationState,
             activityGroupTableVersion: AuthoritativeActivityGroups.tableVersion
         )
     }
@@ -850,7 +853,13 @@ private struct ChemicalSearchV2ReviewView: View {
                 provenance: ["rates": "manual_entry"]
             ))
         }
-        return draft.isManual ? proposed : ChemicalEditReconciler.reconcile(existing: draft.intelligence, proposed: proposed).intelligence
+        if draft.isManual { return proposed }
+        var reconciled = ChemicalEditReconciler.reconcile(existing: draft.intelligence, proposed: proposed).intelligence
+        if reconciled.activeIngredients != draft.intelligence.activeIngredients ||
+            reconciled.productCategory != draft.intelligence.productCategory {
+            reconciled.resistanceClassificationState = .unresolved
+        }
+        return reconciled
     }
 
     private var completeness: ChemicalDetailsCompleteness {
@@ -1043,6 +1052,12 @@ private struct ChemicalSearchV2ReviewView: View {
                             .foregroundStyle(.orange)
                         Button("Use Chemical") { onSaved(duplicate); onComplete("Used \(duplicate.name)") }
                     }
+                }
+                if reviewIntelligence.resistanceClassificationState == .unresolved {
+                    Text("Resistance group is unknown — resistance rotation cannot be assessed for this product.")
+                        .foregroundStyle(.orange)
+                } else if reviewIntelligence.resistanceClassificationState == .notApplicable {
+                    Text("No resistance group applies").foregroundStyle(.secondary)
                 }
                 if let notice { Text(notice).foregroundStyle(.orange) }
                 ForEach(evaluation.violations, id: \.code) { Text($0.message).font(.caption).foregroundStyle(.red) }

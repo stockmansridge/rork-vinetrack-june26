@@ -40,6 +40,8 @@ nonisolated struct ChemicalIntelligence: Codable, Sendable, Hashable {
     /// Product category key, aligned with the existing `product_category`
     /// vocabulary (fungicide, herbicide, insecticide, adjuvant, …).
     var productCategory: String
+    /// Backend-owned SQL 210 state; nil for historical/manual records, never inferred from a missing group.
+    var resistanceClassificationState: ChemicalResistanceState?
     /// Version of `AuthoritativeActivityGroups` that judged this record.
     var activityGroupTableVersion: Int
     /// Schema version of this payload.
@@ -52,6 +54,7 @@ nonisolated struct ChemicalIntelligence: Codable, Sendable, Hashable {
         registeredUses: [ChemicalRegisteredUse] = [],
         fieldProvenance: [String: String]? = nil,
         productCategory: String = "",
+        resistanceClassificationState: ChemicalResistanceState? = nil,
         activityGroupTableVersion: Int = AuthoritativeActivityGroups.tableVersion,
         schemaVersion: Int = ChemicalIntelligence.currentSchemaVersion
     ) {
@@ -61,6 +64,7 @@ nonisolated struct ChemicalIntelligence: Codable, Sendable, Hashable {
         self.registeredUses = registeredUses
         self.fieldProvenance = fieldProvenance
         self.productCategory = productCategory
+        self.resistanceClassificationState = resistanceClassificationState
         self.activityGroupTableVersion = activityGroupTableVersion
         self.schemaVersion = schemaVersion
     }
@@ -72,6 +76,7 @@ nonisolated struct ChemicalIntelligence: Codable, Sendable, Hashable {
         case registeredUses = "registered_uses"
         case fieldProvenance = "field_provenance"
         case productCategory = "product_category"
+        case resistanceClassificationState = "resistance_classification_state"
         case activityGroupTableVersion = "activity_group_table_version"
         case schemaVersion = "schema_version"
     }
@@ -86,6 +91,7 @@ nonisolated struct ChemicalIntelligence: Codable, Sendable, Hashable {
         // so every stored record keeps loading; absence is never invented.
         fieldProvenance = try? c.decodeIfPresent([String: String].self, forKey: .fieldProvenance)
         productCategory = try c.decodeIfPresent(String.self, forKey: .productCategory) ?? ""
+        resistanceClassificationState = try? c.decodeIfPresent(ChemicalResistanceState.self, forKey: .resistanceClassificationState)
         activityGroupTableVersion = try c.decodeIfPresent(Int.self, forKey: .activityGroupTableVersion) ?? 0
         schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
     }
