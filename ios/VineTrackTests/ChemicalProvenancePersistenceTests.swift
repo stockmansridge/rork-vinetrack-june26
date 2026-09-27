@@ -41,6 +41,42 @@ struct ChemicalProvenancePersistenceTests {
         #expect(!frozen.resistanceAvailability.permitsCleanResult)
     }
 
+    @Test(arguments: [
+        ("classified", "hrac", "10", ChemicalResistanceState.classified),
+        ("unresolved", "hrac", "10", ChemicalResistanceState.unresolved),
+        ("not_applicable", "not_applicable", "", ChemicalResistanceState.notApplicable)
+    ])
+    func masterRPCStateSurvivesSelectionAndSave(
+        fixture: (String, String, String, ChemicalResistanceState)
+    ) throws {
+        let (state, scheme, group, expected) = fixture
+        let groups = group.isEmpty ? "[]" : "[\"\(group)\"]"
+        let actives = group.isEmpty ? "[]" : """
+        [{"name":"Glufosinate-ammonium","activity_group":{"scheme":"hrac","code":"10"}}]
+        """
+        let response = """
+        {"id":"10000000-0000-4000-8000-000000000256",
+         "registration_country":"AU","registration_scheme":"apvma","registration_number":"90143",
+         "registered_product_name":"Master fixture","common_names":[],"product_category":"herbicide",
+         "active_ingredients":\(actives),"activity_groups":\(groups),
+         "activity_group_scheme":"\(scheme)","resistance_classification_state":"\(state)",
+         "registered_uses":[],"viticulture_rates":{"per_hectare":[],"per_100_litres":[]},
+         "has_viticulture_evidence":true,"label_rate_bases":[],"verification_status":"verified",
+         "verification_sources":[],"verification_conflicts":[],"verification_unresolved_fields":[],
+         "source_kind":"official_register","review_status":"approved","catalogue_version":1,"search_rank":1}
+        """
+        let master = try JSONDecoder().decode(MasterChemicalV2.self, from: Data(response.utf8))
+        #expect(master.activityGroups == (group.isEmpty ? [] : [group]))
+        #expect(master.resistanceClassificationState == expected)
+        let intel = master.intelligence
+        #expect(intel.resistanceClassificationState == expected)
+        #expect(intel.activityGroupCodes == (group.isEmpty ? [] : [group]))
+        let saved = SavedChemical(name: master.registeredProductName, chemicalIntelligence: intel)
+        let payload = BackendSavedChemical.upsert(from: saved, createdBy: nil, clientUpdatedAt: Date())
+        #expect(payload.resistanceClassificationState == expected)
+        #expect(try roundTrip(saved).chemicalIntelligence?.resistanceClassificationState == expected)
+    }
+
     // MARK: - Sprayseal 80160: label-backed rate + WHP survive save/reopen
 
     @Test func spraysealKeepsManufacturerLabelProvenanceThroughSave() throws {

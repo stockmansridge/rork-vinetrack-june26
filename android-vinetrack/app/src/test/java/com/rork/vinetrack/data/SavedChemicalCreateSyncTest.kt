@@ -2,6 +2,7 @@ package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.chemical.ChemicalSearchV2Duplicate
 import com.rork.vinetrack.data.chemical.ChemicalResistanceState
+import com.rork.vinetrack.data.chemical.MasterChemicalV2
 import com.rork.vinetrack.data.chemical.ChemicalIntelligenceAvailability
 import com.rork.vinetrack.data.chemical.ChemicalLineSnapshot
 import com.rork.vinetrack.data.chemical.resistanceAvailability
@@ -58,6 +59,37 @@ class SavedChemicalCreateSyncTest {
         val unresolved = ChemicalLineSnapshot.capture(intel.copy(resistanceClassificationState = ChemicalResistanceState.UNRESOLVED), "10")!!
         assertEquals(ChemicalIntelligenceAvailability.UNAVAILABLE, unresolved.resistanceAvailability)
         assertFalse(unresolved.resistanceAvailability.permitsCleanResult)
+    }
+
+    @Test fun masterRPCStateSurvivesSelectionAndSavedPayload() {
+        val fixtures = listOf(
+            Triple("classified", "10", ChemicalResistanceState.CLASSIFIED),
+            Triple("unresolved", "10", ChemicalResistanceState.UNRESOLVED),
+            Triple("not_applicable", "", ChemicalResistanceState.NOT_APPLICABLE),
+        )
+        fixtures.forEach { (state, group, expected) ->
+            val groups = if (group.isEmpty()) "[]" else "[\"$group\"]"
+            val scheme = if (group.isEmpty()) "not_applicable" else "hrac"
+            val actives = if (group.isEmpty()) "[]" else """[{"name":"Glufosinate-ammonium","activity_group":{"scheme":"hrac","code":"10"}}]"""
+            val response = """{"id":"10000000-0000-4000-8000-000000000256",
+                "registration_country":"AU","registration_scheme":"apvma","registration_number":"90143",
+                "registered_product_name":"Master fixture","product_category":"herbicide",
+                "active_ingredients":$actives,"activity_groups":$groups,
+                "activity_group_scheme":"$scheme","resistance_classification_state":"$state",
+                "registered_uses":[],"viticulture_rates":{"per_hectare":[],"per_100_litres":[]},
+                "has_viticulture_evidence":true,"verification_status":"verified",
+                "source_kind":"official_register","review_status":"approved","catalogue_version":1,"search_rank":1} """
+            val master = Json { ignoreUnknownKeys = true }.decodeFromString<MasterChemicalV2>(response)
+            assertEquals(if (group.isEmpty()) emptyList<String>() else listOf(group), master.activityGroups)
+            assertEquals(expected, master.resistanceClassificationState)
+            val intel = master.intelligence
+            assertEquals(expected, intel.resistanceClassificationState)
+            assertEquals(if (group.isEmpty()) emptyList<String>() else listOf(group), intel.activityGroupCodes)
+            val body = repository.prepareCreate("vineyard", input.copy(intelligence = intel), "master-id", "2026-09-27T00:00:00Z")
+            assertEquals(expected, body.resistanceClassificationState)
+            assertEquals(state, Json.encodeToString(SavedChemicalRepository.ChemicalInsert.serializer(), body)
+                .substringAfter("\"resistance_classification_state\":\"").substringBefore('"'))
+        }
     }
 
     @Test fun offlineSaveSurvivesRestartAndSavedFirstSearchUsesSameObject() = runBlocking {
