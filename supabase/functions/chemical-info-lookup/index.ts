@@ -129,7 +129,7 @@ import { hasOfficialGrapevineRate } from "./ingestion/authoritative_completion.t
 import { chooseLabelCandidate, confirmedOCRName, directOfficialLabelURL } from "./label_fallback.ts";
 import { discoverUnverifiedLabel } from "./unverified_label_discovery.ts";
 import { nameCorresponds } from "./ingestion/matching.ts";
-import { agriculturalWebCandidates, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardRateSummary, vineyardTableRate } from "./web_lookup.ts";
+import { agriculturalWebCandidates, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardRateSummary, vineyardTableRate, webResearchFailureDiagnostic, withWebEnrichment } from "./web_lookup.ts";
 import {
   buildCandidatePayload,
   buildFieldProvenance,
@@ -1359,7 +1359,10 @@ Deno.serve(async (req: Request) => {
       });
       const searchMs = Date.now() - searchStarted;
       const research = outcome.research;
-      if (!research) return json({ error: "Web research is temporarily unavailable. Try again or enter details manually." }, 503);
+      if (!research) {
+        console.error(JSON.stringify(webResearchFailureDiagnostic(subject, outcome, Date.now() - searchStarted)));
+        return json({ error: "Web research is temporarily unavailable. Try again or enter details manually." }, 503);
+      }
       const candidates = agriculturalWebCandidates(query, research, countryCode);
       if (!selectedName && candidates.length > 1) {
         return json({ candidates, detail: null, timings: { search_ms: searchMs, extraction_ms: 0 } });
@@ -1367,6 +1370,7 @@ Deno.serve(async (req: Request) => {
       if (!candidates.length) {
         return json({ candidates: [], detail: null, timings: { search_ms: searchMs, extraction_ms: 0 } });
       }
+      const result = await withWebEnrichment(candidates, searchMs, async () => {
       const detailStarted = Date.now();
       const canonicalName = research.product.canonical_name ?? subject;
       const leads = [
@@ -1391,6 +1395,7 @@ Deno.serve(async (req: Request) => {
         }) : null;
       const labelMs = Date.now() - labelStarted;
       const label = readableV2Label(enrichment);
+      if (!label) return null;
       const supported = supportedWebResearch(research, countryCode, label, page?.finalUrl ?? null);
       const supportedProjection = projectResearch(supported, countryCode, null, canonicalName, inspected.pages);
       const parsedVineyardRates = enrichment?.uses.some((use) =>
@@ -1476,7 +1481,9 @@ Deno.serve(async (req: Request) => {
         await writeWebV2Cache(countryCode, canonicalName, payload);
         if (query.toLowerCase() === canonicalName.toLowerCase()) await writeWebV2Cache(countryCode, query, payload);
       }
-      return json(payload);
+      return payload;
+      });
+      return json(result);
     }
 
     if (action === "discover_label") {

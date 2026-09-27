@@ -1,8 +1,27 @@
 import type { ChemicalResearchResult } from "./research/schema.ts";
+import { researchLog, type ResearchOutcome } from "./research/research.ts";
 import type { ManufacturerEnrichmentResult } from "./ingestion/manufacturer_enrichment.ts";
 import { classifyUrl } from "./research/classify.ts";
 import { callResponsesApi, DEFAULT_RESEARCH_MODEL } from "./research/responses_client.ts";
 import { parseChemicalResearchResult } from "./research/schema.ts";
+
+/** Log only server-side research diagnostics at the V2 unavailable boundary. */
+export function webResearchFailureDiagnostic(subject: string, outcome: ResearchOutcome, durationMs: number): Record<string, unknown> {
+  const message = outcome.error?.message ?? null;
+  return {
+    action: "web_lookup_v2",
+    subject,
+    error_category: outcome.error?.category ?? null,
+    error_message: message?.replace(/Bearer\s+\S+|sk-[a-zA-Z0-9_-]+/gi, "[redacted]") ?? null,
+    research: researchLog(outcome.telemetry),
+    primary_model: outcome.telemetry.attempts.find((a) => a.role === "primary")?.model ?? null,
+    retried: outcome.telemetry.attempts.some((a) => a.retried),
+    web_search_calls: outcome.telemetry.attempts.reduce((n, a) => n + a.web_search_calls, 0),
+    response_status: message?.match(/(?:OpenAI HTTP|HTTP)\s+(\d{3})/i)?.[1] ?? null,
+    attempt_error_categories: outcome.telemetry.attempts.map((a) => a.error_category),
+    total_duration_ms: durationMs,
+  };
+}
 
 const ANIMAL_OR_HUMAN = /\b(veterinary|livestock|horse|equine|sheep|cattle|companion.animals?|dogs?|cats?|human|pet|parasiticide|drench)\b/i;
 const CROP_CONTEXT = /\b(agricultur\w*|vineyard\w*|grape\w*|herbicide|fungicide|insecticide|adjuvant|fertili[sz]er|biostimulant|crop|weed\w*|plant|foliar|horticultur\w*)\b/i;
@@ -133,6 +152,17 @@ export function vineyardRateSummary(uses: Array<Record<string, unknown>>): Array
   }
   return [...groups.values()].filter((group) =>
     [...groups.values()].filter((other) => other.basis === group.basis).length === 1);
+}
+
+/** Discovery is independently useful; a failed label read must not turn it into an outage. */
+export async function withWebEnrichment<T>(
+  candidates: WebCandidate[], searchMs: number, enrich: () => Promise<T | null>,
+): Promise<T | { candidates: WebCandidate[]; detail: null; timings: { search_ms: number; extraction_ms: number } }> {
+  try {
+    return await enrich() ?? { candidates, detail: null, timings: { search_ms: searchMs, extraction_ms: 0 } };
+  } catch {
+    return { candidates, detail: null, timings: { search_ms: searchMs, extraction_ms: 0 } };
+  }
 }
 
 export interface WebCandidate {

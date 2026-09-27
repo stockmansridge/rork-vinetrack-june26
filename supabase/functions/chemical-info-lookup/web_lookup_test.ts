@@ -1,8 +1,8 @@
 import { assertEquals } from "jsr:@std/assert";
-import { agriculturalWebCandidates, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardTableRate, vineyardRateSummary } from "./web_lookup.ts";
+import { agriculturalWebCandidates, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardTableRate, vineyardRateSummary, webResearchFailureDiagnostic, withWebEnrichment } from "./web_lookup.ts";
 import type { ManufacturerEnrichmentResult } from "./ingestion/manufacturer_enrichment.ts";
 import { cloneResearch, fakeFetch, jsonResponse, responsesEnvelope } from "./research/test_fixtures.ts";
-import { buildResearchPrompt } from "./research/research.ts";
+import { buildResearchPrompt, readResearchConfig, runChemicalResearch } from "./research/research.ts";
 
 const beastLabel = "https://cropsure.com/wp-content/uploads/2023/03/cropsure-beast-200-herbicide-label-v2.pdf";
 
@@ -104,6 +104,40 @@ Deno.test("document-only AI fallback retains both printed bases and rejects abse
     apiKey: "fixture", fetchFn: fn,
   });
   assertEquals(result?.registered_uses[0].rates.map((rate) => rate.basis), ["per_100_litres", "per_hectare"]);
+});
+
+Deno.test("web_lookup_v2 retains research failure category, provider status and model without credentials", async () => {
+  const outcome = await runChemicalResearch({
+    query: "Beast", countryCode: "AU", countryLabel: "Australia", mode: "product_enrichment",
+    webFirst: true, useCache: false, registerResolved: false, apiKey: "sk-test-secret",
+    config: readResearchConfig(() => undefined),
+    fetchFn: (async () => new Response('invalid schema sk-test-secret', { status: 400 })) as typeof fetch,
+  });
+  const diagnostic = webResearchFailureDiagnostic("Beast", outcome, 42);
+  assertEquals(outcome.research, null);
+  assertEquals(diagnostic.action, "web_lookup_v2");
+  assertEquals(diagnostic.subject, "Beast");
+  assertEquals(diagnostic.error_category, "permanent");
+  assertEquals(diagnostic.response_status, "400");
+  assertEquals(diagnostic.primary_model, "gpt-5.6-terra");
+  assertEquals(diagnostic.retried, false);
+  assertEquals(diagnostic.web_search_calls, 0);
+  assertEquals(diagnostic.total_duration_ms, 42);
+  assertEquals(String(diagnostic.error_message).includes("[redacted]"), true);
+  assertEquals(String(diagnostic.research).includes("primary=gpt-5.6-terra"), true);
+});
+
+Deno.test("web_lookup_v2 preserves credible Beast discovery when deeper label enrichment fails", async () => {
+  const research = cloneResearch();
+  research.product = { ...research.product, searched_name: "Beast", canonical_name: "CropSure Beast 200 Herbicide",
+    manufacturer: "CropSure Pty Ltd", category: "herbicide", source_refs: [beastLabel] };
+  research.documents.official_label_candidates = [{ url: beastLabel, title: "Beast label", domain: "cropsure.com", reason: "product label" }];
+  const candidates = agriculturalWebCandidates("Beast", research, "AU");
+  const result = await withWebEnrichment(candidates, 12, async () => { throw new Error("manufacturer PDF fetch failed"); });
+  assertEquals(result, { candidates: [{ name: "CropSure Beast 200 Herbicide", brand: "CropSure Pty Ltd",
+    activeIngredient: research.active_ingredients.map((a) => a.name).join(", "), product_category: "herbicide", source: "research" }],
+    detail: null, timings: { search_ms: 12, extraction_ms: 0 } });
+  assertEquals(await withWebEnrichment(candidates, 12, async () => null), result);
 });
 
 Deno.test("unsupported research facts never populate review", () => {
