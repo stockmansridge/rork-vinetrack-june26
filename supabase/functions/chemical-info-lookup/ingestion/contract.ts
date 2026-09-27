@@ -527,6 +527,7 @@ export interface CandidateRowPayload {
   label_rate_bases: string[];
   label_reference: string | null;
   label_version: string | null;
+  manufacturer_label_url?: string | null;
   verification_status: string;
   verification_sources: WireDataSource[];
   verification_conflicts: WireConflict[];

@@ -948,25 +948,11 @@ nonisolated struct ChemicalInfoService: Sendable {
     }
 
     func lookupOnlineCandidates(query: String) async throws -> WebV2Lookup {
-        // The existing official register search is fast for registered crops;
-        // keep web research for unregistered products or unresolved names.
-        if let response = try? await searchResponse(query: query, country: "AU") {
-            let candidates = Self.agriculturalRegisterCandidates(response.results)
-            if !candidates.isEmpty { return WebV2Lookup(candidates: candidates, detail: nil) }
-        }
-        return try await lookupWebV2(query: query)
+        try await lookupWebV2(query: query)
     }
 
     func lookupSelectedOnlineCandidate(_ candidate: WebV2Candidate, query: String) async throws -> WebV2Lookup {
-        guard let number = candidate.registrationNumber else {
-            return try await lookupWebV2(query: query, selectedName: candidate.name)
-        }
-        let detail = try await discoverLabel(query: number)
-        guard detail.registration?.registrationNumber == number,
-              detail.productName?.localizedCaseInsensitiveCompare(candidate.name) == .orderedSame else {
-            throw ChemicalLookupError.parseFailed
-        }
-        return WebV2Lookup(candidates: [candidate], detail: detail)
+        try await lookupWebV2(query: query, selectedName: candidate.name)
     }
 
     func lookupWebV2(query: String, selectedName: String? = nil) async throws -> WebV2Lookup {

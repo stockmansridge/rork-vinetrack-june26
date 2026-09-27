@@ -1,10 +1,29 @@
 import { assertEquals } from "jsr:@std/assert";
-import { agriculturalWebCandidates, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch } from "./web_lookup.ts";
+import { agriculturalWebCandidates, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardTableRate, vineyardRateSummary } from "./web_lookup.ts";
 import type { ManufacturerEnrichmentResult } from "./ingestion/manufacturer_enrichment.ts";
 import { cloneResearch, fakeFetch, jsonResponse, responsesEnvelope } from "./research/test_fixtures.ts";
 import { buildResearchPrompt } from "./research/research.ts";
 
 const beastLabel = "https://cropsure.com/wp-content/uploads/2023/03/cropsure-beast-200-herbicide-label-v2.pdf";
+
+Deno.test("Beast's split manufacturer table prints a vineyard range, never a carrier-volume conversion", () => {
+  const text = `Crop / Weed State Rate WHP Critical Comments
+Avocado,See list ofQld,1.0 toNil Apply as a directed spray
+banana, feijoa,weedsNSW,5.0label section application
+ guava, kiwifruit,controlledVic,L/hainformation
+Citrus orchards
+Olive plantations
+Vineyards
+Use the lower rate when weeds are young`;
+  const row = vineyardTableRate(text);
+  assertEquals(vineyardRateSummary(row ? [row] : [] ).map(({ basis, unit, min_value, max_value }) =>
+    ({ basis, unit, min_value, max_value })), [{ basis: "per_hectare", unit: "L", min_value: 1, max_value: 5 }]);
+  assertEquals(vineyardTableRate(text.replace("Vineyards", "Industrial areas")), null);
+  assertEquals(vineyardRateSummary([{ crop: "Vineyards", rates: [
+    { basis: "per_hectare", value: 6, unit: "L", raw_text: "6 L/ha" },
+    { basis: "per_100_litres", value: 100, unit: "mL", raw_text: "100 mL/100 L" },
+  ] }]).length, 2);
+});
 
 Deno.test("V2 prompt starts with manufacturer labels and never requires APVMA", () => {
   const prompt = buildResearchPrompt("Beast", "AU", "Australia", "product_enrichment", [], [], null, true);

@@ -82,6 +82,59 @@ export async function readLabelWithResearchSchema(input: {
   }
 }
 
+/** Recover a vineyard row from multi-column PDF text when the crop name and rate sit on separate lines. */
+export function vineyardTableRate(text: string): Record<string, unknown> | null {
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^\s*Vineyards\s*$/i.test(lines[i])) continue;
+    const start = Math.max(0, i - 30);
+    const candidates: Array<{ low: number; high: number; raw: string }> = [];
+    for (let j = start; j < i - 2; j++) {
+      const first = /\b(\d+(?:\.\d+)?)\s*to/i.exec(lines[j]);
+      const second = /\b(\d+(?:\.\d+)?)/.exec(lines[j + 1]);
+      if (!first || !second || !/\bL\s*\/\s*ha/i.test(lines[j + 2])) continue;
+      const low = Number(first[1]); const high = Number(second[1]);
+      if (low > 0 && high >= low) candidates.push({ low, high,
+        raw: `${lines[j].trim()} | ${lines[j + 1].trim()} | ${lines[j + 2].trim()} | ${lines[i].trim()}` });
+    }
+    if (candidates.length !== 1) continue;
+    const rate = candidates[0];
+    return { crop: "Vineyards", target_raw: "Weeds referenced in label directions",
+      rates: [{ basis: "range_per_hectare", min_value: rate.low, max_value: rate.high,
+        unit: "L", raw_text: rate.raw, condition_ambiguous: false }],
+      provenance: { rates: "manufacturer_label" } };
+  }
+  return null;
+}
+
+export function vineyardRateSummary(uses: Array<Record<string, unknown>>): Array<{
+  basis: string; unit: string; min_value: number; max_value: number; evidence: string[];
+}> {
+  const groups = new Map<string, { basis: string; unit: string; min_value: number; max_value: number; evidence: string[] }>();
+  for (const use of uses) {
+    if (!/grape|vineyard/i.test(String(use.crop ?? ""))) continue;
+    for (const rate of Array.isArray(use.rates) ? use.rates as Array<Record<string, unknown>> : []) {
+      const basis = String(rate.basis ?? "");
+      const normalized = basis.includes("100_litres") ? "per_100_litres" : basis.includes("hectare") ? "per_hectare" : "";
+      const unit = String(rate.unit ?? "").trim();
+      const raw = String(rate.raw_text ?? "").trim();
+      const low = Number(rate.min_value ?? rate.value);
+      const high = Number(rate.max_value ?? rate.value);
+      if (!normalized || !unit || !raw || rate.condition_ambiguous === true ||
+          !Number.isFinite(low) || !Number.isFinite(high) || low <= 0 || high < low) continue;
+      const key = `${normalized}:${unit.toLowerCase()}`;
+      const found = groups.get(key);
+      if (found) {
+        found.min_value = Math.min(found.min_value, low);
+        found.max_value = Math.max(found.max_value, high);
+        if (!found.evidence.includes(raw)) found.evidence.push(raw);
+      } else groups.set(key, { basis: normalized, unit, min_value: low, max_value: high, evidence: [raw] });
+    }
+  }
+  return [...groups.values()].filter((group) =>
+    [...groups.values()].filter((other) => other.basis === group.basis).length === 1);
+}
+
 export interface WebCandidate {
   name: string;
   brand: string;
@@ -96,8 +149,9 @@ export function agriculturalWebCandidates(query: string, research: ChemicalResea
   const relates = (name: string) => tokens.some((token) => token.length >= 3 && name.toLowerCase().includes(token));
   const credible = (url: string) => {
     const source = classifyUrl(url, country);
-    return source.trust !== "search_engine" && source.trust !== "reseller" &&
-      source.kind !== "safety_data_sheet" && source.kind !== "search_results" && /^https:\/\//i.test(url);
+    return (source.trust === "registrant" || source.trust === "unknown") &&
+      (source.trust === "registrant" || source.isInspectableProductPage) && source.kind !== "safety_data_sheet" &&
+      source.kind !== "search_results" && /^https:\/\//i.test(url);
   };
   const name = research.product.canonical_name ?? "";
   const evidence = research.product.source_refs.some(credible) ||

@@ -40,6 +40,28 @@ nonisolated enum ChemicalSearchV2OperationalDefaults {
         return result
     }
 
+    /// Summarise only numeric rates read from one manufacturer's vineyard label, keeping bases and printed units separate.
+    static func manufacturerEnvelope(from rates: ViticultureRates) -> [ChemicalDefaultRateBasis: ChemicalLabelRate] {
+        var result: [ChemicalDefaultRateBasis: ChemicalLabelRate] = [:]
+        for (basis, rows, rangeBasis) in [
+            (ChemicalDefaultRateBasis.perHectare, rates.perHectare, ChemicalLabelRateBasis.rangePerHectare),
+            (.per100Litres, rates.per100Litres, .rangePer100Litres)
+        ] {
+            let usable = rows.filter { !$0.conditionIsAmbiguous && $0.rawText != nil && !$0.unit.isEmpty &&
+                ($0.value != nil || ($0.minValue != nil && $0.maxValue != nil)) }
+            let units = Set(usable.map { $0.unit.lowercased() })
+            guard units.count == 1, let first = usable.first else { continue }
+            let lows = usable.compactMap { $0.minValue ?? $0.value }
+            let highs = usable.compactMap { $0.maxValue ?? $0.value }
+            guard lows.count == usable.count, highs.count == usable.count,
+                  let low = lows.min(), let high = highs.max(), low > 0, high >= low else { continue }
+            result[basis] = low == high
+                ? ChemicalLabelRate(label: "Vineyard rate", basis: first.basis == rangeBasis ? (basis == .perHectare ? .perHectare : .per100Litres) : first.basis, value: low, unit: first.unit, rawText: first.rawText)
+                : ChemicalLabelRate(label: "Vineyard rate", basis: rangeBasis, minValue: low, maxValue: high, unit: first.unit, rawText: usable.compactMap(\.rawText).joined(separator: "; "))
+        }
+        return result
+    }
+
     static func effectiveRates(
         automatic: [ChemicalDefaultRateBasis: ChemicalLabelRate],
         edited: ChemicalLabelRate?
@@ -377,6 +399,7 @@ struct ChemicalSearchV2View: View {
         _query = State(initialValue: prefillQuery)
     }
 
+    @FocusState private var isQueryFocused: Bool
     @State private var query: String = ""
     @State private var results: [MasterChemicalV2] = []
     @State private var onlineCandidates: [ChemicalInfoService.WebV2Candidate] = []
@@ -423,7 +446,8 @@ struct ChemicalSearchV2View: View {
         NavigationStack {
             List {
                 Section {
-                    TextField("Product name, APVMA number, active or manufacturer", text: $query)
+                    TextField("Product name", text: $query)
+                        .focused($isQueryFocused)
                         .textInputAutocapitalization(.never)
                         .submitLabel(.search)
                         .onSubmit(search)
@@ -507,9 +531,8 @@ struct ChemicalSearchV2View: View {
                 Section(results.isEmpty ? "More ways to find a product" : "Other options") {
                     if isExternalLookupRunning {
                         HStack { ProgressView(); Text("Finding agricultural product and reading label…") }
-                    } else {
-                        Button("Search Online") { searchOnline() }
-                            .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
+                    } else if message != nil && results.isEmpty && onlineCandidates.isEmpty && savedMatches.isEmpty {
+                        Button("Retry manufacturer search") { searchOnline() }
                     }
                     Button("Take Photo of Label") { isShowingCamera = true }
                     PhotosPicker(selection: $photoItem, matching: .images) {
@@ -555,6 +578,7 @@ struct ChemicalSearchV2View: View {
     private func search() {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2 else { return }
+        isQueryFocused = false
         requestID = nil
         externalRequestID = nil
         isExternalLookupRunning = false
@@ -587,7 +611,13 @@ struct ChemicalSearchV2View: View {
                     isSearching = false
                     searchOnline(automatically: true)
                 }
-            } catch { if requestID == token { message = error.localizedDescription; results = [] } }
+            } catch {
+                if requestID == token {
+                    results = []
+                    isSearching = false
+                    searchOnline(automatically: true)
+                }
+            }
             if requestID == token { isSearching = false }
         }
     }
@@ -635,13 +665,13 @@ struct ChemicalSearchV2View: View {
         isSearching = false
         let token = UUID(); externalRequestID = token
         isExternalLookupRunning = true
-        message = automatically ? "No catalogue match. Searching the official register online…" : "Searching the official register online…"
+        message = "Finding manufacturer product and reading its label…"
         onlineCandidates = []; diagnostics.fallbackInvoked = true
         Task {
             do {
                 let response = try await externalService.lookupOnlineCandidates(query: trimmed)
                 guard externalRequestID == token else { return }
-                onlineCandidates = response.candidates
+                onlineCandidates = response.detail == nil ? response.candidates : []
                 if let detail = response.detail { openWebReview(detail, fallbackName: response.candidates.first?.name ?? trimmed) }
                 message = response.detail != nil ? nil : onlineCandidates.isEmpty
                     ? "No reliable agricultural source found online. Check the name or create manually."
@@ -660,8 +690,8 @@ struct ChemicalSearchV2View: View {
     private func openWebReview(_ lookup: ChemicalStructuredLookup, fallbackName: String) {
         let intel = lookup.intelligence()
         let rates = ViticultureRates.fromRegisteredUses(intel.registeredUses)
-        let automatic: [ChemicalDefaultRateBasis: ChemicalLabelRate] = rates.all.count > 1
-            ? [:] : ChemicalSearchV2OperationalDefaults.unambiguousRates(from: rates)
+        let automatic = intel.registration?.manufacturerLabelURL == nil ? [:] :
+            ChemicalSearchV2OperationalDefaults.manufacturerEnvelope(from: rates)
         let selected = automatic[.perHectare] ?? automatic[.per100Litres]
         let initial = selected.map(draftRate) ?? ChemicalManualRateDraft()
         review = ReviewDraft(
@@ -675,7 +705,7 @@ struct ChemicalSearchV2View: View {
     private func openOnlineCandidate(_ candidate: ChemicalInfoService.WebV2Candidate) {
         let token = UUID(); externalRequestID = token
         isExternalLookupRunning = true
-        message = candidate.registrationNumber == nil ? "Reading product label…" : "Checking official product record…"
+        message = "Reading manufacturer product label…"
         Task {
             do {
                 let response = try await externalService.lookupSelectedOnlineCandidate(candidate, query: query)
@@ -862,18 +892,12 @@ private struct ChemicalSearchV2ReviewView: View {
                     Section("Product") {
                         TextField("Chemical / product name *", text: $draft.productName)
                         LabeledContent("Registrant", value: draft.intelligence.registration?.registrant?.ifEmpty("Not found — check label") ?? "Not found — check label")
-                        LabeledContent("APVMA", value: draft.source == "Product label / web"
-                            ? (draft.intelligence.registration?.registrationNumber.map { "\($0) (from label)" } ?? "Not stated on label")
-                            : (draft.intelligence.hasEvidencedRegistration
-                                ? (draft.intelligence.registration?.registrationNumber ?? "Not found — check label") : "APVMA number not available"))
                         LabeledContent("Active ingredients", value: draft.intelligence.activeIngredients.map(\.displayLabelWithGroup).joined(separator: ", ").ifEmpty("Needs confirmation — check label"))
                         LabeledContent("Category", value: draft.intelligence.productCategory.isEmpty ? "Not found — check label" : draft.intelligence.productCategory.capitalized)
                         LabeledContent("Product form", value: draft.manualDetails.productForm.ifEmpty(draft.formType ?? "Needs confirmation"))
-                        if let label = [draft.intelligence.registration?.manufacturerLabelURL,
-                                        draft.intelligence.registration?.regulatorLabelURL,
-                                        draft.intelligence.registration?.labelReference]
-                            .compactMap({ $0 }).compactMap(URL.init(string:))
-                            .first(where: { $0.scheme == "https" && $0.host != nil && $0.path.lowercased().hasSuffix(".pdf") }) {
+                        if let label = draft.intelligence.registration?.manufacturerLabelURL.flatMap(URL.init(string:)),
+                           label.scheme == "https", label.host != nil,
+                           label.path.lowercased().hasSuffix(".pdf") {
                             Link("View Label", destination: label)
                         } else {
                             Text("Label not found — check product packaging").foregroundStyle(.secondary)
@@ -884,37 +908,16 @@ private struct ChemicalSearchV2ReviewView: View {
                             Text("Grapevine use / rate not found — check label.")
                                 .foregroundStyle(.secondary)
                         }
-                        if !draft.viticultureRates.perHectare.isEmpty {
-                            LabeledContent("Per hectare") {
-                                VStack(alignment: .trailing) {
-                                    ForEach(draft.viticultureRates.perHectare) { Text($0.displayRate) }
-                                }
-                            }
-                        }
-                        if !draft.viticultureRates.per100Litres.isEmpty {
-                            LabeledContent("Per 100 L") {
-                                VStack(alignment: .trailing) {
-                                    ForEach(draft.viticultureRates.per100Litres) { Text($0.displayRate) }
-                                }
-                            }
-                        }
-                        if draft.source == "Product label / web" {
-                            ForEach(draft.intelligence.registeredUses.filter(\.isViticultural)) { use in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(use.targetRaw.isEmpty ? use.crop : "\(use.crop) · \(use.targetRaw)")
-                                        .font(.subheadline.weight(.semibold))
-                                    ForEach(use.rates) { rate in Text(rate.displayRate).font(.caption) }
-                                    if let days = use.withholdingPeriodDays { Text("Withholding: \(days) days").font(.caption) }
-                                    if let reEntry = use.reEntryStatement { Text("Re-entry: \(reEntry)").font(.caption) }
-                                    if let restrictions = use.restrictions { Text(restrictions).font(.caption).foregroundStyle(.secondary) }
-                                }
+                        ForEach(ChemicalDefaultRateBasis.allCases, id: \.self) { basis in
+                            if let rate = draft.automaticRates[basis] {
+                                LabeledContent(basis == .perHectare ? "Vineyard rate · per hectare" : "Vineyard rate · per 100 L", value: rate.displayRate)
                             }
                         }
                     }
                 }
                 Section {
                     let rates = draft.viticultureRates.all
-                    if rates.count > 1 {
+                    if rates.count > 1 && draft.source != "Product label / web" {
                         Picker("Registered rate", selection: $draft.selectedRegisteredRateID) {
                             Text("Enter/edit manually").tag(String?.none)
                             ForEach(rates) { rate in Text(rate.displayRate).tag(Optional(rate.id)) }
@@ -951,6 +954,9 @@ private struct ChemicalSearchV2ReviewView: View {
                 }
                 Section {
                     DisclosureGroup("Fill missing details", isExpanded: $isOptionalDetailsExpanded) {
+                            if draft.source == "Product label / web", let number = draft.intelligence.registration?.registrationNumber {
+                                LabeledContent("APVMA (printed on label)", value: number)
+                            }
                             if !draft.isManual {
                                 TextField("Category", text: $draft.manualDetails.productCategory)
                                 TextField("Product form (liquid or solid)", text: $draft.manualDetails.productForm)

@@ -4,6 +4,24 @@ import Testing
 
 @MainActor
 struct ChemicalSearchV2Tests {
+    @Test func manufacturerBeastRatesSummariseWithoutMixingBases() throws {
+        let rows = ViticultureRates(perHectare: [
+            ChemicalLabelRate(basis: .perHectare, value: 1, unit: "L", rawText: "1 L/ha"),
+            ChemicalLabelRate(basis: .rangePerHectare, minValue: 2, maxValue: 5, unit: "L", rawText: "2–5 L/ha")
+        ], per100Litres: [ChemicalLabelRate(basis: .per100Litres, value: 100, unit: "mL", rawText: "100 mL/100 L")])
+        let summary = ChemicalSearchV2OperationalDefaults.manufacturerEnvelope(from: rows)
+        let hectare = try #require(summary[.perHectare])
+        #expect(hectare.basis == .rangePerHectare)
+        #expect(hectare.minValue == 1 && hectare.maxValue == 5 && hectare.unit == "L")
+        #expect(summary[.per100Litres]?.value == 100)
+        let defaults = ChemicalSearchV2OperationalDefaults.storedDefaults(rates: Array(summary.values), selectedAt: "2026-09-27T00:00:00Z")
+        #expect(defaults?.perHectare?.minValue == 1)
+        #expect(defaults?.perHectare?.maxValue == 5)
+        #expect(ChemicalSearchV2OperationalDefaults.manufacturerEnvelope(from: ViticultureRates(perHectare: [
+            ChemicalLabelRate(basis: .perHectare, value: 5, unit: "L")
+        ], per100Litres: [])).isEmpty)
+    }
+
     @Test func onlineRegisterDiscoveryKeepsCropBeastAndRejectsVeterinaryNames() {
         let rows = [
             ChemicalSearchResult(name: "BEAST Pour-On For Cattle", registrationNumber: "92938",

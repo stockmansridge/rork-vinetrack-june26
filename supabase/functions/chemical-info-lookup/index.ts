@@ -129,7 +129,7 @@ import { hasOfficialGrapevineRate } from "./ingestion/authoritative_completion.t
 import { chooseLabelCandidate, confirmedOCRName, directOfficialLabelURL } from "./label_fallback.ts";
 import { discoverUnverifiedLabel } from "./unverified_label_discovery.ts";
 import { nameCorresponds } from "./ingestion/matching.ts";
-import { agriculturalWebCandidates, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch } from "./web_lookup.ts";
+import { agriculturalWebCandidates, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardRateSummary, vineyardTableRate } from "./web_lookup.ts";
 import {
   buildCandidatePayload,
   buildFieldProvenance,
@@ -750,6 +750,37 @@ const REVIEW_PREVIEWS_URL = (() => {
   return base ? `${base.replace(/\/+$/, "")}/rest/v1/master_review_previews` : "";
 })();
 const MASTER_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+const WEB_V2_CACHE_URL = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "") + "/rest/v1/chemical_web_v2_cache";
+const WEB_V2_CACHE_VERSION = "manufacturer-v2-1";
+
+function webV2CacheKey(country: string, name: string): string {
+  return `${WEB_V2_CACHE_VERSION}:${country}:${name.trim().toLowerCase().replace(/\s+/g, " ")}`;
+}
+
+async function readWebV2Cache(country: string, name: string): Promise<any | null> {
+  if (!masterConfigured()) return null;
+  try {
+    const res = await fetch(`${WEB_V2_CACHE_URL}?key=eq.${encodeURIComponent(webV2CacheKey(country, name))}&expires_at=gt.${encodeURIComponent(new Date().toISOString())}&select=payload&limit=1`, {
+      headers: masterHeaders(),
+    });
+    if (!res.ok) return null;
+    const rows = await res.json();
+    const payload = rows?.[0]?.payload;
+    return payload?.detail?.registration?.manufacturer_label_url &&
+      payload.detail.registration.regulator_label_url == null ? payload : null;
+  } catch { return null; }
+}
+
+async function writeWebV2Cache(country: string, name: string, payload: Record<string, unknown>): Promise<void> {
+  if (!masterConfigured()) return;
+  try {
+    await fetch(`${WEB_V2_CACHE_URL}?on_conflict=key`, {
+      method: "POST", headers: { ...masterHeaders(), "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({ key: webV2CacheKey(country, name), payload,
+        expires_at: new Date(Date.now() + 7 * 86400_000).toISOString() }),
+    });
+  } catch { /* Cache never blocks live discovery. */ }
+}
 
 function masterConfigured(): boolean {
   return Boolean(MASTER_TABLE_URL && MASTER_SERVICE_KEY);
@@ -1261,12 +1292,65 @@ Deno.serve(async (req: Request) => {
       return json({ product_name: confirmedOCRName(parsed?.product_name, ocr) });
     }
 
+    if (action === "manufacturer_batch_v2") {
+      if (!await isSystemAdmin(req)) return json({ error: "Admin access required" }, 403);
+      const names = Array.isArray(body?.names) ? body.names.filter((n: unknown) =>
+        typeof n === "string" && n.trim().length >= 3 && n.trim().length <= 150).slice(0, 8) as string[] : [];
+      if (!names.length || !countryCode) return json({ error: "Supply up to eight product names and a country" }, 400);
+      const results: Array<Record<string, unknown>> = [];
+      for (const name of names) {
+        try {
+          // Identical manufacturer-only extraction to interactive V2; never register search.
+          const lookupResponse = await fetch(req.url, { method: "POST", headers: {
+            "Content-Type": "application/json", "Authorization": req.headers.get("Authorization") ?? "",
+            "apikey": req.headers.get("apikey") ?? Deno.env.get("SUPABASE_ANON_KEY") ?? "",
+          }, body: JSON.stringify({ action: "web_lookup_v2", query: name, country: countryCode }) });
+          if (!lookupResponse.ok) { results.push({ name, status: "lookup_unavailable" }); continue; }
+          const found = await lookupResponse.json();
+          const detail = found?.detail;
+          const label = detail?.registration?.manufacturer_label_url;
+          const registration = detail?.registration?.registration_number;
+          if (found?.candidates?.length !== 1 || !label) {
+            results.push({ name, status: "requires_product_selection_or_label", candidates: found?.candidates?.length ?? 0 }); continue;
+          }
+          if (!registration) {
+            results.push({ name, status: "cached_only_no_printed_registration", manufacturer_label_url: label }); continue;
+          }
+          const identity = `${countryCode}:apvma:${String(registration).toUpperCase()}`;
+          if (await masterOps.selectByIdentityKey(identity)) {
+            results.push({ name, status: "already_in_master" }); continue;
+          }
+          const rows = detail.registered_uses ?? [];
+          const rates = { per_hectare: rows.filter((u: any) => /grape|vineyard/i.test(u.crop ?? "")).flatMap((u: any) => u.rates ?? []).filter((r: any) => String(r.basis).includes("hectare")),
+            per_100_litres: rows.filter((u: any) => /grape|vineyard/i.test(u.crop ?? "")).flatMap((u: any) => u.rates ?? []).filter((r: any) => String(r.basis).includes("100_litres")) };
+          const candidate = await masterOps.insertCandidate({
+            registration_country: countryCode, registration_scheme: "apvma", registration_number: registration,
+            registered_product_name: detail.product_name, common_names: [], registrant: detail.registration.registrant ?? null,
+            product_category: detail.product_category ?? null, form_type: detail.form_type ?? null,
+            active_ingredients: detail.active_ingredients ?? [], activity_groups: [], activity_group_scheme: null,
+            registered_uses: rows, viticulture_rates: rates,
+            label_rate_bases: [...new Set([...rates.per_hectare, ...rates.per_100_litres].map((r: any) => r.basis))],
+            label_reference: label, label_version: null, manufacturer_label_url: label,
+            source_kind: "manufacturer_label", source_reference: label, retrieved_at: new Date().toISOString(),
+            review_status: "candidate", activity_group_table_version: ACTIVITY_GROUP_TABLE_VERSION,
+            intelligence_schema_version: 1,
+            verification_status: "partially_verified", verification_sources: detail.verification?.sources ?? [],
+            verification_conflicts: [], verification_unresolved_fields: detail.verification?.unresolved_fields ?? [],
+          });
+          results.push({ name, status: candidate ? "staged_for_review" : "staging_unavailable", manufacturer_label_url: label });
+        } catch { results.push({ name, status: "lookup_unavailable" }); }
+      }
+      return json({ results });
+    }
+
     if (action === "web_lookup_v2") {
       const query = typeof body?.query === "string" ? body.query.trim() : "";
       if (query.length < 2 || query.length > 200) return json({ error: "Enter a product name" }, 400);
       if (!countryCode) return json({ error: "Select a vineyard country" }, 422);
       const selectedName = typeof body?.selectedName === "string" ? body.selectedName.trim() : "";
       const subject = selectedName || query;
+      const cachedWeb = await readWebV2Cache(countryCode, subject);
+      if (cachedWeb) return json(cachedWeb);
       const searchStarted = Date.now();
       const outcome = await runChemicalResearch({
         query: subject, countryCode, countryLabel, mode: "product_enrichment",
@@ -1291,7 +1375,7 @@ Deno.serve(async (req: Request) => {
       ].filter(Boolean);
       const inspected = await inspectCandidateProductPages({ fetchFn: fetch, now: () => new Date() }, leads, countryCode);
       const projection = projectResearch(research, countryCode, null, canonicalName, inspected.pages);
-      const acceptedLabel = projection.manufacturerLabelCandidate ?? projection.officialLabelCandidate;
+      const acceptedLabel = projection.manufacturerLabelCandidate;
       const page = inspected.pages.find((p) => nameCorresponds(canonicalName, p.pageProductName) &&
         p.links.some((link) => link.url === acceptedLabel?.url)) ??
         inspected.pages.find((p) => nameCorresponds(canonicalName, p.pageProductName));
@@ -1349,11 +1433,19 @@ Deno.serve(async (req: Request) => {
         manufacturer_label_url: label,
         regulator_label_url: null,
         productURL: page?.finalUrl ?? supportedProjection.productPageCandidate?.url ?? null,
-        registered_uses: parsedVineyardRates ? enrichment?.uses :
-          Array.isArray(labelUses) && labelUses.length ? labelUses :
-          label && enrichment?.uses.length ? enrichment.uses : supportedProjection.extraction.registered_uses,
+        registered_uses: label ? (parsedVineyardRates ? enrichment?.uses :
+          Array.isArray(labelUses) && labelUses.length ? labelUses : enrichment?.uses ?? []) : [],
       };
       const detail = buildStructuredResponse(extraction, countryCode, "Agricultural web and label research");
+      // A PDF's multi-column text can split the printed vineyard crop and range
+      // across separate lines. Preserve that exact table evidence as a use row.
+      const tableRate = label && enrichment?.labelText ? vineyardTableRate(enrichment.labelText) : null;
+      if (tableRate && !detail.registered_uses.some((use: any) =>
+        /grape|vineyard/i.test(String(use.crop ?? "")) && use.rates?.some((rate: any) =>
+          rate.basis === "range_per_hectare" && rate.min_value === (tableRate.rates as any[])[0].min_value &&
+          rate.max_value === (tableRate.rates as any[])[0].max_value))) {
+        detail.registered_uses.push(tableRate as any);
+      }
       // This number was read from the accepted label, not resolved through the register.
       // Keep scheme null so SavedChemical provenance remains label_lookup.
       if (detail.registration) {
@@ -1372,12 +1464,19 @@ Deno.serve(async (req: Request) => {
       stripStructuredDirectionSeeds(detail);
       applyDefaultRateOptions(detail);
       const totalMs = Date.now() - searchStarted;
-      return json({ candidates, detail, timings: { search_ms: searchMs,
+      const payload = { candidates, detail,
+        vineyard_rate_summary: label ? vineyardRateSummary(detail.registered_uses as Array<Record<string, unknown>>) : [],
+        timings: { search_ms: searchMs,
         label_fetch_ms: enrichment?.diagnostics.label_fetch_ms ?? null,
         label_parse_ms: enrichment?.diagnostics.label_parse_ms ?? null,
         label_processing_ms: labelMs,
         extraction_ms: Date.now() - extractionStarted, review_ready_ms: totalMs,
-        detail_ms: Date.now() - detailStarted } });
+        detail_ms: Date.now() - detailStarted } };
+      if (label && candidates.length === 1 && nameCorresponds(canonicalName, candidates[0].name)) {
+        await writeWebV2Cache(countryCode, canonicalName, payload);
+        if (query.toLowerCase() === canonicalName.toLowerCase()) await writeWebV2Cache(countryCode, query, payload);
+      }
+      return json(payload);
     }
 
     if (action === "discover_label") {

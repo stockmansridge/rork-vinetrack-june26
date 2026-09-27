@@ -61,6 +61,33 @@ object ChemicalSearchV2OperationalDefaults {
         }
     }
 
+    /** Only same-unit, same-basis numeric vineyard rates actually transcribed from a manufacturer label. */
+    fun manufacturerEnvelope(rates: ViticultureRates): Map<ChemicalDefaultRateBasis, ChemicalLabelRate> = buildMap {
+        listOf(
+            Triple(ChemicalDefaultRateBasis.PER_HECTARE, rates.perHectare, ChemicalLabelRateBasis.RANGE_PER_HECTARE),
+            Triple(ChemicalDefaultRateBasis.PER_100_LITRES, rates.per100Litres, ChemicalLabelRateBasis.RANGE_PER_100_LITRES),
+        ).forEach { (basis, rows, rangeBasis) ->
+            val usable = rows.filter { it.conditionAmbiguous != true && !it.rawText.isNullOrBlank() && it.unit.isNotBlank() &&
+                (it.value != null || (it.minValue != null && it.maxValue != null)) }
+            if (usable.isEmpty() || usable.map { it.unit.lowercase() }.distinct().size != 1) return@forEach
+            val low = usable.mapNotNull { it.minValue ?: it.value }.minOrNull() ?: return@forEach
+            val high = usable.mapNotNull { it.maxValue ?: it.value }.maxOrNull() ?: return@forEach
+            if (low <= 0 || high < low) return@forEach
+            val first = usable.first()
+            put(basis, first.copy(
+                label = "Vineyard rate",
+                basis = if (low == high) {
+                    if (basis == ChemicalDefaultRateBasis.PER_HECTARE) ChemicalLabelRateBasis.PER_HECTARE else ChemicalLabelRateBasis.PER_100_LITRES
+                } else rangeBasis,
+                value = if (low == high) low else null,
+                minValue = if (low == high) null else low,
+                maxValue = if (low == high) null else high,
+                rawText = usable.mapNotNull { it.rawText }.joinToString("; "),
+                rateId = null,
+            ))
+        }
+    }
+
     fun effectiveRates(
         automatic: Map<ChemicalDefaultRateBasis, ChemicalLabelRate>,
         edited: ChemicalLabelRate?,

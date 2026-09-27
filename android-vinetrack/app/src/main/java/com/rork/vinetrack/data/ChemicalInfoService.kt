@@ -339,27 +339,10 @@ class ChemicalInfoService {
         WebV2Candidate(row.name, row.brand, row.activeIngredient, row.productCategory, row.registrationNumber)
     }
 
-    suspend fun lookupOnlineCandidates(query: String): WebV2Lookup {
-        // Match iOS: use the fast official register first, then research only if no crop candidate exists.
-        val candidates = try {
-            agriculturalRegisterCandidates(searchChemicals(query, "AU"))
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            emptyList()
-        }
-        return if (candidates.isNotEmpty()) WebV2Lookup(candidates = candidates) else lookupWebV2(query)
-    }
+    suspend fun lookupOnlineCandidates(query: String): WebV2Lookup = lookupWebV2(query)
 
-    suspend fun lookupSelectedOnlineCandidate(candidate: WebV2Candidate, query: String): WebV2Lookup {
-        val number = candidate.registrationNumber ?: return lookupWebV2(query, candidate.name)
-        val detail = discoverLabel(number)
-        if (detail.registration?.registrationNumber != number ||
-            !detail.productName.orEmpty().equals(candidate.name, ignoreCase = true)) {
-            throw LookupException("The product record did not match the selected registration. Try again.")
-        }
-        return WebV2Lookup(candidates = listOf(candidate), detail = detail)
-    }
+    suspend fun lookupSelectedOnlineCandidate(candidate: WebV2Candidate, query: String): WebV2Lookup =
+        lookupWebV2(query, candidate.name)
 
     suspend fun lookupWebV2(query: String, selectedName: String? = null): WebV2Lookup = withContext(Dispatchers.IO) {
         val payload = buildMap {

@@ -31,6 +31,28 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ChemicalSearchV2Test {
+    @Test fun manufacturerBeastEnvelopePrefillsIndependentRateBases() {
+        val rates = ViticultureRates(
+            perHectare = listOf(
+                ChemicalLabelRate(basis = ChemicalLabelRateBasis.PER_HECTARE, value = 1.0, unit = "L", rawText = "1 L/ha"),
+                ChemicalLabelRate(basis = ChemicalLabelRateBasis.RANGE_PER_HECTARE, minValue = 2.0, maxValue = 5.0, unit = "L", rawText = "2–5 L/ha"),
+            ),
+            per100Litres = listOf(ChemicalLabelRate(basis = ChemicalLabelRateBasis.PER_100_LITRES, value = 100.0, unit = "mL", rawText = "100 mL/100 L")),
+        )
+        val summary = ChemicalSearchV2OperationalDefaults.manufacturerEnvelope(rates)
+        val area = summary[ChemicalDefaultRateBasis.PER_HECTARE]!!
+        assertEquals(ChemicalLabelRateBasis.RANGE_PER_HECTARE, area.basis)
+        assertEquals(1.0, area.minValue)
+        assertEquals(5.0, area.maxValue)
+        assertEquals(100.0, summary[ChemicalDefaultRateBasis.PER_100_LITRES]?.value)
+        val defaults = ChemicalSearchV2OperationalDefaults.storedDefaults(summary.values.toList(), "2026-09-27T00:00:00Z")
+        assertEquals(1.0, defaults?.perHectare?.minValue)
+        assertEquals(5.0, defaults?.perHectare?.maxValue)
+        assertTrue(ChemicalSearchV2OperationalDefaults.manufacturerEnvelope(ViticultureRates(
+            perHectare = listOf(ChemicalLabelRate(basis = ChemicalLabelRateBasis.PER_HECTARE, value = 5.0, unit = "L")),
+        )).isEmpty())
+    }
+
     @Test fun registerFirstDiscoveryKeepsCropBeastButNotVeterinaryOrSuggestions() {
         val rows = listOf(
             ChemicalInfoService.ChemicalSearchResult(name = "BEAST Pour-On For Cattle", registrationNumber = "92938", registrationScheme = "apvma", source = "official_register"),
