@@ -1,7 +1,19 @@
 // deno-lint-ignore-file no-import-prefix
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { containRowFailure, pendingIds, selectBackfillRows } from "./master-chemical-backfill-v2.ts";
+import { applyPreviewIfExecuting, containRowFailure, pendingIds, selectBackfillRows } from "./master-chemical-backfill-v2.ts";
+import { storeBackfillPreview, writeLookupCache } from "../supabase/functions/chemical-info-lookup/ingestion/master_backfill.ts";
 import type { MasterRow } from "../supabase/functions/chemical-info-lookup/ingestion/contract.ts";
+
+Deno.test("dry-run cannot insert preview, write V2 cache or apply Master review", async () => {
+  const calls: string[] = [];
+  const previewStore = { insertPreview: () => { calls.push("previewStore.insertPreview"); return Promise.resolve({ id: "preview" }); } };
+  const writeWebV2Cache = () => { calls.push("writeWebV2Cache"); return Promise.resolve(); };
+  const masterReviewApply = () => { calls.push("master_review_apply"); return Promise.resolve({ status: "applied" }); };
+  assertEquals(await storeBackfillPreview(true, previewStore.insertPreview), null);
+  await writeLookupCache(true, true, writeWebV2Cache);
+  assertEquals(await applyPreviewIfExecuting(false, "preview", masterReviewApply), null);
+  assertEquals(calls, []);
+});
 
 Deno.test("canary selection is stable by id and only incomplete by default", () => {
   const row = (id: string, state: "unresolved" | "classified") => ({

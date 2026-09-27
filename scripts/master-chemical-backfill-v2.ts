@@ -15,6 +15,11 @@ export async function containRowFailure<T>(work: () => Promise<T>): Promise<{ va
   try { return { value: await work(), error: false }; }
   catch { return { value: null, error: true }; }
 }
+/** The signed-in admin apply RPC is inaccessible to the runner's dry-run branch. */
+export async function applyPreviewIfExecuting<T>(execute: boolean, previewId: string | null,
+  apply: () => Promise<T>): Promise<T | null> {
+  return execute && previewId ? await apply() : null;
+}
 export function selectBackfillRows(rows: MasterRow[], masterId: string | null, limit: number): MasterRow[] {
   return rows.filter((r) => masterId ? r.id === masterId : isIncompleteMaster(r))
     .sort((a, b) => a.id.localeCompare(b.id)).slice(0, limit);
@@ -108,10 +113,11 @@ async function main(): Promise<void> {
       if (dryRun && response.findings?.not_applicable) { counts.not_applicable = (counts.not_applicable ?? 0) + 1; finalResistanceState = "not_applicable"; }
       if (dryRun && response.findings?.vineyard_rates_added) counts.vineyard_rates_added = (counts.vineyard_rates_added ?? 0) + 1;
       if (execute && response.preview_id) {
-        const result = await request("/rest/v1/rpc/master_review_apply", {
+        const result = await applyPreviewIfExecuting(execute, response.preview_id, () => request("/rest/v1/rpc/master_review_apply", {
           p_preview_id: response.preview_id, p_master_id: id,
           p_reason: "Controlled manufacturer-label Master catalogue refill V2",
-        });
+        }));
+        if (!result) throw new Error("Apply did not return a result");
         if (result.status !== "applied" && result.status !== "already_applied") throw new Error("Apply did not confirm success");
         const latest = await request(`/rest/v1/master_chemicals?select=*&id=eq.${encodeURIComponent(id)}&limit=1`) as MasterRow[];
         if (latest.length !== 1 || latest[0].id !== id || latest[0].registration_identity_key !== row.registration_identity_key ||

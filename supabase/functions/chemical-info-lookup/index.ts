@@ -138,7 +138,7 @@ import { nameCorresponds } from "./ingestion/matching.ts";
 import { labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardRateSummary, vineyardTableRate, withWebEnrichment } from "./web_lookup.ts";
 import { discoverManufacturerUrls, findWebMasterIdentities, identityCandidate, identityResearch, selectedIdentity, verifiedManufacturerLead, type WebIdentity } from "./web_identity.ts";
 import { classifyUrl } from "./research/classify.ts";
-import { buildMasterBackfillPatch, isIncompleteMaster, lockedWebIdentity } from "./ingestion/master_backfill.ts";
+import { authoritativeBackfillDetail, buildMasterBackfillPatch, isIncompleteMaster, lockedWebIdentity, storeBackfillPreview, writeLookupCache } from "./ingestion/master_backfill.ts";
 import { buildCurrentSnapshot } from "./ingestion/review_preview.ts";
 import {
   buildCandidatePayload,
@@ -1395,18 +1395,17 @@ Deno.serve(async (req: Request) => {
           registration_identity_key: backfillRow.registration_identity_key, base_revision: backfillRow.catalogue_version,
           review_status: backfillRow.review_status, current: buildCurrentSnapshot(backfillRow) };
         if (payload?.identity_conflict) return json({ ...base, status: "identity_conflict", evidence: payload.identity_conflict, preview_id: null });
-        if (!payload?.detail) return json({ ...base, status: "manufacturer_label_not_found", preview_id: null });
-        const proposed = buildMasterBackfillPatch(backfillRow, payload.detail);
+        const proposed = buildMasterBackfillPatch(backfillRow, payload?.detail ?? authoritativeBackfillDetail(backfillRow));
         const findings = { classified: proposed.patch?.resistance_classification_state === "classified",
           not_applicable: proposed.patch?.resistance_classification_state === "not_applicable",
           vineyard_rates_added: Boolean(proposed.patch?.viticulture_rates),
-          no_vineyard_use: !payload.detail.registered_uses?.some((use: any) => /grape|vineyard|vine/i.test(String(use.crop ?? ""))) };
+          no_vineyard_use: !(payload.detail.registered_uses ?? backfillRow.registered_uses)?.some((use: any) => /grape|vineyard|vine/i.test(String(use.crop ?? ""))) };
         if (!proposed.patch) return json({ ...base, status: proposed.status, evidence: proposed.evidence, findings, preview_id: null });
         if (dryRun) return json({ ...base, status: "preview_ready", proposed_patch: proposed.patch,
           evidence: proposed.evidence, findings, preview_id: null, dry_run: true });
-        const stored = await previewStore.insertPreview({ master_chemical_id: backfillRow.id,
+        const stored = await storeBackfillPreview(dryRun, () => previewStore.insertPreview({ master_chemical_id: backfillRow.id,
           base_revision: backfillRow.catalogue_version ?? 1, outcome: "material_change",
-          proposed_patch: proposed.patch, changes: [], requested_by: adminId });
+          proposed_patch: proposed.patch!, changes: [], requested_by: adminId }));
         if (!stored?.id) return json({ ...base, error: "preview_store_failed", preview_id: null }, 503);
         return json({ ...base, status: "preview_ready", proposed_patch: proposed.patch,
           evidence: proposed.evidence, findings, preview_id: stored.id, expires_at: stored.expires_at ?? null });
@@ -1416,12 +1415,19 @@ Deno.serve(async (req: Request) => {
         base_revision: backfillRow.catalogue_version, review_status: backfillRow.review_status,
         current: buildCurrentSnapshot(backfillRow), proposed_patch: null,
         status: "already_complete", preview_id: null });
+      // If the local reference table alone closes every remaining gap, no
+      // manufacturer search (or AI call) is needed for this Master identity.
+      if (backfillRow) {
+        const groupOnly = buildMasterBackfillPatch(backfillRow, authoritativeBackfillDetail(backfillRow));
+        if (groupOnly.patch && !isIncompleteMaster({ ...backfillRow, ...groupOnly.patch } as MasterRow))
+          return await finishBackfill({ detail: authoritativeBackfillDetail(backfillRow) });
+      }
       const query = backfillRow?.registered_product_name ?? (typeof body?.query === "string" ? body.query.trim() : "");
       if (query.length < 2 || query.length > 200) return json({ error: "Enter a product name" }, 400);
       if (!countryCode) return json({ error: "Select a vineyard country" }, 422);
       const selectedName = backfillRow?.registered_product_name ?? (typeof body?.selectedName === "string" ? body.selectedName.trim() : "");
       const subject = selectedName || query;
-      const cachedWeb = await readWebV2Cache(countryCode, subject);
+      const cachedWeb = backfill ? null : await readWebV2Cache(countryCode, subject);
       // A name cache is not an identity lock: accept it only when the label
       // explicitly prints the exact registration number for this Master row.
       if (cachedWeb && (!backfillRow || (cachedWeb.label_printed_registration_number === backfillRow.registration_number && cachedWeb.detail?.registration?.registration_number === backfillRow.registration_number)))
@@ -1606,11 +1612,11 @@ Deno.serve(async (req: Request) => {
         label_processing_ms: labelMs,
         extraction_ms: Date.now() - extractionStarted, review_ready_ms: totalMs,
         detail_ms: Date.now() - detailStarted } };
-      if (!backfill && label && payload.vineyard_rate_summary.length && candidates.length === 1 &&
+      if (label && payload.vineyard_rate_summary.length && candidates.length === 1 &&
           nameCorresponds(canonicalName, candidates[0].name)) {
-        await writeWebV2Cache(countryCode, canonicalName, payload);
-        if (!selectedName || (await findWebMasterIdentities(masterSelect, query, countryCode)).length === 1) {
-          await writeWebV2Cache(countryCode, query, payload);
+        await writeLookupCache(backfill, dryRun, () => writeWebV2Cache(countryCode, canonicalName, payload));
+        if (!backfill && (!selectedName || (await findWebMasterIdentities(masterSelect, query, countryCode)).length === 1)) {
+          await writeLookupCache(backfill, dryRun, () => writeWebV2Cache(countryCode, query, payload));
         }
       }
       return payload;

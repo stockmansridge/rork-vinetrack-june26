@@ -1,7 +1,7 @@
 // deno-lint-ignore-file no-import-prefix
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import type { MasterRow } from "./contract.ts";
-import { buildMasterBackfillPatch, isIncompleteMaster, lockedWebIdentity } from "./master_backfill.ts";
+import { authoritativeBackfillDetail, buildMasterBackfillPatch, isIncompleteMaster, lockedWebIdentity } from "./master_backfill.ts";
 import { validateResolverPatch } from "./review_preview.ts";
 
 const LABEL = "https://cropsure.com/wp-content/uploads/2023/03/cropsure-beast-200-herbicide-label-v2.pdf";
@@ -67,11 +67,82 @@ Deno.test("incomplete mixture cannot claim classified; explicit not-applicable o
 Deno.test("second pass is non-destructive and complete rows are skipped", () => {
   const row = master({ active_ingredients: [active], activity_groups: ["10"], activity_group_scheme: "hrac",
     resistance_classification_state: "classified", viticulture_rates: { per_hectare: [rate], per_100_litres: [] },
+    label_rate_bases: ["range_per_hectare"],
     registered_uses: detail().registered_uses, verification_sources: [master().verification_sources![0],
       { kind: "manufacturer_label", name: "Manufacturer commercial label", reference: LABEL }],
     verification_unresolved_fields: [] });
   assertEquals(isIncompleteMaster(row), false);
   assertEquals(buildMasterBackfillPatch(row, detail()).status, "no_material_change");
+});
+
+Deno.test("only relevant unresolved markers select a ready vineyard product", () => {
+  const row = master({ active_ingredients: [active], activity_groups: ["10"], activity_group_scheme: "hrac",
+    resistance_classification_state: "classified", registered_uses: detail().registered_uses,
+    viticulture_rates: { per_hectare: [rate], per_100_litres: [] },
+    verification_sources: [{ kind: "manufacturer_label", name: "Label", reference: LABEL }],
+    verification_unresolved_fields: ["rates:POTATO"] });
+  assertEquals(isIncompleteMaster(row), false);
+  assertEquals(buildMasterBackfillPatch(row, detail()).patch?.verification_unresolved_fields, undefined);
+});
+
+Deno.test("authoritative classification works without PDF, including the second active", () => {
+  const tebu = master({ active_ingredients: [{ name: "Tebuconazole", concentration: 250, concentration_unit: "g/L" }],
+    activity_groups: [], verification_unresolved_fields: ["activity_group:Tebuconazole", "rates:POTATO"] });
+  const proposed = buildMasterBackfillPatch(tebu, authoritativeBackfillDetail(tebu));
+  assertEquals(proposed.patch?.activity_groups, ["3"]);
+  assertEquals(proposed.patch?.activity_group_scheme, "frac");
+  assertEquals(proposed.patch?.resistance_classification_state, "classified");
+  assertEquals(proposed.patch?.verification_unresolved_fields, ["rates:POTATO"]);
+  assertEquals(proposed.patch?.verification_sources, undefined);
+  const withLabel = master({ ...tebu, verification_sources: [{ kind: "manufacturer_label", name: "Label", reference: LABEL }],
+    verification_unresolved_fields: ["activity_group:Tebuconazole", "rates:POTATO"] });
+  assertEquals(isIncompleteMaster({ ...withLabel, ...buildMasterBackfillPatch(withLabel, authoritativeBackfillDetail(withLabel)).patch } as MasterRow), false);
+  const mixture = master({ product_category: "fungicide", active_ingredients: [
+    { name: "Tebuconazole", activity_group: { scheme: "frac", code: "3" } }, { name: "Azoxystrobin" }],
+    activity_groups: ["3"], activity_group_scheme: "frac" });
+  const merged = buildMasterBackfillPatch(mixture, authoritativeBackfillDetail(mixture));
+  assertEquals(merged.patch?.activity_groups, ["3", "11"]);
+  assertEquals(merged.patch?.resistance_classification_state, "classified");
+});
+
+Deno.test("vineyard gaps prune only evidenced markers; second pass stays stable", () => {
+  const before = master({ registered_uses: [{ crop: "Grapevines", target: "weeds", rates: [] }],
+    verification_unresolved_fields: ["rates:GRAPEVINE", "rates:GRAPE", "rates:POTATO", "label_reference"] });
+  const first = buildMasterBackfillPatch(before, detail());
+  assertEquals(first.patch?.verification_unresolved_fields, ["rates:POTATO"]);
+  const after = { ...before, ...first.patch } as MasterRow;
+  assertEquals(isIncompleteMaster(after), false);
+  assertEquals(buildMasterBackfillPatch(after, detail()).patch, null);
+});
+
+Deno.test("partial bases and targets merge by rate id, preserving old values", () => {
+  const spray = { ...rate, rate_id: "rate_v1_spray", basis: "per_100_litres", min_value: 100, max_value: 100, unit: "mL/100 L" };
+  const old = master({ registered_uses: [{ crop: "Grapevines", target: "weeds", rates: [rate] }],
+    viticulture_rates: { per_hectare: [rate], per_100_litres: [] }, label_rate_bases: ["range_per_hectare"] });
+  const incoming = detail({ registered_uses: [{ crop: "Grapevines", target: "weeds", rates: [rate, spray] },
+    { crop: "Grapevines", target: "second", direction_id: "direction_v1_second", rates: [{ ...rate, rate_id: "rate_v1_second" }] }] });
+  const proposed = buildMasterBackfillPatch(old, incoming);
+  assertEquals(proposed.patch?.viticulture_rates && (proposed.patch.viticulture_rates as { per_hectare: unknown[]; per_100_litres: unknown[] }).per_hectare.length, 2);
+  assertEquals((proposed.patch?.viticulture_rates as { per_100_litres: unknown[] }).per_100_litres, [spray]);
+  assertEquals((proposed.patch?.registered_uses as Array<{ rates: unknown[] }>)[0].rates, [rate, spray]);
+  const after = { ...old, ...proposed.patch } as MasterRow;
+  assertEquals(buildMasterBackfillPatch(after, incoming).patch, null);
+  const contradiction = detail({ registered_uses: [{ crop: "Grapevines", target: "weeds", rates: [{ ...rate, max_value: 7 }] }] });
+  assertEquals(buildMasterBackfillPatch(old, contradiction).status, "evidence_conflict");
+});
+
+Deno.test("WHP REI restrictions fill null but positive disagreements fail closed", () => {
+  const enriched = detail({ registered_uses: [{ crop: "Grapevines", target: "weeds", rates: [rate],
+    withholding_period_days: 14, re_entry_period_hours: 12, restrictions: "No entry until dry" }] });
+  const old = master({ registered_uses: [{ crop: "Grapevines", target: "weeds", rates: [rate],
+    withholding_period_days: null, re_entry_period_hours: null, restrictions: null }] });
+  const patch = buildMasterBackfillPatch(old, enriched).patch;
+  const use = (patch?.registered_uses as Array<Record<string, unknown>>)[0];
+  assertEquals(use.withholding_period_days, 14);
+  assertEquals(use.re_entry_period_hours, 12);
+  assertEquals(use.restrictions, "No entry until dry");
+  assertEquals(buildMasterBackfillPatch({ ...old, ...patch } as MasterRow, enriched).patch, null);
+  assertEquals(buildMasterBackfillPatch(master({ registered_uses: [{ ...old.registered_uses[0], withholding_period_days: 7 }] }), enriched).status, "evidence_conflict");
 });
 
 Deno.test("store boundary rejects client identity and invalid structured fields", () => {
