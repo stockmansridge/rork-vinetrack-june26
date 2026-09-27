@@ -523,6 +523,12 @@ struct TripCostAllocationRecalculator {
     /// rows for the trip on Supabase and locally, then inserts a fresh set.
     @discardableResult
     func recalculate(trip: Trip) async -> Bool {
+        // Completed allocations contain saved financial amounts. Until an
+        // immutable trip-rate snapshot exists, the current catalogue cannot
+        // prove a rebuild would preserve those historical amounts.
+        if !trip.isActive, store.tripCostAllocations.contains(where: { $0.tripId == trip.id }) {
+            return false
+        }
         // Resolve TripCostService inputs the same way TripDetailView does.
         let operatorCategory: OperatorCategory? = {
             if let cid = trip.operatorCategoryId,
@@ -581,7 +587,11 @@ struct TripCostAllocationRecalculator {
         // Soft-delete every existing remote row for this trip in bulk so the
         // unique (trip, paddock, variety) index never fights us when fresh
         // rows have new ids.
-        await allocationSync.softDeleteAllocations(forTripId: trip.id)
+        do {
+            try await allocationSync.softDeleteAllocations(forTripId: trip.id)
+        } catch {
+            return false
+        }
         store.replaceTripCostAllocations(tripId: trip.id, with: rows)
         return !rows.isEmpty
     }

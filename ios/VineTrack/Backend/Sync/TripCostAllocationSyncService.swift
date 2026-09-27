@@ -4,6 +4,14 @@ import Observation
 /// Financial sync service for `trip_cost_allocations`. Owners/managers only —
 /// non-financial roles get an empty result set from RLS and the service no-ops
 /// fetching / pushing if `canViewCosting` is false.
+nonisolated enum TripCostAllocationRebuildError: LocalizedError {
+    case remoteUnavailable
+
+    var errorDescription: String? {
+        "Saved trip costs cannot be replaced while the service is unavailable. Try again after reconnecting."
+    }
+}
+
 @Observable
 @MainActor
 final class TripCostAllocationSyncService {
@@ -38,19 +46,15 @@ final class TripCostAllocationSyncService {
         store.onTripCostAllocationDeleted = { [weak self] id in self?.metadata.markDeleted(id, at: Date()) }
     }
 
-    /// Hard request from the recalculation flow to soft-delete every active
-    /// allocation row for `tripId` on Supabase before pushing fresh rows.
-    /// Owner/manager only; no-ops for non-financial roles.
-    func softDeleteAllocations(forTripId tripId: UUID) async {
-        guard accessControl?.canViewCosting == true else { return }
-        guard SupabaseClientProvider.shared.isConfigured else { return }
-        do {
-            try await repository.softDeleteForTrip(tripId: tripId)
-        } catch {
-            #if DEBUG
-            print("[TripCostAllocationSync] bulk soft-delete failed for trip \(tripId): \(error)")
-            #endif
+    /// A failed remote delete must never be treated as success by a local
+    /// allocation replacement: the latter would otherwise lose saved costs
+    /// offline and queue new IDs that conflict with active remote rows.
+    func softDeleteAllocations(forTripId tripId: UUID) async throws {
+        guard accessControl?.canViewCosting == true,
+              SupabaseClientProvider.shared.isConfigured else {
+            throw TripCostAllocationRebuildError.remoteUnavailable
         }
+        try await repository.softDeleteForTrip(tripId: tripId)
     }
 
     func syncForSelectedVineyard() async {
