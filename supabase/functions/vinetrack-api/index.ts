@@ -684,34 +684,53 @@ function mapTripSummary(row: TripRow, idx: MachineIndex, profile: AuthProfile) {
 interface TripCostSums {
   labour_cost: number | null; fuel_cost: number | null;
   chemical_cost: number | null; input_cost: number | null; total_cost: number | null;
+  hourly_rate_snapshot: number | null; labour_hours: number | null;
+  worker_type_id: string | null; worker_type_name_snapshot: string | null;
 }
 
 /** Sums active trip_cost_allocations rows for one trip (costs:read gated). */
 async function loadTripCosts(db: SupabaseClient, tripId: string): Promise<TripCostSums | null> {
   const { data, error } = await db.from("trip_cost_allocations")
-    .select("labour_cost, fuel_cost, chemical_cost, input_cost, total_cost")
+    .select("*")
     .eq("trip_id", tripId)
     .is("deleted_at", null);
   if (error) {
     console.error("[vinetrack-api] trip cost query failed:", error.message);
     throw new ApiError("internal_error");
   }
-  const rows = (data ?? []) as { labour_cost: number | null; fuel_cost: number | null; chemical_cost: number | null; input_cost: number | null; total_cost: number | null }[];
+  type CostRow = { labour_cost: number | null; fuel_cost: number | null; chemical_cost: number | null;
+    input_cost: number | null; total_cost: number | null; allocation_basis?: string | null;
+    hourly_rate_snapshot?: number | null; labour_hours?: number | null;
+    worker_type_id?: string | null; worker_type_name_snapshot?: string | null };
+  const rows = (data ?? []) as CostRow[];
   if (rows.length === 0) return null;
-  const sum = (pick: (r: typeof rows[number]) => number | null): number | null => {
+  const snapshot = rows.find((row) => row.allocation_basis === "labour_snapshot");
+  // Do not double count the protected start marker if block/variety slices
+  // were separately saved. The marker remains authoritative for labour.
+  const slices = rows.filter((row) => row.allocation_basis !== "labour_snapshot");
+  const counted = slices.length > 0 ? slices : rows;
+  const sum = (pick: (r: CostRow) => number | null): number | null => {
     let acc: number | null = null;
-    for (const r of rows) {
+    for (const r of counted) {
       const v = pick(r);
       if (v !== null) acc = (acc ?? 0) + v;
     }
     return acc !== null ? round3(acc) : null;
   };
+  const savedLabour = snapshot?.labour_cost ?? sum((r) => r.labour_cost);
+  const sliceLabour = sum((r) => r.labour_cost);
+  const sliceTotal = sum((r) => r.total_cost);
   return {
-    labour_cost: sum((r) => r.labour_cost),
+    labour_cost: savedLabour,
     fuel_cost: sum((r) => r.fuel_cost),
     chemical_cost: sum((r) => r.chemical_cost),
     input_cost: sum((r) => r.input_cost),
-    total_cost: sum((r) => r.total_cost),
+    total_cost: slices.length > 0 && snapshot && sliceTotal !== null && sliceLabour !== null && savedLabour !== null
+      ? round3(sliceTotal - sliceLabour + savedLabour) : sliceTotal,
+    hourly_rate_snapshot: snapshot?.hourly_rate_snapshot ?? null,
+    labour_hours: snapshot?.labour_hours ?? null,
+    worker_type_id: snapshot?.worker_type_id ?? null,
+    worker_type_name_snapshot: snapshot?.worker_type_name_snapshot ?? null,
   };
 }
 
@@ -1533,7 +1552,13 @@ async function handleTripGet(
         input_cost: sums.input_cost,
         total_cost: sums.total_cost,
       };
-      if (hasScope(profile, "labour:read")) costs.labour_cost = sums.labour_cost;
+      if (hasScope(profile, "labour:read")) {
+        costs.labour_cost = sums.labour_cost;
+        if (sums.hourly_rate_snapshot !== null) costs.hourly_rate_snapshot = sums.hourly_rate_snapshot;
+        if (sums.labour_hours !== null) costs.labour_hours = sums.labour_hours;
+        if (sums.worker_type_id !== null) costs.worker_type_id = sums.worker_type_id;
+        if (sums.worker_type_name_snapshot !== null) costs.worker_type_name_snapshot = sums.worker_type_name_snapshot;
+      }
       body.costs = costs;
     } else {
       body.costs = null;
