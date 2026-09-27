@@ -618,7 +618,7 @@ class PinAisleAttachmentTest {
         val result = automatic(block, -33.0, longitude, "left", 0.0)
         assertFalse(result.snappedToRow)
         val now = 100_000_000_000L
-        val current = QualifiedLocationFix(-33.0, longitude, 1.0, 0L, now)
+        val current = QualifiedLocationFix(-33.0, longitude, 1.0, 0L, now, bearingDegrees = null)
         val lock = PinAisleObservationLock.Lock(block.id, 32.5, 3, now)
         assertFalse(PinAisleObservationLock.isValid(lock, current, block))
     }

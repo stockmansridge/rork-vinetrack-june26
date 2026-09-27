@@ -130,7 +130,8 @@ struct NewMainTabView: View {
             }
             // Set the authenticated owner before restoring this device's trip.
             pinSync.configure(store: store, auth: auth)
-            tripTracking.configure(store: store, locationService: locationService)
+            tripTracking.configure(store: store, locationService: locationService,
+                                   accessControl: accessControl, auth: auth)
             // Provide active-trip lookup so MigratedDataStore.addPin can
             // self-link any pin dropped during a live trip back to that
             // trip (so the Trip Report shows pins logged > 0 even when

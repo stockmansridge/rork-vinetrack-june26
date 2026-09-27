@@ -164,7 +164,7 @@ class StartTankCommitCoordinatorTest {
 
     @Test fun firstCommitMergesLiveRouteAheadOfStoredSnapshotAndRelaunchRetainsIt() {
         val stored = sourceTrip.copy(pathPoints = listOf(CoordinatePoint(-33.0, 149.0)))
-        val live = sourceTrip.copy(pathPoints = stored.pathPoints + listOf(
+        val live = sourceTrip.copy(pathPoints = stored.pathPoints.orEmpty() + listOf(
             CoordinatePoint(-33.0001, 149.0001), CoordinatePoint(-33.0002, 149.0002),
         ), totalDistance = 88.0)
         val intended = live.copy(tankSessions = trip.tankSessions, activeTankNumber = 1)

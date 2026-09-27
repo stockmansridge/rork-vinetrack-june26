@@ -156,6 +156,8 @@ final class TripTrackingService {
 
     private weak var store: MigratedDataStore?
     private weak var locationService: LocationService?
+    private weak var accessControl: BackendAccessControl?
+    private weak var authService: NewBackendAuthService?
 
     private var trackingTask: Task<Void, Never>?
     private var tickerTask: Task<Void, Never>?
@@ -247,9 +249,12 @@ final class TripTrackingService {
 
     // MARK: - Configuration
 
-    func configure(store: MigratedDataStore, locationService: LocationService) {
+    func configure(store: MigratedDataStore, locationService: LocationService,
+                   accessControl: BackendAccessControl? = nil, auth: NewBackendAuthService? = nil) {
         self.store = store
         self.locationService = locationService
+        self.accessControl = accessControl
+        self.authService = auth
         store.onOwnedTripCompletedByServer = { [weak self] tripId in
             self?.lastServerCompletedTripId = tripId
             self?.stopTrackingLoops(stopLocation: true)
@@ -304,7 +309,7 @@ final class TripTrackingService {
         seedingDetails: SeedingDetails? = nil
     ) {
         guard let store else { return }
-        guard store.selectedVineyardId != nil else {
+        guard let vineyardId = store.selectedVineyardId else {
             errorMessage = "No vineyard selected."
             return
         }
@@ -330,6 +335,7 @@ final class TripTrackingService {
             ?? resolvedCurrent
 
         let trip = Trip(
+            vineyardId: vineyardId,
             paddockId: primaryPaddockId ?? resolvedIds.first,
             paddockName: paddockName,
             paddockIds: resolvedIds,
@@ -351,6 +357,19 @@ final class TripTrackingService {
             startEngineHours: startEngineHours,
             seedingDetails: seedingDetails
         )
+        let category = operatorCategoryId.flatMap { id in
+            store.operatorCategories.first { $0.id == id && $0.vineyardId == trip.vineyardId }
+        }
+        do {
+            try TripLabourSnapshotJournal.shared.record(.init(
+                tripId: trip.id, workerUserId: trip.operatorUserId,
+                workerTypeId: trip.operatorCategoryId, workerTypeName: category?.name,
+                hourlyRate: (category?.costPerHour).flatMap { $0.isFinite && (0.0...10_000.0).contains($0) ? $0 : nil }, capturedAt: trip.startTime
+            ))
+        } catch {
+            errorMessage = "Couldn't save the Trip start on this device. Free up storage and retry."
+            return
+        }
         // Persist one complete snapshot before GPS, sync callbacks, or any
         // dependent trip event can observe it.
         store.startTrip(trip)
@@ -394,6 +413,10 @@ final class TripTrackingService {
 
         var activated = savedTrip
         activated.startTime = activationTime
+        if activated.operatorUserId == authService?.userId,
+           accessControl?.loadedVineyardId == activated.vineyardId {
+            activated.operatorCategoryId = accessControl?.currentWorkerTypeId
+        }
         activated.startEngineHours = startEngineHours?.isFinite == true ? startEngineHours : nil
         activated.endEngineHours = nil
         activated.endTime = nil
@@ -414,6 +437,23 @@ final class TripTrackingService {
         record.startTime = activationTime
         record.endTime = nil
 
+        // Old placeholders predate SQL 253 and must never be retrofitted.
+        if let contractStart = ISO8601DateFormatter().date(from: "2026-09-27T00:00:00Z"),
+           savedTrip.startTime >= contractStart {
+            let category = activated.operatorCategoryId.flatMap { id in
+                store.operatorCategories.first { $0.id == id && $0.vineyardId == activated.vineyardId }
+            }
+            do {
+                try TripLabourSnapshotJournal.shared.record(.init(
+                    tripId: activated.id, workerUserId: activated.operatorUserId,
+                    workerTypeId: activated.operatorCategoryId, workerTypeName: category?.name,
+                    hourlyRate: (category?.costPerHour).flatMap { $0.isFinite && (0.0...10_000.0).contains($0) ? $0 : nil }, capturedAt: activationTime
+                ))
+            } catch {
+                errorMessage = "Couldn't save the Trip start on this device. Free up storage and retry."
+                return
+            }
+        }
         // Persist both linked operational records before GPS or sync callbacks
         // can observe the newly active trip. Planned tanks and frozen calculator
         // snapshots are deliberately untouched.

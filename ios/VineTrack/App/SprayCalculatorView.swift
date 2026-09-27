@@ -4204,6 +4204,7 @@ struct SprayCalculatorView: View {
             tripTitle: TripFunction.spraying.displayName,
             tractorId: selectedTractorId,
             operatorUserId: auth.userId,
+            operatorCategoryId: accessControl.loadedVineyardId == vineyardId ? accessControl.currentWorkerTypeId : nil,
             startEngineHours: parsedStartEngineHours
         )
 

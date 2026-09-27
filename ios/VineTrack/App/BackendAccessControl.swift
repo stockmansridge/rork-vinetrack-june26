@@ -9,6 +9,7 @@ import Observation
 @MainActor
 final class BackendAccessControl {
     var currentRole: BackendRole?
+    private(set) var currentWorkerTypeId: UUID?
     var isLoading: Bool = false
     var errorMessage: String?
 
@@ -69,6 +70,7 @@ final class BackendAccessControl {
     func refresh(for vineyardId: UUID?, auth: NewBackendAuthService) async {
         guard let vineyardId, let userId = auth.userId else {
             currentRole = nil
+            currentWorkerTypeId = nil
             loadedVineyardId = nil
             loadedUserId = nil
             errorMessage = nil
@@ -81,17 +83,21 @@ final class BackendAccessControl {
 
         do {
             let members = try await teamRepository.listMembers(vineyardId: vineyardId)
-            currentRole = members.first { $0.userId == userId }?.role
+            let ownMembership = members.first { $0.userId == userId }
+            currentRole = ownMembership?.role
+            currentWorkerTypeId = ownMembership?.operatorCategoryId
             loadedVineyardId = vineyardId
             loadedUserId = userId
         } catch {
             errorMessage = error.localizedDescription
             currentRole = nil
+            currentWorkerTypeId = nil
         }
     }
 
     func clear() {
         currentRole = nil
+        currentWorkerTypeId = nil
         loadedVineyardId = nil
         loadedUserId = nil
         errorMessage = nil

@@ -153,6 +153,8 @@ object PendingEntityType {
      * [TRIP_GPS], [TRIP_ROW], [TRIP_TANK] and [TRIP_END].
      */
     const val TRIP_START = "trip_start"
+    /** Original protected labour facts, captured before trip creation and replayed without catalogue lookup. */
+    const val TRIP_LABOUR = "trip_labour"
     /**
      * Structured trip seeding-details edit queued offline (Android Stage S). Backs
      * the `trips.seeding_details` JSONB column only — mix lines + box settings —

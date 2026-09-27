@@ -4,6 +4,7 @@ import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.VineyardMember
 import com.rork.vinetrack.data.model.Trip
+import com.rork.vinetrack.data.model.TripCostAllocation
 import com.rork.vinetrack.data.model.resolveTripOperatorCategory
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonNull
@@ -75,7 +76,10 @@ class WorkerTypeIntegrityTest {
         assertEquals("fixture-worker", restored.operatorUserId)
         assertEquals("fixture-type", restored.operatorCategoryId)
         assertEquals("fixture-type", resolveTripOperatorCategory(restored, listOf(category))?.id)
-        val estimate = TripCostEstimator.estimate(restored, null, listOf(category), emptyList(), emptyList())
+        val saved = listOf(TripCostAllocation(id = "snapshot", vineyardId = "fixture-vineyard", tripId = trip.id,
+            totalCostRaw = "76", labourCostRaw = "76", allocationBasis = "labour_snapshot",
+            hourlyRateSnapshotRaw = "38", labourHoursRaw = "2"))
+        val estimate = TripCostEstimator.estimate(restored, null, listOf(category), emptyList(), emptyList(), savedAllocations = saved)
         assertEquals(2.0, estimate.labour.hours, 0.001)
         assertEquals(38.0, estimate.labour.costPerHour!!, 0.001)
         assertEquals(76.0, estimate.labour.cost, 0.001)
@@ -88,9 +92,14 @@ class WorkerTypeIntegrityTest {
             endTime = "2026-09-01T10:00:00Z", isActive = false)
         val oldRate = OperatorCategory("fixture-type", "fixture-vineyard", "Fixture worker", 38.0)
         val changedRate = oldRate.copy(costPerHour = 45.0)
-        assertEquals(76.0, TripCostEstimator.estimate(trip, null, listOf(oldRate), emptyList(), emptyList()).labour.cost, 0.001)
-        // Read-only estimate currently has no historical rate snapshot: regression stays red.
-        assertEquals(76.0, TripCostEstimator.estimate(trip, null, listOf(changedRate), emptyList(), emptyList()).labour.cost, 0.001)
+        val saved = listOf(TripCostAllocation(id = "snapshot", vineyardId = "fixture-vineyard", tripId = trip.id,
+            totalCostRaw = "76", labourCostRaw = "76", allocationBasis = "labour_snapshot",
+            hourlyRateSnapshotRaw = "38", labourHoursRaw = "2"))
+        assertEquals(76.0, TripCostEstimator.estimate(trip, null, listOf(oldRate), emptyList(), emptyList(), savedAllocations = saved).labour.cost, 0.001)
+        val historical = TripCostEstimator.estimate(trip, null, listOf(changedRate), emptyList(), emptyList(), savedAllocations = saved)
+        assertEquals(76.0, historical.labour.cost, 0.001)
+        assertEquals(38.0, historical.labour.costPerHour!!, 0.001)
+        assertNull(TripCostEstimator.estimate(trip, null, listOf(changedRate), emptyList(), emptyList()).labour.costPerHour)
     }
 
     @Test fun `saved two hours at thirty eight retains identity snapshot and seventy six cost`() {

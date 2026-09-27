@@ -353,9 +353,9 @@ final class ELRipenessHeatmapFeatureTests: XCTestCase {
         // Qualify the case name: a bare `.none` on an Optional resolves to
         // `Optional.none`, i.e. nil, not `Mode.none`.
         XCTAssertEqual(heatB?.mode, ELRipeness.Mode.none)
-        XCTAssertNotNil(heatA.flatMap(ELRipenessHeatRaster.raster(for:)))
+        XCTAssertNotNil(heatA.flatMap { ELRipenessHeatRaster.raster(for: $0) })
         XCTAssertNil(
-            heatB.flatMap(ELRipenessHeatRaster.raster(for:)),
+            heatB.flatMap { ELRipenessHeatRaster.raster(for: $0) },
             "a block with no observations of its own must paint nothing"
         )
     }

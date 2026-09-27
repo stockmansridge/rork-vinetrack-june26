@@ -135,13 +135,21 @@ nonisolated enum TripCostService {
         savedInputs: [SavedInput] = [],
         paddockHectares: Double? = nil,
         paddockAreasById: [UUID: Double] = [:],
-        historicalYieldRecords: [HistoricalYieldRecord] = []
+        historicalYieldRecords: [HistoricalYieldRecord] = [],
+        savedLabour: LabourBreakdown? = nil
     ) -> Result {
         let hours = max(0, trip.activeDuration / 3600.0)
 
         // ---- Labour ---------------------------------------------------------
         let labour: LabourBreakdown
-        if let cat = operatorCategory, cat.costPerHour > 0, hours > 0 {
+        if let savedLabour {
+            labour = savedLabour
+        } else if !trip.isActive {
+            labour = LabourBreakdown(
+                categoryName: nil, costPerHour: nil, hours: hours, cost: 0,
+                warning: "Historical labour rate unavailable; only saved allocations can establish its cost."
+            )
+        } else if let cat = operatorCategory, cat.costPerHour > 0, hours > 0 {
             labour = LabourBreakdown(
                 categoryName: cat.name,
                 costPerHour: cat.costPerHour,

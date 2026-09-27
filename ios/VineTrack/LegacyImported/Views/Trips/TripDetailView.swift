@@ -444,6 +444,7 @@ struct TripDetailView: View {
 
     private var resolvedOperatorCategory: OperatorCategory? {
         let trip = currentTrip
+        guard trip.isActive else { return nil }
         if let cid = trip.operatorCategoryId,
            let cat = store.operatorCategories.first(where: { $0.id == cid }) {
             return cat
@@ -475,6 +476,24 @@ struct TripDetailView: View {
         store.fuelPurchases.filter { $0.vineyardId == trip.vineyardId }
     }
 
+    private var savedTripLabour: TripCostService.LabourBreakdown? {
+        guard !currentTrip.isActive else { return nil }
+        let rows = store.tripCostAllocations.filter { $0.tripId == currentTrip.id }
+        if let snapshot = rows.first(where: { $0.allocationBasis == .labourSnapshot }) {
+            return .init(categoryName: snapshot.workerTypeNameSnapshot,
+                         costPerHour: snapshot.hourlyRateSnapshot,
+                         hours: snapshot.labourHours ?? 0,
+                         cost: snapshot.labourCost ?? 0,
+                         warning: snapshot.labourCost == nil ? "Saved Trip labour rate is unknown." : nil)
+        }
+        let savedSlices = rows.filter { $0.allocationBasis != .labourSnapshot }
+        guard savedSlices.contains(where: { $0.labourCost != nil }) else { return nil }
+        return .init(categoryName: nil, costPerHour: nil,
+                     hours: max(0, currentTrip.activeDuration / 3600),
+                     cost: savedSlices.reduce(0) { $0 + ($1.labourCost ?? 0) },
+                     warning: nil)
+    }
+
     private var costResult: TripCostService.Result {
         TripCostService.estimate(
             trip: currentTrip,
@@ -488,7 +507,8 @@ struct TripDetailView: View {
             savedInputs: store.savedInputs,
             paddockHectares: tripPaddockHectares,
             paddockAreasById: tripPaddockAreasById,
-            historicalYieldRecords: store.historicalYieldRecords
+            historicalYieldRecords: store.historicalYieldRecords,
+            savedLabour: savedTripLabour
         )
     }
 

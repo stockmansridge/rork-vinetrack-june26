@@ -6,6 +6,7 @@ import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.Trip
+import com.rork.vinetrack.data.model.TripCostAllocation
 import com.rork.vinetrack.data.model.VineyardMachine
 
 /**
@@ -61,6 +62,7 @@ object CostReportBuilder {
         tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual> = emptyList(),
         seasonStartMonth: Int = 7,
         seasonStartDay: Int = 1,
+        savedAllocations: List<TripCostAllocation> = emptyList(),
     ): List<CostAllocationRow> {
         val rows = mutableListOf<CostAllocationRow>()
 
@@ -85,6 +87,7 @@ object CostReportBuilder {
                 fuelPurchases = fuelPurchases,
                 paddocks = paddocks,
                 tankActuals = tankActuals.filter { it.tripId == trip.id },
+                savedAllocations = savedAllocations,
             )
 
             val paddock = trip.paddockId?.let { id -> paddocks.firstOrNull { it.id == id } }

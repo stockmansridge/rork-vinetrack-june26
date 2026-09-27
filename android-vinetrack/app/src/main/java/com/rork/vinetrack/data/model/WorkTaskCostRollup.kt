@@ -18,9 +18,23 @@ data class TripCostAllocation(
     @Serializable(with = NullableMaterialNumericStringSerializer::class)
     val totalCostRaw: String? = null,
     @SerialName("costing_status") val costingStatus: String? = null,
+    @SerialName("allocation_basis") val allocationBasis: String? = null,
+    @SerialName("labour_cost")
+    @Serializable(with = NullableMaterialNumericStringSerializer::class)
+    val labourCostRaw: String? = null,
+    @SerialName("hourly_rate_snapshot")
+    @Serializable(with = NullableMaterialNumericStringSerializer::class)
+    val hourlyRateSnapshotRaw: String? = null,
+    @SerialName("labour_hours")
+    @Serializable(with = NullableMaterialNumericStringSerializer::class)
+    val labourHoursRaw: String? = null,
+    @SerialName("worker_type_name_snapshot") val workerTypeNameSnapshot: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
     val totalCost: BigDecimal? get() = totalCostRaw?.toBigDecimalOrNull()
+    val labourCost: BigDecimal? get() = labourCostRaw?.toBigDecimalOrNull()
+    val hourlyRateSnapshot: BigDecimal? get() = hourlyRateSnapshotRaw?.toBigDecimalOrNull()
+    val labourHours: BigDecimal? get() = labourHoursRaw?.toBigDecimalOrNull()
 }
 
 data class WorkTaskCostRollupResult(
@@ -62,7 +76,14 @@ object WorkTaskCostRollup {
             .sumOf { BigDecimal.valueOf(it.resolvedCost) }
         val linkedTripIds = trips.filter { it.workTaskId == task.id }.mapTo(mutableSetOf()) { it.id }
         val linkedAllocations = tripCostAllocations.filter { it.deletedAt == null && it.tripId in linkedTripIds }
-        val linked = linkedAllocations.mapNotNull { it.totalCost }.fold(BigDecimal.ZERO, BigDecimal::add)
+        val linked = linkedAllocations.groupBy { it.tripId }.values.fold(BigDecimal.ZERO) { accumulated, rows ->
+            val marker = rows.firstOrNull { it.allocationBasis == "labour_snapshot" }
+            val slices = rows.filter { it.allocationBasis != "labour_snapshot" }
+            val sliceTotal = slices.mapNotNull { it.totalCost }.fold(BigDecimal.ZERO, BigDecimal::add)
+            val sliceLabour = slices.mapNotNull { it.labourCost }.fold(BigDecimal.ZERO, BigDecimal::add)
+            accumulated + if (marker == null) sliceTotal else
+                (marker.totalCost ?: BigDecimal.ZERO) + sliceTotal - sliceLabour
+        }
         val material = if (includeMaterials) WorkTaskMaterialCosting.total(materials, task.id) else BigDecimal.ZERO
         val allocatedTripIds = linkedAllocations.mapTo(mutableSetOf()) { it.tripId }
         val linkedTripsComplete = linkedTripIds.all { it in allocatedTripIds } && linkedAllocations.all { it.totalCost != null }

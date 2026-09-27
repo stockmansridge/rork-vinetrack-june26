@@ -2219,6 +2219,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * before any dependent marker writes to it.
      */
     private val tripStartSync = TripStartSync(tripRepo, pendingWrites)
+    private val tripLabourSync = com.rork.vinetrack.data.TripLabourSnapshotSync(session, pendingWrites, tripRepo)
 
     /** Foreground GPS tracker for the currently active trip (null when idle). */
     private var tracker: LocationTracker? = null
@@ -3075,6 +3076,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }) }
                     persistActiveTripSnapshot()
                 }
+                tripLabourSync.replay()
                 tripRowPlanSync.replayAll { _ ->
                     // The durable local trip is authoritative for live GPS and
                     // coverage; a replay response must not rewind its row pointer.
@@ -3128,6 +3130,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     ) }
                     runCatching { activeTripStore.load()?.takeIf { it.trip.id == trip.id }?.let { activeTripStore.clear() } }
                 }
+                tripLabourSync.replay()
             } finally {
                 phase5ReplayRunning.set(false)
             }
@@ -8111,6 +8114,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return saved
     }
 
+    private fun recordTripLabourAtStart(trip: Trip) {
+        val typeId = trip.operatorCategoryId ?: _ui.value.members.firstOrNull { it.userId == trip.operatorUserId }?.operatorCategoryId
+        val type = _ui.value.operatorCategories.firstOrNull { it.id == typeId && it.vineyardId == trip.vineyardId }
+        tripLabourSync.record(com.rork.vinetrack.data.TripLabourSnapshotSync.Snapshot(
+            tripId = trip.id, workerUserId = trip.operatorUserId, workerTypeId = typeId,
+            workerTypeName = type?.name,
+            hourlyRate = type?.costPerHour?.takeIf { it.isFinite() && it in 0.0..10_000.0 },
+            capturedAt = requireNotNull(trip.startTime),
+        ))
+    }
+
     fun startTrip(
         paddockId: String?,
         paddockName: String?,
@@ -8165,6 +8179,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             seedingDetails = seedingDetails,
             clientUpdatedAt = startTime,
         )
+        // Write original facts to the durable financial journal before network work.
+        // A missing catalogue rate remains null, never a fabricated zero.
+        recordTripLabourAtStart(provisional)
         // Known offline: start locally and queue the create marker; no network.
         if (!_ui.value.isOnline) {
             startTripLocally(provisional)
@@ -8201,6 +8218,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     onResult(false); return@launch
                 }
                 _ui.update { it.copy(trips = listOf(created) + it.trips, tripBusy = false) }
+                tripLabourSync.replay(tripId)
                 beginTracking(created)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
@@ -8497,6 +8515,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(tripBusy = true, tripError = null) }
             try {
                 val ended = tripRepo.endTrip(tripId, capturedPoints, capturedDistance, cleanNotes, endEngineHours)
+                tripLabourSync.replay(tripId)
                 _ui.update { st ->
                     st.copy(
                         trips = st.trips.map { if (it.id == tripId)
@@ -11188,7 +11207,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val activatedSpray = linkedSpray?.let {
             SavedTripActivation.activateLinkedSpray(it, tripId, operationalStart)
         }
-        val activated = SavedTripActivation.activate(existing, operationalStart, startEngineHours)
+        val activated = SavedTripActivation.activate(existing, operationalStart, startEngineHours)?.copy(
+            operatorCategoryId = _ui.value.members.firstOrNull { it.userId == existing.operatorUserId }?.operatorCategoryId,
+        )
         if (activated == null || activatedSpray == null) {
             _ui.update { it.copy(sprayError = "Only a Not Started spray job can be activated.") }
             onResult(false)
@@ -11212,6 +11233,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         persistActiveTripSnapshot()
+        val contractStart = java.time.Instant.parse("2026-09-27T00:00:00Z").toEpochMilli()
+        if ((com.rork.vinetrack.data.model.parseIsoToEpochMs(existing.createdAt) ?: 0L) >= contractStart) {
+            recordTripLabourAtStart(activated)
+        }
         tripStartSync.enqueueActivation(activated)
         sprayUpdateSync.enqueue(
             activatedSpray.id,
@@ -11298,6 +11323,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     onResult(false); return@launch
                 }
                 persistActiveTripSnapshot()
+                recordTripLabourAtStart(seededTrip)
                 tripStartSync.enqueue(seededTrip)
                 beginTracking(seededTrip)
                 if (_ui.value.isOnline) replayPendingTripStart()
@@ -15704,12 +15730,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val cachedMachines = domainCache.loadVineyardMachineLines(userId, vineyardId).orEmpty()
             val cachedMaterials = domainCache.loadVineyardTaskMaterials(userId, vineyardId).orEmpty()
-            val cachedAllocations = domainCache.loadTripCostAllocations(userId, vineyardId).orEmpty()
+            val canReadAllocations = _ui.value.currentRole in setOf("owner", "manager")
+            val cachedAllocations = if (canReadAllocations) domainCache.loadTripCostAllocations(userId, vineyardId).orEmpty() else emptyList()
             _ui.update { st ->
                 if (st.selectedVineyardId != vineyardId) st else st.copy(
                     vineyardMachineLines = cachedMachines.ifEmpty { st.vineyardMachineLines },
                     vineyardTaskMaterials = cachedMaterials.ifEmpty { st.vineyardTaskMaterials },
-                    tripCostAllocations = cachedAllocations.ifEmpty { st.tripCostAllocations },
+                    tripCostAllocations = if (canReadAllocations) cachedAllocations.ifEmpty { st.tripCostAllocations } else emptyList(),
                 )
             }
             val tasks = try {
@@ -15733,11 +15760,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 null
             }
-            val allocations = try {
+            val allocations = if (canReadAllocations) try {
                 tripCostAllocationRepo.listForVineyard(vineyardId)
             } catch (e: Exception) {
                 null
-            }
+            } else emptyList()
             val materials = if (materialCostsAccess().isAllowed) try {
                 materialRepo.listTaskMaterialsForVineyard(vineyardId)
             } catch (e: Exception) {
@@ -16020,6 +16047,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             membershipError = "Couldn't confirm your vineyard role. Check your connection and retry."
             _ui.value.members
         }
+        val canReadTripCosts = members.any { member ->
+            member.userId == userId && (member.vineyardId == null || member.vineyardId == vineyardId) &&
+                member.role?.lowercase() in setOf("owner", "manager")
+        }
+        val savedTripCosts: List<TripCostAllocation> = if (canReadTripCosts) try {
+            tripCostAllocationRepo.listForVineyard(vineyardId).also { rows ->
+                runCatching { domainCache.saveTripCostAllocations(userId, vineyardId, rows) }
+            }
+        } catch (_: Exception) {
+            domainCache.loadTripCostAllocations(userId, vineyardId).orEmpty()
+        } else emptyList()
         var operatorCategoriesError: String? = null
         val cachedCategories = domainCache.loadOperatorCategories(userId, vineyardId)
         val operatorCategories = try {
@@ -16373,6 +16411,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     vineyardId,
                 ),
                 members = members,
+                tripCostAllocations = savedTripCosts,
                 membershipLoading = false,
                 membershipError = membershipError,
                 operatorCategories = operatorCategories,

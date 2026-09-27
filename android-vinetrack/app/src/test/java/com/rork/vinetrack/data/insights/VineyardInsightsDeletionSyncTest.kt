@@ -96,7 +96,7 @@ class VineyardInsightsDeletionSyncTest {
         store.saveNote(note("n1", "v1")); store.saveNote(note("n2", "v1"))
         store.enqueue("n1", "v1", VineyardInsightsStore.QueuedOperation.Entity.VINTAGE_NOTE, VineyardInsightsStore.QueuedOperation.Operation.UPSERT, "2026-01-01T00:00:00Z")
         api.deletions += VineyardInsightsSyncApi.DeletionRow("a", "v1", "vintage_note", "n1", "2026-02-01T00:00:00Z")
-        VineyardInsightsSyncWorker(store, Files(), api) { "2026-03-01T00:00:00Z" }.pullDeletions("v1")
+        VineyardInsightsSyncWorker(store, Files(), api, { "2026-03-01T00:00:00Z" }).pullDeletions("v1")
         val restarted = VineyardInsightsStore(raw)
         assertEquals(listOf("n2"), restarted.loadNotes().map { it.id })
         assertTrue(restarted.loadQueue().isEmpty())
@@ -104,7 +104,7 @@ class VineyardInsightsDeletionSyncTest {
     }
 
     @Test fun `equal timestamp markers use ledger id tie breaker idempotently`() = runBlocking {
-        val store = VineyardInsightsStore(MemoryStore()); val api = Api(); val worker = VineyardInsightsSyncWorker(store, Files(), api) { "now" }
+        val store = VineyardInsightsStore(MemoryStore()); val api = Api(); val worker = VineyardInsightsSyncWorker(store, Files(), api, { "now" })
         api.deletions += VineyardInsightsSyncApi.DeletionRow("a", "v1", "vintage_note", "n1", "2026-02-01T00:00:00Z")
         api.deletions += VineyardInsightsSyncApi.DeletionRow("b", "v1", "vintage_note", "n2", "2026-02-01T00:00:00Z")
         worker.pullDeletions("v1"); worker.pullDeletions("v1")
@@ -117,13 +117,13 @@ class VineyardInsightsDeletionSyncTest {
         val store = VineyardInsightsStore(MemoryStore()); val api = Api()
         store.saveNote(note("same", "v2"))
         api.deletions += VineyardInsightsSyncApi.DeletionRow("a", "v1", "vintage_note", "same", "2026-02-01T00:00:00Z")
-        VineyardInsightsSyncWorker(store, Files(), api) { "now" }.pullDeletions("v1")
+        VineyardInsightsSyncWorker(store, Files(), api, { "now" }).pullDeletions("v1")
         assertEquals("v2", store.loadNotes().single().vineyardId)
         assertTrue(store.deletionCursor("v2") == null)
     }
 
     @Test fun `stale ordinary pull cannot recreate consumed id`() {
-        val store = VineyardInsightsStore(MemoryStore()); val api = Api(); val worker = VineyardInsightsSyncWorker(store, Files(), api) { "now" }
+        val store = VineyardInsightsStore(MemoryStore()); val api = Api(); val worker = VineyardInsightsSyncWorker(store, Files(), api, { "now" })
         store.consumeDeletion("v1", "vintage_note", "n1")
         worker.applyNoteRow(VineyardInsightsSyncApi.NoteRow(id="n1", vineyardId="v1", noteDate="2026-01-01", vintageYear=2026))
         assertTrue(store.loadNotes().isEmpty())
@@ -133,10 +133,10 @@ class VineyardInsightsDeletionSyncTest {
         val raw = MemoryStore(); val store = VineyardInsightsStore(raw); val api = Api(); api.failRemoval = true
         store.enqueuePhoto(VineyardInsightsStore.QueuedPhoto("p1", "v1", "visit", "obs", "local", "v1/obs/p1.jpg", false, "now"))
         store.consumeDeletion("v1", "scout_visit", "visit")
-        VineyardInsightsSyncWorker(store, Files(), api) { "now" }.processLocalObjectCleanup("v1")
+        VineyardInsightsSyncWorker(store, Files(), api, { "now" }).processLocalObjectCleanup("v1")
         assertEquals(1, VineyardInsightsStore(raw).loadObjectCleanup().single().attemptCount)
         api.failRemoval = false
-        VineyardInsightsSyncWorker(VineyardInsightsStore(raw), Files(), api) { "now" }.processLocalObjectCleanup("v1")
+        VineyardInsightsSyncWorker(VineyardInsightsStore(raw), Files(), api, { "now" }).processLocalObjectCleanup("v1")
         assertTrue(VineyardInsightsStore(raw).loadObjectCleanup().isEmpty())
         assertEquals(listOf("v1/obs/p1.jpg"), api.removed)
     }
@@ -144,7 +144,7 @@ class VineyardInsightsDeletionSyncTest {
     @Test fun `server cleanup acknowledges only successful object removal`() = runBlocking {
         val store = VineyardInsightsStore(MemoryStore()); val api = Api()
         api.cleanup += VineyardInsightsSyncApi.PhotoCleanupRow("q1", "v1", "visit", "p1", "v1/obs/p1.jpg", "lease")
-        val worker = VineyardInsightsSyncWorker(store, Files(), api) { "now" }
+        val worker = VineyardInsightsSyncWorker(store, Files(), api, { "now" })
         api.failRemoval = true; worker.processServerPhotoCleanup("v1")
         assertTrue("q1" in api.failed); assertFalse("q1" in api.completed)
         api.failRemoval = false; worker.processServerPhotoCleanup("v1")

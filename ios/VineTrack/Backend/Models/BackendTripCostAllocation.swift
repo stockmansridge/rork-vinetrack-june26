@@ -15,6 +15,12 @@ nonisolated struct BackendTripCostAllocation: Codable, Sendable, Identifiable {
     let varietyPercentage: Double?
     let allocationAreaHa: Double?
     let labourCost: Double?
+    let workerUserId: UUID?
+    let workerTypeId: UUID?
+    let workerTypeNameSnapshot: String?
+    let hourlyRateSnapshot: Double?
+    let labourHours: Double?
+    let rateCapturedAt: Date?
     let fuelCost: Double?
     let chemicalCost: Double?
     let inputCost: Double?
@@ -45,6 +51,12 @@ nonisolated struct BackendTripCostAllocation: Codable, Sendable, Identifiable {
         case varietyPercentage = "variety_percentage"
         case allocationAreaHa = "allocation_area_ha"
         case labourCost = "labour_cost"
+        case workerUserId = "worker_user_id"
+        case workerTypeId = "worker_type_id"
+        case workerTypeNameSnapshot = "worker_type_name_snapshot"
+        case hourlyRateSnapshot = "hourly_rate_snapshot"
+        case labourHours = "labour_hours"
+        case rateCapturedAt = "rate_captured_at"
         case fuelCost = "fuel_cost"
         case chemicalCost = "chemical_cost"
         case inputCost = "input_cost"
@@ -77,6 +89,12 @@ nonisolated struct BackendTripCostAllocation: Codable, Sendable, Identifiable {
         self.varietyPercentage = try c.decodeIfPresent(Double.self, forKey: .varietyPercentage)
         self.allocationAreaHa = try c.decodeIfPresent(Double.self, forKey: .allocationAreaHa)
         self.labourCost = try c.decodeIfPresent(Double.self, forKey: .labourCost)
+        self.workerUserId = try c.decodeIfPresent(UUID.self, forKey: .workerUserId)
+        self.workerTypeId = try c.decodeIfPresent(UUID.self, forKey: .workerTypeId)
+        self.workerTypeNameSnapshot = try c.decodeIfPresent(String.self, forKey: .workerTypeNameSnapshot)
+        self.hourlyRateSnapshot = try c.decodeIfPresent(Double.self, forKey: .hourlyRateSnapshot)
+        self.labourHours = try c.decodeIfPresent(Double.self, forKey: .labourHours)
+        self.rateCapturedAt = try c.decodeIfPresent(Date.self, forKey: .rateCapturedAt)
         self.fuelCost = try c.decodeIfPresent(Double.self, forKey: .fuelCost)
         self.chemicalCost = try c.decodeIfPresent(Double.self, forKey: .chemicalCost)
         self.inputCost = try c.decodeIfPresent(Double.self, forKey: .inputCost)
@@ -200,6 +218,12 @@ extension BackendTripCostAllocation {
             varietyPercentage: varietyPercentage,
             allocationAreaHa: allocationAreaHa,
             labourCost: labourCost,
+            workerUserId: workerUserId,
+            workerTypeId: workerTypeId,
+            workerTypeNameSnapshot: workerTypeNameSnapshot,
+            hourlyRateSnapshot: hourlyRateSnapshot,
+            labourHours: labourHours,
+            rateCapturedAt: rateCapturedAt,
             fuelCost: fuelCost,
             chemicalCost: chemicalCost,
             inputCost: inputCost,

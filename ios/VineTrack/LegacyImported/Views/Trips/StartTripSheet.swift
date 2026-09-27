@@ -1267,6 +1267,7 @@ struct StartTripSheet: View {
             machineId: selectedMachineId,
             tractorId: legacyTractorId,
             operatorUserId: auth.userId,
+            operatorCategoryId: accessControl.loadedVineyardId == store.selectedVineyardId ? accessControl.currentWorkerTypeId : nil,
             startEngineHours: startHours,
             seedingDetails: tripSeedingDetails
         )

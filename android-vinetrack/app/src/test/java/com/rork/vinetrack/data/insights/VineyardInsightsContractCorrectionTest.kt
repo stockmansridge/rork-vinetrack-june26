@@ -10,11 +10,10 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
-import kotlin.test.assertTrue
+import org.junit.Test
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import java.time.LocalDate
 
 class VineyardInsightsContractCorrectionTest {
@@ -43,7 +42,7 @@ class VineyardInsightsContractCorrectionTest {
         val raw = MemoryStore()
         val store = VineyardInsightsStore(raw)
         val controller = VineyardInsightsController(store)
-        val type = assertNotNull(controller.addCustomNoteType("vineyard", "Wind damage"))
+        val type = requireNotNull(controller.addCustomNoteType("vineyard", "Wind damage"))
         assertTrue(runCatching { java.util.UUID.fromString(type.databaseId) }.isSuccess)
         assertEquals(type.databaseId, store.pendingNoteTypes("vineyard").single().databaseId)
         assertEquals(type.databaseId, controller.noteTypesByVineyard.value["vineyard"]?.single()?.databaseId)
@@ -60,7 +59,7 @@ class VineyardInsightsContractCorrectionTest {
         assertEquals("Frost", draft.noteTypeLabel)
         assertTrue(draft.canSave)
         val controller = VineyardInsightsController(VineyardInsightsStore(MemoryStore()))
-        val saved = assertNotNull(controller.saveNote(draft, "vineyard", null, "Scout", 7, 1))
+        val saved = requireNotNull(controller.saveNote(draft, "vineyard", null, "Scout", 7, 1))
         assertEquals("frost", saved.noteTypeId)
         assertEquals("Frost", saved.noteTypeLabelSnapshot)
     }
@@ -73,7 +72,7 @@ class VineyardInsightsContractCorrectionTest {
             noteTypeId = "frost",
             noteTypeLabel = "Frost",
         )
-        val note = assertNotNull(controller.saveNote(draft, "vineyard", null, "Scout", 7, 1))
+        val note = requireNotNull(controller.saveNote(draft, "vineyard", null, "Scout", 7, 1))
         val frostId = "00000000-0000-0000-0000-000000000240"
         assertTrue(store.reconcileNoteTypes("vineyard", listOf(
             VintageNoteType(frostId, "frost", VintageNoteGroup.WEATHER, "Frost", 1, false, true, null, true),
@@ -221,13 +220,13 @@ class VineyardInsightsContractCorrectionTest {
         private val values = mutableMapOf<String, String>()
         private var failingKey: String? = null
         fun failNext(key: String) { failingKey = key }
-        override fun get(key: String): String? = values[key]
-        override fun put(key: String, value: String): Boolean {
+        override fun read(key: String): String? = values[key]
+        override fun write(key: String, value: String): Boolean {
             if (failingKey == key) { failingKey = null; return false }
             values[key] = value
             return true
         }
         override fun remove(key: String): Boolean { values.remove(key); return true }
-        override fun clear(): Boolean { values.clear(); return true }
+        fun clear(): Boolean { values.clear(); return true }
     }
 }

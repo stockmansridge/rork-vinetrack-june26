@@ -208,6 +208,7 @@ final class TripSyncService {
         errorMessage = nil
         do {
             try await pushLocalTrips(vineyardId: vineyardId)
+            await TripLabourSnapshotJournal.shared.replay(trips: store?.trips ?? [])
             try await pullRemoteTrips(vineyardId: vineyardId)
             metadata.setLastSync(Date(), for: vineyardId)
             lastSyncDate = Date()

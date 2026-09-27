@@ -8,6 +8,7 @@ import com.rork.vinetrack.data.model.SavedInput
 import com.rork.vinetrack.data.model.SeedingMixLine
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.Trip
+import com.rork.vinetrack.data.model.TripCostAllocation
 import com.rork.vinetrack.data.model.VineyardMachine
 import com.rork.vinetrack.data.model.areSprayTankActualsComplete
 import com.rork.vinetrack.data.model.resolveSprayTankActual
@@ -121,13 +122,32 @@ object TripCostEstimator {
         yieldRecords: List<HistoricalYieldRecord> = emptyList(),
         savedInputs: List<SavedInput> = emptyList(),
         tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual> = emptyList(),
+        savedAllocations: List<TripCostAllocation> = emptyList(),
     ): Estimate {
         val hours = (trip.activeDurationSeconds ?: 0L).coerceAtLeast(0L) / 3600.0
 
         // ---- Labour --------------------------------------------------------
-        val category = resolveTripOperatorCategory(trip, operatorCategories)
+        val category = if (trip.isActive) resolveTripOperatorCategory(trip, operatorCategories) else null
         val rate = category?.costPerHour ?: 0.0
+        val savedRows = savedAllocations.filter { it.tripId == trip.id && it.deletedAt == null }
+        val snapshot = savedRows.firstOrNull { it.allocationBasis == "labour_snapshot" }
+        val slices = savedRows.filter { it.allocationBasis != "labour_snapshot" }
         val labour: LabourBreakdown = when {
+            !trip.isActive && snapshot != null -> LabourBreakdown(
+                categoryName = snapshot.workerTypeNameSnapshot,
+                costPerHour = snapshot.hourlyRateSnapshot?.toDouble(),
+                hours = snapshot.labourHours?.toDouble() ?: hours,
+                cost = snapshot.labourCost?.toDouble() ?: 0.0,
+                warning = if (snapshot.labourCost == null) "Saved Trip labour rate is unknown." else null,
+            )
+            !trip.isActive && slices.any { it.labourCost != null } -> LabourBreakdown(
+                categoryName = null, costPerHour = null, hours = hours,
+                cost = slices.sumOf { it.labourCost?.toDouble() ?: 0.0 }, warning = null,
+            )
+            !trip.isActive -> LabourBreakdown(
+                categoryName = null, costPerHour = null, hours = hours, cost = 0.0,
+                warning = "Historical labour rate unavailable; only saved allocations can establish its cost.",
+            )
             category != null && rate > 0 && hours > 0 -> LabourBreakdown(
                 categoryName = category.displayName,
                 costPerHour = rate,

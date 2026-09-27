@@ -14,7 +14,7 @@ class TripCostAllocationRepository(private val session: SessionStore) {
     suspend fun listForVineyard(vineyardId: String): List<TripCostAllocation> = withContext(Dispatchers.IO) {
         val base = AppConfig.supabaseUrl?.trimEnd('/') ?: throw BackendError.NotConfigured
         val key = AppConfig.supabaseAnonKey ?: throw BackendError.NotConfigured
-        val response = SupabaseClient.http.get("$base/rest/v1/trip_cost_allocations?select=id,vineyard_id,trip_id,total_cost,costing_status,deleted_at&vineyard_id=eq.$vineyardId&deleted_at=is.null") {
+        val response = SupabaseClient.http.get("$base/rest/v1/trip_cost_allocations?select=id,vineyard_id,trip_id,total_cost,labour_cost,allocation_basis,hourly_rate_snapshot,labour_hours,worker_type_name_snapshot,costing_status,deleted_at&vineyard_id=eq.$vineyardId&deleted_at=is.null") {
             headers {
                 append("apikey", key)
                 session.accessToken?.let { append("Authorization", "Bearer $it") }

@@ -523,10 +523,10 @@ struct TripCostAllocationRecalculator {
     /// rows for the trip on Supabase and locally, then inserts a fresh set.
     @discardableResult
     func recalculate(trip: Trip) async -> Bool {
-        // Completed allocations contain saved financial amounts. Until an
-        // immutable trip-rate snapshot exists, the current catalogue cannot
-        // prove a rebuild would preserve those historical amounts.
-        if !trip.isActive, store.tripCostAllocations.contains(where: { $0.tripId == trip.id }) {
+        // Never delete a protected start marker or reprice completed saved costs
+        // from today's mutable Worker Type catalogue.
+        if !trip.isActive || TripLabourSnapshotJournal.shared.contains(tripId: trip.id) ||
+            store.tripCostAllocations.contains(where: { $0.tripId == trip.id && $0.allocationBasis == .labourSnapshot }) {
             return false
         }
         // Resolve TripCostService inputs the same way TripDetailView does.

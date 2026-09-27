@@ -50,10 +50,14 @@ import Testing
                     operatorUserId: worker, operatorCategoryId: workerType)
     }
 
-    private func cost(_ trip: Trip, rate: Double?) -> TripCostService.Result {
+    private func cost(_ trip: Trip, rate: Double?, saved: TripCostService.LabourBreakdown? = nil) -> TripCostService.Result {
         TripCostService.estimate(trip: trip,
             operatorCategory: rate.map { OperatorCategory(id: workerType, vineyardId: vineyard, name: "Fixture worker", costPerHour: $0) },
-            tractor: nil, fuelPurchases: [], sprayRecord: nil)
+            tractor: nil, fuelPurchases: [], sprayRecord: nil, savedLabour: saved)
+    }
+
+    private var savedLabour: TripCostService.LabourBreakdown {
+        .init(categoryName: "Fixture worker", costPerHour: 38, hours: 2, cost: 76, warning: nil)
     }
 
     @Test func twoHoursAtThirtyEightPersistsIdentityAndLocalCostAfterReloadAndTripSyncPayload() throws {
@@ -61,7 +65,7 @@ import Testing
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let trip = completedTrip()
-        let initial = cost(trip, rate: 38)
+        let initial = cost(trip, rate: 38, saved: savedLabour)
         #expect(initial.activeHours == 2)
         #expect(initial.labour.costPerHour == 38)
         #expect(initial.labour.cost == 76)
@@ -70,7 +74,7 @@ import Testing
         let reloaded = try #require(TripRepository(persistence: PersistenceStore(directory: directory)).load(for: vineyard).first)
         #expect(reloaded.operatorUserId == worker)
         #expect(reloaded.operatorCategoryId == workerType)
-        #expect(cost(reloaded, rate: 38).labour.cost == 76)
+        #expect(cost(reloaded, rate: 38, saved: savedLabour).labour.cost == 76)
         let payload = BackendTrip.upsert(from: reloaded, createdBy: nil, clientUpdatedAt: trip.endTime ?? trip.startTime)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -83,12 +87,34 @@ import Testing
         #expect(saved.labourCost == 76)
     }
 
+    @Test func offlineJournalKeepsOriginalFactsAcrossRestartAndDuplicateStart() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let trip = completedTrip()
+        let journal = TripLabourSnapshotJournal(persistence: PersistenceStore(directory: directory))
+        let original = TripLabourSnapshotJournal.Snapshot(
+            tripId: trip.id, workerUserId: worker, workerTypeId: workerType,
+            workerTypeName: "Fixture worker", hourlyRate: 38, capturedAt: trip.startTime
+        )
+        try journal.record(original)
+        try journal.record(.init(tripId: trip.id, workerUserId: worker, workerTypeId: workerType,
+                                 workerTypeName: "Changed worker", hourlyRate: 45,
+                                 capturedAt: trip.startTime.addingTimeInterval(60)))
+        let persisted: [UUID: TripLabourSnapshotJournal.Snapshot] = try #require(
+            PersistenceStore(directory: directory).load(key: "vinetrack_trip_labour_original_facts")
+        )
+        #expect(persisted[trip.id]?.hourlyRate == 38)
+        #expect(persisted[trip.id]?.workerTypeName == "Fixture worker")
+        #expect(persisted[trip.id]?.capturedAt == trip.startTime)
+    }
+
     @Test func completedTripMustNotRepriceWhenCurrentWorkerTypeChanges() {
         let trip = completedTrip()
-        #expect(cost(trip, rate: 38).labour.cost == 76)
-        // Current Trip Detail and Android reports re-estimate from the mutable catalogue.
-        // This acceptance assertion remains red until historical rate snapshots exist.
-        #expect(cost(trip, rate: 45).labour.cost == 76)
+        #expect(cost(trip, rate: 38, saved: savedLabour).labour.cost == 76)
+        #expect(cost(trip, rate: 45, saved: savedLabour).labour.cost == 76)
+        #expect(cost(trip, rate: 45, saved: savedLabour).labour.costPerHour == 38)
+        #expect(cost(trip, rate: 45).labour.costPerHour == nil)
     }
 }
 

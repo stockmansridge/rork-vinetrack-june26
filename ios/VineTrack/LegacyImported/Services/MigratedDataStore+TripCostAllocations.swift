@@ -10,15 +10,15 @@ extension MigratedDataStore {
     /// New rows fire a change callback for upload.
     func replaceTripCostAllocations(tripId: UUID, with newRows: [TripCostAllocation]) {
         guard let vineyardId = selectedVineyardId else { return }
-        let stale = tripCostAllocations.filter { $0.tripId == tripId }
-        tripCostAllocations.removeAll { $0.tripId == tripId }
-        tripCostAllocations.append(contentsOf: newRows)
+        let stale = tripCostAllocations.filter { $0.tripId == tripId && $0.allocationBasis != .labourSnapshot }
+        tripCostAllocations.removeAll { $0.tripId == tripId && $0.allocationBasis != .labourSnapshot }
+        tripCostAllocations.append(contentsOf: newRows.filter { $0.allocationBasis != .labourSnapshot })
         tripCostAllocationRepo.saveSlice(
             tripCostAllocations.filter { $0.vineyardId == vineyardId },
             for: vineyardId
         )
         for row in stale { onTripCostAllocationDeleted?(row.id) }
-        for row in newRows { onTripCostAllocationChanged?(row.id) }
+        for row in newRows where row.allocationBasis != .labourSnapshot { onTripCostAllocationChanged?(row.id) }
     }
 
     /// Soft-delete every allocation for `tripId` locally (and notify sync to

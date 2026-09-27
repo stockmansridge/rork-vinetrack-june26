@@ -11,6 +11,7 @@ nonisolated enum TripCostAllocationBasis: String, CaseIterable, Codable, Sendabl
     case varietyPercentage = "variety_percentage"
     case rowCoverage = "row_coverage"
     case manual
+    case labourSnapshot = "labour_snapshot"
 
     var displayName: String {
         switch self {
@@ -18,6 +19,7 @@ nonisolated enum TripCostAllocationBasis: String, CaseIterable, Codable, Sendabl
         case .varietyPercentage: return "Variety %"
         case .rowCoverage: return "Row coverage"
         case .manual: return "Manual"
+        case .labourSnapshot: return "Labour snapshot"
         }
     }
 }
@@ -46,6 +48,12 @@ nonisolated struct TripCostAllocation: Codable, Identifiable, Sendable, Hashable
     var allocationAreaHa: Double?
 
     var labourCost: Double?
+    var workerUserId: UUID?
+    var workerTypeId: UUID?
+    var workerTypeNameSnapshot: String?
+    var hourlyRateSnapshot: Double?
+    var labourHours: Double?
+    var rateCapturedAt: Date?
     var fuelCost: Double?
     var chemicalCost: Double?
     var inputCost: Double?
@@ -74,6 +82,12 @@ nonisolated struct TripCostAllocation: Codable, Identifiable, Sendable, Hashable
         varietyPercentage: Double? = nil,
         allocationAreaHa: Double? = nil,
         labourCost: Double? = nil,
+        workerUserId: UUID? = nil,
+        workerTypeId: UUID? = nil,
+        workerTypeNameSnapshot: String? = nil,
+        hourlyRateSnapshot: Double? = nil,
+        labourHours: Double? = nil,
+        rateCapturedAt: Date? = nil,
         fuelCost: Double? = nil,
         chemicalCost: Double? = nil,
         inputCost: Double? = nil,
@@ -99,6 +113,12 @@ nonisolated struct TripCostAllocation: Codable, Identifiable, Sendable, Hashable
         self.varietyPercentage = varietyPercentage
         self.allocationAreaHa = allocationAreaHa
         self.labourCost = labourCost
+        self.workerUserId = workerUserId
+        self.workerTypeId = workerTypeId
+        self.workerTypeNameSnapshot = workerTypeNameSnapshot
+        self.hourlyRateSnapshot = hourlyRateSnapshot
+        self.labourHours = labourHours
+        self.rateCapturedAt = rateCapturedAt
         self.fuelCost = fuelCost
         self.chemicalCost = chemicalCost
         self.inputCost = inputCost
@@ -117,7 +137,8 @@ nonisolated struct TripCostAllocation: Codable, Identifiable, Sendable, Hashable
         case id, vineyardId, tripId, seasonYear, tripFunction
         case paddockId, paddockName
         case variety, varietyId, varietyPercentage, allocationAreaHa
-        case labourCost, fuelCost, chemicalCost, inputCost, totalCost
+        case labourCost, workerUserId, workerTypeId, workerTypeNameSnapshot, hourlyRateSnapshot, labourHours, rateCapturedAt
+        case fuelCost, chemicalCost, inputCost, totalCost
         case costPerHa, yieldTonnes, costPerTonne
         case allocationBasis, costingStatus, warnings, calculatedAt, sourceTripUpdatedAt
     }
@@ -136,6 +157,12 @@ nonisolated struct TripCostAllocation: Codable, Identifiable, Sendable, Hashable
         varietyPercentage = try c.decodeIfPresent(Double.self, forKey: .varietyPercentage)
         allocationAreaHa = try c.decodeIfPresent(Double.self, forKey: .allocationAreaHa)
         labourCost = try c.decodeIfPresent(Double.self, forKey: .labourCost)
+        workerUserId = try c.decodeIfPresent(UUID.self, forKey: .workerUserId)
+        workerTypeId = try c.decodeIfPresent(UUID.self, forKey: .workerTypeId)
+        workerTypeNameSnapshot = try c.decodeIfPresent(String.self, forKey: .workerTypeNameSnapshot)
+        hourlyRateSnapshot = try c.decodeIfPresent(Double.self, forKey: .hourlyRateSnapshot)
+        labourHours = try c.decodeIfPresent(Double.self, forKey: .labourHours)
+        rateCapturedAt = try c.decodeIfPresent(Date.self, forKey: .rateCapturedAt)
         fuelCost = try c.decodeIfPresent(Double.self, forKey: .fuelCost)
         chemicalCost = try c.decodeIfPresent(Double.self, forKey: .chemicalCost)
         inputCost = try c.decodeIfPresent(Double.self, forKey: .inputCost)
