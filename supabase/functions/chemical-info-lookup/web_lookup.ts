@@ -8,11 +8,12 @@ import { parseChemicalResearchResult } from "./research/schema.ts";
 /** Log only server-side research diagnostics at the V2 unavailable boundary. */
 export function webResearchFailureDiagnostic(subject: string, outcome: ResearchOutcome, durationMs: number): Record<string, unknown> {
   const message = outcome.error?.message ?? null;
+  const safeMessage = message?.replace(/Bearer\s+\S+|sk-[a-zA-Z0-9_-]+|eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/gi, "[redacted]") ?? null;
   return {
     action: "web_lookup_v2",
     subject,
     error_category: outcome.error?.category ?? null,
-    error_message: message?.replace(/Bearer\s+\S+|sk-[a-zA-Z0-9_-]+/gi, "[redacted]") ?? null,
+    error_message: safeMessage,
     research: researchLog(outcome.telemetry),
     primary_model: outcome.telemetry.attempts.find((a) => a.role === "primary")?.model ?? null,
     retried: outcome.telemetry.attempts.some((a) => a.retried),
