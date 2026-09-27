@@ -12,6 +12,7 @@ nonisolated extension WillyWeatherForecastDay {
             condition: condition,
             conditionCode: conditionCode,
             conditionKey: conditionKey,
+            conditionSource: [condition, conditionCode, conditionKey].contains(where: { $0?.isEmpty == false }) ? "WillyWeather" : nil,
             rainMinMm: rainMinMm,
             rainMaxMm: rainMaxMm,
             rainProbabilityPct: rainProbability

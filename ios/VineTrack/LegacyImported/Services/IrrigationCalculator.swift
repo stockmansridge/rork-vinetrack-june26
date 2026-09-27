@@ -10,6 +10,7 @@ nonisolated struct ForecastDay: Sendable, Hashable, Identifiable {
     let condition: String?
     let conditionCode: String?
     let conditionKey: String?
+    let conditionSource: String?
     let rainMinMm: Double?
     let rainMaxMm: Double?
     let rainProbabilityPct: Double?
@@ -26,6 +27,7 @@ nonisolated struct ForecastDay: Sendable, Hashable, Identifiable {
         condition: String? = nil,
         conditionCode: String? = nil,
         conditionKey: String? = nil,
+        conditionSource: String? = nil,
         rainMinMm: Double? = nil,
         rainMaxMm: Double? = nil,
         rainProbabilityPct: Double? = nil
@@ -39,6 +41,7 @@ nonisolated struct ForecastDay: Sendable, Hashable, Identifiable {
         self.condition = condition
         self.conditionCode = conditionCode
         self.conditionKey = conditionKey
+        self.conditionSource = conditionSource
         self.rainMinMm = rainMinMm
         self.rainMaxMm = rainMaxMm
         self.rainProbabilityPct = rainProbabilityPct

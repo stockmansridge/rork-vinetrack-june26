@@ -56,11 +56,12 @@ object SprayForecastPeriodRepository {
         return aggregate(samples)
     }
 
-    fun openMeteo(body: String): Pair<TimeZone, List<SprayForecastPeriod>> {
+    fun openMeteo(body: String): Triple<TimeZone, List<SprayForecastPeriod>, Map<String, OpenMeteoDailyCondition>> {
         val root = SupabaseClient.json.parseToJsonElement(body).jsonObject
         val zone = TimeZone.getTimeZone(root["timezone"]?.jsonPrimitive?.contentOrNull ?: "UTC")
-        val hourly = root["hourly"]?.jsonObject ?: return zone to emptyList()
-        val times = hourly["time"]?.jsonArray ?: return zone to emptyList()
+        val conditions = OpenMeteoDailyCondition.byDate(root)
+        val hourly = root["hourly"]?.jsonObject ?: return Triple(zone, emptyList(), conditions)
+        val times = hourly["time"]?.jsonArray ?: return Triple(zone, emptyList(), conditions)
         val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm", Locale.US).apply { timeZone = zone; isLenient = false }
         val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = zone }
         fun value(field: String, index: Int): Double? = (hourly[field] as? JsonArray)?.getOrNull(index)?.jsonPrimitive?.doubleOrNull
@@ -70,14 +71,16 @@ object SprayForecastPeriodRepository {
             Sample(dateFormat.format(date), hour, value("temperature_2m", index), value("wind_speed_10m", index),
                 value("relative_humidity_2m", index), value("precipitation", index))
         }
-        return zone to aggregate(samples)
+        val sprayDates = (root["daily"]?.jsonObject?.get("time")?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }
+            ?: samples.map { it.date }.distinct().sorted()).take(5).toSet()
+        return Triple(zone, aggregate(samples).filter { it.date in sprayDates }, conditions)
     }
 
-    suspend fun fetchOpenMeteo(latitude: Double, longitude: Double): Pair<TimeZone, List<SprayForecastPeriod>> {
+    suspend fun fetchOpenMeteo(latitude: Double, longitude: Double): Triple<TimeZone, List<SprayForecastPeriod>, Map<String, OpenMeteoDailyCondition>> {
         val url = "https://api.open-meteo.com/v1/forecast?latitude=$latitude&longitude=$longitude" +
-            "&hourly=temperature_2m,wind_speed_10m,relative_humidity_2m,precipitation&forecast_days=5&timezone=auto&wind_speed_unit=kmh&precipitation_unit=mm"
+            "&hourly=temperature_2m,wind_speed_10m,relative_humidity_2m,precipitation&daily=weather_code&forecast_days=7&timezone=auto&wind_speed_unit=kmh&precipitation_unit=mm"
         val response = SupabaseClient.http.get(url)
-        if (!response.status.isSuccess()) return TimeZone.getTimeZone("UTC") to emptyList()
+        if (!response.status.isSuccess()) return Triple(TimeZone.getTimeZone("UTC"), emptyList(), emptyMap())
         return openMeteo(response.bodyAsText())
     }
 }

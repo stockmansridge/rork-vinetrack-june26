@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -15,6 +16,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -56,6 +60,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.PersistedRainfallRepository
+import com.rork.vinetrack.data.OpenMeteoDailyCondition
 import com.rork.vinetrack.data.insights.ScoutWeatherRepository
 import com.rork.vinetrack.data.insights.ScoutWeatherSnapshot
 import com.rork.vinetrack.data.RegionFormatter
@@ -241,9 +246,14 @@ private fun RainAndForecastContent(
                     errorMessage = e.message ?: "Could not load rain forecast."
                 }
             }
-            // Supplement only missing four-hour facts; daily provider selection is untouched.
+            // Complete only absent conditions from the same detail request; never replace primary daily facts.
             val detail = runCatching { SprayForecastPeriodRepository.fetchOpenMeteo(loc.first, loc.second) }.getOrNull()
-            if (detail != null) sprayPeriods = SprayForecastWindows.supplement(sprayPeriods, detail.second)
+            if (detail != null) {
+                sprayPeriods = SprayForecastWindows.supplement(sprayPeriods, detail.second)
+                if (wwForecast != null) {
+                    wwForecast = OpenMeteoDailyCondition.supplement(wwForecast.orEmpty(), detail.third, TimeZone.getTimeZone(wwTimezone ?: "UTC"))
+                }
+            }
             // Persisted station-sourced rainfall (`rainfall_daily`) — the same
             // shared records iOS and the portal show, with per-day source
             // labels (Manual/Davis/Wunderground/Open-Meteo). Falls back to the
@@ -629,6 +639,10 @@ private fun DailyForecastSection(
 ) {
     val vine = LocalVineColors.current
     var selectedDay by remember(days) { mutableStateOf(0) }
+    val dayListState = rememberLazyListState()
+    LaunchedEffect(selectedDay, days) {
+        if (days.isNotEmpty()) dayListState.animateScrollToItem(selectedDay.coerceIn(days.indices))
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
@@ -641,16 +655,19 @@ private fun DailyForecastSection(
             }
         }
         if (days.isNotEmpty()) {
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                days.forEachIndexed { index, day ->
-                    Column(
-                        Modifier.clip(RoundedCornerShape(12.dp))
-                            .background(if (selectedDay == index) VineColors.Primary else vine.cardBackground)
-                            .clickable { selectedDay = index }
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                    ) {
-                        Text(dayLabel(day.dateEpochMs, timezone), fontSize = 12.sp, color = if (selectedDay == index) Color.White else vine.textPrimary)
-                        Text(dateLabel(day.dateEpochMs, timezone), fontSize = 11.sp, color = if (selectedDay == index) Color.White else vine.textSecondary)
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val chipWidth = maxOf(80.dp, (maxWidth - 16.dp) / 3)
+                LazyRow(state = dayListState, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    itemsIndexed(days, key = { _, day -> day.dateEpochMs }) { index, day ->
+                        Column(
+                            Modifier.width(chipWidth).clip(RoundedCornerShape(12.dp))
+                                .background(if (selectedDay == index) VineColors.Primary else vine.cardBackground)
+                                .clickable { selectedDay = index }
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                        ) {
+                            Text(dayLabel(day.dateEpochMs, timezone), fontSize = 12.sp, maxLines = 1, color = if (selectedDay == index) Color.White else vine.textPrimary)
+                            Text(dateLabel(day.dateEpochMs, timezone), fontSize = 11.sp, maxLines = 1, color = if (selectedDay == index) Color.White else vine.textSecondary)
+                        }
                     }
                 }
             }

@@ -91,6 +91,7 @@ fun WillyWeatherForecastDay.toRainDay(timezone: String?): RainDay? {
         condition = precis,
         conditionCode = precisCode,
         conditionKey = conditionKey,
+        conditionSource = if (listOf(precis, precisCode, conditionKey).any { !it.isNullOrBlank() }) "WillyWeather" else null,
         tempMinC = tempMinC,
         tempMaxC = tempMaxC,
         rainMinMm = rainMinMm,

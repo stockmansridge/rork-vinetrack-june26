@@ -78,11 +78,14 @@ nonisolated enum SprayForecastPeriodService {
         return periods(from: samples)
     }
 
-    static func fetchOpenMeteo(latitude: Double, longitude: Double) async -> [SprayForecastPeriod] {
-        guard let url = URL(string: "https://api.open-meteo.com/v1/forecast?latitude=\(latitude)&longitude=\(longitude)&hourly=temperature_2m,wind_speed_10m,relative_humidity_2m,precipitation&forecast_days=5&timezone=auto&wind_speed_unit=kmh&precipitation_unit=mm") else { return [] }
+    static func fetchOpenMeteo(latitude: Double, longitude: Double) async -> (periods: [SprayForecastPeriod], conditions: [String: OpenMeteoDailyCondition]) {
+        guard let url = URL(string: "https://api.open-meteo.com/v1/forecast?latitude=\(latitude)&longitude=\(longitude)&hourly=temperature_2m,wind_speed_10m,relative_humidity_2m,precipitation&daily=weather_code&forecast_days=7&timezone=auto&wind_speed_unit=kmh&precipitation_unit=mm") else { return ([], [:]) }
         guard let (data, response) = try? await URLSession.shared.data(from: url),
               (response as? HTTPURLResponse)?.statusCode == 200,
-              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return [] }
-        return openMeteo(json: json)
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return ([], [:]) }
+        let periods = openMeteo(json: json)
+        let dailyDates = (json["daily"] as? [String: Any])?["time"] as? [String]
+        let sprayDates = Set((dailyDates ?? Array(Set(periods.map(\.date))).sorted()).prefix(5))
+        return (periods.filter { sprayDates.contains($0.date) }, OpenMeteoDailyCondition.byDate(json: json))
     }
 }

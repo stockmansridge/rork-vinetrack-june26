@@ -27,6 +27,7 @@ data class RainDay(
     val condition: String? = null,
     val conditionCode: String? = null,
     val conditionKey: String? = null,
+    val conditionSource: String? = null,
     val tempMinC: Double? = null,
     val tempMaxC: Double? = null,
     val rainMinMm: Double? = null,

@@ -266,25 +266,37 @@ struct RainAndForecastView: View {
             }
             .padding(.horizontal, 4)
             if !forecastDays.isEmpty {
-                ScrollView(.horizontal) {
-                    HStack(spacing: 8) {
-                        ForEach(Array(forecastDays.enumerated()), id: \.element.id) { index, day in
-                            Button {
-                                selectedForecastDay = index
-                            } label: {
-                                VStack(spacing: 2) {
-                                    Text(dayLabel(day.date)).font(.caption.weight(.semibold))
-                                    Text(dateLabel(day.date)).font(.caption2)
+                GeometryReader { geometry in
+                    ScrollViewReader { proxy in
+                        ScrollView(.horizontal) {
+                            HStack(spacing: 8) {
+                                ForEach(Array(forecastDays.enumerated()), id: \.element.id) { index, day in
+                                    Button {
+                                        selectedForecastDay = index
+                                        withAnimation { proxy.scrollTo(index, anchor: .leading) }
+                                    } label: {
+                                        VStack(spacing: 2) {
+                                            Text(dayLabel(day.date)).font(.caption.weight(.semibold)).lineLimit(1)
+                                            Text(dateLabel(day.date)).font(.caption2).lineLimit(1)
+                                        }
+                                        .frame(width: max(80, (geometry.size.width - 16) / 3), height: 48)
+                                        .foregroundStyle(selectedForecastDay == index ? .white : .primary)
+                                        .background(selectedForecastDay == index ? Color(red: 0.04, green: 0.34, blue: 0.22) : Color(.secondarySystemBackground), in: .rect(cornerRadius: 12))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .id(index)
                                 }
-                                .frame(minWidth: 75, minHeight: 44)
-                                .foregroundStyle(selectedForecastDay == index ? .white : .primary)
-                                .background(selectedForecastDay == index ? Color(red: 0.04, green: 0.34, blue: 0.22) : Color(.secondarySystemBackground), in: .rect(cornerRadius: 12))
                             }
-                            .buttonStyle(.plain)
+                            .scrollTargetLayout()
+                        }
+                        .scrollIndicators(.hidden)
+                        .scrollTargetBehavior(.viewAligned)
+                        .onChange(of: selectedForecastDay) { _, index in
+                            withAnimation { proxy.scrollTo(index, anchor: .leading) }
                         }
                     }
                 }
-                .contentMargins(.horizontal, 4)
+                .frame(height: 48)
             }
 
             if !hasLocation {
@@ -770,12 +782,13 @@ struct RainAndForecastView: View {
         isLoadingForecast = true
         let svc = IrrigationForecastService()
         await svc.fetchForecast(latitude: lat, longitude: lon, days: 7, vineyardId: store.selectedVineyardId)
-        forecastDays = svc.forecast?.days ?? []
         let supplemental = await SprayForecastPeriodService.fetchOpenMeteo(latitude: lat, longitude: lon)
-        sprayPeriods = SprayForecastWindows.supplement(svc.forecast?.sprayPeriods ?? [], with: supplemental)
+        let zone = svc.forecast?.timezone.flatMap(TimeZone.init(identifier:)) ?? TimeZone(secondsFromGMT: 0)!
+        forecastDays = OpenMeteoDailyCondition.supplement(svc.forecast?.days ?? [], with: supplemental.conditions, timezone: zone)
+        sprayPeriods = SprayForecastWindows.supplement(svc.forecast?.sprayPeriods ?? [], with: supplemental.periods)
         selectedForecastDay = 0
         forecastSource = svc.forecast?.source
-        forecastTimezone = svc.forecast?.timezone.flatMap(TimeZone.init(identifier:)) ?? TimeZone(secondsFromGMT: 0)!
+        forecastTimezone = zone
         rolling24hMm = svc.forecast?.rolling24hMm
         rolling48hMm = svc.forecast?.rolling48hMm
         rollingRainSource = svc.forecast?.rollingRainSource
