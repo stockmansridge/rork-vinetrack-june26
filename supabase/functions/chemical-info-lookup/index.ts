@@ -216,7 +216,6 @@ import {
 } from "./grapevine_label.ts";
 import {
   applyRateIdentities,
-  DIRECTION_SEED_KEY,
   stripStructuredDirectionSeeds,
 } from "./rate_identity.ts";
 import { applyDefaultRateOptions } from "./default_rate_options.ts";
@@ -461,7 +460,6 @@ import {
   normaliseRegisteredUses,
   parseNumber,
   parseString,
-  RATE_BASES,
 } from "./registered_use_normaliser.ts";
 
 const SCHEMES: ActivityGroupScheme[] = ["frac", "hrac", "irac", "not_applicable"];
@@ -1399,7 +1397,7 @@ Deno.serve(async (req: Request) => {
         const findings = { classified: proposed.patch?.resistance_classification_state === "classified",
           not_applicable: proposed.patch?.resistance_classification_state === "not_applicable",
           vineyard_rates_added: Boolean(proposed.patch?.viticulture_rates),
-          no_vineyard_use: !(payload.detail.registered_uses ?? backfillRow.registered_uses)?.some((use: any) => /grape|vineyard|vine/i.test(String(use.crop ?? ""))) };
+          no_vineyard_use: !(payload?.detail?.registered_uses ?? backfillRow.registered_uses)?.some((use: any) => /grape|vineyard|vine/i.test(String(use.crop ?? ""))) };
         if (!proposed.patch) return json({ ...base, status: proposed.status, evidence: proposed.evidence, findings, preview_id: null });
         if (dryRun) return json({ ...base, status: "preview_ready", proposed_patch: proposed.patch,
           evidence: proposed.evidence, findings, preview_id: null, dry_run: true });

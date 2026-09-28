@@ -19,9 +19,9 @@ const grape = (use: Record<string, unknown>): boolean => /grape|vineyard|vine/i.
 const grapeScope = (text: string): boolean => /^(?:grape(?:vine)?s?|vine(?:yard)?s?)\b/i.test(text.trim());
 const scopedGap = (field: string): boolean => {
   const [kind, ...scope] = field.split(":");
-  if (!scope.length) return ["active_ingredients", "activity_groups", "label_reference", "re_entry_period_hours"].includes(kind.toLowerCase());
+  if (!scope.length) return ["active_ingredients", "activity_group", "activity_groups", "label_reference", "manufacturer_label", "re_entry_period_hours"].includes(kind.toLowerCase());
   return /^(rates|withholding_period|re_entry_period|restrictions|statements|conditions)$/i.test(kind) && grapeScope(scope.join(":")) ||
-    /^activity_group:|^concentration:/i.test(field);
+    /^(activity_group|concentration|active_ingredients):/i.test(field);
 };
 const hasLabel = (row: MasterRow): boolean => (row.verification_sources ?? []).some((s) => s.kind === "manufacturer_label" &&
   typeof s.reference === "string" && classifyUrl(s.reference, row.registration_country).trust === "registrant" &&
@@ -62,7 +62,8 @@ export function lockedWebIdentity(row: MasterRow): WebIdentity | null {
 }
 
 const equal = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
-const present = (value: unknown): boolean => value !== null && value !== undefined && value !== "";
+const present = (value: unknown): boolean => value !== null && value !== undefined &&
+  (typeof value !== "string" || value.trim().length > 0) && (!Array.isArray(value) || value.length > 0);
 const ratesOf = (use: Record<string, unknown>): Array<Record<string, unknown>> =>
   Array.isArray(use.rates) ? use.rates as Array<Record<string, unknown>> : [];
 const rateIdentity = (rate: Record<string, unknown>): string | null =>
@@ -94,7 +95,7 @@ const useFields = ["withholding_period_days", "withholding_period_text", "re_ent
 function mergeUse(old: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> | null {
   const result: Record<string, unknown> = { ...old };
   for (const key of useFields) {
-    if (!present(next[key])) continue;
+    if (!present(next[key]) || (typeof next[key] === "number" && (key === "withholding_period_days" || key === "re_entry_period_hours") && (next[key] as number) <= 0)) continue;
     if (present(old[key]) && !equal(old[key], next[key])) return null;
     if (!present(old[key])) result[key] = next[key];
   }
@@ -140,7 +141,9 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
     const group = authoritativeGroup(old.name);
     const proposedGroup = group ?? (labelReady && next?.group_source === "manufacturer_label" ? next.activity_group as typeof old.activity_group : null);
     if (old.activity_group && proposedGroup && !groupsAreEquivalent(old.name, old.activity_group, proposedGroup)) return null;
-    if (next?.identity_source === "manufacturer_label" && present(old.concentration) && present(next.concentration) && old.concentration !== next.concentration) return null;
+    if (next?.identity_source === "manufacturer_label" &&
+      ((present(old.concentration) && present(next.concentration) && old.concentration !== next.concentration) ||
+        (present(old.concentration_unit) && present(next.concentration_unit) && old.concentration_unit !== next.concentration_unit))) return null;
     return { ...old, concentration: old.concentration ?? (next?.identity_source === "manufacturer_label" ? next.concentration : null) ?? null,
       concentration_unit: old.concentration_unit ?? (next?.identity_source === "manufacturer_label" ? next.concentration_unit : null) ?? null,
       activity_group: old.activity_group ?? proposedGroup ?? null,
@@ -167,12 +170,12 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
     if (!row.activity_group_scheme) put("activity_group_scheme", row.activity_group_scheme, "not_applicable");
   }
 
+  const incoming = labelReady ? (detail.registered_uses ?? []).filter(grape) : [];
   if (labelReady) {
     if (!row.registrant && detail.registration?.registrant) put("registrant", row.registrant, detail.registration.registrant);
     if (!row.product_category && detail.product_category) put("product_category", row.product_category, detail.product_category);
     if (!row.form_type && detail.form_type) put("form_type", row.form_type, detail.form_type);
     const uses = detail.registered_uses ?? [];
-    const incoming = uses.filter(grape);
     const oldUses = (row.registered_uses ?? []) as Array<Record<string, unknown>>;
     const mergedUses = [...oldUses];
     for (const next of incoming) {
@@ -223,21 +226,35 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
       const a = trusted.find((item) => String(item.name).toLowerCase() === scope.join(":").toLowerCase());
       return present((a?.activity_group as Record<string, unknown> | null)?.code);
     }
-    if (kind.toLowerCase() === "concentration" && scope.length) {
+    if (["concentration", "active_ingredients"].includes(kind.toLowerCase()) && scope.length) {
       const a = trusted.find((item) => String(item.name).toLowerCase() === scope.join(":").toLowerCase());
       return present(a?.concentration) && present(a?.concentration_unit) && !!patch.active_ingredients;
     }
-    if (field.toLowerCase() === "activity_groups") return !!codes.length && trusted.every((a) => present((a.activity_group as Record<string, unknown> | null)?.code));
-    if (field.toLowerCase() === "label_reference") return labelReady; // existing extractor: no usable label evidence
+    if (["activity_group", "activity_groups"].includes(field.toLowerCase())) return !!codes.length && trusted.every((a) => present((a.activity_group as Record<string, unknown> | null)?.code));
+    if (field.toLowerCase() === "active_ingredients") return trusted.length > 0 && !!patch.active_ingredients &&
+      trusted.every((a) => present(a.name) && present(a.concentration) && present(a.concentration_unit));
+    if (["label_reference", "manufacturer_label"].includes(field.toLowerCase())) return labelReady; // stored as manufacturer_label source, not regulator label_reference
+    if (field.toLowerCase() === "re_entry_period_hours" && labelReady) {
+      const vines = ((patch.registered_uses ?? row.registered_uses ?? []) as Array<Record<string, unknown>>).filter(grape);
+      return vines.length > 0 && vines.every((use) => incoming.some((next) => useKey(next) === useKey(use) &&
+        (!present(use.direction_id) || !present(next.direction_id) || use.direction_id === next.direction_id) &&
+        typeof next.re_entry_period_hours === "number" && next.re_entry_period_hours > 0));
+    }
     if (!scope.length || !grapeScope(scope.join(":")) || !labelReady) return false;
     const matching = ((patch.registered_uses ?? row.registered_uses ?? []) as Array<Record<string, unknown>>)
       .filter((u) => grape(u) && (!scope[1] || String(u.target ?? u.target_raw ?? "").toLowerCase() === scope.slice(1).join(":").toLowerCase()));
     if (!matching.length) return false;
-    if (kind.toLowerCase() === "rates") return matching.every((u) => ratesOf(u).some((r) => rateIdentity(r)));
+    // A stored value alone is not proof that this label pass resolved its marker.
+    // Require matching, positively extracted label facts for EVERY scoped use.
+    const evidenced = matching.map((use) => incoming.find((next) => useKey(next) === useKey(use) &&
+      (!present(use.direction_id) || !present(next.direction_id) || use.direction_id === next.direction_id)));
+    if (evidenced.some((use) => !use)) return false;
+    if (kind.toLowerCase() === "rates") return evidenced.every((u) => ratesOf(u!).some((r) => rateIdentity(r)));
     const keys: Record<string, string[]> = { withholding_period: ["withholding_period_days", "withholding_period_text"],
       re_entry_period: ["re_entry_period_hours", "re_entry_period_text"], restrictions: ["restrictions"],
       statements: ["statements"], conditions: ["conditions"] };
-    return !!keys[kind.toLowerCase()] && matching.every((u) => keys[kind.toLowerCase()].some((key) => present(u[key])));
+    return !!keys[kind.toLowerCase()] && evidenced.every((u) => keys[kind.toLowerCase()].some((key) =>
+      present(u?.[key]) && (typeof u?.[key] !== "number" || (u[key] as number) > 0)));
   };
   const pruned = unresolved.filter((field) => !resolved(field));
   put("verification_unresolved_fields", unresolved, pruned);

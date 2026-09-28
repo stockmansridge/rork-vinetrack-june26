@@ -133,16 +133,67 @@ Deno.test("partial bases and targets merge by rate id, preserving old values", (
 
 Deno.test("WHP REI restrictions fill null but positive disagreements fail closed", () => {
   const enriched = detail({ registered_uses: [{ crop: "Grapevines", target: "weeds", rates: [rate],
-    withholding_period_days: 14, re_entry_period_hours: 12, restrictions: "No entry until dry" }] });
+    withholding_period_days: 14, withholding_period_text: "14 days", re_entry_period_hours: 12,
+    re_entry_period_text: "12 hours", restrictions: "No entry until dry", statements: ["Keep away from waterways"],
+    conditions: "Apply only to established vines" }] });
   const old = master({ registered_uses: [{ crop: "Grapevines", target: "weeds", rates: [rate],
-    withholding_period_days: null, re_entry_period_hours: null, restrictions: null }] });
+    withholding_period_days: null, withholding_period_text: null, re_entry_period_hours: null,
+    re_entry_period_text: null, restrictions: null, statements: null, conditions: null }] });
   const patch = buildMasterBackfillPatch(old, enriched).patch;
   const use = (patch?.registered_uses as Array<Record<string, unknown>>)[0];
   assertEquals(use.withholding_period_days, 14);
   assertEquals(use.re_entry_period_hours, 12);
+  assertEquals(use.withholding_period_text, "14 days");
+  assertEquals(use.re_entry_period_text, "12 hours");
   assertEquals(use.restrictions, "No entry until dry");
+  assertEquals(use.statements, ["Keep away from waterways"]);
+  assertEquals(use.conditions, "Apply only to established vines");
   assertEquals(buildMasterBackfillPatch({ ...old, ...patch } as MasterRow, enriched).patch, null);
   assertEquals(buildMasterBackfillPatch(master({ registered_uses: [{ ...old.registered_uses[0], withholding_period_days: 7 }] }), enriched).status, "evidence_conflict");
+  assertEquals(buildMasterBackfillPatch(master({ registered_uses: [{ ...old.registered_uses[0], re_entry_period_hours: 24 }] }), enriched).status, "evidence_conflict");
+  assertEquals(buildMasterBackfillPatch(master({ registered_uses: [{ ...old.registered_uses[0], restrictions: "Keep out" }] }), enriched).status, "evidence_conflict");
+});
+
+Deno.test("one pass closes classification, vineyard rates and label evidence; unrelated gaps do not repeat research", () => {
+  const before = master({ registered_uses: [{ crop: "Grapevines", target: "weeds", rates: [] }],
+    verification_unresolved_fields: ["activity_group:Glufosinate-ammonium", "rates:GRAPEVINE", "rates:POTATO"] });
+  const first = buildMasterBackfillPatch(before, detail());
+  assertEquals(first.status, "preview_ready");
+  assertEquals(first.patch?.resistance_classification_state, "classified");
+  assertEquals(first.patch?.activity_groups, ["10"]);
+  assertEquals(first.patch?.viticulture_rates, { per_hectare: [rate], per_100_litres: [] });
+  assertEquals(first.patch?.verification_unresolved_fields, ["rates:POTATO"]);
+  assertEquals((first.patch?.verification_sources as Array<{ kind: string }>).at(-1)?.kind, "manufacturer_label");
+  const after = { ...before, ...first.patch } as MasterRow;
+  assertEquals(isIncompleteMaster(after), false);
+  assertEquals(buildMasterBackfillPatch(after, detail()).status, "no_material_change");
+  assertEquals(buildMasterBackfillPatch(after, detail()).patch, null);
+});
+
+Deno.test("unresolved vineyard markers need matching positive label evidence for each target", () => {
+  const old = master({ active_ingredients: [active], activity_groups: ["10"], activity_group_scheme: "hrac",
+    resistance_classification_state: "classified", registered_uses: [
+      { crop: "Grapevines", target: "weeds", rates: [rate], withholding_period_days: 14 },
+      { crop: "Grapevines", target: "mites", rates: [] }],
+    viticulture_rates: { per_hectare: [rate], per_100_litres: [] },
+    verification_unresolved_fields: ["rates:GRAPEVINE", "withholding_period:GRAPEVINE", "rates:POTATO"] });
+  const partial = buildMasterBackfillPatch(old, detail({ registered_uses: [
+    { crop: "Grapevines", target: "weeds", rates: [rate] }] }));
+  assertEquals(partial.patch?.verification_unresolved_fields, undefined);
+  const empty = buildMasterBackfillPatch(old, detail({ registered_uses: [] }));
+  assertEquals(empty.patch?.verification_unresolved_fields, undefined);
+  assertEquals(isIncompleteMaster(old), true);
+  const noPositivePeriod = buildMasterBackfillPatch(old, detail({ registered_uses: [
+    { crop: "Grapevines", target: "weeds", rates: [rate], withholding_period_days: 0,
+      restrictions: [], statements: [] }] }));
+  assertEquals(noPositivePeriod.patch?.verification_unresolved_fields, undefined);
+  assertEquals((noPositivePeriod.patch?.registered_uses as Array<Record<string, unknown>> | undefined)?.[0].withholding_period_days, undefined);
+});
+
+Deno.test("manufacturer label cannot silently replace a stored active concentration unit", () => {
+  const row = master({ active_ingredients: [{ name: active.name, concentration: 200, concentration_unit: "g/L" }] });
+  const conflicting = detail({ active_ingredients: [{ ...active, concentration_unit: "mg/L", identity_source: "manufacturer_label" }] });
+  assertEquals(buildMasterBackfillPatch(row, conflicting).status, "evidence_conflict");
 });
 
 Deno.test("store boundary rejects client identity and invalid structured fields", () => {
