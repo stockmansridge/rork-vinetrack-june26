@@ -3,6 +3,7 @@
 import { isIncompleteMaster } from "../supabase/functions/chemical-info-lookup/ingestion/master_backfill.ts";
 import type { MasterRow } from "../supabase/functions/chemical-info-lookup/ingestion/contract.ts";
 import type { BackfillPreviewResponse } from "../supabase/functions/chemical-info-lookup/ingestion/master_backfill_preview.ts";
+import type { IndexFailureReason } from "../supabase/functions/chemical-info-lookup/ingestion/manufacturer_label_index.ts";
 
 /** Versioned, reviewed dry-run record. A hash covers the entire proposed patch, not just rates. */
 const reviewableStatuses = new Set(["preview_ready", "manufacturer_label_not_found", "identity_conflict",
@@ -81,11 +82,21 @@ export async function executeReviewedPreview<T>(plan: ReviewedRow, row: MasterRo
   return { status: "preview_ready", reason: null, result: await apply() };
 }
 
+const indexedFailureReasons: ReadonlySet<string> = new Set<IndexFailureReason>([
+  "candidate_not_approved", "index_request_failed", "no_web_search_evidence",
+  "exact_url_not_consulted", "malformed_index_result", "product_identity_mismatch",
+  "registration_missing", "active_identity_mismatch", "rate_condition_incomplete", "simanex_completeness_failed",
+]);
+
 /** Only reason codes, never free-form evidence or URLs, reach runner logs. */
 export function safeDiagnosticReason(response: BackfillPreviewResponse): string | null {
   if (!["evidence_conflict", "identity_conflict", "manufacturer_label_not_found"].includes(response.status)) return null;
   const reason = response.evidence?.reason ?? (Array.isArray(response.evidence?.conflicts) ? response.evidence.conflicts[0] : null);
-  return typeof reason === "string" && /^[a-z][a-z0-9_]{0,79}$/.test(reason) ? reason : null;
+  if (typeof reason !== "string") return null;
+  if (/^[a-z][a-z0-9_]{0,79}$/.test(reason)) return reason;
+  if (response.status !== "manufacturer_label_not_found") return null;
+  const indexed = /^label_index_unavailable: ([a-z][a-z0-9_]{0,79})$/.exec(reason);
+  return indexed?.[0] === reason && indexedFailureReasons.has(indexed[1]) ? reason : null;
 }
 
 export interface Checkpoint {

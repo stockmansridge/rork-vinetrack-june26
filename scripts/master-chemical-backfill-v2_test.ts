@@ -157,6 +157,40 @@ Deno.test("runner prints safe manufacturer discovery reasons and retains conflic
   assertEquals(safeDiagnosticReason({ ...response, status: "already_complete", evidence: { reason: "search_timeout" } }), null);
 });
 
+Deno.test("runner prints only fixed indexed reasons for missing manufacturer labels", () => {
+  const response = { status: "manufacturer_label_not_found", evidence: {} } as BackfillPreviewResponse;
+  for (const code of [
+    "candidate_not_approved", "index_request_failed", "no_web_search_evidence",
+    "exact_url_not_consulted", "malformed_index_result", "product_identity_mismatch",
+    "registration_missing", "active_identity_mismatch", "rate_condition_incomplete", "simanex_completeness_failed",
+  ]) {
+    const reason = `label_index_unavailable: ${code}`;
+    const diagnostic = safeDiagnosticReason({ ...response, evidence: { reason } });
+    assertEquals(diagnostic, reason);
+    assertEquals(`SIMANEX 900 WG HERBICIDE ${response.status}${diagnostic ? `: ${diagnostic}` : ""}`,
+      `SIMANEX 900 WG HERBICIDE manufacturer_label_not_found: ${reason}`);
+  }
+});
+
+Deno.test("runner suppresses unapproved indexed text, URLs and tokens without changing conflict diagnostics", () => {
+  const response = { status: "manufacturer_label_not_found", evidence: {} } as BackfillPreviewResponse;
+  for (const reason of [
+    "label_index_unavailable: unknown_code", "label_index_unavailable: arbitrary free-form text",
+    "label_index_unavailable: exact_url_not_consulted: extra", "label_index_unavailable: exact_url_not_consulted ",
+    "label_index_unavailable: https://example.com/label.pdf", "label_index_unavailable: Bearer secret",
+    "label_index_unavailable: token=secret", "label_index_unavailable: exact_url_not_consulted https://example.com",
+    "label_index_unavailable: exact_url_not_consulted\n", "label_index_unavailable: ", "other_prefix: exact_url_not_consulted",
+  ]) assertEquals(safeDiagnosticReason({ ...response, evidence: { reason } }), null);
+  assertEquals(safeDiagnosticReason({ ...response, status: "evidence_conflict",
+    evidence: { reason: "vineyard_use_or_rate" } }), "vineyard_use_or_rate");
+  assertEquals(safeDiagnosticReason({ ...response, status: "identity_conflict",
+    evidence: { conflicts: ["manufacturer_product_identity_mismatch"] } }), "manufacturer_product_identity_mismatch");
+  for (const status of ["identity_conflict", "evidence_conflict"] as const) {
+    assertEquals(safeDiagnosticReason({ ...response, status,
+      evidence: { reason: "label_index_unavailable: exact_url_not_consulted" } }), null);
+  }
+});
+
 Deno.test("resume skips successes and failures; retry-failed targets only failures", () => {
   const checkpoint = { ids: ["a", "b", "c", "d"], completed: { a: "updated" }, failed: { c: "lookup_unavailable" } };
   assertEquals(pendingIds(checkpoint, false), ["b", "d"]);
