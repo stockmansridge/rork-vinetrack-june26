@@ -136,7 +136,7 @@ import { chooseLabelCandidate, confirmedOCRName, directOfficialLabelURL } from "
 import { discoverUnverifiedLabel } from "./unverified_label_discovery.ts";
 import { nameCorresponds } from "./ingestion/matching.ts";
 import { labelApprovalIdentifiers, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardRateSummary, vineyardTableRate, withWebEnrichment } from "./web_lookup.ts";
-import { readManufacturerLabelViaWebIndex, shouldReadManufacturerIndex } from "./ingestion/manufacturer_label_index.ts";
+import { distinctLabelDocument, finalAttemptedLabelUrl, readManufacturerLabelViaWebIndex, shouldReadManufacturerIndex } from "./ingestion/manufacturer_label_index.ts";
 import { discoverManufacturerUrlsDetailed, findWebMasterIdentities, identityCandidate, identityResearch, selectedIdentity, verifiedManufacturerLead, type ManufacturerLeads, type WebIdentity } from "./web_identity.ts";
 import { alternateManufacturerLabel, companionDirectionsUrl, pageMatchesLockedProduct, requiresAttachedDirections, verifiesTradingAs } from "./ingestion/manufacturer_companion.ts";
 import { safeManufacturerFetchReason } from "./ingestion/manufacturer_document.ts";
@@ -1517,7 +1517,11 @@ Deno.serve(async (req: Request) => {
         replacementLabel = fallback.leads?.labelUrl ?? null;
         searchedDirectReplacement = !!replacementLabel;
       }
-      if (enrichment?.diagnostics.manufacturer_label_fetch === "failure" && replacementLabel) {
+      // A query-only variant is the same failed document, not a second approved label.
+      if (replacementLabel && manufacturerLabel && !distinctLabelDocument(manufacturerLabel, replacementLabel))
+        replacementLabel = null;
+      const alternateAttempted = enrichment?.diagnostics.manufacturer_label_fetch === "failure" && !!replacementLabel;
+      if (alternateAttempted && replacementLabel) {
         enrichment = await enrichFromManufacturerLabel({
           deps: { fetchFn: fetch, now: () => new Date() }, manufacturerLabelUrl: replacementLabel,
           sourcePageUrl: page?.finalUrl ?? replacementLabel, regulatorUses: [], registeredProductName: canonicalName,
@@ -1530,30 +1534,31 @@ Deno.serve(async (req: Request) => {
           !labelApprovalIdentifiers(enrichment.labelText, countryCode).numbers.includes(backfillRow.registration_number))
         return { identity_conflict: { manufacturer_label_url: replacementLabel,
           reason: "printed_registration_mismatch" } };
-      if (backfillRow && manufacturerLabel && shouldReadManufacturerIndex(originalAccessStatus, !!readableV2Label(enrichment)) &&
-          !enrichment?.diagnostics.identity_mismatch && manufacturerHostEligible(manufacturerLabel, countryCode, identity.registrant)) {
+      const indexedLabelUrl = manufacturerLabel ? finalAttemptedLabelUrl(manufacturerLabel, replacementLabel, alternateAttempted) : null;
+      if (backfillRow && indexedLabelUrl && shouldReadManufacturerIndex(originalAccessStatus, !!readableV2Label(enrichment)) &&
+          !enrichment?.diagnostics.identity_mismatch && manufacturerHostEligible(indexedLabelUrl, countryCode, identity.registrant)) {
         const indexed = await readManufacturerLabelViaWebIndex({ name: backfillRow.registered_product_name,
           registrant: backfillRow.registrant ?? "", registrationNumber: backfillRow.registration_number,
-          activeIngredients: backfillRow.active_ingredients, labelUrl: manufacturerLabel, country: countryCode,
+          activeIngredients: backfillRow.active_ingredients, labelUrl: indexedLabelUrl, country: countryCode,
           apiKey, fetchFn: fetch });
         if (indexed.status === "identity_conflict") return { identity_conflict: {
-          manufacturer_label_url: manufacturerLabel, reason: indexed.reason } };
-        if (indexed.status !== "ready") return { discovery_reason: "label_index_unavailable" };
+          manufacturer_label_url: indexedLabelUrl, reason: indexed.reason } };
+        if (indexed.status !== "ready") return { discovery_reason: `label_index_unavailable: ${indexed.reason}` as const };
         const indexedDetail = buildStructuredResponse({ product_name: backfillRow.registered_product_name,
           product_category: backfillRow.product_category, form_type: backfillRow.form_type,
           active_ingredients: indexed.actives, registration_number: backfillRow.registration_number,
-          registrant: backfillRow.registrant, manufacturer_label_url: manufacturerLabel,
+          registrant: backfillRow.registrant, manufacturer_label_url: indexedLabelUrl,
           registered_uses: indexed.uses }, countryCode, "Manufacturer label via web search index");
         indexedDetail.registration.scheme = backfillRow.registration_scheme;
         indexedDetail.registration.registration_number = backfillRow.registration_number;
-        indexedDetail.registration.manufacturer_label_url = manufacturerLabel;
+        indexedDetail.registration.manufacturer_label_url = indexedLabelUrl;
         indexedDetail.registration.manufacturer_label_verified = true;
         indexedDetail.registration.manufacturer_label_retrieval_method = "web_search_index";
         indexedDetail.registration.manufacturer_label_identifiers = indexed.identifiers;
         indexedDetail.active_ingredients = indexedDetail.active_ingredients.map((active: any) => ({ ...active,
           identity_source: "manufacturer_label" }));
         indexedDetail.verification.sources.push({ kind: "manufacturer_label", name: "Product directions",
-          reference: manufacturerLabel, retrieval_method: "web_search_index" });
+          reference: indexedLabelUrl, retrieval_method: "web_search_index" });
         applyRateIdentities(indexedDetail);
         stripStructuredDirectionSeeds(indexedDetail);
         applyDefaultRateOptions(indexedDetail);

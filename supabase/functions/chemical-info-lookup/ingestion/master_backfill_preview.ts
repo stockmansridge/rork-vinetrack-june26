@@ -1,4 +1,5 @@
 import type { MasterRow, Jsonish } from "./contract.ts";
+import type { IndexFailureReason } from "./manufacturer_label_index.ts";
 import { buildCurrentSnapshot, type PreviewStore } from "./review_preview.ts";
 import { authoritativeBackfillDetail, buildMasterBackfillPatch, lockedWebIdentity, storeBackfillPreview, type BackfillDetail } from "./master_backfill.ts";
 import { classifyUrl, manufacturerHostEligible } from "../research/classify.ts";
@@ -42,7 +43,8 @@ export interface BackfillResearchPayload {
   identity_conflict?: { printed?: string | null; manufacturer_label_url?: string | null; reason?: string };
   discovery_reason?: "search_no_candidate" | "search_timeout" | "host_not_verified" | "product_page_fetch_failed" |
     "product_name_mismatch" | "label_link_not_found" | "label_fetch_failed" | `label_fetch_failed_${string}` |
-    `label_fetch_http_${number}` | "label_unreadable" | "label_index_unavailable";
+    `label_fetch_http_${number}` | "label_unreadable" | "label_index_unavailable" |
+    `label_index_unavailable: ${IndexFailureReason}`;
 }
 
 function baseResponse(row: MasterRow): BackfillPreviewResponse {

@@ -1,7 +1,7 @@
 import type { MasterRow } from "./contract.ts";
 import type { ResearchRegisteredUse } from "../research/schema.ts";
 import { parseChemicalResearchResult } from "../research/schema.ts";
-import { callResponsesApi, DEFAULT_RESEARCH_MODEL, type ResponsesCallResult } from "../research/responses_client.ts";
+import { callResponsesApi, DEFAULT_RESEARCH_MODEL, OpenAIResearchError, type ResponsesCallResult } from "../research/responses_client.ts";
 import { classifyUrl, manufacturerHostEligible } from "../research/classify.ts";
 import { DIRECTION_SEED_KEY } from "../rate_identity.ts";
 
@@ -9,6 +9,24 @@ import { DIRECTION_SEED_KEY } from "../rate_identity.ts";
 export function shouldReadManufacturerIndex(originalStatus: number | null | undefined, alternateSucceeded: boolean): boolean {
   return (originalStatus === 403 || originalStatus === 429) && !alternateSucceeded;
 }
+
+/** A query-string change cannot make an access-denied PDF into a distinct alternate. */
+export function distinctLabelDocument(original: string, candidate: string): boolean {
+  try {
+    const first = new URL(original); const second = new URL(candidate);
+    return first.protocol === "https:" && second.protocol === "https:" &&
+      (first.host !== second.host || first.pathname !== second.pathname);
+  } catch { return false; }
+}
+
+/** The indexed candidate is the last distinct approved PDF actually fetched, never an unattempted discovery lead. */
+export function finalAttemptedLabelUrl(original: string, alternate: string | null, alternateAttempted: boolean): string {
+  return alternateAttempted && alternate ? alternate : original;
+}
+
+export type IndexFailureReason = "candidate_not_approved" | "index_request_failed" | "no_web_search_evidence" |
+  "exact_url_not_consulted" | "malformed_index_result" | "product_identity_mismatch" |
+  "registration_missing" | "active_identity_mismatch" | "rate_condition_incomplete" | "simanex_completeness_failed";
 
 export interface IndexedLabelInput {
   name: string;
@@ -23,7 +41,8 @@ export interface IndexedLabelInput {
 
 type IndexedLabelResult = { status: "ready"; uses: Record<string, unknown>[];
   actives: Array<Record<string, unknown>>; identifiers: { numbers: string[]; printed_values: string[] } } |
-  { status: "label_index_unavailable" | "identity_conflict"; reason?: string };
+  { status: "label_index_unavailable"; reason: IndexFailureReason } |
+  { status: "identity_conflict"; reason: "product_identity_mismatch" | "printed_registration_mismatch" | "active_identity_mismatch" };
 
 function exactUrl(a: string, b: string): boolean {
   try {
@@ -61,7 +80,7 @@ export async function readManufacturerLabelViaWebIndex(input: IndexedLabelInput)
   if (input.country !== "AU" || !input.name || !input.registrant || !/^\d{4,7}$/.test(input.registrationNumber) ||
     !input.activeIngredients.length || !input.apiKey || !manufacturerHostEligible(input.labelUrl, input.country, input.registrant) ||
     classifyUrl(input.labelUrl, input.country).kind !== "label_document" ||
-    !new URL(input.labelUrl).pathname.toLowerCase().endsWith(".pdf")) return { status: "label_index_unavailable" };
+    !new URL(input.labelUrl).pathname.toLowerCase().endsWith(".pdf")) return { status: "label_index_unavailable", reason: "candidate_not_approved" };
   let answer: ResponsesCallResult;
   try {
     answer = await callResponsesApi({ model: DEFAULT_RESEARCH_MODEL, apiKey: input.apiKey,
@@ -73,24 +92,26 @@ If the exact manufacturer label cannot be read from the web index, return no ext
 Report only facts printed on that exact PDF. Put its exact URL in every product, active, use and rate source_refs. Do not search for a replacement registration source. Report the printed APVMA approval identifier (including any suffix) in the registration candidate number and use the exact PDF as source_url. Never infer an absent number or concentration.
 For each grapevine dose create a separate use/rate with verbatim raw_text containing the printed numeric dose and unit. In the rate label explicitly include State: <printed states>; Soil: <light or heavy>. Keep each /100 L alternative as its own rate. Keep state-specific critical comments in that use's restrictions. If state, soil or printed dose cannot be bound, return no such rate.`,
       input: `Exact manufacturer label URL: ${input.labelUrl}\nLocked product: ${input.name}\nRegistrant: ${input.registrant}\nCanonical APVMA number: ${input.registrationNumber}\nLocked actives: ${input.activeIngredients.map((a) => `${a.name} ${a.concentration ?? "unknown"} ${a.concentration_unit ?? ""}`).join("; ")}` });
-  } catch { return { status: "label_index_unavailable" }; }
-  if (answer.incomplete || !answer.webSearchCalls.length ||
-    ![...answer.consultedUrls, ...answer.citedUrls].some((url) => exactUrl(url, input.labelUrl)))
-    return { status: "label_index_unavailable" };
+  } catch (error) { return { status: "label_index_unavailable",
+    reason: error instanceof OpenAIResearchError && error.category === "malformed" ? "malformed_index_result" : "index_request_failed" }; }
+  if (answer.incomplete || !answer.webSearchCalls.length)
+    return { status: "label_index_unavailable", reason: "no_web_search_evidence" };
+  if (![...answer.consultedUrls, ...answer.citedUrls].some((url) => exactUrl(url, input.labelUrl)))
+    return { status: "label_index_unavailable", reason: "exact_url_not_consulted" };
   let research;
   try { research = parseChemicalResearchResult(answer.payload); }
-  catch { return { status: "label_index_unavailable" }; }
+  catch { return { status: "label_index_unavailable", reason: "malformed_index_result" }; }
   const refs = (urls: string[]) => urls.length > 0 && urls.every((url) => exactUrl(url, input.labelUrl));
   const name = normal(research.product.canonical_name ?? "");
   const expected = normal(input.name);
   if (!refs(research.product.source_refs) || !name || !expected ||
     !expected.split(" ").every((token) => name.split(" ").includes(token)) ||
     research.product.registrant && normal(research.product.registrant) !== normal(input.registrant))
-    return { status: "identity_conflict", reason: "manufacturer_product_identity_mismatch" };
+    return { status: "identity_conflict", reason: "product_identity_mismatch" };
   const printed = research.registration_candidates.filter((candidate) => candidate.scheme === "apvma" &&
     candidate.source_url && exactUrl(candidate.source_url, input.labelUrl) && candidate.country === "AU")
     .map((candidate) => candidate.number ?? "");
-  if (!printed.length) return { status: "label_index_unavailable" };
+  if (!printed.length) return { status: "label_index_unavailable", reason: "registration_missing" };
   if (printed.some((number) => !/^\d{4,7}(?:\/\d{4,7})*$/.test(number) ||
     number.split("/")[0] !== input.registrationNumber)) return { status: "identity_conflict", reason: "printed_registration_mismatch" };
   if (research.active_ingredients.length !== input.activeIngredients.length ||
@@ -99,15 +120,15 @@ For each grapevine dose create a separate use/rate with verbatim raw_text contai
       active.concentration != null && active.concentration_unit != null &&
       (locked.concentration == null || locked.concentration === active.concentration) &&
       (locked.concentration_unit == null || normal(locked.concentration_unit) === normal(active.concentration_unit)))))
-    return { status: "identity_conflict", reason: "manufacturer_product_or_chemistry_mismatch" };
+    return { status: "identity_conflict", reason: "active_identity_mismatch" };
   const uses: Record<string, unknown>[] = [];
   for (const use of research.registered_uses) {
     if (!/grape|vineyard/i.test(use.crop)) continue;
-    if (!refs(use.source_refs)) return { status: "label_index_unavailable" };
+    if (!refs(use.source_refs)) return { status: "label_index_unavailable", reason: "rate_condition_incomplete" };
     for (const rate of use.rates) {
-      if (!refs(rate.source_refs) || !printedDose(rate)) return { status: "label_index_unavailable" };
+      if (!refs(rate.source_refs) || !printedDose(rate)) return { status: "label_index_unavailable", reason: "rate_condition_incomplete" };
       const condition = stateSoil(rate.label ?? "");
-      if (!condition) return { status: "label_index_unavailable" };
+      if (!condition) return { status: "label_index_unavailable", reason: "rate_condition_incomplete" };
       for (const target of use.targets.length ? use.targets : [""]) uses.push({ crop: use.crop, target,
         [DIRECTION_SEED_KEY]: { crop: use.crop, targets: use.targets, condition },
         conditions: condition, restrictions: use.restrictions.join("; ") || null,
@@ -115,7 +136,7 @@ For each grapevine dose create a separate use/rate with verbatim raw_text contai
           unit: rate.unit, raw_text: rate.raw_text, source_refs: [input.labelUrl] }], source_refs: [input.labelUrl] });
     }
   }
-  if (!uses.length) return { status: "label_index_unavailable" };
+  if (!uses.length) return { status: "label_index_unavailable", reason: "rate_condition_incomplete" };
   // The SIMANEX acceptance contract is a completeness check, never a source of rates.
   if (input.registrationNumber === "62917" && normal(input.name) === "simanex 900 wg herbicide") {
     const expected = [
@@ -131,7 +152,7 @@ For each grapevine dose create a separate use/rate with verbatim raw_text contai
         (use.rates as Array<Record<string, unknown>>)[0]?.unit === unit &&
         (use.rates as Array<Record<string, unknown>>)[0]?.basis === basis &&
         (states === "QLD" ? /at least two years old/i : /at least 12 months old.*split applications are preferred/i)
-          .test(String(use.restrictions ?? ""))))) return { status: "label_index_unavailable" };
+          .test(String(use.restrictions ?? ""))))) return { status: "label_index_unavailable", reason: "simanex_completeness_failed" };
   }
   const printed_values = [...new Set(printed)];
   return { status: "ready", uses,
