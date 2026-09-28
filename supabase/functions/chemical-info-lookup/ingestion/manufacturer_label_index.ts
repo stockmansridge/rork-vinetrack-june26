@@ -24,7 +24,10 @@ export function finalAttemptedLabelUrl(original: string, alternate: string | nul
   return alternateAttempted && alternate ? alternate : original;
 }
 
-export type IndexFailureReason = "candidate_not_approved" | "index_request_failed" | "no_web_search_evidence" |
+export const MANUFACTURER_INDEX_TIMEOUT_MS = 60_000;
+
+export type IndexFailureReason = "candidate_not_approved" | "index_request_failed" |
+  "index_request_timeout" | "index_request_transient" | "index_request_permanent" | "index_request_refusal" | "no_web_search_evidence" |
   "exact_url_not_consulted" | "malformed_index_result" | "product_identity_mismatch" |
   "registration_missing" | "active_identity_mismatch" | "rate_condition_incomplete" | "simanex_completeness_failed";
 
@@ -84,7 +87,7 @@ export async function readManufacturerLabelViaWebIndex(input: IndexedLabelInput)
   let answer: ResponsesCallResult;
   try {
     answer = await callResponsesApi({ model: DEFAULT_RESEARCH_MODEL, apiKey: input.apiKey,
-      fetchFn: input.fetchFn ?? fetch, timeoutMs: 30_000, reasoningEffort: "low",
+      fetchFn: input.fetchFn ?? fetch, timeoutMs: MANUFACTURER_INDEX_TIMEOUT_MS, reasoningEffort: "low",
       searchCountry: "AU", allowedDomains: [new URL(input.labelUrl).hostname],
       instructions: `Read only the exact manufacturer product label identified by this URL: ${input.labelUrl}.
 Do not use APVMA, regulators, resellers, SDS, technical notes, brochures, other products, or model memory.
@@ -92,8 +95,15 @@ If the exact manufacturer label cannot be read from the web index, return no ext
 Report only facts printed on that exact PDF. Put its exact URL in every product, active, use and rate source_refs. Do not search for a replacement registration source. Report the printed APVMA approval identifier (including any suffix) in the registration candidate number and use the exact PDF as source_url. Never infer an absent number or concentration.
 For each grapevine dose create a separate use/rate with verbatim raw_text containing the printed numeric dose and unit. In the rate label explicitly include State: <printed states>; Soil: <light or heavy>. Keep each /100 L alternative as its own rate. Keep state-specific critical comments in that use's restrictions. If state, soil or printed dose cannot be bound, return no such rate.`,
       input: `Exact manufacturer label URL: ${input.labelUrl}\nLocked product: ${input.name}\nRegistrant: ${input.registrant}\nCanonical APVMA number: ${input.registrationNumber}\nLocked actives: ${input.activeIngredients.map((a) => `${a.name} ${a.concentration ?? "unknown"} ${a.concentration_unit ?? ""}`).join("; ")}` });
-  } catch (error) { return { status: "label_index_unavailable",
-    reason: error instanceof OpenAIResearchError && error.category === "malformed" ? "malformed_index_result" : "index_request_failed" }; }
+  } catch (error) {
+    const category = error instanceof OpenAIResearchError ? error.category : null;
+    const reason: IndexFailureReason = category === "malformed" ? "malformed_index_result" :
+      category === "timeout" ? "index_request_timeout" :
+      category === "transient" ? "index_request_transient" :
+      category === "permanent" ? "index_request_permanent" :
+      category === "refusal" ? "index_request_refusal" : "index_request_failed";
+    return { status: "label_index_unavailable", reason };
+  }
   if (answer.incomplete || !answer.webSearchCalls.length)
     return { status: "label_index_unavailable", reason: "no_web_search_evidence" };
   if (![...answer.consultedUrls, ...answer.citedUrls].some((url) => exactUrl(url, input.labelUrl)))

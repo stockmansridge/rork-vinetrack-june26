@@ -1,6 +1,6 @@
 // deno-lint-ignore-file no-import-prefix
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { distinctLabelDocument, finalAttemptedLabelUrl, readManufacturerLabelViaWebIndex, shouldReadManufacturerIndex } from "./manufacturer_label_index.ts";
+import { distinctLabelDocument, finalAttemptedLabelUrl, MANUFACTURER_INDEX_TIMEOUT_MS, readManufacturerLabelViaWebIndex, shouldReadManufacturerIndex } from "./manufacturer_label_index.ts";
 import { cloneResearch, responsesEnvelope } from "../research/test_fixtures.ts";
 import { normaliseRegisteredUses } from "../registered_use_normaliser.ts";
 import { applyRateIdentities, stripStructuredDirectionSeeds } from "../rate_identity.ts";
@@ -112,6 +112,32 @@ Deno.test("two access-denied ADAMA PDFs index only the final attempted alternate
   const thirdOnly = await readManufacturerLabelViaWebIndex({ ...locked, labelUrl: indexedLabelUrl,
     fetchFn: fetchFor(indexedResponse(undefined, thirdPdf, thirdPdf)) });
   assertEquals(thirdOnly, { status: "label_index_unavailable", reason: "exact_url_not_consulted" });
+});
+
+Deno.test("manufacturer index uses one bounded 60-second Responses attempt and fixed transport categories", async () => {
+  assertEquals(MANUFACTURER_INDEX_TIMEOUT_MS, 60_000);
+  const cases: Array<[string, () => Promise<Response>, string]> = [
+    ["timeout", () => Promise.reject(new DOMException("sensitive token", "AbortError")), "index_request_timeout"],
+    ["transient", () => Promise.resolve(new Response("sensitive token", { status: 429 })), "index_request_transient"],
+    ["permanent", () => Promise.resolve(new Response("sensitive token", { status: 401 })), "index_request_permanent"],
+    ["refusal", () => Promise.resolve(new Response(JSON.stringify({ output: [{ type: "message",
+      content: [{ type: "refusal", refusal: "sensitive token" }] }] }), { status: 200 })), "index_request_refusal"],
+    ["malformed", () => Promise.resolve(new Response("sensitive token", { status: 200 })), "malformed_index_result"],
+  ];
+  for (const [category, respond, reason] of cases) {
+    let calls = 0;
+    const fetchFn = ((_request: string | URL | Request, init?: RequestInit) => {
+      calls++;
+      assert(init?.signal instanceof AbortSignal, `${category} must have a bounded abort signal`);
+      return respond();
+    }) as typeof fetch;
+    const result = await readManufacturerLabelViaWebIndex({ ...locked, fetchFn });
+    assertEquals(result.status, "label_index_unavailable");
+    if (result.status !== "label_index_unavailable") throw Error("unexpected indexed result");
+    assertEquals(result.reason, reason);
+    assertEquals(calls, 1, `${category} must not retry`);
+    assertEquals(JSON.stringify(result).includes("sensitive token"), false);
+  }
 });
 
 Deno.test("indexed failures expose only fixed, sanitised codes in dry-run evidence", async () => {

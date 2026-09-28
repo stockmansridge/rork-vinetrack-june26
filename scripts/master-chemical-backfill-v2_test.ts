@@ -160,7 +160,8 @@ Deno.test("runner prints safe manufacturer discovery reasons and retains conflic
 Deno.test("runner prints only fixed indexed reasons for missing manufacturer labels", () => {
   const response = { status: "manufacturer_label_not_found", evidence: {} } as BackfillPreviewResponse;
   for (const code of [
-    "candidate_not_approved", "index_request_failed", "no_web_search_evidence",
+    "candidate_not_approved", "index_request_failed", "index_request_timeout", "index_request_transient",
+    "index_request_permanent", "index_request_refusal", "no_web_search_evidence",
     "exact_url_not_consulted", "malformed_index_result", "product_identity_mismatch",
     "registration_missing", "active_identity_mismatch", "rate_condition_incomplete", "simanex_completeness_failed",
   ]) {
