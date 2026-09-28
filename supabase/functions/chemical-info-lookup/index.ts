@@ -136,13 +136,14 @@ import { chooseLabelCandidate, confirmedOCRName, directOfficialLabelURL } from "
 import { discoverUnverifiedLabel } from "./unverified_label_discovery.ts";
 import { nameCorresponds } from "./ingestion/matching.ts";
 import { labelApprovalIdentifiers, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardRateSummary, vineyardTableRate, withWebEnrichment } from "./web_lookup.ts";
-import { distinctLabelDocument, finalAttemptedLabelUrl, readManufacturerLabelViaWebIndex, shouldReadManufacturerIndex } from "./ingestion/manufacturer_label_index.ts";
+import { distinctLabelDocument, finalAttemptedLabelUrl, shouldReadManufacturerIndex } from "./ingestion/manufacturer_label_index.ts";
 import { discoverManufacturerUrlsDetailed, findWebMasterIdentities, identityCandidate, identityResearch, selectedIdentity, verifiedManufacturerLead, type ManufacturerLeads, type WebIdentity } from "./web_identity.ts";
 import { alternateManufacturerLabel, companionDirectionsUrl, pageMatchesLockedProduct, requiresAttachedDirections, verifiesTradingAs } from "./ingestion/manufacturer_companion.ts";
 import { safeManufacturerFetchReason } from "./ingestion/manufacturer_document.ts";
 import { classifyUrl, manufacturerHostEligible } from "./research/classify.ts";
 import { authoritativeBackfillDetail, buildMasterBackfillPatch, isIncompleteMaster, lockedWebIdentity, writeLookupCache } from "./ingestion/master_backfill.ts";
-import { alreadyCompleteBackfill, backfillCountry, finishBackfillPreview, parseBackfillRequest } from "./ingestion/master_backfill_preview.ts";
+import { alreadyCompleteBackfill, authorizeBackfillRequest, backfillCountry, finishBackfillPreview, parseBackfillRequest, readBackfillIndexedLabel, withIndexedDiagnostic } from "./ingestion/master_backfill_preview.ts";
+import type { IndexedLabelSnapshot } from "./ingestion/manufacturer_label_snapshot.ts";
 import {
   buildCandidatePayload,
   buildFieldProvenance,
@@ -1223,6 +1224,8 @@ Deno.serve(async (req: Request) => {
   }
 
   const action = String(body?.action ?? "").toLowerCase();
+  if (body?.capture_indexed_response !== undefined && action !== "master_backfill_preview_v2")
+    return json({ error: "Capture unavailable" }, 403);
   if (!apiKey && action !== "discover_label") {
     return json({ error: "Server is missing OPENAI_API_KEY secret" }, 500);
   }
@@ -1379,23 +1382,28 @@ Deno.serve(async (req: Request) => {
       const backfill = action === "master_backfill_preview_v2";
       const request = backfill ? parseBackfillRequest(body ?? {}) : null;
       if (request && "error" in request) return json({ error: request.error }, 400);
-      if (backfill && !(await isSystemAdmin(req))) return json({ error: "Not authorised" }, 403);
-      const adminId = backfill ? await authenticatedUserId(req) : null;
-      if (backfill && !adminId) return json({ error: "Not authorised" }, 403);
+      const adminAllowed = backfill ? await isSystemAdmin(req) : false;
+      const adminId = backfill && adminAllowed ? await authenticatedUserId(req) : null;
+      if (backfill && "error" in authorizeBackfillRequest(body ?? {}, adminAllowed, adminId))
+        return json({ error: "Not authorised" }, 403);
       const masterId = request && "masterId" in request ? request.masterId : "";
       const masterRows = backfill ? await masterSelect(`select=*&id=eq.${encodeURIComponent(masterId)}&limit=1`) : null;
       if (backfill && (!masterRows || masterRows.length !== 1)) return json({ error: "Master row not found" }, 404);
       const backfillRow = backfill ? masterRows![0] as MasterRow : null;
+      const capture = request && "capture" in request ? request.capture : false;
+      let indexedSnapshot: IndexedLabelSnapshot | null = null;
+      const diagnosticResponse = (response: import("./ingestion/master_backfill_preview.ts").BackfillPreviewResponse) =>
+        withIndexedDiagnostic(response, capture, indexedSnapshot);
       const countryCode = backfillRow ? backfillCountry(backfillRow) : jur.code ?? "";
       if (backfillRow && !lockedWebIdentity(backfillRow))
-        return json(await finishBackfillPreview(backfillRow, adminId!, null, false, previewStore));
+        return json(diagnosticResponse(await finishBackfillPreview(backfillRow, adminId!, null, false, previewStore)));
       const dryRun = request && "dryRun" in request ? request.dryRun : false;
       const finishBackfill = async (payload: any, classificationOnly = false) => {
         if (!backfillRow || !adminId) return json(payload);
         const response = await finishBackfillPreview(backfillRow, adminId, payload, dryRun, previewStore, classificationOnly);
-        return json(response, response.error === "preview_store_failed" ? 503 : 200);
+        return json(diagnosticResponse(response), response.error === "preview_store_failed" ? 503 : 200);
       };
-      if (backfillRow && !isIncompleteMaster(backfillRow)) return json(alreadyCompleteBackfill(backfillRow));
+      if (backfillRow && !isIncompleteMaster(backfillRow)) return json(diagnosticResponse(alreadyCompleteBackfill(backfillRow)));
       // If the local reference table alone closes every remaining gap, no
       // manufacturer search (or AI call) is needed for this Master identity.
       if (backfillRow) {
@@ -1537,10 +1545,12 @@ Deno.serve(async (req: Request) => {
       const indexedLabelUrl = manufacturerLabel ? finalAttemptedLabelUrl(manufacturerLabel, replacementLabel, alternateAttempted) : null;
       if (backfillRow && indexedLabelUrl && shouldReadManufacturerIndex(originalAccessStatus, !!readableV2Label(enrichment)) &&
           !enrichment?.diagnostics.identity_mismatch && manufacturerHostEligible(indexedLabelUrl, countryCode, identity.registrant)) {
-        const indexed = await readManufacturerLabelViaWebIndex({ name: backfillRow.registered_product_name,
+        const indexedRead = await readBackfillIndexedLabel({ name: backfillRow.registered_product_name,
           registrant: backfillRow.registrant ?? "", registrationNumber: backfillRow.registration_number,
           activeIngredients: backfillRow.active_ingredients, labelUrl: indexedLabelUrl, country: countryCode,
-          apiKey, fetchFn: fetch });
+          apiKey, fetchFn: fetch }, { id: backfillRow.id, revision: backfillRow.catalogue_version ?? 1 }, capture);
+        indexedSnapshot = indexedRead.snapshot;
+        const indexed = indexedRead.result;
         if (indexed.status === "identity_conflict") return { identity_conflict: {
           manufacturer_label_url: indexedLabelUrl, reason: indexed.reason } };
         if (indexed.status !== "ready") return { discovery_reason: `label_index_unavailable: ${indexed.reason}` as const };

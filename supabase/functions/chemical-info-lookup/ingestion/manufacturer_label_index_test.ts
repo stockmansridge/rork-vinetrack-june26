@@ -7,6 +7,11 @@ import { applyRateIdentities, stripStructuredDirectionSeeds } from "../rate_iden
 import { finishBackfillPreview } from "./master_backfill_preview.ts";
 import { enrichFromManufacturerLabel } from "./manufacturer_enrichment.ts";
 import type { MasterRow } from "./contract.ts";
+import type { IndexedLabelSnapshot } from "./manufacturer_label_snapshot.ts";
+import { replayIndexedLabelSnapshot } from "./manufacturer_label_snapshot_replay.ts";
+import { saveIndexedDiagnostic } from "../../../../scripts/master-chemical-backfill-v2.ts";
+import { replayFile } from "../../../../scripts/replay-indexed-label-snapshot.ts";
+import { authorizeBackfillRequest, readBackfillIndexedLabel, withIndexedDiagnostic } from "./master_backfill_preview.ts";
 
 const url = "https://www.adama.com/australia/sites/adama_australia/files/product-documents/2025-01/10150_Adama_Simanex_A4xWebLabel_F_0.pdf";
 const originalUrl = "https://www.adama.com/australia/sites/adama_australia/files/product-documents/2024-12/10150_Adama_Simanex_A4xWebLabel_F_MOA_Contents.pdf";
@@ -248,6 +253,94 @@ Deno.test("SIMANEX indexed manufacturer label retains six independent state/soil
     "admin", { detail: indexedDetail }, true, store);
   assertEquals(repeated.status, "no_material_change");
   assertEquals(writes, 0);
+});
+
+Deno.test("opt-in snapshot captures all rate rows before identity failure and replays offline", async () => {
+  let snapshot: IndexedLabelSnapshot | null = null;
+  const result = await readManufacturerLabelViaWebIndex({ ...locked,
+    fetchFn: fetchFor(indexedResponse((research) => { research.product.canonical_name = "OTHER 900 WG HERBICIDE"; })),
+    onDiagnosticSnapshot: (value) => { snapshot = value; } });
+  assertEquals(result, { status: "identity_conflict", reason: "product_identity_mismatch" });
+  if (!snapshot) throw Error("snapshot not captured");
+  const captured: IndexedLabelSnapshot = snapshot;
+  assertEquals(captured.complete, true);
+  assertEquals(captured.comparison?.product_name, false);
+  assertEquals(captured.comparison?.product_source, true);
+  assertEquals(captured.comparison?.registrant, true);
+  assertEquals(captured.extracted?.uses.length, 6);
+  assertEquals(captured.extracted?.uses.map((use) => use.rates[0].value), [2, 4, 1.25, 60, 2.5, 120]);
+  assertEquals(captured.extracted?.uses[0].rates[0].raw_text, "2 kg/ha");
+  assertEquals(captured.extracted?.registration[0].number, "62917/107619");
+  assertEquals(await replayIndexedLabelSnapshot(captured), result);
+  assertEquals(await replayIndexedLabelSnapshot({ ...captured, extracted: { ...captured.extracted!,
+    product: { ...captured.extracted!.product, name: locked.name } } }).then((outcome) => outcome.status), "ready");
+});
+
+Deno.test("authorised single-record dry run captures one failed indexed attempt, writes no backend state, saves and replays", async () => {
+  const masterId = "10000000-0000-4000-8000-000000000629";
+  const request = authorizeBackfillRequest({ action: "master_backfill_preview_v2", master_chemical_id: masterId,
+    dryRun: true, capture_indexed_response: true }, true, "admin");
+  assertEquals("error" in request, false);
+  let calls = 0;
+  const indexedRead = await readBackfillIndexedLabel({ ...locked,
+    fetchFn: ((_url, _init) => { calls++; return Promise.resolve(indexedResponse((research) => {
+      research.product.canonical_name = "OTHER 900 WG HERBICIDE";
+    })); }) as typeof fetch }, { id: masterId, revision: 1 }, true);
+  const indexed = indexedRead.result;
+  const snapshot = indexedRead.snapshot;
+  assertEquals(calls, 1);
+  assertEquals(indexed, { status: "identity_conflict", reason: "product_identity_mismatch" });
+  if (indexed.status !== "identity_conflict") throw Error("expected conflict");
+  if (!snapshot) throw Error("missing capture");
+  const captured: IndexedLabelSnapshot = snapshot;
+  assertEquals(captured.validation, { status: indexed.status, reason: indexed.reason });
+  assertEquals(captured.extracted?.uses.length, 6);
+  let writes = 0;
+  const row = { id: masterId, catalogue_version: 1, registration_country: "AU", registration_scheme: "apvma",
+    registration_identity_key: "AU:apvma:62917", registration_number: "62917", registered_product_name: locked.name,
+    registrant: locked.registrant, active_ingredients: locked.activeIngredients } as MasterRow;
+  const preview = await finishBackfillPreview(row, "admin", { identity_conflict: { reason: indexed.reason } }, true,
+    { insertPreview: () => { writes++; return Promise.resolve({ id: "unexpected" }); } });
+  const response = withIndexedDiagnostic(preview, true, captured);
+  assertEquals(response.status, "identity_conflict");
+  assertEquals(response.preview_id, null);
+  assertEquals(withIndexedDiagnostic(preview, false, captured).indexed_diagnostic, undefined);
+  assertEquals(writes, 0);
+  const dir = await Deno.makeTempDir();
+  const file = `${dir}/indexed.json`;
+  try {
+    const saved = await saveIndexedDiagnostic(response, masterId, 1, file);
+    assertEquals(saved.complete, true);
+    assertEquals(saved.validation, "identity_conflict: product_identity_mismatch");
+    const replay = await replayFile(file);
+    assertEquals(replay.replayed, replay.original);
+    assertEquals((replay.vineyard_rates as unknown[]).length, 6);
+  } finally { await Deno.remove(dir, { recursive: true }); }
+});
+
+Deno.test("ordinary indexed read never attaches diagnostics; transport failure has no invented response", async () => {
+  const master = { id: "10000000-0000-4000-8000-000000000629", revision: 1 };
+  const ordinary = await readBackfillIndexedLabel({ ...locked, fetchFn: fetchFor(indexedResponse()) }, master, false);
+  assertEquals(ordinary.result.status, "ready");
+  assertEquals(ordinary.snapshot, null);
+  const unavailable = await readBackfillIndexedLabel({ ...locked,
+    fetchFn: (() => Promise.reject(new Error("network unavailable"))) as typeof fetch }, master, true);
+  assertEquals(unavailable.result, { status: "label_index_unavailable", reason: "index_request_transient" });
+  assertEquals(unavailable.snapshot, null);
+});
+
+Deno.test("snapshot redacts untrusted credentials and refuses incomplete offline replay", async () => {
+  let snapshot: IndexedLabelSnapshot | null = null;
+  await readManufacturerLabelViaWebIndex({ ...locked,
+    fetchFn: fetchFor(indexedResponse((research) => { research.registered_uses[0].rates[0].raw_text = "Bearer secret-token"; })),
+    onDiagnosticSnapshot: (value) => { snapshot = value; } });
+  if (!snapshot) throw Error("snapshot not captured");
+  const captured: IndexedLabelSnapshot = snapshot;
+  assertEquals(captured.complete, false);
+  assertEquals(JSON.stringify(captured).includes("secret-token"), false);
+  let refused = false;
+  try { await replayIndexedLabelSnapshot(captured); } catch { refused = true; }
+  assertEquals(refused, true);
 });
 
 Deno.test("indexed vineyard-rate failures return only their fixed diagnostic codes", async () => {

@@ -1,9 +1,26 @@
 // deno-lint-ignore-file no-import-prefix
 import { assertEquals, assertThrows } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { applyPreviewIfExecuting, containRowFailure, executeReviewedPreview, parseReviewedPlan, patchFingerprint, pendingIds, reviewedRow, safeDiagnosticReason, selectBackfillRows } from "./master-chemical-backfill-v2.ts";
+import { applyPreviewIfExecuting, containRowFailure, executeReviewedPreview, parseCaptureArgs, parseReviewedPlan, patchFingerprint, pendingIds, reviewedRow, safeDiagnosticReason, saveIndexedDiagnostic, selectBackfillRows } from "./master-chemical-backfill-v2.ts";
 import { finishBackfillPreview, type BackfillPreviewResponse } from "../supabase/functions/chemical-info-lookup/ingestion/master_backfill_preview.ts";
 import { storeBackfillPreview, writeLookupCache } from "../supabase/functions/chemical-info-lookup/ingestion/master_backfill.ts";
 import type { MasterRow } from "../supabase/functions/chemical-info-lookup/ingestion/contract.ts";
+
+Deno.test("capture runner rejects incompatible modes and never saves an absent provider response", async () => {
+  const id = "10000000-0000-4000-8000-000000000629";
+  const valid = ["--dry-run", "--master-id", id, "--limit", "1", "--capture-indexed-response", "diagnostic.json"];
+  assertEquals(parseCaptureArgs(valid), { masterId: id, file: "diagnostic.json" });
+  for (const invalid of [
+    valid.filter((arg) => arg !== "--dry-run"), valid.map((arg) => arg === "1" ? "2" : arg),
+    [...valid, "--execute"], [...valid, "--resume"], [...valid, "--plan", "plan.json"],
+    [...valid, "--checkpoint", "checkpoint.json"], [...valid, "--use-plan"],
+    [...valid, "--retry-failed"], [...valid, "--master-id", id],
+  ]) assertThrows(() => parseCaptureArgs(invalid));
+  const response = { master_chemical_id: id, base_revision: 1,
+    indexed_diagnostic: { snapshot: null, outcome: "no_indexed_response" } } as BackfillPreviewResponse;
+  let refused = false;
+  try { await saveIndexedDiagnostic(response, id, 1, "diagnostic.json"); } catch { refused = true; }
+  assertEquals(refused, true);
+});
 
 Deno.test("dry-run cannot insert preview, write V2 cache or apply Master review", async () => {
   const calls: string[] = [];

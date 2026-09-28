@@ -4,6 +4,7 @@ import { parseChemicalResearchResult } from "../research/schema.ts";
 import { callResponsesApi, DEFAULT_RESEARCH_MODEL, OpenAIResearchError, type ResponsesCallResult } from "../research/responses_client.ts";
 import { classifyUrl, manufacturerHostEligible } from "../research/classify.ts";
 import { DIRECTION_SEED_KEY } from "../rate_identity.ts";
+import { captureIndexedLabelSnapshot, type IndexedLabelSnapshot } from "./manufacturer_label_snapshot.ts";
 
 /** An indexed read is permitted only after the original verified PDF was access-denied and the alternate failed. */
 export function shouldReadManufacturerIndex(originalStatus: number | null | undefined, alternateSucceeded: boolean): boolean {
@@ -43,6 +44,8 @@ export interface IndexedLabelInput {
   country: string;
   apiKey: string;
   fetchFn?: typeof fetch;
+  /** Opt-in controlled capture; never logged or included in the public preview response. */
+  onDiagnosticSnapshot?: (snapshot: IndexedLabelSnapshot) => void;
 }
 
 type IndexedLabelResult = { status: "ready"; uses: Record<string, unknown>[];
@@ -114,43 +117,55 @@ For each grapevine dose create a separate use/rate with verbatim raw_text contai
       category === "refusal" ? "index_request_refusal" : "index_request_failed";
     return { status: "label_index_unavailable", reason };
   }
+  let snapshot: IndexedLabelSnapshot | null = null;
+  if (input.onDiagnosticSnapshot) {
+    try { snapshot = captureIndexedLabelSnapshot(input, answer); }
+    catch { /* Diagnostic delivery must not affect validation. */ }
+  }
+  const finish = (result: IndexedLabelResult): IndexedLabelResult => {
+    if (snapshot && input.onDiagnosticSnapshot) {
+      snapshot.validation = { status: result.status, reason: result.status === "ready" ? null : result.reason };
+      try { input.onDiagnosticSnapshot(snapshot); } catch { /* Diagnostic delivery must not affect validation. */ }
+    }
+    return result;
+  };
   if (answer.incomplete || !answer.webSearchCalls.length)
-    return { status: "label_index_unavailable", reason: "no_web_search_evidence" };
+    return finish({ status: "label_index_unavailable", reason: "no_web_search_evidence" });
   if (![...answer.consultedUrls, ...answer.citedUrls].some((url) => exactUrl(url, input.labelUrl)))
-    return { status: "label_index_unavailable", reason: "exact_url_not_consulted" };
+    return finish({ status: "label_index_unavailable", reason: "exact_url_not_consulted" });
   let research;
   try { research = parseChemicalResearchResult(answer.payload); }
-  catch { return { status: "label_index_unavailable", reason: "malformed_index_result" }; }
+  catch { return finish({ status: "label_index_unavailable", reason: "malformed_index_result" }); }
   const refs = (urls: string[]) => urls.length > 0 && urls.every((url) => exactUrl(url, input.labelUrl));
   const name = normal(research.product.canonical_name ?? "");
   const expected = normal(input.name);
   if (!refs(research.product.source_refs) || !name || !expected ||
     !expected.split(" ").every((token) => name.split(" ").includes(token)) ||
     research.product.registrant && normal(research.product.registrant) !== normal(input.registrant))
-    return { status: "identity_conflict", reason: "product_identity_mismatch" };
+    return finish({ status: "identity_conflict", reason: "product_identity_mismatch" });
   const printed = research.registration_candidates.filter((candidate) => candidate.scheme === "apvma" &&
     candidate.source_url && exactUrl(candidate.source_url, input.labelUrl) && candidate.country === "AU")
     .map((candidate) => candidate.number ?? "");
-  if (!printed.length) return { status: "label_index_unavailable", reason: "registration_missing" };
+  if (!printed.length) return finish({ status: "label_index_unavailable", reason: "registration_missing" });
   if (printed.some((number) => !/^\d{4,7}(?:\/\d{4,7})*$/.test(number) ||
-    number.split("/")[0] !== input.registrationNumber)) return { status: "identity_conflict", reason: "printed_registration_mismatch" };
+    number.split("/")[0] !== input.registrationNumber)) return finish({ status: "identity_conflict", reason: "printed_registration_mismatch" });
   if (research.active_ingredients.length !== input.activeIngredients.length ||
     input.activeIngredients.some((locked) => !research.active_ingredients.some((active) =>
       normal(active.name) === normal(locked.name) && refs(active.source_refs) &&
       active.concentration != null && active.concentration_unit != null &&
       (locked.concentration == null || locked.concentration === active.concentration) &&
       (locked.concentration_unit == null || normal(locked.concentration_unit) === normal(active.concentration_unit)))))
-    return { status: "identity_conflict", reason: "active_identity_mismatch" };
+    return finish({ status: "identity_conflict", reason: "active_identity_mismatch" });
   const uses: Record<string, unknown>[] = [];
   for (const use of research.registered_uses) {
     if (!/grape|vineyard/i.test(use.crop)) continue;
-    if (!refs(use.source_refs)) return { status: "label_index_unavailable", reason: "rate_use_source_mismatch" };
+    if (!refs(use.source_refs)) return finish({ status: "label_index_unavailable", reason: "rate_use_source_mismatch" });
     for (const rate of use.rates) {
-      if (!refs(rate.source_refs)) return { status: "label_index_unavailable", reason: "rate_source_mismatch" };
+      if (!refs(rate.source_refs)) return finish({ status: "label_index_unavailable", reason: "rate_source_mismatch" });
       const doseFailure = printedDoseFailure(rate);
-      if (doseFailure) return { status: "label_index_unavailable", reason: doseFailure };
+      if (doseFailure) return finish({ status: "label_index_unavailable", reason: doseFailure });
       const condition = stateSoil(rate.label ?? "");
-      if (!condition) return { status: "label_index_unavailable", reason: "rate_state_soil_missing" };
+      if (!condition) return finish({ status: "label_index_unavailable", reason: "rate_state_soil_missing" });
       for (const target of use.targets.length ? use.targets : [""]) uses.push({ crop: use.crop, target,
         [DIRECTION_SEED_KEY]: { crop: use.crop, targets: use.targets, condition },
         conditions: condition, restrictions: use.restrictions.join("; ") || null,
@@ -158,7 +173,7 @@ For each grapevine dose create a separate use/rate with verbatim raw_text contai
           unit: rate.unit, raw_text: rate.raw_text, source_refs: [input.labelUrl] }], source_refs: [input.labelUrl] });
     }
   }
-  if (!uses.length) return { status: "label_index_unavailable", reason: "rate_no_vineyard_rows" };
+  if (!uses.length) return finish({ status: "label_index_unavailable", reason: "rate_no_vineyard_rows" });
   // The SIMANEX acceptance contract is a completeness check, never a source of rates.
   if (input.registrationNumber === "62917" && normal(input.name) === "simanex 900 wg herbicide") {
     const expected = [
@@ -174,11 +189,11 @@ For each grapevine dose create a separate use/rate with verbatim raw_text contai
         (use.rates as Array<Record<string, unknown>>)[0]?.unit === unit &&
         (use.rates as Array<Record<string, unknown>>)[0]?.basis === basis &&
         (states === "QLD" ? /at least two years old/i : /at least 12 months old.*split applications are preferred/i)
-          .test(String(use.restrictions ?? ""))))) return { status: "label_index_unavailable", reason: "simanex_completeness_failed" };
+          .test(String(use.restrictions ?? ""))))) return finish({ status: "label_index_unavailable", reason: "simanex_completeness_failed" });
   }
   const printed_values = [...new Set(printed)];
-  return { status: "ready", uses,
+  return finish({ status: "ready", uses,
     actives: research.active_ingredients.map((active) => ({ name: active.name, concentration: active.concentration,
       concentration_unit: active.concentration_unit, identity_source: "manufacturer_label" })),
-    identifiers: { numbers: [...new Set(printed_values.flatMap((value) => value.split("/")))], printed_values } };
+    identifiers: { numbers: [...new Set(printed_values.flatMap((value) => value.split("/")))], printed_values } });
 }

@@ -1,9 +1,14 @@
 // Deno admin runner. No service-role credential; only the signed-in System Admin's
 // short-lived access token. --dry-run never calls preview INSERT, cache INSERT or apply.
+// Capture (requires deployed backend update and signed-in admin JWT in VINETRACK_ADMIN_ACCESS_TOKEN):
+// deno run --allow-env --allow-net --allow-read --allow-write scripts/master-chemical-backfill-v2.ts --dry-run --master-id UUID --limit 1 --capture-indexed-response simanex-indexed.json
+// Replay offline: deno run --allow-read=simanex-indexed.json scripts/replay-indexed-label-snapshot.ts simanex-indexed.json
+// Supply V2_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY as in ordinary admin dry runs; no local OpenAI key.
 import { isIncompleteMaster } from "../supabase/functions/chemical-info-lookup/ingestion/master_backfill.ts";
 import type { MasterRow } from "../supabase/functions/chemical-info-lookup/ingestion/contract.ts";
 import type { BackfillPreviewResponse } from "../supabase/functions/chemical-info-lookup/ingestion/master_backfill_preview.ts";
 import type { IndexFailureReason } from "../supabase/functions/chemical-info-lookup/ingestion/manufacturer_label_index.ts";
+import type { IndexedLabelSnapshot } from "../supabase/functions/chemical-info-lookup/ingestion/manufacturer_label_snapshot.ts";
 
 /** Versioned, reviewed dry-run record. A hash covers the entire proposed patch, not just rates. */
 const reviewableStatuses = new Set(["preview_ready", "manufacturer_label_not_found", "identity_conflict",
@@ -124,8 +129,52 @@ export function selectBackfillRows(rows: MasterRow[], masterId: string | null, l
     .sort((a, b) => a.id.localeCompare(b.id)).slice(0, limit);
 }
 
+const masterUuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
+/** An isolated diagnostic mode: never parses a reviewed plan or enters the batch/apply loop. */
+export function parseCaptureArgs(args: string[]): { masterId: string; file: string } | null {
+  if (!args.includes("--capture-indexed-response")) return null;
+  const allowed = new Set(["--capture-indexed-response", "--master-id", "--limit", "--dry-run"]);
+  const values = new Map<string, string>();
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i];
+    if (!allowed.has(flag) || values.has(flag)) throw new Error("Capture is incompatible with execute, resume, batch, plans or other options");
+    const value = flag === "--dry-run" ? "true" : args[++i];
+    if (!value || value.startsWith("--")) throw new Error(`Missing value for ${flag}`);
+    values.set(flag, value);
+  }
+  const id = values.get("--master-id");
+  const file = values.get("--capture-indexed-response");
+  if (values.get("--dry-run") !== "true" || values.get("--limit") !== "1" || !id || !masterUuid.test(id) || !file || file.endsWith("/") || file.endsWith("\\"))
+    throw new Error("Capture requires explicit --dry-run --master-id UUID --limit 1 --capture-indexed-response FILE");
+  return { masterId: id, file };
+}
+
+/** Create a separate new local diagnostic file, including on identity/rate failure. Never overwrite a plan. */
+export async function saveIndexedDiagnostic(response: BackfillPreviewResponse, masterId: string, revision: number,
+  file: string): Promise<{ file: string; complete: boolean; validation: string }> {
+  const diagnostic = response.indexed_diagnostic;
+  if (response.master_chemical_id !== masterId || response.base_revision !== revision || !diagnostic)
+    throw new Error("Capture response missing or Master identity/revision changed; no file saved");
+  if (!diagnostic.snapshot) throw new Error("No indexed provider response obtained; no snapshot saved");
+  const snapshot: IndexedLabelSnapshot = diagnostic.snapshot;
+  if (snapshot.version !== 2 || snapshot.validator_version !== 1 || snapshot.master?.id !== masterId ||
+    snapshot.master.revision !== revision || !snapshot.validation || !snapshot.locked?.document ||
+    !snapshot.model || !snapshot.extracted || diagnostic.outcome !== "captured")
+    throw new Error("Invalid diagnostic snapshot; no file saved");
+  const data = JSON.stringify(snapshot, null, 2);
+  if (data.length > 150_000) throw new Error("Diagnostic snapshot exceeds local size limit; no file saved");
+  const handle = await Deno.open(file, { write: true, createNew: true, mode: 0o600 });
+  try {
+    const bytes = new TextEncoder().encode(data);
+    for (let offset = 0; offset < bytes.length;) offset += await handle.write(bytes.subarray(offset));
+  } finally { handle.close(); }
+  return { file, complete: snapshot.complete, validation: `${snapshot.validation.status}${snapshot.validation.reason ? `: ${snapshot.validation.reason}` : ""}` };
+}
+
 async function main(): Promise<void> {
   const args = Deno.args;
+  const captureMode = parseCaptureArgs(args);
   const has = (flag: string) => args.includes(flag);
   const option = (flag: string): string | null => {
     const index = args.indexOf(flag);
@@ -158,6 +207,17 @@ async function main(): Promise<void> {
   }
   const admin = await request("/rest/v1/rpc/is_system_admin", {});
   if (admin !== true) throw new Error("The session is not a System Admin; no rows processed.");
+  if (captureMode) {
+    const { masterId: id, file } = captureMode;
+    const rows = await request(`/rest/v1/master_chemicals?select=*&id=eq.${encodeURIComponent(id)}&limit=1`) as MasterRow[];
+    if (rows.length !== 1 || rows[0].id !== id) throw new Error("Master id not found");
+    const response = await request("/functions/v1/chemical-info-lookup", {
+      action: "master_backfill_preview_v2", master_chemical_id: id, dryRun: true, capture_indexed_response: true,
+    }) as BackfillPreviewResponse;
+    const saved = await saveIndexedDiagnostic(response, id, rows[0].catalogue_version ?? 1, file);
+    console.log(`${saved.file} complete=${saved.complete} validation=${saved.validation}`);
+    return;
+  }
   const before = await request("/rest/v1/rpc/master_backfill_catalogue_stats_v2", {});
   console.log("Baseline:", JSON.stringify(before));
   const rows: MasterRow[] = [];

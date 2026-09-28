@@ -1,12 +1,13 @@
 import type { MasterRow, Jsonish } from "./contract.ts";
-import type { IndexFailureReason } from "./manufacturer_label_index.ts";
+import { readManufacturerLabelViaWebIndex, type IndexedLabelInput, type IndexFailureReason } from "./manufacturer_label_index.ts";
+import type { IndexedLabelSnapshot } from "./manufacturer_label_snapshot.ts";
 import { buildCurrentSnapshot, type PreviewStore } from "./review_preview.ts";
 import { authoritativeBackfillDetail, buildMasterBackfillPatch, lockedWebIdentity, storeBackfillPreview, type BackfillDetail } from "./master_backfill.ts";
 import { classifyUrl, manufacturerHostEligible } from "../research/classify.ts";
 
 /** Only the Master UUID selects an identity. Legacy country is ignored, never used to redirect research. */
-export function parseBackfillRequest(body: Record<string, unknown>): { masterId: string; dryRun: boolean } | { error: string } {
-  const allowed = new Set(["action", "master_chemical_id", "masterChemicalId", "dryRun", "country"]);
+export function parseBackfillRequest(body: Record<string, unknown>): { masterId: string; dryRun: boolean; capture: boolean } | { error: string } {
+  const allowed = new Set(["action", "master_chemical_id", "masterChemicalId", "dryRun", "country", "capture_indexed_response"]);
   if (Object.keys(body).some((key) => !allowed.has(key))) return { error: "Backfill accepts only a Master id and dryRun" };
   if (body.master_chemical_id !== undefined && body.masterChemicalId !== undefined && body.master_chemical_id !== body.masterChemicalId)
     return { error: "Conflicting Master ids" };
@@ -14,7 +15,18 @@ export function parseBackfillRequest(body: Record<string, unknown>): { masterId:
   if (typeof masterId !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(masterId))
     return { error: "Invalid Master id" };
   if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") return { error: "Invalid dryRun" };
-  return { masterId, dryRun: body.dryRun === true };
+  if (body.capture_indexed_response !== undefined && body.capture_indexed_response !== true)
+    return { error: "Invalid capture mode" };
+  if (body.capture_indexed_response === true && (body.dryRun !== true ||
+    (body.master_chemical_id !== undefined && body.masterChemicalId !== undefined)))
+    return { error: "Capture requires dryRun true and exactly one Master id" };
+  return { masterId, dryRun: body.dryRun === true, capture: body.capture_indexed_response === true };
+}
+
+/** Both the JWT-backed admin RPC and authenticated user id must succeed before any Master lookup. */
+export function authorizeBackfillRequest(body: Record<string, unknown>, isAdmin: boolean, userId: string | null) {
+  const parsed = parseBackfillRequest(body);
+  return "error" in parsed ? parsed : !isAdmin || !userId ? { error: "Not authorised" } : parsed;
 }
 
 /** Locked registration jurisdiction is the sole authority, regardless of any legacy request country. */
@@ -35,6 +47,7 @@ export interface BackfillPreviewResponse {
   evidence: Record<string, unknown>;
   findings: { classified: boolean; not_applicable: boolean; vineyard_rates_added: boolean; no_vineyard_use: boolean };
   dry_run?: true;
+  indexed_diagnostic?: { snapshot: IndexedLabelSnapshot | null; outcome: "captured" | "no_indexed_response" };
   error?: string;
 }
 
@@ -45,6 +58,25 @@ export interface BackfillResearchPayload {
     "product_name_mismatch" | "label_link_not_found" | "label_fetch_failed" | `label_fetch_failed_${string}` |
     `label_fetch_http_${number}` | "label_unreadable" | "label_index_unavailable" |
     `label_index_unavailable: ${IndexFailureReason}`;
+}
+
+/** Same indexed read and validator as the ordinary Master dry run; capture is local to this invocation. */
+export async function readBackfillIndexedLabel(input: IndexedLabelInput, master: { id: string; revision: number },
+  capture: boolean) {
+  let snapshot: IndexedLabelSnapshot | null = null;
+  const result = await readManufacturerLabelViaWebIndex({ ...input,
+    onDiagnosticSnapshot: capture ? (value) => {
+      value.master = master;
+      snapshot = value;
+    } : undefined });
+  return { result, snapshot };
+}
+
+/** Diagnostic data is returned only for an explicitly authorised capture request, never stored as a preview. */
+export function withIndexedDiagnostic(response: BackfillPreviewResponse, capture: boolean,
+  snapshot: IndexedLabelSnapshot | null): BackfillPreviewResponse {
+  return capture ? { ...response, indexed_diagnostic: { snapshot,
+    outcome: snapshot ? "captured" : "no_indexed_response" } } : response;
 }
 
 function baseResponse(row: MasterRow): BackfillPreviewResponse {

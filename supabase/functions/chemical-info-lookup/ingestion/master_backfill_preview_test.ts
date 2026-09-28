@@ -2,7 +2,7 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import type { MasterRow } from "./contract.ts";
 import { buildMasterBackfillPatch, isIncompleteMaster } from "./master_backfill.ts";
-import { alreadyCompleteBackfill, backfillCountry, finishBackfillPreview, parseBackfillRequest } from "./master_backfill_preview.ts";
+import { alreadyCompleteBackfill, authorizeBackfillRequest, backfillCountry, finishBackfillPreview, parseBackfillRequest, withIndexedDiagnostic } from "./master_backfill_preview.ts";
 import type { PreviewInsertPayload } from "./review_preview.ts";
 import { applyRateIdentities } from "../rate_identity.ts";
 import { labelApprovalIdentifiers, vineyardTableRate } from "../web_lookup.ts";
@@ -23,13 +23,26 @@ const row = (): MasterRow => ({ id, registration_country: "AU", registration_sch
 const detail = { registration: { registration_number: "90143", manufacturer_label_url: label } };
 
 Deno.test("canonical snake-case Master ID needs no country; legacy country cannot redirect jurisdiction", () => {
-  assertEquals(parseBackfillRequest({ action: "master_backfill_preview_v2", master_chemical_id: id }), { masterId: id, dryRun: false });
-  assertEquals(parseBackfillRequest({ action: "master_backfill_preview_v2", master_chemical_id: id, country: "NZ" }), { masterId: id, dryRun: false });
+  assertEquals(parseBackfillRequest({ action: "master_backfill_preview_v2", master_chemical_id: id }), { masterId: id, dryRun: false, capture: false });
+  assertEquals(parseBackfillRequest({ action: "master_backfill_preview_v2", master_chemical_id: id, country: "NZ" }), { masterId: id, dryRun: false, capture: false });
   assertEquals(backfillCountry(row()), "AU");
-  assertEquals(parseBackfillRequest({ masterChemicalId: id }), { masterId: id, dryRun: false });
+  assertEquals(parseBackfillRequest({ masterChemicalId: id }), { masterId: id, dryRun: false, capture: false });
   assertEquals(parseBackfillRequest({ master_chemical_id: id, masterChemicalId: "10000000-0000-4000-8000-000000000144" }), { error: "Conflicting Master ids" });
   for (const extra of ["query", "selectedName", "patch", "proposed_patch", "proposedPatch", "apply", "registration_number", "registered_product_name"])
     assertEquals("error" in parseBackfillRequest({ master_chemical_id: id, [extra]: "redirect" }), true);
+});
+
+Deno.test("server capture gate requires signed-in admin, explicit dry run and one Master id", () => {
+  const body = { action: "master_backfill_preview_v2", master_chemical_id: id, dryRun: true, capture_indexed_response: true };
+  assertEquals(authorizeBackfillRequest(body, true, "admin"), { masterId: id, dryRun: true, capture: true });
+  assertEquals(authorizeBackfillRequest(body, false, "user"), { error: "Not authorised" });
+  assertEquals(authorizeBackfillRequest(body, true, null), { error: "Not authorised" });
+  for (const changed of [{ dryRun: false }, { dryRun: undefined }, { masterChemicalId: id }, { master_chemical_id: [id] },
+    { capture_indexed_response: false }, { query: "SIMANEX" }])
+    assertEquals("error" in parseBackfillRequest({ ...body, ...changed }), true);
+  assertEquals(withIndexedDiagnostic(alreadyCompleteBackfill(row()), false, null).indexed_diagnostic, undefined);
+  assertEquals(withIndexedDiagnostic(alreadyCompleteBackfill(row()), true, null).indexed_diagnostic,
+    { snapshot: null, outcome: "no_indexed_response" });
 });
 
 Deno.test("complete, no change, missing label, and conflicting identity have explicit non-writable envelopes", async () => {
