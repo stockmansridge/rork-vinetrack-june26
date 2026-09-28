@@ -12,7 +12,7 @@ export interface BackfillDetail {
   activity_group_scheme?: string | null;
   resistance_classification_state?: string;
   registered_uses?: Array<Record<string, unknown>>;
-  registration?: { registration_number?: string | null; manufacturer_label_url?: string | null; manufacturer_package_label_url?: string | null; manufacturer_label_verified?: boolean; registrant?: string | null;
+  registration?: { registration_number?: string | null; manufacturer_label_url?: string | null; manufacturer_package_label_url?: string | null; manufacturer_label_verified?: boolean; manufacturer_label_retrieval_method?: "web_search_index"; registrant?: string | null;
     manufacturer_label_identifiers?: { numbers: string[]; printed_values: string[] } } | null;
   verification?: { conflicts?: Array<Record<string, unknown>> };
 }
@@ -138,6 +138,10 @@ const useKey = (use: Record<string, unknown>): string => {
 };
 const sameUse = (old: Record<string, unknown>, next: Record<string, unknown>): boolean => {
   if (useKey(old) !== useKey(next)) return false;
+  // State/soil-scoped label directions are distinct even when crop and target match.
+  if (/^State:.*; Soil: (?:light|heavy)$/i.test(String(old.conditions ?? "")) &&
+    /^State:.*; Soil: (?:light|heavy)$/i.test(String(next.conditions ?? "")) &&
+    matchWords(old.conditions) !== matchWords(next.conditions)) return false;
   const oldScientific = useTarget(old).match(scientificSuffix)?.[1];
   const nextScientific = useTarget(next).match(scientificSuffix)?.[1];
   // Two explicit, different species must not be conflated just because their common name matches.
@@ -299,6 +303,7 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
     const printed = [...new Set((identifiers?.printed_values ?? []).filter((value) =>
       /^\d{4,7}(?:\/\d{4,7})*$/.test(value) && value.split("/").every((n) => numbers.includes(n))))];
     const labelSource = { kind: "manufacturer_label", name: "Manufacturer commercial label", reference: label,
+      ...(detail.registration?.manufacturer_label_retrieval_method === "web_search_index" ? { retrieval_method: "web_search_index" as const } : {}),
       ...(numbers.length ? { registration_numbers: numbers.map((number) => ({ scheme: "apvma" as const, number,
         source: "manufacturer_label" as const, canonical: number === row.registration_number })),
         printed_registration_values: printed } : {}) };
@@ -309,8 +314,10 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
       ? { kind: "manufacturer_label" as const, name: "Manufacturer container label", reference: packageUrl } : null;
     const updated = [...sources];
     if (existing < 0) updated.push(labelSource);
-    else if (numbers.length) updated[existing] = { ...sources[existing], registration_numbers: labelSource.registration_numbers,
-      printed_registration_values: labelSource.printed_registration_values };
+    else if (numbers.length || labelSource.retrieval_method) updated[existing] = { ...sources[existing],
+      ...(numbers.length ? { registration_numbers: labelSource.registration_numbers,
+        printed_registration_values: labelSource.printed_registration_values } : {}),
+      ...(labelSource.retrieval_method ? { retrieval_method: labelSource.retrieval_method } : {}) };
     if (packageSource && !updated.some((source) => source.kind === "manufacturer_label" && source.reference === packageUrl))
       updated.push(packageSource);
     put("verification_sources", sources, updated);

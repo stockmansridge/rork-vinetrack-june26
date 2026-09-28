@@ -136,6 +136,7 @@ import { chooseLabelCandidate, confirmedOCRName, directOfficialLabelURL } from "
 import { discoverUnverifiedLabel } from "./unverified_label_discovery.ts";
 import { nameCorresponds } from "./ingestion/matching.ts";
 import { labelApprovalIdentifiers, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardRateSummary, vineyardTableRate, withWebEnrichment } from "./web_lookup.ts";
+import { readManufacturerLabelViaWebIndex, shouldReadManufacturerIndex } from "./ingestion/manufacturer_label_index.ts";
 import { discoverManufacturerUrlsDetailed, findWebMasterIdentities, identityCandidate, identityResearch, selectedIdentity, verifiedManufacturerLead, type ManufacturerLeads, type WebIdentity } from "./web_identity.ts";
 import { alternateManufacturerLabel, companionDirectionsUrl, pageMatchesLockedProduct, requiresAttachedDirections, verifiesTradingAs } from "./ingestion/manufacturer_companion.ts";
 import { safeManufacturerFetchReason } from "./ingestion/manufacturer_document.ts";
@@ -1500,6 +1501,8 @@ Deno.serve(async (req: Request) => {
             scheme: "apvma", registration_number: identity.registrationNumber } } : {}),
           ...(backfillRow ? { activeNames: backfillRow.active_ingredients.map((a) => a.name) } : {}),
         }) : null;
+      const originalAccessStatus = enrichment?.diagnostics.manufacturer_label_fetch === "failure"
+        ? enrichment.diagnostics.manufacturer_label_http_status : null;
       // A failed direct PDF gets one different, page-linked label attempt; never retry the same URL.
       const alternateLabel = alternateManufacturerLabel(page ?? null, canonicalName, countryCode,
         identity.registrant, manufacturerLabel ?? "");
@@ -1527,6 +1530,37 @@ Deno.serve(async (req: Request) => {
           !labelApprovalIdentifiers(enrichment.labelText, countryCode).numbers.includes(backfillRow.registration_number))
         return { identity_conflict: { manufacturer_label_url: replacementLabel,
           reason: "printed_registration_mismatch" } };
+      if (backfillRow && manufacturerLabel && shouldReadManufacturerIndex(originalAccessStatus, !!readableV2Label(enrichment)) &&
+          !enrichment?.diagnostics.identity_mismatch && manufacturerHostEligible(manufacturerLabel, countryCode, identity.registrant)) {
+        const indexed = await readManufacturerLabelViaWebIndex({ name: backfillRow.registered_product_name,
+          registrant: backfillRow.registrant ?? "", registrationNumber: backfillRow.registration_number,
+          activeIngredients: backfillRow.active_ingredients, labelUrl: manufacturerLabel, country: countryCode,
+          apiKey, fetchFn: fetch });
+        if (indexed.status === "identity_conflict") return { identity_conflict: {
+          manufacturer_label_url: manufacturerLabel, reason: indexed.reason } };
+        if (indexed.status !== "ready") return { discovery_reason: "label_index_unavailable" };
+        const indexedDetail = buildStructuredResponse({ product_name: backfillRow.registered_product_name,
+          product_category: backfillRow.product_category, form_type: backfillRow.form_type,
+          active_ingredients: indexed.actives, registration_number: backfillRow.registration_number,
+          registrant: backfillRow.registrant, manufacturer_label_url: manufacturerLabel,
+          registered_uses: indexed.uses }, countryCode, "Manufacturer label via web search index");
+        indexedDetail.registration.scheme = backfillRow.registration_scheme;
+        indexedDetail.registration.registration_number = backfillRow.registration_number;
+        indexedDetail.registration.manufacturer_label_url = manufacturerLabel;
+        indexedDetail.registration.manufacturer_label_verified = true;
+        indexedDetail.registration.manufacturer_label_retrieval_method = "web_search_index";
+        indexedDetail.registration.manufacturer_label_identifiers = indexed.identifiers;
+        indexedDetail.active_ingredients = indexedDetail.active_ingredients.map((active: any) => ({ ...active,
+          identity_source: "manufacturer_label" }));
+        indexedDetail.verification.sources.push({ kind: "manufacturer_label", name: "Product directions",
+          reference: manufacturerLabel, retrieval_method: "web_search_index" });
+        applyRateIdentities(indexedDetail);
+        stripStructuredDirectionSeeds(indexedDetail);
+        applyDefaultRateOptions(indexedDetail);
+        return { candidates, detail: indexedDetail, label_printed_registration_number: indexed.identifiers.printed_values[0],
+          vineyard_rate_summary: vineyardRateSummary(indexedDetail.registered_uses),
+          timings: { search_ms: searchMs, label_processing_ms: Date.now() - labelStarted } };
+      }
       const packageLabel = readableV2Label(enrichment);
       let packageUrl: string | null = null;
       if (packageLabel && requiresAttachedDirections(enrichment?.labelText ?? "")) {

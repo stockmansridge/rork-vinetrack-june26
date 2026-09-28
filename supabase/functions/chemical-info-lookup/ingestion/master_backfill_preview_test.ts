@@ -73,7 +73,7 @@ Deno.test("complete, no change, missing label, and conflicting identity have exp
 
 Deno.test("missing manufacturer labels expose only safe stage-specific reasons and never store previews", async () => {
   const reasons = ["search_no_candidate", "search_timeout", "host_not_verified", "product_page_fetch_failed",
-    "product_name_mismatch", "label_link_not_found", "label_fetch_failed", "label_unreadable"] as const;
+    "product_name_mismatch", "label_link_not_found", "label_fetch_failed", "label_index_unavailable", "label_unreadable"] as const;
   for (const reason of reasons) {
     const result = await finishBackfillPreview(row(), "admin", { discovery_reason: reason }, false,
       { insertPreview: () => { throw new Error("missing label cannot store a preview"); } });

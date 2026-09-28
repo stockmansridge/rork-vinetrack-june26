@@ -112,6 +112,7 @@ export function normaliseRegisteredUses(raw: any): any[] {
           max_value: maxValue,
           unit: parseString(r?.unit) ?? "",
           raw_text: rawText,
+          ...(Array.isArray(r?.source_refs) ? { source_refs: r.source_refs } : {}),
           ...(rateId ? { rate_id: rateId } : {}),
           ...(conditionAmbiguous ? { condition_ambiguous: true } : {}),
         });
@@ -148,6 +149,8 @@ export function normaliseRegisteredUses(raw: any): any[] {
       ...(directionId ? { direction_id: directionId } : {}),
       ...(directionSeed ? { [DIRECTION_SEED_KEY]: directionSeed } : {}),
       rates,
+      ...(parseString(use?.conditions) ? { conditions: parseString(use.conditions) } : {}),
+      ...(Array.isArray(use?.source_refs) ? { source_refs: use.source_refs } : {}),
       withholding_period_days: parseNumber(use?.withholding_period_days),
       ...(withholdingStatement ? { withholding_statement: withholdingStatement } : {}),
       re_entry_period_hours: parseNumber(use?.re_entry_period_hours),

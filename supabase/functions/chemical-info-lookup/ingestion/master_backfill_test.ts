@@ -94,6 +94,21 @@ Deno.test("printed identifiers are label evidence, never a Master rekey", () => 
   assertEquals(buildMasterBackfillPatch(master(), detail({ active_ingredients: [{ name: "Other" }] })).status, "evidence_conflict");
 });
 
+Deno.test("indexed manufacturer evidence carries retrieval provenance without inventing PDF bytes", () => {
+  const proposal = buildMasterBackfillPatch(master(), detail({ registration: {
+    registration_number: "90143", manufacturer_label_url: LABEL, manufacturer_label_verified: true,
+    manufacturer_label_retrieval_method: "web_search_index",
+    manufacturer_label_identifiers: { numbers: ["90143", "127764"], printed_values: ["90143/127764"] },
+  } }));
+  assertEquals(proposal.status, "preview_ready");
+  const source = (proposal.patch?.verification_sources as NonNullable<MasterRow["verification_sources"]>).at(-1);
+  assertEquals(source?.retrieval_method, "web_search_index");
+  assertEquals(source?.reference, LABEL);
+  assertEquals("sha256" in (source ?? {}), false);
+  assertEquals("byte_size" in (source ?? {}), false);
+  assertEquals(validateResolverPatch(proposal.patch), null);
+});
+
 Deno.test("incomplete mixture cannot claim classified; explicit not-applicable only", () => {
   const unresolved = buildMasterBackfillPatch(master({ active_ingredients: [active, { name: "Unknown" }] }),
     detail({ active_ingredients: [active, { name: "Unknown" }], resistance_classification_state: "unresolved" }));

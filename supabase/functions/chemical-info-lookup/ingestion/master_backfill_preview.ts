@@ -42,7 +42,7 @@ export interface BackfillResearchPayload {
   identity_conflict?: { printed?: string | null; manufacturer_label_url?: string | null; reason?: string };
   discovery_reason?: "search_no_candidate" | "search_timeout" | "host_not_verified" | "product_page_fetch_failed" |
     "product_name_mismatch" | "label_link_not_found" | "label_fetch_failed" | `label_fetch_failed_${string}` |
-    `label_fetch_http_${number}` | "label_unreadable";
+    `label_fetch_http_${number}` | "label_unreadable" | "label_index_unavailable";
 }
 
 function baseResponse(row: MasterRow): BackfillPreviewResponse {
