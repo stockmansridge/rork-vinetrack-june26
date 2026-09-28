@@ -218,6 +218,8 @@ const REGISTRANT_HOSTS = [
   "fmc.com",
   "sumitomo-chem.com.au",
   "agnova.com.au",
+  "farmalinx.com.au",
+  "conquestag.com.au",
   "grochem.com",
   "grochem.co.nz",
   "sipcam.com.au",
@@ -234,6 +236,26 @@ const REGISTRANT_HOSTS = [
   "nzagritrade.co.nz",
   "cropsure.com",
 ];
+
+/** Unknown hosts are inspectable leads only when their domain corresponds to the locked registrant. */
+export function manufacturerHostEligible(url: string, country: string, registrant?: string | null): boolean {
+  if (!url.startsWith("https://")) return false;
+  const classification = classifyUrl(url, country);
+  if (!classification.domain || !["registrant", "unknown"].includes(classification.trust) ||
+    isForeignRegulatorHost(classification.domain, country) ||
+    /(^|\.)gov\.(au|nz)$|(^|\.)govt\.nz$/.test(classification.domain)) return false;
+  if (classification.trust === "registrant") return true;
+  if (!registrant) return false;
+  const parts = classification.domain.split(".");
+  const suffix = /\.(?:com|net|org|co)\.(?:au|nz)$/.test(classification.domain) ? 3 : 2;
+  const domain = (parts[parts.length - suffix] ?? "").replace(/[^a-z0-9]/g, "");
+  const names = registrant.toLowerCase().replace(/\b(pty|ltd|limited|australia|australian|inc|group)\b/g, " ")
+    .split(/[^a-z0-9]+/).filter((word) => word.length >= 5 &&
+      !["crops", "chemicals", "chemical", "agriculture", "farming", "group"].includes(word));
+  const compact = registrant.toLowerCase().replace(/\b(pty|ltd|limited|australia|australian|inc|group)\b/g, "")
+    .replace(/[^a-z0-9]/g, "");
+  return names.some((word) => domain === word) || domain.length >= 6 && domain === compact;
+}
 
 /** URL path/extension signals for a real label DOCUMENT. */
 function looksLikeLabelPath(url: string): boolean {

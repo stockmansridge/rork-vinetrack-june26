@@ -1,3 +1,4 @@
+// deno-lint-ignore-file no-import-prefix
 import { assert, assertEquals, assertNotEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   applyRateIdentities,
@@ -330,6 +331,15 @@ Deno.test("retrieval circumstances are excluded from both canonical inputs", () 
   }
   // A direction identity never binds the label version either — same reason.
   assert(!directionCanonical.includes("label_version"));
+});
+
+Deno.test("generic Product rate is display metadata, while printed conditions still distinguish rates", () => {
+  const direction = { crop: "Grapes", target_raw: "Fig longicorn" };
+  const dose = { basis: "per_100_litres", min_value: 400, max_value: 400, unit: "mL/100 L", raw_text: "400 mL/100 L" };
+  const blank = mintRateId(VICOL, direction, { ...dose, label: "" });
+  assertEquals(blank, mintRateId(VICOL, direction, { ...dose, label: "Product rate" }));
+  assertNotEquals(blank, mintRateId(VICOL, direction, { ...dose, label: "Dilute spraying" }));
+  assertNotEquals(blank, mintRateId(VICOL, direction, { ...dose, label: "Tasmania" }));
 });
 
 Deno.test("raw_text is excluded for parsed rates, and included for `other`", () => {

@@ -124,12 +124,7 @@ export interface RateIdentityRate {
   value?: number | null;
   min_value?: number | null;
   max_value?: number | null;
-  /**
-   * What the label calls this rate. This IS the condition — "Tasmania",
-   * "NSW/Vic/Qld/SA/WA", "Dilute spraying", "High disease pressure" — and it
-   * is part of semantic identity: the same target under two jurisdictions is
-   * two directions, not one.
-   */
+  /** Printed condition/jurisdiction when present; generic parser display text is not identity. */
   label?: string | null;
   /**
    * Verbatim label wording. Participates ONLY for `basis: "other"`.
@@ -323,6 +318,11 @@ export function mintDirectionId(
  * rate, so it carries one rate identity whichever of its three projected rows
  * a client happens to be looking at.
  */
+export function identityBearingRateLabel(label: string | null | undefined): string {
+  const normalized = normaliseIdentityText(label);
+  return normalized === "product rate" ? "" : normalized;
+}
+
 export function canonicalRateIdentityInput(
   product: RateIdentityProduct | null | undefined,
   directionId: string,
@@ -345,7 +345,7 @@ export function canonicalRateIdentityInput(
     `value=${normaliseIdentityNumber(rate?.value)}`,
     `min=${normaliseIdentityNumber(rate?.min_value)}`,
     `max=${normaliseIdentityNumber(rate?.max_value)}`,
-    `condition=${orDash(normaliseIdentityText(rate?.label))}`,
+    `condition=${orDash(identityBearingRateLabel(rate?.label))}`,
     `jurisdiction=${orDash(normaliseIdentityText(rate?.jurisdiction))}`,
     `other=${rawText}`,
   ].join("\u001f");

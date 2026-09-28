@@ -1,7 +1,7 @@
 import type { MasterRow, Jsonish } from "./contract.ts";
 import { buildCurrentSnapshot, type PreviewStore } from "./review_preview.ts";
 import { authoritativeBackfillDetail, buildMasterBackfillPatch, lockedWebIdentity, storeBackfillPreview, type BackfillDetail } from "./master_backfill.ts";
-import { classifyUrl } from "../research/classify.ts";
+import { classifyUrl, manufacturerHostEligible } from "../research/classify.ts";
 
 /** Only the Master UUID selects an identity. Legacy country is ignored, never used to redirect research. */
 export function parseBackfillRequest(body: Record<string, unknown>): { masterId: string; dryRun: boolean } | { error: string } {
@@ -40,6 +40,8 @@ export interface BackfillPreviewResponse {
 export interface BackfillResearchPayload {
   detail?: BackfillDetail | null;
   identity_conflict?: { printed?: string | null; manufacturer_label_url?: string | null; reason?: string };
+  discovery_reason?: "search_no_candidate" | "search_timeout" | "host_not_verified" | "product_page_fetch_failed" |
+    "product_name_mismatch" | "label_link_not_found" | "label_fetch_failed" | "label_unreadable";
 }
 
 function baseResponse(row: MasterRow): BackfillPreviewResponse {
@@ -81,9 +83,12 @@ export async function finishBackfillPreview(row: MasterRow, adminId: string, pay
   // A failed label search is not a reviewable manufacturer-label preview. A wholly
   // deterministic classification-only result may still be reviewed separately.
   const label = detail.registration?.manufacturer_label_url;
-  if (!classificationOnly && (!label || classifyUrl(label, backfillCountry(row)).trust !== "registrant" ||
-    classifyUrl(label, backfillCountry(row)).kind !== "label_document")) return {
-    ...response, status: "manufacturer_label_not_found" };
+  if (!classificationOnly && (!label || !manufacturerHostEligible(label, backfillCountry(row), row.registrant) ||
+    !(classifyUrl(label, backfillCountry(row)).trust === "registrant" &&
+      classifyUrl(label, backfillCountry(row)).kind === "label_document" ||
+      detail.registration?.manufacturer_label_verified === true && new URL(label).pathname.toLowerCase().endsWith(".pdf")))) return {
+    ...response, status: "manufacturer_label_not_found",
+    evidence: { ...response.evidence, reason: payload?.discovery_reason ?? "host_not_verified" } };
   if (!proposed.patch) return response;
   if (dryRun) return { ...response, status: "preview_ready", proposed_patch: proposed.patch, dry_run: true };
   const stored = await storeBackfillPreview(false, () => store.insertPreview({ master_chemical_id: row.id,

@@ -71,6 +71,18 @@ Deno.test("complete, no change, missing label, and conflicting identity have exp
   assertEquals(inserts, 0);
 });
 
+Deno.test("missing manufacturer labels expose only safe stage-specific reasons and never store previews", async () => {
+  const reasons = ["search_no_candidate", "search_timeout", "host_not_verified", "product_page_fetch_failed",
+    "product_name_mismatch", "label_link_not_found", "label_fetch_failed", "label_unreadable"] as const;
+  for (const reason of reasons) {
+    const result = await finishBackfillPreview(row(), "admin", { discovery_reason: reason }, false,
+      { insertPreview: () => { throw new Error("missing label cannot store a preview"); } });
+    assertEquals(result.status, "manufacturer_label_not_found");
+    assertEquals(result.evidence.reason, reason);
+    assertEquals(result.preview_id, null);
+  }
+});
+
 Deno.test("Beast label excerpt produces a dry-run review with both printed IDs and 1–5 L/ha", async () => {
   const beast = { ...row(), id: "17cd1608-ed02-4bc0-a7e1-797846620892", catalogue_version: 2,
     active_ingredients: [{ ...row().active_ingredients[0], activity_group: { scheme: "hrac" as const, code: "10" } }],

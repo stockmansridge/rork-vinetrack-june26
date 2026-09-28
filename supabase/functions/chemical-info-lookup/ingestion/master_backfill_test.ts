@@ -4,6 +4,7 @@ import type { MasterRow } from "./contract.ts";
 import { authoritativeBackfillDetail, buildMasterBackfillPatch, equalBackfillValue, isIncompleteMaster, lockedWebIdentity } from "./master_backfill.ts";
 import { validateResolverPatch } from "./review_preview.ts";
 import { finishBackfillPreview } from "./master_backfill_preview.ts";
+import { mintRateId } from "../rate_identity.ts";
 
 const LABEL = "https://cropsure.com/wp-content/uploads/2023/03/cropsure-beast-200-herbicide-label-v2.pdf";
 const active = { name: "Glufosinate-ammonium", concentration: 200, concentration_unit: "g/L",
@@ -256,6 +257,61 @@ Deno.test("TALSTAR-like 83-use row merges 400 mL/100 L once and second pass stor
     { ...driftedDetail.registered_uses[0], rates: [{ ...fmcRate, max_value: 500 }] }] });
   assertEquals(structuredConflict.status, "evidence_conflict");
   assertEquals(structuredConflict.evidence.reason, "vineyard_use_or_rate");
+});
+
+Deno.test("TALSTAR stored 83-use state ignores generic Product rate and per-vine spray volume", async () => {
+  const label = "https://fmc.com/label/talstar-250-ec-label.pdf";
+  const product = { country: "AU", scheme: "apvma", registration_number: "60987" };
+  const direction = { crop: "Grapes", target_raw: "Fig longicorn" };
+  const baseRate = { basis: "per_100_litres" as const, min_value: 400, max_value: 400,
+    unit: "mL/100 L", raw_text: "400 mL/100 L" };
+  const storedRate = { ...baseRate, label: "", rate_id: mintRateId(product, direction, { ...baseRate, label: "" }) };
+  const storedUse = { ...direction, rates: [storedRate], restrictions: "Apply to affected vines" };
+  const uses = [...Array.from({ length: 82 }, (_, i) => ({ crop: `Crop ${i}`, target_raw: `Target ${i}`, rates: [] })), storedUse];
+  const row = master({ registration_number: "60987", registration_identity_key: "AU:apvma:60987",
+    registered_product_name: "TALSTAR 250 EC INSECTICIDE/MITICIDE", registrant: "FMC", catalogue_version: 2,
+    product_category: "insecticide", active_ingredients: [{ name: "Bifenthrin", concentration: 250,
+      concentration_unit: "g/L", activity_group: { scheme: "irac", code: "3A" },
+      group_source: "authoritative_classification" }],
+    activity_groups: ["3A"], activity_group_scheme: "irac", resistance_classification_state: "classified",
+    registered_uses: uses, viticulture_rates: { per_hectare: [], per_100_litres: [storedRate] },
+    label_rate_bases: ["per_100_litres"],
+    verification_sources: [{ kind: "manufacturer_label", name: "Manufacturer commercial label", reference: label }] });
+  const fromParser = { basis: "per_100_litres" as const, value: 400, unit: "mL",
+    raw_text: "400 mL/100 L", label: "Product rate",
+    rate_id: mintRateId(product, direction, { basis: "per_100_litres", value: 400, unit: "mL", label: "Product rate" }) };
+  assertEquals(mintRateId(product, direction, { ...baseRate, label: "Product rate" }), storedRate.rate_id);
+  const detail = { registration: { registration_number: "60987", manufacturer_label_url: label },
+    registered_uses: [{ ...direction, rates: [fromParser,
+      { basis: "other", raw_text: "Total spray volume should be about 500 mL/vine", rate_id: "rate_v1_guidance" }],
+    restrictions: "Different extraction wording" }] };
+  let previews = 0;
+  const result = await finishBackfillPreview(row, "admin", { detail }, false,
+    { insertPreview: () => { previews++; return Promise.resolve({ id: "unexpected" }); } });
+  assertEquals(result.status, "no_material_change");
+  assertEquals(result.preview_id, null);
+  assertEquals(result.findings.vineyard_rates_added, false);
+  assertEquals(previews, 0);
+  assertEquals(row.catalogue_version, 2);
+  assertEquals(row.registered_uses.length, 83);
+  assertEquals(row.registered_uses.filter((use) => /grape/i.test(use.crop)).length, 1);
+  assertEquals(row.viticulture_rates?.per_100_litres.length, 1);
+  const emptyGuidance = buildMasterBackfillPatch({ ...row, registered_uses: [...uses.slice(0, -1),
+    { ...storedUse, restrictions: null }] } as MasterRow, detail);
+  const filled = (emptyGuidance.patch?.registered_uses as Array<Record<string, unknown>>)?.at(-1);
+  assertEquals(filled?.restrictions, "Different extraction wording");
+  assertEquals((filled?.rates as unknown[])?.length, 1);
+  const guidanceOnly = buildMasterBackfillPatch({ ...row, registered_uses: [...uses.slice(0, -1),
+    { ...storedUse, restrictions: null }] } as MasterRow, { ...detail, registered_uses: [
+    { ...detail.registered_uses[0], restrictions: null }] });
+  assertEquals((guidanceOnly.patch?.registered_uses as Array<Record<string, unknown>>)?.at(-1)?.restrictions,
+    "Total spray volume should be about 500 mL/vine");
+  const conditional = { ...fromParser, label: "Tasmania",
+    rate_id: mintRateId(product, direction, { ...fromParser, label: "Tasmania" }) };
+  const distinct = buildMasterBackfillPatch(row, { ...detail, registered_uses: [
+    { ...detail.registered_uses[0], rates: [conditional] }] });
+  assertEquals(distinct.status, "preview_ready");
+  assertEquals((distinct.patch?.viticulture_rates as { per_100_litres: unknown[] }).per_100_litres.length, 2);
 });
 
 Deno.test("stored resistance disagreements remain evidence conflicts, not use-merge overrides", () => {

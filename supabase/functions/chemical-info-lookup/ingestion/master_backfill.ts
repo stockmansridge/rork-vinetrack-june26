@@ -1,7 +1,8 @@
 import type { MasterRow, Jsonish } from "./contract.ts";
 import { authoritativeGroup, groupsAreEquivalent } from "./activity_groups.ts";
-import { classifyUrl } from "../research/classify.ts";
+import { classifyUrl, manufacturerHostEligible } from "../research/classify.ts";
 import { manufacturerUrlsFromMaster, type WebIdentity } from "../web_identity.ts";
+import { identityBearingRateLabel, normaliseIdentityText } from "../rate_identity.ts";
 import { validateResolverPatch } from "./review_preview.ts";
 
 export interface BackfillDetail {
@@ -11,7 +12,7 @@ export interface BackfillDetail {
   activity_group_scheme?: string | null;
   resistance_classification_state?: string;
   registered_uses?: Array<Record<string, unknown>>;
-  registration?: { registration_number?: string | null; manufacturer_label_url?: string | null; registrant?: string | null;
+  registration?: { registration_number?: string | null; manufacturer_label_url?: string | null; manufacturer_label_verified?: boolean; registrant?: string | null;
     manufacturer_label_identifiers?: { numbers: string[]; printed_values: string[] } } | null;
   verification?: { conflicts?: Array<Record<string, unknown>> };
 }
@@ -25,8 +26,9 @@ const scopedGap = (field: string): boolean => {
     /^(activity_group|concentration|active_ingredients):/i.test(field);
 };
 const hasLabel = (row: MasterRow): boolean => (row.verification_sources ?? []).some((s) => s.kind === "manufacturer_label" &&
-  typeof s.reference === "string" && classifyUrl(s.reference, row.registration_country).trust === "registrant" &&
-  classifyUrl(s.reference, row.registration_country).kind === "label_document");
+  typeof s.reference === "string" && manufacturerHostEligible(s.reference, row.registration_country, row.registrant) &&
+  (classifyUrl(s.reference, row.registration_country).kind === "label_document" ||
+    new URL(s.reference).pathname.toLowerCase().endsWith(".pdf")));
 
 export function isIncompleteMaster(row: MasterRow): boolean {
   const actives = row.active_ingredients ?? [];
@@ -85,7 +87,24 @@ const rateIdentity = (rate: Record<string, unknown>): string | null =>
 const rateValue = (rate: Record<string, unknown>): unknown =>
   [rate.basis ?? null, rate.min_value ?? null, rate.max_value ?? null, rate.value ?? null,
     rate.unit ?? null, rate.condition_ambiguous ?? false];
-function mergeRates(old: Array<Record<string, unknown>>, incoming: Array<Record<string, unknown>>): Array<Record<string, unknown>> | null {
+function equivalentPrintedDose(old: Record<string, unknown>, next: Record<string, unknown>): boolean {
+  const amount = (rate: Record<string, unknown>): [unknown, unknown] => {
+    const value = rate.value ?? null;
+    return [rate.min_value ?? value, rate.max_value ?? value];
+  };
+  const unit = (rate: Record<string, unknown>): string => {
+    const text = normaliseIdentityText(String(rate.unit ?? ""));
+    return String(rate.basis).includes("100_litres") ? text.replace(/ 100 l$/, "") :
+      String(rate.basis).includes("hectare") ? text.replace(/ ha$/, "") : text;
+  };
+  return rateIdentity(old) !== null && rateIdentity(next) !== null && old.basis === next.basis &&
+    equal(amount(old), amount(next)) && unit(old) === unit(next) &&
+    identityBearingRateLabel(String(old.label ?? "")) === identityBearingRateLabel(String(next.label ?? "")) &&
+    (old.condition_ambiguous ?? false) === (next.condition_ambiguous ?? false);
+}
+
+function mergeRates(old: Array<Record<string, unknown>>, incoming: Array<Record<string, unknown>>,
+  sameDirection = false): Array<Record<string, unknown>> | null {
   const merged = [...old];
   for (const next of incoming) {
     const id = rateIdentity(next);
@@ -94,6 +113,11 @@ function mergeRates(old: Array<Record<string, unknown>>, incoming: Array<Record<
     if (previous) {
       if (!equal(rateValue(previous), rateValue(next))) return null;
     } else {
+      // Historical rate_v1 IDs are immutable. Within the SAME printed
+      // direction a parser may describe a fixed dose as value=400 or
+      // min=max=400 and render its unit as mL or mL/100 L. Reuse the stored
+      // identity; never make this equivalence across distinct directions.
+      if (sameDirection && merged.some((rate) => equivalentPrintedDose(rate, next))) continue;
       // A legacy rate with no identity cannot be proven distinct from a new
       // rate on the same basis. Never create a plausible duplicate.
       if (merged.some((rate) => !rateIdentity(rate) && rate.basis === next.basis)) return null;
@@ -134,7 +158,7 @@ function mergeUse(old: Record<string, unknown>, next: Record<string, unknown>, s
     if (present(old[key]) && !sameLabel && !equal(old[key], next[key])) return null;
     if (!present(old[key])) result[key] = next[key];
   }
-  const rates = mergeRates(ratesOf(old), ratesOf(next));
+  const rates = mergeRates(ratesOf(old), ratesOf(next), true);
   if (!rates) return null;
   if (rates.length && !equal(ratesOf(old), rates)) result.rates = rates;
   return result;
@@ -154,8 +178,10 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
   status: string; patch: Record<string, Jsonish> | null; evidence: Record<string, unknown>;
 } {
   const label = detail.registration?.manufacturer_label_url;
-  const labelReady = !!label && classifyUrl(label, row.registration_country).trust === "registrant" &&
-    classifyUrl(label, row.registration_country).kind === "label_document";
+  const labelReady = !!label && manufacturerHostEligible(label, row.registration_country, row.registrant) &&
+    (classifyUrl(label, row.registration_country).trust === "registrant" &&
+      classifyUrl(label, row.registration_country).kind === "label_document" ||
+      detail.registration?.manufacturer_label_verified === true && new URL(label).pathname.toLowerCase().endsWith(".pdf"));
   const identifiers = detail.registration?.manufacturer_label_identifiers;
   const evidence = { locked_identity: row.registration_identity_key, reported_registration_number: detail.registration?.registration_number ?? null,
     manufacturer_label_url: label ?? null, manufacturer_label_identifiers: identifiers ?? null,
@@ -204,7 +230,16 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
     if (!row.activity_group_scheme) put("activity_group_scheme", row.activity_group_scheme, "not_applicable");
   }
 
-  const incoming = labelReady ? (detail.registered_uses ?? []).filter(grape) : [];
+  // A per-vine total SPRAY VOLUME is carrier/application guidance, not a
+  // product dose. Keep the wording only when a direction has no restriction.
+  const incoming = labelReady ? (detail.registered_uses ?? []).filter(grape).map((use) => {
+    const guidance = ratesOf(use).filter((rate) => rate.basis === "other" &&
+      /\b(?:total\s+)?spray\s+volume\b/i.test(`${rate.raw_text ?? ""} ${rate.label ?? ""} ${use.restrictions ?? ""}`) &&
+      /\b(?:mL|L)\s*\/\s*(?:vine|plant|tree)\b/i.test(String(rate.raw_text ?? "")));
+    if (!guidance.length) return use;
+    return { ...use, rates: ratesOf(use).filter((rate) => !guidance.includes(rate)),
+      restrictions: present(use.restrictions) ? use.restrictions : guidance.map((rate) => rate.raw_text).join("; ") };
+  }) : [];
   if (labelReady) {
     if (!row.registrant && detail.registration?.registrant) put("registrant", row.registrant, detail.registration.registrant);
     if (!row.product_category && detail.product_category) put("product_category", row.product_category, detail.product_category);
@@ -237,7 +272,15 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
     const projected: Record<"per_hectare" | "per_100_litres", Array<Record<string, unknown>>> = {
       per_hectare: (oldRates?.per_hectare ?? []).map((rate) => ({ ...rate })),
       per_100_litres: (oldRates?.per_100_litres ?? []).map((rate) => ({ ...rate })) };
-    const extracted = incoming.flatMap(ratesOf);
+    const extracted = incoming.flatMap((use) => {
+      const stored = oldUses.find((old) => grape(old) && sameUse(old, use) &&
+        (!present(old.direction_id) || !present(use.direction_id) || old.direction_id === use.direction_id));
+      return ratesOf(use).map((rate) => {
+        const previous = ratesOf(stored ?? {}).find((old) => rateIdentity(old) === rateIdentity(rate) ||
+          equivalentPrintedDose(old, rate));
+        return previous && equivalentPrintedDose(previous, rate) ? previous : rate;
+      });
+    });
     const basisGroups: Array<["per_hectare" | "per_100_litres", string[]]> = [
       ["per_hectare", ["per_hectare", "range_per_hectare"]],
       ["per_100_litres", ["per_100_litres", "range_per_100_litres"]] ];

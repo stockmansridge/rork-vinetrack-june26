@@ -1,5 +1,9 @@
+// deno-lint-ignore-file no-import-prefix no-unversioned-import require-await
 import { assertEquals, assert } from "jsr:@std/assert";
-import { discoverManufacturerUrls, findWebMasterIdentities, identityCandidate, identityResearch, manufacturerUrlsFromMaster, selectedIdentity, verifiedManufacturerLead, type WebIdentity } from "./web_identity.ts";
+import { discoverManufacturerUrls, discoverManufacturerUrlsDetailed, findWebMasterIdentities, identityCandidate, identityResearch, manufacturerUrlsFromMaster, selectedIdentity, verifiedManufacturerLead, type WebIdentity } from "./web_identity.ts";
+import { manufacturerHostEligible, classifyUrl } from "./research/classify.ts";
+import { inspectCandidateProductPages } from "./research/page_inspector.ts";
+import { projectResearch } from "./research/authority.ts";
 import { withWebEnrichment, vineyardTableRate, vineyardRateSummary, readableV2Label, labelHeaderFacts } from "./web_lookup.ts";
 import { authoritativeGroup, resistanceClassificationState } from "./ingestion/activity_groups.ts";
 import { selectLabelReferences } from "./grapevine_label.ts";
@@ -67,6 +71,66 @@ Deno.test("manufacturer URL discovery timeout makes one low-effort Terra call, n
   assertEquals(await withWebEnrichment([candidate], 4, async () => null), {
     candidates: [candidate], detail: null, timings: { search_ms: 4, extraction_ms: 0 },
   });
+});
+
+Deno.test("known manufacturer domains and unknown matching registrants are leads, never reseller/regulator evidence", async () => {
+  const cases = [
+    ["Nufarm Weedmaster DUO Herbicide", "Nufarm", "https://nufarm.com/au/product/weedmaster-duo/"],
+    ["Farmalinx Chlorostar 900 WG Herbicide", "Farmalinx", "https://farmalinx.com.au/products/chlorostar-900-wg/"],
+    ["Katana 250 WG Herbicide", "AgNova", "https://agnova.com.au/products/katana-250-wg/"],
+    ["Simanex 900 WG Herbicide", "ADAMA", "https://adama.com/australia/en/products/simanex-900-wg/"],
+    ["Conquest Example Herbicide", "Conquest Agriculture", "https://conquestag.com.au/products/example/"],
+    ["Unlisted Example Herbicide", "Unlisted Crop Pty Ltd", "https://unlistedcrop.com.au/products/example/"],
+  ];
+  for (const [name, registrant, url] of cases) {
+    const identity: WebIdentity = { name, registrant, registrationNumber: "12345", category: "herbicide",
+      activeNames: "Example active", pageUrls: [], labelUrls: [] };
+    assertEquals(manufacturerHostEligible(url, "AU", registrant), true, name);
+    const searched = await discoverManufacturerUrlsDetailed({ identity, query: name, country: "AU", apiKey: "test",
+      fetchFn: (async () => new Response(JSON.stringify({ output: [
+        { type: "web_search_call", action: { sources: [{ url }] } },
+        { type: "message", content: [{ type: "output_text", text: JSON.stringify({ product_url: url, label_url: null }) }] },
+      ] }), { status: 200 })) as typeof fetch });
+    assertEquals(searched.leads?.productUrl, url, name);
+    assertEquals(searched.leads?.labelUrl, null);
+  }
+  assertEquals(classifyUrl(cases[5][2], "AU").trust, "unknown");
+  assertEquals(manufacturerHostEligible("https://files.unlistedcrop.com.au/label.pdf", "AU", "Unlisted Crop Pty Ltd"), true);
+  for (const url of ["https://elders.com.au/products/example/", "https://elabels.apvma.gov.au/12345.pdf",
+    "https://random-reseller.com.au/products/example/", "https://unlistedcrop.evil.com/products/example/"]) {
+    assertEquals(manufacturerHostEligible(url, "AU", "Unlisted Crop Pty Ltd"), false);
+  }
+});
+
+Deno.test("Katana stored manufacturer label survives variable web search, without a second discovery call", async () => {
+  const labelUrl = "https://agnova.com.au/labels/katana-250-wg-label.pdf";
+  const identity: WebIdentity = { name: "Katana 250 WG Herbicide", registrant: "AgNova",
+    registrationNumber: "12345", category: "herbicide", activeNames: "Example active", pageUrls: [],
+    labelUrls: manufacturerUrlsFromMaster({ registrant: "AgNova", verification_sources: [
+      { kind: "manufacturer_label", reference: labelUrl }] }, "AU").labels };
+  assertEquals(identity.labelUrls, [labelUrl]);
+  const select = async (search: () => Promise<unknown>) => identity.labelUrls[0] ?? await search();
+  let searches = 0;
+  for (const _variant of [null, "https://reseller.example/katana.pdf"]) {
+    const found = await select(() => { searches++; return Promise.resolve(_variant); });
+    assertEquals(found, labelUrl);
+  }
+  assertEquals(searches, 0);
+});
+
+Deno.test("unlisted registrant product page supplies own-host label link absent from search results", async () => {
+  const page = "https://unlistedcrop.com.au/products/example/";
+  const labelUrl = "https://unlistedcrop.com.au/files/12345.pdf";
+  const identity: WebIdentity = { name: "Unlisted Example Herbicide", registrant: "Unlisted Crop Pty Ltd",
+    registrationNumber: "12345", category: "herbicide", activeNames: "Example active", pageUrls: [], labelUrls: [] };
+  const inspected = await inspectCandidateProductPages({ fetchFn: (async () => new Response(
+    `<html><title>Unlisted Example Herbicide</title><h1>Unlisted Example Herbicide</h1><a href="${labelUrl}">Download Product Label</a></html>`,
+    { status: 200, headers: { "Content-Type": "text/html" } })) as typeof fetch }, [page], "AU");
+  assertEquals(inspected.pages.length, 1);
+  const projected = projectResearch(identityResearch(identity, identity.name, "AU", { productUrl: page, labelUrl: null }),
+    "AU", null, identity.name, inspected.pages);
+  assertEquals(projected.manufacturerLabelCandidate?.url, labelUrl);
+  assertEquals(classifyUrl(labelUrl, "AU").trust, "unknown");
 });
 
 Deno.test("Beast manufacturer PDF fixture verifies identity and prints 1–5 L/ha without AI", async () => {

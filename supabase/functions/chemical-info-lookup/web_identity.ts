@@ -1,4 +1,4 @@
-import { classifyUrl } from "./research/classify.ts";
+import { classifyUrl, manufacturerHostEligible } from "./research/classify.ts";
 import { nameCorresponds } from "./ingestion/matching.ts";
 import type { WebCandidate } from "./web_lookup.ts";
 import type { ChemicalResearchResult } from "./research/schema.ts";
@@ -40,9 +40,12 @@ export function manufacturerUrlsFromMaster(row: Record<string, unknown>, country
     const item = source as Record<string, unknown>;
     const url = String(item.reference ?? "");
     const classified = classifyUrl(url, country);
-    // A JSON 'manufacturer_label' tag cannot override government host classification.
-    if (classified.trust !== "registrant" || !url.startsWith("https://")) continue;
-    if (classified.kind === "label_document") labels.push(url);
+    // Persisted manufacturer evidence is a lead, not a trust override. Reject
+    // government/reseller hosts even when a stored JSON source is mislabelled.
+    if (!["manufacturer_label", "manufacturer_product"].includes(String(item.kind)) ||
+      !manufacturerHostEligible(url, country, String(row.registrant ?? ""))) continue;
+    if (item.kind === "manufacturer_label" &&
+      (classified.kind === "label_document" || new URL(url).pathname.toLowerCase().endsWith(".pdf"))) labels.push(url);
     else if (classified.isInspectableProductPage) pages.push(url);
   }
   return { pages: [...new Set(pages)], labels: [...new Set(labels)] };
@@ -101,6 +104,8 @@ export function identityResearch(identity: WebIdentity, query: string, country: 
 }
 
 export interface ManufacturerLeads { productUrl: string | null; labelUrl: string | null }
+export type ManufacturerDiscoveryReason = "search_no_candidate" | "search_timeout" | "host_not_verified";
+export interface ManufacturerDiscovery { leads: ManufacturerLeads | null; reason: ManufacturerDiscoveryReason | null }
 const URL_DISCOVERY_TIMEOUT_MS = 12_000;
 
 /** One small, abortable web-search request; no full research schema and no serial model escalation. */
@@ -108,7 +113,15 @@ export async function discoverManufacturerUrls(input: {
   identity: WebIdentity | null; query: string; country: string; apiKey: string; fetchFn: typeof fetch;
   timeoutMs?: number;
 }): Promise<ManufacturerLeads | null> {
-  if (!input.apiKey) return null;
+  return (await discoverManufacturerUrlsDetailed(input)).leads;
+}
+
+/** Search results are leads only; unknown hosts require fetched page/PDF proof downstream. */
+export async function discoverManufacturerUrlsDetailed(input: {
+  identity: WebIdentity | null; query: string; country: string; apiKey: string; fetchFn: typeof fetch;
+  timeoutMs?: number;
+}): Promise<ManufacturerDiscovery> {
+  if (!input.apiKey) return { leads: null, reason: "search_no_candidate" };
   const name = input.identity?.name ?? input.query;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), input.timeoutMs ?? URL_DISCOVERY_TIMEOUT_MS);
@@ -118,7 +131,7 @@ export async function discoverManufacturerUrls(input: {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${input.apiKey}` },
       body: JSON.stringify({ model: DEFAULT_RESEARCH_MODEL,
         instructions: "Find only the registrant/manufacturer-owned product page and commercial product label for the exact agricultural product. Never substitute a veterinary product, reseller, SDS or government/regulator PDF. Only report URLs found by web search; missing URLs are null. Do not interpret label content.",
-        input: `Product: ${name}; registrant: ${input.identity?.registrant ?? "unknown"}; registration: ${input.identity?.registrationNumber ?? "unknown"}; country: ${input.country}. Find manufacturer product page and label URL only.`,
+        input: `Exact product: ${name}; registrant: ${input.identity?.registrant ?? "unknown"}; registration: ${input.identity?.registrationNumber ?? "unknown"}; active ingredients: ${input.identity?.activeNames ?? "unknown"}; country: ${input.country}. Find manufacturer product page and label URL only.`,
         tools: [{ type: "web_search", user_location: { type: "approximate", country: input.country } }],
         include: ["web_search_call.action.sources"], store: false, reasoning: { effort: "low" },
         text: { format: { type: "json_schema", name: "manufacturer_urls", strict: true, schema: {
@@ -127,7 +140,7 @@ export async function discoverManufacturerUrls(input: {
         } } },
       }),
     });
-    if (!response.ok) return null;
+    if (!response.ok) return { leads: null, reason: "search_no_candidate" };
     const data = await response.json();
     const output = Array.isArray(data?.output) ? data.output : [];
     const consulted = new Set<string>();
@@ -140,19 +153,21 @@ export async function discoverManufacturerUrls(input: {
     const text = output.filter((item: { type?: string }) => item?.type === "message")
       .flatMap((item: { content?: Array<{ type?: string; text?: string }> }) => item.content ?? [])
       .filter((part: { type?: string }) => part.type === "output_text").map((part: { text?: string }) => part.text ?? "").join("");
-    if (!text) return null;
+    if (!text) return { leads: null, reason: "search_no_candidate" };
     const result = JSON.parse(text);
     const accepted = (url: unknown, kind: "page" | "label"): string | null => {
-      if (typeof url !== "string" || !url.startsWith("https://") || !consulted.has(url)) return null;
+      if (typeof url !== "string" || !consulted.has(url) || !manufacturerHostEligible(url, input.country, input.identity?.registrant)) return null;
       const classified = classifyUrl(url, input.country);
-      if (classified.trust !== "registrant") return null;
-      return kind === "label" ? classified.kind === "label_document" ? url : null
+      // An unknown PDF cannot prove host ownership on its own. Require an
+      // inspected same-host product page to link it before it may be fetched.
+      return kind === "label" ? classified.trust === "registrant" && classified.kind === "label_document" ? url : null
         : classified.isInspectableProductPage ? url : null;
     };
     const productUrl = accepted(result.product_url, "page");
     const labelUrl = accepted(result.label_url, "label");
-    return productUrl || labelUrl ? { productUrl, labelUrl } : null;
-  } catch { return null; }
+    return productUrl || labelUrl ? { leads: { productUrl, labelUrl }, reason: null } :
+      { leads: null, reason: result.product_url || result.label_url ? "host_not_verified" : "search_no_candidate" };
+  } catch (error) { return { leads: null, reason: error instanceof DOMException && error.name === "AbortError" ? "search_timeout" : "search_no_candidate" }; }
   finally { clearTimeout(timer); }
 }
 
