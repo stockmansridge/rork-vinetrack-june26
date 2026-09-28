@@ -102,8 +102,23 @@ function mergeRates(old: Array<Record<string, unknown>>, incoming: Array<Record<
   }
   return merged;
 }
-const useKey = (use: Record<string, unknown>): string =>
-  `${String(use.crop ?? "").trim().toLowerCase()}|${String(use.target ?? use.target_raw ?? "").trim().toLowerCase()}`;
+const matchWords = (value: unknown): string => String(value ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/g, " ");
+const grapeAliases = new Set(["grape", "grapes", "grapevine", "grapevines", "vineyard", "vineyards"]);
+const scientificSuffix = /\s*\(([A-Z][a-z]+\s+[a-z]+)\)\s*$/;
+const useTarget = (use: Record<string, unknown>): string => String(use.target ?? use.target_raw ?? "").trim();
+const useKey = (use: Record<string, unknown>): string => {
+  const crop = matchWords(use.crop);
+  // Drop only a final binomial scientific name, never arbitrary parenthetical qualifiers.
+  const commonName = useTarget(use).replace(scientificSuffix, "");
+  return `${grapeAliases.has(crop) ? "grapevine" : crop}|${matchWords(commonName)}`;
+};
+const sameUse = (old: Record<string, unknown>, next: Record<string, unknown>): boolean => {
+  if (useKey(old) !== useKey(next)) return false;
+  const oldScientific = useTarget(old).match(scientificSuffix)?.[1];
+  const nextScientific = useTarget(next).match(scientificSuffix)?.[1];
+  // Two explicit, different species must not be conflated just because their common name matches.
+  return !oldScientific || !nextScientific || matchWords(oldScientific) === matchWords(nextScientific);
+};
 const useFields = ["withholding_period_days", "withholding_period_text", "re_entry_period_hours", "re_entry_period_text", "restrictions", "statements", "conditions"];
 function mergeUse(old: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> | null {
   const result: Record<string, unknown> = { ...old };
@@ -191,13 +206,14 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
     const oldUses = (row.registered_uses ?? []) as Array<Record<string, unknown>>;
     const mergedUses = [...oldUses];
     for (const next of incoming) {
-      const matches = mergedUses.map((old, i) => grape(old) && useKey(old) === useKey(next) &&
-        (!present(old.direction_id) || !present(next.direction_id) || old.direction_id === next.direction_id) ? i : -1).filter((i) => i >= 0);
+      // Canonical spelling is a matching aid only: never replace stored crop/target display text.
+      const matches = mergedUses.map((old, i) => grape(old) && sameUse(old, next) ? i : -1)
+        .filter((i) => i >= 0);
       if (matches.length > 1) return conflict("ambiguous_vineyard_direction");
+      if (matches.length && present(mergedUses[matches[0]].direction_id) && present(next.direction_id) &&
+        mergedUses[matches[0]].direction_id !== next.direction_id) return conflict("vineyard_direction_identity");
       if (!matches.length) {
         if (ratesOf(next).some((r) => !rateIdentity(r))) return conflict("missing_authoritative_rate_identity");
-        // Do not append a second row for the same target with an incompatible direction.
-        if (mergedUses.some((old) => grape(old) && useKey(old) === useKey(next))) return conflict("vineyard_direction_identity");
         mergedUses.push(next);
       } else {
         const merged = mergeUse(mergedUses[matches[0]], next);
@@ -261,7 +277,7 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
     if (["label_reference", "manufacturer_label"].includes(field.toLowerCase())) return labelReady; // stored as manufacturer_label source, not regulator label_reference
     if (field.toLowerCase() === "re_entry_period_hours" && labelReady) {
       const vines = ((patch.registered_uses ?? row.registered_uses ?? []) as Array<Record<string, unknown>>).filter(grape);
-      return vines.length > 0 && vines.every((use) => incoming.some((next) => useKey(next) === useKey(use) &&
+      return vines.length > 0 && vines.every((use) => incoming.some((next) => sameUse(next, use) &&
         (!present(use.direction_id) || !present(next.direction_id) || use.direction_id === next.direction_id) &&
         typeof next.re_entry_period_hours === "number" && next.re_entry_period_hours > 0));
     }
@@ -271,7 +287,7 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
     if (!matching.length) return false;
     // A stored value alone is not proof that this label pass resolved its marker.
     // Require matching, positively extracted label facts for EVERY scoped use.
-    const evidenced = matching.map((use) => incoming.find((next) => useKey(next) === useKey(use) &&
+    const evidenced = matching.map((use) => incoming.find((next) => sameUse(next, use) &&
       (!present(use.direction_id) || !present(next.direction_id) || use.direction_id === next.direction_id)));
     if (evidenced.some((use) => !use)) return false;
     if (kind.toLowerCase() === "rates") return evidenced.every((u) => ratesOf(u!).some((r) => rateIdentity(r)));

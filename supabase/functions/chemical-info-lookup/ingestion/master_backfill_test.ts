@@ -3,6 +3,7 @@ import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.t
 import type { MasterRow } from "./contract.ts";
 import { authoritativeBackfillDetail, buildMasterBackfillPatch, equalBackfillValue, isIncompleteMaster, lockedWebIdentity } from "./master_backfill.ts";
 import { validateResolverPatch } from "./review_preview.ts";
+import { finishBackfillPreview } from "./master_backfill_preview.ts";
 
 const LABEL = "https://cropsure.com/wp-content/uploads/2023/03/cropsure-beast-200-herbicide-label-v2.pdf";
 const active = { name: "Glufosinate-ammonium", concentration: 200, concentration_unit: "g/L",
@@ -154,6 +155,108 @@ Deno.test("vineyard gaps prune only evidenced markers; second pass stays stable"
   const after = { ...before, ...first.patch } as MasterRow;
   assertEquals(isIncompleteMaster(after), false);
   assertEquals(buildMasterBackfillPatch(after, detail()).patch, null);
+});
+
+Deno.test("viticulture crop aliases match without rewriting stored crop or target", () => {
+  for (const [storedCrop, extractedCrop] of [["GRAPE", "Grapes"], ["VINEYARD", "Vineyards"],
+    ["grapevine", "grapevines"]]) {
+    const row = master({ registered_uses: [{ crop: storedCrop, target_raw: "FIG LONGICORN", rates: [] }] });
+    const proposed = buildMasterBackfillPatch(row, detail({ registered_uses: [{ crop: extractedCrop,
+      target_raw: "Fig longicorn (Acalolepta vastator)", rates: [rate] }] }));
+    assertEquals(proposed.status, "preview_ready");
+    const uses = proposed.patch?.registered_uses as Array<Record<string, unknown>>;
+    assertEquals(uses.length, 1);
+    assertEquals(uses[0].crop, storedCrop);
+    assertEquals(uses[0].target_raw, "FIG LONGICORN");
+    assertEquals(uses[0].rates, [rate]);
+    assertEquals(buildMasterBackfillPatch({ ...row, ...proposed.patch } as MasterRow, detail({ registered_uses: [
+      { crop: extractedCrop, target_raw: "Fig longicorn (Acalolepta vastator)", rates: [rate] }] })).status, "no_material_change");
+  }
+});
+
+Deno.test("different longicorn pests stay distinct; ambiguous canonical targets and directions fail closed", () => {
+  const incoming = detail({ registered_uses: [{ crop: "Grapes", target_raw: "Fig longicorn (Acalolepta vastator)", rates: [rate] }] });
+  const different = master({ registered_uses: [{ crop: "GRAPE", target_raw: "CITRUS LONGICORN", rates: [] }] });
+  const newUse = buildMasterBackfillPatch(different, incoming);
+  assertEquals((newUse.patch?.registered_uses as unknown[]).length, 2);
+  const ambiguous = master({ registered_uses: [
+    { crop: "GRAPE", target_raw: "FIG LONGICORN", rates: [] },
+    { crop: "VINEYARD", target_raw: "Fig longicorn (Acalolepta vastator)", rates: [] },
+  ] });
+  assertEquals(buildMasterBackfillPatch(ambiguous, incoming).status, "evidence_conflict");
+  assertEquals(buildMasterBackfillPatch(ambiguous, incoming).patch, null);
+  const differentDirection = master({ registered_uses: [
+    { crop: "GRAPE", target_raw: "FIG LONGICORN", direction_id: "direction_v1_other", rates: [] },
+  ] });
+  assertEquals(buildMasterBackfillPatch(differentDirection, detail({ registered_uses: [
+    { crop: "Grapes", target_raw: "Fig longicorn (Acalolepta vastator)", direction_id: "direction_v1_new", rates: [rate] },
+  ] })).status, "evidence_conflict");
+  assertEquals(buildMasterBackfillPatch(master({ registered_uses: [
+    { crop: "GRAPE", target_raw: "FIG LONGICORN (different life stage)", rates: [] },
+  ] }), incoming).patch?.registered_uses?.length, 2);
+  assertEquals(buildMasterBackfillPatch(master({ registered_uses: [
+    { crop: "GRAPE", target_raw: "Fig longicorn (Acalolepta australis)", rates: [] },
+  ] }), incoming).patch?.registered_uses?.length, 2);
+});
+
+Deno.test("TALSTAR-like 83-use row merges 400 mL/100 L once and second pass stores no preview", async () => {
+  // Synthetic, trusted-host fixture: no network request or claim about the live label's other directions.
+  const fmcLabel = "https://www.fmc.com/label/talstar-250-ec-label.pdf";
+  const fmcRate = { rate_id: "rate_v1_talstar_fig_longicorn", basis: "per_100_litres", min_value: 400,
+    max_value: 400, unit: "mL/100 L", raw_text: "400 mL/100 L" };
+  const grapeUse = { crop: "GRAPE", target_raw: "FIG LONGICORN", rates: [] };
+  const existingUses = [...Array.from({ length: 82 }, (_, i) => ({ crop: `Other crop ${i}`, target_raw: `Other pest ${i}`, rates: [] })), grapeUse];
+  const talstar = master({ registration_number: "60987", registration_identity_key: "AU:apvma:60987",
+    registered_product_name: "TALSTAR 250 EC INSECTICIDE/MITICIDE", registrant: "FMC",
+    product_category: "insecticide", active_ingredients: [{ name: "Bifenthrin", concentration: 250,
+      concentration_unit: "g/L", activity_group: { scheme: "irac", code: "3A", common_name: "Pyrethroid" },
+      group_source: "authoritative_classification" }],
+    activity_groups: ["3A"], activity_group_scheme: "irac", resistance_classification_state: "classified",
+    registered_uses: existingUses, viticulture_rates: { per_hectare: [], per_100_litres: [] },
+    verification_sources: [{ kind: "manufacturer_label", name: "Manufacturer commercial label", reference: fmcLabel }] });
+  const fmcDetail = { registration: { registration_number: "60987", manufacturer_label_url: fmcLabel },
+    registered_uses: [{ crop: "Grapes", target_raw: "Fig longicorn (Acalolepta vastator)",
+      direction_id: "direction_v1_talstar_fig_longicorn", rates: [fmcRate],
+      restrictions: "Apply as directed on the label", re_entry_period_hours: 12,
+      withholding_period_days: 7 }] };
+  assertEquals(talstar.registered_uses.length, 83);
+  const proposed = buildMasterBackfillPatch(talstar, fmcDetail);
+  assertEquals(proposed.status, "preview_ready");
+  const uses = proposed.patch?.registered_uses as Array<Record<string, unknown>>;
+  assertEquals(uses.length, 83);
+  assertEquals(uses.filter((use) => /grape|vineyard/i.test(String(use.crop))).length, 1);
+  assertEquals(uses[82].crop, "GRAPE");
+  assertEquals(uses[82].target_raw, "FIG LONGICORN");
+  assertEquals(uses[82].rates, [fmcRate]);
+  assertEquals(uses[82].restrictions, fmcDetail.registered_uses[0].restrictions);
+  assertEquals(uses[82].re_entry_period_hours, 12);
+  assertEquals(uses[82].withholding_period_days, 7);
+  assertEquals((proposed.patch?.viticulture_rates as { per_100_litres: unknown[] }).per_100_litres, [fmcRate]);
+  const after = { ...talstar, ...proposed.patch } as MasterRow;
+  let previewWrites = 0;
+  const store = { insertPreview: () => { previewWrites++; return Promise.resolve({ id: "unexpected" }); } };
+  const secondDry = await finishBackfillPreview(after, "admin", { detail: fmcDetail }, true, store);
+  assertEquals(secondDry.status, "no_material_change");
+  assertEquals(secondDry.proposed_patch, null);
+  assertEquals(secondDry.preview_id, null);
+  assertEquals(secondDry.findings.vineyard_rates_added, false);
+  const second = await finishBackfillPreview(after, "admin", { detail: fmcDetail }, false, store);
+  assertEquals(second.status, "no_material_change");
+  assertEquals(second.proposed_patch, null);
+  assertEquals(second.preview_id, null);
+  assertEquals(second.findings.vineyard_rates_added, false);
+  assertEquals(previewWrites, 0);
+  assertEquals(after.registered_uses.length, 83);
+  assertEquals(after.viticulture_rates?.per_100_litres.length, 1);
+});
+
+Deno.test("stored resistance disagreements remain evidence conflicts, not use-merge overrides", () => {
+  const row = master({ active_ingredients: [{ name: "Bifenthrin", activity_group: { scheme: "irac", code: "9B" } }],
+    activity_groups: ["9B"], activity_group_scheme: "irac", resistance_classification_state: "classified" });
+  const result = buildMasterBackfillPatch(row, detail({ active_ingredients: [{ name: "Bifenthrin" }],
+    registered_uses: [{ crop: "Grapes", target_raw: "Fig longicorn (Acalolepta vastator)", rates: [rate] }] }));
+  assertEquals(result.status, "evidence_conflict");
+  assertEquals(result.patch, null);
 });
 
 Deno.test("partial bases and targets merge by rate id, preserving old values", () => {
