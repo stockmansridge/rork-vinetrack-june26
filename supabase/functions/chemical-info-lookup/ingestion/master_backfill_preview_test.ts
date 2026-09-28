@@ -50,7 +50,12 @@ Deno.test("complete, no change, missing label, and conflicting identity have exp
   const conflict = await finishBackfillPreview(row(), "admin", { identity_conflict: { printed: "99999", manufacturer_label_url: label } }, false, store);
   assertEquals(conflict.status, "identity_conflict");
   assertEquals(conflict.evidence.reported_registration_number, "99999");
+  assertEquals(conflict.evidence.reason, "manufacturer_product_identity_mismatch");
   assertEquals(conflict.preview_id, null);
+  const invalidIdentity = await finishBackfillPreview({ ...row(), registration_identity_key: "AU:apvma:wrong" },
+    "admin", { detail }, false, store);
+  assertEquals(invalidIdentity.status, "identity_conflict");
+  assertEquals(invalidIdentity.evidence.reason, "locked_master_identity_invalid");
   const printed = await finishBackfillPreview(row(), "admin", { detail: { registration: { ...detail.registration,
     manufacturer_label_identifiers: { numbers: ["90143", "127764"], printed_values: ["90143/127764"] } } } }, true, store);
   assertEquals(printed.status, "preview_ready");

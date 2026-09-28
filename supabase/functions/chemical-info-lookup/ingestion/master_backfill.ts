@@ -119,12 +119,19 @@ const sameUse = (old: Record<string, unknown>, next: Record<string, unknown>): b
   // Two explicit, different species must not be conflated just because their common name matches.
   return !oldScientific || !nextScientific || matchWords(oldScientific) === matchWords(nextScientific);
 };
-const useFields = ["withholding_period_days", "withholding_period_text", "re_entry_period_hours", "re_entry_period_text", "restrictions", "statements", "conditions"];
-function mergeUse(old: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> | null {
+const structuredUseFields = ["withholding_period_days", "re_entry_period_hours"];
+const narrativeUseFields = ["withholding_period_text", "re_entry_period_text", "restrictions", "statements", "conditions"];
+function mergeUse(old: Record<string, unknown>, next: Record<string, unknown>, sameLabel: boolean): Record<string, unknown> | null {
   const result: Record<string, unknown> = { ...old };
-  for (const key of useFields) {
-    if (!present(next[key]) || (typeof next[key] === "number" && (key === "withholding_period_days" || key === "re_entry_period_hours") && (next[key] as number) <= 0)) continue;
+  for (const key of structuredUseFields) {
+    if (typeof next[key] !== "number" || (next[key] as number) <= 0) continue;
     if (present(old[key]) && !equal(old[key], next[key])) return null;
+    if (!present(old[key])) result[key] = next[key];
+  }
+  for (const key of narrativeUseFields) {
+    if (!present(next[key])) continue;
+    // Existing label prose is stable; extraction wording is not. Never rewrite it.
+    if (present(old[key]) && !sameLabel && !equal(old[key], next[key])) return null;
     if (!present(old[key])) result[key] = next[key];
   }
   const rates = mergeRates(ratesOf(old), ratesOf(next));
@@ -216,7 +223,9 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
         if (ratesOf(next).some((r) => !rateIdentity(r))) return conflict("missing_authoritative_rate_identity");
         mergedUses.push(next);
       } else {
-        const merged = mergeUse(mergedUses[matches[0]], next);
+        const sameLabel = (row.verification_sources ?? []).some((source) =>
+          source.kind === "manufacturer_label" && source.reference === label);
+        const merged = mergeUse(mergedUses[matches[0]], next, sameLabel);
         if (!merged) return conflict("vineyard_use_or_rate");
         mergedUses[matches[0]] = merged;
       }

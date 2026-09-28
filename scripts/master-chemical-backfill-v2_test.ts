@@ -1,6 +1,7 @@
 // deno-lint-ignore-file no-import-prefix
-import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { applyPreviewIfExecuting, containRowFailure, pendingIds, selectBackfillRows } from "./master-chemical-backfill-v2.ts";
+import { assertEquals, assertThrows } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { applyPreviewIfExecuting, containRowFailure, executeReviewedPreview, parseReviewedPlan, patchFingerprint, pendingIds, reviewedRow, safeConflictReason, selectBackfillRows } from "./master-chemical-backfill-v2.ts";
+import { finishBackfillPreview, type BackfillPreviewResponse } from "../supabase/functions/chemical-info-lookup/ingestion/master_backfill_preview.ts";
 import { storeBackfillPreview, writeLookupCache } from "../supabase/functions/chemical-info-lookup/ingestion/master_backfill.ts";
 import type { MasterRow } from "../supabase/functions/chemical-info-lookup/ingestion/contract.ts";
 
@@ -36,6 +37,107 @@ Deno.test("one failing lookup is contained and the next row still runs", async (
   assertEquals(first.error, true);
   assertEquals(second.value, "preview_ready");
   assertEquals(visited, 2);
+});
+
+Deno.test("canonical patch fingerprint ignores nested object ordering, not array order or text", async () => {
+  const a = { registered_uses: [{ crop: "GRAPE", rates: [{ unit: "mL/100 L", value: 400 }], restrictions: "A" }],
+    verification_sources: [{ kind: "manufacturer_label", reference: "label" }] };
+  const b = { verification_sources: [{ reference: "label", kind: "manufacturer_label" }],
+    registered_uses: [{ restrictions: "A", rates: [{ value: 400, unit: "mL/100 L" }], crop: "GRAPE" }] };
+  assertEquals(await patchFingerprint(a), await patchFingerprint(b));
+  assertEquals(await patchFingerprint(a) === await patchFingerprint({ ...a, registered_uses: [{ ...a.registered_uses[0], restrictions: "B" }] }), false);
+  assertEquals(await patchFingerprint(a) === await patchFingerprint({ ...a, verification_sources: [...a.verification_sources, { kind: "other" }] }), false);
+  assertEquals(await patchFingerprint({ values: ["a", "b"] }) === await patchFingerprint({ values: ["b", "a"] }), false);
+});
+
+Deno.test("TALSTAR reviewed plan rejects extraction drift before any apply or audit; stored second pass is inert", async () => {
+  const label = "https://www.fmc.com/label/talstar-250-ec-label.pdf";
+  const rate = { label: "Fig longicorn", rate_id: "rate_v1_talstar_fig", basis: "per_100_litres" as const, min_value: 400, max_value: 400,
+    unit: "mL/100 L", raw_text: "400 mL/100 L" };
+  const row = {
+    id: "04376d16-6e66-455e-a0a4-f02c8007bc64", registration_country: "AU", registration_scheme: "apvma",
+    registration_number: "60987", registration_identity_key: "AU:apvma:60987", registered_product_name: "TALSTAR 250 EC INSECTICIDE/MITICIDE",
+    registrant: "FMC", product_category: "insecticide", active_ingredients: [{ name: "Bifenthrin", concentration: 250,
+      concentration_unit: "g/L", activity_group: { scheme: "irac", code: "3A", common_name: "Pyrethroid" },
+      group_source: "authoritative_classification" }], activity_groups: ["3A"], activity_group_scheme: "irac",
+    resistance_classification_state: "classified", registered_uses: [
+      ...Array.from({ length: 82 }, (_, i) => ({ crop: `Other crop ${i}`, target_raw: `Other pest ${i}`, rates: [] })),
+      { crop: "GRAPE", target_raw: "FIG LONGICORN", rates: [] }],
+    viticulture_rates: { per_hectare: [], per_100_litres: [] }, label_rate_bases: [],
+    verification_sources: [{ kind: "manufacturer_label", name: "Manufacturer commercial label", reference: label }],
+    verification_unresolved_fields: [], review_status: "candidate", catalogue_version: 1,
+  } as unknown as MasterRow;
+  const detail = (restrictions: string) => ({ registration: { registration_number: "60987", manufacturer_label_url: label },
+    registered_uses: [{ crop: "Grapes", target_raw: "Fig longicorn (Acalolepta vastator)", rates: [rate],
+      restrictions, withholding_period_days: 7, re_entry_period_hours: 12 }] });
+  let previewWrites = 0;
+  let masterWrites = 0;
+  let auditActions = 0;
+  const store = { insertPreview: () => { previewWrites++; return Promise.resolve({ id: `preview-${previewWrites}` }); } };
+  const first = await finishBackfillPreview(row, "admin", { detail: detail("Apply as directed") }, true, store);
+  assertEquals(first.status, "preview_ready");
+  assertEquals((first.proposed_patch?.registered_uses as unknown[]).length, 83);
+  assertEquals((first.proposed_patch?.registered_uses as Array<{ crop: string }>).filter((use) => use.crop === "GRAPE").length, 1);
+  assertEquals((first.proposed_patch?.viticulture_rates as { per_100_litres: unknown[] }).per_100_litres, [rate]);
+  const plan = parseReviewedPlan([await reviewedRow(row, first)])[0];
+  assertEquals(plan.reviewed_status, "preview_ready");
+  assertEquals(plan.proposed_patch_sha256?.length, 64);
+  assertEquals(previewWrites, 0);
+  const fresh = await finishBackfillPreview(row, "admin", { detail: detail("Follow the directions for use") }, false, store);
+  const checked = await executeReviewedPreview(plan, row, fresh, () => {
+    masterWrites++; auditActions++; return Promise.resolve({ status: "applied" });
+  });
+  assertEquals(checked.status, "preview_drift");
+  assertEquals(checked.reason, "proposed_patch_sha256");
+  assertEquals(masterWrites, 0);
+  assertEquals(auditActions, 0);
+  assertEquals(previewWrites, 1);
+  const stored = { ...row, ...first.proposed_patch, catalogue_version: 2 } as MasterRow;
+  const second = await finishBackfillPreview(stored, "admin", { detail: detail("Follow the directions for use") }, false, store);
+  assertEquals(second.status, "no_material_change");
+  assertEquals(second.preview_id, null);
+  assertEquals(second.proposed_patch, null);
+  assertEquals(stored.registered_uses.length, 83);
+  assertEquals(stored.registered_uses.filter((use) => use.crop === "GRAPE").length, 1);
+  assertEquals(stored.viticulture_rates?.per_100_litres, [rate]);
+  assertEquals(previewWrites, 1);
+  assertEquals(masterWrites, 0);
+  assertEquals(auditActions, 0);
+});
+
+Deno.test("unapproved canary statuses and revision/identity/status drift never apply", async () => {
+  const id = "04376d16-6e66-455e-a0a4-f02c8007bc64";
+  const identity = "AU:apvma:60987";
+  const row = { id, registration_identity_key: identity, catalogue_version: 2 } as MasterRow;
+  const patch = { registered_uses: [{ crop: "GRAPE" }] };
+  const response = { status: "preview_ready", master_chemical_id: id, registration_identity_key: identity,
+    base_revision: 2, proposed_patch: patch, preview_id: "preview", evidence: {},
+    review_status: "candidate", current: {}, expires_at: null,
+    findings: { classified: false, not_applicable: false, vineyard_rates_added: false, no_vineyard_use: false } } as BackfillPreviewResponse;
+  let writes = 0;
+  const apply = () => { writes++; return Promise.resolve("applied"); };
+  const approved = parseReviewedPlan([{ id, registration_identity_key: identity, base_revision: 2,
+    reviewed_status: "preview_ready", proposed_patch_sha256: await patchFingerprint(patch) }])[0];
+  assertEquals((await executeReviewedPreview(approved, row, response, apply)).result, "applied");
+  writes = 0;
+  for (const status of ["manufacturer_label_not_found", "identity_conflict", "evidence_conflict", "no_material_change", "already_complete"]) {
+    const denied = parseReviewedPlan([{ ...approved, reviewed_status: status, proposed_patch_sha256: null }])[0];
+    assertEquals((await executeReviewedPreview(denied, row, response, apply)).status, "plan_drift");
+  }
+  for (const [changedRow, changedResponse, reason] of [
+    [{ ...row, catalogue_version: 3 }, response, "base_revision"],
+    [{ ...row, registration_identity_key: "AU:apvma:other" }, response, "registration_identity_key"],
+    [row, { ...response, status: "evidence_conflict" }, "status:evidence_conflict"],
+    [row, { ...response, master_chemical_id: "wrong" }, "master_id"],
+    [row, { ...response, proposed_patch: { registered_uses: [{ crop: "OTHER" }] } }, "proposed_patch_sha256"],
+  ] as const) assertEquals((await executeReviewedPreview(approved, changedRow as MasterRow,
+    changedResponse as BackfillPreviewResponse, apply)).reason, reason);
+  assertEquals(writes, 0);
+  assertThrows(() => parseReviewedPlan([{ id, identity }]));
+  assertThrows(() => parseReviewedPlan([approved, approved]));
+  assertEquals(safeConflictReason({ ...response, status: "evidence_conflict", evidence: { reason: "vineyard_use_or_rate" } }), "vineyard_use_or_rate");
+  assertEquals(safeConflictReason({ ...response, status: "identity_conflict", evidence: { conflicts: ["manufacturer_product_identity_mismatch"] } }), "manufacturer_product_identity_mismatch");
+  assertEquals(safeConflictReason({ ...response, status: "evidence_conflict", evidence: { reason: "Bearer secret" } }), null);
 });
 
 Deno.test("resume skips successes and failures; retry-failed targets only failures", () => {

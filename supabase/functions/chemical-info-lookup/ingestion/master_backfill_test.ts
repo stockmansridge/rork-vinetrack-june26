@@ -218,7 +218,8 @@ Deno.test("TALSTAR-like 83-use row merges 400 mL/100 L once and second pass stor
     registered_uses: [{ crop: "Grapes", target_raw: "Fig longicorn (Acalolepta vastator)",
       direction_id: "direction_v1_talstar_fig_longicorn", rates: [fmcRate],
       restrictions: "Apply as directed on the label", re_entry_period_hours: 12,
-      withholding_period_days: 7 }] };
+      withholding_period_days: 7, withholding_period_text: "7 days", re_entry_period_text: "12 hours",
+      statements: ["Keep out of waterways"], conditions: "Apply to infested vines" }] };
   assertEquals(talstar.registered_uses.length, 83);
   const proposed = buildMasterBackfillPatch(talstar, fmcDetail);
   assertEquals(proposed.status, "preview_ready");
@@ -235,12 +236,15 @@ Deno.test("TALSTAR-like 83-use row merges 400 mL/100 L once and second pass stor
   const after = { ...talstar, ...proposed.patch } as MasterRow;
   let previewWrites = 0;
   const store = { insertPreview: () => { previewWrites++; return Promise.resolve({ id: "unexpected" }); } };
-  const secondDry = await finishBackfillPreview(after, "admin", { detail: fmcDetail }, true, store);
+  const driftedDetail = { ...fmcDetail, registered_uses: [{ ...fmcDetail.registered_uses[0],
+    restrictions: "Use only according to the label directions", withholding_period_text: "Seven days",
+    re_entry_period_text: "Twelve hours", statements: ["Avoid waterways"], conditions: "Treat affected vines" }] };
+  const secondDry = await finishBackfillPreview(after, "admin", { detail: driftedDetail }, true, store);
   assertEquals(secondDry.status, "no_material_change");
   assertEquals(secondDry.proposed_patch, null);
   assertEquals(secondDry.preview_id, null);
   assertEquals(secondDry.findings.vineyard_rates_added, false);
-  const second = await finishBackfillPreview(after, "admin", { detail: fmcDetail }, false, store);
+  const second = await finishBackfillPreview(after, "admin", { detail: driftedDetail }, false, store);
   assertEquals(second.status, "no_material_change");
   assertEquals(second.proposed_patch, null);
   assertEquals(second.preview_id, null);
@@ -248,6 +252,10 @@ Deno.test("TALSTAR-like 83-use row merges 400 mL/100 L once and second pass stor
   assertEquals(previewWrites, 0);
   assertEquals(after.registered_uses.length, 83);
   assertEquals(after.viticulture_rates?.per_100_litres.length, 1);
+  const structuredConflict = buildMasterBackfillPatch(after, { ...driftedDetail, registered_uses: [
+    { ...driftedDetail.registered_uses[0], rates: [{ ...fmcRate, max_value: 500 }] }] });
+  assertEquals(structuredConflict.status, "evidence_conflict");
+  assertEquals(structuredConflict.evidence.reason, "vineyard_use_or_rate");
 });
 
 Deno.test("stored resistance disagreements remain evidence conflicts, not use-merge overrides", () => {
@@ -295,7 +303,22 @@ Deno.test("WHP REI restrictions fill null but positive disagreements fail closed
   assertEquals(buildMasterBackfillPatch({ ...old, ...patch } as MasterRow, enriched).patch, null);
   assertEquals(buildMasterBackfillPatch(master({ registered_uses: [{ ...old.registered_uses[0], withholding_period_days: 7 }] }), enriched).status, "evidence_conflict");
   assertEquals(buildMasterBackfillPatch(master({ registered_uses: [{ ...old.registered_uses[0], re_entry_period_hours: 24 }] }), enriched).status, "evidence_conflict");
-  assertEquals(buildMasterBackfillPatch(master({ registered_uses: [{ ...old.registered_uses[0], restrictions: "Keep out" }] }), enriched).status, "evidence_conflict");
+  const wordingDrift = buildMasterBackfillPatch(master({
+    registered_uses: [{ ...old.registered_uses[0], restrictions: "Keep out" }],
+    verification_sources: [{ kind: "manufacturer_label", name: "Label", reference: LABEL }],
+    active_ingredients: [active], activity_groups: ["10"], activity_group_scheme: "hrac",
+    resistance_classification_state: "classified", viticulture_rates: { per_hectare: [rate], per_100_litres: [] },
+    label_rate_bases: ["range_per_hectare"],
+  }), detail({ registered_uses: [{ crop: "Grapevines", target: "weeds", rates: [rate], restrictions: "No entry until dry" }] }));
+  assertEquals(wordingDrift.status, "no_material_change");
+  assertEquals(wordingDrift.patch, null);
+  const otherLabel = detail({ registration: { registration_number: "90143",
+    manufacturer_label_url: "https://cropsure.com/labels/another-trusted-label.pdf" },
+    registered_uses: [{ crop: "Grapevines", target: "weeds", rates: [rate], restrictions: "No entry until dry" }] });
+  assertEquals(buildMasterBackfillPatch(master({
+    registered_uses: [{ crop: "Grapevines", target: "weeds", rates: [rate], restrictions: "Keep out" }],
+    verification_sources: [{ kind: "manufacturer_label", name: "Label", reference: LABEL }],
+  }), otherLabel).status, "evidence_conflict");
 });
 
 Deno.test("one pass closes classification, vineyard rates and label evidence; unrelated gaps do not repeat research", () => {

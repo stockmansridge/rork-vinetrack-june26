@@ -62,10 +62,12 @@ export function alreadyCompleteBackfill(row: MasterRow): BackfillPreviewResponse
 export async function finishBackfillPreview(row: MasterRow, adminId: string, payload: BackfillResearchPayload | null,
   dryRun: boolean, store: Pick<PreviewStore, "insertPreview">, classificationOnly = false): Promise<BackfillPreviewResponse> {
   const base = baseResponse(row);
-  if (!lockedWebIdentity(row)) return { ...base, status: "identity_conflict" };
+  if (!lockedWebIdentity(row)) return { ...base, status: "identity_conflict",
+    evidence: { ...base.evidence, reason: "locked_master_identity_invalid" } };
   if (payload?.identity_conflict) return { ...base, status: "identity_conflict", evidence: {
     ...base.evidence, reported_registration_number: payload.identity_conflict.printed ?? null,
     manufacturer_label_url: payload.identity_conflict.manufacturer_label_url ?? null,
+    reason: payload.identity_conflict.reason ?? "manufacturer_product_identity_mismatch",
     conflicts: [payload.identity_conflict.reason ?? "manufacturer_product_identity_mismatch"] } };
   const detail = payload?.detail ?? authoritativeBackfillDetail(row);
   const proposed = buildMasterBackfillPatch(row, detail);
