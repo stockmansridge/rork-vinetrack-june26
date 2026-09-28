@@ -62,7 +62,19 @@ export function lockedWebIdentity(row: MasterRow): WebIdentity | null {
     pageUrls: urls.pages, labelUrls: urls.labels };
 }
 
-const equal = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+/** Compare JSON-shaped backfill values without depending on JSONB object key order. Array order and key presence remain significant. */
+export function equalBackfillValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) return Array.isArray(a) && Array.isArray(b) &&
+    a.length === b.length && a.every((value, index) => equalBackfillValue(value, b[index]));
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  const keys = Object.keys(left);
+  return keys.length === Object.keys(right).length && keys.every((key) =>
+    Object.hasOwn(right, key) && equalBackfillValue(left[key], right[key]));
+}
+const equal = equalBackfillValue;
 const present = (value: unknown): boolean => value !== null && value !== undefined &&
   (typeof value !== "string" || value.trim().length > 0) && (!Array.isArray(value) || value.length > 0);
 const ratesOf = (use: Record<string, unknown>): Array<Record<string, unknown>> =>

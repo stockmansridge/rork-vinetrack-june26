@@ -1,7 +1,7 @@
 // deno-lint-ignore-file no-import-prefix
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import type { MasterRow } from "./contract.ts";
-import { authoritativeBackfillDetail, buildMasterBackfillPatch, isIncompleteMaster, lockedWebIdentity } from "./master_backfill.ts";
+import { authoritativeBackfillDetail, buildMasterBackfillPatch, equalBackfillValue, isIncompleteMaster, lockedWebIdentity } from "./master_backfill.ts";
 import { validateResolverPatch } from "./review_preview.ts";
 
 const LABEL = "https://cropsure.com/wp-content/uploads/2023/03/cropsure-beast-200-herbicide-label-v2.pdf";
@@ -27,6 +27,18 @@ const detail = (overrides: Record<string, unknown> = {}) => ({
   resistance_classification_state: "classified",
   registered_uses: [{ crop: "Grapevines", target: "weeds", direction_id: "direction_v1_example", rates: [rate] }],
   ...overrides,
+});
+
+Deno.test("backfill JSON equality ignores object key order but preserves exact values and array order", () => {
+  const original = { number: "90143", scheme: "apvma", source: "manufacturer_label", canonical: true };
+  assertEquals(equalBackfillValue(original, { scheme: "apvma", number: "90143", source: "manufacturer_label", canonical: true }), true);
+  assertEquals(equalBackfillValue({ sources: [{ metadata: { number: "90143", canonical: true } }] },
+    { sources: [{ metadata: { canonical: true, number: "90143" } }] }), true);
+  assertEquals(equalBackfillValue(original, { scheme: "apvma", number: "127764", source: "manufacturer_label", canonical: true }), false);
+  assertEquals(equalBackfillValue(original, { ...original, canonical: false }), false);
+  assertEquals(equalBackfillValue({ numbers: ["90143", "127764"] }, { numbers: ["127764", "90143"] }), false);
+  assertEquals(equalBackfillValue({ number: "90143" }, { number: 90143 }), false);
+  assertEquals(equalBackfillValue({ number: undefined }, {}), false);
 });
 
 Deno.test("locked Master identity prevents wrong registration and preserves identity/status/history surface", () => {
@@ -60,6 +72,21 @@ Deno.test("printed identifiers are label evidence, never a Master rekey", () => 
     { scheme: "apvma", number: "127764", source: "manufacturer_label", canonical: false },
   ]);
   assertEquals(source.printed_registration_values, ["90143/127764"]);
+  const stored = { ...row, ...proposed.patch, verification_sources: [row.verification_sources![0], {
+    reference: LABEL, name: "Manufacturer commercial label", kind: "manufacturer_label" as const,
+    printed_registration_values: ["90143/127764"], registration_numbers: [
+      { number: "90143", scheme: "apvma", canonical: true, source: "manufacturer_label" },
+      { canonical: false, source: "manufacturer_label", number: "127764", scheme: "apvma" },
+    ],
+  }] } as MasterRow;
+  const second = buildMasterBackfillPatch(stored, detail({ registration: {
+    registration_number: "90143", manufacturer_label_url: LABEL, manufacturer_label_identifiers: identifiers } }));
+  assertEquals(second.status, "no_material_change");
+  assertEquals(second.patch, null);
+  const changed = buildMasterBackfillPatch({ ...stored, verification_sources: [row.verification_sources![0], {
+    ...stored.verification_sources![1], printed_registration_values: ["127764"] }] }, detail({ registration: {
+    registration_number: "90143", manufacturer_label_url: LABEL, manufacturer_label_identifiers: identifiers } }));
+  assertEquals(changed.patch?.verification_sources !== undefined, true);
   assertEquals(buildMasterBackfillPatch({ ...row, ...proposed.patch } as MasterRow, detail({ registration: {
     registration_number: "90143", manufacturer_label_url: LABEL, manufacturer_label_identifiers: identifiers } })).patch, null);
   assertEquals(buildMasterBackfillPatch(master(), detail({ active_ingredients: [{ name: "Other" }] })).status, "evidence_conflict");

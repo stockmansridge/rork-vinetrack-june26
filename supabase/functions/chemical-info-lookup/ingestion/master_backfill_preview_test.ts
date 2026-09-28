@@ -1,7 +1,7 @@
 // deno-lint-ignore-file no-import-prefix
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import type { MasterRow } from "./contract.ts";
-import { buildMasterBackfillPatch } from "./master_backfill.ts";
+import { buildMasterBackfillPatch, isIncompleteMaster } from "./master_backfill.ts";
 import { alreadyCompleteBackfill, backfillCountry, finishBackfillPreview, parseBackfillRequest } from "./master_backfill_preview.ts";
 import type { PreviewInsertPayload } from "./review_preview.ts";
 import { applyRateIdentities } from "../rate_identity.ts";
@@ -67,7 +67,9 @@ Deno.test("complete, no change, missing label, and conflicting identity have exp
 });
 
 Deno.test("Beast label excerpt produces a dry-run review with both printed IDs and 1–5 L/ha", async () => {
-  const beast = { ...row(), id: "17cd1608-ed02-4bc0-a7e1-797846620892" };
+  const beast = { ...row(), id: "17cd1608-ed02-4bc0-a7e1-797846620892", catalogue_version: 2,
+    active_ingredients: [{ ...row().active_ingredients[0], activity_group: { scheme: "hrac" as const, code: "10" } }],
+    activity_groups: ["10"], activity_group_scheme: "hrac", resistance_classification_state: "classified" as const };
   const text = `CropSure Beast 200 Herbicide Label Final\nACTIVE CONSTITUENT: 200 g/L GLUFOSINATE-AMMONIUM\nAPVMA Approval No.: 90143/127764\nCrop / Weed State Rate WHP Critical Comments\nAvocado,See list ofQld,1.0 toNil Apply as a directed spray\nbanana, feijoa,weedsNSW,5.0label section application\nguava, kiwifruit,controlledVic,L/hainformation\nVineyards\nUse the lower rate when weeds are young`;
   assertEquals(manufacturerDocumentConfirmsIdentity({ text, registrationNumber: beast.registration_number,
     registeredProductName: beast.registered_product_name, activeNames: ["Glufosinate-ammonium"] }), true);
@@ -87,6 +89,36 @@ Deno.test("Beast label excerpt produces a dry-run review with both printed IDs a
   assertEquals(source?.printed_registration_values, ["90143/127764"]);
   const rates = (result.proposed_patch?.viticulture_rates as { per_hectare: Array<{ min_value: number; max_value: number; unit: string }> }).per_hectare;
   assertEquals(rates.map((r) => [r.min_value, r.max_value, r.unit]), [[1, 5, "L"]]);
+
+  // Simulate the first apply and a JSONB readback that reordered object keys, without any database call.
+  const sources = result.proposed_patch?.verification_sources as NonNullable<MasterRow["verification_sources"]>;
+  const stored = { ...beast, ...result.proposed_patch, catalogue_version: 3,
+    verification_sources: sources.map((source) => source.kind !== "manufacturer_label" ? source : ({
+      printed_registration_values: ["90143/127764"],
+      registration_numbers: [
+        { canonical: true, source: "manufacturer_label", number: "90143", scheme: "apvma" },
+        { number: "127764", canonical: false, scheme: "apvma", source: "manufacturer_label" },
+      ], reference: label, name: "Manufacturer commercial label", kind: "manufacturer_label",
+    })) } as MasterRow;
+  assertEquals(isIncompleteMaster(stored), false);
+  assertEquals(stored.viticulture_rates?.per_hectare?.length, 1);
+  let previewWrites = 0;
+  const store = { insertPreview: (_: PreviewInsertPayload) => {
+    previewWrites++;
+    return Promise.resolve({ id: "unexpected-preview" });
+  } };
+  const secondDry = await finishBackfillPreview(stored, "admin", { detail: labelDetail }, true, store);
+  assertEquals(secondDry.status, "no_material_change");
+  assertEquals(secondDry.proposed_patch, null);
+  assertEquals(secondDry.preview_id, null);
+  assertEquals(secondDry.findings.vineyard_rates_added, false);
+  const secondReview = await finishBackfillPreview(stored, "admin", { detail: labelDetail }, false, store);
+  assertEquals(secondReview.status, "no_material_change");
+  assertEquals(secondReview.proposed_patch, null);
+  assertEquals(secondReview.preview_id, null);
+  assertEquals(previewWrites, 0);
+  assertEquals(stored.viticulture_rates?.per_hectare?.length, 1);
+  assertEquals(stored.catalogue_version, 3);
 });
 
 Deno.test("normal review stores only a server-owned admin-bound preview; dry run and classification-only do not mutate Master", async () => {
