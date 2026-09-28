@@ -158,10 +158,20 @@ export async function discoverManufacturerUrlsDetailed(input: {
     if (!text) return { leads: null, reason: "search_no_candidate" };
     const result = JSON.parse(text);
     const accepted = (url: unknown, kind: "page" | "label"): string | null => {
-      if (typeof url !== "string" || !consulted.has(url) ||
-        url === input.excludeUrl || input.fallbackHost &&
+      if (typeof url !== "string" || !consulted.has(url)) return null;
+      let candidate: URL;
+      try { candidate = new URL(url); } catch { return null; }
+      if (candidate.protocol !== "https:") return null;
+      if (input.excludeUrl) {
+        try {
+          const failed = new URL(input.excludeUrl);
+          // Changing a query string does not turn the failed document into a different PDF.
+          if (candidate.host === failed.host && candidate.pathname === failed.pathname) return null;
+        } catch { return null; }
+      }
+      if (input.fallbackHost &&
         (hostOf(url) !== input.fallbackHost && !hostOf(url).endsWith(`.${input.fallbackHost}`) ||
-          kind === "label" && !new URL(url).pathname.toLowerCase().endsWith(".pdf"))) return null;
+          kind === "label" && !candidate.pathname.toLowerCase().endsWith(".pdf"))) return null;
       const classified = classifyUrl(url, input.country);
       // An unknown page can be inspected for an explicit legal trading-as
       // statement. A bare unknown PDF can never establish its own host custody.

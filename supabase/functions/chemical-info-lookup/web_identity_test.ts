@@ -142,7 +142,10 @@ Deno.test("failed direct SIMANEX PDF search excludes the original and rejects re
   const identity: WebIdentity = { name: "SIMANEX 900 WG HERBICIDE", registrant: "ADAMA AUSTRALIA PTY LIMITED",
     registrationNumber: "62917", category: "herbicide", activeNames: "simazine", pageUrls: [], labelUrls: [] };
   for (const [candidate, expected] of [
-    [failed, null], ["https://elders.com.au/labels/simanex-900-wg-label.pdf", null],
+    [failed, null], [failed + "?download=1", null],
+    ["https://elders.com.au/labels/simanex-900-wg-label.pdf", null],
+    ["https://portal.apvma.gov.au/labels/simanex-900-wg-label.pdf", null],
+    ["http://www.adama.com/labels/simanex-900-wg-label.pdf", null],
     ["https://www.adama.com/australia/en/media/9096/download?attachment=", null], [alternate, alternate],
   ] as const) {
     const found = await discoverManufacturerUrlsDetailed({ identity, query: identity.name, country: "AU", apiKey: "test",

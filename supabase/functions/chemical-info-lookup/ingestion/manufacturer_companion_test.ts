@@ -112,6 +112,34 @@ Deno.test("fetch failure reports only a fixed subtype or validated HTTP status",
   assertEquals(safeManufacturerFetchReason("rejected_off_host_redirect"), "label_fetch_failed_off_host_redirect");
   assertEquals(safeManufacturerFetchReason("rejected_network_error"), "label_fetch_failed_network_error");
   assertEquals(safeManufacturerFetchReason("rejected_http_error", 999), "label_fetch_failed_http_error");
+  for (const status of [429, 500])
+    assertEquals(safeManufacturerFetchReason("rejected_http_error", status), `label_fetch_http_${status}`);
+  for (const subtype of ["not_https", "untrusted_host", "off_host_redirect", "not_found", "not_pdf", "too_large", "network_error"] as const)
+    assertEquals(safeManufacturerFetchReason(`rejected_${subtype}`), `label_fetch_failed_${subtype}`);
+});
+
+Deno.test("manufacturer fetch logs status, outcome and both URLs without query secrets or response text", async () => {
+  const selected = "https://www.adama.com/labels/simanex-label.pdf?token=private";
+  const final = "https://www.adama.com/labels/simanex-current-label.pdf?signature=private";
+  const original = console.info;
+  const logs: string[] = [];
+  console.info = (...args: unknown[]) => { logs.push(args.map(String).join(" ")); };
+  try {
+    const fetched = await fetchManufacturerDocument({ now: () => new Date(), fetchFn: (async () => {
+      const response = new Response("secret response", { status: 429, headers: { "content-type": "text/html" } });
+      Object.defineProperty(response, "url", { value: final });
+      return response;
+    }) as typeof fetch }, selected, selected);
+    assertEquals(fetched.outcome, "rejected_http_error");
+    assertEquals(logs.length, 1);
+    const event = JSON.parse(logs[0].slice("manufacturer_document_fetch ".length));
+    assertEquals(event.selected_url, "https://www.adama.com/labels/simanex-label.pdf");
+    assertEquals(event.http_status, 429);
+    assertEquals(event.outcome, "rejected_http_error");
+    assertEquals(typeof event.elapsed_ms, "number");
+    assertEquals(logs[0].includes("private") || logs[0].includes("secret response"), false);
+    assertEquals(event.final_url, "https://www.adama.com/labels/simanex-current-label.pdf");
+  } finally { console.info = original; }
 });
 
 Deno.test("legal trading-as relationship is specific, not fuzzy brand trust", () => {
