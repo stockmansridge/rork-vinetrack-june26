@@ -82,8 +82,8 @@ export async function executeReviewedPreview<T>(plan: ReviewedRow, row: MasterRo
 }
 
 /** Only reason codes, never free-form evidence or URLs, reach runner logs. */
-export function safeConflictReason(response: BackfillPreviewResponse): string | null {
-  if (!["evidence_conflict", "identity_conflict"].includes(response.status)) return null;
+export function safeDiagnosticReason(response: BackfillPreviewResponse): string | null {
+  if (!["evidence_conflict", "identity_conflict", "manufacturer_label_not_found"].includes(response.status)) return null;
   const reason = response.evidence?.reason ?? (Array.isArray(response.evidence?.conflicts) ? response.evidence.conflicts[0] : null);
   return typeof reason === "string" && /^[a-z][a-z0-9_]{0,79}$/.test(reason) ? reason : null;
 }
@@ -205,7 +205,7 @@ async function main(): Promise<void> {
         if (dryRun && response.findings?.not_applicable) { counts.not_applicable = (counts.not_applicable ?? 0) + 1; finalResistanceState = "not_applicable"; }
         if (dryRun && response.findings?.vineyard_rates_added) counts.vineyard_rates_added = (counts.vineyard_rates_added ?? 0) + 1;
         if (dryRun && planFile && !has("--use-plan")) reviewed.push(await reviewedRow(row, response));
-        diagnostic = safeConflictReason(response);
+        diagnostic = safeDiagnosticReason(response);
         if (execute && approved) {
           const checked = await executeReviewedPreview(approved, row, response, () => request("/rest/v1/rpc/master_review_apply", {
             p_preview_id: response.preview_id, p_master_id: id,

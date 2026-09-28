@@ -1,6 +1,6 @@
 // deno-lint-ignore-file no-import-prefix
 import { assertEquals, assertThrows } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { applyPreviewIfExecuting, containRowFailure, executeReviewedPreview, parseReviewedPlan, patchFingerprint, pendingIds, reviewedRow, safeConflictReason, selectBackfillRows } from "./master-chemical-backfill-v2.ts";
+import { applyPreviewIfExecuting, containRowFailure, executeReviewedPreview, parseReviewedPlan, patchFingerprint, pendingIds, reviewedRow, safeDiagnosticReason, selectBackfillRows } from "./master-chemical-backfill-v2.ts";
 import { finishBackfillPreview, type BackfillPreviewResponse } from "../supabase/functions/chemical-info-lookup/ingestion/master_backfill_preview.ts";
 import { storeBackfillPreview, writeLookupCache } from "../supabase/functions/chemical-info-lookup/ingestion/master_backfill.ts";
 import type { MasterRow } from "../supabase/functions/chemical-info-lookup/ingestion/contract.ts";
@@ -135,9 +135,26 @@ Deno.test("unapproved canary statuses and revision/identity/status drift never a
   assertEquals(writes, 0);
   assertThrows(() => parseReviewedPlan([{ id, identity }]));
   assertThrows(() => parseReviewedPlan([approved, approved]));
-  assertEquals(safeConflictReason({ ...response, status: "evidence_conflict", evidence: { reason: "vineyard_use_or_rate" } }), "vineyard_use_or_rate");
-  assertEquals(safeConflictReason({ ...response, status: "identity_conflict", evidence: { conflicts: ["manufacturer_product_identity_mismatch"] } }), "manufacturer_product_identity_mismatch");
-  assertEquals(safeConflictReason({ ...response, status: "evidence_conflict", evidence: { reason: "Bearer secret" } }), null);
+});
+
+Deno.test("runner prints safe manufacturer discovery reasons and retains conflict diagnostics", () => {
+  const response = { status: "manufacturer_label_not_found", evidence: {} } as BackfillPreviewResponse;
+  for (const reason of [
+    "search_no_candidate", "search_timeout", "host_not_verified", "product_page_fetch_failed",
+    "product_name_mismatch", "label_link_not_found", "label_fetch_failed", "label_unreadable",
+  ]) {
+    const diagnostic = safeDiagnosticReason({ ...response, evidence: { reason } });
+    assertEquals(diagnostic, reason);
+    assertEquals(`SIMANEX 900 WG HERBICIDE ${response.status}${diagnostic ? `: ${diagnostic}` : ""}`,
+      `SIMANEX 900 WG HERBICIDE manufacturer_label_not_found: ${reason}`);
+  }
+  assertEquals(safeDiagnosticReason({ ...response, status: "evidence_conflict", evidence: { reason: "vineyard_use_or_rate" } }), "vineyard_use_or_rate");
+  assertEquals(safeDiagnosticReason({ ...response, status: "identity_conflict", evidence: { conflicts: ["manufacturer_product_identity_mismatch"] } }), "manufacturer_product_identity_mismatch");
+  for (const reason of ["Bearer secret", "https://example.com/label.pdf", "label fetch failed: token", "a".repeat(81), "LABEL_UNREADABLE"]) {
+    assertEquals(safeDiagnosticReason({ ...response, evidence: { reason } }), null);
+  }
+  assertEquals(safeDiagnosticReason({ ...response, status: "evidence_conflict", evidence: { reason: "Bearer secret" } }), null);
+  assertEquals(safeDiagnosticReason({ ...response, status: "already_complete", evidence: { reason: "search_timeout" } }), null);
 });
 
 Deno.test("resume skips successes and failures; retry-failed targets only failures", () => {
