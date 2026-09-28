@@ -46,6 +46,7 @@ export interface ManufacturerEnrichmentDiagnostics {
   manufacturer_label_fetch: "success" | "failure" | "skipped";
   manufacturer_label_fetch_outcome: ManufacturerFetchOutcome | "skipped";
   manufacturer_label_fetch_reason: string;
+  manufacturer_label_http_status?: number | null;
   manufacturer_label_extract: "success" | "failure" | "skipped";
   identity_mismatch?: boolean;
   /** Document size, for a sense of what was read. Never the contents. */
@@ -236,6 +237,7 @@ export async function enrichFromManufacturerLabel(input: {
         manufacturer_label_fetch: "failure",
         manufacturer_label_fetch_outcome: fetched.outcome,
         manufacturer_label_fetch_reason: fetched.reason,
+        manufacturer_label_http_status: fetched.httpStatus ?? null,
         manufacturer_label_extract: "skipped",
         manufacturer_label_bytes: null,
         manufacturer_label_sha256: null,

@@ -3,7 +3,7 @@ import { assert, assertEquals } from "jsr:@std/assert";
 import { alternateManufacturerLabel, companionDirectionsUrl, pageMatchesLockedProduct, pairedDirectionsConfirmIdentity, requiresAttachedDirections, verifiesTradingAs } from "./manufacturer_companion.ts";
 import { manufacturerHostEligible } from "../research/classify.ts";
 import { extractLinks } from "../research/page_inspector.ts";
-import { extractManufacturerDocumentText } from "./manufacturer_document.ts";
+import { extractManufacturerDocumentText, fetchManufacturerDocument, safeManufacturerFetchReason } from "./manufacturer_document.ts";
 import { enrichFromManufacturerLabel, manufacturerDocumentConfirmsIdentity } from "./manufacturer_enrichment.ts";
 import { assembleTextLines } from "./label_extract.ts";
 import { finishBackfillPreview } from "./master_backfill_preview.ts";
@@ -96,6 +96,22 @@ Deno.test("failed direct PDF chooses one different own-host product-page label, 
   assertEquals(alternateManufacturerLabel(inspected, "SIMANEX 900 WG HERBICIDE", "AU", "ADAMA", failed), current);
   assertEquals(alternateManufacturerLabel({ ...inspected, links: inspected.links.filter((link) => link.url !== current) },
     "SIMANEX 900 WG HERBICIDE", "AU", "ADAMA", failed), null);
+});
+
+Deno.test("fetch failure reports only a fixed subtype or validated HTTP status", async () => {
+  const selected = "https://www.adama.com/labels/simanex-900-wg-label.pdf?token=secret";
+  const result = await fetchManufacturerDocument({ now: () => new Date(), fetchFn: (async (_url, init) => {
+    assertEquals((init as { headers?: Record<string, string> } | undefined)?.headers?.["User-Agent"],
+      "Mozilla/5.0 (compatible; VineTrack-ChemicalLookup/1.0; +https://rork.app)");
+    return new Response("Denied", { status: 403 });
+  }) as typeof fetch }, selected, selected);
+  assertEquals(result.outcome, "rejected_http_error");
+  assertEquals(result.httpStatus, 403);
+  assertEquals(safeManufacturerFetchReason(result.outcome, result.httpStatus), "label_fetch_http_403");
+  assertEquals(safeManufacturerFetchReason("rejected_not_pdf"), "label_fetch_failed_not_pdf");
+  assertEquals(safeManufacturerFetchReason("rejected_off_host_redirect"), "label_fetch_failed_off_host_redirect");
+  assertEquals(safeManufacturerFetchReason("rejected_network_error"), "label_fetch_failed_network_error");
+  assertEquals(safeManufacturerFetchReason("rejected_http_error", 999), "label_fetch_failed_http_error");
 });
 
 Deno.test("legal trading-as relationship is specific, not fuzzy brand trust", () => {

@@ -138,6 +138,7 @@ import { nameCorresponds } from "./ingestion/matching.ts";
 import { labelApprovalIdentifiers, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardRateSummary, vineyardTableRate, withWebEnrichment } from "./web_lookup.ts";
 import { discoverManufacturerUrlsDetailed, findWebMasterIdentities, identityCandidate, identityResearch, selectedIdentity, verifiedManufacturerLead, type ManufacturerLeads, type WebIdentity } from "./web_identity.ts";
 import { alternateManufacturerLabel, companionDirectionsUrl, pageMatchesLockedProduct, requiresAttachedDirections, verifiesTradingAs } from "./ingestion/manufacturer_companion.ts";
+import { safeManufacturerFetchReason } from "./ingestion/manufacturer_document.ts";
 import { classifyUrl, manufacturerHostEligible } from "./research/classify.ts";
 import { authoritativeBackfillDetail, buildMasterBackfillPatch, isIncompleteMaster, lockedWebIdentity, writeLookupCache } from "./ingestion/master_backfill.ts";
 import { alreadyCompleteBackfill, backfillCountry, finishBackfillPreview, parseBackfillRequest } from "./ingestion/master_backfill_preview.ts";
@@ -1502,15 +1503,30 @@ Deno.serve(async (req: Request) => {
       // A failed direct PDF gets one different, page-linked label attempt; never retry the same URL.
       const alternateLabel = alternateManufacturerLabel(page ?? null, canonicalName, countryCode,
         identity.registrant, manufacturerLabel ?? "");
-      if (enrichment?.diagnostics.manufacturer_label_fetch === "failure" && page && alternateLabel) {
+      let replacementLabel = alternateLabel;
+      let searchedDirectReplacement = false;
+      if (backfillRow && enrichment?.diagnostics.manufacturer_label_fetch === "failure" &&
+          !replacementLabel && !page && directLabel && manufacturerLabel === directLabel &&
+          classifyUrl(directLabel, countryCode).trust === "registrant") {
+        const fallback = await discoverManufacturerUrlsDetailed({ identity, query: subject, country: countryCode,
+          apiKey, fetchFn: fetch, fallbackHost: new URL(directLabel).hostname.replace(/^www\./, ""),
+          excludeUrl: directLabel });
+        replacementLabel = fallback.leads?.labelUrl ?? null;
+        searchedDirectReplacement = !!replacementLabel;
+      }
+      if (enrichment?.diagnostics.manufacturer_label_fetch === "failure" && replacementLabel) {
         enrichment = await enrichFromManufacturerLabel({
-          deps: { fetchFn: fetch, now: () => new Date() }, manufacturerLabelUrl: alternateLabel,
-          sourcePageUrl: page.finalUrl, regulatorUses: [], registeredProductName: canonicalName,
+          deps: { fetchFn: fetch, now: () => new Date() }, manufacturerLabelUrl: replacementLabel,
+          sourcePageUrl: page?.finalUrl ?? replacementLabel, regulatorUses: [], registeredProductName: canonicalName,
           ...(identity.registrationNumber ? { product: { country: countryCode, scheme: "apvma",
             registration_number: identity.registrationNumber } } : {}),
           ...(backfillRow ? { activeNames: backfillRow.active_ingredients.map((a) => a.name) } : {}),
         });
       }
+      if (searchedDirectReplacement && backfillRow && enrichment?.labelText &&
+          !labelApprovalIdentifiers(enrichment.labelText, countryCode).numbers.includes(backfillRow.registration_number))
+        return { identity_conflict: { manufacturer_label_url: replacementLabel,
+          reason: "printed_registration_mismatch" } };
       const packageLabel = readableV2Label(enrichment);
       let packageUrl: string | null = null;
       if (packageLabel && requiresAttachedDirections(enrichment?.labelText ?? "")) {
@@ -1528,7 +1544,8 @@ Deno.serve(async (req: Request) => {
         if (backfillRow && directions.diagnostics.identity_mismatch)
           return { identity_conflict: { manufacturer_label_url: companion, reason: "manufacturer_product_or_chemistry_mismatch" } };
         if (!readableV2Label(directions)) return backfill ? { discovery_reason: directions.diagnostics.manufacturer_label_fetch === "failure"
-          ? "label_fetch_failed" : "label_unreadable" } : null;
+          ? safeManufacturerFetchReason(directions.diagnostics.manufacturer_label_fetch_outcome,
+            directions.diagnostics.manufacturer_label_http_status) : "label_unreadable" } : null;
         packageUrl = packageLabel;
         enrichment = directions;
       }
@@ -1540,7 +1557,9 @@ Deno.serve(async (req: Request) => {
         const reason = !manufacturerLabel ? inspected.attempts.length && !inspected.pages.length ? "product_page_fetch_failed" :
           inspected.pages.length && !inspected.pages.some((p) => nameCorresponds(canonicalName, p.pageProductName)) ? "product_name_mismatch" :
           inspected.pages.length ? "label_link_not_found" : discoveryReason :
-          enrichment?.diagnostics.manufacturer_label_fetch === "failure" ? "label_fetch_failed" :
+          enrichment?.diagnostics.manufacturer_label_fetch === "failure" ? safeManufacturerFetchReason(
+            enrichment.diagnostics.manufacturer_label_fetch_outcome,
+            enrichment.diagnostics.manufacturer_label_http_status) :
           enrichment?.diagnostics.manufacturer_label_fetch_reason.includes("identity") ? "product_name_mismatch" :
           enrichment?.diagnostics.manufacturer_label_extract === "failure" ? "label_unreadable" : "host_not_verified";
         return backfill ? { discovery_reason: reason } : null;

@@ -136,6 +136,28 @@ Deno.test("one exact site-bound search permits only a direct manufacturer label 
   assertEquals(calls, 2);
 });
 
+Deno.test("failed direct SIMANEX PDF search excludes the original and rejects reseller or extensionless media", async () => {
+  const failed = "https://www.adama.com/labels/simanex-old-label.pdf";
+  const alternate = "https://www.adama.com/labels/simanex-900-wg-label.pdf";
+  const identity: WebIdentity = { name: "SIMANEX 900 WG HERBICIDE", registrant: "ADAMA AUSTRALIA PTY LIMITED",
+    registrationNumber: "62917", category: "herbicide", activeNames: "simazine", pageUrls: [], labelUrls: [] };
+  for (const [candidate, expected] of [
+    [failed, null], ["https://elders.com.au/labels/simanex-900-wg-label.pdf", null],
+    ["https://www.adama.com/australia/en/media/9096/download?attachment=", null], [alternate, alternate],
+  ] as const) {
+    const found = await discoverManufacturerUrlsDetailed({ identity, query: identity.name, country: "AU", apiKey: "test",
+      fallbackHost: "adama.com", excludeUrl: failed, fetchFn: (async (_endpoint, init) => {
+        const body = JSON.parse(String((init as { body?: BodyInit } | undefined)?.body));
+        assert(body.input.includes("62917") && body.input.includes("simazine") && body.input.includes("site:adama.com"));
+        return new Response(JSON.stringify({ output: [
+          { type: "web_search_call", action: { sources: [{ url: candidate }] } },
+          { type: "message", content: [{ type: "output_text", text: JSON.stringify({ product_url: null, label_url: candidate }) }] },
+        ] }), { status: 200 });
+      }) as typeof fetch });
+    assertEquals(found.leads?.labelUrl ?? null, expected);
+  }
+});
+
 Deno.test("Katana stored manufacturer label survives variable web search, without a second discovery call", async () => {
   const labelUrl = "https://agnova.com.au/labels/katana-250-wg-label.pdf";
   const identity: WebIdentity = { name: "Katana 250 WG Herbicide", registrant: "AgNova",

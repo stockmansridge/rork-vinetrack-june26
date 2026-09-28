@@ -55,6 +55,14 @@ export type ManufacturerFetchOutcome =
   | "rejected_too_large"
   | "rejected_network_error";
 
+/** Only fixed outcome codes and a validated numeric HTTP status can leave the fetch boundary. */
+export function safeManufacturerFetchReason(outcome: ManufacturerFetchOutcome | "skipped", status?: number | null): string {
+  if (outcome === "rejected_http_error" && status !== null && status !== undefined &&
+    Number.isInteger(status) && status >= 400 && status <= 599) return `label_fetch_http_${status}`;
+  const code = outcome.startsWith("rejected_") ? outcome.slice("rejected_".length) : "unknown";
+  return `label_fetch_failed_${code}`;
+}
+
 export interface ManufacturerDocumentResult {
   outcome: ManufacturerFetchOutcome;
   url: string;
@@ -63,6 +71,7 @@ export interface ManufacturerDocumentResult {
   bytes?: Uint8Array;
   sha256?: string;
   byteSize?: number;
+  httpStatus?: number;
 }
 
 /** Registrable-domain comparison, so `www.` and sub-hosts still match. */
@@ -103,10 +112,28 @@ export async function fetchManufacturerDocument(
   sourcePageUrl: string,
 ): Promise<ManufacturerDocumentResult> {
   const trimmed = (labelUrl ?? "").trim();
+  const started = Date.now();
+  let finalUrl: string | null = null;
+  let httpStatus: number | null = null;
+  let outcome: ManufacturerFetchOutcome | null = null;
+  let enteredFetch = false;
+  const safeUrl = (value: string | null) => {
+    try { const url = new URL(value ?? "");
+      return `${url.origin}${url.pathname.replace(/\/[^/]{65,}/g, "/[redacted]")}`; }
+    catch { return null; }
+  };
+  const logAttempt = () => console.info("manufacturer_document_fetch", JSON.stringify({
+    selected_url: safeUrl(trimmed), final_url: safeUrl(finalUrl), http_status: httpStatus,
+    outcome, elapsed_ms: Date.now() - started,
+  }));
   const fail = (
-    outcome: ManufacturerFetchOutcome,
+    failure: ManufacturerFetchOutcome,
     reason: string,
-  ): ManufacturerDocumentResult => ({ outcome, url: trimmed, reason });
+  ): ManufacturerDocumentResult => {
+    outcome = failure;
+    if (!enteredFetch) logAttempt();
+    return { outcome: failure, url: trimmed, reason, ...(httpStatus !== null ? { httpStatus } : {}) };
+  };
 
   let requested: URL;
   try {
@@ -133,6 +160,7 @@ export async function fetchManufacturerDocument(
     );
   }
 
+  enteredFetch = true;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), MANUFACTURER_FETCH_TIMEOUT_MS);
   try {
@@ -146,7 +174,8 @@ export async function fetchManufacturerDocument(
       signal: ctrl.signal,
     });
 
-    const finalUrl = (res.url && /^https?:\/\//i.test(res.url))
+    httpStatus = res.status;
+    finalUrl = (res.url && /^https?:\/\//i.test(res.url))
       ? res.url
       : requested.toString();
 
@@ -213,8 +242,10 @@ export async function fetchManufacturerDocument(
       );
     }
 
+    outcome = "fetched";
     return {
       outcome: "fetched",
+      httpStatus: res.status,
       url: finalUrl,
       reason: `fetched ${buffer.byteLength} bytes from the registrant's own host`,
       bytes,
@@ -230,6 +261,7 @@ export async function fetchManufacturerDocument(
     );
   } finally {
     clearTimeout(timer);
+    logAttempt();
   }
 }
 
