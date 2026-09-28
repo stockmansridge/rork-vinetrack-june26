@@ -102,8 +102,7 @@ async function main(): Promise<void> {
     let finalResistanceState = row.resistance_classification_state;
     try {
       const attempt = await containRowFailure(() => request("/functions/v1/chemical-info-lookup", {
-        action: "master_backfill_preview_v2", masterChemicalId: id,
-        country: row.registration_country, dryRun,
+        action: "master_backfill_preview_v2", master_chemical_id: id, dryRun,
       }));
       if (attempt.error) throw new Error("Lookup unavailable");
       const response = attempt.value;

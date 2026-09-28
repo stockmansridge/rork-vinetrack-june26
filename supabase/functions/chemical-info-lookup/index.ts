@@ -12,8 +12,8 @@
 //   { "action": "master_refresh", "masterChemicalId": uuid,
 //     "apply"?: boolean }               // system admins only (Stage 3)
 //   { "action": "master_review_preview", "masterChemicalId": uuid }
-//   { "action": "master_backfill_preview_v2", "masterChemicalId": uuid,
-//     "country": "AU", "dryRun"?: boolean } // admin-only, locked Master identity;
+//   { "action": "master_backfill_preview_v2", "master_chemical_id": uuid,
+//     "dryRun"?: boolean } // admin-only, locked Master identity;
 //                                       // dryRun never stores a preview or cache
 //                                        // system admins only (Stage 2 R2-B)
 //                                        // — read-only refresh + SERVER-
@@ -138,7 +138,8 @@ import { nameCorresponds } from "./ingestion/matching.ts";
 import { labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardRateSummary, vineyardTableRate, withWebEnrichment } from "./web_lookup.ts";
 import { discoverManufacturerUrls, findWebMasterIdentities, identityCandidate, identityResearch, selectedIdentity, verifiedManufacturerLead, type WebIdentity } from "./web_identity.ts";
 import { classifyUrl } from "./research/classify.ts";
-import { authoritativeBackfillDetail, buildMasterBackfillPatch, isIncompleteMaster, lockedWebIdentity, storeBackfillPreview, writeLookupCache } from "./ingestion/master_backfill.ts";
+import { authoritativeBackfillDetail, buildMasterBackfillPatch, isIncompleteMaster, lockedWebIdentity, writeLookupCache } from "./ingestion/master_backfill.ts";
+import { alreadyCompleteBackfill, backfillCountry, finishBackfillPreview, parseBackfillRequest } from "./ingestion/master_backfill_preview.ts";
 import { buildCurrentSnapshot } from "./ingestion/review_preview.ts";
 import {
   buildCandidatePayload,
@@ -1374,51 +1375,31 @@ Deno.serve(async (req: Request) => {
 
     if (action === "web_lookup_v2" || action === "master_backfill_preview_v2") {
       const backfill = action === "master_backfill_preview_v2";
-      if (backfill && (body?.patch !== undefined || body?.proposed_patch !== undefined || body?.proposedPatch !== undefined || body?.apply !== undefined || body?.selectedName !== undefined || body?.query !== undefined))
-        return json({ error: "Backfill accepts only a Master id and dryRun" }, 400);
+      const request = backfill ? parseBackfillRequest(body ?? {}) : null;
+      if (request && "error" in request) return json({ error: request.error }, 400);
       if (backfill && !(await isSystemAdmin(req))) return json({ error: "Not authorised" }, 403);
       const adminId = backfill ? await authenticatedUserId(req) : null;
       if (backfill && !adminId) return json({ error: "Not authorised" }, 403);
-      const masterId = typeof body?.masterChemicalId === "string" ? body.masterChemicalId : "";
-      if (backfill && !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(masterId)) return json({ error: "Invalid Master id" }, 400);
+      const masterId = request && "masterId" in request ? request.masterId : "";
       const masterRows = backfill ? await masterSelect(`select=*&id=eq.${encodeURIComponent(masterId)}&limit=1`) : null;
       if (backfill && (!masterRows || masterRows.length !== 1)) return json({ error: "Master row not found" }, 404);
       const backfillRow = backfill ? masterRows![0] as MasterRow : null;
-      if (backfillRow && (!lockedWebIdentity(backfillRow) || countryCode !== backfillRow.registration_country))
-        return json({ status: "identity_conflict", master_chemical_id: masterId, preview_id: null });
-      const dryRun = backfill && body?.dryRun === true;
-      const finishBackfill = async (payload: any) => {
+      const countryCode = backfillRow ? backfillCountry(backfillRow) : jur.code ?? "";
+      if (backfillRow && !lockedWebIdentity(backfillRow))
+        return json(await finishBackfillPreview(backfillRow, adminId!, null, false, previewStore));
+      const dryRun = request && "dryRun" in request ? request.dryRun : false;
+      const finishBackfill = async (payload: any, classificationOnly = false) => {
         if (!backfillRow || !adminId) return json(payload);
-        const base = { master_chemical_id: backfillRow.id, name: backfillRow.registered_product_name,
-          registration_identity_key: backfillRow.registration_identity_key, base_revision: backfillRow.catalogue_version,
-          review_status: backfillRow.review_status, current: buildCurrentSnapshot(backfillRow) };
-        if (payload?.identity_conflict) return json({ ...base, status: "identity_conflict", evidence: payload.identity_conflict, preview_id: null });
-        const proposed = buildMasterBackfillPatch(backfillRow, payload?.detail ?? authoritativeBackfillDetail(backfillRow));
-        const findings = { classified: proposed.patch?.resistance_classification_state === "classified",
-          not_applicable: proposed.patch?.resistance_classification_state === "not_applicable",
-          vineyard_rates_added: Boolean(proposed.patch?.viticulture_rates),
-          no_vineyard_use: !(payload?.detail?.registered_uses ?? backfillRow.registered_uses)?.some((use: any) => /grape|vineyard|vine/i.test(String(use.crop ?? ""))) };
-        if (!proposed.patch) return json({ ...base, status: proposed.status, evidence: proposed.evidence, findings, preview_id: null });
-        if (dryRun) return json({ ...base, status: "preview_ready", proposed_patch: proposed.patch,
-          evidence: proposed.evidence, findings, preview_id: null, dry_run: true });
-        const stored = await storeBackfillPreview(dryRun, () => previewStore.insertPreview({ master_chemical_id: backfillRow.id,
-          base_revision: backfillRow.catalogue_version ?? 1, outcome: "material_change",
-          proposed_patch: proposed.patch!, changes: [], requested_by: adminId }));
-        if (!stored?.id) return json({ ...base, error: "preview_store_failed", preview_id: null }, 503);
-        return json({ ...base, status: "preview_ready", proposed_patch: proposed.patch,
-          evidence: proposed.evidence, findings, preview_id: stored.id, expires_at: stored.expires_at ?? null });
+        const response = await finishBackfillPreview(backfillRow, adminId, payload, dryRun, previewStore, classificationOnly);
+        return json(response, response.error === "preview_store_failed" ? 503 : 200);
       };
-      if (backfillRow && !isIncompleteMaster(backfillRow)) return json({ master_chemical_id: masterId,
-        name: backfillRow.registered_product_name, registration_identity_key: backfillRow.registration_identity_key,
-        base_revision: backfillRow.catalogue_version, review_status: backfillRow.review_status,
-        current: buildCurrentSnapshot(backfillRow), proposed_patch: null,
-        status: "already_complete", preview_id: null });
+      if (backfillRow && !isIncompleteMaster(backfillRow)) return json(alreadyCompleteBackfill(backfillRow));
       // If the local reference table alone closes every remaining gap, no
       // manufacturer search (or AI call) is needed for this Master identity.
       if (backfillRow) {
         const groupOnly = buildMasterBackfillPatch(backfillRow, authoritativeBackfillDetail(backfillRow));
         if (groupOnly.patch && !isIncompleteMaster({ ...backfillRow, ...groupOnly.patch } as MasterRow))
-          return await finishBackfill({ detail: authoritativeBackfillDetail(backfillRow) });
+          return await finishBackfill({ detail: authoritativeBackfillDetail(backfillRow) }, true);
       }
       const query = backfillRow?.registered_product_name ?? (typeof body?.query === "string" ? body.query.trim() : "");
       if (query.length < 2 || query.length > 200) return json({ error: "Enter a product name" }, 400);
