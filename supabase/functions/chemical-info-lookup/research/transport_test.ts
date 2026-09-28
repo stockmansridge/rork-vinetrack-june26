@@ -1,3 +1,4 @@
+// deno-lint-ignore-file no-import-prefix
 // Task §38 — OpenAI transport tests.
 //
 // These prove the SHAPE of what we send and how we read what comes back.
@@ -231,6 +232,28 @@ Deno.test("§4 web-search sources and citations are collected from the response"
   assertEquals(result.webSearchCalls[0].sources, sources);
   assertEquals(result.consultedUrls.length, 2);
   assertEquals(result.citedUrls.length, 2);
+});
+
+Deno.test("web-search open_page and find_in_page HTTPS action URLs join sources and citations", async () => {
+  const page = "https://www.adama.com/australia/simanex";
+  const pdf = "https://www.adama.com/australia/2025-01/simanex.pdf";
+  const citation = "https://www.adama.com/australia/citation";
+  const payload = responsesEnvelope(DITHANE_RESEARCH_PAYLOAD);
+  payload.output = [
+    { type: "web_search_call", action: { type: "search", sources: [{ url: page }] } },
+    { type: "web_search_call", action: { type: "open_page", url: pdf, sources: [{ url: pdf }] } },
+    { type: "web_search_call", action: { type: "find_in_page", url: pdf } },
+    { type: "web_search_call", action: { type: "open_page", url: "http://example.com/not-secure" } },
+    { type: "web_search_call", action: { type: "search", url: "https://example.com/not-opened" } },
+    { type: "message", content: [{ type: "output_text", text: JSON.stringify(DITHANE_RESEARCH_PAYLOAD),
+      annotations: [{ type: "url_citation", url: citation }] }] },
+  ];
+  const { fn } = fakeFetch([jsonResponse(payload)]);
+  const result = await callResponsesApi({ ...baseOpts, model: DEFAULT_RESEARCH_MODEL,
+    apiKey: "sk-test", fetchFn: fn, timeoutMs: 5000 });
+  assertEquals(result.webSearchCalls.map((call) => call.sources), [[page], [pdf], [pdf], [], []]);
+  assertEquals(result.citedUrls, [citation]);
+  assertEquals(result.consultedUrls, [page, pdf, citation]);
 });
 
 Deno.test("§29 response id, model and token usage are captured for debugging", async () => {

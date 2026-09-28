@@ -14,7 +14,8 @@ const locked = { name: "SIMANEX 900 WG HERBICIDE", registrant: "ADAMA AUSTRALIA 
   registrationNumber: "62917", activeIngredients: [{ name: "simazine", concentration: 900, concentration_unit: "g/kg" }],
   labelUrl: url, country: "AU", apiKey: "test" };
 
-function indexedResponse(changes?: (research: ReturnType<typeof cloneResearch>) => void, source = url, documentUrl = url) {
+function indexedResponse(changes?: (research: ReturnType<typeof cloneResearch>) => void, source = url, documentUrl = url,
+  actions?: Record<string, unknown>[]) {
   const research = cloneResearch();
   research.product = { ...research.product, searched_name: locked.name, canonical_name: locked.name,
     registrant: locked.registrant, source_refs: [documentUrl] };
@@ -37,8 +38,10 @@ function indexedResponse(changes?: (research: ReturnType<typeof cloneResearch>) 
   }));
   changes?.(research);
   const payload = responsesEnvelope(research) as Record<string, unknown>;
-  payload.output = [{ type: "web_search_call", action: { sources: [{ url: source }] } },
-    { type: "message", content: [{ type: "output_text", text: JSON.stringify(research) }] }];
+  payload.output = [
+    ...(actions ?? [{ type: "search", sources: [{ url: source }] }]).map((action) => ({ type: "web_search_call", action })),
+    { type: "message", content: [{ type: "output_text", text: JSON.stringify(research) }] },
+  ];
   return new Response(JSON.stringify(payload), { status: 200 });
 }
 
@@ -112,6 +115,30 @@ Deno.test("two access-denied ADAMA PDFs index only the final attempted alternate
   const thirdOnly = await readManufacturerLabelViaWebIndex({ ...locked, labelUrl: indexedLabelUrl,
     fetchFn: fetchFor(indexedResponse(undefined, thirdPdf, thirdPdf)) });
   assertEquals(thirdOnly, { status: "label_index_unavailable", reason: "exact_url_not_consulted" });
+});
+
+Deno.test("indexed SIMANEX requires exact PDF in search, open_page, find_in_page or citation evidence", async () => {
+  const productPage = "https://www.adama.com/australia/en/crop-protection/simanex";
+  const search = { type: "search", sources: [{ url: productPage }] };
+  const read = (actions: Record<string, unknown>[]) => readManufacturerLabelViaWebIndex({ ...locked,
+    fetchFn: fetchFor(indexedResponse(undefined, productPage, url, actions)) });
+  // The model's source_refs alone do not establish consultation of the PDF.
+  assertEquals(await read([search]), { status: "label_index_unavailable", reason: "exact_url_not_consulted" });
+  for (const actionType of ["open_page", "find_in_page"]) {
+    const accepted = await read([search, { type: actionType, url }]);
+    assertEquals(accepted.status, "ready", actionType);
+    if (accepted.status === "ready") {
+      assertEquals(accepted.uses.length, 6);
+      assertEquals(accepted.uses.every((use) => (use.source_refs as string[])[0] === url), true);
+    }
+    for (const other of [url.replace("_0.pdf", "_1.pdf"), `${url}?download=1`,
+      "https://elders.com.au/simanex.pdf", "https://portal.apvma.gov.au/simanex.pdf"]) {
+      assertEquals(await read([search, { type: actionType, url: other }]),
+        { status: "label_index_unavailable", reason: "exact_url_not_consulted" });
+    }
+    assertEquals(await read([search, { type: actionType, url: url.replace("https:", "http:") }]),
+      { status: "label_index_unavailable", reason: "exact_url_not_consulted" });
+  }
 });
 
 Deno.test("manufacturer index uses one bounded 60-second Responses attempt and fixed transport categories", async () => {

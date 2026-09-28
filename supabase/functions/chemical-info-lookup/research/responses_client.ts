@@ -69,7 +69,7 @@ export interface ResponsesCallResult {
   responseId: string | null;
   model: string;
   webSearchCalls: WebSearchCallRecord[];
-  /** Every URL consulted across all web-search calls, de-duplicated. */
+  /** URLs in web-search sources, opened/found pages, and citations, de-duplicated. */
   consultedUrls: string[];
   /** URLs the model cited inline in its output message. */
   citedUrls: string[];
@@ -150,12 +150,15 @@ function collectWebSearchCalls(output: unknown[]): WebSearchCallRecord[] {
     const sources = rawSources
       .map((s) => (typeof s === "string" ? s : isRecord(s) ? String(s.url ?? "") : ""))
       .filter((s) => /^https?:\/\//i.test(s));
+    if ((action.type === "open_page" || action.type === "find_in_page") &&
+      typeof action.url === "string" && /^https:\/\//i.test(action.url)) sources.push(action.url);
+    const evidenceUrls = [...new Set(sources)];
     const record: WebSearchCallRecord = {
       id: typeof item.id === "string" ? item.id : null,
       status: typeof item.status === "string" ? item.status : null,
       action_type: typeof action.type === "string" ? action.type : null,
       query: typeof action.query === "string" ? action.query : null,
-      sources,
+      sources: evidenceUrls,
     };
     const results = (item as Record<string, unknown>).results ??
       (action as Record<string, unknown>).results;
