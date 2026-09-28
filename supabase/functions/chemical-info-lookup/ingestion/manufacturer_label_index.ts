@@ -29,7 +29,9 @@ export const MANUFACTURER_INDEX_TIMEOUT_MS = 60_000;
 export type IndexFailureReason = "candidate_not_approved" | "index_request_failed" |
   "index_request_timeout" | "index_request_transient" | "index_request_permanent" | "index_request_refusal" | "no_web_search_evidence" |
   "exact_url_not_consulted" | "malformed_index_result" | "product_identity_mismatch" |
-  "registration_missing" | "active_identity_mismatch" | "rate_condition_incomplete" | "simanex_completeness_failed";
+  "registration_missing" | "active_identity_mismatch" | "rate_no_vineyard_rows" |
+  "rate_use_source_mismatch" | "rate_source_mismatch" | "rate_dose_unparseable" |
+  "rate_state_soil_missing" | "simanex_completeness_failed";
 
 export interface IndexedLabelInput {
   name: string;
@@ -134,11 +136,12 @@ For each grapevine dose create a separate use/rate with verbatim raw_text contai
   const uses: Record<string, unknown>[] = [];
   for (const use of research.registered_uses) {
     if (!/grape|vineyard/i.test(use.crop)) continue;
-    if (!refs(use.source_refs)) return { status: "label_index_unavailable", reason: "rate_condition_incomplete" };
+    if (!refs(use.source_refs)) return { status: "label_index_unavailable", reason: "rate_use_source_mismatch" };
     for (const rate of use.rates) {
-      if (!refs(rate.source_refs) || !printedDose(rate)) return { status: "label_index_unavailable", reason: "rate_condition_incomplete" };
+      if (!refs(rate.source_refs)) return { status: "label_index_unavailable", reason: "rate_source_mismatch" };
+      if (!printedDose(rate)) return { status: "label_index_unavailable", reason: "rate_dose_unparseable" };
       const condition = stateSoil(rate.label ?? "");
-      if (!condition) return { status: "label_index_unavailable", reason: "rate_condition_incomplete" };
+      if (!condition) return { status: "label_index_unavailable", reason: "rate_state_soil_missing" };
       for (const target of use.targets.length ? use.targets : [""]) uses.push({ crop: use.crop, target,
         [DIRECTION_SEED_KEY]: { crop: use.crop, targets: use.targets, condition },
         conditions: condition, restrictions: use.restrictions.join("; ") || null,
@@ -146,7 +149,7 @@ For each grapevine dose create a separate use/rate with verbatim raw_text contai
           unit: rate.unit, raw_text: rate.raw_text, source_refs: [input.labelUrl] }], source_refs: [input.labelUrl] });
     }
   }
-  if (!uses.length) return { status: "label_index_unavailable", reason: "rate_condition_incomplete" };
+  if (!uses.length) return { status: "label_index_unavailable", reason: "rate_no_vineyard_rows" };
   // The SIMANEX acceptance contract is a completeness check, never a source of rates.
   if (input.registrationNumber === "62917" && normal(input.name) === "simanex 900 wg herbicide") {
     const expected = [

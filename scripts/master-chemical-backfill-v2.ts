@@ -86,7 +86,8 @@ const indexedFailureReasons: ReadonlySet<string> = new Set<IndexFailureReason>([
   "candidate_not_approved", "index_request_failed", "index_request_timeout", "index_request_transient",
   "index_request_permanent", "index_request_refusal", "no_web_search_evidence",
   "exact_url_not_consulted", "malformed_index_result", "product_identity_mismatch",
-  "registration_missing", "active_identity_mismatch", "rate_condition_incomplete", "simanex_completeness_failed",
+  "registration_missing", "active_identity_mismatch", "rate_no_vineyard_rows", "rate_use_source_mismatch",
+  "rate_source_mismatch", "rate_dose_unparseable", "rate_state_soil_missing", "simanex_completeness_failed",
 ]);
 
 /** Only reason codes, never free-form evidence or URLs, reach runner logs. */

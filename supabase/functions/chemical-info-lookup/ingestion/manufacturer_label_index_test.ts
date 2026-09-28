@@ -1,6 +1,6 @@
 // deno-lint-ignore-file no-import-prefix
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { distinctLabelDocument, finalAttemptedLabelUrl, MANUFACTURER_INDEX_TIMEOUT_MS, readManufacturerLabelViaWebIndex, shouldReadManufacturerIndex } from "./manufacturer_label_index.ts";
+import { distinctLabelDocument, finalAttemptedLabelUrl, MANUFACTURER_INDEX_TIMEOUT_MS, readManufacturerLabelViaWebIndex, shouldReadManufacturerIndex, type IndexFailureReason } from "./manufacturer_label_index.ts";
 import { cloneResearch, responsesEnvelope } from "../research/test_fixtures.ts";
 import { normaliseRegisteredUses } from "../registered_use_normaliser.ts";
 import { applyRateIdentities, stripStructuredDirectionSeeds } from "../rate_identity.ts";
@@ -248,6 +248,21 @@ Deno.test("SIMANEX indexed manufacturer label retains six independent state/soil
     "admin", { detail: indexedDetail }, true, store);
   assertEquals(repeated.status, "no_material_change");
   assertEquals(writes, 0);
+});
+
+Deno.test("indexed vineyard-rate failures return only their fixed diagnostic codes", async () => {
+  const cases: Array<[IndexFailureReason, (research: ReturnType<typeof cloneResearch>) => void]> = [
+    ["rate_no_vineyard_rows", (research) => { research.registered_uses = []; }],
+    ["rate_use_source_mismatch", (research) => { research.registered_uses[0].source_refs = []; }],
+    ["rate_source_mismatch", (research) => { research.registered_uses[0].rates[0].source_refs = []; }],
+    ["rate_dose_unparseable", (research) => { research.registered_uses[0].rates[0].raw_text = "unparseable"; }],
+    ["rate_state_soil_missing", (research) => { research.registered_uses[0].rates[0].label = "Soil: light"; }],
+    ["simanex_completeness_failed", (research) => { research.registered_uses.pop(); }],
+  ];
+  for (const [reason, change] of cases) {
+    const result = await readManufacturerLabelViaWebIndex({ ...locked, fetchFn: fetchFor(indexedResponse(change)) });
+    assertEquals(result, { status: "label_index_unavailable", reason });
+  }
 });
 
 Deno.test("indexed result cannot substitute reseller, regulator, another PDF, or a query variant", async () => {
