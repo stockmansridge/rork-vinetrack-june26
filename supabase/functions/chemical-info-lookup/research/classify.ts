@@ -237,6 +237,13 @@ const REGISTRANT_HOSTS = [
   "cropsure.com",
 ];
 
+// Verified on the manufacturer's own product-page legal footer: "Grochem
+// Australia Pty Ltd trading as 7 Worlds Ag". An alias is scoped to its
+// registrant; this does not grant authority to every product on this host.
+const REGISTRANT_TRADING_HOSTS: Record<string, string> = {
+  "7worlds.com.au": "grochem",
+};
+
 /** Unknown hosts are inspectable leads only when their domain corresponds to the locked registrant. */
 export function manufacturerHostEligible(url: string, country: string, registrant?: string | null): boolean {
   if (!url.startsWith("https://")) return false;
@@ -246,6 +253,9 @@ export function manufacturerHostEligible(url: string, country: string, registran
     /(^|\.)gov\.(au|nz)$|(^|\.)govt\.nz$/.test(classification.domain)) return false;
   if (classification.trust === "registrant") return true;
   if (!registrant) return false;
+  const verifiedAlias = Object.entries(REGISTRANT_TRADING_HOSTS).find(([host]) =>
+    classification.domain === host || classification.domain.endsWith(`.${host}`));
+  if (verifiedAlias && registrant.toLowerCase().replace(/[^a-z0-9]/g, "").startsWith(verifiedAlias[1])) return true;
   const parts = classification.domain.split(".");
   const suffix = /\.(?:com|net|org|co)\.(?:au|nz)$/.test(classification.domain) ? 3 : 2;
   const domain = (parts[parts.length - suffix] ?? "").replace(/[^a-z0-9]/g, "");

@@ -39,6 +39,7 @@ import {
 } from "../grapevine_label.ts";
 import { applyRateIdentities, type RateIdentityProduct } from "../rate_identity.ts";
 import { normaliseProductNameLoose } from "./matching.ts";
+import { companionGrapeDirection, pairedDirectionsConfirmIdentity } from "./manufacturer_companion.ts";
 
 /** Everything the live path needs to prove what happened, and why. */
 export interface ManufacturerEnrichmentDiagnostics {
@@ -179,6 +180,9 @@ export async function enrichFromManufacturerLabel(input: {
   registeredProductName?: string | null;
   /** Backfill identity must agree with product and chemistry, not only a printed approval number. */
   activeNames?: string[];
+  /** Only after an independently verified container label explicitly refers to this leaflet. */
+  pairedContainerVerified?: boolean;
+  registrant?: string;
 }): Promise<ManufacturerEnrichmentResult> {
   const regulatorUses = input.regulatorUses ?? [];
 
@@ -280,7 +284,8 @@ export async function enrichFromManufacturerLabel(input: {
     registrationNumber: input.product?.registration_number ?? null,
     registeredProductName: input.registeredProductName ?? null,
     activeNames: input.activeNames,
-  })) {
+  }) && !(input.pairedContainerVerified && pairedDirectionsConfirmIdentity(documentText,
+    input.registeredProductName ?? "", input.registrant ?? "", input.product?.registration_number ?? ""))) {
     return {
       uses: regulatorUses,
       source: regulatorUses.length ? "regulator_label" : "none",
@@ -310,7 +315,9 @@ export async function enrichFromManufacturerLabel(input: {
 
   const parse = extractManufacturerLabelUses(items);
   const whp = readWithholdingPeriod(items);
-  const manufacturerUses = manufacturerUsesToRegisteredUses(parse.uses, {
+  const printedGrape = input.pairedContainerVerified ? companionGrapeDirection(items) : null;
+  const parsedGrape = parse.uses.some((use) => /grape/i.test(String(use.crop ?? "")) && use.rates.length > 0);
+  const manufacturerUses = printedGrape && !parsedGrape ? [printedGrape] : manufacturerUsesToRegisteredUses(parse.uses, {
     withholdingPeriodDays: whp,
     // Never zero-filled. A label that does not state a re-entry period has not
     // stated that there isn't one.
@@ -330,7 +337,7 @@ export async function enrichFromManufacturerLabel(input: {
       manufacturer_label_fetch: "success",
       manufacturer_label_fetch_outcome: fetched.outcome,
       manufacturer_label_fetch_reason: fetched.reason,
-      manufacturer_label_extract: parse.found ? "success" : "failure",
+      manufacturer_label_extract: parse.found || !!printedGrape ? "success" : "failure",
       label_fetch_ms: labelFetchMs,
       label_parse_ms: Date.now() - parseStarted,
       manufacturer_label_bytes: fetched.byteSize ?? null,

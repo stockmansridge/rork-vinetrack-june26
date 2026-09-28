@@ -102,6 +102,40 @@ Deno.test("known manufacturer domains and unknown matching registrants are leads
   }
 });
 
+Deno.test("known exact UPL page outranks a model-selected reseller", async () => {
+  const official = "https://www.uplcorp.com/au/product-details/affix-250-sc";
+  const reseller = "https://elders.com.au/products/affix-250-sc";
+  const identity: WebIdentity = { name: "AFFIX 250 SC FUNGICIDE", registrant: "UPL Australia",
+    registrationNumber: "99999", category: "fungicide", activeNames: "", pageUrls: [], labelUrls: [] };
+  const result = await discoverManufacturerUrlsDetailed({ identity, query: identity.name, country: "AU", apiKey: "test",
+    fetchFn: (async () => new Response(JSON.stringify({ output: [
+      { type: "web_search_call", action: { sources: [{ url: reseller }, { url: official }] } },
+      { type: "message", content: [{ type: "output_text", text: JSON.stringify({ product_url: reseller, label_url: null }) }] },
+    ] }), { status: 200 })) as typeof fetch });
+  assertEquals(result.leads?.productUrl, official);
+});
+
+Deno.test("one exact site-bound search permits only a direct manufacturer label PDF", async () => {
+  const page = "https://www.nufarm.com.au/products/weedmaster-duo/";
+  const pdf = "https://www.nufarm.com.au/labels/weedmaster-duo-label.pdf";
+  const identity: WebIdentity = { name: "Nufarm Weedmaster DUO Herbicide", registrant: "Nufarm",
+    registrationNumber: "12345", category: "herbicide", activeNames: "Glyphosate", pageUrls: [], labelUrls: [] };
+  let calls = 0;
+  const run = async (url: string) => discoverManufacturerUrlsDetailed({ identity, query: identity.name, country: "AU",
+    apiKey: "test", fallbackHost: "nufarm.com.au", fetchFn: (async (_endpoint, init) => {
+      calls++;
+      const body = JSON.parse(String((init as { body?: BodyInit })?.body));
+      assert(body.input.includes("site:nufarm.com.au label PDF only"));
+      return new Response(JSON.stringify({ output: [
+        { type: "web_search_call", action: { sources: [{ url }, { url: page }] } },
+        { type: "message", content: [{ type: "output_text", text: JSON.stringify({ product_url: page, label_url: url }) }] },
+      ] }), { status: 200 });
+    }) as typeof fetch });
+  assertEquals((await run(pdf)).leads, { productUrl: null, labelUrl: pdf });
+  assertEquals((await run("https://elders.com.au/labels/weedmaster-duo-label.pdf")).leads, null);
+  assertEquals(calls, 2);
+});
+
 Deno.test("Katana stored manufacturer label survives variable web search, without a second discovery call", async () => {
   const labelUrl = "https://agnova.com.au/labels/katana-250-wg-label.pdf";
   const identity: WebIdentity = { name: "Katana 250 WG Herbicide", registrant: "AgNova",

@@ -137,6 +137,7 @@ import { discoverUnverifiedLabel } from "./unverified_label_discovery.ts";
 import { nameCorresponds } from "./ingestion/matching.ts";
 import { labelApprovalIdentifiers, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardRateSummary, vineyardTableRate, withWebEnrichment } from "./web_lookup.ts";
 import { discoverManufacturerUrlsDetailed, findWebMasterIdentities, identityCandidate, identityResearch, selectedIdentity, verifiedManufacturerLead, type ManufacturerLeads, type WebIdentity } from "./web_identity.ts";
+import { alternateManufacturerLabel, companionDirectionsUrl, pageMatchesLockedProduct, requiresAttachedDirections, verifiesTradingAs } from "./ingestion/manufacturer_companion.ts";
 import { classifyUrl, manufacturerHostEligible } from "./research/classify.ts";
 import { authoritativeBackfillDetail, buildMasterBackfillPatch, isIncompleteMaster, lockedWebIdentity, writeLookupCache } from "./ingestion/master_backfill.ts";
 import { alreadyCompleteBackfill, backfillCountry, finishBackfillPreview, parseBackfillRequest } from "./ingestion/master_backfill_preview.ts";
@@ -1458,25 +1459,38 @@ Deno.serve(async (req: Request) => {
       const canonicalName = research.product.canonical_name ?? subject;
       const pageLeads = research.documents.product_page_candidates.map((d) => d.url);
       const inspected = await inspectCandidateProductPages({ fetchFn: fetch, now: () => new Date() }, pageLeads, countryCode);
+      let fallbackLabel: string | null = null;
+      if (backfillRow && inspected.attempts.length && !inspected.pages.length && !leads?.labelUrl &&
+          leads?.productUrl && classifyUrl(leads.productUrl, countryCode).trust === "registrant") {
+        const fallback = await discoverManufacturerUrlsDetailed({ identity, query: subject, country: countryCode,
+          apiKey, fetchFn: fetch, fallbackHost: new URL(leads.productUrl).hostname.replace(/^www\./, "") });
+        fallbackLabel = fallback.leads?.labelUrl ?? null;
+      }
       const projection = projectResearch(research, countryCode, null, canonicalName, inspected.pages);
-      const acceptedLabel = projection.manufacturerLabelCandidate;
-      const page = inspected.pages.find((p) => nameCorresponds(canonicalName, p.pageProductName) &&
-        p.links.some((link) => link.url === acceptedLabel?.url)) ??
-        inspected.pages.find((p) => nameCorresponds(canonicalName, p.pageProductName));
+      const page = inspected.pages.find((p) => pageMatchesLockedProduct(canonicalName, p.pageProductName, identity.registrant) &&
+        p.links.some((link) => link.url === projection.manufacturerLabelCandidate?.url)) ??
+        inspected.pages.find((p) => pageMatchesLockedProduct(canonicalName, p.pageProductName, identity.registrant));
+      const pageLabel = page?.links.find((link) => link.sameHost && /^https:\/\//.test(link.url) &&
+        new URL(link.url).pathname.toLowerCase().endsWith(".pdf") && /\blabel\b/i.test(link.linkText) &&
+        !/\b(?:sds|msds|safety\s+data|brochure|promo|technical\s+data)\b/i.test(link.linkText));
+      const acceptedLabel = projection.manufacturerLabelCandidate ?? (pageLabel ? classifyUrl(pageLabel.url, countryCode) : null);
+      const aliasVerified = !!page && verifiesTradingAs(page.legalText ?? "", identity.registrant);
       // A registrant-hosted direct PDF can be checked against its own bytes even
       // if research found the document before finding its product page.
-      const directLabel = leads?.labelUrl && manufacturerHostEligible(leads.labelUrl, countryCode, identity.registrant) &&
-        (classifyUrl(leads.labelUrl, countryCode).trust === "registrant" &&
-          classifyUrl(leads.labelUrl, countryCode).kind === "label_document" ||
-          !!backfillRow && identity.labelUrls.includes(leads.labelUrl) && new URL(leads.labelUrl).pathname.toLowerCase().endsWith(".pdf"))
-        ? leads.labelUrl : null;
+      const directCandidate = leads?.labelUrl ?? fallbackLabel;
+      const directLabel = directCandidate && manufacturerHostEligible(directCandidate, countryCode, identity.registrant) &&
+        (classifyUrl(directCandidate, countryCode).trust === "registrant" &&
+          classifyUrl(directCandidate, countryCode).kind === "label_document" ||
+          !!backfillRow && identity.labelUrls.includes(directCandidate) && new URL(directCandidate).pathname.toLowerCase().endsWith(".pdf"))
+        ? directCandidate : null;
       const linkedLabel = acceptedLabel?.url && page &&
-        manufacturerHostEligible(page.finalUrl, countryCode, identity.registrant) &&
-        manufacturerHostEligible(acceptedLabel.url, countryCode, identity.registrant) ? acceptedLabel.url : null;
+        (manufacturerHostEligible(page.finalUrl, countryCode, identity.registrant) || aliasVerified) &&
+        (manufacturerHostEligible(acceptedLabel.url, countryCode, identity.registrant) ||
+          aliasVerified && new URL(acceptedLabel.url).host === new URL(page.finalUrl).host) ? acceptedLabel.url : null;
       const manufacturerLabel = linkedLabel ?? directLabel;
       const labelSource = linkedLabel ? page?.finalUrl ?? null : directLabel;
       const labelStarted = Date.now();
-      const enrichment = manufacturerLabel && labelSource
+      let enrichment = manufacturerLabel && labelSource
         ? await enrichFromManufacturerLabel({
           deps: { fetchFn: fetch, now: () => new Date() },
           manufacturerLabelUrl: manufacturerLabel, sourcePageUrl: labelSource,
@@ -1485,6 +1499,39 @@ Deno.serve(async (req: Request) => {
             scheme: "apvma", registration_number: identity.registrationNumber } } : {}),
           ...(backfillRow ? { activeNames: backfillRow.active_ingredients.map((a) => a.name) } : {}),
         }) : null;
+      // A failed direct PDF gets one different, page-linked label attempt; never retry the same URL.
+      const alternateLabel = alternateManufacturerLabel(page ?? null, canonicalName, countryCode,
+        identity.registrant, manufacturerLabel ?? "");
+      if (enrichment?.diagnostics.manufacturer_label_fetch === "failure" && page && alternateLabel) {
+        enrichment = await enrichFromManufacturerLabel({
+          deps: { fetchFn: fetch, now: () => new Date() }, manufacturerLabelUrl: alternateLabel,
+          sourcePageUrl: page.finalUrl, regulatorUses: [], registeredProductName: canonicalName,
+          ...(identity.registrationNumber ? { product: { country: countryCode, scheme: "apvma",
+            registration_number: identity.registrationNumber } } : {}),
+          ...(backfillRow ? { activeNames: backfillRow.active_ingredients.map((a) => a.name) } : {}),
+        });
+      }
+      const packageLabel = readableV2Label(enrichment);
+      let packageUrl: string | null = null;
+      if (packageLabel && requiresAttachedDirections(enrichment?.labelText ?? "")) {
+        const companion = companionDirectionsUrl(page ?? null, canonicalName, countryCode, identity.registrant,
+          enrichment?.fetchedUrl ?? manufacturerLabel ?? "");
+        if (!companion) return backfill ? { discovery_reason: "label_link_not_found" } : null;
+        const directions = await enrichFromManufacturerLabel({
+          deps: { fetchFn: fetch, now: () => new Date() }, manufacturerLabelUrl: companion,
+          sourcePageUrl: page!.finalUrl, regulatorUses: [], registeredProductName: canonicalName,
+          ...(identity.registrationNumber ? { product: { country: countryCode, scheme: "apvma",
+            registration_number: identity.registrationNumber } } : {}),
+          ...(backfillRow ? { activeNames: backfillRow.active_ingredients.map((a) => a.name) } : {}),
+          pairedContainerVerified: true, registrant: identity.registrant,
+        });
+        if (backfillRow && directions.diagnostics.identity_mismatch)
+          return { identity_conflict: { manufacturer_label_url: companion, reason: "manufacturer_product_or_chemistry_mismatch" } };
+        if (!readableV2Label(directions)) return backfill ? { discovery_reason: directions.diagnostics.manufacturer_label_fetch === "failure"
+          ? "label_fetch_failed" : "label_unreadable" } : null;
+        packageUrl = packageLabel;
+        enrichment = directions;
+      }
       if (backfillRow && enrichment?.diagnostics.identity_mismatch)
         return { identity_conflict: { manufacturer_label_url: manufacturerLabel, reason: "manufacturer_product_or_chemistry_mismatch" } };
       const labelMs = Date.now() - labelStarted;
@@ -1498,7 +1545,7 @@ Deno.serve(async (req: Request) => {
           enrichment?.diagnostics.manufacturer_label_extract === "failure" ? "label_unreadable" : "host_not_verified";
         return backfill ? { discovery_reason: reason } : null;
       }
-      if (backfillRow && manufacturerLabel && classifyUrl(manufacturerLabel, countryCode).trust === "unknown" &&
+      if (backfillRow && label && classifyUrl(label, countryCode).trust === "unknown" &&
           !backfillRow.active_ingredients.length) return { discovery_reason: "host_not_verified" };
       if (backfillRow && enrichment?.labelText) {
         const printed = labelApprovalIdentifiers(enrichment.labelText, countryCode).numbers;
@@ -1593,11 +1640,13 @@ Deno.serve(async (req: Request) => {
         if (backfillRow) {
           detail.registration.registration_number = backfillRow.registration_number;
           detail.registration.manufacturer_label_identifiers = labelIdentifiers;
+          if (packageUrl) detail.registration.manufacturer_package_label_url = packageUrl;
         }
       }
       detail.label_urls.regulator_label_url = null;
       if (label) {
-        detail.verification.sources.push({ kind: "manufacturer_label", name: "Product label", reference: label, retrieved_at: new Date().toISOString() });
+        detail.verification.sources.push({ kind: "manufacturer_label", name: "Product directions", reference: label, retrieved_at: new Date().toISOString() });
+        if (packageUrl) detail.verification.sources.push({ kind: "manufacturer_label", name: "Container label", reference: packageUrl, retrieved_at: new Date().toISOString() });
         detail.field_provenance = { label_reference: "manufacturer_label",
           ...(extraction.registration_number ? { registration_number: identity.registrationNumber ? "master_catalogue" : "manufacturer_label" } : {}),
           ...(detail.registered_uses.length ? { registered_uses: "manufacturer_label" } : {}) };

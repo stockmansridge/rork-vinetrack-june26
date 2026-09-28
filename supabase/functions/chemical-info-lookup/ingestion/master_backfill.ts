@@ -12,7 +12,7 @@ export interface BackfillDetail {
   activity_group_scheme?: string | null;
   resistance_classification_state?: string;
   registered_uses?: Array<Record<string, unknown>>;
-  registration?: { registration_number?: string | null; manufacturer_label_url?: string | null; manufacturer_label_verified?: boolean; registrant?: string | null;
+  registration?: { registration_number?: string | null; manufacturer_label_url?: string | null; manufacturer_package_label_url?: string | null; manufacturer_label_verified?: boolean; registrant?: string | null;
     manufacturer_label_identifiers?: { numbers: string[]; printed_values: string[] } } | null;
   verification?: { conflicts?: Array<Record<string, unknown>> };
 }
@@ -303,13 +303,17 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
         source: "manufacturer_label" as const, canonical: number === row.registration_number })),
         printed_registration_values: printed } : {}) };
     const existing = sources.findIndex((s) => s.kind === "manufacturer_label" && s.reference === label);
-    if (existing < 0) put("verification_sources", sources, [...sources, labelSource]);
-    else if (numbers.length) {
-      const updated = [...sources];
-      updated[existing] = { ...sources[existing], registration_numbers: labelSource.registration_numbers,
-        printed_registration_values: labelSource.printed_registration_values };
-      put("verification_sources", sources, updated);
-    }
+    const packageUrl = detail.registration?.manufacturer_package_label_url;
+    const packageSource = packageUrl && manufacturerHostEligible(packageUrl, row.registration_country, row.registrant) &&
+      new URL(packageUrl).host === new URL(label!).host && new URL(packageUrl).pathname.toLowerCase().endsWith(".pdf")
+      ? { kind: "manufacturer_label" as const, name: "Manufacturer container label", reference: packageUrl } : null;
+    const updated = [...sources];
+    if (existing < 0) updated.push(labelSource);
+    else if (numbers.length) updated[existing] = { ...sources[existing], registration_numbers: labelSource.registration_numbers,
+      printed_registration_values: labelSource.printed_registration_values };
+    if (packageSource && !updated.some((source) => source.kind === "manufacturer_label" && source.reference === packageUrl))
+      updated.push(packageSource);
+    put("verification_sources", sources, updated);
     // label_reference remains regulator-only for older consumers.
   }
   const unresolved = row.verification_unresolved_fields ?? [];

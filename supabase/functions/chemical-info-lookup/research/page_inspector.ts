@@ -102,6 +102,8 @@ export interface InspectedPage {
    */
   pageProductName: string;
   pageProductNameSource: "h1" | "title" | "none";
+  /** Bounded legal footer wording for registrant/trading-name confirmation. */
+  legalText?: string;
   links: InspectedLink[];
   /** True when the anchor cap or byte cap truncated what was read. */
   truncated: boolean;
@@ -531,6 +533,7 @@ export async function inspectProductPage(
 
     const { name, source } = extractPageProductName(body.html);
     const { links, truncated } = extractLinks(body.html, finalUrl);
+    const footer = /<footer\b[^>]*>([\s\S]*?)<\/footer\s*>/i.exec(body.html)?.[1];
 
     return {
       outcome: "inspected",
@@ -538,6 +541,7 @@ export async function inspectProductPage(
       finalUrl,
       pageProductName: name,
       pageProductNameSource: source,
+      ...(footer ? { legalText: textOf(footer).slice(0, 4000) } : {}),
       links,
       truncated,
     };

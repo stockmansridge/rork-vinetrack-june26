@@ -1,4 +1,4 @@
-import { classifyUrl, manufacturerHostEligible } from "./research/classify.ts";
+import { classifyUrl, hostOf, manufacturerHostEligible } from "./research/classify.ts";
 import { nameCorresponds } from "./ingestion/matching.ts";
 import type { WebCandidate } from "./web_lookup.ts";
 import type { ChemicalResearchResult } from "./research/schema.ts";
@@ -119,7 +119,7 @@ export async function discoverManufacturerUrls(input: {
 /** Search results are leads only; unknown hosts require fetched page/PDF proof downstream. */
 export async function discoverManufacturerUrlsDetailed(input: {
   identity: WebIdentity | null; query: string; country: string; apiKey: string; fetchFn: typeof fetch;
-  timeoutMs?: number;
+  timeoutMs?: number; fallbackHost?: string;
 }): Promise<ManufacturerDiscovery> {
   if (!input.apiKey) return { leads: null, reason: "search_no_candidate" };
   const name = input.identity?.name ?? input.query;
@@ -130,8 +130,10 @@ export async function discoverManufacturerUrlsDetailed(input: {
       method: "POST", signal: controller.signal,
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${input.apiKey}` },
       body: JSON.stringify({ model: DEFAULT_RESEARCH_MODEL,
-        instructions: "Find only the registrant/manufacturer-owned product page and commercial product label for the exact agricultural product. Never substitute a veterinary product, reseller, SDS or government/regulator PDF. Only report URLs found by web search; missing URLs are null. Do not interpret label content.",
-        input: `Exact product: ${name}; registrant: ${input.identity?.registrant ?? "unknown"}; registration: ${input.identity?.registrationNumber ?? "unknown"}; active ingredients: ${input.identity?.activeNames ?? "unknown"}; country: ${input.country}. Find manufacturer product page and label URL only.`,
+        instructions: input.fallbackHost
+          ? "Find one direct commercial label PDF on the specified manufacturer host for this exact registered product. Never use a reseller, regulator, SDS or a different formulation. Only report URLs found by web search; missing URLs are null."
+          : "Find only the registrant/manufacturer-owned product page and commercial product label for the exact agricultural product. Never substitute a veterinary product, reseller, SDS or government/regulator PDF. Only report URLs found by web search; missing URLs are null. Do not interpret label content.",
+        input: `Exact product: ${name}; registrant: ${input.identity?.registrant ?? "unknown"}; registration: ${input.identity?.registrationNumber ?? "unknown"}; active ingredients: ${input.identity?.activeNames ?? "unknown"}; country: ${input.country}. ${input.fallbackHost ? `Search site:${input.fallbackHost} label PDF only.` : "Find manufacturer product page and label URL only."}`,
         tools: [{ type: "web_search", user_location: { type: "approximate", country: input.country } }],
         include: ["web_search_call.action.sources"], store: false, reasoning: { effort: "low" },
         text: { format: { type: "json_schema", name: "manufacturer_urls", strict: true, schema: {
@@ -156,14 +158,31 @@ export async function discoverManufacturerUrlsDetailed(input: {
     if (!text) return { leads: null, reason: "search_no_candidate" };
     const result = JSON.parse(text);
     const accepted = (url: unknown, kind: "page" | "label"): string | null => {
-      if (typeof url !== "string" || !consulted.has(url) || !manufacturerHostEligible(url, input.country, input.identity?.registrant)) return null;
+      if (typeof url !== "string" || !consulted.has(url) ||
+        input.fallbackHost && hostOf(url) !== input.fallbackHost && !hostOf(url).endsWith(`.${input.fallbackHost}`)) return null;
       const classified = classifyUrl(url, input.country);
+      // An unknown page can be inspected for an explicit legal trading-as
+      // statement. A bare unknown PDF can never establish its own host custody.
+      if (!manufacturerHostEligible(url, input.country, input.identity?.registrant) &&
+          !(kind === "page" && url.startsWith("https://") && classified.trust === "unknown")) return null;
       // An unknown PDF cannot prove host ownership on its own. Require an
       // inspected same-host product page to link it before it may be fetched.
       return kind === "label" ? classified.trust === "registrant" && classified.kind === "label_document" ? url : null
         : classified.isInspectableProductPage ? url : null;
     };
-    const productUrl = accepted(result.product_url, "page");
+    const knownPages = [...consulted].filter((url) => {
+      const classified = classifyUrl(url, input.country);
+      if (classified.trust !== "registrant" || classified.kind !== "product_page" ||
+          !manufacturerHostEligible(url, input.country, input.identity?.registrant)) return false;
+      try {
+        const slug = decodeURIComponent(new URL(url).pathname.split("/").filter(Boolean).at(-1) ?? "").replace(/[-_]/g, " ");
+        return nameCorresponds(name, slug);
+      } catch { return false; }
+    });
+    // Search's own cited exact product page outranks a model-selected reseller.
+    // Multiple equally plausible official hosts are ambiguous, not a license to guess.
+    const productUrl = input.fallbackHost || knownPages.length > 1 ? null :
+      knownPages.length === 1 ? knownPages[0] : accepted(result.product_url, "page");
     const labelUrl = accepted(result.label_url, "label");
     return productUrl || labelUrl ? { leads: { productUrl, labelUrl }, reason: null } :
       { leads: null, reason: result.product_url || result.label_url ? "host_not_verified" : "search_no_candidate" };
