@@ -135,7 +135,7 @@ import { hasOfficialGrapevineRate } from "./ingestion/authoritative_completion.t
 import { chooseLabelCandidate, confirmedOCRName, directOfficialLabelURL } from "./label_fallback.ts";
 import { discoverUnverifiedLabel } from "./unverified_label_discovery.ts";
 import { nameCorresponds } from "./ingestion/matching.ts";
-import { labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardRateSummary, vineyardTableRate, withWebEnrichment } from "./web_lookup.ts";
+import { labelApprovalIdentifiers, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardRateSummary, vineyardTableRate, withWebEnrichment } from "./web_lookup.ts";
 import { discoverManufacturerUrls, findWebMasterIdentities, identityCandidate, identityResearch, selectedIdentity, verifiedManufacturerLead, type WebIdentity } from "./web_identity.ts";
 import { classifyUrl } from "./research/classify.ts";
 import { authoritativeBackfillDetail, buildMasterBackfillPatch, isIncompleteMaster, lockedWebIdentity, writeLookupCache } from "./ingestion/master_backfill.ts";
@@ -1478,7 +1478,10 @@ Deno.serve(async (req: Request) => {
           regulatorUses: [], registeredProductName: canonicalName,
           ...(identity.registrationNumber ? { product: { country: countryCode,
             scheme: "apvma", registration_number: identity.registrationNumber } } : {}),
+          ...(backfillRow ? { activeNames: backfillRow.active_ingredients.map((a) => a.name) } : {}),
         }) : null;
+      if (backfillRow && enrichment?.diagnostics.identity_mismatch)
+        return { identity_conflict: { manufacturer_label_url: manufacturerLabel, reason: "manufacturer_product_or_chemistry_mismatch" } };
       const labelMs = Date.now() - labelStarted;
       const label = readableV2Label(enrichment);
       if (!label) return null;
@@ -1515,9 +1518,8 @@ Deno.serve(async (req: Request) => {
             activity_group_scheme: facts?.group?.scheme ?? a.activity_group_scheme,
             group_evidence: facts?.group ? "manufacturer_label" : a.group_evidence } : a);
       const printedApproval = label && enrichment?.labelText ? labelApprovalNumber(enrichment.labelText, countryCode) : null;
-      if (backfillRow && printedApproval && printedApproval !== backfillRow.registration_number)
-        return { identity_conflict: { locked: backfillRow.registration_number, printed: printedApproval,
-          manufacturer_label_url: label }, detail: null };
+      const labelIdentifiers = backfillRow && label && enrichment?.labelText
+        ? labelApprovalIdentifiers(enrichment.labelText, countryCode) : null;
       const unresolvedWebFields = (supportedProjection.extraction.unresolved as string[]).filter((field) =>
         !(printedApproval && field === "registration_number") && !(label && field === "label_reference"));
       // Only a positive statement on the fetched label can assert group-free;
@@ -1567,6 +1569,10 @@ Deno.serve(async (req: Request) => {
         detail.registration.label_reference = label;
         detail.registration.manufacturer_label_url = label;
         detail.registration.regulator_label_url = null;
+        if (backfillRow) {
+          detail.registration.registration_number = backfillRow.registration_number;
+          detail.registration.manufacturer_label_identifiers = labelIdentifiers;
+        }
       }
       detail.label_urls.regulator_label_url = null;
       if (label) {
@@ -1600,7 +1606,7 @@ Deno.serve(async (req: Request) => {
       }
       return payload;
       });
-      return backfill ? await finishBackfill(result) : json(result.detail ? result : { ...result, resistance_classification_state: "unresolved", enrichment_incomplete: true });
+      return backfill ? await finishBackfill(result) : json("detail" in result && result.detail ? result : { ...result, resistance_classification_state: "unresolved", enrichment_incomplete: true });
     }
 
     if (action === "discover_label") {

@@ -39,7 +39,7 @@ export interface BackfillPreviewResponse {
 
 export interface BackfillResearchPayload {
   detail?: BackfillDetail | null;
-  identity_conflict?: { printed?: string | null; manufacturer_label_url?: string | null };
+  identity_conflict?: { printed?: string | null; manufacturer_label_url?: string | null; reason?: string };
 }
 
 function baseResponse(row: MasterRow): BackfillPreviewResponse {
@@ -66,7 +66,7 @@ export async function finishBackfillPreview(row: MasterRow, adminId: string, pay
   if (payload?.identity_conflict) return { ...base, status: "identity_conflict", evidence: {
     ...base.evidence, reported_registration_number: payload.identity_conflict.printed ?? null,
     manufacturer_label_url: payload.identity_conflict.manufacturer_label_url ?? null,
-    conflicts: ["registration_number_mismatch"] } };
+    conflicts: [payload.identity_conflict.reason ?? "manufacturer_product_identity_mismatch"] } };
   const detail = payload?.detail ?? authoritativeBackfillDetail(row);
   const proposed = buildMasterBackfillPatch(row, detail);
   const findings = { classified: proposed.patch?.resistance_classification_state === "classified",

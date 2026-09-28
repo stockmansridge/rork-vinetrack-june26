@@ -1,5 +1,5 @@
 import { assertEquals } from "jsr:@std/assert";
-import { agriculturalWebCandidates, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardTableRate, vineyardRateSummary, webResearchFailureDiagnostic, withWebEnrichment } from "./web_lookup.ts";
+import { agriculturalWebCandidates, labelApprovalIdentifiers, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardTableRate, vineyardRateSummary, webResearchFailureDiagnostic, withWebEnrichment } from "./web_lookup.ts";
 import type { ManufacturerEnrichmentResult } from "./ingestion/manufacturer_enrichment.ts";
 import { cloneResearch, fakeFetch, jsonResponse, responsesEnvelope } from "./research/test_fixtures.ts";
 import { buildResearchPrompt, readResearchConfig, runChemicalResearch } from "./research/research.ts";
@@ -52,6 +52,11 @@ Deno.test("only an accepted Australian document can contribute its printed APVMA
   assertEquals(labelApprovalNumber(text, "NZ"), null);
   assertEquals(labelApprovalNumber("Beast herbicide; candidate 90143/127764", "AU"), null);
   assertEquals(labelApprovalNumber("APVMA Approval No. 90143/127764; APVMA Approval No. 88888", "AU"), null);
+  assertEquals(labelApprovalIdentifiers("APVMA Approval No. 90143", "AU"),
+    { numbers: ["90143"], printed_values: ["90143"] });
+  assertEquals(labelApprovalIdentifiers("APVMA Approval No.: 90143/127764; APVMA Registration Number 90143; APVMA Approval No. 127764; APVMA Approval No. 90143/127764", "AU"),
+    { numbers: ["90143", "127764"], printed_values: ["90143/127764", "90143", "127764"] });
+  assertEquals(labelApprovalIdentifiers("APVMA Approval No. 90143/127764", "NZ").numbers, []);
   const document = { fetchedUrl: beastLabel, labelText: text,
     diagnostics: { manufacturer_label_fetch_outcome: "fetched", manufacturer_label_extract: "failure" } } as ManufacturerEnrichmentResult;
   assertEquals(readableV2Label(document), beastLabel);

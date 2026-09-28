@@ -35,11 +35,16 @@ export function readableV2Label(result: ManufacturerEnrichmentResult | null): st
     ? result.fetchedUrl : null;
 }
 
+export function labelApprovalIdentifiers(text: string, country: string): { numbers: string[]; printed_values: string[] } {
+  if (country !== "AU") return { numbers: [], printed_values: [] };
+  const matches = [...text.matchAll(/\bAPVMA\s+(?:APPROVAL|REGISTRATION)\s*(?:NO\.?|NUMBER)?\s*[:#-]?\s*(\d{4,7}(?:\s*\/\s*\d{4,7})*)(?!\d)/gi)];
+  const printed_values = [...new Set(matches.map((match) => match[1].replace(/\s+/g, "")))];
+  return { printed_values, numbers: [...new Set(printed_values.flatMap((value) => value.split("/")))] };
+}
+
 export function labelApprovalNumber(text: string, country: string): string | null {
-  if (country !== "AU") return null;
-  const matches = [...text.matchAll(/\bAPVMA\s+(?:APPROVAL|REGISTRATION)\s*(?:NO\.?|NUMBER)?\s*[:#-]?\s*(\d{4,7}(?:\s*\/\s*\d{4,7})?)(?!\d)/gi)];
-  const numbers = [...new Set(matches.map((match) => match[1].replace(/\s+/g, "")))];
-  return numbers.length === 1 ? numbers[0] : null;
+  const values = labelApprovalIdentifiers(text, country).printed_values;
+  return values.length === 1 ? values[0] : null;
 }
 
 export function labelHeaderFacts(text: string): {

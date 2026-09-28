@@ -46,8 +46,22 @@ Deno.test("locked Master identity prevents wrong registration and preserves iden
   assertEquals(buildMasterBackfillPatch(master({ review_status: "approved" }), detail()).patch?.review_status, undefined);
 });
 
-Deno.test("identity conflict and mismatched mixtures never create a writable preview", () => {
-  assertEquals(buildMasterBackfillPatch(master(), detail({ registration: { registration_number: "99999", manufacturer_label_url: LABEL } })).status, "identity_conflict");
+Deno.test("printed identifiers are label evidence, never a Master rekey", () => {
+  const row = master();
+  const identifiers = { numbers: ["90143", "127764"], printed_values: ["90143/127764"] };
+  const proposed = buildMasterBackfillPatch(row, detail({ registration: {
+    registration_number: "90143", manufacturer_label_url: LABEL, manufacturer_label_identifiers: identifiers } }));
+  assertEquals(proposed.status, "preview_ready");
+  assertEquals(proposed.patch?.registration_number, undefined);
+  assertEquals(proposed.patch?.registration_identity_key, undefined);
+  const source = (proposed.patch?.verification_sources as NonNullable<MasterRow["verification_sources"]>)[1];
+  assertEquals(source.registration_numbers, [
+    { scheme: "apvma", number: "90143", source: "manufacturer_label", canonical: true },
+    { scheme: "apvma", number: "127764", source: "manufacturer_label", canonical: false },
+  ]);
+  assertEquals(source.printed_registration_values, ["90143/127764"]);
+  assertEquals(buildMasterBackfillPatch({ ...row, ...proposed.patch } as MasterRow, detail({ registration: {
+    registration_number: "90143", manufacturer_label_url: LABEL, manufacturer_label_identifiers: identifiers } })).patch, null);
   assertEquals(buildMasterBackfillPatch(master(), detail({ active_ingredients: [{ name: "Other" }] })).status, "evidence_conflict");
 });
 

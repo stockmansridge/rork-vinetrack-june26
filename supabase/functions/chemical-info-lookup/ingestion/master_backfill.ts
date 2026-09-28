@@ -11,7 +11,8 @@ export interface BackfillDetail {
   activity_group_scheme?: string | null;
   resistance_classification_state?: string;
   registered_uses?: Array<Record<string, unknown>>;
-  registration?: { registration_number?: string | null; manufacturer_label_url?: string | null; registrant?: string | null } | null;
+  registration?: { registration_number?: string | null; manufacturer_label_url?: string | null; registrant?: string | null;
+    manufacturer_label_identifiers?: { numbers: string[]; printed_values: string[] } } | null;
   verification?: { conflicts?: Array<Record<string, unknown>> };
 }
 
@@ -121,12 +122,11 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
   const label = detail.registration?.manufacturer_label_url;
   const labelReady = !!label && classifyUrl(label, row.registration_country).trust === "registrant" &&
     classifyUrl(label, row.registration_country).kind === "label_document";
+  const identifiers = detail.registration?.manufacturer_label_identifiers;
   const evidence = { locked_identity: row.registration_identity_key, reported_registration_number: detail.registration?.registration_number ?? null,
-    manufacturer_label_url: label ?? null, conflicts: detail.verification?.conflicts ?? [] };
+    manufacturer_label_url: label ?? null, manufacturer_label_identifiers: identifiers ?? null,
+    conflicts: detail.verification?.conflicts ?? [] };
   const conflict = (reason: string) => ({ status: "evidence_conflict", patch: null, evidence: { ...evidence, reason } });
-  if (detail.registration?.registration_number &&
-    detail.registration.registration_number.trim().toUpperCase() !== row.registration_number.trim().toUpperCase())
-    return { status: "identity_conflict", patch: null, evidence };
   if (detail.verification?.conflicts?.length) return conflict("label_conflicts");
   const patch: Record<string, Jsonish> = {};
   const put = (key: string, before: unknown, after: unknown) => {
@@ -215,8 +215,21 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
         ...extracted.map((r) => String(r.basis))])]);
     }
     const sources = row.verification_sources ?? [];
-    if (!sources.some((s) => s.kind === "manufacturer_label" && s.reference === label))
-      put("verification_sources", sources, [...sources, { kind: "manufacturer_label", name: "Manufacturer commercial label", reference: label }]);
+    const numbers = [...new Set((identifiers?.numbers ?? []).filter((n) => /^\d{4,7}$/.test(n)))];
+    const printed = [...new Set((identifiers?.printed_values ?? []).filter((value) =>
+      /^\d{4,7}(?:\/\d{4,7})*$/.test(value) && value.split("/").every((n) => numbers.includes(n))))];
+    const labelSource = { kind: "manufacturer_label", name: "Manufacturer commercial label", reference: label,
+      ...(numbers.length ? { registration_numbers: numbers.map((number) => ({ scheme: "apvma" as const, number,
+        source: "manufacturer_label" as const, canonical: number === row.registration_number })),
+        printed_registration_values: printed } : {}) };
+    const existing = sources.findIndex((s) => s.kind === "manufacturer_label" && s.reference === label);
+    if (existing < 0) put("verification_sources", sources, [...sources, labelSource]);
+    else if (numbers.length) {
+      const updated = [...sources];
+      updated[existing] = { ...sources[existing], registration_numbers: labelSource.registration_numbers,
+        printed_registration_values: labelSource.printed_registration_values };
+      put("verification_sources", sources, updated);
+    }
     // label_reference remains regulator-only for older consumers.
   }
   const unresolved = row.verification_unresolved_fields ?? [];

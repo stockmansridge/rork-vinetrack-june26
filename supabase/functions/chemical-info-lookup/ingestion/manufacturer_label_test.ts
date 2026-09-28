@@ -74,6 +74,16 @@ Deno.test("manufacturer PDF bytes must confirm the locked registration or full p
     registrationNumber: "90279",
     registeredProductName: "CROPSURE GREENSHIELD 750 WG FUNGICIDE",
   }), false);
+  assertEquals(manufacturerDocumentConfirmsIdentity({
+    text: "CropSure Beast 200 Herbicide. ACTIVE CONSTITUENT: 200 g/L GLUFOSINATE-AMMONIUM. APVMA Approval No. 90143/127764",
+    registrationNumber: "90143", registeredProductName: "CropSure Beast 200 Herbicide",
+    activeNames: ["Glufosinate-ammonium"],
+  }), true);
+  assertEquals(manufacturerDocumentConfirmsIdentity({
+    text: "Different Product Name. ACTIVE CONSTITUENT: 450 g/L GLYPHOSATE. APVMA Approval No. 90143/127764",
+    registrationNumber: "90143", registeredProductName: "CropSure Beast 200 Herbicide",
+    activeNames: ["Glufosinate-ammonium"],
+  }), false);
 });
 
 // ---------------------------------------------------------------------------

@@ -46,6 +46,7 @@ export interface ManufacturerEnrichmentDiagnostics {
   manufacturer_label_fetch_outcome: ManufacturerFetchOutcome | "skipped";
   manufacturer_label_fetch_reason: string;
   manufacturer_label_extract: "success" | "failure" | "skipped";
+  identity_mismatch?: boolean;
   /** Document size, for a sense of what was read. Never the contents. */
   manufacturer_label_bytes: number | null;
   manufacturer_label_sha256: string | null;
@@ -133,18 +134,22 @@ export function manufacturerDocumentConfirmsIdentity(input: {
   text: string;
   registrationNumber?: string | null;
   registeredProductName?: string | null;
+  activeNames?: string[];
 }): boolean {
   const documentText = String(input.text ?? "");
-  const number = String(input.registrationNumber ?? "").trim();
-  if (number && new RegExp(`(^|\\D)${number.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}(\\D|$)`).test(documentText)) {
-    return true;
-  }
-
   const product = normaliseProductNameLoose(String(input.registeredProductName ?? ""));
-  if (!product) return false;
-  const haystack = normaliseProductNameLoose(documentText);
+  const header = normaliseProductNameLoose(documentText.slice(0, 2500));
   const tokens = product.split(" ").filter((token) => token.length > 2);
-  return tokens.length > 0 && tokens.every((token) => haystack.includes(token));
+  const nameMatches = tokens.length > 0 && tokens.every((token) => header.includes(token));
+  const chemistryMatches = !input.activeNames?.length || input.activeNames.every((name) => {
+    const active = normaliseProductNameLoose(name).replace(/[^a-z0-9]/g, "");
+    return active.length > 2 && header.replace(/[^a-z0-9]/g, "").includes(active);
+  });
+  if (input.activeNames) return nameMatches && chemistryMatches;
+  const number = String(input.registrationNumber ?? "").trim();
+  const fullText = normaliseProductNameLoose(documentText);
+  return (!!number && new RegExp(`(^|\\D)${number.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}(\\D|$)`).test(documentText)) ||
+    (tokens.length > 0 && tokens.every((token) => fullText.includes(token)));
 }
 
 /**
@@ -172,6 +177,8 @@ export async function enrichFromManufacturerLabel(input: {
   product?: RateIdentityProduct | null;
   /** Register-resolved name, used only to verify the fetched document. */
   registeredProductName?: string | null;
+  /** Backfill identity must agree with product and chemistry, not only a printed approval number. */
+  activeNames?: string[];
 }): Promise<ManufacturerEnrichmentResult> {
   const regulatorUses = input.regulatorUses ?? [];
 
@@ -272,6 +279,7 @@ export async function enrichFromManufacturerLabel(input: {
     text: documentText,
     registrationNumber: input.product?.registration_number ?? null,
     registeredProductName: input.registeredProductName ?? null,
+    activeNames: input.activeNames,
   })) {
     return {
       uses: regulatorUses,
@@ -284,6 +292,9 @@ export async function enrichFromManufacturerLabel(input: {
         manufacturer_label_fetch_reason:
           "the fetched PDF did not confirm the locked registration or registered product identity",
         manufacturer_label_extract: "failure",
+        identity_mismatch: !!input.activeNames?.length && /\bACTIVE\s+CONSTITUENT\b/i.test(documentText.slice(0, 2500)) &&
+          !input.activeNames.some((name) => documentText.slice(0, 2500).toLowerCase().replace(/[^a-z0-9]/g, "")
+            .includes(name.toLowerCase().replace(/[^a-z0-9]/g, ""))),
         manufacturer_label_bytes: fetched.byteSize ?? null,
         manufacturer_label_sha256: fetched.sha256 ?? null,
         label_rows_found: 0,

@@ -1,8 +1,12 @@
-import { assertEquals } from "jsr:@std/assert";
+// deno-lint-ignore-file no-import-prefix
+import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import type { MasterRow } from "./contract.ts";
 import { buildMasterBackfillPatch } from "./master_backfill.ts";
 import { alreadyCompleteBackfill, backfillCountry, finishBackfillPreview, parseBackfillRequest } from "./master_backfill_preview.ts";
 import type { PreviewInsertPayload } from "./review_preview.ts";
+import { applyRateIdentities } from "../rate_identity.ts";
+import { labelApprovalIdentifiers, vineyardTableRate } from "../web_lookup.ts";
+import { manufacturerDocumentConfirmsIdentity } from "./manufacturer_enrichment.ts";
 
 const id = "10000000-0000-4000-8000-000000000143";
 const label = "https://cropsure.com/wp-content/uploads/2023/03/cropsure-beast-200-herbicide-label-v2.pdf";
@@ -47,9 +51,11 @@ Deno.test("complete, no change, missing label, and conflicting identity have exp
   assertEquals(conflict.status, "identity_conflict");
   assertEquals(conflict.evidence.reported_registration_number, "99999");
   assertEquals(conflict.preview_id, null);
-  const mismatch = await finishBackfillPreview(row(), "admin", { detail: { registration: { ...detail.registration, registration_number: "99999" } } }, false, store);
-  assertEquals(mismatch.status, "identity_conflict");
-  assertEquals(mismatch.preview_id, null);
+  const printed = await finishBackfillPreview(row(), "admin", { detail: { registration: { ...detail.registration,
+    manufacturer_label_identifiers: { numbers: ["90143", "127764"], printed_values: ["90143/127764"] } } } }, true, store);
+  assertEquals(printed.status, "preview_ready");
+  assertEquals(printed.preview_id, null);
+  assertEquals(printed.proposed_patch?.registration_number, undefined);
   const evidenceConflict = await finishBackfillPreview(row(), "admin", { detail: { ...detail, verification: { conflicts: [{ field: "rate" }] } } }, false, store);
   assertEquals(evidenceConflict.status, "evidence_conflict");
   assertEquals(evidenceConflict.preview_id, null);
@@ -58,6 +64,29 @@ Deno.test("complete, no change, missing label, and conflicting identity have exp
   assertEquals(unchanged.status, "no_material_change");
   assertEquals(unchanged.preview_id, null);
   assertEquals(inserts, 0);
+});
+
+Deno.test("Beast label excerpt produces a dry-run review with both printed IDs and 1–5 L/ha", async () => {
+  const beast = { ...row(), id: "17cd1608-ed02-4bc0-a7e1-797846620892" };
+  const text = `CropSure Beast 200 Herbicide Label Final\nACTIVE CONSTITUENT: 200 g/L GLUFOSINATE-AMMONIUM\nAPVMA Approval No.: 90143/127764\nCrop / Weed State Rate WHP Critical Comments\nAvocado,See list ofQld,1.0 toNil Apply as a directed spray\nbanana, feijoa,weedsNSW,5.0label section application\nguava, kiwifruit,controlledVic,L/hainformation\nVineyards\nUse the lower rate when weeds are young`;
+  assertEquals(manufacturerDocumentConfirmsIdentity({ text, registrationNumber: beast.registration_number,
+    registeredProductName: beast.registered_product_name, activeNames: ["Glufosinate-ammonium"] }), true);
+  const use = vineyardTableRate(text);
+  assertEquals(Boolean(use), true);
+  const labelDetail = { registration: { registration_number: "90143", manufacturer_label_url: label,
+    manufacturer_label_identifiers: labelApprovalIdentifiers(text, "AU") }, registered_uses: [use!] };
+  applyRateIdentities({ registration: { country_code: "AU", scheme: "apvma", registration_number: "90143" },
+    registered_uses: labelDetail.registered_uses });
+  const result = await finishBackfillPreview(beast, "admin", { detail: labelDetail }, true,
+    { insertPreview: () => { throw new Error("dry run attempted to store"); } });
+  assertEquals(result.status, "preview_ready");
+  assertEquals(result.preview_id, null);
+  assertEquals(result.registration_identity_key, "AU:apvma:90143");
+  const source = (result.proposed_patch?.verification_sources as NonNullable<MasterRow["verification_sources"]>).at(-1);
+  assertEquals(source?.registration_numbers?.map((n) => n.number), ["90143", "127764"]);
+  assertEquals(source?.printed_registration_values, ["90143/127764"]);
+  const rates = (result.proposed_patch?.viticulture_rates as { per_hectare: Array<{ min_value: number; max_value: number; unit: string }> }).per_hectare;
+  assertEquals(rates.map((r) => [r.min_value, r.max_value, r.unit]), [[1, 5, "L"]]);
 });
 
 Deno.test("normal review stores only a server-owned admin-bound preview; dry run and classification-only do not mutate Master", async () => {

@@ -41,6 +41,9 @@ export interface WireDataSource {
   name: string;
   reference?: string | null;
   retrieved_at?: string | null;
+  /** Printed identifiers on this manufacturer label, never alternative Master identities. */
+  registration_numbers?: Array<{ scheme: "apvma"; number: string; source: "manufacturer_label"; canonical: boolean }>;
+  printed_registration_values?: string[];
 }
 
 export interface WireConflict {
