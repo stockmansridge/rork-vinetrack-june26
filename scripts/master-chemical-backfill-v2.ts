@@ -158,7 +158,7 @@ export async function saveIndexedDiagnostic(response: BackfillPreviewResponse, m
     throw new Error("Capture response missing or Master identity/revision changed; no file saved");
   if (!diagnostic.snapshot) throw new Error("No indexed provider response obtained; no snapshot saved");
   const snapshot: IndexedLabelSnapshot = diagnostic.snapshot;
-  if (snapshot.version !== 2 || snapshot.validator_version !== 1 || snapshot.master?.id !== masterId ||
+  if (snapshot.version !== 2 || snapshot.validator_version !== 2 || snapshot.master?.id !== masterId ||
     snapshot.master.revision !== revision || !snapshot.validation || !snapshot.locked?.document ||
     !snapshot.model || !snapshot.extracted || diagnostic.outcome !== "captured")
     throw new Error("Invalid diagnostic snapshot; no file saved");

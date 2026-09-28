@@ -4,7 +4,7 @@ import type { IndexedLabelSnapshot } from "./manufacturer_label_snapshot.ts";
 
 /** Offline diagnostic replay only: never promotes snapshot data to evidence or writes a preview. */
 export function replayIndexedLabelSnapshot(snapshot: IndexedLabelSnapshot) {
-  if (snapshot.version !== 2 || snapshot.validator_version !== 1 || !snapshot.validation ||
+  if (snapshot.version !== 2 || snapshot.validator_version !== 2 || !snapshot.validation ||
     !snapshot.complete || !snapshot.extracted || !snapshot.locked.document || !snapshot.locked.name ||
     !snapshot.locked.registrant || !snapshot.locked.registration || snapshot.tool.sources.length === 0) {
     throw new Error("Snapshot is incomplete; cannot replay faithfully");
@@ -23,7 +23,8 @@ export function replayIndexedLabelSnapshot(snapshot: IndexedLabelSnapshot) {
       restrictions: strings(use.restrictions), whp: null, rei: null, source_refs: strings(use.refs),
       rates: use.rates.map((rate) => ({ label: rate.condition, basis: rate.basis as ResearchRateBasis,
         value: rate.value, min_value: rate.min_value, max_value: rate.max_value,
-        unit: rate.unit, raw_text: rate.raw_text, source_refs: strings(rate.refs) })) })),
+        unit: rate.unit, raw_text: rate.raw_text, table_heading: rate.table_heading ?? null,
+        table_context: rate.table_context ?? null, source_refs: strings(rate.refs) })) })),
     documents: { official_label_candidates: [], product_page_candidates: [], sds_candidates: [] },
     sources: [], unresolved: [], notes: null,
   };

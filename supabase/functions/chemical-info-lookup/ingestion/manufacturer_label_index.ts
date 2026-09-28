@@ -78,7 +78,7 @@ type PrintedDoseFailure = Extract<IndexFailureReason,
   "rate_value_invalid" | "rate_raw_text_missing" | "rate_basis_unrecognised" |
   "rate_unit_unrecognised" | "rate_raw_text_mismatch">;
 
-function printedDoseFailure(rate: ResearchRegisteredUse["rates"][number]): PrintedDoseFailure | null {
+function printedDoseFailure(rate: ResearchRegisteredUse["rates"][number], crop: string): PrintedDoseFailure | null {
   if (rate.value === null || !Number.isFinite(rate.value) || rate.value <= 0) return "rate_value_invalid";
   if (!rate.raw_text) return "rate_raw_text_missing";
   const basis = rate.basis === "per_hectare" ? "ha" : rate.basis === "per_100_litres" ? "100 L" : null;
@@ -86,9 +86,19 @@ function printedDoseFailure(rate: ResearchRegisteredUse["rates"][number]): Print
   if (!rate.unit) return "rate_unit_unrecognised";
   const unit = rate.unit.replace(/[^a-z]/gi, "");
   if (!/^(kg|g|l|ml)$/i.test(unit)) return "rate_unit_unrecognised";
-  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`\\b${escape(String(rate.value))}\\s*${unit}\\s*\\/\\s*${basis.replace(" ", "\\s*")}\\b`, "i").test(rate.raw_text)
-    ? null : "rate_raw_text_mismatch";
+  const doseTokens = [...rate.raw_text.matchAll(/\b(\d+(?:\.\d+)?)\s*(kg|g|ml|l)\b(?:\s*\/\s*(ha|100\s*l)\b)?/gi)];
+  if (doseTokens.length !== 1 || Number(doseTokens[0][1]) !== rate.value ||
+    doseTokens[0][2].toLowerCase() !== unit.toLowerCase()) return "rate_raw_text_mismatch";
+  if (/^\s*\/\s*\S+/.test(rate.raw_text.slice((doseTokens[0].index ?? 0) + doseTokens[0][0].length)))
+    return "rate_raw_text_mismatch";
+  const printedBasis = doseTokens[0][3]?.replace(/\s/g, "").toLowerCase();
+  if (printedBasis) return printedBasis === basis.replace(/\s/g, "").toLowerCase() ? null : "rate_raw_text_mismatch";
+  const context = rate.table_context ?? "";
+  const heading = rate.table_heading ?? "";
+  if (!/^\s*RATE\s*\/\s*ha\s*$/i.test(heading) || basis !== "ha" ||
+    normal(/^\s*Crop\s*:\s*([^;]+)\s*;/i.exec(context)?.[1] ?? "") !== normal(crop) ||
+    !stateSoil(context) || stateSoil(context) !== stateSoil(rate.label ?? "")) return "rate_raw_text_mismatch";
+  return null;
 }
 
 /** Read only a previously accepted, registrant-hosted manufacturer PDF through the existing Responses web index. */
@@ -106,7 +116,7 @@ export async function readManufacturerLabelViaWebIndex(input: IndexedLabelInput)
 Do not use APVMA, regulators, resellers, SDS, technical notes, brochures, other products, or model memory.
 If the exact manufacturer label cannot be read from the web index, return no extracted evidence.
 Report only facts printed on that exact PDF. Put its exact URL in every product, active, use and rate source_refs. Do not search for a replacement registration source. Report the printed APVMA approval identifier (including any suffix) in the registration candidate number and use the exact PDF as source_url. Never infer an absent number or concentration.
-For each grapevine dose create a separate use/rate with verbatim raw_text containing the printed numeric dose and unit. In the rate label explicitly include State: <printed states>; Soil: <light or heavy>. Keep each /100 L alternative as its own rate. Keep state-specific critical comments in that use's restrictions. If state, soil or printed dose cannot be bound, return no such rate.`,
+For each grapevine dose create a separate use/rate. Preserve the printed rate cell in raw_text, without appending a denominator not printed in the cell. If the denominator appears only in the SAME table's heading directly governing that crop/state/soil cell, provide the verbatim table_heading and table_context (Crop: <crop>; State: <states>; Soil: <light or heavy>) on that rate; otherwise leave them null. An explicit cell denominator (including /100 L water) always overrides the heading. In the rate label explicitly include State: <printed states>; Soil: <light or heavy>. Keep each /100 L alternative as its own rate. Keep controlled weeds and suppression claims distinct in targets (prefix a suppression target with 'Suppression: '); never merge the claims. Keep state-specific critical comments in that use's restrictions. If state, soil or printed dose cannot be bound, return no such rate.`,
       input: `Exact manufacturer label URL: ${input.labelUrl}\nLocked product: ${input.name}\nRegistrant: ${input.registrant}\nCanonical APVMA number: ${input.registrationNumber}\nLocked actives: ${input.activeIngredients.map((a) => `${a.name} ${a.concentration ?? "unknown"} ${a.concentration_unit ?? ""}`).join("; ")}` });
   } catch (error) {
     const category = error instanceof OpenAIResearchError ? error.category : null;
@@ -157,15 +167,18 @@ For each grapevine dose create a separate use/rate with verbatim raw_text contai
       (locked.concentration_unit == null || normal(locked.concentration_unit) === normal(active.concentration_unit)))))
     return finish({ status: "identity_conflict", reason: "active_identity_mismatch" });
   const uses: Record<string, unknown>[] = [];
+  const doseRows: Array<{ condition: string; value: number | null; unit: string | null; basis: string; restrictions: string }> = [];
   for (const use of research.registered_uses) {
     if (!/grape|vineyard/i.test(use.crop)) continue;
     if (!refs(use.source_refs)) return finish({ status: "label_index_unavailable", reason: "rate_use_source_mismatch" });
     for (const rate of use.rates) {
       if (!refs(rate.source_refs)) return finish({ status: "label_index_unavailable", reason: "rate_source_mismatch" });
-      const doseFailure = printedDoseFailure(rate);
+      const doseFailure = printedDoseFailure(rate, use.crop);
       if (doseFailure) return finish({ status: "label_index_unavailable", reason: doseFailure });
       const condition = stateSoil(rate.label ?? "");
       if (!condition) return finish({ status: "label_index_unavailable", reason: "rate_state_soil_missing" });
+      doseRows.push({ condition, value: rate.value, unit: rate.unit, basis: rate.basis,
+        restrictions: use.restrictions.join("; ") });
       for (const target of use.targets.length ? use.targets : [""]) uses.push({ crop: use.crop, target,
         [DIRECTION_SEED_KEY]: { crop: use.crop, targets: use.targets, condition },
         conditions: condition, restrictions: use.restrictions.join("; ") || null,
@@ -183,13 +196,11 @@ For each grapevine dose create a separate use/rate with verbatim raw_text contai
       ["NSW, VIC, SA, TAS, WA", "heavy", 2.5, "kg", "per_hectare"],
       ["NSW, VIC, SA, TAS, WA", "heavy", 120, "g", "per_100_litres"],
     ] as const;
-    if (uses.length !== expected.length || expected.some(([states, soil, amount, unit, basis]) =>
-      !uses.some((use) => use.conditions === `State: ${states}; Soil: ${soil}` &&
-        (use.rates as Array<Record<string, unknown>>)[0]?.value === amount &&
-        (use.rates as Array<Record<string, unknown>>)[0]?.unit === unit &&
-        (use.rates as Array<Record<string, unknown>>)[0]?.basis === basis &&
+    if (doseRows.length !== expected.length || expected.some(([states, soil, amount, unit, basis]) =>
+      doseRows.filter((row) => row.condition === `State: ${states}; Soil: ${soil}` &&
+        row.value === amount && row.unit === unit && row.basis === basis &&
         (states === "QLD" ? /at least two years old/i : /at least 12 months old.*split applications are preferred/i)
-          .test(String(use.restrictions ?? ""))))) return finish({ status: "label_index_unavailable", reason: "simanex_completeness_failed" });
+          .test(row.restrictions)).length !== 1)) return finish({ status: "label_index_unavailable", reason: "simanex_completeness_failed" });
   }
   const printed_values = [...new Set(printed)];
   return finish({ status: "ready", uses,

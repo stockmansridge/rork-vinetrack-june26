@@ -5,7 +5,7 @@ import type { IndexedLabelSnapshot } from "../supabase/functions/chemical-info-l
 export async function replayFile(file: string): Promise<{ original: unknown; replayed: unknown; comparison: unknown; vineyard_rates: unknown }> {
   if ((await Deno.stat(file)).size > 150_000) throw new Error("Snapshot exceeds diagnostic size limit");
   const snapshot = JSON.parse(await Deno.readTextFile(file)) as IndexedLabelSnapshot;
-  if (snapshot.version !== 2 || snapshot.validator_version !== 1 || !snapshot.validation || !snapshot.master)
+  if (snapshot.version !== 2 || snapshot.validator_version !== 2 || !snapshot.validation || !snapshot.master)
     throw new Error("Unsupported or missing snapshot/validator version");
   const replayed = await replayIndexedLabelSnapshot(snapshot);
   const observed = { status: replayed.status, reason: replayed.status === "ready" ? null : replayed.reason };

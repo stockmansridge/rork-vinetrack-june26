@@ -127,7 +127,9 @@ const rateSchema = obj({
   min_value: nullableNum("Low end, when the label gives a range."),
   max_value: nullableNum("High end, when the label gives a range."),
   unit: nullableStr("Rate unit exactly as printed, e.g. 'kg', 'g', 'L', 'mL'."),
-  raw_text: nullableStr("The rate sentence verbatim from the label."),
+  raw_text: nullableStr("The rate cell wording as extracted; do not append a denominator absent from the cell."),
+  table_heading: nullableStr("Verbatim heading directly above this rate cell, e.g. RATE/ha. Null if not verified in the same table."),
+  table_context: nullableStr("Crop, state and soil of the row/column this heading governs, e.g. Crop: Grapevines; State: Qld only; Soil: light soil. Null if association cannot be established."),
   source_refs: sourceRefs,
 });
 
@@ -260,6 +262,8 @@ export interface ResearchRate {
   max_value: number | null;
   unit: string | null;
   raw_text: string | null;
+  table_heading?: string | null;
+  table_context?: string | null;
   source_refs: string[];
 }
 
@@ -491,6 +495,8 @@ export function parseChemicalResearchResult(raw: unknown): ChemicalResearchResul
           max_value,
           unit: optString(r, "unit", rp),
           raw_text,
+          table_heading: optString(r, "table_heading", rp),
+          table_context: optString(r, "table_context", rp),
           source_refs: strArray(r, "source_refs", rp),
         }];
       });
