@@ -255,13 +255,25 @@ Deno.test("indexed vineyard-rate failures return only their fixed diagnostic cod
     ["rate_no_vineyard_rows", (research) => { research.registered_uses = []; }],
     ["rate_use_source_mismatch", (research) => { research.registered_uses[0].source_refs = []; }],
     ["rate_source_mismatch", (research) => { research.registered_uses[0].rates[0].source_refs = []; }],
-    ["rate_dose_unparseable", (research) => { research.registered_uses[0].rates[0].raw_text = "unparseable"; }],
+    ["rate_value_invalid", (research) => { research.registered_uses[0].rates[0].value = 0; }],
+    ["rate_raw_text_missing", (research) => { research.registered_uses[0].rates[0].raw_text = null; }],
+    ["rate_basis_unrecognised", (research) => { research.registered_uses[0].rates[0].basis = "other"; }],
+    ["rate_unit_unrecognised", (research) => { research.registered_uses[0].rates[0].unit = "litres"; }],
+    ["rate_raw_text_mismatch", (research) => { research.registered_uses[0].rates[0].raw_text = "unparseable"; }],
     ["rate_state_soil_missing", (research) => { research.registered_uses[0].rates[0].label = "Soil: light"; }],
     ["simanex_completeness_failed", (research) => { research.registered_uses.pop(); }],
   ];
   for (const [reason, change] of cases) {
     const result = await readManufacturerLabelViaWebIndex({ ...locked, fetchFn: fetchFor(indexedResponse(change)) });
     assertEquals(result, { status: "label_index_unavailable", reason });
+  }
+  for (const [reason, change] of [
+    ["rate_value_invalid", (research: ReturnType<typeof cloneResearch>) => { research.registered_uses[0].rates[0].value = null; }],
+    ["rate_raw_text_missing", (research: ReturnType<typeof cloneResearch>) => { research.registered_uses[0].rates[0].raw_text = ""; }],
+    ["rate_unit_unrecognised", (research: ReturnType<typeof cloneResearch>) => { research.registered_uses[0].rates[0].unit = null; }],
+  ] as const) {
+    assertEquals(await readManufacturerLabelViaWebIndex({ ...locked, fetchFn: fetchFor(indexedResponse(change)) }),
+      { status: "label_index_unavailable", reason });
   }
 });
 

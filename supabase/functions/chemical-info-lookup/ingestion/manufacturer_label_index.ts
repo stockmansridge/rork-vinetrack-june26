@@ -30,8 +30,9 @@ export type IndexFailureReason = "candidate_not_approved" | "index_request_faile
   "index_request_timeout" | "index_request_transient" | "index_request_permanent" | "index_request_refusal" | "no_web_search_evidence" |
   "exact_url_not_consulted" | "malformed_index_result" | "product_identity_mismatch" |
   "registration_missing" | "active_identity_mismatch" | "rate_no_vineyard_rows" |
-  "rate_use_source_mismatch" | "rate_source_mismatch" | "rate_dose_unparseable" |
-  "rate_state_soil_missing" | "simanex_completeness_failed";
+  "rate_use_source_mismatch" | "rate_source_mismatch" | "rate_value_invalid" |
+  "rate_raw_text_missing" | "rate_basis_unrecognised" | "rate_unit_unrecognised" |
+  "rate_raw_text_mismatch" | "rate_state_soil_missing" | "simanex_completeness_failed";
 
 export interface IndexedLabelInput {
   name: string;
@@ -70,14 +71,21 @@ function stateSoil(text: string): string | null {
   return states.length ? `State: ${[...new Set(states.map((s) => s.toUpperCase()))].join(", ")}; Soil: ${soil.toLowerCase()}` : null;
 }
 
-function printedDose(rate: ResearchRegisteredUse["rates"][number]): boolean {
-  if (rate.value === null || !Number.isFinite(rate.value) || rate.value <= 0 || !rate.raw_text || !rate.unit) return false;
+type PrintedDoseFailure = Extract<IndexFailureReason,
+  "rate_value_invalid" | "rate_raw_text_missing" | "rate_basis_unrecognised" |
+  "rate_unit_unrecognised" | "rate_raw_text_mismatch">;
+
+function printedDoseFailure(rate: ResearchRegisteredUse["rates"][number]): PrintedDoseFailure | null {
+  if (rate.value === null || !Number.isFinite(rate.value) || rate.value <= 0) return "rate_value_invalid";
+  if (!rate.raw_text) return "rate_raw_text_missing";
   const basis = rate.basis === "per_hectare" ? "ha" : rate.basis === "per_100_litres" ? "100 L" : null;
-  if (!basis) return false;
+  if (!basis) return "rate_basis_unrecognised";
+  if (!rate.unit) return "rate_unit_unrecognised";
   const unit = rate.unit.replace(/[^a-z]/gi, "");
-  if (!/^(kg|g|l|ml)$/i.test(unit)) return false;
+  if (!/^(kg|g|l|ml)$/i.test(unit)) return "rate_unit_unrecognised";
   const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`\\b${escape(String(rate.value))}\\s*${unit}\\s*\\/\\s*${basis.replace(" ", "\\s*")}\\b`, "i").test(rate.raw_text);
+  return new RegExp(`\\b${escape(String(rate.value))}\\s*${unit}\\s*\\/\\s*${basis.replace(" ", "\\s*")}\\b`, "i").test(rate.raw_text)
+    ? null : "rate_raw_text_mismatch";
 }
 
 /** Read only a previously accepted, registrant-hosted manufacturer PDF through the existing Responses web index. */
@@ -139,7 +147,8 @@ For each grapevine dose create a separate use/rate with verbatim raw_text contai
     if (!refs(use.source_refs)) return { status: "label_index_unavailable", reason: "rate_use_source_mismatch" };
     for (const rate of use.rates) {
       if (!refs(rate.source_refs)) return { status: "label_index_unavailable", reason: "rate_source_mismatch" };
-      if (!printedDose(rate)) return { status: "label_index_unavailable", reason: "rate_dose_unparseable" };
+      const doseFailure = printedDoseFailure(rate);
+      if (doseFailure) return { status: "label_index_unavailable", reason: doseFailure };
       const condition = stateSoil(rate.label ?? "");
       if (!condition) return { status: "label_index_unavailable", reason: "rate_state_soil_missing" };
       for (const target of use.targets.length ? use.targets : [""]) uses.push({ crop: use.crop, target,

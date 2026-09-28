@@ -164,7 +164,8 @@ Deno.test("runner prints only fixed indexed reasons for missing manufacturer lab
     "index_request_permanent", "index_request_refusal", "no_web_search_evidence",
     "exact_url_not_consulted", "malformed_index_result", "product_identity_mismatch",
     "registration_missing", "active_identity_mismatch", "rate_no_vineyard_rows", "rate_use_source_mismatch",
-    "rate_source_mismatch", "rate_dose_unparseable", "rate_state_soil_missing", "simanex_completeness_failed",
+    "rate_source_mismatch", "rate_value_invalid", "rate_raw_text_missing", "rate_basis_unrecognised",
+    "rate_unit_unrecognised", "rate_raw_text_mismatch", "rate_state_soil_missing", "simanex_completeness_failed",
   ]) {
     const reason = `label_index_unavailable: ${code}`;
     const diagnostic = safeDiagnosticReason({ ...response, evidence: { reason } });
@@ -178,7 +179,8 @@ Deno.test("runner suppresses unapproved indexed text, URLs and tokens without ch
   const response = { status: "manufacturer_label_not_found", evidence: {} } as BackfillPreviewResponse;
   for (const reason of [
     "label_index_unavailable: unknown_code", "label_index_unavailable: rate_condition_incomplete",
-    "label_index_unavailable: rate_dose_unparseable: secret", "label_index_unavailable: arbitrary free-form text",
+    "label_index_unavailable: rate_dose_unparseable", "label_index_unavailable: rate_raw_text_mismatch: secret",
+    "label_index_unavailable: arbitrary free-form text",
     "label_index_unavailable: exact_url_not_consulted: extra", "label_index_unavailable: exact_url_not_consulted ",
     "label_index_unavailable: https://example.com/label.pdf", "label_index_unavailable: Bearer secret",
     "label_index_unavailable: token=secret", "label_index_unavailable: exact_url_not_consulted https://example.com",
