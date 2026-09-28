@@ -17,9 +17,8 @@ export function parseBackfillRequest(body: Record<string, unknown>): { masterId:
   if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") return { error: "Invalid dryRun" };
   if (body.capture_indexed_response !== undefined && body.capture_indexed_response !== true)
     return { error: "Invalid capture mode" };
-  if (body.capture_indexed_response === true && (body.dryRun !== true ||
-    (body.master_chemical_id !== undefined && body.masterChemicalId !== undefined)))
-    return { error: "Capture requires dryRun true and exactly one Master id" };
+  if (body.capture_indexed_response === true && body.master_chemical_id !== undefined && body.masterChemicalId !== undefined)
+    return { error: "Capture requires exactly one Master id" };
   return { masterId, dryRun: body.dryRun === true, capture: body.capture_indexed_response === true };
 }
 
@@ -72,7 +71,7 @@ export async function readBackfillIndexedLabel(input: IndexedLabelInput, master:
   return { result, snapshot };
 }
 
-/** Diagnostic data is returned only for an explicitly authorised capture request, never stored as a preview. */
+/** Diagnostic data is returned only for an explicitly authorised opt-in request, never stored as a preview. */
 export function withIndexedDiagnostic(response: BackfillPreviewResponse, capture: boolean,
   snapshot: IndexedLabelSnapshot | null): BackfillPreviewResponse {
   return capture ? { ...response, indexed_diagnostic: { snapshot,

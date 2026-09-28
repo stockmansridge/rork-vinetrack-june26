@@ -181,6 +181,7 @@ async function main(): Promise<void> {
     return index < 0 ? null : args[index + 1] ?? null;
   };
   const execute = has("--execute");
+  if (execute) throw new Error("Legacy execute re-extracts before apply. Use scripts/master-stored-review.ts prepare → inspect → apply instead.");
   const dryRun = has("--dry-run") || !execute;
   const resume = has("--resume");
   const retryFailed = has("--retry-failed");

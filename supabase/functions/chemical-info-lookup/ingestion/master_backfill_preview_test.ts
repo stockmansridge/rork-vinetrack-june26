@@ -32,12 +32,13 @@ Deno.test("canonical snake-case Master ID needs no country; legacy country canno
     assertEquals("error" in parseBackfillRequest({ master_chemical_id: id, [extra]: "redirect" }), true);
 });
 
-Deno.test("server capture gate requires signed-in admin, explicit dry run and one Master id", () => {
+Deno.test("server diagnostic gate requires signed-in admin and one Master id; preparation may opt in", () => {
   const body = { action: "master_backfill_preview_v2", master_chemical_id: id, dryRun: true, capture_indexed_response: true };
   assertEquals(authorizeBackfillRequest(body, true, "admin"), { masterId: id, dryRun: true, capture: true });
+  assertEquals(authorizeBackfillRequest({ ...body, dryRun: false }, true, "admin"), { masterId: id, dryRun: false, capture: true });
   assertEquals(authorizeBackfillRequest(body, false, "user"), { error: "Not authorised" });
   assertEquals(authorizeBackfillRequest(body, true, null), { error: "Not authorised" });
-  for (const changed of [{ dryRun: false }, { dryRun: undefined }, { masterChemicalId: id }, { master_chemical_id: [id] },
+  for (const changed of [{ masterChemicalId: id }, { master_chemical_id: [id] },
     { capture_indexed_response: false }, { query: "SIMANEX" }])
     assertEquals("error" in parseBackfillRequest({ ...body, ...changed }), true);
   assertEquals(withIndexedDiagnostic(alreadyCompleteBackfill(row()), false, null).indexed_diagnostic, undefined);
