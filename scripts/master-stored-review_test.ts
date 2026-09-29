@@ -1,6 +1,6 @@
 // deno-lint-ignore-file no-import-prefix
 import { assertEquals, assertRejects, assertThrows } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { applyStoredReview, inspectStoredReview, parseStoredReviewArgs, prepareStoredReview, type ReviewApi, type StoredReviewPreview } from "./master-stored-review.ts";
+import { applyStoredReview, confirmCoverEvidence, inspectStoredReview, parseStoredReviewArgs, preparationRequest, prepareStoredReview, type ReviewApi, type StoredReviewPreview } from "./master-stored-review.ts";
 import { finishBackfillPreview, type BackfillPreviewResponse } from "../supabase/functions/chemical-info-lookup/ingestion/master_backfill_preview.ts";
 import type { MasterRow } from "../supabase/functions/chemical-info-lookup/ingestion/contract.ts";
 
@@ -117,7 +117,7 @@ Deno.test("indexed success still cannot store a preview when full Master merge c
 });
 
 Deno.test("failed indexed identity check stays non-writable and diagnostic never promotes snapshot to evidence", async () => {
-  const snapshot = JSON.parse(await Deno.readTextFile(".rork/tmp/master-backfill-simanex-capture-20260928-223105936.json"));
+  const snapshot = { complete: false, validator_version: 1, reason: "incomplete_test_snapshot" };
   assertEquals(snapshot.complete, false);
   assertEquals(snapshot.validator_version, 1);
   let calls = 0;
@@ -132,14 +132,58 @@ Deno.test("failed indexed identity check stays non-writable and diagnostic never
   } };
   const result = await prepareStoredReview(api, id, true);
   assertEquals(result.manifest, null);
-  assertEquals(result.response.indexed_diagnostic?.snapshot, snapshot);
+  assertEquals(result.response.indexed_diagnostic?.snapshot?.complete, snapshot.complete);
+  assertEquals(result.response.indexed_diagnostic?.snapshot?.validator_version, snapshot.validator_version);
   assertEquals(calls, 1);
   assertEquals(f.counters(), { lookups: 0, inserts: 0, applies: 0 });
+});
+
+Deno.test("unsigned real cover evidence requires matching PDF and explicit cover-only confirmation", async () => {
+  const candidate = JSON.parse(await Deno.readTextFile("docs/weedmaster-acceptance/visual_review_candidate.json"));
+  const pdf = await Deno.readFile("docs/weedmaster-acceptance/weedmaster_duo_documented.pdf");
+  const answer = `CONFIRM COVER ${candidate.document_sha256}`;
+  await assertRejects(() => confirmCoverEvidence(candidate, pdf, null));
+  await assertRejects(() => confirmCoverEvidence(candidate, pdf, "yes"));
+  await assertRejects(() => confirmCoverEvidence({ ...candidate, confirm_review: true }, pdf, answer));
+  await assertRejects(() => confirmCoverEvidence({ ...candidate, reviewed_by: "synthetic" }, pdf, answer));
+  await assertRejects(() => confirmCoverEvidence(candidate, new Uint8Array([1, 2, 3]), answer));
+  const evidence = await confirmCoverEvidence(candidate, pdf, answer);
+  assertEquals(evidence.confirm_review, true);
+  assertEquals(evidence.verbatim, candidate.verbatim);
+  assertEquals("reviewed_by" in evidence, false);
+  assertEquals("reviewed_at" in evidence, false);
+  assertEquals(candidate.confirm_review, false);
+  assertEquals(preparationRequest(id, false, evidence), { action: "master_backfill_preview_v2",
+    master_chemical_id: id, reviewed_visual_declaration: evidence });
+  assertEquals(preparationRequest(id, false), { action: "master_backfill_preview_v2", master_chemical_id: id });
+  assertEquals(preparationRequest(id, true, evidence).capture_indexed_response, true);
+});
+
+Deno.test("prepare forwards confirmed cover only to one live-row preview; identity mismatch never calls prepare", async () => {
+  const f = fixture();
+  const evidence = { confirm_review: true, verbatim: "human-confirmed cover" };
+  const calls: Array<Record<string, unknown> | undefined> = [];
+  const api: ReviewApi = { ...f.api, prepare: (id, diagnostic, declaration) => {
+    calls.push(declaration);
+    return f.api.prepare(id, diagnostic, declaration);
+  } };
+  await assertRejects(() => prepareStoredReview(api, id, false, evidence, "AU:apvma:53576"));
+  assertEquals(calls.length, 0);
+  assertEquals(f.counters().applies, 0);
+  const result = await prepareStoredReview(api, id, false, evidence, "AU:apvma:62917");
+  assertEquals(calls, [evidence]);
+  assertEquals(result.manifest?.master_chemical_id, id);
+  assertEquals(f.counters().applies, 0);
 });
 
 Deno.test("mode parser forbids mixing dry-run, capture, execute, batch and client patch options", () => {
   const valid = parseStoredReviewArgs(["prepare", "--master-id", id, "--manifest", "m.json", "--report", "r.json", "--diagnostic", "d.json"]);
   assertEquals(valid.id, id);
+  const cover = parseStoredReviewArgs(["prepare", "--master-id", id, "--manifest", "m.json", "--report", "r.json",
+    "--evidence-file", "cover.json", "--document", "label.pdf", "--expected-identity", "AU:apvma:53576"]);
+  assertEquals(cover.evidenceFile, "cover.json");
+  assertThrows(() => parseStoredReviewArgs(["prepare", "--master-id", id, "--manifest", "m.json", "--report", "r.json", "--evidence-file", "cover.json"]));
+  assertThrows(() => parseStoredReviewArgs(["apply", "--manifest", "m.json", "--reason", "Reviewed", "--evidence-file", "cover.json"]));
   for (const extra of ["--dry-run", "--execute", "--patch", "--limit", "--capture-indexed-response"])
     assertThrows(() => parseStoredReviewArgs(["apply", "--manifest", "m.json", "--reason", "Reviewed", extra, "x"]));
   assertThrows(() => parseStoredReviewArgs(["prepare", "--master-id", id, "--manifest", "m.json", "--report", "m.json"]));

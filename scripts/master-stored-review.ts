@@ -1,6 +1,6 @@
 // Single-Master stored review handoff. Preparation stores ONLY a pending preview;
 // inspect is read-only; apply alone invokes the audited Master-writing RPC.
-// deno run --allow-env --allow-net --allow-read --allow-write scripts/master-stored-review.ts prepare --master-id UUID --manifest review.json --report report.json [--diagnostic failure.json]
+// deno run --allow-env --allow-net --allow-read --allow-write scripts/master-stored-review.ts prepare --master-id UUID --manifest review.json --report report.json [--diagnostic failure.json] [--evidence-file unsigned.json --document label.pdf --expected-identity AU:apvma:53576]
 // deno run --allow-env --allow-net --allow-read scripts/master-stored-review.ts inspect --manifest review.json
 // deno run --allow-env --allow-net --allow-read scripts/master-stored-review.ts apply --manifest review.json --reason "Reviewed label and directions"
 import type { MasterRow } from "../supabase/functions/chemical-info-lookup/ingestion/contract.ts";
@@ -30,10 +30,18 @@ export interface StoredReviewPreview {
   proposed_patch: Record<string, unknown>;
 }
 
+/** Only the preview endpoint receives the confirmed cover; no apply or dry-run flags are accepted here. */
+export function preparationRequest(id: string, diagnostic: boolean,
+  visualDeclaration?: Record<string, unknown>): Record<string, unknown> {
+  return { action: "master_backfill_preview_v2", master_chemical_id: id,
+    ...(diagnostic ? { capture_indexed_response: true } : {}),
+    ...(visualDeclaration ? { reviewed_visual_declaration: visualDeclaration } : {}) };
+}
+
 export interface ReviewApi {
   currentUser(): Promise<string>;
   master(id: string): Promise<MasterRow>;
-  prepare(id: string, diagnostic: boolean): Promise<BackfillPreviewResponse>;
+  prepare(id: string, diagnostic: boolean, visualDeclaration?: Record<string, unknown>): Promise<BackfillPreviewResponse>;
   stored(id: string): Promise<StoredReviewPreview>;
   apply(id: string, masterId: string, reason: string): Promise<{ status: string; result_revision: number }>;
 }
@@ -73,15 +81,44 @@ export async function inspectStoredReview(api: ReviewApi, manifest: StoredReview
   return { manifest, patch: stored.proposed_patch, current, proposed_effective, pending };
 }
 
+/** Accept only an unsigned transcription of the locally hash-matched document after a separate human confirmation. */
+export async function confirmCoverEvidence(raw: unknown, document: Uint8Array, answer: string | null): Promise<Record<string, unknown>> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Invalid unsigned cover evidence");
+  const v = raw as Record<string, unknown>;
+  if (v.status !== "awaiting_authenticated_admin_review" || v.confirm_review !== false ||
+    v.reviewed_by !== null || v.reviewed_at !== null || v.method !== "human_visual_transcription" ||
+    typeof v.document_sha256 !== "string" || !sha256.test(v.document_sha256) ||
+    typeof v.source_url !== "string" || !v.source_url.startsWith("https://") ||
+    !Number.isInteger(v.physical_page) || (v.physical_page as number) < 1 ||
+    typeof v.location !== "string" || typeof v.verbatim !== "string" ||
+    !v.active || typeof v.active !== "object" || Array.isArray(v.active) ||
+    typeof v.formulation !== "string" || !(v.document_version === null || typeof v.document_version === "string"))
+    throw new Error("Evidence must be the unsigned cover candidate, not a pre-approved or synthetic reviewer");
+  const bytes = new Uint8Array(document.byteLength);
+  bytes.set(document);
+  const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes.buffer)),
+    (byte) => byte.toString(16).padStart(2, "0")).join("");
+  if (hash !== v.document_sha256) throw new Error("Local label PDF hash differs from unsigned cover evidence");
+  if (answer !== `CONFIRM COVER ${v.document_sha256}`) throw new Error("Cover transcription not confirmed; no preparation request sent");
+  const active = v.active as Record<string, unknown>;
+  return { confirm_review: true, document_sha256: v.document_sha256, source_url: v.source_url,
+    physical_page: v.physical_page, location: v.location, verbatim: v.verbatim,
+    active: { name: active.name, salt_form: active.salt_form, concentration: active.concentration, unit: active.unit },
+    formulation: v.formulation, method: v.method, document_version: v.document_version };
+}
+
 /** One lookup, then read back and hash the stored proposal (not the response display copy). */
-export async function prepareStoredReview(api: ReviewApi, id: string, diagnostic = false): Promise<{
+export async function prepareStoredReview(api: ReviewApi, id: string, diagnostic = false,
+  visualDeclaration?: Record<string, unknown>, expectedIdentity?: string): Promise<{
   manifest: StoredReviewManifest | null; report: Record<string, unknown>; response: BackfillPreviewResponse;
 }> {
   if (!uuid.test(id)) throw new Error("Exactly one valid Master ID is required");
   const owner = await api.currentUser();
   if (!owner) throw new Error("System Admin session required");
   const row = await api.master(id);
-  const response = await api.prepare(id, diagnostic);
+  if (expectedIdentity && row.registration_identity_key !== expectedIdentity)
+    throw new Error("Live Master registration identity differs from requested chemical; no preparation request sent");
+  const response = await api.prepare(id, diagnostic, visualDeclaration);
   const report: Record<string, unknown> = { status: response.status, master_chemical_id: id,
     registration_identity_key: row.registration_identity_key, base_revision: row.catalogue_version ?? 1,
     review_status: row.review_status, evidence: response.evidence, findings: response.findings,
@@ -121,10 +158,11 @@ export async function applyStoredReview(api: ReviewApi, manifest: StoredReviewMa
 }
 
 export function parseStoredReviewArgs(args: string[]): { mode: "prepare" | "inspect" | "apply";
-  id?: string; manifest: string; report?: string; diagnostic?: string; reason?: string } {
+  id?: string; manifest: string; report?: string; diagnostic?: string; reason?: string;
+  evidenceFile?: string; document?: string; expectedIdentity?: string } {
   const [mode, ...rest] = args;
   if (mode !== "prepare" && mode !== "inspect" && mode !== "apply") throw new Error("Expected prepare, inspect or apply");
-  const allowed = mode === "prepare" ? ["--master-id", "--manifest", "--report", "--diagnostic"] :
+  const allowed = mode === "prepare" ? ["--master-id", "--manifest", "--report", "--diagnostic", "--evidence-file", "--document", "--expected-identity"] :
     mode === "inspect" ? ["--manifest"] : ["--manifest", "--reason"];
   const options = new Map<string, string>();
   for (let i = 0; i < rest.length; i += 2) {
@@ -138,9 +176,13 @@ export function parseStoredReviewArgs(args: string[]): { mode: "prepare" | "insp
   const reason = options.get("--reason");
   if (!manifest || mode === "prepare" && (!id || !uuid.test(id) || !report || report === manifest ||
     options.get("--diagnostic") === manifest || options.get("--diagnostic") === report) ||
+    Boolean(options.get("--evidence-file")) !== Boolean(options.get("--document")) ||
     mode === "apply" && !reason?.trim()) throw new Error("Missing required review option");
   return { mode, manifest, ...(id ? { id } : {}), ...(report ? { report } : {}),
-    ...(options.get("--diagnostic") ? { diagnostic: options.get("--diagnostic") } : {}), ...(reason ? { reason } : {}) };
+    ...(options.get("--diagnostic") ? { diagnostic: options.get("--diagnostic") } : {}), ...(reason ? { reason } : {}),
+    ...(options.get("--evidence-file") ? { evidenceFile: options.get("--evidence-file") } : {}),
+    ...(options.get("--document") ? { document: options.get("--document") } : {}),
+    ...(options.get("--expected-identity") ? { expectedIdentity: options.get("--expected-identity") } : {}) };
 }
 
 async function main(): Promise<void> {
@@ -167,10 +209,8 @@ async function main(): Promise<void> {
       if (rows.length !== 1 || rows[0].id !== id) throw new Error("Master row not found");
       return rows[0];
     },
-    prepare: (id, diagnostic) => request("/functions/v1/chemical-info-lookup", {
-      action: "master_backfill_preview_v2", master_chemical_id: id,
-      ...(diagnostic ? { capture_indexed_response: true } : {}),
-    }) as Promise<BackfillPreviewResponse>,
+    prepare: (id, diagnostic, visualDeclaration) => request("/functions/v1/chemical-info-lookup",
+      preparationRequest(id, diagnostic, visualDeclaration)) as Promise<BackfillPreviewResponse>,
     stored: async (id) => {
       const rows = await request(`/rest/v1/master_review_previews?select=id,master_chemical_id,base_revision,requested_by,expires_at,consumed_at,proposed_patch&id=eq.${encodeURIComponent(id)}&limit=1`) as StoredReviewPreview[];
       if (rows.length !== 1) throw new Error("Stored preview unavailable; explicit re-review required");
@@ -181,7 +221,25 @@ async function main(): Promise<void> {
     }) as Promise<{ status: string; result_revision: number }>,
   };
   if (options.mode === "prepare") {
-    const { manifest, report, response } = await prepareStoredReview(api, options.id!, !!options.diagnostic);
+    let declaration: Record<string, unknown> | undefined;
+    if (options.evidenceFile && options.document) {
+      const raw: unknown = JSON.parse(await Deno.readTextFile(options.evidenceFile));
+      const candidate = raw as Record<string, unknown>;
+      const document = await Deno.readFile(options.document);
+      // Validate the hash and unsigned state before showing the cover or prompting.
+      await confirmCoverEvidence(raw, document, null).catch((error: unknown) => {
+        if (!(error instanceof Error) || !error.message.startsWith("Cover transcription not confirmed")) throw error;
+      });
+      if (!Deno.stdin.isTerminal()) throw new Error("Interactive admin cover review required; no preparation request sent");
+      console.log(JSON.stringify({ cover_image: candidate.cover_attachment ?? null, document: options.document,
+        source_url: candidate.source_url, document_sha256: candidate.document_sha256,
+        physical_page: candidate.physical_page, location: candidate.location, verbatim: candidate.verbatim,
+        active: candidate.active, formulation: candidate.formulation, document_version: candidate.document_version }, null, 2));
+      console.log("Open the cover image and compare the displayed transcription to the PDF. This confirms ONLY cover evidence, not the Master proposal.");
+      declaration = await confirmCoverEvidence(raw, document, prompt(`Type CONFIRM COVER ${candidate.document_sha256} to attest, or cancel:`));
+    }
+    const { manifest, report, response } = await prepareStoredReview(api, options.id!, !!options.diagnostic,
+      declaration, options.expectedIdentity);
     // Never overwrite an earlier approval or report. Keep evidence in the private report, not stdout.
     const reportHandle = await Deno.open(options.report!, { createNew: true, write: true, mode: 0o600 });
     try { await reportHandle.write(new TextEncoder().encode(JSON.stringify(report, null, 2))); }
