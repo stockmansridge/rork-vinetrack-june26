@@ -83,6 +83,48 @@ Deno.test("actual PDF: hypothetical signed review travels through production lea
     verification: { unresolved_fields: result.enrichment?.diagnostics.vineyard_binding_unresolved ?? [] } } }, true,
     { insertPreview: () => { throw Error("preview write forbidden"); } });
   assertEquals(report.status, "preview_ready", JSON.stringify(report.evidence));
+  // Assert the FINAL serialised review payload, not merely parser fragments.
+  const serialised = JSON.parse(JSON.stringify(report.proposed_patch)) as {
+    registered_uses: Array<{ target_raw: string; restrictions: string; conditions: string; direction_id: string;
+      withholding_statement: string; re_entry_period_hours: number | null;
+      rates: Array<{ label: string; basis: string; raw_text: string; rate_id: string; source_refs: string[] }> }>;
+    verification_unresolved_fields: string[];
+  };
+  const expectedRestraints = [
+    "DO NOT disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds.",
+    "DO NOT treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt.",
+    "Rainfall occurring up to 6 hours after application may reduce effectiveness. Heavy rainfall within 2 hours of application may wash the chemical off the foliage and a repeat treatment may be required.",
+  ];
+  assert(serialised.registered_uses.length > 35);
+  for (const use of serialised.registered_uses) {
+    for (const statement of expectedRestraints) assert(use.restrictions.includes(statement), `${use.target_raw}: ${statement}`);
+    assert(!/\buse prior to sowing tomatoes\b/i.test(use.restrictions));
+    assert(!/\bTea: Apply|All other crops:/.test(use.restrictions));
+    assert(use.direction_id?.startsWith("direction_v1_") && use.rates.every((r) => r.rate_id?.startsWith("rate_v1_")));
+    assertEquals(use.re_entry_period_hours, null);
+    assertEquals(use.withholding_statement, "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED");
+  }
+  const lookup = (target: string) => serialised.registered_uses.find((use) => use.target_raw === target);
+  assert(lookup("Bent grass")?.conditions.includes("Full disturbance with a tyned implement should follow, 10-21 days after spraying."));
+  assert(lookup("Sedge, tall")?.conditions.includes("Use of CDA equipment is not recommended."));
+  assert(lookup("Nutgrass")?.conditions.includes("NON-CULTIVATED SITUATIONS:"));
+  assert(!lookup("Nutgrass")?.conditions.includes("ARABLE LAND:"));
+  assertEquals(lookup("Paspalum"), undefined, "no invented continuation comments");
+  assertEquals(lookup("Alligator weed"), undefined, "floating-only weed is not a Vineyard direction");
+  assert(!lookup("Sorrel")?.conditions.includes("Conservation Tillage"));
+  assert(!lookup("Soursob")?.conditions.includes("Conservation Tillage"));
+  for (const target of ["Amaranth", "Bent grass", "Sedge, tall"]) {
+    const rates = lookup(target)?.rates ?? [];
+    assert(rates.some((r) => r.basis.includes("hectare") && r.label.startsWith("Boom")), `${target} boom`);
+    assert(rates.some((r) => r.basis.includes("100_litres") && r.label.startsWith("Handgun")), `${target} handgun`);
+  }
+  const wiper = lookup("Amaranth")?.rates.find((r) => r.label === "Wiper");
+  assertEquals(wiper?.basis, "other");
+  assert(wiper?.raw_text.startsWith("RATE: Mix 1 L of this product with 2 L clean water to prepare 33% solution."));
+  assert(wiper?.source_refs.some((ref) => ref.includes("page 13 APPLICATION")));
+  assert(!serialised.registered_uses.some((use) => use.rates.some((r) => r.label === "Wiper" && r.basis !== "other")));
+  assert(serialised.verification_unresolved_fields.some((field) => field.includes("re_entry_period:GRAPEVINE")));
+  assert(serialised.verification_unresolved_fields.some((field) => field.includes("Paspalum")));
   assert(report.proposed_patch?.viticulture_rates);
   assertEquals(report.proposed_patch.label_version, "08-09-2022");
   if (report.proposed_patch.active_ingredients) {
@@ -104,7 +146,37 @@ Deno.test("actual PDF: hypothetical signed review travels through production lea
     await Deno.writeTextFile(exportPath, JSON.stringify({
       WARNING: "Test-only synthetic reviewer. NOT an actual review, production preview, or approved Master patch.",
       master_row_source: "locally reconstructed locked row; not a fresh DB read",
-      document_sha256: sha, unresolved: binding.unresolved,
+      document_sha256: sha, unresolved: binding.unresolved, reconciliation: binding.reconciliation,
       report, proposed_patch: report.proposed_patch, preview_storage_disabled: true, master_unchanged: true,
     }, null, 2));
+});
+
+Deno.test("referenced perennial rows reconcile against independent PDF tables; damaged source cannot pass binding", async () => {
+  const items = await extractManufacturerDocumentText({ now: () => new Date(),
+    fetchFn: (() => { throw Error("network forbidden"); }) as typeof fetch }, pdf);
+  assert(items);
+  const binding = bindVineyardReferencedTables(items, product, "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED");
+  const physical = await new Deno.Command("python", { args: [new URL("./tables.py", import.meta.url).pathname] }).output();
+  assert(physical.success, new TextDecoder().decode(physical.stderr));
+  const evidence = JSON.parse(new TextDecoder().decode(physical.stdout)) as {
+    sha256: string; tables: Array<{ kind: string; page: number; rows: Array<Array<string | null>> }>;
+  };
+  assertEquals(evidence.sha256, sha);
+  for (const table of evidence.tables.filter((entry) => entry.kind === "perennial")) {
+    for (const cells of table.rows) {
+      const firstName = String(cells[0] ?? "").split("\n")[0].replace(/\^$/, "").replace(/\s*\(.*/, "").trim();
+      assert(binding.reconciliation.some((entry) => entry.page === table.page && entry.target === firstName),
+        `No mapped, excluded or specifically unresolved decision for page ${table.page}: ${firstName}`);
+    }
+  }
+  assert(binding.reconciliation.some((entry) => entry.target === "Paspalum" && entry.state === "unresolved"));
+  assert(binding.reconciliation.some((entry) => entry.target === "Alligator weed" && entry.state === "excluded"));
+  for (const y of [375.2, 368, 353.6]) {
+    const damaged = items.filter((item) => !(item.page === 2 && item.x < 9 && Math.abs(item.y - y) < 0.5 && item.str === "DO NOT"));
+    const rejected = bindVineyardReferencedTables(damaged, product, null);
+    assertEquals(rejected.uses.length, 0, `missing DO NOT at y=${y} must not promote corrupted directions`);
+    assert(rejected.unresolved.includes("general_restraint_complete_lines_unconfirmed"));
+  }
+  const missingWiperRate = items.filter((item) => !(item.page === 13 && item.str.startsWith("RATE: Mix 1 L of this product with 2 L")));
+  assertEquals(bindVineyardReferencedTables(missingWiperRate, product, null).uses.length, 0);
 });

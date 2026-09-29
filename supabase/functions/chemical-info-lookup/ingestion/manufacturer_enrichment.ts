@@ -349,6 +349,22 @@ export async function enrichFromManufacturerLabel(input: {
   const whp = readWithholdingPeriod(items);
   const withholdingStatement = documentText.match(/WITHHOLDING PERIOD:\s*NOT REQUIRED WHEN USED AS DIRECTED/i)?.[0] ?? null;
   const bound = bindVineyardReferencedTables(items, input.product ?? null, withholdingStatement);
+  // A confirmed cross-page Vineyard reference cannot fall through to a generic
+  // table parser when its complete restraints or shared-cell binding failed.
+  const hasReferencedVineyard = items.some((item) => item.page === 9 && /\bVineyards\b/.test(item.str)) &&
+    items.some((item) => item.page === 9 && /Table 3\. PERENNIAL WEED CONTROL\./.test(item.str));
+  if (hasReferencedVineyard && !bound.uses.length) return {
+    uses: regulatorUses, source: regulatorUses.length ? "regulator_label" : "none",
+    fetchedUrl: null, withholdingPeriodDays: null,
+    diagnostics: { manufacturer_label_fetch: "success", manufacturer_label_fetch_outcome: fetched.outcome,
+      manufacturer_label_fetch_reason: "vineyard_reference_or_complete_restrictions_unbound",
+      manufacturer_label_extract: "failure", manufacturer_label_bytes: fetched.byteSize ?? null,
+      manufacturer_label_sha256: fetched.sha256 ?? null, label_rows_found: 0,
+      grapevine_rows_found: countGrapevineRows(regulatorUses), grapevine_rates_found: countGrapevineRates(regulatorUses),
+      withholding_period_days: null, vineyard_binding_unresolved: bound.unresolved,
+      practical_source: regulatorUses.length ? "regulator_label" : "none",
+      practical_source_reason: "referenced vineyard table or complete restrictions could not be bound" },
+  };
   const printedGrapes = input.pairedContainerVerified ? companionGrapeDirections(items, input.registeredProductName ?? "") : null;
   // On a folded leaflet, an apparently valid row from the ordinary parser can
   // belong to the adjacent product. A paired document needs its own bounded

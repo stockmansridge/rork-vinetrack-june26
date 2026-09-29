@@ -30,8 +30,8 @@ const mapping = bindVineyardReferencedTables(items, { country: "AU", scheme: "ap
   "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED");
 await Deno.writeTextFile(new URL("vineyard_mapping.json", destination), JSON.stringify({
   source_url: WEEDMASTER_LABEL_LEAD, document_sha256: sha,
-  status: "candidate mapping pending actual admin review; perennial coverage incomplete",
-  mapped_directions: mapping.uses, unresolved_exceptions: mapping.unresolved,
+  status: "unsigned candidate mapping; all referenced perennial rows individually reconciled; explicit exceptions remain",
+  mapped_directions: mapping.uses, reconciliation: mapping.reconciliation, unresolved_exceptions: mapping.unresolved,
 }, null, 2));
 await Deno.writeTextFile(new URL("visual_review_candidate.json", destination), JSON.stringify({
   status: "awaiting_authenticated_admin_review", document_sha256: sha,
