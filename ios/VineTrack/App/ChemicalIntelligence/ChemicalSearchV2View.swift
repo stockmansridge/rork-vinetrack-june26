@@ -405,6 +405,7 @@ struct ChemicalSearchV2View: View {
     @FocusState private var isQueryFocused: Bool
     @State private var query: String = ""
     @State private var results: [MasterChemicalV2] = []
+    @State private var approvedMedia: [UUID: MasterFrontLabel] = [:]
     @State private var onlineCandidates: [ChemicalInfoService.WebV2Candidate] = []
     @State private var savedMatches: [SavedChemical] = []
     @State private var isSearching: Bool = false
@@ -505,7 +506,15 @@ struct ChemicalSearchV2View: View {
                 ForEach(results) { result in
                     Section {
                         VStack(alignment: .leading, spacing: 5) {
-                            Text(result.registeredProductName).font(.headline)
+                            HStack(alignment: .top, spacing: 12) {
+                                MasterFrontLabelView(media: approvedMedia[result.id].flatMap {
+                                    $0.belongs(to: result.id, identity: "\(result.registrationCountry):\(result.registrationScheme):\(result.registrationNumber)") ? $0 : nil
+                                })
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(result.registeredProductName).font(.headline)
+                                    Text(result.formType ?? "Formulation not specified").font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
                             if let registrant = result.registrant { Text(registrant).font(.subheadline).foregroundStyle(.secondary) }
                             Text("APVMA \(result.registrationNumber)").font(.caption.monospaced())
                             if !result.activeIngredients.isEmpty {
@@ -586,6 +595,7 @@ struct ChemicalSearchV2View: View {
         externalRequestID = nil
         isExternalLookupRunning = false
         results = []
+        approvedMedia = [:]
         onlineCandidates = []
         savedMatches = ChemicalSearchV2Duplicate.localMatches(query: trimmed, in: store.savedChemicals)
         if !savedMatches.isEmpty {
@@ -600,6 +610,11 @@ struct ChemicalSearchV2View: View {
                 let found = try await repository.search(trimmed)
                 guard requestID == token else { return }
                 results = found
+                // Media is best effort; chemical search and selection never await an image.
+                Task {
+                    let media = (try? await MasterFrontLabelRepository().list(found.map(\.id))) ?? [:]
+                    if requestID == token { approvedMedia = media }
+                }
                 let elapsedMilliseconds = Int(Date().timeIntervalSince(started) * 1_000)
                 diagnostics = ChemicalSearchV2Diagnostics(
                     query: trimmed,

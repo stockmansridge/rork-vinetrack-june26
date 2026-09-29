@@ -31,6 +31,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
@@ -182,6 +183,7 @@ internal fun ChemicalSearchV2Sheet(
     val externalService = remember { ChemicalInfoService() }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<MasterChemicalV2>>(emptyList()) }
+    var approvedMedia by remember { mutableStateOf<Map<String, com.rork.vinetrack.data.chemical.MasterFrontLabel>>(emptyMap()) }
     var onlineCandidates by remember { mutableStateOf<List<ChemicalInfoService.WebV2Candidate>>(emptyList()) }
     var savedMatches by remember { mutableStateOf<List<SavedChemical>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
@@ -320,6 +322,7 @@ internal fun ChemicalSearchV2Sheet(
         searchJob?.cancel()
         requestId = null
         results = emptyList()
+        approvedMedia = emptyMap()
         onlineCandidates = emptyList()
         externalRequestId = null
         externalJob?.cancel()
@@ -339,6 +342,10 @@ internal fun ChemicalSearchV2Sheet(
                 val found = repository.search(trimmed)
                 if (requestId != token) return@launch
                 results = found
+                scope.launch {
+                    val media = runCatching { com.rork.vinetrack.data.chemical.MasterFrontLabelRepository().list(found.map { it.id }) }.getOrDefault(emptyMap())
+                    if (requestId == token) approvedMedia = media
+                }
                 if (found.isEmpty()) {
                     searching = false
                     runOnlineSearch(trimmed, automatically = true)
@@ -446,7 +453,16 @@ internal fun ChemicalSearchV2Sheet(
                 }
                 results.forEach { result ->
                     HorizontalDivider()
-                    Text(result.registeredProductName, fontWeight = FontWeight.SemiBold)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        val image = approvedMedia[result.id]?.takeIf {
+                            it.belongsTo(result.id, "${result.registrationCountry}:${result.registrationScheme}:${result.registrationNumber}")
+                        }
+                        com.rork.vinetrack.ui.components.MasterFrontLabelThumbnail(image)
+                        Column {
+                            Text(result.registeredProductName, fontWeight = FontWeight.SemiBold)
+                            Text(result.formType ?: "Formulation not specified", fontSize = 12.sp)
+                        }
+                    }
                     result.registrant?.let { Text(it, fontSize = 13.sp) }
                     Text("APVMA ${result.registrationNumber}", fontSize = 12.sp)
                     if (result.activeIngredients.isNotEmpty()) Text(result.activeIngredients.joinToString { it.name }, fontSize = 12.sp)

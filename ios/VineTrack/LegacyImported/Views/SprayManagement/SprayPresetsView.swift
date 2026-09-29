@@ -286,6 +286,7 @@ struct EditSavedChemicalSheet: View {
     /// Registration plumbing stays collapsed. A grower edits agronomy; the
     /// identity fields underneath are VineTrack's problem unless they ask.
     @State private var showTechnicalDetails: Bool = false
+    @State private var approvedFrontLabel: MasterFrontLabel?
     /// An approved label can register dozens of crops. A vineyard operator
     /// should not scroll past peaches, tobacco and turf to reach grapevines,
     /// so the rest stay collapsed until asked for. Presentation only — every
@@ -415,12 +416,36 @@ struct EditSavedChemicalSheet: View {
                 }
                 // 5. Labels & References
                 labelsSection
+                if let chemical, let media = approvedFrontLabel,
+                   session.masterChemicalId == chemical.masterChemicalId,
+                   session.name == chemical.name,
+                   media.belongs(to: chemical.masterChemicalId,
+                                    identity: chemical.resolvedIntelligence.registration?.identityKey) {
+                    Section("Confirmed front label") {
+                        HStack {
+                            MasterFrontLabelView(media: media, expanded: true)
+                            VStack(alignment: .leading) {
+                                Text(chemical.name).font(.headline)
+                                Text(session.formType.rawValue).font(.caption)
+                                Text(media.registrationIdentityKey).font(.caption.monospaced())
+                            }
+                        }
+                        Text("Identification aid only. Follow the full label for directions.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 // 6. Purchase & Inventory
                 purchaseSection
                 // 7. Notes
                 notesSection
                 // 8. Advanced / Verification Evidence — collapsed by default
                 advancedSection
+            }
+            .task(id: chemical?.masterChemicalId) {
+                guard let id = chemical?.masterChemicalId else { approvedFrontLabel = nil; return }
+                let found = (try? await MasterFrontLabelRepository().list([id]))?[id]
+                approvedFrontLabel = found?.belongs(to: id,
+                    identity: chemical?.resolvedIntelligence.registration?.identityKey) == true ? found : nil
             }
             .navigationTitle(reviewTitle)
             .navigationBarTitleDisplayMode(.inline)

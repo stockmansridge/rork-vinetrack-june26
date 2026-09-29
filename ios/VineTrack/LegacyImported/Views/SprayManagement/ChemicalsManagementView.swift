@@ -32,6 +32,7 @@ struct ChemicalsManagementView: View {
     @State private var matchingChemical: SavedChemical?
     @State private var reverifyingChemical: SavedChemical?
     @State private var searchText: String = ""
+    @State private var approvedMedia: [UUID: MasterFrontLabel] = [:]
     @State private var filter: ChemicalVerificationFilter = .all
     @State private var deleteCoordinator = ChemicalDeleteCoordinator()
 
@@ -117,10 +118,18 @@ struct ChemicalsManagementView: View {
                         Button {
                             editingChemical = chemical
                         } label: {
-                            ChemicalDetailRow(chemical: chemical, vineyardCountry: countryCode)
+                            ChemicalDetailRow(chemical: chemical, vineyardCountry: countryCode,
+                                              media: chemical.masterChemicalId.flatMap { approvedMedia[$0] }.flatMap {
+                                                  $0.belongs(to: chemical.masterChemicalId,
+                                                              identity: chemical.resolvedIntelligence.registration?.identityKey) ? $0 : nil
+                                              })
                         }
                     } else {
-                        ChemicalDetailRow(chemical: chemical, vineyardCountry: countryCode)
+                        ChemicalDetailRow(chemical: chemical, vineyardCountry: countryCode,
+                                              media: chemical.masterChemicalId.flatMap { approvedMedia[$0] }.flatMap {
+                                                  $0.belongs(to: chemical.masterChemicalId,
+                                                              identity: chemical.resolvedIntelligence.registration?.identityKey) ? $0 : nil
+                                              })
                     }
                 }
                 .swipeActions(edge: .leading, allowsFullSwipe: true) {
@@ -151,6 +160,10 @@ struct ChemicalsManagementView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .task(id: store.savedChemicals.map(\.masterChemicalId)) {
+            let ids = store.savedChemicals.compactMap(\.masterChemicalId)
+            approvedMedia = (try? await MasterFrontLabelRepository().list(ids)) ?? [:]
+        }
         .navigationTitle("Chemicals")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search chemicals...")
@@ -235,6 +248,7 @@ struct ChemicalDetailRow: View {
     /// The vineyard's country, for marking foreign-registered products. Empty
     /// (the default) renders no jurisdiction mark — suitability is unknown.
     var vineyardCountry: String = ""
+    var media: MasterFrontLabel? = nil
 
     private var ratesPerHa: [ChemicalRate] {
         chemical.rates.filter { $0.basis == .perHectare }
@@ -257,6 +271,7 @@ struct ChemicalDetailRow: View {
 
     var body: some View {
         HStack {
+            MasterFrontLabelView(media: media, interactive: false)
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     Text(chemical.name)

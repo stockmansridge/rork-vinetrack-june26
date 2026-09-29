@@ -105,6 +105,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.LaunchedEffect
+import com.rork.vinetrack.data.chemical.MasterFrontLabel
+import com.rork.vinetrack.data.chemical.MasterFrontLabelRepository
+import com.rork.vinetrack.ui.components.MasterFrontLabelThumbnail
 import com.rork.vinetrack.data.ChemicalInfoService
 import com.rork.vinetrack.data.SavedChemicalRepository
 import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_100L
@@ -149,6 +153,11 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
     var editing by remember { mutableStateOf<SavedChemical?>(null) }
     var pendingDelete by remember { mutableStateOf<SavedChemical?>(null) }
     var search by remember { mutableStateOf("") }
+    var approvedMedia by remember { mutableStateOf<Map<String, MasterFrontLabel>>(emptyMap()) }
+    val masterIds = remember(state.savedChemicals) { state.savedChemicals.mapNotNull { it.masterChemicalId }.distinct() }
+    LaunchedEffect(masterIds) {
+        approvedMedia = runCatching { MasterFrontLabelRepository().list(masterIds) }.getOrDefault(emptyMap())
+    }
     /**
      * Null = "All". Filters on the RESOLVED status, never on display text.
      *
@@ -368,6 +377,9 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
                 items(filteredChemicals, key = { it.id }) { chem ->
                     ChemicalRow(
                         chemical = chem,
+                        media = chem.masterChemicalId?.let { approvedMedia[it] }?.takeIf {
+                            it.belongsTo(chem.masterChemicalId, chem.resolvedIntelligence.registration?.identityKey)
+                        },
                         canManage = canManage,
                         canViewFinancials = canViewFinancials,
                         // Eligibility is the domain's call, never the UI's.
@@ -535,6 +547,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
 @Composable
 private fun ChemicalRow(
     chemical: SavedChemical,
+    media: MasterFrontLabel?,
     canManage: Boolean,
     canViewFinancials: Boolean,
     canReverify: Boolean,
@@ -549,6 +562,7 @@ private fun ChemicalRow(
     val status = chemical.verificationStatus
     VineyardCard(modifier = if (canManage) Modifier.clickable { onEdit() } else Modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            MasterFrontLabelThumbnail(media, modifier = Modifier.padding(end = 12.dp), interactive = false)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -825,6 +839,15 @@ internal fun ChemicalFormSheet(
     val uriHandler = LocalUriHandler.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val isEdit = existing != null
+    var approvedFrontLabel by remember(existing?.masterChemicalId) { mutableStateOf<MasterFrontLabel?>(null) }
+    LaunchedEffect(existing?.masterChemicalId) {
+        val id = existing?.masterChemicalId
+        approvedFrontLabel = if (id == null) null else runCatching {
+            MasterFrontLabelRepository().list(listOf(id))[id]?.takeIf {
+                it.belongsTo(id, existing.resolvedIntelligence.registration?.identityKey)
+            }
+        }.getOrNull()
+    }
     val isCreatingManual = existing == null && pendingIntelligence == null
     // The record a re-verification is running against. Usually [existing], but
     // the register search can surface a DIFFERENT stored product with the same
@@ -1243,6 +1266,22 @@ internal fun ChemicalFormSheet(
                     fontSize = 12.sp,
                     color = vine.textSecondary,
                 )
+            }
+            val front = approvedFrontLabel?.takeIf { image ->
+                existing != null && name == existing.displayName &&
+                    image.belongsTo(existing.masterChemicalId, existing.resolvedIntelligence.registration?.identityKey)
+            }
+            if (front != null) {
+                Text("Confirmed front label", fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    MasterFrontLabelThumbnail(front, expanded = true)
+                    Column {
+                        Text(existing?.displayName.orEmpty())
+                        Text(front.registrationIdentityKey, fontSize = 12.sp)
+                        Text(front.documentVersion.orEmpty(), fontSize = 12.sp)
+                    }
+                }
+                Text("Identification aid only — check the complete label for directions.", fontSize = 12.sp)
             }
             // Product evidence actions are available without opening another editor.
             val preferredLabel = existing?.storedIntelligence?.registration?.primaryLabelUrl
