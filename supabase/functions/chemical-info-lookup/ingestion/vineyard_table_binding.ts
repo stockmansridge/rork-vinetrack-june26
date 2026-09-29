@@ -80,7 +80,10 @@ export function bindVineyardReferencedTables(items: PdfTextItem[], product: Rate
   const annualHeader = joined(within(items, 2, 0, 550, 310, 299));
   const situation = joined(within(items, 2, 9, 47, 295, 275));
   const annualRates = joined(within(items, 2, 240, 318, 295, 210));
-  const annualComments = joined(within(items, 2, 318, 550, 295, 230));
+  const annualCommentCell = joined(within(items, 2, 318, 550, 295, 230));
+  if (!annualCommentCell.includes("For residual control of ANNUAL weeds") || !annualCommentCell.includes("For annual weed control in cultivated situations"))
+    return empty("Table 2 annual critical-comment scope boundary unconfirmed");
+  const annualComments = annualCommentCell.split("For residual control of ANNUAL weeds")[0].trim();
   const boom = annualRates.match(/BOOM:\s*([\d.\s-]+L\/ha)\s*HANDGUN:/i)?.[1]?.trim();
   const handgun = annualRates.match(/HANDGUN:\s*([\d.\s-]+mL\/100L)\s*KNAPSACK:/i)?.[1]?.trim();
   const knapsack = annualRates.match(/KNAPSACK:\s*([\d.\s-]+mL\/15L)\s*WIPER/i)?.[1]?.trim();
@@ -90,16 +93,22 @@ export function bindVineyardReferencedTables(items: PdfTextItem[], product: Rate
   const wiperRate = wiperLines[5]?.match(/^RATE: Mix 1 L of this product with 2 L clean water to prepare 33% solution\./)?.[0];
   const wiperUse = /tree and vine crops specified in this label/.test(wiperText) &&
     /DO NOT store mixed solution for more than a few days\./.test(wiperText) && wiperRate;
+  const wiperInstructions = wiperText.slice(wiperText.indexOf("Avoid contact with desirable vegetation."), wiperText.indexOf("RATE:")).trim();
+  const wiperLabel = `${wiperRate} Wiper equipment: ${wiperInstructions}`;
   if (!wiperUse) return empty("Table 2 references Wiper Application section, but its printed page 13 mixture RATE or tree/vine scope is unconfirmed");
   if (/ANNUAL WEED CONTROL/.test(annualHeader) && /Non- Cultivated Situations/.test(situation) && boom && handgun && knapsack &&
     /Use the lower rate on weeds up to 15 cm tall/i.test(annualComments)) {
     const targets = within(items, 2, 47, 128, 295, 15).filter((item) => Math.abs(item.x - 47.58) < 1 && item.str.trim());
-    for (const target of targets) add(target.str.trim(), 2, "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations",
-      [["Boom", boom], ["Handgun", handgun], ["Knapsack", knapsack],
-        ...(wiperUse ? [["Wiper", `${wiperRate} ${wiperText.slice(0, wiperText.indexOf("RATE:"))}`] as [string, string]] : [])], annualComments);
-    if (!wiperUse) unresolved.push("Table 2:Wiper:printed Application section mixture or scope could not be bound");
+    for (const target of targets) {
+      add(target.str.trim(), 2, "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations",
+        [["Boom", boom], ["Handgun", handgun], ["Knapsack", knapsack], ["Wiper", wiperLabel]], annualComments);
+      reconciliation.push({ page: 2, target: target.str.trim(), state: "mapped",
+        reason: `Physical page 2 Non-Cultivated Situations printed annual target sharing Boom ${boom}, Handgun ${handgun}, Knapsack ${knapsack}, Wiper physical page 13 RATE mixture; comments: ${annualComments}` });
+    }
     reconciliation.push({ page: 2, target: "Non-Cultivated Situations annual shared cell", state: "mapped",
       reason: `Physical page 2: ${targets.length} printed targets share Boom, Handgun and Knapsack; physical page 13 Wiper RATE ${wiperUse ? "bound as unsupported mixture basis" : "unresolved"}.` });
+    reconciliation.push({ page: 2, target: "Residual tank mixtures / cultivated annual situations", state: "excluded",
+      reason: "Physical page 2 Table 2 critical-comment continuation refers to separate TANK MIXTURES and CONSERVATION TILLAGE USES directions; these permissions are not established for the page 9 Vineyard situation." });
     reconciliation.push({ page: 2, target: "Controlled droplet applicators", state: "unresolved",
       reason: "Physical page 2 references the Application section; the device/mixture delivery table is not a per-ha or per-100L product dose bound to each annual target." });
   } else return empty("Table 2 shared non-cultivated rate cell unconfirmed");
@@ -138,11 +147,15 @@ export function bindVineyardReferencedTables(items: PdfTextItem[], product: Rate
       for (const target of targets) {
         const aquatic = /^(?:Alligator weed|Cumbungi|Glyceria|Ludwigia peruviana|Phragmites|Water couch|Water hyacinth|Water lettuce|Waterlily)/i.test(target);
         if (aquatic) {
-          reconciliation.push({ page, target, state: "excluded", reason: `Physical page ${page} aquatic/floating/dry-drain or Table 6 aquatic-use condition is not established by the page 9 Vineyard reference; ${comments}` });
+          const evidenced = /^Alligator weed/.test(target) ? "floating form only" : /^Glyceria/.test(target) ? "only allowable in dry drains/channels and dry margins" :
+            /^Water couch/.test(target) ? "submerged-weed condition" : /^Waterlily/.test(target) ? "express reference to Table 6 Aquatic Weed Control" :
+            /^Water (?:hyacinth|lettuce)/.test(target) ? "aquatic floating-plant situation" : null;
+          const state = evidenced ? "excluded" : "unresolved";
+          reconciliation.push({ page, target, state, reason: `Physical page ${page}: ${evidenced ?? "aquatic/wetland target without a separately established Vineyard situation"}; page 9 Vineyard reference does not establish that situation. Printed row: ${comments}` });
           continue;
         }
         if (!comments) {
-          reconciliation.push({ page, target, state: "unresolved", reason: `Physical page ${page} prints no separate critical comment; the relation to the preceding row's comments cannot be established.` });
+          reconciliation.push({ page, target, state: "unresolved", reason: `Physical page ${page} prints Boom ${boomCell}, Handgun ${handgunCell}, Knapsack ${knapsackCell}, but no separate critical comment; whether the preceding Paragrass growth-stage comment applies to this Paspalum row cannot be established. Rates withheld pending that relationship.` });
           unresolved.push(`Table 3 page ${page}:${target}:shared critical comment relationship unconfirmed`);
           continue;
         }
@@ -165,8 +178,8 @@ export function bindVineyardReferencedTables(items: PdfTextItem[], product: Rate
           reason: "Physical page 3 prints Cut stump: Dilute 1:6 (one part product plus six parts water); page 9 Vineyard situation names directed/shielded spray or wiper, not cut-stump treatment. No vineyard cut-stump permission established." });
         if (target === "Pampas grass") reconciliation.push({ page, target: "Pampas grass — low volume", state: "unresolved",
           reason: "Physical page 4 prints LOW VOLUME APPLICATION: Use 1:9 product:water, Apply 2x2mL per 0.5 m height. Page 9 does not establish low-volume equipment as a Vineyard method; no /ha or /100L projection." });
-        if (wiperUse && (/\bWIPER\b/i.test(comments) || /^Rushes$/i.test(target)))
-          rates.push(["Wiper", `${wiperRate} ${wiperText.slice(0, wiperText.indexOf("RATE:"))}`]);
+        if (wiperUse && (/\bWIPER\b/i.test(comments) && !/^(?:Kangaroo grass|Kikuyu grass)$/.test(target) || /^Rushes$/i.test(target)))
+          rates.push(["Wiper", wiperLabel]);
         if (!rates.length) {
           reconciliation.push({ page, target, state: "unresolved", reason: `Physical page ${page} prints no Boom/Handgun/Knapsack dose; Wiper relation or mixture not established.` });
           unresolved.push(`Table 3 page ${page}:${target}:method dose unbound`);
@@ -177,12 +190,13 @@ export function bindVineyardReferencedTables(items: PdfTextItem[], product: Rate
           reconciliation.push({ page, target: "Sorrel — Conservation Tillage seasonal suppression", state: "excluded", reason: "Physical page 4 expressly scopes 1.5 L/ha seasonal suppression to Conservation Tillage; not a Vineyard rate." });
         if (/^Soursob$/i.test(target) && /In Conservation Tillage/.test(scopedComments))
           reconciliation.push({ page, target: "Soursob — Conservation Tillage prior-to-sowing", state: "excluded", reason: "Physical page 5 expressly scopes May-July immediately prior to sowing to Conservation Tillage; not a Vineyard instruction." });
-        const vineyardComments = target === "Sorrel" ? scopedComments.split("In Conservation Tillage situations")[0].trim() :
+        const vineyardComments = /^(?:Kangaroo grass|Kikuyu grass)$/.test(target) ? scopedComments.split("For application by wiper equipment on Johnson grass")[0].trim() :
+          target === "Sorrel" ? scopedComments.split("In Conservation Tillage situations")[0].trim() :
           target === "Soursob" ? scopedComments.split("In Conservation Tillage")[0].trim() :
           target === "Bamboo" ? scopedComments.split("Cut stump:")[0].trim() :
           target === "Pampas grass" ? scopedComments.split("LOW VOLUME APPLICATION:")[0].trim() : scopedComments;
         add(target, page, "Table 3 PERENNIAL WEED CONTROL", rates, vineyardComments);
-        reconciliation.push({ page, target, state: "mapped", reason: `Physical page ${page} bounded weed row; ${rates.map(([method, raw]) => `${method}: ${raw.slice(0, 95)}`).join("; ")}; comments: ${scopedComments}` });
+        reconciliation.push({ page, target, state: "mapped", reason: `Physical page ${page} bounded weed row; ${rates.map(([method, raw]) => `${method}: ${raw.slice(0, 95)}`).join("; ")}; applicable comments: ${vineyardComments}` });
         if (/^Nutgrass/i.test(target)) reconciliation.push({ page, target: "Nutgrass — arable land", state: "excluded",
           reason: "Physical page 4 explicitly labels the 3 L/ha plus 3 L/ha and 700 mL/100L plus 700 mL/100L as ARABLE LAND first/second applications, not the non-cultivated vineyard direction." });
       }

@@ -3,26 +3,12 @@ import { extractManufacturerDocumentText } from "../supabase/functions/chemical-
 import { bindVineyardReferencedTables } from "../supabase/functions/chemical-info-lookup/ingestion/vineyard_table_binding.ts";
 import { WEEDMASTER_LABEL_LEAD } from "../supabase/functions/chemical-info-lookup/ingestion/documented_label_lead.ts";
 
-const source = new URL("../.rork-tmp/", import.meta.url);
 const destination = new URL("../docs/weedmaster-acceptance/", import.meta.url);
-const pdf = await Deno.readFile(new URL("weedmaster_duo_documented.pdf", source));
+const pdf = await Deno.readFile(new URL("weedmaster_duo_documented.pdf", destination));
 const sha = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", pdf)))
   .map((n) => n.toString(16).padStart(2, "0")).join("");
 if (sha !== "69213c077e191e99682e515884d7667156367ea7ab927ecdac2882f4d0ec39b8")
   throw Error("retained source PDF bytes changed; do not export");
-await Deno.mkdir(destination, { recursive: true });
-for (const filename of ["weedmaster_duo_documented.pdf", "weedmaster_page_1.png", "weedmaster_page_2.png",
-  "weedmaster_page_3.png", "weedmaster_page_9.png"]) {
-  await Deno.writeFile(new URL(filename, destination), await Deno.readFile(new URL(filename, source)));
-}
-for (const [from, to] of [["weedmaster_probe.ts", "replay.ts"], ["weedmaster_tables.py", "tables.py"]]) {
-  let script = await Deno.readTextFile(new URL(from, source));
-  script = script.replaceAll("../supabase/functions/chemical-info-lookup/", "../../supabase/functions/chemical-info-lookup/");
-  script = script.replaceAll("weedmaster_tables.py", "tables.py");
-  script = script.replaceAll(".rork-tmp/weedmaster_replay_result.json",
-    "docs/weedmaster-acceptance/weedmaster_replay_result.json");
-  await Deno.writeTextFile(new URL(to, destination), script);
-}
 const items = await extractManufacturerDocumentText({ now: () => new Date(),
   fetchFn: (() => { throw Error("network forbidden"); }) as typeof fetch }, pdf);
 if (!items) throw Error("document text extraction failed");
@@ -45,8 +31,6 @@ await Deno.writeTextFile(new URL("visual_review_candidate.json", destination), J
   printed_approval_date_from_text_layer: "08-09-2022",
   cover_attachment: "weedmaster_page_1.png",
 }, null, 2));
-const blocked = await Deno.readTextFile(new URL("weedmaster_replay_result.json", source));
-await Deno.writeTextFile(new URL("blocked_report.json", destination), blocked);
 console.log(JSON.stringify({ destination: destination.pathname, document_sha256: sha,
   bound_rows: mapping.uses.length, unresolved: mapping.unresolved.length,
   actual_review_status: "awaiting_authenticated_admin_review", network_calls: 0 }));

@@ -99,7 +99,7 @@ Deno.test("actual PDF: hypothetical signed review travels through production lea
   for (const use of serialised.registered_uses) {
     for (const statement of expectedRestraints) assert(use.restrictions.includes(statement), `${use.target_raw}: ${statement}`);
     assert(!/\buse prior to sowing tomatoes\b/i.test(use.restrictions));
-    assert(!/\bTea: Apply|All other crops:/.test(use.restrictions));
+    assert(!/\bTea: Apply|All other crops:|CONSERVATION TILLAGE USES|TANK MIXTURES/.test(use.restrictions));
     assert(use.direction_id?.startsWith("direction_v1_") && use.rates.every((r) => r.rate_id?.startsWith("rate_v1_")));
     assertEquals(use.re_entry_period_hours, null);
     assertEquals(use.withholding_statement, "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED");
@@ -122,6 +122,13 @@ Deno.test("actual PDF: hypothetical signed review travels through production lea
   assertEquals(wiper?.basis, "other");
   assert(wiper?.raw_text.startsWith("RATE: Mix 1 L of this product with 2 L clean water to prepare 33% solution."));
   assert(wiper?.source_refs.some((ref) => ref.includes("page 13 APPLICATION")));
+  assert(wiper?.raw_text.includes("DO NOT store mixed solution for more than a few days. Flush out equipment with water after use."));
+  assert(wiper?.raw_text.includes("Operate wiper equipment a minimum of 10 cm above the crop or pasture."));
+  assert(!wiper?.raw_text.includes("oilseed crops"), "do not inherit unrelated crop permissions");
+  assert(!lookup("Kangaroo grass")?.rates.some((r) => r.label === "Wiper"));
+  assert(!lookup("Kikuyu grass")?.rates.some((r) => r.label === "Wiper"));
+  assert(!lookup("Kangaroo grass")?.conditions.includes("Johnson grass"));
+  assert(lookup("Johnson grass")?.rates.some((r) => r.label === "Wiper"));
   assert(!serialised.registered_uses.some((use) => use.rates.some((r) => r.label === "Wiper" && r.basis !== "other")));
   assert(serialised.verification_unresolved_fields.some((field) => field.includes("re_entry_period:GRAPEVINE")));
   assert(serialised.verification_unresolved_fields.some((field) => field.includes("Paspalum")));
@@ -165,11 +172,16 @@ Deno.test("referenced perennial rows reconcile against independent PDF tables; d
   for (const table of evidence.tables.filter((entry) => entry.kind === "perennial")) {
     for (const cells of table.rows) {
       const firstName = String(cells[0] ?? "").split("\n")[0].replace(/\^$/, "").replace(/\s*\(.*/, "").trim();
-      assert(binding.reconciliation.some((entry) => entry.page === table.page && entry.target === firstName),
+      assert(binding.reconciliation.some((entry) => entry.page === table.page && (entry.target === firstName || entry.target.startsWith(`${firstName} (`))),
         `No mapped, excluded or specifically unresolved decision for page ${table.page}: ${firstName}`);
     }
   }
-  assert(binding.reconciliation.some((entry) => entry.target === "Paspalum" && entry.state === "unresolved"));
+  assert(binding.reconciliation.some((entry) => entry.target === "Paspalum" && entry.state === "unresolved" && entry.reason.includes("6 L/ha") && entry.reason.includes("preceding Paragrass")));
+  const repeated = bindVineyardReferencedTables(items, product, "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED");
+  assertEquals(binding.uses.map((use) => [use.direction_id, (use.rates as Array<{ rate_id: string }>).map((rate) => rate.rate_id)]),
+    repeated.uses.map((use) => [use.direction_id, (use.rates as Array<{ rate_id: string }>).map((rate) => rate.rate_id)]));
+  assert(binding.reconciliation.some((entry) => entry.target === "Cumbungi^" && entry.state === "unresolved"));
+  assert(binding.reconciliation.some((entry) => entry.target === "Phragmites, Common reed" && entry.state === "unresolved"));
   assert(binding.reconciliation.some((entry) => entry.target === "Alligator weed" && entry.state === "excluded"));
   for (const y of [375.2, 368, 353.6]) {
     const damaged = items.filter((item) => !(item.page === 2 && item.x < 9 && Math.abs(item.y - y) < 0.5 && item.str === "DO NOT"));
