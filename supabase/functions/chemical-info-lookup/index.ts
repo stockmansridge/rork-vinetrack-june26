@@ -201,7 +201,7 @@ import {
   projectResearchToSearchResults,
   type ResearchProjection,
 } from "./research/authority.ts";
-import { inspectCandidateProductPages } from "./research/page_inspector.ts";
+import { inspectCandidateProductPages, privatePageFetchDiagnostic } from "./research/page_inspector.ts";
 import {
   readResearchConfig,
   researchLog,
@@ -1392,8 +1392,9 @@ Deno.serve(async (req: Request) => {
       const backfillRow = backfill ? masterRows![0] as MasterRow : null;
       const capture = request && "capture" in request ? request.capture : false;
       let indexedSnapshot: IndexedLabelSnapshot | null = null;
+      let privateFetchDiagnostic: Record<string, unknown> | null = null;
       const diagnosticResponse = (response: import("./ingestion/master_backfill_preview.ts").BackfillPreviewResponse) =>
-        withIndexedDiagnostic(response, capture, indexedSnapshot);
+        withIndexedDiagnostic(response, capture, indexedSnapshot, privateFetchDiagnostic);
       const countryCode = backfillRow ? backfillCountry(backfillRow) : jur.code ?? "";
       if (backfillRow && !lockedWebIdentity(backfillRow))
         return json(diagnosticResponse(await finishBackfillPreview(backfillRow, adminId!, null, false, previewStore)));
@@ -1469,6 +1470,8 @@ Deno.serve(async (req: Request) => {
       const canonicalName = research.product.canonical_name ?? subject;
       const pageLeads = research.documents.product_page_candidates.map((d) => d.url);
       const inspected = await inspectCandidateProductPages({ fetchFn: fetch, now: () => new Date() }, pageLeads, countryCode);
+      if (backfillRow && capture) privateFetchDiagnostic = privatePageFetchDiagnostic(inspected.attempts, null,
+        false, "no_eligible_manufacturer_pdf_lead");
       let fallbackLabel: string | null = null;
       if (backfillRow && inspected.attempts.length && !inspected.pages.length && !leads?.labelUrl &&
           leads?.productUrl && classifyUrl(leads.productUrl, countryCode).trust === "registrant") {
@@ -1499,6 +1502,9 @@ Deno.serve(async (req: Request) => {
           aliasVerified && new URL(acceptedLabel.url).host === new URL(page.finalUrl).host) ? acceptedLabel.url : null;
       const manufacturerLabel = linkedLabel ?? directLabel;
       const labelSource = linkedLabel ? page?.finalUrl ?? null : directLabel;
+      if (backfillRow && capture) privateFetchDiagnostic = privatePageFetchDiagnostic(inspected.attempts, directLabel,
+        !!directLabel && manufacturerLabel === directLabel,
+        directLabel ? "linked_label_preferred" : "no_eligible_manufacturer_pdf_lead");
       const labelStarted = Date.now();
       let enrichment = manufacturerLabel && labelSource
         ? await enrichFromManufacturerLabel({
@@ -1594,7 +1600,9 @@ Deno.serve(async (req: Request) => {
           return { identity_conflict: { manufacturer_label_url: companion, reason: "manufacturer_product_or_chemistry_mismatch" } };
         if (!readableV2Label(directions)) return backfill ? { discovery_reason: directions.diagnostics.manufacturer_label_fetch === "failure"
           ? safeManufacturerFetchReason(directions.diagnostics.manufacturer_label_fetch_outcome,
-            directions.diagnostics.manufacturer_label_http_status) : "label_unreadable" } : null;
+            directions.diagnostics.manufacturer_label_http_status) :
+          directions.diagnostics.manufacturer_label_fetch_reason === "paired_table_binding_unresolved"
+            ? "label_table_binding_unresolved" : "label_unreadable" } : null;
         packageUrl = packageLabel;
         enrichment = directions;
       }
@@ -1625,13 +1633,15 @@ Deno.serve(async (req: Request) => {
       const parsedVineyardRates = enrichment?.uses.some((use) =>
         /grape|vineyard/i.test(String(use.crop ?? "")) && Array.isArray(use.rates) && use.rates.length > 0) ?? false;
       const extractionStarted = Date.now();
-      const tableRate = label && enrichment?.labelText ? vineyardTableRate(enrichment.labelText) : null;
-      const labelReading = label && enrichment?.labelText && !parsedVineyardRates && !tableRate
+      const tableRate = label && enrichment?.labelText && !packageUrl ? vineyardTableRate(enrichment.labelText) : null;
+      const labelReading = label && enrichment?.labelText && !packageUrl && !parsedVineyardRates && !tableRate
         ? await readLabelWithResearchSchema({
           text: enrichment.labelText, label, name: canonicalName, country: countryCode, apiKey,
         }) : null;
       const labelUses = labelReading ? projectResearch(labelReading, countryCode, null).extraction.registered_uses : null;
-      const facts = label && enrichment?.labelText ? labelHeaderFacts(enrichment.labelText) : null;
+      // Paired folded leaflets interleave other products' headers in text order.
+      // Practical rows are position-bound above; unscoped header facts are not.
+      const facts = label && enrichment?.labelText && !packageUrl ? labelHeaderFacts(enrichment.labelText) : null;
       const foundActives = supportedProjection.extraction.active_ingredients as Record<string, unknown>[];
       const labelText = enrichment?.labelText?.toLowerCase().replace(/[^a-z0-9]/g, "") ?? "";
       const labelActives = labelReading?.active_ingredients.filter((active) =>
@@ -1689,6 +1699,12 @@ Deno.serve(async (req: Request) => {
         })(),
       };
       const detail = buildStructuredResponse(extraction, countryCode, "Agricultural web and label research");
+      if (backfillRow && packageUrl && detail.registered_uses.some((use: any) => /grape/i.test(String(use.crop ?? "")) &&
+          use.withholding_period_text && use.withholding_period_days == null)) {
+        detail.verification.unresolved_fields = [...new Set([
+          ...(detail.verification.unresolved_fields ?? []), "withholding_period:GRAPEVINE",
+        ])];
+      }
       if (backfill && facts?.active) detail.active_ingredients = detail.active_ingredients.map((active: any) =>
         String(active.name).toLowerCase() === facts.active!.name.toLowerCase() &&
         active.concentration === facts.active!.concentration && active.concentration_unit === facts.active!.concentration_unit

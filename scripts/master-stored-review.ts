@@ -85,7 +85,8 @@ export async function prepareStoredReview(api: ReviewApi, id: string, diagnostic
   const report: Record<string, unknown> = { status: response.status, master_chemical_id: id,
     registration_identity_key: row.registration_identity_key, base_revision: row.catalogue_version ?? 1,
     review_status: row.review_status, evidence: response.evidence, findings: response.findings,
-    reason: safeDiagnosticReason(response), preview_pending_only: true, master_changed: false };
+    reason: safeDiagnosticReason(response), preview_pending_only: true, master_changed: false,
+    ...(diagnostic && response.private_fetch_diagnostic ? { private_fetch_diagnostic: response.private_fetch_diagnostic } : {}) };
   if (response.master_chemical_id !== id || response.registration_identity_key !== row.registration_identity_key ||
     response.base_revision !== (row.catalogue_version ?? 1) || response.review_status !== row.review_status)
     throw new Error("Preparation identity/revision mismatch; explicit re-review required");

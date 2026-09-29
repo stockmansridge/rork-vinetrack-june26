@@ -1,6 +1,6 @@
 // deno-lint-ignore-file no-import-prefix no-unversioned-import require-await
 import { assert, assertEquals } from "jsr:@std/assert";
-import { alternateManufacturerLabel, companionDirectionsUrl, pageMatchesLockedProduct, pairedDirectionsConfirmIdentity, requiresAttachedDirections, verifiesTradingAs } from "./manufacturer_companion.ts";
+import { alternateManufacturerLabel, companionDirectionsUrl, companionGrapeDirections, pageMatchesLockedProduct, pairedDirectionsConfirmIdentity, requiresAttachedDirections, verifiesTradingAs } from "./manufacturer_companion.ts";
 import { manufacturerHostEligible } from "../research/classify.ts";
 import { extractLinks } from "../research/page_inspector.ts";
 import { extractManufacturerDocumentText, fetchManufacturerDocument, safeManufacturerFetchReason } from "./manufacturer_document.ts";
@@ -52,6 +52,19 @@ Deno.test("Farmalinx leaflet has locked product identity and printed grape direc
   assert(/downy\s+mildew/i.test(text));
   assert(/bunch\s+rot/i.test(text));
   assert(/1\.5/.test(text) && /1\.9/.test(text) && /kg\s*\/\s*ha/i.test(text));
+  const bound = companionGrapeDirections(items, name);
+  assertEquals(bound?.length, 2);
+  assertEquals(bound?.map((use) => use.target_raw), ["Downy mildew / Bunch rot", "Black Spot"]);
+  assertEquals((bound?.[1].rates as Array<{ basis: string; value: number }>)[0].basis, "per_100_litres");
+  assertEquals((bound?.[1].rates as Array<{ basis: string; value: number }>)[0].value, 175);
+  assert(bound?.every((use) => !/virus buildup|Use the higher 7-14/.test(String(use.restrictions))));
+  assert(bound?.every((use) => /For all uses in this table/.test(String(use.restrictions))));
+  assert(bound?.every((use) => /DO NOT exceed 2\.5kg/.test(String(use.restrictions))));
+  assertEquals(companionGrapeDirections(items, "Farmalinx Piricarb WG Aphicide"), null);
+  assertEquals(companionGrapeDirections(items.filter((item) => item.str !== "175 g/100 L"), name), null,
+    "a missing target dose cannot silently become complete grape coverage");
+  assertEquals(companionGrapeDirections(items.filter((item) => item.str !== "14" || item.page !== 1), name), null,
+    "conditional harvest periods cannot be guessed from numbers elsewhere");
   const result = await enrichFromManufacturerLabel({
     deps: { fetchFn: (async () => new Response(bytes, { status: 200 })) as typeof fetch, now: () => new Date() },
     manufacturerLabelUrl: leaflet, sourcePageUrl: pageUrl, regulatorUses: [],
@@ -59,6 +72,7 @@ Deno.test("Farmalinx leaflet has locked product identity and printed grape direc
     registrant: "Farmalinx Pty Ltd", product: { country: "AU", scheme: "apvma", registration_number: "84047" },
   });
   assertEquals(result.fetchedUrl, leaflet);
+  assertEquals(result.uses.length, 2);
   assert(result.uses.some((use) => /grape/i.test(String(use.crop)) &&
     Array.isArray(use.rates) && use.rates.some((rate: { min_value?: number; max_value?: number }) =>
       rate.min_value === 1.5 && rate.max_value === 1.9)), JSON.stringify(result.uses));
@@ -70,7 +84,8 @@ Deno.test("Farmalinx leaflet has locked product identity and printed grape direc
     viticulture_rates: { per_hectare: [], per_100_litres: [] }, verification_sources: [],
     verification_unresolved_fields: [], review_status: "candidate", catalogue_version: 1 } as unknown as MasterRow;
   const detail = { registration: { registration_number: "84047", manufacturer_label_url: leaflet,
-    manufacturer_package_label_url: container, manufacturer_label_verified: true }, registered_uses: result.uses };
+    manufacturer_package_label_url: container, manufacturer_label_verified: true }, registered_uses: result.uses,
+    verification: { unresolved_fields: ["withholding_period:GRAPEVINE"] } };
   applyRateIdentities({ registration: { country_code: "AU", scheme: "apvma", registration_number: "84047" },
     registered_uses: detail.registered_uses });
   const preview = await finishBackfillPreview(row, "admin", { detail }, true,
@@ -83,6 +98,27 @@ Deno.test("Farmalinx leaflet has locked product identity and printed grape direc
     [leaflet, container]);
   assertEquals((preview.proposed_patch?.registered_uses as Array<{ withholding_period_text?: string }>)[0]
     .withholding_period_text, "Dessert grapes: 7 days; Wine grapes: 14 days");
+  assertEquals((preview.proposed_patch?.registered_uses as Array<{ withholding_period_days?: number }>)[0]
+    .withholding_period_days, undefined);
+  assertEquals(preview.proposed_patch?.verification_unresolved_fields, ["withholding_period:GRAPEVINE"]);
+  assertEquals((preview.proposed_patch?.viticulture_rates as { per_100_litres: Array<{ value: number }> })
+    .per_100_litres[0].value, 175);
+});
+
+Deno.test("unbound paired grape table cannot be promoted to a writable manufacturer preview", async () => {
+  const bytes = await Deno.readFile(new URL("./chlorostar_leaflet_fixture.pdf", import.meta.url));
+  const items = await extractManufacturerDocumentText({ fetchFn: fetch, now: () => new Date() }, bytes);
+  assert(items);
+  const result = await enrichFromManufacturerLabel({
+    deps: { fetchFn: (() => Promise.resolve(new Response(bytes, { status: 200 }))) as typeof fetch,
+      now: () => new Date(), extractPdfText: () => Promise.resolve(items.filter((item) => item.str !== "175 g/100 L")) },
+    manufacturerLabelUrl: leaflet, sourcePageUrl: pageUrl, regulatorUses: [],
+    registeredProductName: name, activeNames: ["Chlorothalonil"], pairedContainerVerified: true,
+    registrant: "Farmalinx Pty Ltd", product: { country: "AU", scheme: "apvma", registration_number: "84047" },
+  });
+  assertEquals(result.fetchedUrl, null);
+  assertEquals(result.uses, []);
+  assertEquals(result.diagnostics.manufacturer_label_fetch_reason, "paired_table_binding_unresolved");
 });
 
 Deno.test("failed direct PDF chooses one different own-host product-page label, never the same URL", () => {

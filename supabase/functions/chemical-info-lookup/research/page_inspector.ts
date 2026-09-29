@@ -113,6 +113,9 @@ export interface PageInspectionFailure {
   outcome: Exclude<PageInspectionOutcome, "inspected">;
   pageUrl: string;
   reason: string;
+  finalUrl?: string;
+  httpStatus?: number;
+  errorCategory?: "timeout" | "network_error";
 }
 
 export type PageInspectionResult = InspectedPage | PageInspectionFailure;
@@ -471,7 +474,7 @@ export async function inspectProductPage(
       } catch { /* ignore */ }
       return {
         outcome: "rejected_http_error",
-        pageUrl: trimmed,
+        pageUrl: trimmed, finalUrl, httpStatus: res.status,
         reason: `HTTP ${res.status} — a page that did not load is not evidence`,
       };
     }
@@ -484,7 +487,7 @@ export async function inspectProductPage(
       } catch { /* ignore */ }
       return {
         outcome: "rejected_off_host_redirect",
-        pageUrl: trimmed,
+        pageUrl: trimmed, finalUrl,
         reason: `redirected off the registrant domain to ${hostOf(finalUrl) || "an unparseable host"}`,
       };
     }
@@ -495,7 +498,7 @@ export async function inspectProductPage(
       } catch { /* ignore */ }
       return {
         outcome: "rejected_not_html",
-        pageUrl: trimmed,
+        pageUrl: trimmed, finalUrl,
         reason:
           `content-type ${res.headers.get("content-type") ?? "absent"} is not HTML`,
       };
@@ -511,7 +514,7 @@ export async function inspectProductPage(
       } catch { /* ignore */ }
       return {
         outcome: "rejected_too_large",
-        pageUrl: trimmed,
+        pageUrl: trimmed, finalUrl,
         reason: `declared ${declared} bytes, over the ${MAX_PAGE_BYTES}-byte page budget`,
       };
     }
@@ -523,7 +526,7 @@ export async function inspectProductPage(
       // excellent way to promote the wrong PDF as the label.
       return {
         outcome: "rejected_too_large",
-        pageUrl: trimmed,
+        pageUrl: trimmed, finalUrl,
         reason:
           `response exceeded the ${MAX_PAGE_BYTES}-byte page budget (stopped ` +
           `after ${body.bytesRead} bytes); an oversized page is refused, never ` +
@@ -551,6 +554,7 @@ export async function inspectProductPage(
     return {
       outcome: "rejected_network_error",
       pageUrl: trimmed,
+      errorCategory: ctrl.signal.aborted ? "timeout" : "network_error",
       reason: err instanceof Error ? err.message : String(err),
     };
   } finally {
@@ -568,6 +572,30 @@ export interface PageInspectionAttempt {
   outcome: PageInspectionOutcome;
   reason: string;
   linkCount: number;
+  finalUrl?: string;
+  httpStatus?: number;
+  errorCategory?: "timeout" | "network_error";
+}
+
+/** Bounded admin-only fetch facts; never include response text or exception messages. */
+export function privatePageFetchDiagnostic(attempts: PageInspectionAttempt[], pdfLead: string | null,
+  pdfAttempted: boolean, pdfNotAttemptedReason: string | null): Record<string, unknown> {
+  const safeUrl = (raw: string | undefined): string | null => {
+    if (!raw) return null;
+    try {
+      const url = new URL(raw);
+      if (url.protocol !== "https:") return null;
+      const path = url.pathname.split("/").slice(0, 12).map((part) =>
+        part.length > 80 || /[a-z0-9_-]{24,}/i.test(part) ? "[redacted]" : part).join("/");
+      return `${url.origin}${path}`.slice(0, 350);
+    } catch { return null; }
+  };
+  return { stage: "product_page_inspection", attempts: attempts.slice(0, MAX_PAGE_FETCH_ATTEMPTS + 1).map((attempt) => ({
+    attempted_url: safeUrl(attempt.url), final_url: safeUrl(attempt.finalUrl),
+    outcome: attempt.outcome, http_status: attempt.httpStatus ?? null,
+    error_category: attempt.errorCategory ?? null,
+  })), eligible_manufacturer_pdf_lead: !!pdfLead, pdf_lead_url: safeUrl(pdfLead ?? undefined),
+    pdf_lead_attempted: pdfAttempted, pdf_not_attempted_reason: pdfAttempted ? null : pdfNotAttemptedReason };
 }
 
 /**
@@ -664,6 +692,9 @@ export async function inspectCandidateProductPages(
         outcome: result.outcome,
         reason: result.reason,
         linkCount: 0,
+        ...(result.finalUrl ? { finalUrl: result.finalUrl } : {}),
+        ...(result.httpStatus ? { httpStatus: result.httpStatus } : {}),
+        ...(result.errorCategory ? { errorCategory: result.errorCategory } : {}),
       });
     }
   }

@@ -14,7 +14,7 @@ export interface BackfillDetail {
   registered_uses?: Array<Record<string, unknown>>;
   registration?: { registration_number?: string | null; manufacturer_label_url?: string | null; manufacturer_package_label_url?: string | null; manufacturer_label_verified?: boolean; manufacturer_label_retrieval_method?: "web_search_index"; registrant?: string | null;
     manufacturer_label_identifiers?: { numbers: string[]; printed_values: string[] } } | null;
-  verification?: { conflicts?: Array<Record<string, unknown>> };
+  verification?: { conflicts?: Array<Record<string, unknown>>; unresolved_fields?: string[] };
 }
 
 const grape = (use: Record<string, unknown>): boolean => /grape|vineyard|vine/i.test(String(use.crop ?? ""));
@@ -354,13 +354,17 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
       (!present(use.direction_id) || !present(next.direction_id) || use.direction_id === next.direction_id)));
     if (evidenced.some((use) => !use)) return false;
     if (kind.toLowerCase() === "rates") return evidenced.every((u) => ratesOf(u!).some((r) => rateIdentity(r)));
+    // A crop-dependent harvest interval cannot be represented as one number.
+    if (kind.toLowerCase() === "withholding_period" && evidenced.some((use) =>
+      !present(use?.withholding_period_days) && present(use?.withholding_period_text))) return false;
     const keys: Record<string, string[]> = { withholding_period: ["withholding_period_days", "withholding_period_text"],
       re_entry_period: ["re_entry_period_hours", "re_entry_period_text"], restrictions: ["restrictions"],
       statements: ["statements"], conditions: ["conditions"] };
     return !!keys[kind.toLowerCase()] && evidenced.every((u) => keys[kind.toLowerCase()].some((key) =>
       present(u?.[key]) && (typeof u?.[key] !== "number" || (u[key] as number) > 0)));
   };
-  const pruned = unresolved.filter((field) => !resolved(field));
+  const pruned = [...new Set([...unresolved, ...(detail.verification?.unresolved_fields ?? [])])]
+    .filter((field) => !resolved(field));
   put("verification_unresolved_fields", unresolved, pruned);
   const violation = Object.keys(patch).length ? validateResolverPatch(patch) : null;
   if (violation) throw new Error(`patch_contract_violation: ${violation}`);

@@ -1,3 +1,4 @@
+// deno-lint-ignore-file no-import-prefix
 // Deterministic product-page inspection — the evidence layer under the
 // manufacturer-label promotion policy.
 //
@@ -14,6 +15,7 @@ import {
   extractPageProductName,
   inspectCandidateProductPages,
   inspectProductPage,
+  privatePageFetchDiagnostic,
   MAX_PAGE_BYTES,
   MAX_PAGE_FETCH_ATTEMPTS,
   resolveHref,
@@ -22,6 +24,33 @@ import {
   selectManufacturerLabel,
   selectManufacturerSds,
 } from "./linked_documents.ts";
+
+Deno.test("private failed-page record preserves status, final URL and separate PDF route without secrets", async () => {
+  const page = "https://www.omnia.com.au/products/sprayseal?key=secret";
+  const redirected = "https://www.omnia.com.au/products/new-sprayseal?token=secret";
+  const { attempts } = await inspectCandidateProductPages({ fetchFn: (() => {
+    const response = new Response("private body", { status: 403 });
+    Object.defineProperty(response, "url", { value: redirected });
+    return Promise.resolve(response);
+  }) as typeof fetch }, [page], "AU");
+  const record = privatePageFetchDiagnostic(attempts,
+    "https://www.omnia.com.au/labels/sprayseal-label.pdf?signature=secret", true, null);
+  assertEquals((record.attempts as Array<Record<string, unknown>>)[0].http_status, 403);
+  assertEquals((record.attempts as Array<Record<string, unknown>>)[0].final_url,
+    "https://www.omnia.com.au/products/new-sprayseal");
+  assertEquals(record.eligible_manufacturer_pdf_lead, true);
+  assertEquals(record.pdf_lead_attempted, true);
+  assertEquals(JSON.stringify(record).includes("secret") || JSON.stringify(record).includes("private body"), false);
+});
+
+Deno.test("private failed-page record distinguishes network failure from absent PDF lead", async () => {
+  const { attempts } = await inspectCandidateProductPages({ fetchFn: (() => Promise.reject(new Error("authorization=secret"))) as typeof fetch }, ["https://www.omnia.com.au/products/sprayseal"], "AU");
+  const record = privatePageFetchDiagnostic(attempts, null, false, "no_eligible_manufacturer_pdf_lead");
+  assertEquals((record.attempts as Array<Record<string, unknown>>)[0].error_category, "network_error");
+  assertEquals(record.eligible_manufacturer_pdf_lead, false);
+  assertEquals(record.pdf_not_attempted_reason, "no_eligible_manufacturer_pdf_lead");
+  assertEquals(JSON.stringify(record).includes("secret"), false);
+});
 
 const OMNIA_PAGE = "https://www.omnia.com.au/products/sprayseal";
 const OMNIA_LABEL = "https://www.omnia.com.au/files/2025/07/Sprayseal%205L_Digi.pdf";

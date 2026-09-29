@@ -47,6 +47,7 @@ export interface BackfillPreviewResponse {
   findings: { classified: boolean; not_applicable: boolean; vineyard_rates_added: boolean; no_vineyard_use: boolean };
   dry_run?: true;
   indexed_diagnostic?: { snapshot: IndexedLabelSnapshot | null; outcome: "captured" | "no_indexed_response" };
+  private_fetch_diagnostic?: Record<string, unknown>;
   error?: string;
 }
 
@@ -55,7 +56,7 @@ export interface BackfillResearchPayload {
   identity_conflict?: { printed?: string | null; manufacturer_label_url?: string | null; reason?: string };
   discovery_reason?: "search_no_candidate" | "search_timeout" | "host_not_verified" | "product_page_fetch_failed" |
     "product_name_mismatch" | "label_link_not_found" | "label_fetch_failed" | `label_fetch_failed_${string}` |
-    `label_fetch_http_${number}` | "label_unreadable" | "label_index_unavailable" |
+    `label_fetch_http_${number}` | "label_unreadable" | "label_table_binding_unresolved" | "label_index_unavailable" |
     `label_index_unavailable: ${IndexFailureReason}`;
 }
 
@@ -73,9 +74,10 @@ export async function readBackfillIndexedLabel(input: IndexedLabelInput, master:
 
 /** Diagnostic data is returned only for an explicitly authorised opt-in request, never stored as a preview. */
 export function withIndexedDiagnostic(response: BackfillPreviewResponse, capture: boolean,
-  snapshot: IndexedLabelSnapshot | null): BackfillPreviewResponse {
+  snapshot: IndexedLabelSnapshot | null, fetchDiagnostic: Record<string, unknown> | null = null): BackfillPreviewResponse {
   return capture ? { ...response, indexed_diagnostic: { snapshot,
-    outcome: snapshot ? "captured" : "no_indexed_response" } } : response;
+    outcome: snapshot ? "captured" : "no_indexed_response" },
+    ...(fetchDiagnostic ? { private_fetch_diagnostic: fetchDiagnostic } : {}) } : response;
 }
 
 function baseResponse(row: MasterRow): BackfillPreviewResponse {
@@ -110,7 +112,7 @@ export async function finishBackfillPreview(row: MasterRow, adminId: string, pay
   const findings = { classified: proposed.patch?.resistance_classification_state === "classified",
     not_applicable: proposed.patch?.resistance_classification_state === "not_applicable",
     vineyard_rates_added: Boolean(proposed.patch?.viticulture_rates),
-    no_vineyard_use: !(detail.registered_uses ?? row.registered_uses ?? []).some((use) =>
+    no_vineyard_use: !payload?.discovery_reason && !(detail.registered_uses ?? row.registered_uses ?? []).some((use) =>
       /grape|vineyard|vine/i.test(String(use.crop ?? ""))) };
   const response = { ...base, status: proposed.status, evidence: proposed.evidence, findings };
   if (proposed.status === "identity_conflict" || proposed.status === "evidence_conflict") return response;

@@ -39,7 +39,7 @@ import {
 } from "../grapevine_label.ts";
 import { applyRateIdentities, type RateIdentityProduct } from "../rate_identity.ts";
 import { normaliseProductNameLoose } from "./matching.ts";
-import { companionGrapeDirection, pairedDirectionsConfirmIdentity } from "./manufacturer_companion.ts";
+import { companionGrapeDirections, pairedDirectionsConfirmIdentity } from "./manufacturer_companion.ts";
 
 /** Everything the live path needs to prove what happened, and why. */
 export interface ManufacturerEnrichmentDiagnostics {
@@ -317,9 +317,21 @@ export async function enrichFromManufacturerLabel(input: {
 
   const parse = extractManufacturerLabelUses(items);
   const whp = readWithholdingPeriod(items);
-  const printedGrape = input.pairedContainerVerified ? companionGrapeDirection(items) : null;
-  const parsedGrape = parse.uses.some((use) => /grape/i.test(String(use.crop ?? "")) && use.rates.length > 0);
-  const manufacturerUses = printedGrape && !parsedGrape ? [printedGrape] : manufacturerUsesToRegisteredUses(parse.uses, {
+  const printedGrapes = input.pairedContainerVerified ? companionGrapeDirections(items, input.registeredProductName ?? "") : null;
+  // On a folded leaflet, an apparently valid row from the ordinary parser can
+  // belong to the adjacent product. A paired document needs its own bounded
+  // crop/table binding; never substitute a model or an unscoped text read.
+  if (input.pairedContainerVerified && !printedGrapes) return {
+    uses: regulatorUses, source: regulatorUses.length ? "regulator_label" : "none",
+    fetchedUrl: null, withholdingPeriodDays: null,
+    diagnostics: { manufacturer_label_fetch: "success", manufacturer_label_fetch_outcome: fetched.outcome,
+      manufacturer_label_fetch_reason: "paired_table_binding_unresolved", manufacturer_label_extract: "failure",
+      manufacturer_label_bytes: fetched.byteSize ?? null, manufacturer_label_sha256: fetched.sha256 ?? null,
+      label_rows_found: 0, grapevine_rows_found: 0, grapevine_rates_found: 0,
+      withholding_period_days: null, practical_source: regulatorUses.length ? "regulator_label" : "none",
+      practical_source_reason: "paired grape table could not be bound to printed rows" },
+  };
+  const manufacturerUses = printedGrapes ?? manufacturerUsesToRegisteredUses(parse.uses, {
     withholdingPeriodDays: whp,
     // Never zero-filled. A label that does not state a re-entry period has not
     // stated that there isn't one.
@@ -339,7 +351,7 @@ export async function enrichFromManufacturerLabel(input: {
       manufacturer_label_fetch: "success",
       manufacturer_label_fetch_outcome: fetched.outcome,
       manufacturer_label_fetch_reason: fetched.reason,
-      manufacturer_label_extract: parse.found || !!printedGrape ? "success" : "failure",
+      manufacturer_label_extract: parse.found || !!printedGrapes ? "success" : "failure",
       label_fetch_ms: labelFetchMs,
       label_parse_ms: Date.now() - parseStarted,
       manufacturer_label_bytes: fetched.byteSize ?? null,

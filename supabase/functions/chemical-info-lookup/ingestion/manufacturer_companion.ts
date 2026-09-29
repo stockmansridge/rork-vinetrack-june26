@@ -2,6 +2,7 @@ import { classifyUrl, hostOf, manufacturerHostEligible } from "../research/class
 import { nameCorresponds, normaliseProductNameLoose } from "./matching.ts";
 import type { InspectedPage } from "../research/page_inspector.ts";
 import type { PdfTextItem } from "./contract.ts";
+import { parseRateCell } from "./label_extract.ts";
 
 /** A container label explicitly defers its directions to a separate document. */
 export function requiresAttachedDirections(text: string): boolean {
@@ -30,37 +31,87 @@ export function companionDirectionsUrl(page: InspectedPage | null, product: stri
   return candidates.length === 1 ? candidates[0].url : null;
 }
 
-/** Recover an unambiguous printed grape row from a folded, multi-panel leaflet. */
-export function companionGrapeDirection(items: PdfTextItem[]): Record<string, unknown> | null {
-  const rows: Array<Record<string, unknown>> = [];
+/** Read only rows bound to one grape block of a paired leaflet's own DFU table. */
+export function companionGrapeDirections(items: PdfTextItem[], productName: string): Record<string, unknown>[] | null {
+  // This reader recognises a disease table, not an adjacent insect/weed panel.
+  if (!/\bfungicide\b/i.test(productName)) return null;
+  const blocks: Record<string, unknown>[][] = [];
   for (const crop of items.filter((item) => /^grapes$/i.test(item.str.trim()))) {
-    const nearby = items.filter((item) => item.page === crop.page && item.y <= crop.y + 3 &&
-      item.y >= crop.y - 55 && item.x >= crop.x && item.x < crop.x + 450);
-    const pests = nearby.filter((item) => item.x > crop.x + 25 && item.x < crop.x + 180 &&
-      /^(downy mildew|bunch rot)$/i.test(item.str.trim()));
-    const dose = nearby.filter((item) => item.x > crop.x + 110 && item.x < crop.x + 260 &&
-      Math.abs(item.y - crop.y) < 3 && /^(\d+(?:\.\d+)?)\s*[–-]\s*(\d+(?:\.\d+)?)\s*kg\s*\/$/i.test(item.str.trim()));
-    if (pests.length !== 2 || dose.length !== 1) continue;
-    const unit = nearby.some((item) => item.x >= dose[0].x && item.x < dose[0].x + 65 &&
-      item.y < dose[0].y && item.y >= dose[0].y - 16 && /^ha$/i.test(item.str.trim()));
-    if (!unit) continue;
-    const [, minimum, maximum] = dose[0].str.trim().match(/^(\d+(?:\.\d+)?)\s*[–-]\s*(\d+(?:\.\d+)?)\s*kg\s*\/$/i) ?? [];
-    if (!(Number(minimum) > 0 && Number(maximum) >= Number(minimum))) continue;
-    const whp = nearby.filter((item) => item.x > dose[0].x + 45 && item.x < dose[0].x + 115);
-    const dessert = whp.some((item) => /^dessert$/i.test(item.str.trim())) &&
-      whp.some((item) => /^7$/.test(item.str.trim()));
-    const wine = whp.some((item) => /^wine$/i.test(item.str.trim())) &&
-      whp.some((item) => /^14$/.test(item.str.trim()));
-    const comments = nearby.filter((item) => item.x > dose[0].x + 100 && item.x < dose[0].x + 400)
-      .sort((a, b) => b.y - a.y).map((item) => item.str.trim()).filter(Boolean).join(" ");
-    rows.push({ crop: "Grapes", target_raw: "Downy mildew / Bunch rot",
-      rates: [{ basis: "range_per_hectare", min_value: Number(minimum), max_value: Number(maximum),
-        unit: "kg", raw_text: `${minimum} – ${maximum} kg/ha`, condition_ambiguous: false }],
-      ...(dessert && wine ? { withholding_period_text: "Dessert grapes: 7 days; Wine grapes: 14 days" } : {}),
-      ...(comments ? { restrictions: comments } : {}),
-      provenance: { rates: "manufacturer_label" } });
+    const onPage = items.filter((item) => item.page === crop.page);
+    // A printed table must state its crop, disease, rate and WHP columns on one heading row.
+    const heading = onPage.filter((item) => item.y > crop.y && item.y < crop.y + 50);
+    const cropHeading = heading.find((item) => Math.abs(item.x - crop.x) < 8 && /^(situation|crop|crops)$/i.test(item.str.trim()));
+    const disease = heading.find((item) => item.x > crop.x + 30 && item.x < crop.x + 140 && /^disease$/i.test(item.str.trim()));
+    const rateHeading = heading.find((item) => item.x > (disease?.x ?? Infinity) && item.x < crop.x + 210 && /^rate$/i.test(item.str.trim()));
+    const whpHeading = heading.find((item) => item.x > (rateHeading?.x ?? Infinity) && item.x < crop.x + 270 && /^whp$/i.test(item.str.trim()));
+    if (!cropHeading || !disease || !rateHeading || !whpHeading) continue;
+    const nextCrop = onPage.filter((item) => item.y < crop.y - 10 && Math.abs(item.x - crop.x) < 8 &&
+      /^(?!note\b)[a-z][a-z\s,-]{2,50}$/i.test(item.str.trim()) &&
+      onPage.some((rate) => Math.abs(rate.y - item.y) < 3 && rate.x >= rateHeading.x - 15 &&
+        rate.x < whpHeading.x - 14 && /\d/.test(rate.str)))
+      .sort((a, b) => b.y - a.y)[0];
+    const bottom = nextCrop?.y ?? crop.y - 220;
+    const firstTarget = onPage.filter((item) => Math.abs(item.y - crop.y) < 3 &&
+      item.x > crop.x + 20 && item.x < disease.x + 10 && /^[a-z][a-z\s-]+$/i.test(item.str.trim()));
+    if (firstTarget.length !== 1) continue;
+    const targetColumn = onPage.filter((item) => item.y <= crop.y + 2 && item.y > bottom &&
+      Math.abs(item.x - firstTarget[0].x) < 1.5 && /^[a-z][a-z\s(-]+$/i.test(item.str.trim()))
+      .sort((a, b) => b.y - a.y);
+    const starts = targetColumn.filter((item) => onPage.some((rate) => Math.abs(rate.y - item.y) < 3 &&
+      rate.x >= rateHeading.x - 15 && rate.x < whpHeading.x - 14 && /\d/.test(rate.str)));
+    if (targetColumn.some((target) => !starts.some((start) => start.y >= target.y && start.y - target.y < 35))) continue;
+    const whp = onPage.filter((item) => item.y <= crop.y + 3 && item.y > bottom &&
+      item.x >= whpHeading.x - 8 && item.x < whpHeading.x + 30);
+    const dessert = whp.find((item) => /^dessert$/i.test(item.str.trim()));
+    const wine = whp.find((item) => /^wine$/i.test(item.str.trim()));
+    const period = (type: PdfTextItem | undefined): string | null => {
+      if (!type) return null;
+      const days = whp.filter((item) => /^\d+$/.test(item.str.trim()) && item.y < type.y && item.y > type.y - 16);
+      return days.length === 1 ? days[0].str.trim() : null;
+    };
+    const dessertDays = period(dessert);
+    const wineDays = period(wine);
+    if (!dessertDays || !wineDays) continue;
+    // Establish the comments' left edge from the FIRST rate row, never from all
+    // text to its right: adjacent folded panels can print another product there.
+    const firstComments = onPage.filter((item) => Math.abs(item.y - crop.y) < 3 &&
+      item.x > whpHeading.x + 20 && item.x < whpHeading.x + 95 && /[a-z]{4}/i.test(item.str));
+    if (firstComments.length !== 1) continue;
+    const commentX = firstComments[0].x;
+    const coreName = normaliseProductNameLoose(productName).replace(/\s+fungicide$/, "");
+    const generalRestraints = onPage.filter((item) => /\bDO NOT exceed\b/i.test(item.str) &&
+      normaliseProductNameLoose(item.str).includes(coreName)).map((item) => item.str.trim());
+    const shared = [...onPage.filter((item) => item.y > crop.y && item.y < crop.y + 60 &&
+      Math.abs(item.x - commentX) < 5 && /[a-z]{4}/i.test(item.str))
+      .sort((a, b) => b.y - a.y).map((item) => item.str.trim()), ...generalRestraints].join(" ");
+    const rows: Record<string, unknown>[] = [];
+    for (let n = 0; n < starts.length; n++) {
+      const start = starts[n];
+      const end = starts[n + 1]?.y ?? bottom;
+      const targets = targetColumn.filter((item) => item.y <= start.y + 2 && item.y > end + 2)
+        .map((item) => item.str.trim().replace(/\s*\(.*/, ""));
+      const dose = onPage.filter((item) => item.y <= start.y + 2 && item.y > start.y - 16 &&
+        item.x >= rateHeading.x - 15 && item.x < whpHeading.x - 14 &&
+        (/\d/.test(item.str) || /^(?:ha|100\s*L)$/i.test(item.str.trim())))
+        .sort((a, b) => b.y - a.y).map((item) => item.str.trim()).join("");
+      const parsed = parseRateCell(dose).filter((rate) => rate.basis !== "other" && !rate.condition_ambiguous);
+      if (!targets.length || parsed.length !== 1) return null;
+      const comments = onPage.filter((item) => item.y <= start.y + 2 && item.y > end + 2 &&
+        Math.abs(item.x - commentX) < 5 && /[a-z]{4}/i.test(item.str))
+        .sort((a, b) => b.y - a.y).map((item) => item.str.trim()).join(" ");
+      if (!comments) return null;
+      rows.push({ crop: "Grapes", target_raw: targets.join(" / "),
+        rates: [{ ...parsed[0], raw_text: dose }],
+        withholding_period_text: `Dessert grapes: ${dessertDays} days; Wine grapes: ${wineDays} days`,
+        restrictions: [shared, comments].filter(Boolean).join(" "),
+        provenance: { rates: "manufacturer_label" } });
+    }
+    const rateStarts = onPage.filter((item) => item.y <= crop.y + 2 && item.y > bottom &&
+      item.x >= rateHeading.x - 15 && item.x < whpHeading.x - 14 && /\d/.test(item.str) &&
+      !/^ha$/i.test(item.str.trim()));
+    if (rows.length && rateStarts.length === rows.length) blocks.push(rows);
   }
-  return rows.length === 1 ? rows[0] : null;
+  return blocks.length === 1 ? blocks[0] : null;
 }
 
 /** A legal trading-as statement, not a similar-sounding brand, ties the company to this domain. */

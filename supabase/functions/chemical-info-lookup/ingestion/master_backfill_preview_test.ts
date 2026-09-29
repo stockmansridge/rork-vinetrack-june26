@@ -42,6 +42,9 @@ Deno.test("server diagnostic gate requires signed-in admin and one Master id; pr
     { capture_indexed_response: false }, { query: "SIMANEX" }])
     assertEquals("error" in parseBackfillRequest({ ...body, ...changed }), true);
   assertEquals(withIndexedDiagnostic(alreadyCompleteBackfill(row()), false, null).indexed_diagnostic, undefined);
+  assertEquals(withIndexedDiagnostic(alreadyCompleteBackfill(row()), false, null, { stage: "private" }).private_fetch_diagnostic, undefined);
+  assertEquals(withIndexedDiagnostic(alreadyCompleteBackfill(row()), true, null, { stage: "private" }).private_fetch_diagnostic,
+    { stage: "private" });
   assertEquals(withIndexedDiagnostic(alreadyCompleteBackfill(row()), true, null).indexed_diagnostic,
     { snapshot: null, outcome: "no_indexed_response" });
 });
@@ -87,12 +90,13 @@ Deno.test("complete, no change, missing label, and conflicting identity have exp
 
 Deno.test("missing manufacturer labels expose only safe stage-specific reasons and never store previews", async () => {
   const reasons = ["search_no_candidate", "search_timeout", "host_not_verified", "product_page_fetch_failed",
-    "product_name_mismatch", "label_link_not_found", "label_fetch_failed", "label_index_unavailable", "label_unreadable"] as const;
+    "product_name_mismatch", "label_link_not_found", "label_fetch_failed", "label_index_unavailable", "label_unreadable", "label_table_binding_unresolved"] as const;
   for (const reason of reasons) {
     const result = await finishBackfillPreview(row(), "admin", { discovery_reason: reason }, false,
       { insertPreview: () => { throw new Error("missing label cannot store a preview"); } });
     assertEquals(result.status, "manufacturer_label_not_found");
     assertEquals(result.evidence.reason, reason);
+    assertEquals(result.findings.no_vineyard_use, false);
     assertEquals(result.preview_id, null);
   }
 });
