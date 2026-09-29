@@ -10,12 +10,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rork.vinetrack.data.AppConfig
 import com.rork.vinetrack.data.AppPreferencesStore
 import com.rork.vinetrack.data.DisplayMode
+import com.rork.vinetrack.data.chemical.MasterFrontLabelRepository
 import com.rork.vinetrack.ui.RootScreen
 import com.rork.vinetrack.ui.theme.AppTheme
 
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        MasterFrontLabelRepository.initialize(applicationContext)
         AppConfig.logDiagnostics()
         AppPreferencesStore.seedDisplayMode(this)
         enableEdgeToEdge()

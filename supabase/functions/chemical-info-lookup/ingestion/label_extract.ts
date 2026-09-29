@@ -188,6 +188,26 @@ const RANGE_SEP = "(?:or|to|–|—|-)";
 const PER_100L = "(?:\\/|per\\b)\\s*100\\s*(?:L\\b|litres?\\b|liters?\\b)";
 const PER_HA = "(?:\\/|per\\b)\\s*(?:ha\\b|hectares?\\b)";
 
+// Mixed units within a printed range are normalised only within the same volume/mass dimension.
+// The verbatim cell remains on the resulting rate for label verification.
+const MIXED_RANGE_RE = new RegExp(
+  `${NUM}\\s*${UNIT_PATTERN}\\s*${RANGE_SEP}\\s*${NUM}\\s*${UNIT_PATTERN}\\s*(${PER_100L}|${PER_HA})`, "gi",
+);
+function mixedRange(m: RegExpExecArray): Omit<WireLabelRate, "label" | "raw_text"> {
+  const lowUnit = canonicalUnit(m[2]);
+  const highUnit = canonicalUnit(m[4]);
+  const factors: Record<string, number> = { mL: 1, L: 1000, g: 1, kg: 1000 };
+  const sameDimension = (lowUnit === "mL" || lowUnit === "L") === (highUnit === "mL" || highUnit === "L");
+  const low = Number(m[1]) * factors[lowUnit];
+  const high = Number(m[3]) * factors[highUnit];
+  if (!sameDimension || !Number.isFinite(low) || !Number.isFinite(high) || low > high)
+    return { basis: "other", unit: "" };
+  const unit = lowUnit === "mL" || highUnit === "mL" ? "mL" : lowUnit === "g" || highUnit === "g" ? "g" : lowUnit;
+  const divisor = factors[unit];
+  return { basis: /ha|hectare/i.test(m[5]) ? "range_per_hectare" : "range_per_100_litres",
+    min_value: low / divisor, max_value: high / divisor, unit };
+}
+
 const RANGE_100L_RE = new RegExp(
   `${NUM}\\s*${RANGE_SEP}\\s*${NUM}\\s*${UNIT_PATTERN}\\s*${PER_100L}`,
   "gi",
@@ -382,6 +402,7 @@ export function parseRateCell(
   const masked = new Array<boolean>(cell.length).fill(false);
 
   const matches: RateMatch[] = [
+    ...collectMatches(cell, masked, MIXED_RANGE_RE, mixedRange),
     ...collectMatches(cell, masked, RANGE_100L_RE, (m) => ({
       basis: "range_per_100_litres",
       min_value: Number.parseFloat(m[1]),

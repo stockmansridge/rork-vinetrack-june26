@@ -1,8 +1,8 @@
--- PREPARED ONLY: Jonathan applies after review. No Master patch, catalogue approval, or spray data changes.
--- Shared contract: one immutable PDF version per (Master id, SHA-256), with a reviewed
--- physical cover page, full image and once-generated thumbnail. Vineyard rows retain
--- only their existing master_chemical_id; never copy documents per vineyard.
+-- PREPARED ONLY. Never run against production as part of rate correction.
+-- Private immutable bytes are shared by Master + PDF hash. Review associations and
+-- media approvals are separate, append-only decisions bound to individual previews.
 begin;
+create extension if not exists pgcrypto;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('master-chemical-media', 'master-chemical-media', false, 52428800,
@@ -21,7 +21,17 @@ create table if not exists public.master_chemical_media (
   pdf_path text not null unique,
   full_image_path text not null unique,
   thumbnail_path text not null unique,
-  preview_id uuid not null,
+  staged_at timestamptz not null default now(),
+  unique (master_chemical_id, document_sha256),
+  check (pdf_path = master_chemical_id::text || '/' || document_sha256 || '/label.pdf'
+    and full_image_path = master_chemical_id::text || '/' || document_sha256 || '/front-p' || physical_page || '.png'
+    and thumbnail_path = master_chemical_id::text || '/' || document_sha256 || '/thumb-p' || physical_page || '.webp')
+);
+create table if not exists public.master_chemical_media_reviews (
+  id uuid primary key default gen_random_uuid(),
+  media_id uuid not null references public.master_chemical_media(id),
+  master_chemical_id uuid not null references public.master_chemicals(id),
+  preview_id uuid not null unique,
   preview_patch_sha256 text not null check (preview_patch_sha256 ~ '^[0-9a-f]{64}$'),
   cover_confirmed_by uuid not null references auth.users(id),
   cover_confirmed_at timestamptz not null,
@@ -29,60 +39,87 @@ create table if not exists public.master_chemical_media (
   approved_by uuid references auth.users(id),
   approved_at timestamptz,
   approval_reason text,
-  unique (master_chemical_id, document_sha256),
   check ((approved_at is null and approved_by is null and approval_reason is null) or
-         (approved_at is not null and approved_by is not null and approval_reason is not null
-          and length(btrim(approval_reason)) >= 8)),
-  check (pdf_path = master_chemical_id::text || '/' || document_sha256 || '/label.pdf'
-    and full_image_path = master_chemical_id::text || '/' || document_sha256 || '/front-p' || physical_page || '.png'
-    and thumbnail_path = master_chemical_id::text || '/' || document_sha256 || '/thumb-p' || physical_page || '.webp')
+    (approved_at is not null and approved_by is not null and approval_reason is not null
+      and length(btrim(approval_reason)) >= 8))
 );
-create index if not exists master_chemical_media_current_idx
-  on public.master_chemical_media(master_chemical_id, approved_at desc) where approved_at is not null;
+create index if not exists master_media_reviews_current_idx
+  on public.master_chemical_media_reviews(media_id, approved_at desc) where approved_at is not null;
 alter table public.master_chemical_media enable row level security;
-revoke all on public.master_chemical_media from public, anon, authenticated;
-grant select on public.master_chemical_media to authenticated;
+alter table public.master_chemical_media_reviews enable row level security;
+revoke all on public.master_chemical_media, public.master_chemical_media_reviews from public, anon, authenticated;
+grant select on public.master_chemical_media, public.master_chemical_media_reviews to authenticated;
 drop policy if exists master_chemical_media_admin_read on public.master_chemical_media;
 create policy master_chemical_media_admin_read on public.master_chemical_media
   for select to authenticated using (public.is_system_admin());
+drop policy if exists master_chemical_media_reviews_admin_read on public.master_chemical_media_reviews;
+create policy master_chemical_media_reviews_admin_read on public.master_chemical_media_reviews
+  for select to authenticated using (public.is_system_admin());
 
--- Evidence is retained in the actual stored resolver patch, not in a client claim.
+-- Matches scripts/master-chemical-backfill-v2.ts canonicalJson: recursively sorted
+-- object keys, arrays in original order, compact JSON. Numeric inputs from the
+-- resolver must use canonical JSON numeric representation; mismatches fail closed.
+create or replace function public.master_media_canonical_json(p_value jsonb)
+returns text language plpgsql immutable set search_path = public as $$
+declare v_text text;
+begin
+  case jsonb_typeof(p_value)
+    when 'object' then
+      select '{' || coalesce(string_agg(to_jsonb(key)::text || ':' ||
+        public.master_media_canonical_json(value), ',' order by key collate "C"), '') || '}'
+        into v_text from jsonb_each(p_value);
+    when 'array' then
+      select '[' || coalesce(string_agg(public.master_media_canonical_json(value), ',' order by ord), '') || ']'
+        into v_text from jsonb_array_elements(p_value) with ordinality as a(value, ord);
+    else v_text := p_value::text;
+  end case;
+  return v_text;
+end; $$;
+revoke all on function public.master_media_canonical_json(jsonb) from public, anon, authenticated;
+
 create or replace function public.master_media_matches_current(d public.master_chemical_media)
 returns boolean language sql stable security definer set search_path = public as $$
-  select d.approved_at is not null and m.review_status = 'approved'
+  select m.review_status = 'approved'
     and m.registration_identity_key = d.registration_identity_key
     and m.label_version is not distinct from d.document_version
     and d.document_sha256 = (
       select s->'reviewed_visual_declaration'->>'document_sha256'
       from jsonb_array_elements(coalesce(m.verification_sources, '[]'::jsonb)) s
       where s ? 'reviewed_visual_declaration'
-      order by s->'reviewed_visual_declaration'->>'reviewed_at' desc limit 1
-    )
+      order by s->'reviewed_visual_declaration'->>'reviewed_at' desc limit 1)
     and exists (
       select 1 from jsonb_array_elements(coalesce(m.verification_sources, '[]'::jsonb)) s
       where s->'reviewed_visual_declaration'->>'document_sha256' = d.document_sha256
         and s->'reviewed_visual_declaration'->>'source_url' = d.source_url
         and (s->'reviewed_visual_declaration'->>'physical_page')::integer = d.physical_page
-        and s->'reviewed_visual_declaration'->>'document_version' is not distinct from d.document_version
-    )
+        and s->'reviewed_visual_declaration'->>'document_version' is not distinct from d.document_version)
+    and exists (select 1 from public.master_chemical_media_reviews r
+      join public.master_chemical_review_actions a on a.preview_id = r.preview_id
+        and a.master_chemical_id = r.master_chemical_id and a.action = 'refresh_apply'
+      where r.media_id = d.id and r.master_chemical_id = d.master_chemical_id
+        and r.approved_at is not null and a.result_revision <= m.catalogue_version
+        and r.preview_id = (
+          select latest.preview_id from public.master_chemical_review_actions latest
+          where latest.master_chemical_id = d.master_chemical_id and latest.action = 'refresh_apply'
+            and exists (select 1 from jsonb_array_elements(coalesce(latest.patch->'verification_sources', '[]'::jsonb)) s
+              where s->'reviewed_visual_declaration'->>'document_sha256' = d.document_sha256)
+          order by latest.performed_at desc, latest.id desc limit 1))
   from public.master_chemicals m where m.id = d.master_chemical_id;
 $$;
 revoke all on function public.master_media_matches_current(public.master_chemical_media) from public, anon;
 grant execute on function public.master_media_matches_current(public.master_chemical_media) to authenticated;
 
--- Security definer bypasses the admin-only row policy without exposing private provenance.
 create or replace function public.master_media_can_read_object(p_path text)
 returns boolean language sql stable security definer set search_path = public as $$
   select auth.uid() is not null and exists (
     select 1 from public.master_chemical_media d
     where p_path in (d.pdf_path, d.full_image_path, d.thumbnail_path)
-      and public.master_media_matches_current(d)
-  );
+      and public.master_media_matches_current(d));
 $$;
 revoke all on function public.master_media_can_read_object(text) from public, anon;
 grant execute on function public.master_media_can_read_object(text) to authenticated;
 
--- Object ACL protects pending PDFs and cover images, even if a path leaks.
+-- Restrictive policies close the bucket even if another permissive storage policy exists.
 drop policy if exists master_chemical_media_object_read on storage.objects;
 create policy master_chemical_media_object_read on storage.objects for select to authenticated
 using (bucket_id = 'master-chemical-media' and
@@ -91,12 +128,30 @@ drop policy if exists master_chemical_media_object_insert on storage.objects;
 create policy master_chemical_media_object_insert on storage.objects for insert to authenticated
 with check (bucket_id = 'master-chemical-media' and public.is_system_admin()
   and name ~ '^[0-9a-f-]{36}/[0-9a-f]{64}/(label\.pdf|front-p[1-9][0-9]*\.png|thumb-p[1-9][0-9]*\.webp)$');
--- No update/upsert or delete grants: object paths are immutable version keys.
+drop policy if exists master_chemical_media_read_guard on storage.objects;
+create policy master_chemical_media_read_guard on storage.objects as restrictive for select to authenticated
+using (bucket_id <> 'master-chemical-media' or public.is_system_admin() or public.master_media_can_read_object(name));
+drop policy if exists master_chemical_media_insert_guard on storage.objects;
+create policy master_chemical_media_insert_guard on storage.objects as restrictive for insert to authenticated
+with check (bucket_id <> 'master-chemical-media' or (public.is_system_admin()
+  and name ~ '^[0-9a-f-]{36}/[0-9a-f]{64}/(label\.pdf|front-p[1-9][0-9]*\.png|thumb-p[1-9][0-9]*\.webp)$'));
+drop policy if exists master_chemical_media_anon_read_guard on storage.objects;
+create policy master_chemical_media_anon_read_guard on storage.objects as restrictive for select to anon
+using (bucket_id <> 'master-chemical-media');
+drop policy if exists master_chemical_media_anon_write_guard on storage.objects;
+create policy master_chemical_media_anon_write_guard on storage.objects as restrictive for all to anon
+using (bucket_id <> 'master-chemical-media') with check (bucket_id <> 'master-chemical-media');
+drop policy if exists master_chemical_media_no_update on storage.objects;
+create policy master_chemical_media_no_update on storage.objects as restrictive for update to authenticated
+using (bucket_id <> 'master-chemical-media') with check (bucket_id <> 'master-chemical-media');
+drop policy if exists master_chemical_media_no_delete on storage.objects;
+create policy master_chemical_media_no_delete on storage.objects as restrictive for delete to authenticated
+using (bucket_id <> 'master-chemical-media');
 
 create or replace function public.stage_master_chemical_media(
   p_master_id uuid, p_preview_id uuid, p_patch_sha256 text,
   p_document_sha256 text, p_source_url text, p_document_version text, p_physical_page integer
-) returns uuid language plpgsql security definer set search_path = public as $$
+) returns uuid language plpgsql security definer set search_path = public, extensions as $$
 declare
   v_master public.master_chemicals%rowtype;
   v_preview public.master_review_previews%rowtype;
@@ -110,8 +165,10 @@ begin
   select * into strict v_preview from public.master_review_previews where id = p_preview_id and master_chemical_id = p_master_id;
   if v_preview.requested_by <> auth.uid() or v_preview.consumed_at is not null
      or v_preview.expires_at <= now() or v_preview.base_revision <> v_master.catalogue_version
-     or p_patch_sha256 !~ '^[0-9a-f]{64}$' or p_document_sha256 !~ '^[0-9a-f]{64}$'
-     or p_source_url !~ '^https://' or p_physical_page < 1 then
+     or p_patch_sha256 is null or p_patch_sha256 !~ '^[0-9a-f]{64}$'
+     or p_patch_sha256 <> encode(digest(public.master_media_canonical_json(v_preview.proposed_patch), 'sha256'), 'hex')
+     or p_document_sha256 is null or p_document_sha256 !~ '^[0-9a-f]{64}$'
+     or p_source_url is null or p_source_url !~ '^https://' or p_physical_page is null or p_physical_page < 1 then
     raise exception 'pending_preview_or_identity_mismatch' using errcode = '55000';
   end if;
   select s->'reviewed_visual_declaration' into v_declaration
@@ -130,44 +187,59 @@ begin
     raise exception 'media_objects_missing' using errcode = '22023';
   end if;
   select * into v_existing from public.master_chemical_media
-    where master_chemical_id = p_master_id and document_sha256 = p_document_sha256;
+    where master_chemical_id = p_master_id and document_sha256 = p_document_sha256 for update;
   if found then
-    if v_existing.preview_id <> p_preview_id or v_existing.preview_patch_sha256 <> p_patch_sha256
-       or v_existing.physical_page <> p_physical_page
+    if v_existing.physical_page <> p_physical_page
        or v_existing.registration_identity_key <> v_master.registration_identity_key
        or v_existing.source_url <> p_source_url
        or v_existing.document_version is distinct from p_document_version then
-      raise exception 'document_version_already_staged_for_other_review' using errcode = '55000';
+      raise exception 'document_version_identity_conflict' using errcode = '55000';
     end if;
-    return v_existing.id;
+    v_id := v_existing.id;
+  else
+    insert into public.master_chemical_media (master_chemical_id, registration_identity_key,
+      document_sha256, source_url, document_version, physical_page, pdf_path, full_image_path, thumbnail_path)
+    values (p_master_id, v_master.registration_identity_key, p_document_sha256, p_source_url,
+      p_document_version, p_physical_page, v_base || 'label.pdf',
+      v_base || 'front-p' || p_physical_page || '.png', v_base || 'thumb-p' || p_physical_page || '.webp')
+    returning id into v_id;
   end if;
-  insert into public.master_chemical_media (master_chemical_id, registration_identity_key,
-    document_sha256, source_url, document_version, physical_page, pdf_path, full_image_path,
-    thumbnail_path, preview_id, preview_patch_sha256, cover_confirmed_by, cover_confirmed_at)
-  values (p_master_id, v_master.registration_identity_key, p_document_sha256, p_source_url,
-    p_document_version, p_physical_page, v_base || 'label.pdf',
-    v_base || 'front-p' || p_physical_page || '.png',
-    v_base || 'thumb-p' || p_physical_page || '.webp', p_preview_id, p_patch_sha256,
-    auth.uid(), (v_declaration->>'reviewed_at')::timestamptz) returning id into v_id;
+  insert into public.master_chemical_media_reviews (media_id, master_chemical_id, preview_id,
+    preview_patch_sha256, cover_confirmed_by, cover_confirmed_at)
+  values (v_id, p_master_id, p_preview_id, p_patch_sha256, auth.uid(),
+    (v_declaration->>'reviewed_at')::timestamptz)
+  on conflict (preview_id) do nothing;
+  if not exists (select 1 from public.master_chemical_media_reviews
+    where preview_id = p_preview_id and media_id = v_id and master_chemical_id = p_master_id
+      and preview_patch_sha256 = p_patch_sha256 and cover_confirmed_by = auth.uid()) then
+    raise exception 'preview_association_conflict' using errcode = '55000';
+  end if;
   return v_id;
 end; $$;
 revoke all on function public.stage_master_chemical_media(uuid,uuid,text,text,text,text,integer) from public, anon;
 grant execute on function public.stage_master_chemical_media(uuid,uuid,text,text,text,text,integer) to authenticated;
 
--- Separate decision: this does NOT call master_review_apply or approve a candidate Master row.
+-- Approval authorises precisely one review association; no approval is inherited by
+-- a replacement preview using the same immutable document bytes.
 create or replace function public.approve_master_chemical_media(
-  p_media_id uuid, p_expected_revision integer, p_reason text
-) returns uuid language plpgsql security definer set search_path = public as $$
-declare v_media public.master_chemical_media%rowtype; v_master public.master_chemicals%rowtype;
+  p_media_id uuid, p_preview_id uuid, p_expected_revision integer, p_reason text
+) returns uuid language plpgsql security definer set search_path = public, extensions as $$
+declare v_media public.master_chemical_media%rowtype;
+  v_review public.master_chemical_media_reviews%rowtype;
+  v_master public.master_chemicals%rowtype;
 begin
   if not public.is_system_admin() then raise exception 'not_authorised' using errcode = '42501'; end if;
   if length(btrim(coalesce(p_reason, ''))) < 8 then raise exception 'reason_required' using errcode = '22023'; end if;
   select * into strict v_media from public.master_chemical_media where id = p_media_id for update;
+  select * into strict v_review from public.master_chemical_media_reviews
+    where media_id = p_media_id and preview_id = p_preview_id for update;
   select * into strict v_master from public.master_chemicals where id = v_media.master_chemical_id for update;
-  if v_master.catalogue_version <> p_expected_revision or v_master.review_status <> 'approved'
+  if v_review.master_chemical_id <> v_master.id or v_master.catalogue_version <> p_expected_revision
+     or v_master.review_status <> 'approved'
      or not exists (select 1 from public.master_chemical_review_actions a
-       where a.preview_id = v_media.preview_id and a.master_chemical_id = v_media.master_chemical_id
-         and a.action = 'refresh_apply' and a.result_revision <= p_expected_revision)
+       where a.preview_id = v_review.preview_id and a.master_chemical_id = v_master.id
+         and a.action = 'refresh_apply' and a.result_revision <= p_expected_revision
+         and encode(digest(public.master_media_canonical_json(a.patch), 'sha256'), 'hex') = v_review.preview_patch_sha256)
      or v_master.registration_identity_key <> v_media.registration_identity_key
      or v_master.label_version is distinct from v_media.document_version
      or not exists (select 1 from jsonb_array_elements(coalesce(v_master.verification_sources, '[]'::jsonb)) s
@@ -182,28 +254,25 @@ begin
     where s ? 'reviewed_visual_declaration'
     order by s->'reviewed_visual_declaration'->>'reviewed_at' desc limit 1
   ) then raise exception 'newer_document_requires_review' using errcode = '55000'; end if;
-  if v_media.approved_at is null then
-    update public.master_chemical_media set approved_at = now(), approved_by = auth.uid(), approval_reason = btrim(p_reason)
-      where id = p_media_id;
+  if v_review.approved_at is null then
+    update public.master_chemical_media_reviews set approved_at = now(), approved_by = auth.uid(), approval_reason = btrim(p_reason)
+      where id = v_review.id;
   end if;
   return p_media_id;
 end; $$;
-revoke all on function public.approve_master_chemical_media(uuid,integer,text) from public, anon;
-grant execute on function public.approve_master_chemical_media(uuid,integer,text) to authenticated;
+revoke all on function public.approve_master_chemical_media(uuid,uuid,integer,text) from public, anon;
+grant execute on function public.approve_master_chemical_media(uuid,uuid,integer,text) to authenticated;
 
--- Same small public projection for Portal, iOS and Android. No reviewer or diagnostics.
 create or replace function public.get_approved_chemical_media(p_master_ids uuid[])
 returns table (master_chemical_id uuid, registration_identity_key text, document_sha256 text,
   source_url text, document_version text, physical_page integer, pdf_path text,
   full_image_path text, thumbnail_path text)
 language sql stable security definer set search_path = public as $$
-  select distinct on (d.master_chemical_id) d.master_chemical_id, d.registration_identity_key,
-    d.document_sha256, d.source_url, d.document_version, d.physical_page,
-    d.pdf_path, d.full_image_path, d.thumbnail_path
+  select d.master_chemical_id, d.registration_identity_key, d.document_sha256,
+    d.source_url, d.document_version, d.physical_page, d.pdf_path, d.full_image_path, d.thumbnail_path
   from public.master_chemical_media d
   where auth.uid() is not null and d.master_chemical_id = any(p_master_ids[1:100])
-    and public.master_media_matches_current(d)
-  order by d.master_chemical_id, d.approved_at desc;
+    and public.master_media_matches_current(d);
 $$;
 revoke all on function public.get_approved_chemical_media(uuid[]) from public, anon;
 grant execute on function public.get_approved_chemical_media(uuid[]) to authenticated;

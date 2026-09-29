@@ -129,6 +129,20 @@ Deno.test("range rates are preserved on both bases", () => {
   assertEquals(area[0].max_value, 2);
 });
 
+Deno.test("Weedmaster Phalaris mixed-unit handgun range is one bounded /100 L rate", () => {
+  const raw = "500 mL-1 L/100L";
+  const rates = parseRateCell(raw);
+  assertEquals(rates.length, 1);
+  assertEquals(rates[0].basis, "range_per_100_litres");
+  assertEquals(rates[0].min_value, 500);
+  assertEquals(rates[0].max_value, 1000);
+  assertEquals(rates[0].unit, "mL");
+  assertEquals(rates[0].raw_text, raw);
+  assertEquals(rates[0].value, undefined);
+  assertEquals(parseRateCell("500 mL-1 kg/100L")[0].basis, "other");
+  assertEquals(parseRateCell("1 L-500 mL/100L")[0].basis, "other");
+});
+
 Deno.test("a range and a single rate coexist without either being flattened", () => {
   const cell = "Dilute spraying: 35 or 54 mL/100 L Concentrate spraying: 540 mL/ha";
   const rates = parseRateCell(cell);

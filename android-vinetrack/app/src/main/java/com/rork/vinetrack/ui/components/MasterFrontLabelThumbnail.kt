@@ -45,7 +45,7 @@ fun MasterFrontLabelThumbnail(media: MasterFrontLabel?, modifier: Modifier = Mod
         thumb = null
         val path = media?.thumbnailPath ?: return@LaunchedEffect
         thumb = imageCache.get(path) ?: runCatching {
-            MasterFrontLabelRepository().image(path)?.let { bytes ->
+            MasterFrontLabelRepository().image(path, thumbnail = true)?.let { bytes ->
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.also {
                     imageCache.put(path, it)
                 }
@@ -74,7 +74,7 @@ fun MasterFrontLabelThumbnail(media: MasterFrontLabel?, modifier: Modifier = Mod
                     if (full != null) Image(bitmap = full!!.asImageBitmap(), contentDescription = "Full confirmed front label",
                         modifier = Modifier.height(320.dp), contentScale = ContentScale.Fit)
                     else Text("Image unavailable. The chemical is still available.")
-                    Text("Identification aid only — check the complete label for directions.")
+                    Text("Identification aid only. Offline copies reflect the last approved version seen on this device; check the complete label for current directions.")
                     Text("${media.registrationIdentityKey} · ${media.documentVersion.orEmpty()}")
                     TextButton(onClick = { runCatching { uriHandler.openUri(media.sourceUrl) } }) { Text("View Full Label") }
                 }
