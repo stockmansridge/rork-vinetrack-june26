@@ -79,3 +79,51 @@ Deno.test("documented lead requires locked product and cannot turn arbitrary man
   assertEquals(substituted.manufacturerLabel, null);
   assertEquals(calls, 0);
 });
+
+Deno.test("recognised manufacturer label endpoints without PDF suffix reach PDF-byte and identity checks", async () => {
+  const wrongPdf = await Deno.readFile(new URL("./chlorostar_leaflet_fixture.pdf", import.meta.url));
+  for (const endpoint of ["getlabel", "viewlabel"]) {
+    const url = `https://nufarm.com/au/${endpoint}?product=weedmaster-duo`;
+    assertEquals(classifyUrl(url, "AU").kind, "label_document");
+    const requests: string[] = [];
+    const result = await selectAndFetchManufacturerLead({
+      deps: { now: () => new Date(), fetchFn: ((requested: string | URL | Request) => {
+        requests.push(String(requested));
+        return Promise.resolve(new Response(wrongPdf, { status: 200, headers: { "content-type": "application/pdf" } }));
+      }) as typeof fetch },
+      country: "AU", registrant: "Nufarm", registeredProductName: "Weedmaster DUO Herbicide",
+      registrationNumber: "53576", activeNames: ["Glyphosate"], productPageUrl: WEEDMASTER_PRODUCT_PAGE,
+      linkedLabel: null, directCandidate: url, storedLabelUrls: [], documentedLead: null, regulatorUses: [],
+    });
+    assertEquals(result.candidateRejection, null);
+    assertEquals(result.directLabel, url);
+    assertEquals(requests, [url]);
+    assertEquals(result.enrichment?.diagnostics.manufacturer_label_fetch_outcome, "fetched");
+    assertEquals(result.enrichment?.diagnostics.manufacturer_label_extract, "failure");
+    assertEquals(result.enrichment?.fetchedUrl, null);
+    assertEquals(result.enrichment?.uses, []);
+  }
+});
+
+Deno.test("no candidates select no documented lead and never fetch", async () => {
+  let calls = 0;
+  const result = await selectAndFetchManufacturerLead({
+    deps: { now: () => new Date(), fetchFn: (() => { calls++; throw new Error("must not fetch"); }) as typeof fetch },
+    country: "AU", registrant: "Nufarm", registeredProductName: "Weedmaster DUO Herbicide",
+    registrationNumber: "53576", productPageUrl: WEEDMASTER_PRODUCT_PAGE,
+    linkedLabel: null, directCandidate: null, storedLabelUrls: [], documentedLead: null, regulatorUses: [],
+  });
+  assertEquals(result.directLabel, null);
+  assertEquals(result.manufacturerLabel, null);
+  assertEquals(result.enrichment, null);
+  assertEquals(result.documented, { lead: null, eligible: false, rejection: null, selected: false });
+  const diagnostic = privatePageFetchDiagnostic([], result.directLabel, false, "no_eligible_manufacturer_pdf_lead",
+    "search_no_candidate", { lead: result.documented.lead, eligible: result.documented.eligible,
+      rejection: result.documented.rejection, selected: result.documented.selected,
+      fetchOutcome: null, fetchHttpStatus: null, extractOutcome: null, identityMismatch: false });
+  assertEquals(diagnostic.documented_lead && (diagnostic.documented_lead as Record<string, unknown>).considered, false);
+  assertEquals(diagnostic.documented_lead && (diagnostic.documented_lead as Record<string, unknown>).eligible, false);
+  assertEquals(diagnostic.documented_lead && (diagnostic.documented_lead as Record<string, unknown>).selected, false);
+  assertEquals(diagnostic.documented_lead && (diagnostic.documented_lead as Record<string, unknown>).fetch_started, false);
+  assertEquals(calls, 0);
+});

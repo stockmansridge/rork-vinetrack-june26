@@ -20,8 +20,9 @@ export function documentedWeedmasterLead(input: {
 }
 
 function leadEligibility(url: string, country: string, registrant: string,
-  documented: boolean, productPageUrl: string | null): Rejection | null {
-  if (!url.startsWith("https://") || !new URL(url).pathname.toLowerCase().endsWith(".pdf")) return "not_https_pdf";
+  documented: boolean, productPageUrl: string | null, storedPdf = false): Rejection | null {
+  if (!url.startsWith("https://")) return "not_https_pdf";
+  if ((documented || storedPdf) && !new URL(url).pathname.toLowerCase().endsWith(".pdf")) return "not_https_pdf";
   if (!manufacturerHostEligible(url, country, registrant)) return "host_not_verified";
   const kind = classifyUrl(url, country).kind;
   if (kind === "safety_data_sheet" || /(?:^|[/_.-])(?:sds|msds|brochure|technical[-_ ]?data|tds)(?:[/_.-]|$)/i.test(new URL(url).pathname))
@@ -31,6 +32,7 @@ function leadEligibility(url: string, country: string, registrant: string,
       !manufacturerHostEligible(productPageUrl, country, registrant)) return "product_relationship_unverified";
     return null; // The observed link text, not the filename, identifies this document as a label lead.
   }
+  if (storedPdf) return null;
   if (classifyUrl(url, country).trust !== "registrant") return "host_not_verified";
   return kind === "label_document" ? null : "document_kind_unrecognised";
 }
@@ -56,10 +58,10 @@ export async function selectAndFetchManufacturerLead(input: {
     ? leadEligibility(input.documentedLead, country, registrant, true, productPageUrl) : null;
   const candidate = input.directCandidate;
   const stored = !!candidate && input.storedLabelUrls.includes(candidate);
-  const candidateRejection = candidate && stored && candidate.startsWith("https://") &&
-    new URL(candidate).pathname.toLowerCase().endsWith(".pdf") && manufacturerHostEligible(candidate, country, registrant) &&
-    classifyUrl(candidate, country).kind !== "safety_data_sheet" ? null :
-    candidate ? leadEligibility(candidate, country, registrant, false, productPageUrl) : null;
+  const candidateRejection = candidate
+    ? leadEligibility(candidate, country, registrant, false, productPageUrl,
+      stored && candidate.startsWith("https://") && new URL(candidate).pathname.toLowerCase().endsWith(".pdf"))
+    : null;
   const directLabel = candidate && !candidateRejection ? candidate :
     input.documentedLead && !documentedRejection ? input.documentedLead : null;
   const manufacturerLabel = input.linkedLabel ?? directLabel;
@@ -73,7 +75,7 @@ export async function selectAndFetchManufacturerLead(input: {
   }) : null;
   return { directLabel, manufacturerLabel, labelSource, enrichment,
     documented: { lead: input.documentedLead, eligible: !!input.documentedLead && !documentedRejection,
-      rejection: documentedRejection, selected: manufacturerLabel === input.documentedLead },
+      rejection: documentedRejection, selected: !!input.documentedLead && manufacturerLabel === input.documentedLead },
     candidateRejection,
   };
 }
