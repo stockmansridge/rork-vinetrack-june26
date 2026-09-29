@@ -590,7 +590,8 @@ export function privatePageFetchDiagnostic(attempts: PageInspectionAttempt[], pd
   discoveryOutcome: "not_attempted" | "candidate" | "search_no_candidate" | "search_timeout" | "host_not_verified" = "not_attempted",
   documented?: { lead: string | null; eligible: boolean; rejection: string | null; selected: boolean;
     fetchOutcome: string | null; fetchHttpStatus: number | null; extractOutcome: string | null;
-    identityMismatch: boolean }): Record<string, unknown> {
+    identityMismatch: boolean; identityMatched?: boolean; pairSupplied?: boolean; verified?: boolean },
+  initialDiscoveryOutcome: "not_attempted" | "candidate" | "search_no_candidate" | "search_timeout" | "host_not_verified" = "not_attempted"): Record<string, unknown> {
   const safeUrl = (raw: string | undefined): string | null => {
     if (!raw) return null;
     try {
@@ -602,13 +603,17 @@ export function privatePageFetchDiagnostic(attempts: PageInspectionAttempt[], pd
     } catch { return null; }
   };
   return { stage: "product_page_inspection", pdf_discovery_outcome: discoveryOutcome,
+    initial_discovery_outcome: initialDiscoveryOutcome, failed_page_fallback_discovery_outcome: discoveryOutcome,
     ...(documented ? { documented_lead: { origin: "locked_product_page_download_label",
       url: safeUrl(documented.lead ?? undefined), considered: !!documented.lead,
+      locked_identity_matched: documented.identityMatched ?? false,
+      pair_supplied: documented.pairSupplied ?? false,
       eligible: documented.eligible, rejection_reason: documented.rejection,
       selected: documented.selected, fetch_started: documented.selected && !!documented.fetchOutcome &&
         !["skipped", "rejected_not_https", "rejected_untrusted_host"].includes(documented.fetchOutcome),
       fetch_outcome: documented.fetchOutcome, fetch_http_status: documented.fetchHttpStatus,
-      extract_outcome: documented.extractOutcome, identity_mismatch: documented.identityMismatch } } : {}), attempts: attempts.slice(0, MAX_PAGE_FETCH_ATTEMPTS + 1).map((attempt) => ({
+      extract_outcome: documented.extractOutcome, verified: documented.verified ?? false,
+      identity_mismatch: documented.identityMismatch } } : {}), attempts: attempts.slice(0, MAX_PAGE_FETCH_ATTEMPTS + 1).map((attempt) => ({
     attempted_url: safeUrl(attempt.url), final_url: safeUrl(attempt.finalUrl),
     outcome: attempt.outcome, http_status: attempt.httpStatus ?? null,
     error_category: attempt.errorCategory ?? null,

@@ -137,10 +137,10 @@ import { discoverUnverifiedLabel } from "./unverified_label_discovery.ts";
 import { nameCorresponds } from "./ingestion/matching.ts";
 import { labelApprovalIdentifiers, labelApprovalNumber, labelHeaderFacts, readLabelWithResearchSchema, readableV2Label, supportedWebResearch, vineyardRateSummary, vineyardTableRate, withWebEnrichment } from "./web_lookup.ts";
 import { distinctLabelDocument, finalAttemptedLabelUrl, shouldReadManufacturerIndex } from "./ingestion/manufacturer_label_index.ts";
-import { discoverManufacturerUrlsDetailed, findWebMasterIdentities, identityCandidate, identityResearch, selectedIdentity, verifiedManufacturerLead, type ManufacturerLeads, type WebIdentity } from "./web_identity.ts";
+import { discoverManufacturerUrlsDetailed, findWebMasterIdentities, identityCandidate, identityResearch, productPagesToInspect, resolveInitialManufacturerLeads, selectedIdentity, type WebIdentity } from "./web_identity.ts";
 import { alternateManufacturerLabel, companionDirectionsUrl, pageMatchesLockedProduct, requiresAttachedDirections, verifiesTradingAs } from "./ingestion/manufacturer_companion.ts";
 import { safeManufacturerFetchReason } from "./ingestion/manufacturer_document.ts";
-import { documentedWeedmasterLead, selectAndFetchManufacturerLead } from "./ingestion/documented_label_lead.ts";
+import { selectAndFetchManufacturerLead, WEEDMASTER_PRODUCT_PAGE } from "./ingestion/documented_label_lead.ts";
 import { classifyUrl, manufacturerHostEligible } from "./research/classify.ts";
 import { authoritativeBackfillDetail, buildMasterBackfillPatch, isIncompleteMaster, lockedWebIdentity, writeLookupCache } from "./ingestion/master_backfill.ts";
 import { alreadyCompleteBackfill, authorizeBackfillRequest, backfillCountry, finishBackfillPreview, markConditionalGrapeWithholding, parseBackfillRequest, readBackfillIndexedLabel, withIndexedDiagnostic } from "./ingestion/master_backfill_preview.ts";
@@ -1438,16 +1438,14 @@ Deno.serve(async (req: Request) => {
         return json({ candidates: identities.map(identityCandidate), detail: null,
           resistance_classification_state: "unresolved", enrichment_incomplete: true, timings: { search_ms: Date.now() - searchStarted, extraction_ms: 0 } });
       }
-      // Persisted verified leads win over a variable web-search result. A known
-      // page is inspected for its own label links before any generic search.
-      let leads: ManufacturerLeads | null = identity ? { productUrl: identity.pageUrls[0] ?? null,
-        labelUrl: identity.labelUrls[0] ?? verifiedManufacturerLead(identity, countryCode) } : null;
-      let discoveryReason: string = "search_no_candidate";
-      if (!leads?.productUrl && !leads?.labelUrl) {
-        const discovered = await discoverManufacturerUrlsDetailed({ identity, query: subject, country: countryCode, apiKey, fetchFn: fetch });
-        leads = discovered.leads;
-        discoveryReason = discovered.reason ?? "label_link_not_found";
-      }
+      // Stored verified URLs take precedence; the exact locked Nufarm pair is a fetch lead,
+      // not Master evidence and not a reason to spend discovery merely to find it again.
+      const initial = await resolveInitialManufacturerLeads({ identity, country: countryCode,
+        registrationIdentityKey: backfillRow?.registration_identity_key,
+        discover: () => discoverManufacturerUrlsDetailed({ identity, query: subject, country: countryCode, apiKey, fetchFn: fetch }) });
+      const leads = initial.leads;
+      const documentedLead = initial.documentedLead;
+      const discoveryReason = initial.discoveryOutcome === "not_attempted" ? "label_link_not_found" : initial.discoveryOutcome;
       if (!identity && leads?.productUrl) {
         const discoveredPage = await inspectCandidateProductPages({ fetchFn: fetch }, [leads.productUrl], countryCode);
         const page = discoveredPage.pages[0];
@@ -1469,25 +1467,25 @@ Deno.serve(async (req: Request) => {
       const result = await withWebEnrichment(candidates, searchMs, async () => {
       const detailStarted = Date.now();
       const canonicalName = research.product.canonical_name ?? subject;
-      const pageLeads = research.documents.product_page_candidates.map((d) => d.url);
+      // The documented page is origin, not a page inspected in this request. Other saved
+      // or discovered pages continue through normal inspection.
+      const pageLeads = productPagesToInspect(identity, leads, documentedLead);
       const inspected = await inspectCandidateProductPages({ fetchFn: fetch, now: () => new Date() }, pageLeads, countryCode);
       if (backfillRow && capture) privateFetchDiagnostic = privatePageFetchDiagnostic(inspected.attempts, null,
-        false, "no_eligible_manufacturer_pdf_lead");
+        false, "no_eligible_manufacturer_pdf_lead", "not_attempted", {
+          lead: documentedLead, identityMatched: initial.identityMatched, pairSupplied: !!documentedLead,
+          eligible: false, rejection: null, selected: false, fetchOutcome: null,
+          fetchHttpStatus: null, extractOutcome: null, identityMismatch: false,
+        }, initial.discoveryOutcome);
       let fallbackLabel: string | null = null;
       let fallbackDiscovery: "not_attempted" | "candidate" | "search_no_candidate" | "search_timeout" | "host_not_verified" = "not_attempted";
-      if (backfillRow && inspected.attempts.length && !inspected.pages.length && !leads?.labelUrl &&
+      if (backfillRow && !documentedLead && inspected.attempts.length && !inspected.pages.length && !leads?.labelUrl &&
           leads?.productUrl && classifyUrl(leads.productUrl, countryCode).trust === "registrant") {
         const fallback = await discoverManufacturerUrlsDetailed({ identity, query: subject, country: countryCode,
           apiKey, fetchFn: fetch, fallbackHost: new URL(leads.productUrl).hostname.replace(/^www\./, "") });
         fallbackLabel = fallback.leads?.labelUrl ?? null;
         fallbackDiscovery = fallbackLabel ? "candidate" : fallback.reason ?? "search_no_candidate";
       }
-      const documentedLead = documentedWeedmasterLead({
-        registrationIdentityKey: backfillRow?.registration_identity_key,
-        productPageUrl: leads?.productUrl ?? null,
-        pageFailed: inspected.attempts.some((attempt) => attempt.url === leads?.productUrl &&
-          attempt.httpStatus === 403) && !inspected.pages.length,
-      });
       const projection = projectResearch(research, countryCode, null, canonicalName, inspected.pages);
       const page = inspected.pages.find((p) => pageMatchesLockedProduct(canonicalName, p.pageProductName, identity.registrant) &&
         p.links.some((link) => link.url === projection.manufacturerLabelCandidate?.url)) ??
@@ -1510,7 +1508,9 @@ Deno.serve(async (req: Request) => {
         registrant: identity.registrant, registeredProductName: canonicalName,
         registrationNumber: identity.registrationNumber,
         activeNames: backfillRow?.active_ingredients.map((a) => a.name),
-        productPageUrl: leads?.productUrl ?? null, inspectedPageUrl: page?.finalUrl ?? null, linkedLabel,
+        productPageUrl: leads?.productUrl ?? null,
+        documentedProductPageUrl: documentedLead ? WEEDMASTER_PRODUCT_PAGE : null,
+        inspectedPageUrl: page?.finalUrl ?? null, linkedLabel,
         directCandidate, storedLabelUrls: backfillRow ? identity.labelUrls : [], documentedLead,
         regulatorUses: [],
       });
@@ -1520,12 +1520,18 @@ Deno.serve(async (req: Request) => {
         !!directLabel && manufacturerLabel === directLabel &&
           enrichment?.diagnostics.manufacturer_label_fetch !== "skipped",
         directLabel ? "linked_label_preferred" : selection.candidateRejection ?? "no_eligible_manufacturer_pdf_lead",
-        fallbackDiscovery, { lead: selection.documented.lead, eligible: selection.documented.eligible,
-          rejection: selection.documented.rejection, selected: selection.documented.selected,
+        fallbackDiscovery, { lead: selection.documented.lead, identityMatched: initial.identityMatched,
+          pairSupplied: !!documentedLead,
+          eligible: selection.documented.eligible, rejection: selection.documented.rejection,
+          selected: selection.documented.selected,
           fetchOutcome: selection.documented.selected ? enrichment?.diagnostics.manufacturer_label_fetch_outcome ?? null : null,
           fetchHttpStatus: selection.documented.selected ? enrichment?.diagnostics.manufacturer_label_http_status ?? null : null,
           extractOutcome: selection.documented.selected ? enrichment?.diagnostics.manufacturer_label_extract ?? null : null,
-          identityMismatch: selection.documented.selected ? enrichment?.diagnostics.identity_mismatch === true : false });
+          verified: selection.documented.selected && !!readableV2Label(enrichment) &&
+            (!enrichment?.labelText || !labelApprovalIdentifiers(enrichment.labelText, countryCode).numbers.length ||
+              labelApprovalIdentifiers(enrichment.labelText, countryCode).numbers.includes(backfillRow.registration_number)),
+          identityMismatch: selection.documented.selected ? enrichment?.diagnostics.identity_mismatch === true : false },
+        initial.discoveryOutcome);
       const originalAccessStatus = enrichment?.diagnostics.manufacturer_label_fetch === "failure"
         ? enrichment.diagnostics.manufacturer_label_http_status : null;
       // A failed direct PDF gets one different, page-linked label attempt; never retry the same URL.
@@ -1533,7 +1539,7 @@ Deno.serve(async (req: Request) => {
         identity.registrant, manufacturerLabel ?? "");
       let replacementLabel = alternateLabel;
       let searchedDirectReplacement = false;
-      if (backfillRow && enrichment?.diagnostics.manufacturer_label_fetch === "failure" &&
+      if (backfillRow && !selection.documented.selected && enrichment?.diagnostics.manufacturer_label_fetch === "failure" &&
           !replacementLabel && !page && directLabel && manufacturerLabel === directLabel &&
           classifyUrl(directLabel, countryCode).trust === "registrant") {
         const fallback = await discoverManufacturerUrlsDetailed({ identity, query: subject, country: countryCode,

@@ -9,14 +9,18 @@ export const WEEDMASTER_PRODUCT_PAGE = "https://nufarm.com/au/product/weedmaster
 type Rejection = "not_https_pdf" | "host_not_verified" | "excluded_document_kind" |
   "document_kind_unrecognised" | "product_relationship_unverified";
 
-/** Keep documented origin separate from generic search results and their classification. */
+/** An exact, locked Master identity may supply this observed pair as a lead, never as verified evidence. */
 export function documentedWeedmasterLead(input: {
   registrationIdentityKey?: string | null;
-  productPageUrl: string | null;
-  pageFailed: boolean;
+  country: string;
+  registrationNumber: string | null;
+  registeredProductName: string;
+  registrant: string;
 }): string | null {
-  return input.registrationIdentityKey === "AU:apvma:53576" &&
-    input.productPageUrl === WEEDMASTER_PRODUCT_PAGE && input.pageFailed ? WEEDMASTER_LABEL_LEAD : null;
+  return input.registrationIdentityKey === "AU:apvma:53576" && input.country === "AU" &&
+    input.registrationNumber === "53576" &&
+    input.registeredProductName === "Nufarm Weedmaster DUO Herbicide" &&
+    input.registrant === "NUFARM AUSTRALIA LIMITED" ? WEEDMASTER_LABEL_LEAD : null;
 }
 
 function leadEligibility(url: string, country: string, registrant: string,
@@ -46,6 +50,7 @@ export async function selectAndFetchManufacturerLead(input: {
   registrationNumber: string | null;
   activeNames?: string[];
   productPageUrl: string | null;
+  documentedProductPageUrl?: string | null;
   inspectedPageUrl?: string | null;
   linkedLabel: string | null;
   directCandidate: string | null;
@@ -55,7 +60,8 @@ export async function selectAndFetchManufacturerLead(input: {
 }) {
   const { country, registrant, productPageUrl } = input;
   const documentedRejection = input.documentedLead
-    ? leadEligibility(input.documentedLead, country, registrant, true, productPageUrl) : null;
+    ? leadEligibility(input.documentedLead, country, registrant, true,
+      input.documentedProductPageUrl ?? productPageUrl) : null;
   const candidate = input.directCandidate;
   const stored = !!candidate && input.storedLabelUrls.includes(candidate);
   const candidateRejection = candidate
@@ -66,7 +72,7 @@ export async function selectAndFetchManufacturerLead(input: {
     input.documentedLead && !documentedRejection ? input.documentedLead : null;
   const manufacturerLabel = input.linkedLabel ?? directLabel;
   const labelSource = input.linkedLabel ? input.inspectedPageUrl ?? productPageUrl : directLabel === input.documentedLead
-    ? productPageUrl : directLabel === candidate && productPageUrl ? productPageUrl : directLabel;
+    ? input.documentedProductPageUrl ?? productPageUrl : directLabel === candidate && productPageUrl ? productPageUrl : directLabel;
   const enrichment = manufacturerLabel && labelSource ? await enrichFromManufacturerLabel({
     deps: input.deps, manufacturerLabelUrl: manufacturerLabel, sourcePageUrl: labelSource,
     regulatorUses: input.regulatorUses, registeredProductName: input.registeredProductName,

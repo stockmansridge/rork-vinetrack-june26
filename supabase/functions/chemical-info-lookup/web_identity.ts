@@ -1,5 +1,6 @@
 import { classifyUrl, hostOf, manufacturerHostEligible } from "./research/classify.ts";
 import { nameCorresponds } from "./ingestion/matching.ts";
+import { documentedWeedmasterLead, WEEDMASTER_PRODUCT_PAGE } from "./ingestion/documented_label_lead.ts";
 import type { WebCandidate } from "./web_lookup.ts";
 import type { ChemicalResearchResult } from "./research/schema.ts";
 import { DEFAULT_RESEARCH_MODEL, OPENAI_RESPONSES_URL } from "./research/responses_client.ts";
@@ -104,6 +105,38 @@ export function identityResearch(identity: WebIdentity, query: string, country: 
 }
 
 export interface ManufacturerLeads { productUrl: string | null; labelUrl: string | null }
+
+/** Resolve locked, product-bound leads before spending a discovery request; the documented URL remains unverified. */
+export async function resolveInitialManufacturerLeads(input: {
+  identity: WebIdentity | null; country: string; registrationIdentityKey?: string | null;
+  discover: () => Promise<ManufacturerDiscovery>;
+}): Promise<{ leads: ManufacturerLeads | null; documentedLead: string | null;
+  identityMatched: boolean; discoveryOutcome: "not_attempted" | "candidate" | ManufacturerDiscoveryReason }> {
+  const { identity, country } = input;
+  const documentedLead = identity ? documentedWeedmasterLead({
+    registrationIdentityKey: input.registrationIdentityKey, country,
+    registrationNumber: identity.registrationNumber, registeredProductName: identity.name,
+    registrant: identity.registrant,
+  }) : null;
+  const leads: ManufacturerLeads | null = identity ? {
+    productUrl: identity.pageUrls[0] ?? (documentedLead ? WEEDMASTER_PRODUCT_PAGE : null),
+    labelUrl: identity.labelUrls[0] ?? verifiedManufacturerLead(identity, country),
+  } : null;
+  if (leads?.productUrl || leads?.labelUrl) return {
+    leads, documentedLead, identityMatched: !!documentedLead, discoveryOutcome: "not_attempted",
+  };
+  const discovered = await input.discover();
+  return { leads: discovered.leads, documentedLead, identityMatched: !!documentedLead,
+    discoveryOutcome: discovered.leads ? "candidate" : discovered.reason ?? "search_no_candidate" };
+}
+
+/** An observed page used only as document origin is not a page fetched in this request. */
+export function productPagesToInspect(identity: WebIdentity, leads: ManufacturerLeads | null,
+  documentedLead: string | null): string[] {
+  const url = leads?.productUrl;
+  return url && (!documentedLead || url !== WEEDMASTER_PRODUCT_PAGE || identity.pageUrls.includes(url)) ? [url] : [];
+}
+
 export type ManufacturerDiscoveryReason = "search_no_candidate" | "search_timeout" | "host_not_verified";
 export interface ManufacturerDiscovery { leads: ManufacturerLeads | null; reason: ManufacturerDiscoveryReason | null }
 const URL_DISCOVERY_TIMEOUT_MS = 12_000;
