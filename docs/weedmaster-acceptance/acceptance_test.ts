@@ -85,9 +85,10 @@ Deno.test("actual PDF: hypothetical signed review travels through production lea
   assertEquals(report.status, "preview_ready", JSON.stringify(report.evidence));
   // Assert the FINAL serialised review payload, not merely parser fragments.
   const serialised = JSON.parse(JSON.stringify(report.proposed_patch)) as {
-    registered_uses: Array<{ target_raw: string; restrictions: string; conditions: string; direction_id: string;
+    registered_uses: Array<{ target_raw: string; restrictions: string; conditions: string; direction_id: string; source_refs: string[];
       withholding_statement: string; re_entry_period_hours: number | null;
-      rates: Array<{ label: string; basis: string; raw_text: string; rate_id: string; source_refs: string[] }> }>;
+      rates: Array<{ label: string; basis: string; value: number | null; min_value: number | null;
+        max_value: number | null; unit: string; raw_text: string; rate_id: string; source_refs: string[] }> }>;
     verification_unresolved_fields: string[];
   };
   const expectedRestraints = [
@@ -143,19 +144,98 @@ Deno.test("actual PDF: hypothetical signed review travels through production lea
   }
   const rates = report.proposed_patch.viticulture_rates as { per_hectare: Array<Record<string, unknown>>; per_100_litres: Array<Record<string, unknown>> };
   assert(rates.per_hectare.length > 0 && rates.per_100_litres.length > 0);
+  const phalaris = lookup("Phalaris");
+  assert(phalaris);
+  const handgun = phalaris.rates.filter((rate) => rate.label === "Handgun");
+  assertEquals(handgun.length, 1);
+  const flat = rates.per_100_litres.filter((rate) =>
+    (rate.source_refs as string[])?.some((ref) => ref.endsWith(", Phalaris")));
+  assertEquals(flat.length, 1);
+  const expectedRate = { label: "Handgun", basis: "range_per_100_litres", value: null,
+    min_value: 500, max_value: 1000, unit: "mL", raw_text: "500 mL-1 L/100L",
+    rate_id: "rate_v1_4efec198ead373a3286939ced245fadf" };
+  for (const rate of [handgun[0], flat[0]]) {
+    for (const [key, value] of Object.entries(expectedRate))
+      assertEquals((rate as Record<string, unknown>)[key], value, `Phalaris ${key}`);
+    assertEquals(rate.source_refs, phalaris.source_refs);
+  }
+  assertEquals(phalaris.direction_id, "direction_v1_1363f3205ca7b639cd5f970a03d91785");
+  assertEquals(rates.per_100_litres.filter((rate) =>
+    (rate.source_refs as string[])?.some((ref) => ref.endsWith(", Phalaris"))).length, 1);
+  assert(rates.per_hectare.concat(rates.per_100_litres).every((rate) =>
+    ["per_hectare", "range_per_hectare", "per_100_litres", "range_per_100_litres"].includes(String(rate.basis))));
+  assert(!rates.per_hectare.concat(rates.per_100_litres).some((rate) =>
+    ["Knapsack", "Wiper"].includes(String(rate.label))));
   assert(uses.some((use) => use.crop === "Vineyards" && String(use.source_refs?.[0]).includes("Table 3")));
   assert(uses.every((use) => !String(use.restrictions).includes("Tea: Apply a maximum")));
   assertEquals((report.proposed_patch.verification_sources as Array<Record<string, unknown>>)[0].reviewed_visual_declaration, attested);
   assertEquals(report.preview_id, null);
   assertEquals(JSON.stringify(row), before);
   const exportPath = new URL("./synthetic_review_simulation.json", import.meta.url);
-  if (Deno.permissions.querySync({ name: "write", path: exportPath }).state === "granted")
-    await Deno.writeTextFile(exportPath, JSON.stringify({
-      WARNING: "Test-only synthetic reviewer. NOT an actual review, production preview, or approved Master patch.",
-      master_row_source: "locally reconstructed locked row; not a fresh DB read",
-      document_sha256: sha, unresolved: binding.unresolved, reconciliation: binding.reconciliation,
-      report, proposed_patch: report.proposed_patch, preview_storage_disabled: true, master_unchanged: true,
-    }, null, 2));
+  const baselineCommand = new Deno.Command("git", { args: ["show", "8d1fd4ab256c8699126c0e4f9ca3252a68ada1a9:docs/weedmaster-acceptance/synthetic_review_simulation.json"] });
+  const baselineOutput = await baselineCommand.output();
+  assert(baselineOutput.success, "prior committed acceptance output unavailable");
+  const baseline = JSON.parse(new TextDecoder().decode(baselineOutput.stdout)) as Record<string, unknown>;
+  const refreshed: Record<string, unknown> = {
+    WARNING: "Test-only synthetic reviewer. NOT an actual review, production preview, or approved Master patch.",
+    master_row_source: "locally reconstructed locked row; not a fresh DB read",
+    document_sha256: sha, unresolved: binding.unresolved, reconciliation: binding.reconciliation,
+    report, proposed_patch: report.proposed_patch, preview_storage_disabled: true, master_unchanged: true,
+  };
+  type Difference = { path: string; before: unknown; after: unknown };
+  const differences: Difference[] = [];
+  function compare(oldValue: unknown, newValue: unknown, path: string): void {
+    if (JSON.stringify(oldValue) === JSON.stringify(newValue)) return;
+    if (oldValue !== null && newValue !== null && typeof oldValue === "object" && typeof newValue === "object") {
+      const oldFields = oldValue as Record<string, unknown>;
+      const newFields = newValue as Record<string, unknown>;
+      for (const key of new Set([...Object.keys(oldFields), ...Object.keys(newFields)]))
+        compare(oldFields[key], newFields[key], `${path}.${key}`);
+      return;
+    }
+    differences.push({ path, before: oldValue ?? null, after: newValue ?? null });
+  }
+  compare(baseline, refreshed, "synthetic");
+  const priorPatch = baseline.proposed_patch as { registered_uses: typeof serialised.registered_uses;
+    viticulture_rates: { per_100_litres: Array<Record<string, unknown>> } };
+  const priorPhalaris = priorPatch.registered_uses.find((use) => use.target_raw === "Phalaris");
+  const priorHandgun = priorPhalaris?.rates.find((rate) => rate.label === "Handgun");
+  assert(priorHandgun);
+  assertEquals([priorHandgun.basis, priorHandgun.value, priorHandgun.min_value, priorHandgun.max_value, priorHandgun.unit, priorHandgun.rate_id],
+    ["per_100_litres", 1, null, null, "L", "rate_v1_1404224e824789a20ca4dd4186bf1a0b"]);
+  const allowedFields = new Set(["basis", "value", "min_value", "max_value", "unit", "rate_id"]);
+  const allowedPaths = new Set<string>();
+  for (const root of ["synthetic.report.proposed_patch", "synthetic.proposed_patch"]) {
+    const useIndex = priorPatch.registered_uses.findIndex((use) => use.target_raw === "Phalaris");
+    const rateIndex = priorPatch.registered_uses[useIndex].rates.findIndex((rate) => rate.label === "Handgun");
+    const flatIndex = priorPatch.viticulture_rates.per_100_litres.findIndex((rate) =>
+      (rate.source_refs as string[])?.some((ref) => ref.endsWith(", Phalaris")));
+    assert(useIndex >= 0 && rateIndex >= 0 && flatIndex >= 0);
+    for (const field of allowedFields) {
+      allowedPaths.add(`${root}.registered_uses.${useIndex}.rates.${rateIndex}.${field}`);
+      allowedPaths.add(`${root}.viticulture_rates.per_100_litres.${flatIndex}.${field}`);
+    }
+  }
+  assertEquals(new Set(differences.map((difference) => difference.path)), allowedPaths,
+    "only the two serialized Phalaris rate projections may differ from the prior acceptance output");
+  assertEquals(baseline.unresolved, refreshed.unresolved);
+  assertEquals(baseline.reconciliation, refreshed.reconciliation);
+  assertEquals(report.preview_id, null);
+  const comparison = {
+    WARNING: "Synthetic non-writing comparison only; no real reviewer attestation or approved Master patch.",
+    baseline_commit: "8d1fd4ab256c8699126c0e4f9ca3252a68ada1a9",
+    document_sha256: sha, registration_identity_key: report.registration_identity_key,
+    target: "Phalaris", method: "Handgun", direction_id: phalaris.direction_id,
+    rate_id_before: priorHandgun.rate_id, rate_id_after: handgun[0].rate_id,
+    expected_rate_and_identity_changes: differences,
+    unrelated_changes: [], unresolved_exceptions_unchanged: true,
+    reconciliation_unchanged: true, unsupported_methods_in_calculator: false,
+    preview_storage_disabled: true, master_unchanged: true,
+  };
+  if (Deno.permissions.querySync({ name: "write", path: exportPath }).state === "granted") {
+    await Deno.writeTextFile(exportPath, JSON.stringify(refreshed, null, 2) + "\n");
+    await Deno.writeTextFile(new URL("./synthetic_rate_comparison.json", import.meta.url), JSON.stringify(comparison, null, 2) + "\n");
+  }
 });
 
 Deno.test("referenced perennial rows reconcile against independent PDF tables; damaged source cannot pass binding", async () => {

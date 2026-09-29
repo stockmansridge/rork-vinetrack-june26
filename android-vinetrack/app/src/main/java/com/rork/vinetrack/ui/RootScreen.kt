@@ -22,6 +22,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,12 +38,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.os.SystemClock
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rork.vinetrack.R
+import com.rork.vinetrack.data.auth.BiometricAuth
+import com.rork.vinetrack.data.auth.BiometricBackgroundGrace
 import com.rork.vinetrack.ui.auth.BiometricLockScreen
 import com.rork.vinetrack.ui.auth.LoginScreen
 import com.rork.vinetrack.ui.auth.OnboardingScreen
@@ -66,6 +74,9 @@ fun RootScreen() {
     val authState by vm.authState.collectAsStateWithLifecycle()
     val subscriptionState by vm.subscription.collectAsStateWithLifecycle()
     val pinWorkflow by work.pinWorkflow.collectAsStateWithLifecycle()
+    var backgroundStartedMs by rememberSaveable { mutableLongStateOf(-1L) }
+    var isBackgroundLocked by rememberSaveable { mutableStateOf(false) }
+    var isPrivacyCovered by remember { mutableStateOf(false) }
 
     // THE single owner of FLAG_KEEP_SCREEN_ON for the whole app.
     ScreenAwakeHost()
@@ -109,12 +120,37 @@ fun RootScreen() {
     // returns to the foreground, so a stale token never bounces the user to
     // the login screen on their next save after long idle.
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, state.route) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_START) vm.onAppForegrounded()
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> isPrivacyCovered = state.route == AppRoute.Main
+                Lifecycle.Event.ON_STOP -> {
+                    // The device credential UI can stop the Activity; it is not a trip away.
+                    if (state.route == AppRoute.Main && !BiometricAuth.isPromptActive && backgroundStartedMs < 0L) {
+                        backgroundStartedMs = SystemClock.elapsedRealtime()
+                    }
+                }
+                Lifecycle.Event.ON_START -> {
+                    if (state.route == AppRoute.Main && backgroundStartedMs >= 0L) {
+                        isBackgroundLocked = isBackgroundLocked || BiometricBackgroundGrace.shouldLock(
+                            SystemClock.elapsedRealtime() - backgroundStartedMs, vm.biometricEnabled,
+                        )
+                        backgroundStartedMs = -1L
+                    }
+                    vm.onAppForegrounded()
+                }
+                Lifecycle.Event.ON_RESUME -> isPrivacyCovered = false
+                else -> Unit
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(state.route) {
+        if (state.route == AppRoute.Login) {
+            isBackgroundLocked = false
+            backgroundStartedMs = -1L
+        }
     }
 
     // Publish the selected vineyard's Region & Units as the app-wide formatting
@@ -122,6 +158,7 @@ fun RootScreen() {
     // dialogs and every nested composable format against the SAME vineyard
     // settings, and a save or vineyard switch recomposes them all at once.
     ProvideRegionFormatter(state.regionSettings) {
+    Box(Modifier.fillMaxSize()) {
     when (state.route) {
         AppRoute.Restoring -> SplashScreen()
         AppRoute.Login -> LoginScreen(
@@ -180,8 +217,28 @@ fun RootScreen() {
             if (!state.onboardingCompleted) OnboardingScreen(onComplete = vm::completeOnboarding)
             else MainScaffold(vm, state, work)
     }
+    if (state.route == AppRoute.Main && isBackgroundLocked) {
+        BiometricLockScreen(
+            savedEmail = vm.biometricSavedEmail,
+            onUnlocked = { isBackgroundLocked = false },
+            onUseDifferentAccount = vm::signOutFromBiometricLock,
+        )
+    }
+    if (state.route == AppRoute.Main && isPrivacyCovered) PrivacyCover()
+    }
     }
     ReleasePolicyPrompt(state.route)
+}
+
+@Composable
+private fun PrivacyCover() {
+    Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Image(painterResource(R.drawable.vinetrack_logo), contentDescription = null,
+                modifier = Modifier.size(80.dp).clip(RoundedCornerShape(18.dp)))
+            Text("VineTrack", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        }
+    }
 }
 
 @Composable

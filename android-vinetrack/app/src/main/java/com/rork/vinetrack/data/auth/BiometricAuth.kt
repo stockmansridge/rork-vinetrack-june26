@@ -49,6 +49,8 @@ sealed interface BiometricResult {
  * persisted preference lives in [BiometricStore].
  */
 object BiometricAuth {
+    @Volatile var isPromptActive: Boolean = false
+        private set
 
     fun capability(context: Context): BiometricCapability {
         val manager = BiometricManager.from(context)
@@ -63,6 +65,8 @@ object BiometricAuth {
         subtitle: String?,
         reason: String?,
     ): BiometricResult = suspendCancellableCoroutine { cont ->
+        isPromptActive = true
+        cont.invokeOnCancellation { isPromptActive = false }
         val capability = capability(activity)
         // Prefer biometrics; fall back to the device PIN/pattern so the user is
         // never locked out. When only device credential is available we cannot
@@ -77,12 +81,14 @@ object BiometricAuth {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 if (settled) return
                 settled = true
+                isPromptActive = false
                 if (cont.isActive) cont.resume(BiometricResult.Success)
             }
 
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 if (settled) return
                 settled = true
+                isPromptActive = false
                 val cancelled = errorCode == BiometricPrompt.ERROR_USER_CANCELED ||
                     errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
                     errorCode == BiometricPrompt.ERROR_CANCELED
@@ -112,6 +118,7 @@ object BiometricAuth {
 
         runCatching { prompt.authenticate(builder.build()) }
             .onFailure {
+                isPromptActive = false
                 if (cont.isActive) {
                     cont.resume(BiometricResult.Failed(it.message ?: "Biometric authentication is unavailable."))
                 }

@@ -1,0 +1,139 @@
+{
+  "WARNING": "Synthetic non-writing comparison only; no real reviewer attestation or approved Master patch.",
+  "baseline_commit": "8d1fd4ab256c8699126c0e4f9ca3252a68ada1a9",
+  "document_sha256": "69213c077e191e99682e515884d7667156367ea7ab927ecdac2882f4d0ec39b8",
+  "registration_identity_key": "AU:apvma:53576",
+  "target": "Phalaris",
+  "method": "Handgun",
+  "direction_id": "direction_v1_1363f3205ca7b639cd5f970a03d91785",
+  "rate_id_before": "rate_v1_1404224e824789a20ca4dd4186bf1a0b",
+  "rate_id_after": "rate_v1_4efec198ead373a3286939ced245fadf",
+  "expected_rate_and_identity_changes": [
+    {
+      "path": "synthetic.report.proposed_patch.registered_uses.54.rates.1.basis",
+      "before": "per_100_litres",
+      "after": "range_per_100_litres"
+    },
+    {
+      "path": "synthetic.report.proposed_patch.registered_uses.54.rates.1.value",
+      "before": 1,
+      "after": null
+    },
+    {
+      "path": "synthetic.report.proposed_patch.registered_uses.54.rates.1.min_value",
+      "before": null,
+      "after": 500
+    },
+    {
+      "path": "synthetic.report.proposed_patch.registered_uses.54.rates.1.max_value",
+      "before": null,
+      "after": 1000
+    },
+    {
+      "path": "synthetic.report.proposed_patch.registered_uses.54.rates.1.unit",
+      "before": "L",
+      "after": "mL"
+    },
+    {
+      "path": "synthetic.report.proposed_patch.registered_uses.54.rates.1.rate_id",
+      "before": "rate_v1_1404224e824789a20ca4dd4186bf1a0b",
+      "after": "rate_v1_4efec198ead373a3286939ced245fadf"
+    },
+    {
+      "path": "synthetic.report.proposed_patch.viticulture_rates.per_100_litres.55.basis",
+      "before": "per_100_litres",
+      "after": "range_per_100_litres"
+    },
+    {
+      "path": "synthetic.report.proposed_patch.viticulture_rates.per_100_litres.55.value",
+      "before": 1,
+      "after": null
+    },
+    {
+      "path": "synthetic.report.proposed_patch.viticulture_rates.per_100_litres.55.min_value",
+      "before": null,
+      "after": 500
+    },
+    {
+      "path": "synthetic.report.proposed_patch.viticulture_rates.per_100_litres.55.max_value",
+      "before": null,
+      "after": 1000
+    },
+    {
+      "path": "synthetic.report.proposed_patch.viticulture_rates.per_100_litres.55.unit",
+      "before": "L",
+      "after": "mL"
+    },
+    {
+      "path": "synthetic.report.proposed_patch.viticulture_rates.per_100_litres.55.rate_id",
+      "before": "rate_v1_1404224e824789a20ca4dd4186bf1a0b",
+      "after": "rate_v1_4efec198ead373a3286939ced245fadf"
+    },
+    {
+      "path": "synthetic.proposed_patch.registered_uses.54.rates.1.basis",
+      "before": "per_100_litres",
+      "after": "range_per_100_litres"
+    },
+    {
+      "path": "synthetic.proposed_patch.registered_uses.54.rates.1.value",
+      "before": 1,
+      "after": null
+    },
+    {
+      "path": "synthetic.proposed_patch.registered_uses.54.rates.1.min_value",
+      "before": null,
+      "after": 500
+    },
+    {
+      "path": "synthetic.proposed_patch.registered_uses.54.rates.1.max_value",
+      "before": null,
+      "after": 1000
+    },
+    {
+      "path": "synthetic.proposed_patch.registered_uses.54.rates.1.unit",
+      "before": "L",
+      "after": "mL"
+    },
+    {
+      "path": "synthetic.proposed_patch.registered_uses.54.rates.1.rate_id",
+      "before": "rate_v1_1404224e824789a20ca4dd4186bf1a0b",
+      "after": "rate_v1_4efec198ead373a3286939ced245fadf"
+    },
+    {
+      "path": "synthetic.proposed_patch.viticulture_rates.per_100_litres.55.basis",
+      "before": "per_100_litres",
+      "after": "range_per_100_litres"
+    },
+    {
+      "path": "synthetic.proposed_patch.viticulture_rates.per_100_litres.55.value",
+      "before": 1,
+      "after": null
+    },
+    {
+      "path": "synthetic.proposed_patch.viticulture_rates.per_100_litres.55.min_value",
+      "before": null,
+      "after": 500
+    },
+    {
+      "path": "synthetic.proposed_patch.viticulture_rates.per_100_litres.55.max_value",
+      "before": null,
+      "after": 1000
+    },
+    {
+      "path": "synthetic.proposed_patch.viticulture_rates.per_100_litres.55.unit",
+      "before": "L",
+      "after": "mL"
+    },
+    {
+      "path": "synthetic.proposed_patch.viticulture_rates.per_100_litres.55.rate_id",
+      "before": "rate_v1_1404224e824789a20ca4dd4186bf1a0b",
+      "after": "rate_v1_4efec198ead373a3286939ced245fadf"
+    }
+  ],
+  "unrelated_changes": [],
+  "unresolved_exceptions_unchanged": true,
+  "reconciliation_unchanged": true,
+  "unsupported_methods_in_calculator": false,
+  "preview_storage_disabled": true,
+  "master_unchanged": true
+}

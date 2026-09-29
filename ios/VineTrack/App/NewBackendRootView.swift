@@ -30,7 +30,9 @@ struct NewBackendRootView: View {
     /// retryable state rather than the no-vineyards onboarding screen.
     @State private var vineyardLoadFailedNoCache: Bool = false
     @State private var lastScenePhase: ScenePhase = .active
-    @State private var didEnterBackground: Bool = false
+    @State private var backgroundStartedAt: ContinuousClock.Instant?
+    @State private var privacyCover = AppSwitcherPrivacyCover()
+    @State private var lockCover = AppBiometricLockCover()
     @State private var showInvitationsSheet: Bool = false
     @State private var deferredInvitationIds: Set<UUID> = []
 
@@ -46,8 +48,6 @@ struct NewBackendRootView: View {
             //    the auth state is still indeterminate.
             if !didAttemptRestore {
                 loadingView
-            } else if auth.isSignedIn && biometric.requiresUnlock {
-                BiometricLockView()
             } else if !auth.isSignedIn {
                 // 2. Logged out — login screen only. Disclaimer must never
                 //    appear over the login screen.
@@ -111,6 +111,13 @@ struct NewBackendRootView: View {
                 NavigationStack {
                     SubscriptionPaywallView(allowDismiss: false)
                 }
+            }
+        }
+        .onChange(of: biometric.requiresUnlock) { _, requiresUnlock in
+            if requiresUnlock && auth.isSignedIn {
+                lockCover.show(auth: auth, biometric: biometric)
+            } else {
+                lockCover.hide()
             }
         }
         .alert(
@@ -296,13 +303,24 @@ struct NewBackendRootView: View {
             // background state. The Face ID system prompt itself causes a
             // brief `.inactive` phase; re-locking on `.inactive -> .active`
             // would create an unlock loop.
-            if newPhase == .background {
-                didEnterBackground = true
-            } else if newPhase == .active && auth.isSignedIn {
-                if didEnterBackground {
+            if newPhase != .active {
+                // Privacy is independent of the authentication grace period.
+                if auth.isSignedIn { privacyCover.show() }
+            }
+            if newPhase == .background && backgroundStartedAt == nil {
+                backgroundStartedAt = .now
+            } else if newPhase == .active {
+                if auth.isSignedIn, let startedAt = backgroundStartedAt,
+                   BiometricBackgroundGrace.shouldLock(elapsed: startedAt.duration(to: .now), isEnabled: biometric.isEnabled) {
                     biometric.lockIfEnabled()
-                    didEnterBackground = false
                 }
+                backgroundStartedAt = nil
+                if auth.isSignedIn && biometric.requiresUnlock {
+                    lockCover.show(auth: auth, biometric: biometric)
+                }
+                privacyCover.hide()
+            }
+            if newPhase == .active && auth.isSignedIn {
                 Task { await auth.loadPendingInvitations() }
                 // Foreground return — refresh the shared entitlement (throttled).
                 Task { await entitlementGate.refresh() }
@@ -327,6 +345,8 @@ struct NewBackendRootView: View {
         } else {
             // Signed out — clear the unlock gate so a future sign-in starts fresh.
             biometric.markUnlocked()
+            lockCover.hide()
+            privacyCover.hide()
         }
     }
 

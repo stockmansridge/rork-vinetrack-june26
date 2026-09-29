@@ -4079,16 +4079,16 @@
             },
             {
               "label": "Handgun",
-              "basis": "per_100_litres",
-              "value": 1,
-              "min_value": null,
-              "max_value": null,
-              "unit": "L",
+              "basis": "range_per_100_litres",
+              "value": null,
+              "min_value": 500,
+              "max_value": 1000,
+              "unit": "mL",
               "raw_text": "500 mL-1 L/100L",
               "source_refs": [
                 "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 3 PERENNIAL WEED CONTROL, physical page 4, Phalaris"
               ],
-              "rate_id": "rate_v1_1404224e824789a20ca4dd4186bf1a0b"
+              "rate_id": "rate_v1_4efec198ead373a3286939ced245fadf"
             },
             {
               "label": "Knapsack",
@@ -6504,16 +6504,16 @@
           },
           {
             "label": "Handgun",
-            "basis": "per_100_litres",
-            "value": 1,
-            "min_value": null,
-            "max_value": null,
-            "unit": "L",
+            "basis": "range_per_100_litres",
+            "value": null,
+            "min_value": 500,
+            "max_value": 1000,
+            "unit": "mL",
             "raw_text": "500 mL-1 L/100L",
             "source_refs": [
               "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 3 PERENNIAL WEED CONTROL, physical page 4, Phalaris"
             ],
-            "rate_id": "rate_v1_1404224e824789a20ca4dd4186bf1a0b"
+            "rate_id": "rate_v1_4efec198ead373a3286939ced245fadf"
           },
           {
             "label": "Handgun",
@@ -10309,16 +10309,16 @@
           },
           {
             "label": "Handgun",
-            "basis": "per_100_litres",
-            "value": 1,
-            "min_value": null,
-            "max_value": null,
-            "unit": "L",
+            "basis": "range_per_100_litres",
+            "value": null,
+            "min_value": 500,
+            "max_value": 1000,
+            "unit": "mL",
             "raw_text": "500 mL-1 L/100L",
             "source_refs": [
               "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 3 PERENNIAL WEED CONTROL, physical page 4, Phalaris"
             ],
-            "rate_id": "rate_v1_1404224e824789a20ca4dd4186bf1a0b"
+            "rate_id": "rate_v1_4efec198ead373a3286939ced245fadf"
           },
           {
             "label": "Knapsack",
@@ -12734,16 +12734,16 @@
         },
         {
           "label": "Handgun",
-          "basis": "per_100_litres",
-          "value": 1,
-          "min_value": null,
-          "max_value": null,
-          "unit": "L",
+          "basis": "range_per_100_litres",
+          "value": null,
+          "min_value": 500,
+          "max_value": 1000,
+          "unit": "mL",
           "raw_text": "500 mL-1 L/100L",
           "source_refs": [
             "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 3 PERENNIAL WEED CONTROL, physical page 4, Phalaris"
           ],
-          "rate_id": "rate_v1_1404224e824789a20ca4dd4186bf1a0b"
+          "rate_id": "rate_v1_4efec198ead373a3286939ced245fadf"
         },
         {
           "label": "Handgun",

@@ -1,6 +1,7 @@
 package com.rork.vinetrack
 
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -17,6 +18,8 @@ import com.rork.vinetrack.ui.theme.AppTheme
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Never allow a vineyard screen in a Recents/task-switcher snapshot.
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         MasterFrontLabelRepository.initialize(applicationContext)
         AppConfig.logDiagnostics()
         AppPreferencesStore.seedDisplayMode(this)
