@@ -52,6 +52,24 @@ Deno.test("private failed-page record distinguishes network failure from absent 
   assertEquals(JSON.stringify(record).includes("secret"), false);
 });
 
+Deno.test("Cloudflare challenge is not inspected as product HTML and remains distinct from ordinary 403", async () => {
+  const url = "https://nufarm.com/au/product/weedmaster-duo/";
+  for (const status of [403, 200]) {
+    const response = new Response("<h1>Weedmaster DUO</h1>", { status,
+      headers: { "content-type": "text/html", "cf-mitigated": "challenge" } });
+    const inspected = await inspectCandidateProductPages({ fetchFn: (() => Promise.resolve(response)) as typeof fetch }, [url], "AU");
+    assertEquals(inspected.pages.length, 0);
+    assertEquals(inspected.attempts[0].outcome, "rejected_browser_challenge");
+    assertEquals(inspected.attempts[0].httpStatus, status);
+  }
+  const ordinary = await inspectProductPage({ fetchFn: (() => Promise.resolve(new Response("denied", { status: 403 }))) as typeof fetch }, url, "AU");
+  assertEquals(ordinary.outcome, "rejected_http_error");
+  assertEquals(privatePageFetchDiagnostic([], null, false, "no_eligible_manufacturer_pdf_lead", "host_not_verified")
+    .pdf_discovery_outcome, "host_not_verified");
+  assertEquals(privatePageFetchDiagnostic([], null, false, "no_eligible_manufacturer_pdf_lead", "search_no_candidate")
+    .pdf_discovery_outcome, "search_no_candidate");
+});
+
 const OMNIA_PAGE = "https://www.omnia.com.au/products/sprayseal";
 const OMNIA_LABEL = "https://www.omnia.com.au/files/2025/07/Sprayseal%205L_Digi.pdf";
 const REGISTERED_NAME = "SPRAYSEAL PRUNING WOUND TREATMENT";

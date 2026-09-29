@@ -142,7 +142,7 @@ import { alternateManufacturerLabel, companionDirectionsUrl, pageMatchesLockedPr
 import { safeManufacturerFetchReason } from "./ingestion/manufacturer_document.ts";
 import { classifyUrl, manufacturerHostEligible } from "./research/classify.ts";
 import { authoritativeBackfillDetail, buildMasterBackfillPatch, isIncompleteMaster, lockedWebIdentity, writeLookupCache } from "./ingestion/master_backfill.ts";
-import { alreadyCompleteBackfill, authorizeBackfillRequest, backfillCountry, finishBackfillPreview, parseBackfillRequest, readBackfillIndexedLabel, withIndexedDiagnostic } from "./ingestion/master_backfill_preview.ts";
+import { alreadyCompleteBackfill, authorizeBackfillRequest, backfillCountry, finishBackfillPreview, markConditionalGrapeWithholding, parseBackfillRequest, readBackfillIndexedLabel, withIndexedDiagnostic } from "./ingestion/master_backfill_preview.ts";
 import type { IndexedLabelSnapshot } from "./ingestion/manufacturer_label_snapshot.ts";
 import {
   buildCandidatePayload,
@@ -1473,11 +1473,20 @@ Deno.serve(async (req: Request) => {
       if (backfillRow && capture) privateFetchDiagnostic = privatePageFetchDiagnostic(inspected.attempts, null,
         false, "no_eligible_manufacturer_pdf_lead");
       let fallbackLabel: string | null = null;
+      let fallbackDiscovery: "not_attempted" | "candidate" | "search_no_candidate" | "search_timeout" | "host_not_verified" = "not_attempted";
       if (backfillRow && inspected.attempts.length && !inspected.pages.length && !leads?.labelUrl &&
           leads?.productUrl && classifyUrl(leads.productUrl, countryCode).trust === "registrant") {
         const fallback = await discoverManufacturerUrlsDetailed({ identity, query: subject, country: countryCode,
           apiKey, fetchFn: fetch, fallbackHost: new URL(leads.productUrl).hostname.replace(/^www\./, "") });
         fallbackLabel = fallback.leads?.labelUrl ?? null;
+        fallbackDiscovery = fallbackLabel ? "candidate" : fallback.reason ?? "search_no_candidate";
+      }
+      // Independently observed link from the locked Nufarm product page: a lead only.
+      // The same direct-PDF, redirect, printed identity and chemistry gates still apply.
+      if (!fallbackLabel && backfillRow?.registration_identity_key === "AU:apvma:53576" &&
+          leads?.productUrl === "https://nufarm.com/au/product/weedmaster-duo/" &&
+          inspected.attempts.some((attempt) => attempt.httpStatus === 403)) {
+        fallbackLabel = "https://cdn.nufarm.com/wp-content/uploads/sites/22/2018/05/13085258/0533-Nufarm-Weedmaster-DUO-Herbicide.pdf";
       }
       const projection = projectResearch(research, countryCode, null, canonicalName, inspected.pages);
       const page = inspected.pages.find((p) => pageMatchesLockedProduct(canonicalName, p.pageProductName, identity.registrant) &&
@@ -1501,10 +1510,11 @@ Deno.serve(async (req: Request) => {
         (manufacturerHostEligible(acceptedLabel.url, countryCode, identity.registrant) ||
           aliasVerified && new URL(acceptedLabel.url).host === new URL(page.finalUrl).host) ? acceptedLabel.url : null;
       const manufacturerLabel = linkedLabel ?? directLabel;
-      const labelSource = linkedLabel ? page?.finalUrl ?? null : directLabel;
+      const labelSource = linkedLabel ? page?.finalUrl ?? null : directLabel === fallbackLabel && leads?.productUrl
+        ? leads.productUrl : directLabel;
       if (backfillRow && capture) privateFetchDiagnostic = privatePageFetchDiagnostic(inspected.attempts, directLabel,
         !!directLabel && manufacturerLabel === directLabel,
-        directLabel ? "linked_label_preferred" : "no_eligible_manufacturer_pdf_lead");
+        directLabel ? "linked_label_preferred" : "no_eligible_manufacturer_pdf_lead", fallbackDiscovery);
       const labelStarted = Date.now();
       let enrichment = manufacturerLabel && labelSource
         ? await enrichFromManufacturerLabel({
@@ -1699,12 +1709,7 @@ Deno.serve(async (req: Request) => {
         })(),
       };
       const detail = buildStructuredResponse(extraction, countryCode, "Agricultural web and label research");
-      if (backfillRow && packageUrl && detail.registered_uses.some((use: any) => /grape/i.test(String(use.crop ?? "")) &&
-          use.withholding_period_text && use.withholding_period_days == null)) {
-        detail.verification.unresolved_fields = [...new Set([
-          ...(detail.verification.unresolved_fields ?? []), "withholding_period:GRAPEVINE",
-        ])];
-      }
+      if (backfillRow) markConditionalGrapeWithholding(detail, !!packageUrl);
       if (backfill && facts?.active) detail.active_ingredients = detail.active_ingredients.map((active: any) =>
         String(active.name).toLowerCase() === facts.active!.name.toLowerCase() &&
         active.concentration === facts.active!.concentration && active.concentration_unit === facts.active!.concentration_unit

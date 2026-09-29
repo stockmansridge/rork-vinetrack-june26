@@ -102,7 +102,7 @@ export function companionGrapeDirections(items: PdfTextItem[], productName: stri
       if (!comments) return null;
       rows.push({ crop: "Grapes", target_raw: targets.join(" / "),
         rates: [{ ...parsed[0], raw_text: dose }],
-        withholding_period_text: `Dessert grapes: ${dessertDays} days; Wine grapes: ${wineDays} days`,
+        withholding_statement: `Dessert grapes: ${dessertDays} days; Wine grapes: ${wineDays} days`,
         restrictions: [shared, comments].filter(Boolean).join(" "),
         provenance: { rates: "manufacturer_label" } });
     }

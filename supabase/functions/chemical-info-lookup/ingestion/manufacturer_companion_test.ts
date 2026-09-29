@@ -6,8 +6,9 @@ import { extractLinks } from "../research/page_inspector.ts";
 import { extractManufacturerDocumentText, fetchManufacturerDocument, safeManufacturerFetchReason } from "./manufacturer_document.ts";
 import { enrichFromManufacturerLabel, manufacturerDocumentConfirmsIdentity } from "./manufacturer_enrichment.ts";
 import { assembleTextLines } from "./label_extract.ts";
-import { finishBackfillPreview } from "./master_backfill_preview.ts";
+import { finishBackfillPreview, markConditionalGrapeWithholding } from "./master_backfill_preview.ts";
 import { applyRateIdentities } from "../rate_identity.ts";
+import { normaliseRegisteredUses } from "../registered_use_normaliser.ts";
 import type { MasterRow } from "./contract.ts";
 import type { InspectedPage } from "../research/page_inspector.ts";
 
@@ -79,13 +80,18 @@ Deno.test("Farmalinx leaflet has locked product identity and printed grape direc
   const row = { id: "10000000-0000-4000-8000-000000084047", registration_country: "AU",
     registration_scheme: "apvma", registration_number: "84047", registration_identity_key: "AU:apvma:84047",
     registered_product_name: name, registrant: "Farmalinx Pty Ltd", product_category: "fungicide",
-    active_ingredients: [{ name: "Chlorothalonil", concentration: 900, concentration_unit: "g/kg" }],
-    resistance_classification_state: "classified", activity_groups: ["M05"], registered_uses: [],
+    active_ingredients: [{ name: "Chlorothalonil", concentration: 900, concentration_unit: "g/kg",
+      activity_group: { scheme: "frac", code: "M5", common_name: "Multi-site / Chloronitrile" },
+      group_source: "authoritative_classification", classification_state: "classified" }],
+    resistance_classification_state: "classified", activity_groups: ["M05"], registered_uses: [
+      { crop: "Potatoes", target_raw: "Early blight", restrictions: "Preserved existing direction", rates: [] }],
     viticulture_rates: { per_hectare: [], per_100_litres: [] }, verification_sources: [],
-    verification_unresolved_fields: [], review_status: "candidate", catalogue_version: 1 } as unknown as MasterRow;
+    verification_unresolved_fields: ["active_ingredients"], review_status: "candidate", catalogue_version: 1 } as unknown as MasterRow;
   const detail = { registration: { registration_number: "84047", manufacturer_label_url: leaflet,
-    manufacturer_package_label_url: container, manufacturer_label_verified: true }, registered_uses: result.uses,
-    verification: { unresolved_fields: ["withholding_period:GRAPEVINE"] } };
+    manufacturer_package_label_url: container, manufacturer_label_verified: true },
+    registered_uses: normaliseRegisteredUses(result.uses),
+    verification: { unresolved_fields: ["active_ingredients"] } };
+  markConditionalGrapeWithholding(detail, true);
   applyRateIdentities({ registration: { country_code: "AU", scheme: "apvma", registration_number: "84047" },
     registered_uses: detail.registered_uses });
   const preview = await finishBackfillPreview(row, "admin", { detail }, true,
@@ -96,13 +102,44 @@ Deno.test("Farmalinx leaflet has locked product identity and printed grape direc
     .per_hectare.map((rate) => [rate.min_value, rate.max_value]), [[1.5, 1.9]]);
   assertEquals((preview.proposed_patch?.verification_sources as Array<{ reference: string }>).map((source) => source.reference),
     [leaflet, container]);
-  assertEquals((preview.proposed_patch?.registered_uses as Array<{ withholding_period_text?: string }>)[0]
-    .withholding_period_text, "Dessert grapes: 7 days; Wine grapes: 14 days");
-  assertEquals((preview.proposed_patch?.registered_uses as Array<{ withholding_period_days?: number }>)[0]
-    .withholding_period_days, undefined);
+  const proposedUses = preview.proposed_patch?.registered_uses as Array<Record<string, unknown>>;
+  assertEquals(proposedUses.length, 3);
+  assertEquals(proposedUses[0].crop, "Potatoes");
+  assertEquals(proposedUses[0].restrictions, "Preserved existing direction");
+  assertEquals(proposedUses.slice(1).map((use) => use.target_raw), ["Downy mildew / Bunch rot", "Black Spot"]);
+  assertEquals(proposedUses.slice(1).map((use) => use.withholding_statement),
+    ["Dessert grapes: 7 days; Wine grapes: 14 days", "Dessert grapes: 7 days; Wine grapes: 14 days"]);
+  assert(proposedUses.slice(1).every((use) => use.withholding_period_days == null &&
+    typeof use.direction_id === "string" && /DO NOT exceed 2\.5kg/.test(String(use.restrictions))));
+  assertEquals(proposedUses.slice(1).map((use) => (use.rates as Array<{ basis: string }>)[0].basis),
+    ["range_per_hectare", "per_100_litres"]);
+  assert(proposedUses.slice(1).every((use) => (use.rates as Array<{ rate_id: string }>)[0].rate_id));
+  assertEquals(preview.proposed_patch?.active_ingredients, undefined);
   assertEquals(preview.proposed_patch?.verification_unresolved_fields, ["withholding_period:GRAPEVINE"]);
   assertEquals((preview.proposed_patch?.viticulture_rates as { per_100_litres: Array<{ value: number }> })
     .per_100_litres[0].value, 175);
+  const missingChemistry = { ...row, active_ingredients: [{ name: "Chlorothalonil" }] } as MasterRow;
+  const incomplete = await finishBackfillPreview(missingChemistry, "admin", { detail }, true,
+    { insertPreview: () => { throw new Error("dry run attempted a write"); } });
+  assert((incomplete.proposed_patch?.verification_unresolved_fields as string[]).includes("active_ingredients"));
+});
+
+Deno.test("Nufarm's own CDN PDF is a document lead, not proof of locked Weedmaster chemistry", async () => {
+  const candidate = "https://cdn.nufarm.com/wp-content/uploads/sites/22/2018/05/13085258/0533-Nufarm-Weedmaster-DUO-Herbicide.pdf";
+  const product = "https://nufarm.com/au/product/weedmaster-duo/";
+  assertEquals(manufacturerHostEligible(candidate, "AU", "Nufarm"), true);
+  const bytes = await Deno.readFile(new URL("./chlorostar_leaflet_fixture.pdf", import.meta.url));
+  const fetched = await fetchManufacturerDocument({ fetchFn: (() => Promise.resolve(new Response(bytes))) as typeof fetch,
+    now: () => new Date() }, candidate, product);
+  assertEquals(fetched.outcome, "fetched");
+  const text = assembleTextLines((await extractManufacturerDocumentText({ fetchFn: fetch, now: () => new Date() },
+    fetched.bytes!)) ?? []).map((line) => line.text).join("\n");
+  assertEquals(manufacturerDocumentConfirmsIdentity({ text, registeredProductName: "Weedmaster DUO Herbicide",
+    registrationNumber: "53576", activeNames: ["Glyphosate"] }), false);
+  const rejected = await fetchManufacturerDocument({ fetchFn: (() => Promise.resolve(new Response("blocked", {
+    status: 403, headers: { "cf-mitigated": "challenge" } }))) as typeof fetch,
+    now: () => new Date() }, candidate, product);
+  assertEquals(rejected.outcome, "rejected_browser_challenge");
 });
 
 Deno.test("unbound paired grape table cannot be promoted to a writable manufacturer preview", async () => {

@@ -127,7 +127,7 @@ export function normaliseRegisteredUses(raw: any): any[] {
     // The withholding WORDING, carried for exactly the reason the re-entry
     // wording is. The number is the scheduling projection; this is the legal
     // instruction, and a client must be able to show the operator both.
-    const withholdingStatement = parseString(use?.withholding_statement);
+    const withholdingStatement = parseString(use?.withholding_statement) ?? parseString(use?.withholding_period_text);
     // Carried for the same reason as `rate_id` above: this row may be one of
     // several fanned out from a single printed direction, and only the
     // upstream minter could still see that direction's complete target set.

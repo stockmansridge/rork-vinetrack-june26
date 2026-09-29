@@ -74,6 +74,7 @@ export type PageInspectionOutcome =
   | "rejected_malformed_url"
   | "rejected_off_host_redirect"
   | "rejected_http_error"
+  | "rejected_browser_challenge"
   | "rejected_not_html"
   | "rejected_too_large"
   | "rejected_network_error";
@@ -468,6 +469,12 @@ export async function inspectProductPage(
       ? res.url
       : requested.toString();
 
+    if (res.headers.get("cf-mitigated")?.toLowerCase() === "challenge") {
+      try { await res.body?.cancel(); } catch { /* ignore */ }
+      return { outcome: "rejected_browser_challenge", pageUrl: trimmed, finalUrl,
+        httpStatus: res.status, reason: "browser verification required" };
+    }
+
     if (!res.ok) {
       try {
         await res.body?.cancel();
@@ -579,7 +586,8 @@ export interface PageInspectionAttempt {
 
 /** Bounded admin-only fetch facts; never include response text or exception messages. */
 export function privatePageFetchDiagnostic(attempts: PageInspectionAttempt[], pdfLead: string | null,
-  pdfAttempted: boolean, pdfNotAttemptedReason: string | null): Record<string, unknown> {
+  pdfAttempted: boolean, pdfNotAttemptedReason: string | null,
+  discoveryOutcome: "not_attempted" | "candidate" | "search_no_candidate" | "search_timeout" | "host_not_verified" = "not_attempted"): Record<string, unknown> {
   const safeUrl = (raw: string | undefined): string | null => {
     if (!raw) return null;
     try {
@@ -590,7 +598,7 @@ export function privatePageFetchDiagnostic(attempts: PageInspectionAttempt[], pd
       return `${url.origin}${path}`.slice(0, 350);
     } catch { return null; }
   };
-  return { stage: "product_page_inspection", attempts: attempts.slice(0, MAX_PAGE_FETCH_ATTEMPTS + 1).map((attempt) => ({
+  return { stage: "product_page_inspection", pdf_discovery_outcome: discoveryOutcome, attempts: attempts.slice(0, MAX_PAGE_FETCH_ATTEMPTS + 1).map((attempt) => ({
     attempted_url: safeUrl(attempt.url), final_url: safeUrl(attempt.finalUrl),
     outcome: attempt.outcome, http_status: attempt.httpStatus ?? null,
     error_category: attempt.errorCategory ?? null,

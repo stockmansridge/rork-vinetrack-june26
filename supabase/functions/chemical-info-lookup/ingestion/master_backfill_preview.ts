@@ -60,6 +60,18 @@ export interface BackfillResearchPayload {
     `label_index_unavailable: ${IndexFailureReason}`;
 }
 
+/** Keep conditional grape harvest intervals unresolved after the structured-response normaliser. */
+export function markConditionalGrapeWithholding(detail: {
+  registered_uses: Array<Record<string, unknown>>;
+  verification: { unresolved_fields: string[] };
+}, pairedDirections: boolean): void {
+  if (!pairedDirections || !detail.registered_uses.some((use) => /grape/i.test(String(use.crop ?? "")) &&
+    use.withholding_statement && use.withholding_period_days == null)) return;
+  detail.verification.unresolved_fields = [...new Set([
+    ...(detail.verification.unresolved_fields ?? []), "withholding_period:GRAPEVINE",
+  ])];
+}
+
 /** Same indexed read and validator as the ordinary Master dry run; capture is local to this invocation. */
 export async function readBackfillIndexedLabel(input: IndexedLabelInput, master: { id: string; revision: number },
   capture: boolean) {

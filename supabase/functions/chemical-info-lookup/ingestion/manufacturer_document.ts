@@ -50,6 +50,7 @@ export type ManufacturerFetchOutcome =
   | "rejected_untrusted_host"
   | "rejected_off_host_redirect"
   | "rejected_http_error"
+  | "rejected_browser_challenge"
   | "rejected_not_found"
   | "rejected_not_pdf"
   | "rejected_too_large"
@@ -197,6 +198,11 @@ export async function fetchManufacturerDocument(
     if (!/^https:/i.test(finalUrl)) {
       await discard();
       return fail("rejected_not_https", "redirected to a non-HTTPS URL");
+    }
+
+    if (res.headers.get("cf-mitigated")?.toLowerCase() === "challenge") {
+      await discard();
+      return fail("rejected_browser_challenge", "browser verification required");
     }
 
     if (res.status === 404 || res.status === 410) {

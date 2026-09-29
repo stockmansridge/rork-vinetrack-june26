@@ -148,7 +148,7 @@ const sameUse = (old: Record<string, unknown>, next: Record<string, unknown>): b
   return !oldScientific || !nextScientific || matchWords(oldScientific) === matchWords(nextScientific);
 };
 const structuredUseFields = ["withholding_period_days", "re_entry_period_hours"];
-const narrativeUseFields = ["withholding_period_text", "re_entry_period_text", "restrictions", "statements", "conditions"];
+const narrativeUseFields = ["withholding_statement", "withholding_period_text", "re_entry_period_text", "restrictions", "statements", "conditions"];
 function mergeUse(old: Record<string, unknown>, next: Record<string, unknown>, sameLabel: boolean): Record<string, unknown> | null {
   const result: Record<string, unknown> = { ...old };
   for (const key of structuredUseFields) {
@@ -335,7 +335,7 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
       return present(a?.concentration) && present(a?.concentration_unit) && !!patch.active_ingredients;
     }
     if (["activity_group", "activity_groups"].includes(field.toLowerCase())) return !!codes.length && trusted.every((a) => present((a.activity_group as Record<string, unknown> | null)?.code));
-    if (field.toLowerCase() === "active_ingredients") return trusted.length > 0 && !!patch.active_ingredients &&
+    if (field.toLowerCase() === "active_ingredients") return trusted.length > 0 &&
       trusted.every((a) => present(a.name) && present(a.concentration) && present(a.concentration_unit));
     if (["label_reference", "manufacturer_label"].includes(field.toLowerCase())) return labelReady; // stored as manufacturer_label source, not regulator label_reference
     if (field.toLowerCase() === "re_entry_period_hours" && labelReady) {
@@ -356,8 +356,8 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
     if (kind.toLowerCase() === "rates") return evidenced.every((u) => ratesOf(u!).some((r) => rateIdentity(r)));
     // A crop-dependent harvest interval cannot be represented as one number.
     if (kind.toLowerCase() === "withholding_period" && evidenced.some((use) =>
-      !present(use?.withholding_period_days) && present(use?.withholding_period_text))) return false;
-    const keys: Record<string, string[]> = { withholding_period: ["withholding_period_days", "withholding_period_text"],
+      !present(use?.withholding_period_days) && present(use?.withholding_statement ?? use?.withholding_period_text))) return false;
+    const keys: Record<string, string[]> = { withholding_period: ["withholding_period_days"],
       re_entry_period: ["re_entry_period_hours", "re_entry_period_text"], restrictions: ["restrictions"],
       statements: ["statements"], conditions: ["conditions"] };
     return !!keys[kind.toLowerCase()] && evidenced.every((u) => keys[kind.toLowerCase()].some((key) =>
