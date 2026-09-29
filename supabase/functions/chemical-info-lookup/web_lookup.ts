@@ -37,7 +37,9 @@ export function readableV2Label(result: ManufacturerEnrichmentResult | null): st
 
 export function labelApprovalIdentifiers(text: string, country: string): { numbers: string[]; printed_values: string[] } {
   if (country !== "AU") return { numbers: [], printed_values: [] };
-  const matches = [...text.matchAll(/\bAPVMA\s+(?:APPROVAL|REGISTRATION)\s*(?:NO\.?|NUMBER)?\s*[:#-]?\s*(\d{4,7}(?:\s*\/\s*\d{4,7})*)(?!\d)/gi)];
+  // PDF line assembly can join a footer page number directly to "APVMA" ("14APVMA").
+  // Require no preceding letter, while allowing an adjacent numeric page marker.
+  const matches = [...text.matchAll(/(?<![A-Za-z])APVMA\s+(?:APPROVAL|REGISTRATION)\s*(?:NO\.?|NUMBER)?\s*[:#-]?\s*(\d{4,7}(?:\s*\/\s*\d{4,7})*)(?!\d)/gi)];
   const printed_values = [...new Set(matches.map((match) => match[1].replace(/\s+/g, "")))];
   return { printed_values, numbers: [...new Set(printed_values.flatMap((value) => value.split("/")))] };
 }

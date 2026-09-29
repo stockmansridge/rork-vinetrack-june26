@@ -1634,6 +1634,8 @@ Deno.serve(async (req: Request) => {
           enrichment?.diagnostics.manufacturer_label_fetch === "failure" ? safeManufacturerFetchReason(
             enrichment.diagnostics.manufacturer_label_fetch_outcome,
             enrichment.diagnostics.manufacturer_label_http_status) :
+          enrichment?.diagnostics.manufacturer_label_fetch_reason.includes("omits the active-constituent panel")
+            ? "label_chemistry_text_unavailable" :
           enrichment?.diagnostics.manufacturer_label_fetch_reason.includes("identity") ? "product_name_mismatch" :
           enrichment?.diagnostics.manufacturer_label_extract === "failure" ? "label_unreadable" : "host_not_verified";
         return backfill ? { discovery_reason: reason } : null;

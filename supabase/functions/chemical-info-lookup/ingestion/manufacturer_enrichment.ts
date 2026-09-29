@@ -296,8 +296,10 @@ export async function enrichFromManufacturerLabel(input: {
       diagnostics: {
         manufacturer_label_fetch: "success",
         manufacturer_label_fetch_outcome: fetched.outcome,
-        manufacturer_label_fetch_reason:
-          "the fetched PDF did not confirm the locked registration or registered product identity",
+        manufacturer_label_fetch_reason: input.activeNames?.length &&
+            !/\bACTIVE\s+CONSTITUENT\b/i.test(documentText)
+          ? "the PDF text layer omits the active-constituent panel; chemistry requires separate verification"
+          : "the fetched PDF did not confirm the locked registration or registered product identity",
         manufacturer_label_extract: "failure",
         identity_mismatch: !!input.activeNames?.length && /\bACTIVE\s+CONSTITUENT\b/i.test(documentText.slice(0, 2500)) &&
           !input.activeNames.some((name) => documentText.slice(0, 2500).toLowerCase().replace(/[^a-z0-9]/g, "")

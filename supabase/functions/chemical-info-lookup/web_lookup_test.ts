@@ -57,6 +57,9 @@ Deno.test("only an accepted Australian document can contribute its printed APVMA
   assertEquals(labelApprovalIdentifiers("APVMA Approval No.: 90143/127764; APVMA Registration Number 90143; APVMA Approval No. 127764; APVMA Approval No. 90143/127764", "AU"),
     { numbers: ["90143", "127764"], printed_values: ["90143/127764", "90143", "127764"] });
   assertEquals(labelApprovalIdentifiers("APVMA Approval No. 90143/127764", "NZ").numbers, []);
+  assertEquals(labelApprovalIdentifiers("14APVMA Approval No.: 53576/136340 Date: 08-09-2022", "AU"),
+    { numbers: ["53576", "136340"], printed_values: ["53576/136340"] });
+  assertEquals(labelApprovalIdentifiers("WRONGAPVMA Approval No.: 53576/136340", "AU").numbers, []);
   const document = { fetchedUrl: beastLabel, labelText: text,
     diagnostics: { manufacturer_label_fetch_outcome: "fetched", manufacturer_label_extract: "failure" } } as ManufacturerEnrichmentResult;
   assertEquals(readableV2Label(document), beastLabel);
