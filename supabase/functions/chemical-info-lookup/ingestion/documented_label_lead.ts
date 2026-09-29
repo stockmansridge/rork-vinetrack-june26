@@ -1,0 +1,79 @@
+import type { AdapterDeps } from "./contract.ts";
+import { enrichFromManufacturerLabel } from "./manufacturer_enrichment.ts";
+import { classifyUrl, manufacturerHostEligible } from "../research/classify.ts";
+
+/** Observed Download Label link on the locked Nufarm product page; this is a fetch lead, not verified evidence. */
+export const WEEDMASTER_LABEL_LEAD = "https://cdn.nufarm.com/wp-content/uploads/sites/22/2018/05/13085258/0533-Nufarm-Weedmaster-DUO-Herbicide.pdf";
+export const WEEDMASTER_PRODUCT_PAGE = "https://nufarm.com/au/product/weedmaster-duo/";
+
+type Rejection = "not_https_pdf" | "host_not_verified" | "excluded_document_kind" |
+  "document_kind_unrecognised" | "product_relationship_unverified";
+
+/** Keep documented origin separate from generic search results and their classification. */
+export function documentedWeedmasterLead(input: {
+  registrationIdentityKey?: string | null;
+  productPageUrl: string | null;
+  pageFailed: boolean;
+}): string | null {
+  return input.registrationIdentityKey === "AU:apvma:53576" &&
+    input.productPageUrl === WEEDMASTER_PRODUCT_PAGE && input.pageFailed ? WEEDMASTER_LABEL_LEAD : null;
+}
+
+function leadEligibility(url: string, country: string, registrant: string,
+  documented: boolean, productPageUrl: string | null): Rejection | null {
+  if (!url.startsWith("https://") || !new URL(url).pathname.toLowerCase().endsWith(".pdf")) return "not_https_pdf";
+  if (!manufacturerHostEligible(url, country, registrant)) return "host_not_verified";
+  const kind = classifyUrl(url, country).kind;
+  if (kind === "safety_data_sheet" || /(?:^|[/_.-])(?:sds|msds|brochure|technical[-_ ]?data|tds)(?:[/_.-]|$)/i.test(new URL(url).pathname))
+    return "excluded_document_kind";
+  if (documented) {
+    if (url !== WEEDMASTER_LABEL_LEAD || productPageUrl !== WEEDMASTER_PRODUCT_PAGE ||
+      !manufacturerHostEligible(productPageUrl, country, registrant)) return "product_relationship_unverified";
+    return null; // The observed link text, not the filename, identifies this document as a label lead.
+  }
+  if (classifyUrl(url, country).trust !== "registrant") return "host_not_verified";
+  return kind === "label_document" ? null : "document_kind_unrecognised";
+}
+
+/** The same selection and enrichment route is used by the live lookup and mocked regression. */
+export async function selectAndFetchManufacturerLead(input: {
+  deps: AdapterDeps;
+  country: string;
+  registrant: string;
+  registeredProductName: string;
+  registrationNumber: string | null;
+  activeNames?: string[];
+  productPageUrl: string | null;
+  inspectedPageUrl?: string | null;
+  linkedLabel: string | null;
+  directCandidate: string | null;
+  storedLabelUrls: string[];
+  documentedLead: string | null;
+  regulatorUses: Record<string, unknown>[];
+}) {
+  const { country, registrant, productPageUrl } = input;
+  const documentedRejection = input.documentedLead
+    ? leadEligibility(input.documentedLead, country, registrant, true, productPageUrl) : null;
+  const candidate = input.directCandidate;
+  const stored = !!candidate && input.storedLabelUrls.includes(candidate);
+  const candidateRejection = candidate && stored && candidate.startsWith("https://") &&
+    new URL(candidate).pathname.toLowerCase().endsWith(".pdf") && manufacturerHostEligible(candidate, country, registrant) &&
+    classifyUrl(candidate, country).kind !== "safety_data_sheet" ? null :
+    candidate ? leadEligibility(candidate, country, registrant, false, productPageUrl) : null;
+  const directLabel = candidate && !candidateRejection ? candidate :
+    input.documentedLead && !documentedRejection ? input.documentedLead : null;
+  const manufacturerLabel = input.linkedLabel ?? directLabel;
+  const labelSource = input.linkedLabel ? input.inspectedPageUrl ?? productPageUrl : directLabel === input.documentedLead
+    ? productPageUrl : directLabel === candidate && productPageUrl ? productPageUrl : directLabel;
+  const enrichment = manufacturerLabel && labelSource ? await enrichFromManufacturerLabel({
+    deps: input.deps, manufacturerLabelUrl: manufacturerLabel, sourcePageUrl: labelSource,
+    regulatorUses: input.regulatorUses, registeredProductName: input.registeredProductName,
+    activeNames: input.activeNames,
+    ...(input.registrationNumber ? { product: { country, scheme: "apvma", registration_number: input.registrationNumber } } : {}),
+  }) : null;
+  return { directLabel, manufacturerLabel, labelSource, enrichment,
+    documented: { lead: input.documentedLead, eligible: !!input.documentedLead && !documentedRejection,
+      rejection: documentedRejection, selected: manufacturerLabel === input.documentedLead },
+    candidateRejection,
+  };
+}

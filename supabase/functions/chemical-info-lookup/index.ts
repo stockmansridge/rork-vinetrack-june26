@@ -140,6 +140,7 @@ import { distinctLabelDocument, finalAttemptedLabelUrl, shouldReadManufacturerIn
 import { discoverManufacturerUrlsDetailed, findWebMasterIdentities, identityCandidate, identityResearch, selectedIdentity, verifiedManufacturerLead, type ManufacturerLeads, type WebIdentity } from "./web_identity.ts";
 import { alternateManufacturerLabel, companionDirectionsUrl, pageMatchesLockedProduct, requiresAttachedDirections, verifiesTradingAs } from "./ingestion/manufacturer_companion.ts";
 import { safeManufacturerFetchReason } from "./ingestion/manufacturer_document.ts";
+import { documentedWeedmasterLead, selectAndFetchManufacturerLead } from "./ingestion/documented_label_lead.ts";
 import { classifyUrl, manufacturerHostEligible } from "./research/classify.ts";
 import { authoritativeBackfillDetail, buildMasterBackfillPatch, isIncompleteMaster, lockedWebIdentity, writeLookupCache } from "./ingestion/master_backfill.ts";
 import { alreadyCompleteBackfill, authorizeBackfillRequest, backfillCountry, finishBackfillPreview, markConditionalGrapeWithholding, parseBackfillRequest, readBackfillIndexedLabel, withIndexedDiagnostic } from "./ingestion/master_backfill_preview.ts";
@@ -1481,13 +1482,12 @@ Deno.serve(async (req: Request) => {
         fallbackLabel = fallback.leads?.labelUrl ?? null;
         fallbackDiscovery = fallbackLabel ? "candidate" : fallback.reason ?? "search_no_candidate";
       }
-      // Independently observed link from the locked Nufarm product page: a lead only.
-      // The same direct-PDF, redirect, printed identity and chemistry gates still apply.
-      if (!fallbackLabel && backfillRow?.registration_identity_key === "AU:apvma:53576" &&
-          leads?.productUrl === "https://nufarm.com/au/product/weedmaster-duo/" &&
-          inspected.attempts.some((attempt) => attempt.httpStatus === 403)) {
-        fallbackLabel = "https://cdn.nufarm.com/wp-content/uploads/sites/22/2018/05/13085258/0533-Nufarm-Weedmaster-DUO-Herbicide.pdf";
-      }
+      const documentedLead = documentedWeedmasterLead({
+        registrationIdentityKey: backfillRow?.registration_identity_key,
+        productPageUrl: leads?.productUrl ?? null,
+        pageFailed: inspected.attempts.some((attempt) => attempt.url === leads?.productUrl &&
+          attempt.httpStatus === 403) && !inspected.pages.length,
+      });
       const projection = projectResearch(research, countryCode, null, canonicalName, inspected.pages);
       const page = inspected.pages.find((p) => pageMatchesLockedProduct(canonicalName, p.pageProductName, identity.registrant) &&
         p.links.some((link) => link.url === projection.manufacturerLabelCandidate?.url)) ??
@@ -1500,31 +1500,32 @@ Deno.serve(async (req: Request) => {
       // A registrant-hosted direct PDF can be checked against its own bytes even
       // if research found the document before finding its product page.
       const directCandidate = leads?.labelUrl ?? fallbackLabel;
-      const directLabel = directCandidate && manufacturerHostEligible(directCandidate, countryCode, identity.registrant) &&
-        (classifyUrl(directCandidate, countryCode).trust === "registrant" &&
-          classifyUrl(directCandidate, countryCode).kind === "label_document" ||
-          !!backfillRow && identity.labelUrls.includes(directCandidate) && new URL(directCandidate).pathname.toLowerCase().endsWith(".pdf"))
-        ? directCandidate : null;
       const linkedLabel = acceptedLabel?.url && page &&
         (manufacturerHostEligible(page.finalUrl, countryCode, identity.registrant) || aliasVerified) &&
         (manufacturerHostEligible(acceptedLabel.url, countryCode, identity.registrant) ||
           aliasVerified && new URL(acceptedLabel.url).host === new URL(page.finalUrl).host) ? acceptedLabel.url : null;
-      const manufacturerLabel = linkedLabel ?? directLabel;
-      const labelSource = linkedLabel ? page?.finalUrl ?? null : directLabel === fallbackLabel && leads?.productUrl
-        ? leads.productUrl : directLabel;
-      if (backfillRow && capture) privateFetchDiagnostic = privatePageFetchDiagnostic(inspected.attempts, directLabel,
-        !!directLabel && manufacturerLabel === directLabel,
-        directLabel ? "linked_label_preferred" : "no_eligible_manufacturer_pdf_lead", fallbackDiscovery);
       const labelStarted = Date.now();
-      let enrichment = manufacturerLabel && labelSource
-        ? await enrichFromManufacturerLabel({
-          deps: { fetchFn: fetch, now: () => new Date() },
-          manufacturerLabelUrl: manufacturerLabel, sourcePageUrl: labelSource,
-          regulatorUses: [], registeredProductName: canonicalName,
-          ...(identity.registrationNumber ? { product: { country: countryCode,
-            scheme: "apvma", registration_number: identity.registrationNumber } } : {}),
-          ...(backfillRow ? { activeNames: backfillRow.active_ingredients.map((a) => a.name) } : {}),
-        }) : null;
+      const selection = await selectAndFetchManufacturerLead({
+        deps: { fetchFn: fetch, now: () => new Date() }, country: countryCode,
+        registrant: identity.registrant, registeredProductName: canonicalName,
+        registrationNumber: identity.registrationNumber,
+        activeNames: backfillRow?.active_ingredients.map((a) => a.name),
+        productPageUrl: leads?.productUrl ?? null, inspectedPageUrl: page?.finalUrl ?? null, linkedLabel,
+        directCandidate, storedLabelUrls: backfillRow ? identity.labelUrls : [], documentedLead,
+        regulatorUses: [],
+      });
+      const { directLabel, manufacturerLabel } = selection;
+      let enrichment = selection.enrichment;
+      if (backfillRow && capture) privateFetchDiagnostic = privatePageFetchDiagnostic(inspected.attempts, directLabel,
+        !!directLabel && manufacturerLabel === directLabel &&
+          enrichment?.diagnostics.manufacturer_label_fetch !== "skipped",
+        directLabel ? "linked_label_preferred" : selection.candidateRejection ?? "no_eligible_manufacturer_pdf_lead",
+        fallbackDiscovery, { lead: selection.documented.lead, eligible: selection.documented.eligible,
+          rejection: selection.documented.rejection, selected: selection.documented.selected,
+          fetchOutcome: selection.documented.selected ? enrichment?.diagnostics.manufacturer_label_fetch_outcome ?? null : null,
+          fetchHttpStatus: selection.documented.selected ? enrichment?.diagnostics.manufacturer_label_http_status ?? null : null,
+          extractOutcome: selection.documented.selected ? enrichment?.diagnostics.manufacturer_label_extract ?? null : null,
+          identityMismatch: selection.documented.selected ? enrichment?.diagnostics.identity_mismatch === true : false });
       const originalAccessStatus = enrichment?.diagnostics.manufacturer_label_fetch === "failure"
         ? enrichment.diagnostics.manufacturer_label_http_status : null;
       // A failed direct PDF gets one different, page-linked label attempt; never retry the same URL.
