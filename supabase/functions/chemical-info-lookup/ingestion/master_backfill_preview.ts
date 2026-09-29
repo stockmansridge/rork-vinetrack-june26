@@ -6,8 +6,8 @@ import { authoritativeBackfillDetail, buildMasterBackfillPatch, lockedWebIdentit
 import { classifyUrl, manufacturerHostEligible } from "../research/classify.ts";
 
 /** Only the Master UUID selects an identity. Legacy country is ignored, never used to redirect research. */
-export function parseBackfillRequest(body: Record<string, unknown>): { masterId: string; dryRun: boolean; capture: boolean } | { error: string } {
-  const allowed = new Set(["action", "master_chemical_id", "masterChemicalId", "dryRun", "country", "capture_indexed_response"]);
+export function parseBackfillRequest(body: Record<string, unknown>): { masterId: string; dryRun: boolean; capture: boolean; visualDeclaration: unknown } | { error: string } {
+  const allowed = new Set(["action", "master_chemical_id", "masterChemicalId", "dryRun", "country", "capture_indexed_response", "reviewed_visual_declaration"]);
   if (Object.keys(body).some((key) => !allowed.has(key))) return { error: "Backfill accepts only a Master id and dryRun" };
   if (body.master_chemical_id !== undefined && body.masterChemicalId !== undefined && body.master_chemical_id !== body.masterChemicalId)
     return { error: "Conflicting Master ids" };
@@ -19,7 +19,8 @@ export function parseBackfillRequest(body: Record<string, unknown>): { masterId:
     return { error: "Invalid capture mode" };
   if (body.capture_indexed_response === true && body.master_chemical_id !== undefined && body.masterChemicalId !== undefined)
     return { error: "Capture requires exactly one Master id" };
-  return { masterId, dryRun: body.dryRun === true, capture: body.capture_indexed_response === true };
+  return { masterId, dryRun: body.dryRun === true, capture: body.capture_indexed_response === true,
+    visualDeclaration: body.reviewed_visual_declaration ?? null };
 }
 
 /** Both the JWT-backed admin RPC and authenticated user id must succeed before any Master lookup. */

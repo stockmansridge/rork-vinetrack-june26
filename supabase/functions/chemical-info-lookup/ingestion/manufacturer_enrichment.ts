@@ -39,6 +39,10 @@ import {
 } from "../grapevine_label.ts";
 import { applyRateIdentities, type RateIdentityProduct } from "../rate_identity.ts";
 import { normaliseProductNameLoose } from "./matching.ts";
+import { labelApprovalIdentifiers } from "../web_lookup.ts";
+import { verifyReviewedVisualDeclaration, type ReviewedVisualDeclaration } from "./reviewed_visual_evidence.ts";
+import { bindVineyardReferencedTables } from "./vineyard_table_binding.ts";
+import type { WireActiveIngredient } from "./contract.ts";
 import { companionGrapeDirections, pairedDirectionsConfirmIdentity } from "./manufacturer_companion.ts";
 
 /** Everything the live path needs to prove what happened, and why. */
@@ -59,6 +63,7 @@ export interface ManufacturerEnrichmentDiagnostics {
   grapevine_rows_found: number;
   grapevine_rates_found: number;
   withholding_period_days: number | null;
+  vineyard_binding_unresolved?: string[];
   practical_source: PracticalSource;
   practical_source_reason: string;
 }
@@ -71,6 +76,8 @@ export interface ManufacturerEnrichmentResult {
   fetchedUrl: string | null;
   /** Readable PDF text for the request-local V2 label fact check; never sent to clients. */
   labelText?: string;
+  /** Actual reviewed image evidence, only when matched to fetched bytes and locked chemistry. */
+  reviewedVisualDeclaration?: ReviewedVisualDeclaration;
   withholdingPeriodDays: number | null;
   diagnostics: ManufacturerEnrichmentDiagnostics;
 }
@@ -181,6 +188,10 @@ export async function enrichFromManufacturerLabel(input: {
   registeredProductName?: string | null;
   /** Backfill identity must agree with product and chemistry, not only a printed approval number. */
   activeNames?: string[];
+  /** Optional admin-attested image transcription, never a replacement for PDF text extraction. */
+  reviewedVisualDeclaration?: ReviewedVisualDeclaration | null;
+  lockedActives?: WireActiveIngredient[];
+  lockedFormType?: string | null;
   /** Only after an independently verified container label explicitly refers to this leaflet. */
   pairedContainerVerified?: boolean;
   registrant?: string;
@@ -281,13 +292,29 @@ export async function enrichFromManufacturerLabel(input: {
   }
 
   const documentText = assembleTextLines(items).map((line) => line.text).join("\n");
-  if (!manufacturerDocumentConfirmsIdentity({
+  const reviewed = input.reviewedVisualDeclaration ? verifyReviewedVisualDeclaration({
+    evidence: input.reviewedVisualDeclaration, fetchedSha256: fetched.sha256 ?? "", fetchedUrl: fetched.url,
+    lockedActives: input.lockedActives ?? [], lockedFormType: input.lockedFormType ?? null,
+    printedApprovalNumbers: labelApprovalIdentifiers(documentText, "AU").numbers,
+    lockedRegistrationNumber: input.product?.registration_number ?? "",
+    printedDocumentVersion: documentText.match(/APVMA Approval No\.:?\s*\d{4,7}(?:\/\d{4,7})*\s+Date:\s*(\d{2}-\d{2}-\d{4})/i)?.[1] ?? null,
+  }) : null;
+  const productTokens = normaliseProductNameLoose(input.registeredProductName ?? "").split(" ").filter((token) => token.length > 2);
+  const textNameConfirmed = productTokens.length > 0 && productTokens.every((token) =>
+    normaliseProductNameLoose(documentText).includes(token));
+  const textLayerDeclarations = [...documentText.matchAll(/\bACTIVE CONSTITUENT:\s*([^\n]+)/gi)].map((match) =>
+    match[0].toLowerCase().replace(/[^a-z0-9]+/g, " ").trim());
+  const reviewedText = input.reviewedVisualDeclaration?.verbatim.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const textLayerChemistryConflict = reviewed?.ok === true && textLayerDeclarations.length > 0 &&
+    textLayerDeclarations.some((declaration) => declaration !== reviewedText);
+  const reviewedIdentity = reviewed?.ok === true && textNameConfirmed && !textLayerChemistryConflict;
+  if (textLayerChemistryConflict || (!reviewedIdentity && !manufacturerDocumentConfirmsIdentity({
     text: documentText,
     registrationNumber: input.product?.registration_number ?? null,
     registeredProductName: input.registeredProductName ?? null,
     activeNames: input.activeNames,
   }) && !(input.pairedContainerVerified && pairedDirectionsConfirmIdentity(documentText,
-    input.registeredProductName ?? "", input.registrant ?? "", input.product?.registration_number ?? ""))) {
+    input.registeredProductName ?? "", input.registrant ?? "", input.product?.registration_number ?? "")))) {
     return {
       uses: regulatorUses,
       source: regulatorUses.length ? "regulator_label" : "none",
@@ -296,10 +323,11 @@ export async function enrichFromManufacturerLabel(input: {
       diagnostics: {
         manufacturer_label_fetch: "success",
         manufacturer_label_fetch_outcome: fetched.outcome,
-        manufacturer_label_fetch_reason: input.activeNames?.length &&
-            !/\bACTIVE\s+CONSTITUENT\b/i.test(documentText)
-          ? "the PDF text layer omits the active-constituent panel; chemistry requires separate verification"
-          : "the fetched PDF did not confirm the locked registration or registered product identity",
+        manufacturer_label_fetch_reason: textLayerChemistryConflict ? "visual_text_layer_chemistry_conflict" :
+          reviewed && !reviewed.ok ? reviewed.reason :
+          input.activeNames?.length && !/\bACTIVE\s+CONSTITUENT\b/i.test(documentText)
+            ? "the PDF text layer omits the active-constituent panel; chemistry requires separate verification"
+            : "the fetched PDF did not confirm the locked registration or registered product identity",
         manufacturer_label_extract: "failure",
         identity_mismatch: !!input.activeNames?.length && /\bACTIVE\s+CONSTITUENT\b/i.test(documentText.slice(0, 2500)) &&
           !input.activeNames.some((name) => documentText.slice(0, 2500).toLowerCase().replace(/[^a-z0-9]/g, "")
@@ -319,6 +347,8 @@ export async function enrichFromManufacturerLabel(input: {
 
   const parse = extractManufacturerLabelUses(items);
   const whp = readWithholdingPeriod(items);
+  const withholdingStatement = documentText.match(/WITHHOLDING PERIOD:\s*NOT REQUIRED WHEN USED AS DIRECTED/i)?.[0] ?? null;
+  const bound = bindVineyardReferencedTables(items, input.product ?? null, withholdingStatement);
   const printedGrapes = input.pairedContainerVerified ? companionGrapeDirections(items, input.registeredProductName ?? "") : null;
   // On a folded leaflet, an apparently valid row from the ordinary parser can
   // belong to the adjacent product. A paired document needs its own bounded
@@ -333,13 +363,13 @@ export async function enrichFromManufacturerLabel(input: {
       withholding_period_days: null, practical_source: regulatorUses.length ? "regulator_label" : "none",
       practical_source_reason: "paired grape table could not be bound to printed rows" },
   };
-  const manufacturerUses = printedGrapes ?? manufacturerUsesToRegisteredUses(parse.uses, {
+  const manufacturerUses = printedGrapes ?? (bound.uses.length ? bound.uses : manufacturerUsesToRegisteredUses(parse.uses, {
     withholdingPeriodDays: whp,
     // Never zero-filled. A label that does not state a re-entry period has not
     // stated that there isn't one.
     reEntryPeriodHours: null,
     product: input.product ?? null,
-  });
+  }));
 
   const chosen = selectPracticalUses({ manufacturerUses, regulatorUses });
 
@@ -348,6 +378,7 @@ export async function enrichFromManufacturerLabel(input: {
     source: chosen.source,
     fetchedUrl: fetched.url,
     labelText: documentText,
+    ...(reviewedIdentity ? { reviewedVisualDeclaration: input.reviewedVisualDeclaration! } : {}),
     withholdingPeriodDays: chosen.source === "manufacturer_label" ? whp : null,
     diagnostics: {
       manufacturer_label_fetch: "success",
@@ -362,6 +393,7 @@ export async function enrichFromManufacturerLabel(input: {
       grapevine_rows_found: countGrapevineRows(chosen.uses),
       grapevine_rates_found: countGrapevineRates(chosen.uses),
       withholding_period_days: chosen.source === "manufacturer_label" ? whp : null,
+      ...(bound.uses.length ? { vineyard_binding_unresolved: bound.unresolved } : {}),
       practical_source: chosen.source,
       practical_source_reason: chosen.reason,
     },

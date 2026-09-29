@@ -141,6 +141,7 @@ import { discoverManufacturerUrlsDetailed, findWebMasterIdentities, identityCand
 import { alternateManufacturerLabel, companionDirectionsUrl, pageMatchesLockedProduct, requiresAttachedDirections, verifiesTradingAs } from "./ingestion/manufacturer_companion.ts";
 import { safeManufacturerFetchReason } from "./ingestion/manufacturer_document.ts";
 import { selectAndFetchManufacturerLead, WEEDMASTER_PRODUCT_PAGE } from "./ingestion/documented_label_lead.ts";
+import { attestVisualDeclaration } from "./ingestion/reviewed_visual_evidence.ts";
 import { classifyUrl, manufacturerHostEligible } from "./research/classify.ts";
 import { authoritativeBackfillDetail, buildMasterBackfillPatch, isIncompleteMaster, lockedWebIdentity, writeLookupCache } from "./ingestion/master_backfill.ts";
 import { alreadyCompleteBackfill, authorizeBackfillRequest, backfillCountry, finishBackfillPreview, markConditionalGrapeWithholding, parseBackfillRequest, readBackfillIndexedLabel, withIndexedDiagnostic } from "./ingestion/master_backfill_preview.ts";
@@ -1387,6 +1388,10 @@ Deno.serve(async (req: Request) => {
       const adminId = backfill && adminAllowed ? await authenticatedUserId(req) : null;
       if (backfill && "error" in authorizeBackfillRequest(body ?? {}, adminAllowed, adminId))
         return json({ error: "Not authorised" }, 403);
+      const visualDeclaration = request && "visualDeclaration" in request && request.visualDeclaration !== null
+        ? attestVisualDeclaration(request.visualDeclaration, adminId ?? "", new Date()) : null;
+      if (request && "visualDeclaration" in request && request.visualDeclaration !== null && !visualDeclaration)
+        return json({ error: "Reviewed visual declaration requires authenticated admin attestation and complete provenance" }, 400);
       const masterId = request && "masterId" in request ? request.masterId : "";
       const masterRows = backfill ? await masterSelect(`select=*&id=eq.${encodeURIComponent(masterId)}&limit=1`) : null;
       if (backfill && (!masterRows || masterRows.length !== 1)) return json({ error: "Master row not found" }, 404);
@@ -1508,6 +1513,9 @@ Deno.serve(async (req: Request) => {
         registrant: identity.registrant, registeredProductName: canonicalName,
         registrationNumber: identity.registrationNumber,
         activeNames: backfillRow?.active_ingredients.map((a) => a.name),
+        lockedActives: backfillRow?.active_ingredients,
+        lockedFormType: backfillRow?.form_type,
+        reviewedVisualDeclaration: visualDeclaration,
         productPageUrl: leads?.productUrl ?? null,
         documentedProductPageUrl: documentedLead ? WEEDMASTER_PRODUCT_PAGE : null,
         inspectedPageUrl: page?.finalUrl ?? null, linkedLabel,
@@ -1670,7 +1678,11 @@ Deno.serve(async (req: Request) => {
         : [];
       const allActives = [...foundActives, ...labelProjected.filter((candidate) =>
         !foundActives.some((active) => String(active.name).toLowerCase() === String(candidate.name).toLowerCase()))];
-      const labelActive = facts?.active;
+      const reviewedDeclaration = enrichment?.reviewedVisualDeclaration;
+      const labelActive = reviewedDeclaration && backfillRow
+        ? { name: backfillRow.active_ingredients[0].name,
+          concentration: reviewedDeclaration.active.concentration,
+          concentration_unit: reviewedDeclaration.active.unit } : facts?.active;
       const actives = labelActive && !allActives.some((a) => String(a.name).toLowerCase() === labelActive.name.toLowerCase())
         ? [...allActives, { name: labelActive.name, concentration: labelActive.concentration,
           concentration_unit: labelActive.concentration_unit, activity_group_code: facts?.group?.code ?? null,
@@ -1719,9 +1731,13 @@ Deno.serve(async (req: Request) => {
       };
       const detail = buildStructuredResponse(extraction, countryCode, "Agricultural web and label research");
       if (backfillRow) markConditionalGrapeWithholding(detail, !!packageUrl);
-      if (backfill && facts?.active) detail.active_ingredients = detail.active_ingredients.map((active: any) =>
-        String(active.name).toLowerCase() === facts.active!.name.toLowerCase() &&
-        active.concentration === facts.active!.concentration && active.concentration_unit === facts.active!.concentration_unit
+      if (backfillRow && enrichment?.diagnostics.vineyard_binding_unresolved?.length)
+        detail.verification.unresolved_fields = [...new Set([
+          ...detail.verification.unresolved_fields, ...enrichment.diagnostics.vineyard_binding_unresolved,
+        ])];
+      if (backfill && labelActive) detail.active_ingredients = detail.active_ingredients.map((active: any) =>
+        String(active.name).toLowerCase() === labelActive.name.toLowerCase() &&
+        active.concentration === labelActive.concentration && active.concentration_unit === labelActive.concentration_unit
           ? { ...active, identity_source: "manufacturer_label" } : active);
       if (explicitGroupFree && !detail.active_ingredients.length) {
         detail.resistance_classification_state = "not_applicable";
@@ -1738,12 +1754,18 @@ Deno.serve(async (req: Request) => {
         if (backfillRow) {
           detail.registration.registration_number = backfillRow.registration_number;
           detail.registration.manufacturer_label_identifiers = labelIdentifiers;
+          if (reviewedDeclaration) detail.registration.reviewed_visual_declaration = reviewedDeclaration;
           if (packageUrl) detail.registration.manufacturer_package_label_url = packageUrl;
         }
       }
       detail.label_urls.regulator_label_url = null;
       if (label) {
         detail.verification.sources.push({ kind: "manufacturer_label", name: "Product directions", reference: label, retrieved_at: new Date().toISOString() });
+        if (reviewedDeclaration) detail.verification.sources.push({ kind: "manufacturer_label", name: "Admin-reviewed visual declaration",
+          reference: label, document_sha256: reviewedDeclaration.document_sha256, physical_page: reviewedDeclaration.physical_page,
+          location: reviewedDeclaration.location, verbatim: reviewedDeclaration.verbatim,
+          method: reviewedDeclaration.method, reviewed_by: reviewedDeclaration.reviewed_by,
+          reviewed_at: reviewedDeclaration.reviewed_at, document_version: reviewedDeclaration.document_version });
         if (packageUrl) detail.verification.sources.push({ kind: "manufacturer_label", name: "Container label", reference: packageUrl, retrieved_at: new Date().toISOString() });
         detail.field_provenance = { label_reference: "manufacturer_label",
           ...(extraction.registration_number ? { registration_number: identity.registrationNumber ? "master_catalogue" : "manufacturer_label" } : {}),

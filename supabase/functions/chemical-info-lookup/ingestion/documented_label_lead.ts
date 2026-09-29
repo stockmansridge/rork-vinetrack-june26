@@ -1,5 +1,7 @@
 import type { AdapterDeps } from "./contract.ts";
 import { enrichFromManufacturerLabel } from "./manufacturer_enrichment.ts";
+import type { ReviewedVisualDeclaration } from "./reviewed_visual_evidence.ts";
+import type { WireActiveIngredient } from "./contract.ts";
 import { classifyUrl, manufacturerHostEligible } from "../research/classify.ts";
 
 /** Observed Download Label link on the locked Nufarm product page; this is a fetch lead, not verified evidence. */
@@ -49,6 +51,9 @@ export async function selectAndFetchManufacturerLead(input: {
   registeredProductName: string;
   registrationNumber: string | null;
   activeNames?: string[];
+  lockedActives?: WireActiveIngredient[];
+  lockedFormType?: string | null;
+  reviewedVisualDeclaration?: ReviewedVisualDeclaration | null;
   productPageUrl: string | null;
   documentedProductPageUrl?: string | null;
   inspectedPageUrl?: string | null;
@@ -76,7 +81,9 @@ export async function selectAndFetchManufacturerLead(input: {
   const enrichment = manufacturerLabel && labelSource ? await enrichFromManufacturerLabel({
     deps: input.deps, manufacturerLabelUrl: manufacturerLabel, sourcePageUrl: labelSource,
     regulatorUses: input.regulatorUses, registeredProductName: input.registeredProductName,
-    activeNames: input.activeNames,
+    activeNames: input.activeNames, lockedActives: input.lockedActives,
+    lockedFormType: input.lockedFormType,
+    reviewedVisualDeclaration: input.reviewedVisualDeclaration,
     ...(input.registrationNumber ? { product: { country, scheme: "apvma", registration_number: input.registrationNumber } } : {}),
   }) : null;
   return { directLabel, manufacturerLabel, labelSource, enrichment,

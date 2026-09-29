@@ -1,0 +1,4767 @@
+{
+  "source": {
+    "product_page": "https://nufarm.com/au/product/weedmaster-duo/",
+    "pdf": "https://cdn.nufarm.com/wp-content/uploads/sites/22/2018/05/13085258/0533-Nufarm-Weedmaster-DUO-Herbicide.pdf",
+    "sha256": "69213c077e191e99682e515884d7667156367ea7ab927ecdac2882f4d0ec39b8",
+    "master_row_source": "locally reconstructed locked row; not a fresh DB read"
+  },
+  "initial": {
+    "leads": {
+      "productUrl": "https://nufarm.com/au/product/weedmaster-duo/",
+      "labelUrl": null
+    },
+    "documentedLead": "https://cdn.nufarm.com/wp-content/uploads/sites/22/2018/05/13085258/0533-Nufarm-Weedmaster-DUO-Herbicide.pdf",
+    "identityMatched": true,
+    "discoveryOutcome": "not_attempted"
+  },
+  "actual_enrichment_diagnostics": {
+    "manufacturer_label_fetch": "success",
+    "manufacturer_label_fetch_outcome": "fetched",
+    "manufacturer_label_fetch_reason": "the PDF text layer omits the active-constituent panel; chemistry requires separate verification",
+    "manufacturer_label_extract": "failure",
+    "identity_mismatch": false,
+    "manufacturer_label_bytes": 934261,
+    "manufacturer_label_sha256": "69213c077e191e99682e515884d7667156367ea7ab927ecdac2882f4d0ec39b8",
+    "label_rows_found": 0,
+    "grapevine_rows_found": 0,
+    "grapevine_rates_found": 0,
+    "withholding_period_days": null,
+    "practical_source": "none",
+    "practical_source_reason": "manufacturer document identity was not confirmed, so regulator data carries the lookup"
+  },
+  "evidence": {
+    "document_sha256": "69213c077e191e99682e515884d7667156367ea7ab927ecdac2882f4d0ec39b8",
+    "item_count": 2749,
+    "physical_page_1": {
+      "extractable_text": "",
+      "visual_review_only": "ACTIVE CONSTITUENT: 360 g/L GLYPHOSATE; present as the isopropylamine and mono-ammonium salts",
+      "image": ".rork-tmp/weedmaster_page_1.png",
+      "note": "Manual inspection of PDF page 1, orange band, left; NOT extracted by parser or automatically promoted."
+    },
+    "product_page_chemistry": "Separate source; not requested or fetched in this replay and never attributed to PDF text layer.",
+    "approval": {
+      "physical_page": 15,
+      "printed_values": [
+        "53576/136340"
+      ],
+      "numbers": [
+        "53576",
+        "136340"
+      ]
+    },
+    "vineyard": {
+      "physical_page": 9,
+      "crop_cell": "TREE AND VINE CROPS:\nAvocado, Banana, Blueberries,\nCitrus fruit, Custard apples,\nDuboisia, Figs dessert, Guava,\nKiwifruit, Litchi, Mango,\nMonstera fruit, Nuts (including:\nalmond, pecan, macadamia,\npistachio, walnut), Olive,\nPawpaw, Persimmons, Pome\nfruit, Raspberries, Stone fruit,\nTea, Vineyards.",
+      "reference_cell": "For specific rates of application refer\nTable 2. ANNUAL WEED CONTROL.\nTable 3. PERENNIAL WEED CONTROL.",
+      "rate_cell": null,
+      "comments_cell": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are\neffectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm.\nCitrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers,\nfresh wounds, foliage or fruit.\nTea: Apply a maximum of 4L/ha by shielded boom or directed off-centre nozzle or 0.5L/100L by directed handgun or knapsack to avoid application\nto the crop.\nAll other crops: DO NOT allow spray or spray drift to contact any part of the tree, vine or palm, including the trunk. CAUTION: Where split bark on\nKiwifruit and green stems on pawpaw occur, extreme care is required. For residual control of annual weeds this product may be tank mixed with\ncompatible herbicides which are labeled for use in the above crops. See Tank Mixtures for Directions."
+    },
+    "general_restraints": [
+      "RESTRAINTS",
+      "DO NOT disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds.",
+      "DO NOT treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt.",
+      "Rainfall occurring up to 6 hours after application may reduce effectiveness. Heavy rainfall within 2 hours of application may wash the chemical off the foliage and a repeat treatment may be required.",
+      "DO NOT use prior to sowing tomatoes."
+    ],
+    "withholding": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED",
+    "re_entry_period": null,
+    "re_entry_status": "not stated in extracted text; unresolved",
+    "production_parser": {
+      "found": true,
+      "rows": 11,
+      "vineyard_rows": 0
+    },
+    "quarantined_weed_table_candidates": [
+      {
+        "physical_page": 2,
+        "row": 2,
+        "table": "annual",
+        "target_weed": "Amaranth",
+        "scientific_name": "Amaranthus spp.",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 3,
+        "table": "annual",
+        "target_weed": "Barley grass",
+        "scientific_name": "Hordeum leporinum",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 4,
+        "table": "annual",
+        "target_weed": "Barnyard grass",
+        "scientific_name": "Echinochloa spp.",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 5,
+        "table": "annual",
+        "target_weed": "Brome grass",
+        "scientific_name": "Bromus spp.",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 6,
+        "table": "annual",
+        "target_weed": "Caltrop",
+        "scientific_name": "Tribulus terrestris",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 7,
+        "table": "annual",
+        "target_weed": "Canary grass / Annual phalaris",
+        "scientific_name": "Phalaris spp.",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 8,
+        "table": "annual",
+        "target_weed": "Capeweed",
+        "scientific_name": "Arctotheca calendula",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 9,
+        "table": "annual",
+        "target_weed": "Cereals",
+        "scientific_name": "(volunteer wheat, barley, oats, sorghum)",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 10,
+        "table": "annual",
+        "target_weed": "Chickweed",
+        "scientific_name": "Stellaria media",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 11,
+        "table": "annual",
+        "target_weed": "Cobbler’s pegs",
+        "scientific_name": "Bidens pilosa",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 12,
+        "table": "annual",
+        "target_weed": "Dead nettle",
+        "scientific_name": "Lamium amplexicaule",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 13,
+        "table": "annual",
+        "target_weed": "Double gee",
+        "scientific_name": "Emex australis",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 14,
+        "table": "annual",
+        "target_weed": "Fumitory",
+        "scientific_name": "Fumaria officinalis / F. muralis",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 15,
+        "table": "annual",
+        "target_weed": "Ground cherry",
+        "scientific_name": "Physalis angulata",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 16,
+        "table": "annual",
+        "target_weed": "Lesser swinecress",
+        "scientific_name": "Coronopus didymus",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 17,
+        "table": "annual",
+        "target_weed": "Liverseed grass",
+        "scientific_name": "Urochloa panicoides",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 18,
+        "table": "annual",
+        "target_weed": "Mintweed",
+        "scientific_name": "Salvia reflexa",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 19,
+        "table": "annual",
+        "target_weed": "Paradoxa grass",
+        "scientific_name": "Phalaris paradoxa",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 20,
+        "table": "annual",
+        "target_weed": "Paterson’s curse",
+        "scientific_name": "Echium plantagineum",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 21,
+        "table": "annual",
+        "target_weed": "Pigweed",
+        "scientific_name": "Portulaca oleracea",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 22,
+        "table": "annual",
+        "target_weed": "Potato weed",
+        "scientific_name": "Galinsoga parviflora",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 23,
+        "table": "annual",
+        "target_weed": "Ryegrass",
+        "scientific_name": "Lolium rigidum",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 24,
+        "table": "annual",
+        "target_weed": "Saffron thistle",
+        "scientific_name": "Carthamus lanatus",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 25,
+        "table": "annual",
+        "target_weed": "Silver grass",
+        "scientific_name": "Vulpia spp.",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 26,
+        "table": "annual",
+        "target_weed": "Sowthistle",
+        "scientific_name": "Sonchus oleraceus",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 27,
+        "table": "annual",
+        "target_weed": "Spear thistle",
+        "scientific_name": "Cirsium vulgare",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 28,
+        "table": "annual",
+        "target_weed": "Spiny burrgrass",
+        "scientific_name": "Cenchrus spp.",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 29,
+        "table": "annual",
+        "target_weed": "Spurge",
+        "scientific_name": "Euphorbia spp.",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 30,
+        "table": "annual",
+        "target_weed": "Sub. clover",
+        "scientific_name": "Trifolium subterraneum",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 31,
+        "table": "annual",
+        "target_weed": "Thornapple",
+        "scientific_name": "Datura spp.",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 32,
+        "table": "annual",
+        "target_weed": "Wild mustard",
+        "scientific_name": "Sisymbrium officinale",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 33,
+        "table": "annual",
+        "target_weed": "Wild oats",
+        "scientific_name": "Avena spp.",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 34,
+        "table": "annual",
+        "target_weed": "Wild turnip",
+        "scientific_name": "Brassica tournefortii",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 35,
+        "table": "annual",
+        "target_weed": "Winter grass",
+        "scientific_name": "Poa annua",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 2,
+        "row": 36,
+        "table": "annual",
+        "target_weed": "Variegated thistle",
+        "scientific_name": "Silybum marianum",
+        "method_cells": {
+          "boom": "2-3 L/ha",
+          "handgun": "500-700 mL/100L",
+          "knapsack": "75-100 mL/15L",
+          "wiper": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section."
+        },
+        "rate_cell": "BOOM:\n2-3 L/ha\nHANDGUN:\n500-700 mL/100L\nKNAPSACK:\n75-100 mL/15L\nWIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2-3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2-3 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 2,
+                "max_value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500-700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500-700 mL/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 500,
+                "max_value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-100 mL/15L"
+              }
+            ]
+          },
+          {
+            "method": "wiper",
+            "verbatim": "WIPER EQUIPMENT\nAND CONTROLLED\nDROPLET\nAPPLICATORS:\nSee Application section.",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "WIPER EQUIPMENT AND CONTROLLED DROPLET APPLICATORS: See Application section."
+              }
+            ]
+          }
+        ],
+        "comments": "Annual weeds may be sprayed anytime they are actively growing. Use the lower\nrate on weeds up to 15 cm tall; increase to the higher rate where weeds are over\n15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may\ntake 20-30 days under cool conditions.\nThis product does not provide residual weed control. Repeat treatments may be\nnecessary to control later germinating weeds. For residual control of ANNUAL\nweeds, this product may be used as a tank mixture with certain residual\nherbicides. See TANK MIXTURES for directions. For annual weed control in\ncultivated situations see: CONSERVATION TILLAGE USES.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 3,
+        "row": 3,
+        "table": "perennial",
+        "target_weed": "Alligator weed^",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "-",
+          "handgun": "1 L/100L",
+          "knapsack": "150 mL/15L"
+        },
+        "rate_cell": "- | 1 L/100L | 150 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "-",
+            "parsed": []
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1 L/100L",
+                "basis": "per_100_litres",
+                "value": 1,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "150 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "150 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply when actively growing, from Summer through Winter. Floating form only.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 3,
+        "row": 4,
+        "table": "perennial",
+        "target_weed": "Bamboo\n(Bambusa spp.)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "-",
+          "handgun": "1 L/100L",
+          "knapsack": "150 mL/15L"
+        },
+        "rate_cell": "- | 1 L/100L | 150 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "-",
+            "parsed": []
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1 L/100L",
+                "basis": "per_100_litres",
+                "value": 1,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "150 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "150 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing foliage and/or regrowth which is between 1m and 2m tall. Cut stump: Dilute 1:6 ie. mix 1 part of this\nproduct plus 6 parts water. Cut stems back to 20cm high, pour mixture down hollow stem or wet the cut.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 3,
+        "row": 5,
+        "table": "perennial",
+        "target_weed": "Bent grass\n(Agrostis capillaris)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "2.5 L/ha",
+          "handgun": "500 mL/100L",
+          "knapsack": "75 mL/15L"
+        },
+        "rate_cell": "2.5 L/ha | 500 mL/100L | 75 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2.5 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2.5 L/ha",
+                "basis": "per_hectare",
+                "value": 2.5,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500 mL/100L",
+                "basis": "per_100_litres",
+                "value": 500,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants in late Spring when they have some seed head development but before Summer moisture stress.\nBent grass should NOT be heavily grazed at spraying. Follow up management is required to limit seedling re-establishment. Full\ndisturbance with a tyned implement should follow, 10-21 days after spraying. Application of this product should be followed by a\nSummer crop and/or by re-seeding pasture or crop the following Autumn.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 3,
+        "row": 6,
+        "table": "perennial",
+        "target_weed": "Blady grass\n(Imperata cylindrica)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "9 L/ha",
+          "handgun": "1.3 L/100L",
+          "knapsack": "200 mL/15L"
+        },
+        "rate_cell": "9 L/ha | 1.3 L/100L | 200 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "9 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "9 L/ha",
+                "basis": "per_hectare",
+                "value": 9,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1.3 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1.3 L/100L",
+                "basis": "per_100_litres",
+                "value": 1.3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "200 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "200 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants at the early head stage.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 3,
+        "row": 7,
+        "table": "perennial",
+        "target_weed": "Bracken\n(Pteridium esculentum)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "9 L/ha plus\nPulse® Penetrant\n500mL/\n100L spray",
+          "handgun": "1.5 L/100L",
+          "knapsack": "225 mL/15L"
+        },
+        "rate_cell": "9 L/ha plus\nPulse® Penetrant\n500mL/\n100L spray | 1.5 L/100L | 225 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "9 L/ha plus\nPulse® Penetrant\n500mL/\n100L spray",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "9 L/ha plus Pulse® Penetrant 500mL/ 100L spray",
+                "basis": "per_hectare",
+                "value": 9,
+                "unit": "L"
+              },
+              {
+                "label": "",
+                "raw_text": "9 L/ha plus Pulse® Penetrant 500mL/ 100L spray",
+                "basis": "per_100_litres",
+                "value": 500,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1.5 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1.5 L/100L",
+                "basis": "per_100_litres",
+                "value": 1.5,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "225 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "225 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "For boom application, always add Pulse® Penetrant, otherwise reduced results will occur. Addition of Pulse® Penetrant (500\nmL/100L spray) may improve control with handgun application. Wiper application is recommended, see WIPER EQUIPMENT. Double\npass application is required for ropewick equipment. Bracken should be slashed in Winter/Spring prior to treatment. Apply this\nproduct when fronds are fully unfurled actively growing fronds but prior to frosts. Visible symptoms may not be fully apparent until\nthe next season. Complete control will not be achieved from one application. Repeat treatment is recommended, preferably\nassociated with pasture improvement.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 3,
+        "row": 8,
+        "table": "perennial",
+        "target_weed": "Brown beetle grass^\n(Diplachne spp.)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "3 L/ha",
+          "handgun": "500 mL/100L",
+          "knapsack": "75 mL/15L"
+        },
+        "rate_cell": "3 L/ha | 500 mL/100L | 75 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "3 L/ha",
+                "basis": "per_hectare",
+                "value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500 mL/100L",
+                "basis": "per_100_litres",
+                "value": 500,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants. DO NOT apply to partially submerged plants.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 3,
+        "row": 9,
+        "table": "perennial",
+        "target_weed": "Carpet grass\n(Axonopus spp.)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "3 L/ha",
+          "handgun": "500 mL/100L",
+          "knapsack": "75 mL/15L"
+        },
+        "rate_cell": "3 L/ha | 500 mL/100L | 75 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "3 L/ha",
+                "basis": "per_hectare",
+                "value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500 mL/100L",
+                "basis": "per_100_litres",
+                "value": 500,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants at the early head stage.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 3,
+        "row": 10,
+        "table": "perennial",
+        "target_weed": "Cocksfoot\n(Dactylis glomerata)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "3 L/ha",
+          "handgun": "700 mL/100L",
+          "knapsack": "100 mL/15L"
+        },
+        "rate_cell": "3 L/ha | 700 mL/100L | 100 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "3 L/ha",
+                "basis": "per_hectare",
+                "value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "700 mL/100L",
+                "basis": "per_100_litres",
+                "value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "100 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants at the early head stage.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 3,
+        "row": 11,
+        "table": "perennial",
+        "target_weed": "Couch (Cynodon dactylon)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "9 L/ha",
+          "handgun": "1.3 L/100L",
+          "knapsack": "200 mL/15L"
+        },
+        "rate_cell": "9 L/ha | 1.3 L/100L | 200 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "9 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "9 L/ha",
+                "basis": "per_hectare",
+                "value": 9,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1.3 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1.3 L/100L",
+                "basis": "per_100_litres",
+                "value": 1.3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "200 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "200 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants when most have reached the early head stage. In SA and WA apply to active plants during Oct-Nov\nfor best results.\nAddition of Pulse® Penetrant (500 mL/100L spray) may improve control. No disturbance for 5 weeks minimum after application.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 3,
+        "row": 12,
+        "table": "perennial",
+        "target_weed": "Cumbungi^ (Typha spp.)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": null,
+          "handgun": null,
+          "knapsack": null
+        },
+        "rate_cell": "",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": null,
+            "parsed": []
+          },
+          {
+            "method": "handgun",
+            "verbatim": null,
+            "parsed": []
+          },
+          {
+            "method": "knapsack",
+            "verbatim": null,
+            "parsed": []
+          }
+        ],
+        "comments": "Apply to actively growing plants at the early head to full head stage (Summer-Autumn). Re-treatment may be required to restrict\nseedling re-establishment. Application by wiper equipment is recommended (not Tasmania). Refer WIPER EQUIPMENT section.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 3,
+        "row": 13,
+        "table": "perennial",
+        "target_weed": "Flatweed (Cat’s ear)\n(Hypochoeris radicata)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "3 L/ha",
+          "handgun": "700 mL/100L",
+          "knapsack": "100 mL/15L"
+        },
+        "rate_cell": "3 L/ha | 700 mL/100L | 100 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "3 L/ha",
+                "basis": "per_hectare",
+                "value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "700 mL/100L",
+                "basis": "per_100_litres",
+                "value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "100 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to fully developed rosettes at the early flower stage.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 3,
+        "row": 14,
+        "table": "perennial",
+        "target_weed": "Glyceria\n(Glyceria maxima)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "6 L/ha",
+          "handgun": "1 L/100L",
+          "knapsack": "150 mL/15L"
+        },
+        "rate_cell": "6 L/ha | 1 L/100L | 150 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "6 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "6 L/ha",
+                "basis": "per_hectare",
+                "value": 6,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1 L/100L",
+                "basis": "per_100_litres",
+                "value": 1,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "150 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "150 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants at the mature head stage in late Summer-Autumn. Add Nufarm LI 700® at 250-500 mL/100L.\nNOTE: Control of Glyceria is only allowable in dry drains and channels and dry margins of dams, lakes and streams. DO NOT apply to\nweeds growing in or over water. DO NOT spray across open bodies of water, and DO NOT allow spray to enter water. DO NOT allow\nwater to return to dry channels within 4 days of application.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 3,
+        "row": 15,
+        "table": "perennial",
+        "target_weed": "Guinea grass\n(Panicum maximum)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "9 L/ha",
+          "handgun": "1.3 L/100L",
+          "knapsack": "200 mL/15L"
+        },
+        "rate_cell": "9 L/ha | 1.3 L/100L | 200 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "9 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "9 L/ha",
+                "basis": "per_hectare",
+                "value": 9,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1.3 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1.3 L/100L",
+                "basis": "per_100_litres",
+                "value": 1.3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "200 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "200 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants when most have reached the early head stage. For WIPER application refer WIPER EQUIPMENT\nsection.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 3,
+        "row": 16,
+        "table": "perennial",
+        "target_weed": "Hoary cress\n(Cardaria draba)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "1.5 L/ha",
+          "handgun": "500 mL/100L",
+          "knapsack": "75 mL/15L"
+        },
+        "rate_cell": "1.5 L/ha | 500 mL/100L | 75 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "1.5 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1.5 L/ha",
+                "basis": "per_hectare",
+                "value": 1.5,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500 mL/100L",
+                "basis": "per_100_litres",
+                "value": 500,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "For maximum long term reduction, apply from late July to September when plants are in late rosette to flowering stage. Plants\nshould be actively growing and not under stress of drought, frost or waterlogging. Application may be integrated with long fallows.\nCultivation may start 7 days after spraying. Wiper equipment may be used where sufficient stem elongation occurs, refer to WIPER\nEQUIPMENT section. In Tasmania add Nufarm LI 700 at 250-500 mL/100L spray.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 3,
+        "row": 17,
+        "table": "perennial",
+        "target_weed": "Johnson grass\n(Sorghum halepense)\nKangaroo grass\n(Themeda australis)\nKikuyu grass\n(Pennisetum clandestinum)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "6 L/ha",
+          "handgun": "1 L/100L",
+          "knapsack": "150 mL/15L"
+        },
+        "rate_cell": "6 L/ha | 1 L/100L | 150 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "6 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "6 L/ha",
+                "basis": "per_hectare",
+                "value": 6,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1 L/100L",
+                "basis": "per_100_litres",
+                "value": 1,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "150 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "150 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants at the early head stage. For application by wiper equipment on Johnson grass, off-type and\nVolunteer sorghum refer to WIPER EQUIPMENT section.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 3,
+        "row": 18,
+        "table": "perennial",
+        "target_weed": "Lovegrass, African\n(Eragrostis curvula)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "6 L/ha",
+          "handgun": "1 L/100L",
+          "knapsack": "150 mL/15L"
+        },
+        "rate_cell": "6 L/ha | 1 L/100L | 150 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "6 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "6 L/ha",
+                "basis": "per_hectare",
+                "value": 6,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1 L/100L",
+                "basis": "per_100_litres",
+                "value": 1,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "150 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "150 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants. Re-treatment and/or pasture improvement is recommended to restrict seedling re-establishment.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 4,
+        "row": 3,
+        "table": "perennial",
+        "target_weed": "Ludwigia peruviana",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "-",
+          "handgun": "1 L/100L",
+          "knapsack": "150 mL/15L"
+        },
+        "rate_cell": "- | 1 L/100L | 150 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "-",
+            "parsed": []
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1 L/100L",
+                "basis": "per_100_litres",
+                "value": 1,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "150 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "150 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply when actively growing and at or beyond the early bloom stage of growth, but before Autumn colour changes occur. Thorough\ncoverage is necessary for best control.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 4,
+        "row": 4,
+        "table": "perennial",
+        "target_weed": "Nutgrass\n(Cyperus rotundus)\nDoes not refer to other Cyperus\nspp. which may be locally known\nas nutgrass.",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "6 L/ha\n3 L/ha\nplus\n3 L/ha",
+          "handgun": "1 L/100L\n700 mL//100L\nplus\n700 mL/100L",
+          "knapsack": "150 mL/15L\n100 mL/15L plus\n100 mL/15L"
+        },
+        "rate_cell": "6 L/ha\n3 L/ha\nplus\n3 L/ha | 1 L/100L\n700 mL//100L\nplus\n700 mL/100L | 150 mL/15L\n100 mL/15L plus\n100 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "6 L/ha\n3 L/ha\nplus\n3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "6 L/ha 3 L/ha plus 3 L/ha",
+                "basis": "per_hectare",
+                "value": 6,
+                "unit": "L",
+                "condition_ambiguous": true
+              },
+              {
+                "label": "",
+                "raw_text": "6 L/ha 3 L/ha plus 3 L/ha",
+                "basis": "per_hectare",
+                "value": 3,
+                "unit": "L",
+                "condition_ambiguous": true
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1 L/100L\n700 mL//100L\nplus\n700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1 L/100L 700 mL//100L plus 700 mL/100L",
+                "basis": "per_100_litres",
+                "value": 1,
+                "unit": "L",
+                "condition_ambiguous": true
+              },
+              {
+                "label": "",
+                "raw_text": "1 L/100L 700 mL//100L plus 700 mL/100L",
+                "basis": "per_100_litres",
+                "value": 700,
+                "unit": "mL",
+                "condition_ambiguous": true
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "150 mL/15L\n100 mL/15L plus\n100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "150 mL/15L 100 mL/15L plus 100 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "NON-CULTIVATED SITUATIONS: Apply to actively growing plants in late Summer-Autumn (Feb-Apr) when at least 20% have reached\nthe head stage.\nARABLE LAND: Make FIRST APPLICATION to actively growing plants when at least 20% have reached the head stage (normally\nabout Feb). After allowing maximum re-emergence to occur (normally in 6-8 weeks) it is essential to make a SECOND APPLICATION.\nNOTE: In arable land Nutgrass may rapidly regenerate from isolated nuts. Follow up treatments should be made as part of a\nNutgrass control program.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 4,
+        "row": 5,
+        "table": "perennial",
+        "target_weed": "Pampas grass\n(Cortaderia spp.)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "-",
+          "handgun": "1 L/100L or\n1.3 L/100L",
+          "knapsack": "150 mL or\n200 mL/15L"
+        },
+        "rate_cell": "- | 1 L/100L or\n1.3 L/100L | 150 mL or\n200 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "-",
+            "parsed": []
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1 L/100L or\n1.3 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1 L/100L or 1.3 L/100L",
+                "basis": "per_100_litres",
+                "value": 1,
+                "unit": "L",
+                "condition_ambiguous": true
+              },
+              {
+                "label": "",
+                "raw_text": "1 L/100L or 1.3 L/100L",
+                "basis": "per_100_litres",
+                "value": 1.3,
+                "unit": "L",
+                "condition_ambiguous": true
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "150 mL or\n200 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "150 mL or 200 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants during Spring, Summer or Autumn. Ensure complete coverage of the foliage. For best results, apply\nafter flowering. For easier access, large plants may be cut or burnt prior to spraying, but first allow regrowth to reach 1m. Use the\nhigher rate on plants over 1 m high.\nLOW VOLUME APPLICATION: Use 1:9 mixture of this product to water. Apply 2x2mL per 0.5 m height. Ensure spray contacts all\nfoliage.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 4,
+        "row": 6,
+        "table": "perennial",
+        "target_weed": "Paragrass^\n(Brachiara mutica)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "9 L/ha",
+          "handgun": "1.3 L/100L",
+          "knapsack": "200 mL/15L"
+        },
+        "rate_cell": "9 L/ha | 1.3 L/100L | 200 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "9 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "9 L/ha",
+                "basis": "per_hectare",
+                "value": 9,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1.3 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1.3 L/100L",
+                "basis": "per_100_litres",
+                "value": 1.3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "200 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "200 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants when most have reached the early head stage.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 4,
+        "row": 7,
+        "table": "perennial",
+        "target_weed": "Paspalum\n(Paspalum dilitatum)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "6 L/ha",
+          "handgun": "1 L/100L",
+          "knapsack": "150 mL/15L"
+        },
+        "rate_cell": "6 L/ha | 1 L/100L | 150 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "6 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "6 L/ha",
+                "basis": "per_hectare",
+                "value": 6,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1 L/100L",
+                "basis": "per_100_litres",
+                "value": 1,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "150 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "150 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 4,
+        "row": 8,
+        "table": "perennial",
+        "target_weed": "Pellitory\n(Parietaria judaica)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "-",
+          "handgun": "1 L/100L",
+          "knapsack": "150 mL/15L"
+        },
+        "rate_cell": "- | 1 L/100L | 150 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "-",
+            "parsed": []
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1 L/100L",
+                "basis": "per_100_litres",
+                "value": 1,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "150 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "150 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants prior to seeding. Repeat applications may be necessary to control seedlings and/or regrowth.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 4,
+        "row": 9,
+        "table": "perennial",
+        "target_weed": "Phalaris\n(Phalaris aquatica)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "3-6 L/ha",
+          "handgun": "500 mL-1\nL/100L",
+          "knapsack": "75-150 mL/15L"
+        },
+        "rate_cell": "3-6 L/ha | 500 mL-1\nL/100L | 75-150 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "3-6 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "3-6 L/ha",
+                "basis": "range_per_hectare",
+                "min_value": 3,
+                "max_value": 6,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500 mL-1\nL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500 mL-1 L/100L",
+                "basis": "per_100_litres",
+                "value": 1,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75-150 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75-150 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants during Winter-Spring. Use the lower rate where only knockdown is required eg. prior to burning of\nfirebreaks. Burning can usually start 14-21 days after spraying. For long term control increase to the higher rate.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 4,
+        "row": 10,
+        "table": "perennial",
+        "target_weed": "Phragmites, Common reed^\n(Phragmites australis)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "9 L/ha",
+          "handgun": "1.3 L/100L",
+          "knapsack": "200 mL/15L"
+        },
+        "rate_cell": "9 L/ha | 1.3 L/100L | 200 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "9 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "9 L/ha",
+                "basis": "per_hectare",
+                "value": 9,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1.3 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1.3 L/100L",
+                "basis": "per_100_litres",
+                "value": 1.3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "200 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "200 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing, fully developed plants approaching the early head stage. Visible symptoms of control may be slow to\ndevelop and may not be fully apparent until the next season. For application by wiper equipment refer to WIPER EQUIPMENT\nsection.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 4,
+        "row": 11,
+        "table": "perennial",
+        "target_weed": "Plantains\n(Plantago spp.)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "3 L/ha",
+          "handgun": "700 mL/100L",
+          "knapsack": "100 mL/15L"
+        },
+        "rate_cell": "3 L/ha | 700 mL/100L | 100 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "3 L/ha",
+                "basis": "per_hectare",
+                "value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "700 mL/100L",
+                "basis": "per_100_litres",
+                "value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "100 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants at the early head stage. Symptoms may be slow to develop.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 4,
+        "row": 12,
+        "table": "perennial",
+        "target_weed": "Prairie grass\n(Bromus unioloides)\nQld Blue grass\n(Dichanthium sericeum)\nRedleg grass\n(Brothriochloa ambigua)\nRhodes grass\n(Chloris gayana)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "6 L/ha",
+          "handgun": "1 L/100L",
+          "knapsack": "150 mL/15L"
+        },
+        "rate_cell": "6 L/ha | 1 L/100L | 150 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "6 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "6 L/ha",
+                "basis": "per_hectare",
+                "value": 6,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1 L/100L",
+                "basis": "per_100_litres",
+                "value": 1,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "150 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "150 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants at the early head stage.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 4,
+        "row": 13,
+        "table": "perennial",
+        "target_weed": "Rope twitch\n(Agropyron repens)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "6 L/ha",
+          "handgun": "1 L/100L",
+          "knapsack": "150 mL/15L"
+        },
+        "rate_cell": "6 L/ha | 1 L/100L | 150 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "6 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "6 L/ha",
+                "basis": "per_hectare",
+                "value": 6,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1 L/100L",
+                "basis": "per_100_litres",
+                "value": 1,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "150 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "150 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply in late Summer-Autumn to actively growing plants with foliage at least 20 cm high. To ensure maximum shoot emergence the\narea should NOT be cultivated in the period from the preceding Winter until the time of spraying.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 4,
+        "row": 14,
+        "table": "perennial",
+        "target_weed": "Rushes^\n(Juncus spp.)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "-",
+          "handgun": "-",
+          "knapsack": "-"
+        },
+        "rate_cell": "- | - | -",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "-",
+            "parsed": []
+          },
+          {
+            "method": "handgun",
+            "verbatim": "-",
+            "parsed": []
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "-",
+            "parsed": []
+          }
+        ],
+        "comments": "Apply by wiper equipment to actively growing plants. Where there is a large proportion of dead foliage, pre-slashing is\nrecommended. Allow adequate regrowth before treatment. Refer WIPER EQUIPMENT section for application instruction.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 4,
+        "row": 15,
+        "table": "perennial",
+        "target_weed": "Sedge, tall^\n(Carex appressa)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "2 L or\n4 L/ha",
+          "handgun": "500 mL/100L\nor\n1 L/100L",
+          "knapsack": "75 mL/15L or\n150 mL/15L"
+        },
+        "rate_cell": "2 L or\n4 L/ha | 500 mL/100L\nor\n1 L/100L | 75 mL/15L or\n150 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "2 L or\n4 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2 L or 4 L/ha",
+                "basis": "per_hectare",
+                "value": 4,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500 mL/100L\nor\n1 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500 mL/100L or 1 L/100L",
+                "basis": "per_100_litres",
+                "value": 500,
+                "unit": "mL",
+                "condition_ambiguous": true
+              },
+              {
+                "label": "",
+                "raw_text": "500 mL/100L or 1 L/100L",
+                "basis": "per_100_litres",
+                "value": 1,
+                "unit": "L",
+                "condition_ambiguous": true
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75 mL/15L or\n150 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75 mL/15L or 150 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants in flowering to post-flowering period (Oct-Apr). Use the lower rate only if the stand has been slashed\nprior to treatment. Re-treatment may be necessary. Visible symptoms may not be fully apparent for up to 3 months. Use of CDA\nequipment is not recommended.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 4,
+        "row": 16,
+        "table": "perennial",
+        "target_weed": "Silverleaf nightshade\n(Solanum elaegnifoiium)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "-",
+          "handgun": "2 L/100L",
+          "knapsack": "300 mL/15L"
+        },
+        "rate_cell": "- | 2 L/100L | 300 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "-",
+            "parsed": []
+          },
+          {
+            "method": "handgun",
+            "verbatim": "2 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "2 L/100L",
+                "basis": "per_100_litres",
+                "value": 2,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "300 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "300 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Use ONLY under good soil moisture conditions. Apply to actively growing plants at the late flowering to berry stage. Repeat spraying\nwill be necessary to restrict regrowth and seedling re-establishment.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 4,
+        "row": 17,
+        "table": "perennial",
+        "target_weed": "Sorrel\n(Rumex acetosella)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "6 L/ha",
+          "handgun": "1 L/100L",
+          "knapsack": "150 mL/15L"
+        },
+        "rate_cell": "6 L/ha | 1 L/100L | 150 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "6 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "6 L/ha",
+                "basis": "per_hectare",
+                "value": 6,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1 L/100L",
+                "basis": "per_100_litres",
+                "value": 1,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "150 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "150 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants when most have reached the early bud stage. In Conservation Tillage situations, 1.5 L/ha provides\nseasonal suppression. Refer to Conservation Tillage Uses table.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 5,
+        "row": 3,
+        "table": "perennial",
+        "target_weed": "Soursob\n(Oxalis pes-caprae)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "1.5 L/ha",
+          "handgun": "500 mL/100L",
+          "knapsack": "75 mL/15L"
+        },
+        "rate_cell": "1.5 L/ha | 500 mL/100L | 75 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "1.5 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1.5 L/ha",
+                "basis": "per_hectare",
+                "value": 1.5,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500 mL/100L",
+                "basis": "per_100_litres",
+                "value": 500,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "For maximum long term reduction apply from late July to early September but before natural plant yellowing (senescence) occurs.\nSoursob should be actively growing and not under stress of drought or waterlogging. If heavy frosting has occurred allow recovery\nbefore spraying. If heavy grazing has occurred allow recovery of foliage to at least 5cm before spraying. In Conservation Tillage (eg.\ndirect drilling) situations, application in May-July immediately prior to sowing will give control of top growth and give partial\nreduction of plant numbers. Refer Conservation Tillage Uses table.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 5,
+        "row": 4,
+        "table": "perennial",
+        "target_weed": "St John’s wort\n(Hypericum perforatum)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "3 L/ha",
+          "handgun": "500 mL/100L",
+          "knapsack": "75 mL/15L"
+        },
+        "rate_cell": "3 L/ha | 500 mL/100L | 75 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "3 L/ha",
+                "basis": "per_hectare",
+                "value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500 mL/100L",
+                "basis": "per_100_litres",
+                "value": 500,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants in the flowering to post-flowering, procumbent stem stage (generally Nov-May). Re-treatment or\noversowing with improved pasture species may be necessary to restrict seedling re-establishment.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 5,
+        "row": 5,
+        "table": "perennial",
+        "target_weed": "Thistle, artichoke\n(Cynara cardunculus)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "3 L/ha",
+          "handgun": "500 mL/100L",
+          "knapsack": "75 mL/15L"
+        },
+        "rate_cell": "3 L/ha | 500 mL/100L | 75 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "3 L/ha",
+                "basis": "per_hectare",
+                "value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "500 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "500 mL/100L",
+                "basis": "per_100_litres",
+                "value": 500,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "75 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "75 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply at the rosette-early head stage.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 5,
+        "row": 6,
+        "table": "perennial",
+        "target_weed": "Thistle, Californian\n(Cirsium arvense)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "6 L/ha",
+          "handgun": "1 L/100L",
+          "knapsack": "150 mL/15L"
+        },
+        "rate_cell": "6 L/ha | 1 L/100L | 150 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "6 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "6 L/ha",
+                "basis": "per_hectare",
+                "value": 6,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1 L/100L",
+                "basis": "per_100_litres",
+                "value": 1,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "150 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "150 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants at the flowering stage. To ensure maximum shoot emergence the area should NOT be cultivated\nprior to spraying. Re-treatment and/or pasture improvement may be necessary to restrict seedling re-establishment.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 5,
+        "row": 7,
+        "table": "perennial",
+        "target_weed": "Water couch^\n(Paspalum distichum)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "9 L/ha",
+          "handgun": "1.3 L/100L",
+          "knapsack": "200 mL/15L"
+        },
+        "rate_cell": "9 L/ha | 1.3 L/100L | 200 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "9 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "9 L/ha",
+                "basis": "per_hectare",
+                "value": 9,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1.3 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1.3 L/100L",
+                "basis": "per_100_litres",
+                "value": 1.3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "200 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "200 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants in late Summer-Autumn (February-March). DO NOT treat after March because of the onset of\nWinter dormancy. Full results may not be visible until the following Spring. Not more than 1/4 of the weed should be submerged at\nthe time of treatment.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 5,
+        "row": 8,
+        "table": "perennial",
+        "target_weed": "Water hyacinth^",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "6 L-9L/ha",
+          "handgun": "1-1.3 L/100L",
+          "knapsack": "150-\n200 mL/15L"
+        },
+        "rate_cell": "6 L-9L/ha | 1-1.3 L/100L | 150-\n200 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "6 L-9L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "6 L-9L/ha",
+                "basis": "per_hectare",
+                "value": 9,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1-1.3 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1-1.3 L/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 1,
+                "max_value": 1.3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "150-\n200 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "150- 200 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply when actively growing and at or beyond the early bloom stage of growth. Use the higher rate on dense infestations.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 5,
+        "row": 9,
+        "table": "perennial",
+        "target_weed": "Water lettuce^",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "-",
+          "handgun": "1-1.3 L/100L",
+          "knapsack": "150-\n200 mL/15L"
+        },
+        "rate_cell": "- | 1-1.3 L/100L | 150-\n200 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "-",
+            "parsed": []
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1-1.3 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1-1.3 L/100L",
+                "basis": "range_per_100_litres",
+                "min_value": 1,
+                "max_value": 1.3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "150-\n200 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "150- 200 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Best results are obtained from mid-Summer through to Winter. Use the higher rate on dense infestations.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 5,
+        "row": 10,
+        "table": "perennial",
+        "target_weed": "Waterlily, yellow^",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "6 L/ha",
+          "handgun": "1 L/100L",
+          "knapsack": "150 mL/15L"
+        },
+        "rate_cell": "6 L/ha | 1 L/100L | 150 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "6 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "6 L/ha",
+                "basis": "per_hectare",
+                "value": 6,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "1 L/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "1 L/100L",
+                "basis": "per_100_litres",
+                "value": 1,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "150 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "150 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply when there is a maximum emergence of floating leaves. Allow 2-3 weeks for symptoms to develop and then retreat any\nunaffected plants. Use low volume sprayer. Refer to Table 6: Aquatic Weed Control.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      },
+      {
+        "physical_page": 5,
+        "row": 11,
+        "table": "perennial",
+        "target_weed": "Yorkshire fog\n(Holcus lanatus)",
+        "scientific_name": null,
+        "method_cells": {
+          "boom": "3 L/ha",
+          "handgun": "700 mL/100L",
+          "knapsack": "100 mL/15L"
+        },
+        "rate_cell": "3 L/ha | 700 mL/100L | 100 mL/15L",
+        "parsed_rate_candidates": [
+          {
+            "method": "boom",
+            "verbatim": "3 L/ha",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "3 L/ha",
+                "basis": "per_hectare",
+                "value": 3,
+                "unit": "L"
+              }
+            ]
+          },
+          {
+            "method": "handgun",
+            "verbatim": "700 mL/100L",
+            "parsed": [
+              {
+                "label": "",
+                "raw_text": "700 mL/100L",
+                "basis": "per_100_litres",
+                "value": 700,
+                "unit": "mL"
+              }
+            ]
+          },
+          {
+            "method": "knapsack",
+            "verbatim": "100 mL/15L",
+            "parsed": [
+              {
+                "label": "",
+                "basis": "other",
+                "unit": "",
+                "raw_text": "100 mL/15L"
+              }
+            ]
+          }
+        ],
+        "comments": "Apply to actively growing plants at the early head stage.",
+        "binding_state": "quarantined: scope, continuation, method and crop binding unverified"
+      }
+    ],
+    "unresolved": [
+      "page 1 chemistry is image-only; production text-layer gate cannot verify it",
+      "production parser has no vineyard direction from referenced tables",
+      "physical weed-table row spans and exceptions must be verified before crop/target/method/rate binding",
+      "no stated re-entry period"
+    ]
+  },
+  "report": {
+    "status": "manufacturer_label_not_found",
+    "master_chemical_id": "03dfb9e8-6592-4746-a3bc-295890d32cd1",
+    "registration_identity_key": "AU:apvma:53576",
+    "base_revision": 1,
+    "review_status": "approved",
+    "current": {
+      "registered_product_name": "Nufarm Weedmaster DUO Herbicide",
+      "registrant": "NUFARM AUSTRALIA LIMITED",
+      "product_category": "herbicide",
+      "form_type": "liquid",
+      "label_version": null,
+      "label_reference": null,
+      "registered_uses": [],
+      "label_rate_bases": [],
+      "active_ingredients": [
+        {
+          "name": "Glyphosate Present As The Isopropylamine And Mono-ammoni",
+          "concentration": 360,
+          "concentration_unit": "g/L"
+        }
+      ],
+      "activity_groups": [],
+      "activity_group_scheme": null,
+      "resistance_classification_state": "unresolved",
+      "viticulture_rates": {
+        "per_hectare": [],
+        "per_100_litres": []
+      },
+      "verification_status": "partially_verified",
+      "verification_sources": [],
+      "verification_conflicts": [],
+      "verification_unresolved_fields": [],
+      "retrieved_at": null,
+      "source_kind": "official_register",
+      "source_reference": "pubcris:53576"
+    },
+    "proposed_patch": null,
+    "preview_id": null,
+    "expires_at": null,
+    "evidence": {
+      "locked_identity": "AU:apvma:53576",
+      "reported_registration_number": null,
+      "manufacturer_label_url": null,
+      "manufacturer_label_identifiers": null,
+      "reviewed_visual_declaration": null,
+      "conflicts": [],
+      "reason": "label_chemistry_text_unavailable"
+    },
+    "findings": {
+      "classified": true,
+      "not_applicable": false,
+      "vineyard_rates_added": false,
+      "no_vineyard_use": false
+    },
+    "indexed_diagnostic": {
+      "snapshot": null,
+      "outcome": "no_indexed_response"
+    },
+    "private_fetch_diagnostic": {
+      "stage": "product_page_inspection",
+      "pdf_discovery_outcome": "not_attempted",
+      "initial_discovery_outcome": "not_attempted",
+      "failed_page_fallback_discovery_outcome": "not_attempted",
+      "documented_lead": {
+        "origin": "locked_product_page_download_label",
+        "url": "https://cdn.nufarm.com/wp-content/uploads/sites/22/2018/05/13085258/[redacted]",
+        "considered": true,
+        "locked_identity_matched": true,
+        "pair_supplied": true,
+        "eligible": true,
+        "rejection_reason": null,
+        "selected": true,
+        "fetch_started": true,
+        "fetch_outcome": "fetched",
+        "fetch_http_status": null,
+        "extract_outcome": "failure",
+        "verified": false,
+        "identity_mismatch": false
+      },
+      "attempts": [],
+      "eligible_manufacturer_pdf_lead": true,
+      "pdf_lead_url": "https://cdn.nufarm.com/wp-content/uploads/sites/22/2018/05/13085258/[redacted]",
+      "pdf_lead_attempted": true,
+      "pdf_not_attempted_reason": null
+    }
+  },
+  "proposed_patch": null,
+  "preview_storage_disabled": true,
+  "master_unchanged": true
+}

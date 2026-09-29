@@ -591,6 +591,8 @@ export function manufacturerUsesToRegisteredUses(
      * unconfirmed product is worse than serving none (Gate D1.3 §2).
      */
     product?: RateIdentityProduct | null;
+    /** A table binder has already attached explicit method labels to each rate. */
+    preserveRateLabels?: boolean;
   } = {},
 ): Record<string, unknown>[] {
   const product = opts.product ?? null;
@@ -619,7 +621,7 @@ export function manufacturerUsesToRegisteredUses(
       // key clients already read. Without it, 2 L/100 L and 3 L/100 L are two
       // unexplained numbers and a client has no honest way to show which
       // applies.
-      label: use.condition ?? r.label,
+      label: opts.preserveRateLabels ? r.label : use.condition ?? r.label,
     }));
     const rateIds = directionId
       ? rates.map((r) => mintRateIdForDirection(product, directionId, r))

@@ -1,0 +1,23 @@
+{
+  "status": "awaiting_authenticated_admin_review",
+  "document_sha256": "69213c077e191e99682e515884d7667156367ea7ab927ecdac2882f4d0ec39b8",
+  "source_url": "https://cdn.nufarm.com/wp-content/uploads/sites/22/2018/05/13085258/0533-Nufarm-Weedmaster-DUO-Herbicide.pdf",
+  "physical_page": 1,
+  "location": "orange band near top of physical cover page, left side",
+  "verbatim": "ACTIVE CONSTITUENT: 360 g/L GLYPHOSATE present as the isopropylamine and mono-ammonium salts",
+  "active": {
+    "name": "GLYPHOSATE",
+    "salt_form": "isopropylamine and mono-ammonium salts",
+    "concentration": 360,
+    "unit": "g/L"
+  },
+  "formulation": "SL soluble concentrate",
+  "method": "human_visual_transcription",
+  "document_version": "08-09-2022",
+  "confirm_review": false,
+  "reviewed_by": null,
+  "reviewed_at": null,
+  "printed_approval_reference_from_text_layer": "53576/136340",
+  "printed_approval_date_from_text_layer": "08-09-2022",
+  "cover_attachment": "weedmaster_page_1.png"
+}

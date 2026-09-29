@@ -4,6 +4,7 @@ import { classifyUrl, manufacturerHostEligible } from "../research/classify.ts";
 import { manufacturerUrlsFromMaster, type WebIdentity } from "../web_identity.ts";
 import { identityBearingRateLabel, normaliseIdentityText } from "../rate_identity.ts";
 import { validateResolverPatch } from "./review_preview.ts";
+import type { ReviewedVisualDeclaration } from "./reviewed_visual_evidence.ts";
 
 export interface BackfillDetail {
   product_category?: string | null;
@@ -13,7 +14,8 @@ export interface BackfillDetail {
   resistance_classification_state?: string;
   registered_uses?: Array<Record<string, unknown>>;
   registration?: { registration_number?: string | null; manufacturer_label_url?: string | null; manufacturer_package_label_url?: string | null; manufacturer_label_verified?: boolean; manufacturer_label_retrieval_method?: "web_search_index"; registrant?: string | null;
-    manufacturer_label_identifiers?: { numbers: string[]; printed_values: string[] } } | null;
+    manufacturer_label_identifiers?: { numbers: string[]; printed_values: string[] };
+    reviewed_visual_declaration?: ReviewedVisualDeclaration } | null;
   verification?: { conflicts?: Array<Record<string, unknown>>; unresolved_fields?: string[] };
 }
 
@@ -189,6 +191,7 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
   const identifiers = detail.registration?.manufacturer_label_identifiers;
   const evidence = { locked_identity: row.registration_identity_key, reported_registration_number: detail.registration?.registration_number ?? null,
     manufacturer_label_url: label ?? null, manufacturer_label_identifiers: identifiers ?? null,
+    reviewed_visual_declaration: detail.registration?.reviewed_visual_declaration ?? null,
     conflicts: detail.verification?.conflicts ?? [] };
   const conflict = (reason: string) => ({ status: "evidence_conflict", patch: null, evidence: { ...evidence, reason } });
   if (detail.verification?.conflicts?.length) return conflict("label_conflicts");
@@ -269,6 +272,8 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
         mergedUses[matches[0]] = merged;
       }
     }
+    if (detail.registration?.reviewed_visual_declaration?.document_version && !row.label_version)
+      put("label_version", row.label_version, detail.registration.reviewed_visual_declaration.document_version);
     if (incoming.length) put("registered_uses", row.registered_uses, mergedUses);
     else if (uses.length && !oldUses.length) put("registered_uses", row.registered_uses, uses);
     // Only use extracted, identity-bearing label rates. Never remint old fanned-out projections.
@@ -303,6 +308,8 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
     const printed = [...new Set((identifiers?.printed_values ?? []).filter((value) =>
       /^\d{4,7}(?:\/\d{4,7})*$/.test(value) && value.split("/").every((n) => numbers.includes(n))))];
     const labelSource = { kind: "manufacturer_label", name: "Manufacturer commercial label", reference: label,
+      ...(detail.registration?.reviewed_visual_declaration ? {
+        reviewed_visual_declaration: detail.registration.reviewed_visual_declaration } : {}),
       ...(detail.registration?.manufacturer_label_retrieval_method === "web_search_index" ? { retrieval_method: "web_search_index" as const } : {}),
       ...(numbers.length ? { registration_numbers: numbers.map((number) => ({ scheme: "apvma" as const, number,
         source: "manufacturer_label" as const, canonical: number === row.registration_number })),
@@ -314,7 +321,8 @@ export function buildMasterBackfillPatch(row: MasterRow, detail: BackfillDetail 
       ? { kind: "manufacturer_label" as const, name: "Manufacturer container label", reference: packageUrl } : null;
     const updated = [...sources];
     if (existing < 0) updated.push(labelSource);
-    else if (numbers.length || labelSource.retrieval_method) updated[existing] = { ...sources[existing],
+    else if (numbers.length || labelSource.retrieval_method || labelSource.reviewed_visual_declaration) updated[existing] = { ...sources[existing],
+      ...(labelSource.reviewed_visual_declaration ? { reviewed_visual_declaration: labelSource.reviewed_visual_declaration } : {}),
       ...(numbers.length ? { registration_numbers: labelSource.registration_numbers,
         printed_registration_values: labelSource.printed_registration_values } : {}),
       ...(labelSource.retrieval_method ? { retrieval_method: labelSource.retrieval_method } : {}) };

@@ -1,0 +1,1773 @@
+{
+  "source_url": "https://cdn.nufarm.com/wp-content/uploads/sites/22/2018/05/13085258/0533-Nufarm-Weedmaster-DUO-Herbicide.pdf",
+  "document_sha256": "69213c077e191e99682e515884d7667156367ea7ab927ecdac2882f4d0ec39b8",
+  "status": "candidate mapping pending actual admin review; perennial coverage incomplete",
+  "mapped_directions": [
+    {
+      "crop": "Vineyards",
+      "target": "Amaranth",
+      "direction_id": "direction_v1_3443331819e43738f5c33cc8b351e157",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_4a7f321d9c924f8a44dd72f37e91be61",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Amaranth"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_0e414c5186acf8a301e8e605081e97a6",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Amaranth"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_47592b70e670588e370d9611ba5f1415",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Amaranth"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Amaranth"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Barley grass",
+      "direction_id": "direction_v1_03a2f92fa69a088efd011b800f71a96f",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_62c6b62534d7bd868d4ad602dffdaa49",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Barley grass"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_19d7ab7c7c50a6872b9bf4ca82304052",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Barley grass"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_9bbc965fd0f5575d87c11d2595cfa81b",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Barley grass"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Barley grass"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Barnyard grass",
+      "direction_id": "direction_v1_46008d7ec0b2807992fad455dc4a6383",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_7ee64844107dcce0e05c0497e5e9f321",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Barnyard grass"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_883d82e20093cad1e15f8f8c2f476f89",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Barnyard grass"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_f77e83251c00c0785797634bd5df7872",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Barnyard grass"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Barnyard grass"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Brome grass",
+      "direction_id": "direction_v1_fed8d4d14722b3825d5cd41fb555370c",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_4fd5c8631eb5831b3c616e8cace7a882",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Brome grass"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_ec4f848db8d7b1aedb93502067e3b034",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Brome grass"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_99152d85f0bd3bac624e89ef420399a4",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Brome grass"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Brome grass"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Caltrop",
+      "direction_id": "direction_v1_7b5a4b9828ca739418b0de97c9db00a3",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_2442cadce3f66cf6f1d2d630d35f1ad1",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Caltrop"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_87ffc45e8300a25ed470d997fef04e40",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Caltrop"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_3a407ba35d2dc368b88c95c40c809678",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Caltrop"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Caltrop"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Canary grass / Annual phalaris",
+      "direction_id": "direction_v1_139daf24050588b654ec6461325a8553",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_2954799fccd8009c5abea1de7a870802",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Canary grass / Annual phalaris"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_dcddc048ca11ae22915b57c8c96c9589",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Canary grass / Annual phalaris"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_11a5256416eb7b80f390548d88598e92",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Canary grass / Annual phalaris"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Canary grass / Annual phalaris"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Capeweed",
+      "direction_id": "direction_v1_ce85769295d36dbc09debf4f774d4f66",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_ab6c0bf14f8a68b809f7c8727f8faaba",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Capeweed"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_e488ddab20ed630e3dad630e9c8f78bb",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Capeweed"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_abf645ebca7270234777833f9d5374ad",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Capeweed"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Capeweed"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Cereals",
+      "direction_id": "direction_v1_65e830a703d56684dccbc6401b49e83c",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_2286a579d43d30b5559921175ea03b4a",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Cereals"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_a35d0192effd8486279e2e185c422ac7",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Cereals"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_67ae66bab66bf5a27da020e872fb84d4",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Cereals"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Cereals"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Chickweed",
+      "direction_id": "direction_v1_c56babf9540b52b1dc8c9058a70b8602",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_a75862084dd3fea6be54d671756f8ed6",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Chickweed"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_8b2707f0b7226e237ef458e9298ad6e2",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Chickweed"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_c142667145892b4134707e0b7849ff8e",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Chickweed"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Chickweed"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Cobbler’s pegs",
+      "direction_id": "direction_v1_8141d2d3c67b712be16012858b6bd40e",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_84084de51aa89470de3494d40e349139",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Cobbler’s pegs"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_fba5f61c58f0fce0e5adcefe0ccf5929",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Cobbler’s pegs"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_312568e2aca915832148eeb17c8fc695",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Cobbler’s pegs"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Cobbler’s pegs"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Dead nettle",
+      "direction_id": "direction_v1_fb0c05c51c323e371e1808cc1dc196d6",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_5023d5ae824425ac6884b443d1ddb042",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Dead nettle"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_6c980090796e76cf42cbaedb547ba601",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Dead nettle"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_e9275e8a61e3b46ba9bc52fed9f4a274",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Dead nettle"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Dead nettle"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Double gee",
+      "direction_id": "direction_v1_467d8b6c373caaae50ff0e52cae34d4f",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_cc4434fff2e59cff79f998797bb90100",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Double gee"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_ee3d0f130c960fb87e2266319cd9d8b9",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Double gee"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_3ae525cdeef5394685d7337015d82c54",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Double gee"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Double gee"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Fumitory",
+      "direction_id": "direction_v1_96782ae17a80a9fbd9472a301bc4ae67",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_fd577f4e2721c4f5b6bfaabfc67de64c",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Fumitory"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_0e289f6938400855148e50cee90f89d6",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Fumitory"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_441b5d4f442330e0d3ea7473b9aa26c0",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Fumitory"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Fumitory"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Ground cherry",
+      "direction_id": "direction_v1_5509d154e34533740a2e5d4a38e8a601",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_8fb6a8f79428e7cdf2048c461cdac4a1",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Ground cherry"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_eca91bf40dd46dc1d6fbdc2912b92d9c",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Ground cherry"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_d21c09b03c32e67438af85aba9669139",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Ground cherry"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Ground cherry"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Lesser swinecress",
+      "direction_id": "direction_v1_8fa26a2f1962d7d5d2fb8af5767bb508",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_2d44158e996161ef41b77deb1d38db93",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Lesser swinecress"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_aa5c2d16763d818b7a36f093e64bbe4b",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Lesser swinecress"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_6039fa88d30a0e71e63197ba24d4ba0e",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Lesser swinecress"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Lesser swinecress"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Liverseed grass",
+      "direction_id": "direction_v1_a348e9eb4d971c40307cabbc55b156c7",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_2459374745c32fd187c46a8503df3124",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Liverseed grass"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_11c3f471dbe6a8a5d02ffe44cca283da",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Liverseed grass"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_d7b889c80d0d016bf8d25387e4e60b7f",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Liverseed grass"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Liverseed grass"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Mintweed",
+      "direction_id": "direction_v1_fdacf7b4476d691bdf6cf1ee0badd311",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_dcb31a61698abafb06d82d039ce43159",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Mintweed"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_11a4794bcd3974073ccfde79d361c9b4",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Mintweed"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_f2186dc51f4ff97ecf672dc4ae169400",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Mintweed"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Mintweed"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Paradoxa grass",
+      "direction_id": "direction_v1_4673e5a9e17b66ba923fc3cbfd69dfce",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_70e122f0a99b71801ccb17503ac6e0d1",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Paradoxa grass"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_a94629d84ed13bece11f32545c5e5c67",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Paradoxa grass"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_ac423d24d350d7d366fbe598ec5e1d32",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Paradoxa grass"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Paradoxa grass"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Paterson’s curse",
+      "direction_id": "direction_v1_ee794ef386449cc86b7918d0c105f54c",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_c53993a6299cf872bc6cd15f26fa6afd",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Paterson’s curse"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_7aed1f58401b54703004876094ebe308",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Paterson’s curse"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_7af1aa4ccd769d95514734c41a8fcf60",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Paterson’s curse"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Paterson’s curse"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Pigweed",
+      "direction_id": "direction_v1_eae8a83ce318af85885872e15ac30041",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_50d3e8ea0819c4d8d12f2807eab6ab64",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Pigweed"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_c57ab3fc5e9a1ec875ce799247cd3ee2",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Pigweed"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_5f36217384116f89a349206aebda68d9",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Pigweed"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Pigweed"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Potato weed",
+      "direction_id": "direction_v1_33bbf2318b308e28b76d138d01e587d3",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_e49a7fef29958ea3434e866cc33e082d",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Potato weed"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_42ba45cb4fcfce24c1d9816d41587e85",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Potato weed"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_4afeaf8af09edc7c909a227217d79212",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Potato weed"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Potato weed"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Ryegrass",
+      "direction_id": "direction_v1_6dddf195a37a1750c180e66a6eeff6d0",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_2e9433bee9e86128ae94e853d4b922c9",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Ryegrass"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_7c3927d6582f1a8e3401591d80078979",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Ryegrass"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_2ac29185f702212177ef89715308a10d",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Ryegrass"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Ryegrass"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Saffron thistle",
+      "direction_id": "direction_v1_176d3046323db26320bd7be1e778d832",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_f75f40e730faaf72bcb69642160215cf",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Saffron thistle"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_d336dbbaa5d1225a71845c7b9b511935",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Saffron thistle"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_464f48d48bea760e7eb5899725bfcbda",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Saffron thistle"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Saffron thistle"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Silver grass",
+      "direction_id": "direction_v1_d5cfe3c188ee6112db2cb0c856b2fd20",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_3bfa1d8b8fd55dd3189205b7fa1b2791",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Silver grass"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_a10d34e4ac74734af57e296bc438d85b",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Silver grass"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_4ffd6adc8281d628ef03d241e6e74153",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Silver grass"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Silver grass"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Sowthistle",
+      "direction_id": "direction_v1_c4287c30a920ff1bf38c4902f8c25cc5",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_3781051c637a7cf1292821ff8d1c74cb",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Sowthistle"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_c8889be5020054a3d8b613c418388f38",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Sowthistle"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_dd24001570397aa1bed3c3242504d551",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Sowthistle"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Sowthistle"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Spear thistle",
+      "direction_id": "direction_v1_93c3d95963ccd83087e9ec014fc2418c",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_15fe07a58f557122ca26c9f225abaae0",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Spear thistle"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_cf13b92deaba66d777f45272b4bab2a9",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Spear thistle"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_c6f5bc91d486b0ec357bf9d839886fb5",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Spear thistle"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Spear thistle"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Spiny burrgrass",
+      "direction_id": "direction_v1_ae26797e7727c79bedadaae6180d4279",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_9799ad0032cba2186675bcf2f1a322fa",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Spiny burrgrass"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_e084aa92757769ebce0c02a9afdd5a70",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Spiny burrgrass"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_f43975becde3c420e87a08e19b8f8c6e",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Spiny burrgrass"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Spiny burrgrass"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Spurge",
+      "direction_id": "direction_v1_cc5694f5484d1d6e9d06c30ead3b37b7",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_0e8e332d8ba8fd21947b131600c7acce",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Spurge"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_6df4806ccae52762c3cc1e42371c6396",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Spurge"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_9a3f18a62cabe92d28d9f870a0152c99",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Spurge"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Spurge"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Sub. clover",
+      "direction_id": "direction_v1_3e11d8536d2f72f01d104d645bcc6f11",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_cd36113138173258c1b9d1568f8a69da",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Sub. clover"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_79cba21164d53a89ae88af0f3a05c801",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Sub. clover"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_ebe72c2cfed1283e1cbaeeae77f94df4",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Sub. clover"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Sub. clover"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Thornapple",
+      "direction_id": "direction_v1_0ed5406d0e74e8526e95c5ba622a4eaa",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_f762fe5f89ca9d8c7a466d39eb27e612",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Thornapple"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_ca1ac36d90c7c29afdeccd941043282f",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Thornapple"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_0b3b8281bdab02ec710b98bd4b7343ef",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Thornapple"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Thornapple"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Wild mustard",
+      "direction_id": "direction_v1_48c773b24ed6a3629ba12ff5d6bf9de5",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_0760c29a0550b6a485e5d612675eabdd",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Wild mustard"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_1830dd929fb6053308eb504d0f314d97",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Wild mustard"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_44afdbe4a8ba6fc37409121f9b20ed83",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Wild mustard"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Wild mustard"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Wild oats",
+      "direction_id": "direction_v1_f782443b69586225dac073791a7ba84f",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_94b61e223ed0b799fc077195d8c866de",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Wild oats"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_0afbfddc9286a5641a0b5c49d2669f12",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Wild oats"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_c450eb2c356233e1eceac4c7a09424ee",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Wild oats"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Wild oats"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Wild turnip",
+      "direction_id": "direction_v1_49f3f3694dd87dd82a7c3ddceb188da9",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_1a5ee1ea0b2e1f63c1ef67c07543abd8",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Wild turnip"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_900a238bf5732cb0a44d7e96168637cd",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Wild turnip"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_559d8126e88d03c9ca252df3b5baa079",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Wild turnip"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Wild turnip"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Winter grass",
+      "direction_id": "direction_v1_abbd3a240f8a438f672c63a0131aade6",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_3f759db44c9735a2a7942cc8ffe6ea60",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Winter grass"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_7811df3e42cd323570bdfb2b2080c9a5",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Winter grass"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_7f037c20dd657c5e0fbc57f8ecfcfab5",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Winter grass"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Winter grass"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Variegated thistle",
+      "direction_id": "direction_v1_460c3821759c19e98dfc1923e9fdcf92",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2-3 L/ha",
+          "basis": "range_per_hectare",
+          "min_value": 2,
+          "max_value": 3,
+          "unit": "L",
+          "rate_id": "rate_v1_4011fceb625306e24daf30ec1d48bd29",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Variegated thistle"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500-700 mL/100L",
+          "basis": "range_per_100_litres",
+          "min_value": 500,
+          "max_value": 700,
+          "unit": "mL",
+          "rate_id": "rate_v1_172ecda57607f6e196834802ebca2d55",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Variegated thistle"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75-100 mL/15L",
+          "rate_id": "rate_v1_72aba4591066fca5d02f08f5da092ad9",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Variegated thistle"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations, physical page 2, Variegated thistle"
+      ],
+      "conditions": "Table 2 ANNUAL WEED CONTROL / Non-Cultivated Situations; Annual weeds may be sprayed anytime they are actively growing. Use the lower rate on weeds up to 15 cm tall; increase to the higher rate where weeds are over 15 cm tall. Visible symptoms develop in 3-7 days, but complete desiccation may take 20-30 days under cool conditions. This product does not provide residual weed control. Repeat treatments may be necessary to control later germinating weeds. For residual control of ANNUAL weeds, this product may be used as a tank mixture with certain residual herbicides. See TANK MIXTURES for directions. For annual weed control in cultivated situations see: CONSERVATION TILLAGE USES.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    },
+    {
+      "crop": "Vineyards",
+      "target": "Bent grass",
+      "direction_id": "direction_v1_1faae88a19222c5caf50e4ba46c87992",
+      "rates": [
+        {
+          "label": "Boom",
+          "raw_text": "2.5 L/ha",
+          "basis": "per_hectare",
+          "value": 2.5,
+          "unit": "L",
+          "rate_id": "rate_v1_0540f303c3f0c7192b662cb072a8df5f",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 3 PERENNIAL WEED CONTROL, physical page 3, Bent grass"
+          ]
+        },
+        {
+          "label": "Handgun",
+          "raw_text": "500 mL/100L",
+          "basis": "per_100_litres",
+          "value": 500,
+          "unit": "mL",
+          "rate_id": "rate_v1_49cff29cd6502c8c075c1e0fe3aec913",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 3 PERENNIAL WEED CONTROL, physical page 3, Bent grass"
+          ]
+        },
+        {
+          "label": "Knapsack",
+          "basis": "other",
+          "unit": "",
+          "raw_text": "75 mL/15L",
+          "rate_id": "rate_v1_a8feba82acb03d8e677469f756e0c75e",
+          "source_refs": [
+            "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 3 PERENNIAL WEED CONTROL, physical page 3, Bent grass"
+          ]
+        }
+      ],
+      "withholding_period_days": null,
+      "re_entry_period_hours": null,
+      "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. use prior to sowing tomatoes. Apply to actively growing plants in late Spring when they have some seed head development but before Summer moisture stress. Bent grass should NOT be heavily grazed at spraying. Follow up management is required to limit seedling re-establishment. Full disturbance with a tyned implement should follow, 10-21 days after spraying. Application of this product should be followed by a Summer crop and/or by re-seeding pasture or crop the following Autumn.",
+      "source_refs": [
+        "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 3 PERENNIAL WEED CONTROL, physical page 3, Bent grass"
+      ],
+      "conditions": "Table 3 PERENNIAL WEED CONTROL; Apply to actively growing plants in late Spring when they have some seed head development but before Summer moisture stress. Bent grass should NOT be heavily grazed at spraying. Follow up management is required to limit seedling re-establishment. Full disturbance with a tyned implement should follow, 10-21 days after spraying. Application of this product should be followed by a Summer crop and/or by re-seeding pasture or crop the following Autumn.",
+      "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED"
+    }
+  ],
+  "unresolved_exceptions": [
+    "Table 2 wiper and controlled-droplet rates: See Application section; no standalone calculable product dose",
+    "Remaining Table 3 perennial rows require individual shared-cell, aquatic and method exception review"
+  ]
+}
