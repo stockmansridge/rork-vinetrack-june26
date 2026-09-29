@@ -1555,7 +1555,7 @@ fun GrowthSheet(
         saving = true
         // Snapshot the block's primary variety so historical records stay
         // readable if the allocation changes later (mirrors iOS).
-        val variety = existing?.variety?.takeIf { it.isNotBlank() } ?: block?.primaryVarietyName
+        val variety = if (existing != null) existing.variety else block?.primaryVarietyName
         val observedIso = Instant.ofEpochMilli(observedMs).toString()
         val input = GrowthStageRecordRepository.GrowthInput(
             paddockId = block?.id,

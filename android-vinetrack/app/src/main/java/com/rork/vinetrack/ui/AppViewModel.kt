@@ -1439,7 +1439,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     paddockId = current.paddockId ?: paddockId,
                     stageCode = stage.code,
                     stageLabel = stage.description,
-                    variety = current.variety ?: block?.primaryVarietyName,
+                    variety = current.variety,
                     observedAt = current.observedAt ?: java.time.Instant.now().toString(),
                     rowNumber = current.rowNumber,
                     notes = current.notes,
@@ -13984,6 +13984,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             stageCode = stage.code,
             stageLabel = stage.description,
             variety = variety ?: block?.primaryVarietyName,
+            varietyId = block?.primaryVarietyAllocation?.takeIf {
+                it.displayName != null && it.displayName.equals(variety ?: block.primaryVarietyName, ignoreCase = true)
+            }?.varietyId?.takeIf { runCatching { UUID.fromString(it) }.isSuccess },
             notes = notes,
             observedAtIso = observedAtIso ?: java.time.Instant.now().toString(),
             originatingFeature = originatingFeature,
@@ -14055,6 +14058,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     input = GrowthStageRecordRepository.GrowthInput(
                         paddockId = journal.paddockId, stageCode = journal.stageCode,
                         stageLabel = journal.stageLabel, variety = journal.variety,
+                        varietyId = journal.varietyId,
                         observedAt = journal.observedAtIso, rowNumber = journal.rowNumber,
                         notes = journal.notes, latitude = journal.latitude,
                         longitude = journal.longitude, pinId = journal.pinId,

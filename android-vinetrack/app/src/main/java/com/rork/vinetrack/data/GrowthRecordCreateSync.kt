@@ -30,8 +30,9 @@ import kotlinx.serialization.json.Json
  * original [Payload.clientUpdatedAt] travels in the payload so replay preserves
  * the moment the operator actually saved the observation, not when it later
  * synced. `created_by` is never carried — it is resolved from the signed-in
- * session at insert time; pin/geo/side/photo columns are never sent (Android
- * authors direct records with `pin_id` null). No auth/session/tokens are stored.
+ * session at insert time; the original pin, GPS, and variety snapshots are
+ * carried through replay. Side/photo are populated only by their own paths.
+ * No auth/session/tokens are stored.
  */
 class GrowthRecordCreateSync(
     private val growthRepo: GrowthStageRecordRepository,
@@ -45,8 +46,8 @@ class GrowthRecordCreateSync(
     /**
      * Full insert payload needed to replay the create. Carries the editable
      * growth-stage fields plus the stable client id, vineyard scope and original
-     * client_updated_at. `created_by`, pin/geo/side/photo and server-managed
-     * audit/sync columns are deliberately NOT carried.
+     * client_updated_at. `created_by` and server-managed audit/sync columns
+     * are deliberately NOT carried.
      */
     @Serializable
     data class Payload(
@@ -56,9 +57,13 @@ class GrowthRecordCreateSync(
         val stageCode: String,
         val stageLabel: String? = null,
         val variety: String? = null,
+        val varietyId: String? = null,
         val observedAt: String,
         val rowNumber: Int? = null,
         val notes: String? = null,
+        val latitude: Double? = null,
+        val longitude: Double? = null,
+        val pinId: String? = null,
         val clientUpdatedAt: String,
     )
 
@@ -68,9 +73,13 @@ class GrowthRecordCreateSync(
             stageCode = stageCode,
             stageLabel = stageLabel,
             variety = variety,
+            varietyId = varietyId,
             observedAt = observedAt,
             rowNumber = rowNumber,
             notes = notes,
+            latitude = latitude,
+            longitude = longitude,
+            pinId = pinId,
         )
 
     /**
@@ -96,9 +105,13 @@ class GrowthRecordCreateSync(
             stageCode = record.stageCode,
             stageLabel = record.stageLabel,
             variety = record.variety,
+            varietyId = record.varietyId,
             observedAt = record.observedAt ?: clientUpdatedAt,
             rowNumber = record.rowNumber,
             notes = record.notes,
+            latitude = record.latitude,
+            longitude = record.longitude,
+            pinId = record.pinId,
             clientUpdatedAt = clientUpdatedAt,
         )
         return pending.enqueue(

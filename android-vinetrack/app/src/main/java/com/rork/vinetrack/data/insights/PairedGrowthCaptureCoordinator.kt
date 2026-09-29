@@ -16,6 +16,7 @@ data class PairedGrowthCaptureJournal(
     val stageCode: String,
     val stageLabel: String? = null,
     val variety: String? = null,
+    val varietyId: String? = null,
     val notes: String? = null,
     val observedAtIso: String,
     val originatingFeature: String,

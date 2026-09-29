@@ -118,7 +118,7 @@ final class GrowthStageRecordSyncService {
         print("[GrowthStageRecord] backfillFromExistingPins mirroring \(candidates.count) legacy pins")
         #endif
         for pin in candidates {
-            mirrorPinWithoutSync(pin)
+            mirrorPinWithoutSync(pin, snapshotVariety: false)
         }
         reconcileBudburstFromExistingObservations()
         persist()
@@ -148,7 +148,7 @@ final class GrowthStageRecordSyncService {
     /// Core mirror logic without persistence or sync side-effects. Returns
     /// `true` if the pin was a valid growth-stage pin and was mirrored.
     @discardableResult
-    private func mirrorPinWithoutSync(_ pin: VinePin) -> Bool {
+    private func mirrorPinWithoutSync(_ pin: VinePin, snapshotVariety: Bool = true) -> Bool {
         guard pin.mode == .growth, let code = pin.growthStageCode, !code.isEmpty else {
             #if DEBUG
             print("[GrowthStageRecord] mirrorPinWithoutSync SKIPPED — not a growth-stage pin")
@@ -156,12 +156,14 @@ final class GrowthStageRecordSyncService {
             return false
         }
         let stageLabel = GrowthStage.allStages.first { $0.code == code }?.description
-        let variety = variety(for: pin.paddockId)
+        // A legacy pin has no stored variety snapshot: today's allocation cannot
+        // establish what was planted when that historical pin was captured.
+        let variety = snapshotVariety ? variety(for: pin.paddockId, vineyardId: pin.vineyardId) : nil
         if let idx = records.firstIndex(where: { $0.pinId == pin.id }) {
             var updated = records[idx]
             updated.stageCode = code
             updated.stageLabel = stageLabel
-            updated.variety = variety ?? updated.variety
+            // Never infer a historical snapshot from today's block allocations.
             updated.observedAt = pin.timestamp
             updated.latitude = pin.latitude
             updated.longitude = pin.longitude
@@ -178,9 +180,11 @@ final class GrowthStageRecordSyncService {
             guard var mirrored = GrowthStageRecord.mirroring(
                 pin,
                 stageLabel: stageLabel,
-                variety: variety
+                variety: variety?.displayName,
+                varietyId: variety?.varietyId
             ) else { return false }
             mirrored.recordedByName = pin.createdBy ?? auth?.userName
+            // Pin creation stamps the authenticated UUID; do not reattribute imported pins.
             records.append(mirrored)
             metadata.markDirty(mirrored.id, at: Date())
             #if DEBUG
@@ -217,20 +221,20 @@ final class GrowthStageRecordSyncService {
         #endif
     }
 
-    private func variety(for paddockId: UUID?) -> String? {
-        guard let paddockId, let store else { return nil }
-        guard let paddock = store.paddocks.first(where: { $0.id == paddockId }) else { return nil }
-        // Paddock.variety / grapeVariety field names vary across the codebase;
-        // resolve via Mirror so we don't hard-couple to a specific schema.
-        for child in Mirror(reflecting: paddock).children {
-            guard let label = child.label else { continue }
-            let l = label.lowercased()
-            if l == "variety" || l == "grapevariety" || l == "grape" {
-                if let s = child.value as? String, !s.isEmpty { return s }
-                if let s = (child.value as? String?) ?? nil, !s.isEmpty { return s }
-            }
-        }
-        return nil
+    private func variety(for paddockId: UUID?, vineyardId: UUID) -> PaddockVarietyResolver.Resolved? {
+        guard let paddockId, let store,
+              let paddock = store.paddocks.first(where: { $0.id == paddockId && $0.vineyardId == vineyardId }) else { return nil }
+        return Self.primaryVariety(in: paddock, varieties: store.grapeVarieties)
+    }
+
+    /// Match Android's `maxByOrNull(displayPercent)` (first allocation wins a tie).
+    nonisolated static func primaryVariety(in paddock: Paddock, varieties: [GrapeVariety]) -> PaddockVarietyResolver.Resolved? {
+        guard let primary = paddock.varietyAllocations.reduce(nil as PaddockVarietyAllocation?, { best, candidate in
+            guard let best else { return candidate }
+            return candidate.percent > best.percent ? candidate : best
+        }) else { return nil }
+        let resolved = PaddockVarietyResolver.resolve(allocation: primary, varieties: varieties)
+        return resolved.displayName == nil ? nil : resolved
     }
 
     func localPhotoData(recordId: UUID) -> Data? {

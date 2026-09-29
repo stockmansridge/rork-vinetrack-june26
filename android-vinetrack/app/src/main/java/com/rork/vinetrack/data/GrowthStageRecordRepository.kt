@@ -40,7 +40,7 @@ import java.util.UUID
 class GrowthStageRecordRepository(private val session: SessionStore) : GrowthPhotoReferenceGateway {
 
     @Serializable
-    private data class GrowthInsert(
+    internal data class GrowthInsert(
         val id: String,
         @SerialName("vineyard_id") val vineyardId: String,
         @SerialName("paddock_id") val paddockId: String? = null,
@@ -49,6 +49,7 @@ class GrowthStageRecordRepository(private val session: SessionStore) : GrowthPho
         @SerialName("stage_code") val stageCode: String,
         @SerialName("stage_label") val stageLabel: String? = null,
         val variety: String? = null,
+        @SerialName("variety_id") val varietyId: String? = null,
         @SerialName("observed_at") val observedAt: String,
         val latitude: Double? = null,
         val longitude: Double? = null,
@@ -102,9 +103,24 @@ class GrowthStageRecordRepository(private val session: SessionStore) : GrowthPho
          * back-fills a pin — see [GrowthStageCapture.isLegacyUnlinked].
          */
         val pinId: String? = null,
+        val varietyId: String? = null,
     )
 
     private fun nowIso(): String = Instant.now().toString()
+
+    internal companion object {
+        fun insertPayload(
+            vineyardId: String, input: GrowthInput, id: String, clientUpdatedAt: String,
+            createdBy: String?, recordedByName: String?,
+        ): GrowthInsert = GrowthInsert(
+            id = id, vineyardId = vineyardId, paddockId = input.paddockId,
+            pinId = input.pinId, stageCode = input.stageCode, stageLabel = input.stageLabel,
+            variety = input.variety, varietyId = input.varietyId,
+            observedAt = input.observedAt, latitude = input.latitude, longitude = input.longitude,
+            rowNumber = input.rowNumber, notes = input.notes,
+            recordedByName = recordedByName, createdBy = createdBy, clientUpdatedAt = clientUpdatedAt,
+        )
+    }
 
     /**
      * Build the optimistic [GrowthStageRecord] for a new Android-authored
@@ -126,7 +142,7 @@ class GrowthStageRecordRepository(private val session: SessionStore) : GrowthPho
             stageCode = input.stageCode,
             stageLabel = input.stageLabel,
             variety = input.variety,
-            varietyId = null,
+            varietyId = input.varietyId,
             observedAt = input.observedAt,
             latitude = input.latitude,
             longitude = input.longitude,
@@ -134,7 +150,7 @@ class GrowthStageRecordRepository(private val session: SessionStore) : GrowthPho
             side = null,
             notes = input.notes,
             photoPaths = null,
-            recordedByName = null,
+            recordedByName = session.userName,
             createdAt = clientUpdatedAt,
             deletedAt = null,
         )
@@ -156,22 +172,9 @@ class GrowthStageRecordRepository(private val session: SessionStore) : GrowthPho
         withContext(Dispatchers.IO) {
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized
-            val body = GrowthInsert(
-                id = id ?: UUID.randomUUID().toString(),
-                vineyardId = vineyardId,
-                paddockId = input.paddockId,
-                pinId = input.pinId,
-                stageCode = input.stageCode,
-                stageLabel = input.stageLabel,
-                variety = input.variety,
-                observedAt = input.observedAt,
-                latitude = input.latitude,
-                longitude = input.longitude,
-                rowNumber = input.rowNumber,
-                notes = input.notes,
-                recordedByName = null,
-                createdBy = session.userId,
-                clientUpdatedAt = clientUpdatedAt ?: nowIso(),
+            val body = insertPayload(
+                vineyardId, input, id ?: UUID.randomUUID().toString(), clientUpdatedAt ?: nowIso(),
+                createdBy = session.userId, recordedByName = session.userName,
             )
             val response = SupabaseClient.http.post(SupabaseClient.restUrl("growth_stage_records")) {
                 authHeaders(token)

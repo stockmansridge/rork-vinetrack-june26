@@ -247,11 +247,13 @@ data class Paddock(
         get() = !budburstDate.isNullOrBlank() || !floweringDate.isNullOrBlank() ||
             !veraisonDate.isNullOrBlank() || !harvestDate.isNullOrBlank()
 
+    /** First highest-percentage allocation is the primary planted variety. */
+    val primaryVarietyAllocation: PaddockVarietyAllocation?
+        get() = varietyAllocations?.maxByOrNull { it.displayPercent ?: 0.0 }
+
     /** Best display name for the block's primary planted variety, if any. */
     val primaryVarietyName: String?
-        get() = varietyAllocations
-            ?.maxByOrNull { it.displayPercent ?: 0.0 }
-            ?.displayName
+        get() = primaryVarietyAllocation?.displayName
     /** Polygon area in hectares (equirectangular projection — matches iOS `areaHectares`). */
     val areaHectares: Double
         get() {
