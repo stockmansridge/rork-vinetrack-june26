@@ -30,6 +30,43 @@ import {
   selectLabelReferences,
 } from "../grapevine_label.ts";
 import { inspectDefaultRateOptionIdentityReadiness } from "../default_rate_options.ts";
+import { classifyUrl, manufacturerHostEligible } from "../research/classify.ts";
+
+/** Resolve retained catalogue label evidence without fetching, rewriting, or equating document versions. */
+export function resolveMasterLabelEvidence(row: any): {
+  references: ReturnType<typeof selectLabelReferences>;
+  manufacturerSource: Record<string, any> | null;
+} {
+  const country = String(row?.registration_country ?? "").toUpperCase();
+  const sources = Array.isArray(row?.verification_sources) ? row.verification_sources : [];
+  const manufacturerSource = sources.find((source: any) => {
+    if (source?.kind !== "manufacturer_label" || typeof source.reference !== "string") return false;
+    const url = source.reference;
+    const classified = classifyUrl(url, country);
+    if (!manufacturerHostEligible(url, country, String(row?.registrant ?? "")) ||
+      classified.kind === "safety_data_sheet" ||
+      !(classified.kind === "label_document" || new URL(url).pathname.toLowerCase().endsWith(".pdf"))) return false;
+    const visual = source.reviewed_visual_declaration;
+    // A retained visual review must remain bound to precisely this document.
+    // Ordinary pre-existing catalogue label sources need no new attestation.
+    return !visual || (visual.source_url === url &&
+      typeof visual.document_sha256 === "string" && /^[a-f0-9]{64}$/.test(visual.document_sha256) &&
+      visual.method === "human_visual_transcription" && Boolean(visual.reviewed_by) &&
+      typeof visual.reviewed_at === "string" && Number.isFinite(Date.parse(visual.reviewed_at)));
+  }) ?? null;
+  const legacyReferences = selectLabelReferences({ manufacturerLabelUrl: row?.label_reference });
+  // Legacy manufacturer links belong in the manufacturer slot, not the regulator slot.
+  const legacyIsRegulator = Boolean(legacyReferences.regulator_label_url);
+  const references = selectLabelReferences({
+    manufacturerLabelUrl: row?.manufacturer_label_url ||
+      (!legacyIsRegulator ? legacyReferences.manufacturer_label_url : null) || manufacturerSource?.reference,
+    regulatorLabelUrl: row?.regulator_label_url || (legacyIsRegulator ? row?.label_reference : null),
+    productUrl: row?.product_url,
+    sdsUrl: row?.sds_url,
+  });
+  return { references, manufacturerSource: manufacturerSource?.reference === references.manufacturer_label_url
+    ? manufacturerSource : null };
+}
 
 /** PostgREST query executor over master_chemicals. Null = table unavailable. */
 export type MasterSelect = (query: string) => Promise<any[] | null>;
@@ -167,9 +204,7 @@ export function masterHasCompleteVineyardData(row: any): boolean {
   // target is still a rate gap.
   const grapeRatesUnresolved = unresolved.some((x: string) => x.startsWith("RATES:GRAPEVINE"));
 
-  const hasOfficialLabel = Boolean(
-    row?.regulator_label_url || row?.label_reference || row?.manufacturer_label_url,
-  );
+  const hasOfficialLabel = Boolean(resolveMasterLabelEvidence(row).references.label_reference);
 
   return Boolean(row?.registration_number) && hasOfficialLabel &&
     !grapeRatesUnresolved && masterHasDefaultIdentityReadiness(row);
@@ -228,7 +263,7 @@ export function masterHasDefaultIdentityReadiness(row: any): boolean {
 }
 
 /** Per-field provenance for a served master row: everything the row carries is catalogue-reviewed evidence. */
-function masterFieldProvenance(row: any): Record<string, FieldProvenance> {
+function masterFieldProvenance(row: any, labelReference: string | null, labelVersion: unknown): Record<string, FieldProvenance> {
   const has = (v: unknown): boolean => v !== null && v !== undefined && v !== "";
   const of = (present: boolean): FieldProvenance => (present ? "master_catalogue" : "unresolved");
   const actives = Array.isArray(row.active_ingredients) ? row.active_ingredients : [];
@@ -246,8 +281,8 @@ function masterFieldProvenance(row: any): Record<string, FieldProvenance> {
     withholding_periods: of(uses.some((u: any) => u?.withholding_period_days != null)),
     re_entry: of(uses.some((u: any) => u?.re_entry_period_hours != null)),
     restrictions: of(uses.some((u: any) => has(u?.restrictions))),
-    label_version: of(has(row.label_version)),
-    label_reference: of(has(row.label_reference)),
+    label_version: of(has(labelVersion)),
+    label_reference: of(has(labelReference)),
   };
 }
 
@@ -281,13 +316,10 @@ export function buildMasterStructuredResponse(row: any): any {
   // one code path serving both shapes -- no backfill, no schema redesign, and
   // no row that silently reports having no label because it was written
   // before the column existed.
-  const regulatorLabelUrl = row.regulator_label_url ?? row.label_reference ?? null;
-  const labelRefs = selectLabelReferences({
-    manufacturerLabelUrl: row.manufacturer_label_url,
-    regulatorLabelUrl,
-    productUrl: row.product_url,
-    sdsUrl: row.sds_url,
-  });
+  const { references: labelRefs, manufacturerSource } = resolveMasterLabelEvidence(row);
+  const storedLabelReference = row.regulator_label_url || row.label_reference || null;
+  // Do not put a register version beside a newly resolved manufacturer link in legacy clients.
+  const labelVersion = labelRefs.label_reference === storedLabelReference ? row.label_version ?? null : null;
 
   const served = {
     product_name: row.registered_product_name ?? null,
@@ -302,7 +334,10 @@ export function buildMasterStructuredResponse(row: any): any {
       label_reference: labelRefs.label_reference ?? row.label_reference ?? null,
       manufacturer_label_url: labelRefs.manufacturer_label_url,
       regulator_label_url: labelRefs.regulator_label_url,
-      label_version: row.label_version ?? null,
+      label_version: labelVersion,
+      stored_register_label_version: row.label_version ?? null,
+      label_version_reference: storedLabelReference,
+      manufacturer_label_version: manufacturerSource?.reviewed_visual_declaration?.document_version ?? null,
     },
     // The label URLs a client can OPEN, in one predictable block.
     //
@@ -315,6 +350,16 @@ export function buildMasterStructuredResponse(row: any): any {
       manufacturer_label_url: labelRefs.manufacturer_label_url,
       product_url: labelRefs.manufacturer_product_url ?? row.product_url ?? null,
     },
+    label_evidence: {
+      stored_register_metadata: {
+        label_reference: row.regulator_label_url || row.label_reference || null,
+        label_version: row.label_version ?? null,
+      },
+      reviewed_manufacturer_document: manufacturerSource,
+      // The stored register metadata and the reviewed PDF are distinct evidence.
+      same_label_version_established: false,
+    },
+    ...(row.viticulture_rates ? { viticulture_rates: row.viticulture_rates } : {}),
     active_ingredients: Array.isArray(row.active_ingredients) ? row.active_ingredients : [],
     activity_groups: Array.isArray(row.activity_groups) ? row.activity_groups : [],
     activity_group_scheme: row.activity_group_scheme ?? null,
@@ -338,7 +383,7 @@ export function buildMasterStructuredResponse(row: any): any {
     },
     activity_group_table_version: row.activity_group_table_version ?? ACTIVITY_GROUP_TABLE_VERSION,
     schema_version: row.intelligence_schema_version ?? 1,
-    field_provenance: masterFieldProvenance(row),
+    field_provenance: masterFieldProvenance(row, labelRefs.label_reference, labelVersion),
     match_source: "master",
     master: {
       master_chemical_id: row.id,
