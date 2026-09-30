@@ -7,29 +7,27 @@ import {
 import { applyDefaultRateOptions } from "./default_rate_options.ts";
 import { validateDefaultRates } from "./default_rates.ts";
 
-// Local revision-2 SHAPE, not a live DB export or a real reviewer attestation.
-// Reuse the retained serialized directions; never re-extract/apply the PDF.
-const retained = JSON.parse(await Deno.readTextFile(new URL(
-  "../../../docs/weedmaster-acceptance/synthetic_review_simulation.json", import.meta.url,
-)));
-const label = retained.proposed_patch.verification_sources[0].reference;
+// Default: complete applied-snapshot derivative with ONLY reviewer identity redacted.
+// Optional CLI argument: private, byte-identical actual snapshot. Never re-extract/apply.
+const fixturePath = Deno.args[0] ?? new URL(
+  "../../../docs/weedmaster-acceptance/revision-2-shared/master-revision-2.sanitized-fixture.json", import.meta.url,
+);
+const bytes = await Deno.readFile(fixturePath);
+const input = JSON.parse(new TextDecoder().decode(bytes));
+const retained = input.row ?? input;
+if (Deno.args[0]) {
+  const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)))
+    .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  assertEquals(hash, "6daee0d6d2502a897cac988123ead3f6a1db07ec3f75ad5032be6ed40ac4c3a6");
+}
+const retainedBefore = structuredClone(retained);
+const label = "https://cdn.nufarm.com/wp-content/uploads/sites/22/2018/05/13085258/0533-Nufarm-Weedmaster-DUO-Herbicide.pdf";
 const phalarisRateId = "rate_v1_4efec198ead373a3286939ced245fadf";
 const phalarisDirectionId = "direction_v1_1363f3205ca7b639cd5f970a03d91785";
 function revisionTwo(status = "candidate"): any {
-  return structuredClone({
-    ...retained.proposed_patch,
-    id: "03dfb9e8-6592-4746-a3bc-295890d32cd1",
-    registration_country: "AU", registration_scheme: "apvma", registration_number: "53576",
-    registration_identity_key: "AU:apvma:53576", catalogue_version: 2,
-    registered_product_name: "Nufarm Weedmaster DUO Herbicide", registrant: "NUFARM AUSTRALIA LIMITED",
-    common_names: [], product_category: "herbicide", form_type: "liquid",
-    review_status: status, verification_status: "partially_verified", source_kind: "official_register",
-    source_reference: "pubcris:53576", verification_conflicts: [], verified_at: null,
-    label_reference: null, regulator_label_url: "", manufacturer_label_url: null,
-    // Deliberately distinct, unknown register metadata; do not infer equivalence to the PDF.
-    label_version: "stored-register-version-fixture", activity_group_table_version: 1,
-    intelligence_schema_version: 1,
-  });
+  const clone = structuredClone(retained);
+  clone.review_status = status; // the only substitution for the hypothetical approved path
+  return clone;
 }
 
 function assertCustomerContract(served: any, row: any): void {
@@ -53,7 +51,7 @@ function assertCustomerContract(served: any, row: any): void {
   assertEquals(served.registration.label_version_reference, null);
   assertEquals(served.registration.manufacturer_label_version, "08-09-2022");
   assertEquals(served.label_evidence.same_label_version_established, false);
-  assertEquals(served.label_evidence.reviewed_manufacturer_document, row.verification_sources[0]);
+  assertEquals(served.label_evidence.reviewed_manufacturer_document, row.verification_sources[6]);
   const options = served.default_rate_options;
   assert(options.per_hectare.length > 0 && options.per_100_litres.length > 0);
   const phalaris = options.per_100_litres.filter((option: any) => option.rate_ids.includes(phalarisRateId));
@@ -78,6 +76,27 @@ function assertCustomerContract(served: any, row: any): void {
   assertEquals(validated.value?.per_100_litres?.rate_ids, phalaris[0].rate_ids);
 }
 
+Deno.test("Weedmaster release: full actual input keeps source order, counts and flattened identity relationships", () => {
+  const row = revisionTwo();
+  assertEquals(row.review_status, "candidate");
+  assertEquals(row.catalogue_version, 2);
+  assertEquals(row.registered_uses.length, 582);
+  assertEquals(row.registered_uses.filter((use: any) => use.crop === "Vineyards").length, 70);
+  assertEquals(row.verification_sources.length, 7);
+  for (const index of [3, 4]) {
+    assertEquals(row.verification_sources[index].kind, "manufacturer_label");
+    assertEquals(new URL(row.verification_sources[index].reference).hostname, "data.gov.au");
+  }
+  assertEquals(row.verification_sources[6].reference, label);
+  assertEquals(resolveMasterLabelEvidence(row).manufacturerSource, row.verification_sources[6]);
+  assertEquals(row.viticulture_rates.per_hectare.length, 66);
+  assertEquals(row.viticulture_rates.per_100_litres.length, 71);
+  const flat = row.viticulture_rates.per_100_litres.find((rate: any) => rate.rate_id === phalarisRateId);
+  assert(!("target_raw" in flat) && !("direction_id" in flat) && !("method" in flat));
+  const direction = row.registered_uses.find((use: any) => use.direction_id === phalarisDirectionId);
+  assertEquals(direction.rates.find((rate: any) => rate.rate_id === phalarisRateId), flat);
+});
+
 Deno.test("Weedmaster release: retained manufacturer evidence satisfies readiness and full customer contract", () => {
   const row = revisionTwo();
   const before = structuredClone(row);
@@ -86,6 +105,42 @@ Deno.test("Weedmaster release: retained manufacturer evidence satisfies readines
   assertEquals(applyDefaultRateOptions(served), []);
   assertCustomerContract(JSON.parse(JSON.stringify(served)), row);
   assertEquals(row, before, "serving must never rewrite the stored row");
+});
+
+Deno.test("Weedmaster release: actual canonical option survives persistence JSON and shared read-back, not a Portal UI test", () => {
+  const row = revisionTwo();
+  const served = buildMasterStructuredResponse(row);
+  assertEquals(applyDefaultRateOptions(served), []);
+  // Deliberate test choice by persisted identity; never auto-select the first option.
+  const option = served.default_rate_options.per_100_litres.find((entry: any) => entry.rate_ids.includes(phalarisRateId));
+  assert(option);
+  const selection = {
+    option_key: option.option_key, rate_ids: option.rate_ids, basis: option.basis,
+    unit: option.unit, value: option.value, min_value: option.min_value, max_value: option.max_value,
+    source: "operator" as const, selected_at: null, label_version: served.registration.manufacturer_label_version,
+  };
+  const payload = {
+    master_chemical_id: row.id, master_source_revision: row.catalogue_version,
+    default_rates: { version: 1 as const, per_hectare: null, per_100_litres: selection },
+  };
+  const readBack = validateDefaultRates(JSON.parse(JSON.stringify(payload)).default_rates);
+  assertEquals(readBack.violations, []);
+  assertEquals(readBack.value, payload.default_rates);
+  const supportingDirections = row.registered_uses.filter((use: any) =>
+    use.rates.some((rate: any) => readBack.value?.per_100_litres?.rate_ids.includes(rate.rate_id)));
+  assertEquals(supportingDirections.map((use: any) => use.direction_id).sort(), option.direction_ids);
+  const actualPhalaris = supportingDirections.find((use: any) => use.direction_id === phalarisDirectionId);
+  assertEquals(actualPhalaris, retained.registered_uses.find((use: any) => use.direction_id === phalarisDirectionId));
+  assertEquals(option.conditions, ["Handgun"]);
+  assertEquals(validateDefaultRates({ ...payload.default_rates,
+    per_100_litres: { ...selection, rate_ids: [] } }).violations[0].code, "rate_ids_missing");
+  assertEquals(validateDefaultRates({ ...payload.default_rates,
+    per_100_litres: { ...selection, source: "manual" } }).violations[0].code, "source_unrecognised");
+  console.log(JSON.stringify({ basis_option_counts: {
+    per_hectare: served.default_rate_options.per_hectare.length,
+    per_100_litres: served.default_rate_options.per_100_litres.length }, option, payload,
+    shared_read_back_violations: readBack.violations, portal_path_executed: false }));
+  assertEquals(retained, retainedBefore);
 });
 
 Deno.test("Weedmaster release: untrusted, SDS, product and mismatched visual sources cannot satisfy readiness", () => {
@@ -104,14 +159,14 @@ Deno.test("Weedmaster release: untrusted, SDS, product and mismatched visual sou
   for (const change of [{ source_url: `${label}?different` }, { document_sha256: "bad" },
     { reviewed_by: "" }, { reviewed_at: "bad" }, { method: "ai_transcription" }]) {
     const row = revisionTwo();
-    Object.assign(row.verification_sources[0].reviewed_visual_declaration, change);
+    Object.assign(row.verification_sources[6].reviewed_visual_declaration, change);
     assertEquals(masterHasCompleteVineyardData(row), false);
   }
 });
 
 Deno.test("Weedmaster release: retained warnings are not missing-rate gates; real rate gaps still block", () => {
   const row = revisionTwo();
-  assertEquals(row.verification_unresolved_fields.length, 11);
+  assertEquals(row.verification_unresolved_fields.length, 32);
   assert(masterHasCompleteVineyardData(row));
   row.verification_unresolved_fields.push("RATES:GRAPEVINE:Phalaris");
   assertEquals(masterHasCompleteVineyardData(row), false);
@@ -191,6 +246,8 @@ Deno.test("Weedmaster release: real structured handler serves hypothetical appro
     assertCustomerContract(served, row);
     assertEquals(requests.length, 1);
     assertEquals(row, before);
+    assertEquals(retained, retainedBefore);
+    assertEquals(retained.review_status, "candidate");
   } finally {
     Deno.serve = originalServe;
     Deno.env.get = originalGet;

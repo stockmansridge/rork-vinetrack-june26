@@ -1,0 +1,148 @@
+{
+  "basis": "Unmodified fields selected from the full applied snapshot; not a parser test result",
+  "phalaris_registered_direction": {
+    "crop": "Vineyards",
+    "rates": [
+      {
+        "unit": "L",
+        "basis": "range_per_hectare",
+        "label": "Boom",
+        "value": null,
+        "rate_id": "rate_v1_32d3ae775ca47cedd9bc3ac09748f18a",
+        "raw_text": "3-6 L/ha",
+        "max_value": 6,
+        "min_value": 3,
+        "source_refs": [
+          "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 3 PERENNIAL WEED CONTROL, physical page 4, Phalaris"
+        ]
+      },
+      {
+        "unit": "mL",
+        "basis": "range_per_100_litres",
+        "label": "Handgun",
+        "value": null,
+        "rate_id": "rate_v1_4efec198ead373a3286939ced245fadf",
+        "raw_text": "500 mL-1 L/100L",
+        "max_value": 1000,
+        "min_value": 500,
+        "source_refs": [
+          "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 3 PERENNIAL WEED CONTROL, physical page 4, Phalaris"
+        ]
+      },
+      {
+        "unit": "",
+        "basis": "other",
+        "label": "Knapsack",
+        "value": null,
+        "rate_id": "rate_v1_d9355893a1d32f60c6a7af05ace69f1c",
+        "raw_text": "75-150 mL/15L",
+        "max_value": null,
+        "min_value": null,
+        "source_refs": [
+          "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 3 PERENNIAL WEED CONTROL, physical page 4, Phalaris"
+        ]
+      }
+    ],
+    "conditions": "Table 3 PERENNIAL WEED CONTROL; Apply to actively growing plants during Winter-Spring. Use the lower rate where only knockdown is required eg. prior to burning of firebreaks. Burning can usually start 14-21 days after spraying. For long term control increase to the higher rate.",
+    "target_raw": "Phalaris",
+    "source_refs": [
+      "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 3 PERENNIAL WEED CONTROL, physical page 4, Phalaris"
+    ],
+    "direction_id": "direction_v1_1363f3205ca7b639cd5f970a03d91785",
+    "restrictions": "Apply as a directed or shielded spray, or using wiper equipment. DO NOT apply as a spray near trees or vines less than 3 years old, unless they are effectively shielded from spray and spray drift. DO NOT allow wiper surface to contact any part of the tree, vine or palm. Citrus fruit, Litchi, Nuts, Olive, Pome fruit, Vineyards: DO NOT allow spray or spray drift to contact green bark or stems, canes, laterals, suckers, fresh wounds, foliage or fruit. DO NOT disturb treated weeds by cultivation, sowing or grazing for 1 day after treatment of annual weeds and 7 days for perennial weeds. DO NOT treat weeds under poor growing or dormant conditions such as occur in drought, water logging, disease, insect damage or following frost. Reduced control may also occur when treating weeds heavily covered with dust or silt. Rainfall occurring up to 6 hours after application may reduce effectiveness. Heavy rainfall within 2 hours of application may wash the chemical off the foliage and a repeat treatment may be required. Apply to actively growing plants during Winter-Spring. Use the lower rate where only knockdown is required eg. prior to burning of firebreaks. Burning can usually start 14-21 days after spraying. For long term control increase to the higher rate.",
+    "re_entry_period_hours": null,
+    "withholding_statement": "WITHHOLDING PERIOD: NOT REQUIRED WHEN USED AS DIRECTED",
+    "withholding_period_days": null
+  },
+  "phalaris_flat_per_100_litres": {
+    "unit": "mL",
+    "basis": "range_per_100_litres",
+    "label": "Handgun",
+    "value": null,
+    "rate_id": "rate_v1_4efec198ead373a3286939ced245fadf",
+    "raw_text": "500 mL-1 L/100L",
+    "max_value": 1000,
+    "min_value": 500,
+    "source_refs": [
+      "PDF physical page 9 TREE AND VINE CROPS: Vineyards → Table 3 PERENNIAL WEED CONTROL, physical page 4, Phalaris"
+    ]
+  },
+  "source_order": [
+    {
+      "array_index": 0,
+      "kind": "official_register",
+      "name": "APVMA PubCRIS register extract — product 53576 (R, expires 30/06/2029 0:00)",
+      "reference": "https://data.gov.au/data/api/3/action/datastore_search?resource_id=b4bb5394-b60b-4602-8bde-2e206ffc498f&filters=%7B%22pcode%22%3A%2253576%22%7D&limit=1"
+    },
+    {
+      "array_index": 1,
+      "kind": "official_register",
+      "name": "APVMA PubCRIS constituents — product 53576",
+      "reference": "https://data.gov.au/data/api/3/action/datastore_search?resource_id=eb08d8fc-bb61-4191-9a4b-a20ee44dac1f&filters=%7B%22pcode%22%3A%2253576%22%7D&limit=32"
+    },
+    {
+      "array_index": 2,
+      "kind": "official_register",
+      "name": "APVMA PubCRIS label registration 141445 (13/12/2023 12:00:00 AM)",
+      "reference": "https://data.gov.au/data/api/3/action/datastore_search?resource_id=a83d500d-b47a-4f03-9d77-4c0524217855&filters=%7B%22pcode%22%3A%2253576%22%7D&limit=8"
+    },
+    {
+      "array_index": 3,
+      "kind": "manufacturer_label",
+      "name": "APVMA-approved label — registered use claims (product 53576)",
+      "reference": "https://data.gov.au/data/api/3/action/datastore_search?resource_id=80289270-0681-44fd-be6e-0473bb4ab9a0&filters=%7B%22pcode%22%3A%2253576%22%7D&limit=512"
+    },
+    {
+      "array_index": 4,
+      "kind": "manufacturer_label",
+      "name": "APVMA-approved label — label statements (product 53576)",
+      "reference": "https://data.gov.au/data/api/3/action/datastore_search?resource_id=98e956e0-8d60-47cd-8bed-1d4da4c9826d&filters=%7B%22pcode%22%3A%2253576%22%7D&limit=256"
+    },
+    {
+      "array_index": 5,
+      "kind": "viticulture_reference",
+      "name": "AWRI 'Dog Book' — Agrochemicals registered for use in Australian viticulture 2026/27 (viticulture coverage reference only; never a registration authority)",
+      "reference": "https://www.awri.com.au/wp-content/uploads/agrochemical_booklet.pdf"
+    },
+    {
+      "array_index": 6,
+      "kind": "manufacturer_label",
+      "name": "Manufacturer commercial label",
+      "reference": "https://cdn.nufarm.com/wp-content/uploads/sites/22/2018/05/13085258/0533-Nufarm-Weedmaster-DUO-Herbicide.pdf"
+    }
+  ],
+  "retained_unresolved_fields": [
+    "rates:BLUEBERRY OVER 3 YEARS OLD",
+    "rates:CHICKPEA - SEE LABEL",
+    "rates:CITRUS FRUIT - OVER 3 YEARS OLD",
+    "rates:POME FRUIT, OVER 3 YEARS OLD",
+    "rates:RASPBERRY OVER 3 YEARS OLD",
+    "rates:RICE - DIRECT DRILLING",
+    "rates:SORGHUM - POST-HARVEST",
+    "rates:SORGHUM - PRE-HARVEST",
+    "rates:SUGAR CANE",
+    "rates:SUGAR CANE - RATOON CROP",
+    "re_entry_period_hours",
+    "withholding_period:BLUEBERRY OVER 3 YEARS OLD",
+    "withholding_period:CHICKPEA - SEE LABEL",
+    "withholding_period:CITRUS FRUIT - OVER 3 YEARS OLD",
+    "withholding_period:POME FRUIT, OVER 3 YEARS OLD",
+    "withholding_period:RASPBERRY OVER 3 YEARS OLD",
+    "withholding_period:RICE - DIRECT DRILLING",
+    "withholding_period:SORGHUM - POST-HARVEST",
+    "withholding_period:SORGHUM - PRE-HARVEST",
+    "withholding_period:SUGAR CANE",
+    "withholding_period:SUGAR CANE - RATOON CROP",
+    "Table 3 page 4:Paspalum:shared critical comment relationship unconfirmed",
+    "re_entry_period:GRAPEVINE: no stated re-entry interval established in this PDF; hours unknown",
+    "application_basis:GRAPEVINE: Wiper 1 L product + 2 L water is printed on physical page 13 and bound as label information; mixture basis not supported by the /ha or /100 L calculator",
+    "application_basis:GRAPEVINE: Knapsack /15 L is printed in Tables 2 and 3; basis not supported by the /ha or /100 L calculator",
+    "Table 2 page 2:Controlled droplet applicators:Physical page 2 references the Application section; the device/mixture delivery table is not a per-ha or per-100L product dose bound to each annual target.",
+    "Table 3 page 3:Bamboo — cut stump:Physical page 3 prints Cut stump: Dilute 1:6 (one part product plus six parts water); page 9 Vineyard situation names directed/shielded spray or wiper, not cut-stump treatment. No vineyard cut-stump permission established.",
+    "Table 3 page 3:Cumbungi^:Physical page 3: aquatic/wetland target without a separately established Vineyard situation; page 9 Vineyard reference does not establish that situation. Printed row: Apply to actively growing plants at the early head to full head stage (Summer-Autumn). Re-treatment may be required to restrict seedling re-establishment. Application by wiper equipment is recommended (not Tasmania). Refer WIPER EQUIPMENT section.",
+    "Table 3 page 4:Ludwigia peruviana:Physical page 4: aquatic/wetland target without a separately established Vineyard situation; page 9 Vineyard reference does not establish that situation. Printed row: Apply when actively growing and at or beyond the early bloom stage of growth, but before Autumn colour changes occur. Thorough coverage is necessary for best control.",
+    "Table 3 page 4:Pampas grass — low volume:Physical page 4 prints LOW VOLUME APPLICATION: Use 1:9 product:water, Apply 2x2mL per 0.5 m height. Page 9 does not establish low-volume equipment as a Vineyard method; no /ha or /100L projection.",
+    "Table 3 page 4:Paspalum:Physical page 4 prints Boom 6 L/ha, Handgun 1 L/100L, Knapsack 150 mL/15L, but no separate critical comment; whether the preceding Paragrass growth-stage comment applies to this Paspalum row cannot be established. Rates withheld pending that relationship.",
+    "Table 3 page 4:Phragmites, Common reed:Physical page 4: aquatic/wetland target without a separately established Vineyard situation; page 9 Vineyard reference does not establish that situation. Printed row: Apply to actively growing, fully developed plants approaching the early head stage. Visible symptoms of control may be slow to develop and may not be fully apparent until the next season. For application by wiper equipment refer to WIPER EQUIPMENT section."
+  ]
+}

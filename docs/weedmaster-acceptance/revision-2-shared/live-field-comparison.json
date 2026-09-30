@@ -1,0 +1,46 @@
+{
+  "purpose": "Shared existing-data fixture for Portal and backend release checks, not a new preview or approval",
+  "snapshot_origin": "master-after.json from the user-uploaded weedmaster-approved-apply-8ec79e5b.zip; bytes retained unchanged",
+  "live_read_check_at": "2026-09-30T13:54:48.711599Z",
+  "current_status": {
+    "id": "03dfb9e8-6592-4746-a3bc-295890d32cd1",
+    "registration_identity_key": "AU:apvma:53576",
+    "catalogue_version": 2,
+    "review_status": "candidate",
+    "verification_status": "partially_verified",
+    "updated_at": "2026-09-30T12:24:40.482631+00:00"
+  },
+  "comparison_note": "Eight critical field digests, current revision, statuses and updated_at compared against a fresh SELECT. MD5 is used for accidental-change comparison only, not authorization or a replacement for existing SHA-256 review fingerprints.",
+  "live_field_md5": {
+    "activity_groups": "3c675b4c47ac2586b971eb0b49fa73a3",
+    "registered_uses": "79d5745977e2f96bca0b1a01567808c4",
+    "label_rate_bases": "d8c9a8b173f8dfa60259bba8810641c9",
+    "viticulture_rates": "0f4d4effa84355b85746025fd9207b57",
+    "active_ingredients": "50b340799c913cfa02a9e11f7d79a3eb",
+    "verification_sources": "68763385a1bf44a50361341f3175fee9",
+    "verification_conflicts": "d751713988987e9331980363e24189ce",
+    "verification_unresolved_fields": "0e59b266a1308d71268579fe33fbce6c"
+  },
+  "snapshot_field_md5": {
+    "activity_groups": "3c675b4c47ac2586b971eb0b49fa73a3",
+    "registered_uses": "79d5745977e2f96bca0b1a01567808c4",
+    "label_rate_bases": "d8c9a8b173f8dfa60259bba8810641c9",
+    "viticulture_rates": "0f4d4effa84355b85746025fd9207b57",
+    "active_ingredients": "50b340799c913cfa02a9e11f7d79a3eb",
+    "verification_sources": "68763385a1bf44a50361341f3175fee9",
+    "verification_conflicts": "d751713988987e9331980363e24189ce",
+    "verification_unresolved_fields": "0e59b266a1308d71268579fe33fbce6c"
+  },
+  "all_eight_fields_match": true,
+  "unresolved_field_count": 32,
+  "vineyard_direction_count": 70,
+  "per_hectare_entries": 66,
+  "per_100_litre_entries": 71,
+  "snapshot_sha256": "6daee0d6d2502a897cac988123ead3f6a1db07ec3f75ad5032be6ed40ac4c3a6",
+  "current_code_refs": {
+    "rork": "0e97c3db6311edcde9d436ff0ff166e6d487e75b",
+    "portal": "5ee63d2411651dc638d462c6126788726ee3a9de"
+  },
+  "network_operations": "Two read-only SELECTs; no chemical lookup, writes, previews, approval or deployment performed",
+  "warning": "Real existing review provenance is present. Use this private snapshot only for read-only fixtures. Do not submit its review fields as a new attestation or approval."
+}
