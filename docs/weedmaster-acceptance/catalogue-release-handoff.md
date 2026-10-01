@@ -1,5 +1,48 @@
 # Weedmaster revision-2 coordinated release handoff
 
+## 2026-10-01: exact candidate hydration repair (not deployed)
+
+Root cause of the reported live minute-long hydration: ordinary `structured` serving queries approved rows only; the selected candidate misses that read and enters the existing discovery/enrichment path. The Portal's flattened-rate fallback then presents 137 rate entries instead of canonical options. No Master correction, extraction or apply is needed.
+
+New read-only action on `chemical-info-lookup`, with the caller's authenticated session Bearer token:
+
+```json
+{
+  "action": "structured_master_preview",
+  "master_chemical_id": "03dfb9e8-6592-4746-a3bc-295890d32cd1",
+  "country": "Australia",
+  "registrationScheme": "apvma",
+  "registrationNumber": "53576"
+}
+```
+
+The server verifies the session through Auth and checks the existing authoritative `is_system_admin()` RPC using the CALLER's JWT, never the service role. Only then does it read `master_chemicals` by exact ID with candidate status. Returned ID, candidate status, country, scheme, number and persisted registration identity must all match. It uses `buildMasterStructuredResponse` and `applyDefaultRateOptions`, without minting a second contract or changing the candidate. The response has the existing `master` linkage and an explicit `admin_preview: { read_only: true, catalogue_status: "candidate", approved_for_customer_use: false }`. Ordinary `structured` behaviour is unchanged and approved-only for Master serving.
+
+The preview has one shared eight-second network deadline across session verification, current-admin check and DB read. It never enters manufacturer discovery, AI, PDF fetch/parsing, cache writes or Master writes, and works without an OpenAI API key. Missing candidate returns 404; identity mismatch 409; failed/incomplete canonical hydration 503 with `catalogue_preview_unavailable`, never an enrichment fallback.
+
+Focused local validation: **9 tests plus 11 preview substeps passed**, TypeScript check and whitespace validation passed. The final mocked success measured **15.98 ms** for the handler response, with exactly Auth GET → admin RPC POST (read-only check) → exact Master GET. This is not live latency; the supplied live one-minute issue remains unverified/unrepaired in deployment until the new function and Portal call are delivered.
+
+Actual unchanged full-row fixture: **70 Vineyard directions**, **66 /ha + 71 /100 L flattened rate entries**, **9 /ha + 8 /100 L canonical options**. These are the existing producer's options, not newly grouped Portal rows. Example target summaries (first three supplied names, exact remaining counts):
+
+- 2–3 L/ha — Boom: Amaranth, Barley grass, Barnyard grass **+32 more**.
+- 6 L/ha — Boom: Johnson grass, Kangaroo grass, Kikuyu grass **+9 more**.
+- 3–6 L/ha — Boom: Phalaris.
+- 500–700 mL/100 L — Handgun: Amaranth, Barley grass, Barnyard grass **+32 more**.
+- 500–1000 mL/100 L — Handgun: Phalaris, canonical key `default_option_v1_5f58b1d9f422213e1ecf8632036c1356`, unchanged rate/direction IDs below.
+
+**Lovable implementation and tests remain outstanding here (Portal source absent):**
+
+- Candidate System Admin selection calls this action, validates returned Master/registration/revision linkage and uses `default_rate_options` as the primary radio UI. Ordinary users continue using approved structured serving.
+- One radio per backend option, separate /ha and /100 L sections; do not regroup/mint keys or select individual flattened weed rows. Keep candidate/not-approved labelling visible.
+- Show the first three `targets` and `+ N more`; Show all expands the complete supplied list. Retain all supplied condition wording and target-specific restrictions in supporting direction evidence; some existing Handgun options aggregate multiple qualified condition strings, so do not imply every condition applies to every listed target.
+- Canonical options already use `isGrapevineCrop`; keep other-crop and excluded/reference-only methods out of selectable defaults. Do not add another Portal crop parser.
+- Failed hydration shows: "Catalogue rate details could not be loaded. Try again or enter a rate manually." with Retry, Enter rate manually and Back. Never turn `viticulture_rates` or flattened registered uses into a selectable fallback.
+- Copy backend option identity/amount/rate IDs into the existing saved-selection contract; retain direction/conditions for display, not a new persistence format. Prove candidate hydration, grouped/count/collapse/expand display, Phalaris selection, exclusions and failure recovery through focused Portal tests.
+
+Changed implementation: `supabase/functions/chemical-info-lookup/index.ts`; new focused tests: `master_candidate_preview_test.ts` in the same folder. No production lookup/write/approval, deployment, SQL, re-extraction/apply, source-order change or mobile/broad build occurred. The current pre-change Rork HEAD observed here is `a6d48479561ddbe014525572e95dffb6691ccccb`; this repair's synced commit is not yet available within this turn. Lovable's last supplied commit remains `830f68da6d6fcdadf2a1aa4a495f5ccbf46fd53b`, not independently verified or claimed to contain these UI changes.
+
+The sections below retain earlier approved-clone release evidence; they do not supersede the candidate preview authorization boundary above.
+
 ## Scope, ownership and evidence
 
 Master `03dfb9e8-6592-4746-a3bc-295890d32cd1`, `AU:apvma:53576`, revision **2**, **candidate**, **partially_verified**.

@@ -9,6 +9,9 @@
 //   { "action": "info",   "productName": string, "country"?: string }
 //   { "action": "structured", "productName": string, "country"?: string,
 //     "registrationNumber"?: string }   // optional identity hint (sql/199)
+//   { "action": "structured_master_preview", "master_chemical_id": uuid,
+//     "country": string, "registrationScheme": string, "registrationNumber": string }
+//     // authenticated current System Admin only; read-only exact candidate hydration
 //   { "action": "master_refresh", "masterChemicalId": uuid,
 //     "apply"?: boolean }               // system admins only (Stage 3)
 //   { "action": "master_review_preview", "masterChemicalId": uuid }
@@ -827,9 +830,9 @@ function masterHeaders(): Record<string, string> {
   };
 }
 
-async function masterSelect(query: string): Promise<any[] | null> {
+async function masterSelect(query: string, signal?: AbortSignal): Promise<any[] | null> {
   if (!masterConfigured()) return null;
-  const res = await fetch(`${MASTER_TABLE_URL}?${query}`, { headers: masterHeaders() });
+  const res = await fetch(`${MASTER_TABLE_URL}?${query}`, { headers: masterHeaders(), signal });
   if (!res.ok) {
     // Table absent (sql/199 not applied yet) or transient failure — the
     // caller falls through to the AI path.
@@ -947,7 +950,7 @@ const previewStore: PreviewStore = {
  * JWT is presented to the database's is_system_admin() RPC. Anything short of
  * an explicit true — missing header, RPC failure, non-admin — is NOT an admin.
  */
-async function isSystemAdmin(req: Request): Promise<boolean> {
+async function isSystemAdmin(req: Request, signal?: AbortSignal): Promise<boolean> {
   const authHeader = req.headers.get("Authorization") ?? "";
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
   const supabaseUrl = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
@@ -961,6 +964,7 @@ async function isSystemAdmin(req: Request): Promise<boolean> {
         "Content-Type": "application/json",
       },
       body: "{}",
+      signal,
     });
     if (adminRes.ok) return (await adminRes.json()) === true;
     try { await adminRes.body?.cancel(); } catch { /* ignore */ }
@@ -976,7 +980,7 @@ async function isSystemAdmin(req: Request): Promise<boolean> {
  * request body). Binds a stored review preview to the requesting admin;
  * sql/203 master_review_apply refuses every other caller.
  */
-async function authenticatedUserId(req: Request): Promise<string | null> {
+async function authenticatedUserId(req: Request, signal?: AbortSignal): Promise<string | null> {
   const authHeader = req.headers.get("Authorization") ?? "";
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
   const supabaseUrl = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
@@ -984,6 +988,7 @@ async function authenticatedUserId(req: Request): Promise<string | null> {
   try {
     const res = await fetch(`${supabaseUrl}/auth/v1/user`, {
       headers: { "apikey": anonKey, "Authorization": authHeader },
+      signal,
     });
     if (!res.ok) {
       try { await res.body?.cancel(); } catch { /* ignore */ }
@@ -1228,7 +1233,7 @@ Deno.serve(async (req: Request) => {
   const action = String(body?.action ?? "").toLowerCase();
   if (body?.capture_indexed_response !== undefined && action !== "master_backfill_preview_v2")
     return json({ error: "Capture unavailable" }, 403);
-  if (!apiKey && action !== "discover_label") {
+  if (!apiKey && action !== "discover_label" && action !== "structured_master_preview") {
     return json({ error: "Server is missing OPENAI_API_KEY secret" }, 500);
   }
 
@@ -2258,6 +2263,46 @@ Deno.serve(async (req: Request) => {
           return servedSearch(authoritative, deterministicMethod());
         }
         throw err;
+      }
+    }
+
+    if (action === "structured_master_preview") {
+      // Separate authorization boundary, same structured builder and option producer.
+      // Never fall through into discovery, enrichment, parsing, caching or writes.
+      const signal = AbortSignal.timeout(8000);
+      const previewFailure = () => json({ error: "Catalogue rate details could not be loaded", code: "catalogue_preview_unavailable" }, 503);
+      try {
+        if (!await authenticatedUserId(req, signal)) {
+          return signal.aborted ? previewFailure() : json({ error: "Authentication required" }, 401);
+        }
+        if (!await isSystemAdmin(req, signal)) {
+          return signal.aborted ? previewFailure() : json({ error: "Admin access required" }, 403);
+        }
+        const masterId = typeof body?.master_chemical_id === "string" ? body.master_chemical_id.trim().toLowerCase() : "";
+        const scheme = typeof body?.registrationScheme === "string" ? body.registrationScheme.trim().toLowerCase() : "";
+        const number = typeof body?.registrationNumber === "string" ? body.registrationNumber.trim().toUpperCase() : "";
+        if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(masterId) ||
+          !countryCode || !scheme || !number || scheme !== registrationSchemeForCode(jur.code)) {
+          return json({ error: "Exact Master ID and registration identity required" }, 400);
+        }
+        const identity = `${countryCode}:${scheme}:${number}`;
+        const rows = await masterSelect(`select=*&id=eq.${encodeURIComponent(masterId)}&review_status=eq.candidate&limit=1`, signal);
+        if (!rows) return previewFailure();
+        if (rows.length !== 1) return json({ error: "Candidate not found" }, 404);
+        const row = rows[0];
+        if (row.id !== masterId || row.review_status !== "candidate" ||
+          row.registration_identity_key !== identity || row.registration_country !== countryCode ||
+          row.registration_scheme !== scheme || row.registration_number !== number) {
+          return json({ error: "Master identity mismatch", code: "master_identity_mismatch" }, 409);
+        }
+        if (!masterHasCompleteVineyardData(row)) return previewFailure();
+        const payload = { ...buildMasterStructuredResponse(row), jurisdiction: jurEnv,
+          admin_preview: { read_only: true, catalogue_status: "candidate", approved_for_customer_use: false } };
+        if (applyDefaultRateOptions(payload).length) return previewFailure();
+        return json(withDiagnostics(payload, { query: row.registered_product_name,
+          selectedRegistration: number, method: "master_catalogue", cache: "none" }));
+      } catch {
+        return previewFailure();
       }
     }
 
