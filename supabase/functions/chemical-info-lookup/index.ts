@@ -180,6 +180,7 @@ import {
   searchMaster,
 } from "./ingestion/master_lookup.ts";
 import {
+  applyCandidateRefreshPatchAtRevision,
   buildCandidateRefreshPatch,
   refreshMasterRow,
 } from "./ingestion/refresh.ts";
@@ -187,6 +188,7 @@ import {
   type PreviewStore,
   runMasterReviewPreview,
 } from "./ingestion/review_preview.ts";
+import { buildWeedmasterEvidenceRestorePatch, storeWeedmasterEvidenceRestorePreview, WEEDMASTER_ID } from "./ingestion/weedmaster_evidence_restore.ts";
 import {
   applyManufacturerEnrichment,
   applyVerifiedManufacturerLinks,
@@ -1238,7 +1240,7 @@ Deno.serve(async (req: Request) => {
   if (body?.capture_indexed_response !== undefined && action !== "master_backfill_preview_v2")
     return json({ error: "Capture unavailable" }, 403);
   const exactApprovedHydration = action === "structured" && body?.master_chemical_id !== undefined;
-  if (!apiKey && action !== "discover_label" && action !== "structured_master_preview" && !exactApprovedHydration) {
+  if (!apiKey && action !== "discover_label" && action !== "structured_master_preview" && action !== "master_evidence_restore_preview" && !exactApprovedHydration) {
     return json({ error: "Server is missing OPENAI_API_KEY secret" }, 500);
   }
 
@@ -3389,6 +3391,43 @@ Deno.serve(async (req: Request) => {
       return json(normalized);
     }
 
+    if (action === "master_evidence_restore_preview") {
+      // Explicit, evidence-only Weedmaster repair. Never part of normal refresh or hydration.
+      const allowed = new Set(["action", "master_chemical_id", "source_revision", "expected_current_revision", "dryRun", "confirm_accidental_evidence_loss"]);
+      if (Object.keys(body).some((key) => !allowed.has(key)) || body.master_chemical_id !== WEEDMASTER_ID ||
+        !Number.isInteger(body.source_revision) || body.source_revision < 1 ||
+        !Number.isInteger(body.expected_current_revision) || body.expected_current_revision <= body.source_revision ||
+        body.expected_current_revision - body.source_revision > 100 ||
+        (body.dryRun !== undefined && typeof body.dryRun !== "boolean"))
+        return json({ error: "Invalid evidence restore request; no patch, attestation or apply input accepted" }, 400);
+      const signal = AbortSignal.timeout(8000);
+      const adminId = await authenticatedUserId(req, signal);
+      if (!adminId) return json({ error: "Not authenticated" }, 401);
+      if (!(await isSystemAdmin(req, signal))) return json({ error: "Not authorised" }, 403);
+      const rows = await masterSelect(`select=*&id=eq.${WEEDMASTER_ID}&limit=1`, signal);
+      if (!rows || rows.length !== 1) return json({ error: "Master row unavailable" }, 503);
+      const row = rows[0] as MasterRow;
+      if (row.catalogue_version !== body.expected_current_revision) return json({ error: "revision_mismatch" }, 409);
+      const historyUrl = MASTER_TABLE_URL.replace(/master_chemicals$/, "master_chemical_versions");
+      const historyResponse = await fetch(`${historyUrl}?select=master_chemical_id,catalogue_version,snapshot,changed_by,change_reason&master_chemical_id=eq.${WEEDMASTER_ID}&catalogue_version=gte.${body.source_revision}&catalogue_version=lte.${row.catalogue_version}&order=catalogue_version.asc&limit=102`,
+        { headers: masterHeaders(), signal });
+      if (!historyResponse.ok) { await historyResponse.body?.cancel(); return json({ error: "Master history unavailable" }, 503); }
+      const history = await historyResponse.json();
+      if (!Array.isArray(history)) return json({ error: "Master history unavailable" }, 503);
+      try {
+        const patch = buildWeedmasterEvidenceRestorePatch(row, history, body.source_revision);
+        if (body.dryRun !== false) return json({ dry_run: true, preview_stored: false, master_mutated: false,
+          base_revision: row.catalogue_version, source_revision: body.source_revision, proposed_patch: patch,
+          history_audit: history.map((version) => ({ catalogue_version: version.catalogue_version,
+            changed_by: version.changed_by ?? null, change_reason: version.change_reason ?? null })) });
+        if (body.confirm_accidental_evidence_loss !== true) return json({ error: "Confirm accidental evidence loss after reviewing history" }, 400);
+        return json(await storeWeedmasterEvidenceRestorePreview(row, history, body.source_revision, adminId, previewStore));
+      } catch (error) {
+        const code = error instanceof Error ? error.message : "repair_refused";
+        return json({ error: code, master_mutated: false }, code === "repair_preview_store_failed" ? 503 : 409);
+      }
+    }
+
     if (action === "master_refresh") {
       // Stage 3 §G — re-check one master row against its jurisdiction's
       // authoritative sources. System admins only. Approved rows are NEVER
@@ -3421,7 +3460,7 @@ Deno.serve(async (req: Request) => {
       let applied = false;
       if (body?.apply === true && row.review_status === "candidate") {
         const patch = buildCandidateRefreshPatch(row, result, new Date().toISOString());
-        if (patch) applied = await masterOps.updateCandidate(row.id, patch);
+        if (patch) applied = await applyCandidateRefreshPatchAtRevision(row, patch, MASTER_TABLE_URL, masterHeaders(), fetch);
       }
 
       console.log(JSON.stringify({

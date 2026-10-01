@@ -1,5 +1,101 @@
 # Weedmaster revision-2 coordinated release handoff
 
+## 2026-10-01: live V2 evidence-retention regression / targeted repair handoff
+
+This section concerns the current Chemical Search V2 and Master Catalogue, not a new app/search version. `catalogue_version` means a Master record revision only. No live deployment, SQL, preview insertion, Master repair, approval or history write was executed by this task.
+
+### Root cause traced and reproduced
+
+The destructive function was `mergeSources()` in `supabase/functions/chemical-info-lookup/ingestion/refresh.ts` (replaced by `mergeRefreshEvidence`). It computed `freshKinds`, then removed **all** stored sources with any matching kind. APVMA's `label.ts` claim/statement producers and `label_document.ts:labelDocumentSource()` use the historical `manufacturer_label` vocabulary for Data.gov claims and eLabels. Their fresh entries therefore caused the independently reviewed Nufarm manufacturer PDF, with its full `reviewed_visual_declaration`, to be removed from the stored source array.
+
+Exact paths:
+
+- `index.ts:master_refresh` → `refreshMasterRow` (read-only discovery) → `buildCandidateRefreshPatch` → `buildRefreshPatch` → old `mergeSources` → candidate PATCH.
+- `index.ts:master_review_preview` → the same `refreshMasterRow` and `buildRefreshPatch` → server-stored preview → existing `public.master_review_apply` → row update.
+- The SQL 199 version trigger increments the record revision and appends the resulting row image; it did not independently delete evidence or roll history back.
+
+This occurs in the material-change, stale-evidence-refresh and chemistry-conflict patch branches. A fresh no-material-change result does not write a patch. `source_reference` follows current official-register evidence; `label_reference` may legitimately move to a newer regulator document; `label_version` remains register approval metadata, **not** the manufacturer document version. Losing the separate manufacturer source object was the regression: the document version/hash/reviewer/history embedded in it disappeared with it. Readiness/action support were not the root cause.
+
+A focused test ran the real register adapter/refresh against mocked upstream responses and reproduced the missing Nufarm source assertion **before** the fix (0 passed / 1 failed). The code path is demonstrated, not guessed. This task did not read production mutation audit history, so the actual actor/time/apply route of the live write has not been independently verified. Review the removal transition's real `master_chemical_versions.changed_by/change_reason` and review-action audit before repairing.
+
+### Before / after
+
+| Before | After |
+|---|---|
+| Fresh source kind replaces every old source of that kind | Normalize source roles first; fresh regulatory evidence replaces only regulatory roles |
+| Data.gov APIs/eLabels use `manufacturer_label` at the refresh boundary | Data.gov APIs become `official_register`; regulator PDFs/eLabels become `regulator_label`, never manufacturer evidence |
+| Previously reviewed Nufarm document disappears | A trusted retained manufacturer document survives field-equivalent, including the unchanged visual declaration, SHA256, URL, manufacturer document version, reviewer and timestamp |
+| Weaker rediscovery at the same URL could replace provenance | Existing review wins over weaker rediscovery; explicit invalidation wins and is never automatically resurrected |
+| Rebuilding use objects from register claims can remove document direction IDs | For retained trusted visually reviewed operational documents, preserve stored uses/rates/direction IDs; register drift is still reported in refresh changes for separate adjudication |
+| In-flight candidate patch can overwrite a newer repaired source array | Candidate refresh PATCH is CAS-filtered by the read `catalogue_version` and candidate state; zero updated rows is not reported as applied |
+
+The serving trust predicate is shared with retention, not weakened. Explicit invalidation also prevents legacy/top-level URL fallbacks from serving the rejected document. Legacy manufacturer evidence without a visual declaration still follows the pre-existing trust rules; no new attestation or hash is minted. Normal refresh never reads old history to resurrect a missing document. Regulator-only/no-operational-rate products remain legitimate regulator-only records.
+
+### Exact changed files (this regression task only)
+
+All backend paths below are under `supabase/functions/chemical-info-lookup/`:
+
+1. `index.ts` — explicit, default-dry-run, System-Admin-only evidence restore preview; CAS candidate refresh wiring.
+2. `ingestion/refresh.ts` — additive merge in all refresh patch branches, reviewed operational-direction retention, CAS writer.
+3. `ingestion/master_lookup.ts` — reuse existing manufacturer trust rules; reject invalidated URL fallbacks. No readiness relaxation.
+4. `ingestion/retained_manufacturer_evidence.ts` — shared trust, role normalization, invalidation and additive retention.
+5. `ingestion/weedmaster_evidence_restore.ts` — exact identity/hash/version/history evidence-only repair builder and existing preview-store adapter.
+6. `ingestion/refresh_evidence_test.ts` — before/after real-register refresh regression and full operational identity preservation.
+7. `ingestion/weedmaster_evidence_restore_test.ts` — role, invalidation, repair, CAS and actual handler regressions.
+8. This report: `docs/weedmaster-acceptance/catalogue-release-handoff.md`.
+
+No Portal/customer layouts, mobile app files, save schema, Chemical Store, Spray Calculator, flags, visibility rules, Master IDs, canonical identity format, SQL 258, parked SQL/media work or source fixtures were changed.
+
+### Focused validation
+
+- New focused suites: **9 tests + 5 handler substeps passed**, zero failed. They cover reviewed evidence before/after refresh, new regulator evidence, source role separation, exact declaration/hash/version/reviewer preservation, unchanged stored rate/direction IDs, no source invention, explicit invalidation (including legacy URL bypass), CAS stale-write rejection, history-only repair, admin authorization, 503 before restoration and 200 after proposed restoration + subsequent register evidence merge.
+- Existing focused candidate/exact-preview and Weedmaster catalogue-release suites passed; existing ingestion/review-preview tests selected only by the `refresh` filter passed. No broad suites were run.
+- Targeted `deno check index.ts` passed; backend-only validation is the active surface. No unrelated mobile rebuilds or SQL tests were run.
+- Actual handler tests are mocked database/auth/network tests, **not** a live production repair/apply or Portal acceptance claim.
+- Weedmaster remains **9 /ha + 8 /100 L**; Phalaris Handgun remains **500–1000 mL/100 L**, `rate_v1_4efec198ead373a3286939ced245fadf` / `direction_v1_1363f3205ca7b639cd5f970a03d91785`. Neither identities nor values are re-minted.
+
+### Manual deployment / exact safe repair mechanism (review first; not executed)
+
+**Redeployment:** the existing `chemical-info-lookup` needs redeployment to activate this fix/new review-preview action. Redeploy its changed shared imports too. Deployment alone does not restore already-lost evidence. **SQL migration:** none required for this fix/repair; reuse the existing SQL 199 history/versioning and SQL 203 admin-bound preview/apply contract. Do not apply SQL 258 or media work for this task.
+
+1. Read the current Weedmaster row and its historical revisions using an authorized admin session. Confirm current candidate state, exact UUID and `AU:apvma:53576`; current 582 uses / 137 vineyard numeric rates with their IDs; find the real historical revision containing the exact reviewed Nufarm source. Revision 2 is the known fixture reference, not a licence to restore from the sanitized fixture. Confirm the removal was accidental register-refresh loss rather than a human invalidation/adjudication; inspect history attribution/reasons and review actions. If ambiguous, **stop**.
+2. Coordinate a controlled admin review window: no concurrent approve/retire/adjudication for this row. Existing `master_review_apply` CAS protects content revision, not lifecycle-only state changes (SQL 199 does not increment content revision for those). Re-read candidate state immediately before apply; if a controlled window cannot be ensured, do not apply. This task does not change visibility/lifecycle rules or claim a new atomic lifecycle guard.
+3. After separately approving/deploying the code, POST to the existing Edge Function with the real admin bearer token. Example only, when historical source revision is 2 and the freshly read current revision is 3:
+
+```json
+{
+  "action": "master_evidence_restore_preview",
+  "master_chemical_id": "03dfb9e8-6592-4746-a3bc-295890d32cd1",
+  "source_revision": 2,
+  "expected_current_revision": 3,
+  "dryRun": true
+}
+```
+
+The default is dry-run even if `dryRun` is omitted. It reads the current row plus every intervening database history snapshot, requires contiguous identity-matching history, rejects invalidated/adjudicated source entries, validates the exact original URL/SHA256/version/declaration against the current locked chemistry/registration, and checks readiness + 9/8/Phalaris before proposing anything. It performs no discovery, PDF fetch, re-extraction, Master write or preview insert. It returns the display patch and available history attribution/reasons for review.
+
+4. Inspect the proposed patch. **Only `verification_sources` may change:** every current source payload is retained (incorrect regulator-as-manufacturer roles are corrected), and the exact historical Nufarm source object is appended. Current uses, rates, direction IDs, regulator metadata, source/label references, register label version, review status and Master ID are absent from the patch. Reject any proposal that fails these comparisons or substitutes a new reviewer/hash/declaration.
+5. Only after that review, repeat the same request with `dryRun:false` and `confirm_accidental_evidence_loss:true`. This inserts a short-lived admin/CAS-bound `master_review_previews` record only. It **still does not apply** the repair. Capture `preview_id`, `base_revision`, expiry and proposed evidence patch; stale revision/history/identity/hash/option/invalidation checks fail closed.
+6. Re-read candidate state/current revision in the coordinated window. Through the existing authenticated **admin's own JWT** PostgREST RPC `POST /rest/v1/rpc/master_review_apply`, send only:
+
+```json
+{
+  "p_preview_id": "<returned preview UUID>",
+  "p_master_id": "03dfb9e8-6592-4746-a3bc-295890d32cd1",
+  "p_reason": "Restore unchanged previously reviewed Nufarm label evidence lost by register refresh; retain current regulator evidence and operational identities; keep candidate"
+}
+```
+
+Do not send the client display patch, directly PATCH Master, use service-role apply, change review status, edit historical snapshots or roll back the row. Existing apply records the real applying admin/reason separately from the unchanged old document reviewer and creates the next Master revision via existing triggers.
+
+7. Read back and compare current uses/rate IDs/direction IDs/regulator evidence unchanged; exact old reviewed declaration/hash/version/reviewer intact; status still candidate; new revision and review action recorded. Then POST `{"action":"structured_master_preview","master_chemical_id":"03dfb9e8-6592-4746-a3bc-295890d32cd1","country":"AU","registrationScheme":"apvma","registrationNumber":"53576"}`. Verify authenticated current System Admin only, exact ID, catalogue-backed source, no discovery/re-extraction/mutation and the 9/8/Phalaris contract. Non-admin must remain 403. These live checks are pending, not claimed complete.
+
+### Sync and safety statement
+
+Last verified synced baseline: `932be7abc840726e1e813a86a16827575d1ad1ed` (prior customer MVP). This regression patch has no new verified automatic-sync SHA at report time; do not treat the baseline hash as containing it. No manual commit/push is performed.
+
+**No product was approved. No production Master data or history was changed automatically. No SQL, deployment, real repair preview insertion or apply was executed.**
+
 ## 2026-10-01: Chemical Search customer MVP consolidated closeout (not deployed)
 
 This MVP section supersedes any earlier registration-required or country-required exact hydration text. No production Master data, approval, SQL execution, Edge deployment or backfill was performed. Existing layouts and saved-chemical/default-rate schema are retained. No Phase 2 work is added.

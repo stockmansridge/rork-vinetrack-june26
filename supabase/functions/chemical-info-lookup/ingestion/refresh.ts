@@ -36,7 +36,6 @@ import type {
   MasterRow,
   ResolvedRegistration,
   WireConflict,
-  WireDataSource,
 } from "./contract.ts";
 import {
   labelClaimsSignature,
@@ -45,6 +44,7 @@ import {
   usesSummary,
 } from "./label.ts";
 import { adapterFor } from "./registry.ts";
+import { mergeRefreshEvidence, trustedRetainedManufacturerDocument } from "./retained_manufacturer_evidence.ts";
 
 /** Candidate evidence older than this is re-stamped on the next lookup. */
 export const CANDIDATE_EVIDENCE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -268,14 +268,6 @@ export async function refreshMasterRow(
   return { outcome: "no_material_change", changes: [], registration: reg };
 }
 
-function mergeSources(row: MasterRow, fresh: WireDataSource[]): WireDataSource[] {
-  // Fresh evidence replaces the stored entries OF THE SAME KIND (register,
-  // label…); other kinds (AI extraction, classification table) are kept.
-  const freshKinds = new Set(fresh.map((s) => s?.kind).filter(Boolean));
-  const kept = (row.verification_sources ?? []).filter((s) => !freshKinds.has(s?.kind));
-  return [...fresh, ...kept];
-}
-
 /**
  * Build the refresh patch for ANY review state — the ONE reviewed builder
  * behind both write paths:
@@ -306,7 +298,7 @@ export function buildRefreshPatch(
 
   if (result.outcome === "evidence_refreshed" && reg) {
     return {
-      verification_sources: mergeSources(row, reg.sources),
+      verification_sources: mergeRefreshEvidence(row, reg.sources),
       retrieved_at: nowIso,
       source_kind: "official_register",
       source_reference: reg.sources[0]?.reference ?? row.source_reference,
@@ -320,7 +312,7 @@ export function buildRefreshPatch(
       product_category: reg.product_category ?? row.product_category,
       form_type: reg.form_type ?? row.form_type,
       label_version: reg.label_version ?? row.label_version,
-      verification_sources: mergeSources(row, reg.sources),
+      verification_sources: mergeRefreshEvidence(row, reg.sources),
       retrieved_at: nowIso,
       source_kind: "official_register",
       source_reference: reg.sources[0]?.reference ?? row.source_reference,
@@ -333,8 +325,13 @@ export function buildRefreshPatch(
     // AI-attributed detail (rates) onto the claims they match — the refresh
     // never invents, never discards silently, never re-keys.
     const evidence = reg.label_evidence ?? null;
+    // A register claim merge rebuilds use objects and can discard reviewed document direction IDs.
+    // Retain the reviewed operational document intact; regulator drift remains visible in result.changes.
+    const retainedReviewedDirections = (row.verification_sources ?? []).some((source: any) =>
+      trustedRetainedManufacturerDocument(row, source) && source.reviewed_visual_declaration) &&
+      (row.registered_uses ?? []).some((use: any) => (use.rates ?? []).some((rate: any) => /^rate_v1_/.test(rate.rate_id ?? "")));
     if (
-      evidence && evidence.claims.length &&
+      evidence && evidence.claims.length && !retainedReviewedDirections &&
       result.changes.some((c) => c.field === "registered_uses")
     ) {
       const merged = mergeLabelEvidenceIntoUses(
@@ -378,7 +375,7 @@ export function buildRefreshPatch(
     return {
       verification_status: "conflict",
       verification_conflicts: conflicts,
-      verification_sources: mergeSources(row, reg.sources),
+      verification_sources: mergeRefreshEvidence(row, reg.sources),
       retrieved_at: nowIso,
     };
   }
@@ -398,4 +395,17 @@ export function buildCandidateRefreshPatch(
 ): Record<string, any> | null {
   if (row.review_status !== "candidate") return null;
   return buildRefreshPatch(row, result, nowIso);
+}
+
+/** Prevent an in-flight register refresh from erasing a concurrently repaired/rejected evidence revision. */
+export async function applyCandidateRefreshPatchAtRevision(row: MasterRow, patch: Record<string, any>,
+  tableUrl: string, headers: Record<string, string>, fetchFn: typeof fetch): Promise<boolean> {
+  if (row.review_status !== "candidate" || !Number.isInteger(row.catalogue_version)) return false;
+  const response = await fetchFn(`${tableUrl}?id=eq.${encodeURIComponent(row.id)}&review_status=eq.candidate&catalogue_version=eq.${row.catalogue_version}`, {
+    method: "PATCH", headers: { ...headers, "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify(patch), signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) { await response.body?.cancel(); return false; }
+  const rows = await response.json();
+  return Array.isArray(rows) && rows.length === 1 && rows[0]?.id === row.id;
 }

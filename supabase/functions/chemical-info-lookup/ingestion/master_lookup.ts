@@ -31,37 +31,26 @@ import {
 } from "../grapevine_label.ts";
 import { inspectDefaultRateOptionIdentityReadiness } from "../default_rate_options.ts";
 import { resolveLookupCountry } from "./jurisdiction.ts";
-import { classifyUrl, manufacturerHostEligible } from "../research/classify.ts";
+import { manufacturerEvidenceInvalidated, trustedRetainedManufacturerDocument } from "./retained_manufacturer_evidence.ts";
 
 /** Resolve retained catalogue label evidence without fetching, rewriting, or equating document versions. */
 export function resolveMasterLabelEvidence(row: any): {
   references: ReturnType<typeof selectLabelReferences>;
   manufacturerSource: Record<string, any> | null;
 } {
-  const country = String(row?.registration_country ?? "").toUpperCase();
   const sources = Array.isArray(row?.verification_sources) ? row.verification_sources : [];
-  const manufacturerSource = sources.find((source: any) => {
-    if (source?.kind !== "manufacturer_label" || typeof source.reference !== "string") return false;
-    const url = source.reference;
-    const classified = classifyUrl(url, country);
-    if (!manufacturerHostEligible(url, country, String(row?.registrant ?? "")) ||
-      classified.kind === "safety_data_sheet" ||
-      !(classified.kind === "label_document" || new URL(url).pathname.toLowerCase().endsWith(".pdf"))) return false;
-    const visual = source.reviewed_visual_declaration;
-    // A retained visual review must remain bound to precisely this document.
-    // Ordinary pre-existing catalogue label sources need no new attestation.
-    return !visual || (visual.source_url === url &&
-      typeof visual.document_sha256 === "string" && /^[a-f0-9]{64}$/.test(visual.document_sha256) &&
-      visual.method === "human_visual_transcription" && Boolean(visual.reviewed_by) &&
-      typeof visual.reviewed_at === "string" && Number.isFinite(Date.parse(visual.reviewed_at)));
-  }) ?? null;
-  const legacyReferences = selectLabelReferences({ manufacturerLabelUrl: row?.label_reference });
+  const invalidatedUrls = new Set(sources.filter((source: any) => manufacturerEvidenceInvalidated(source))
+    .map((source: any) => source.reference));
+  const retainedUrl = (url: any) => invalidatedUrls.has(url) ? null : url;
+  const manufacturerSource = sources.find((source: any) => trustedRetainedManufacturerDocument(row, source) &&
+    !invalidatedUrls.has(source.reference)) ?? null;
+  const legacyReferences = selectLabelReferences({ manufacturerLabelUrl: retainedUrl(row?.label_reference) });
   // Legacy manufacturer links belong in the manufacturer slot, not the regulator slot.
   const legacyIsRegulator = Boolean(legacyReferences.regulator_label_url);
   const references = selectLabelReferences({
-    manufacturerLabelUrl: row?.manufacturer_label_url ||
+    manufacturerLabelUrl: retainedUrl(row?.manufacturer_label_url) ||
       (!legacyIsRegulator ? legacyReferences.manufacturer_label_url : null) || manufacturerSource?.reference,
-    regulatorLabelUrl: row?.regulator_label_url || (legacyIsRegulator ? row?.label_reference : null),
+    regulatorLabelUrl: retainedUrl(row?.regulator_label_url) || (legacyIsRegulator ? retainedUrl(row?.label_reference) : null),
     productUrl: row?.product_url,
     sdsUrl: row?.sds_url,
   });
