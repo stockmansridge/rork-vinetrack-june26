@@ -174,7 +174,7 @@ This turn changes the focused release test, this handoff, the full sanitized fix
 
 ## Delivery and Jonathan's next actions
 
-Confirmed existing Rork delivery: **`58f093399f548128282fccac0c1c08f84d6edf0d`**, retained-label readiness/serving and initial release tests. Earlier Phalaris acceptance: **`81a612aac86e6c7fea218bfbf96ba029d5455b40`**. The attachment records Portal reference **`5ee63d2411651dc638d462c6126788726ee3a9de`**, but that is supplied context, **not a verified delivery of the remaining Portal fixes**. This turn's actual-snapshot test/handoff changes are workspace changes; no new commit hash is yet available and no manual commit/push was performed.
+Confirmed existing Rork delivery: **`58f093399f548128282fccac0c1c08f84d6edf0d`**, retained-label readiness/serving and initial release tests. Earlier Phalaris acceptance: **`81a612aac86e6c7fea218bfbf96ba029d5455b40`**. The attachment records Portal reference **`5ee63d2411651dc638d462c6126788726ee3a9de`**, but that is supplied context, **not a verified delivery of the remaining Portal fixes**. The actual-snapshot tests, full sanitized fixture/importer and handoff are now confirmed delivered in **`1b084a8a083ce9899fe536abc0c77066e2c6a717`**. No manual commit/push was performed. On this follow-up, the original attachment was restored privately after the temporary copy was unavailable; its byte-hash assertion and all eight tests passed again, as did the eight derivative-fixture tests, affected backend/tool type checks and whitespace check. No additional serving change was required.
 
 After Lovable completes and reports all three boundary fixes and its focused acceptance:
 
