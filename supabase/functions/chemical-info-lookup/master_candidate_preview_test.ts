@@ -20,6 +20,7 @@ Deno.test("exact candidate preview: authorization, identities, grouped rates and
   let authenticated = true;
   let admin: unknown = true;
   let dbUnavailable = false;
+  let expectedStatus = "candidate";
   const calls: string[] = [];
   const body = { action: "structured_master_preview", master_chemical_id: candidate.id,
     country: "Australia", registrationScheme: "apvma", registrationNumber: "53576" };
@@ -49,7 +50,7 @@ Deno.test("exact candidate preview: authorization, identities, grouped rates and
       assertEquals(url.pathname, "/rest/v1/master_chemicals", "no cache, preview storage or writes");
       assertEquals(init?.method ?? "GET", "GET");
       assertEquals(url.searchParams.get("id"), `eq.${candidate.id}`);
-      assertEquals(url.searchParams.get("review_status"), "eq.candidate");
+      assertEquals(url.searchParams.get("review_status"), `eq.${expectedStatus}`);
       assertEquals(url.searchParams.get("limit"), "1");
       if (dbUnavailable) throw new DOMException("mock read unavailable", "TimeoutError");
       return Response.json(row ? [row] : []);
@@ -93,8 +94,8 @@ Deno.test("exact candidate preview: authorization, identities, grouped rates and
       }
       admin = true;
     });
-    await t.step("missing exact ID and missing registration identity rejected", async () => {
-      for (const patch of [{ master_chemical_id: undefined }, { registrationNumber: undefined }, { registrationScheme: undefined }, { country: "" }]) {
+    await t.step("missing exact ID or jurisdiction rejected, with no Australia fallback", async () => {
+      for (const patch of [{ master_chemical_id: undefined }, { master_chemical_id: "not-an-id" }, { country: "" }, { country: "unrecognised country" }]) {
         calls.length = 0;
         assertEquals((await request(patch)).status, 400);
         assert(!calls.includes("/rest/v1/master_chemicals"));
@@ -113,6 +114,108 @@ Deno.test("exact candidate preview: authorization, identities, grouped rates and
       }
       row = structuredClone(candidate);
       assertEquals((await request({ registrationNumber: "99999" })).status, 409);
+    });
+    // Disposable international contract rows, not claims about actual catalogue products.
+    const countries = [
+      { country: "AU", scheme: "apvma", number: "53576" },
+      { country: "NZ", scheme: "acvm", number: "P12345" },
+      { country: "France", code: "FR", scheme: null, number: null },
+      { country: "US", scheme: "epa", number: "123-456" },
+      { country: "South Africa", code: "ZA", scheme: null, number: null },
+    ];
+    for (const entry of countries) {
+      for (const status of ["candidate", "approved"] as const) {
+        await t.step(`${entry.country} ${status}: exact ID hydration with optional registration`, async () => {
+          const code = entry.code ?? entry.country;
+          expectedStatus = status;
+          row = { ...structuredClone(candidate), review_status: status, registration_country: code,
+            registration_scheme: entry.scheme, registration_number: entry.number,
+            registration_identity_key: entry.scheme ? `${code}:${entry.scheme}:${entry.number}` : null };
+          const snapshot = structuredClone(row);
+          const patch = { action: status === "candidate" ? "structured_master_preview" : "structured",
+            country: entry.country, registrationScheme: entry.scheme, registrationNumber: entry.number };
+          calls.length = 0;
+          const response = await request(patch);
+          assertEquals(response.status, 200);
+          const served = await response.json();
+          assertEquals(served.master.master_chemical_id, candidate.id);
+          assertEquals(served.jurisdiction.resolved_country_code, code);
+          assertEquals(served.registration.scheme, entry.scheme);
+          assertEquals(served.registration.registration_number, entry.number);
+          assertEquals(served.master.registration_identity_key, row.registration_identity_key);
+          assertEquals(served.master.catalogue_status, status);
+          assertEquals([served.default_rate_options.per_hectare.length, served.default_rate_options.per_100_litres.length], [9, 8]);
+          assertEquals(calls, status === "candidate"
+            ? ["/auth/v1/user", "/rest/v1/rpc/is_system_admin", "/rest/v1/master_chemicals"]
+            : ["/rest/v1/master_chemicals"]);
+          assertEquals(row, snapshot);
+          // Omitting either/both registration hints must not block even registered products.
+          for (const omissions of [{ registrationScheme: undefined }, { registrationNumber: undefined },
+            { registrationScheme: undefined, registrationNumber: undefined }]) {
+            assertEquals((await request({ ...patch, ...omissions })).status, 200);
+          }
+          assertEquals((await request({ ...patch, registrationNumber: "WRONG" })).status, 409);
+          assertEquals((await request({ ...patch, registrationScheme: "wrong" })).status, 409);
+          assertEquals((await request({ ...patch, country: code === "AU" ? "FR" : "AU" })).status, 409);
+          row.id = "00000000-0000-0000-0000-000000000000";
+          assertEquals((await request(patch)).status, 409);
+          row = { ...snapshot, review_status: status === "candidate" ? "approved" : "candidate" };
+          assertEquals((await request(patch)).status, 409);
+          expectedStatus = "candidate";
+          row = structuredClone(candidate);
+        });
+      }
+    }
+    for (const category of ["fertiliser", "biostimulant"]) {
+      for (const status of ["candidate", "approved"] as const) {
+        await t.step(`unregistered ${category} ${status}: no invented scheme, rates or label`, async () => {
+          expectedStatus = status;
+          row = { ...structuredClone(candidate), registered_product_name: `Reviewed ${category}`,
+            product_category: category, review_status: status, registration_country: null,
+            registration_scheme: null, registration_number: null, registration_identity_key: null,
+            registered_uses: [], viticulture_rates: { per_hectare: [], per_100_litres: [] },
+            verification_unresolved_fields: [], verification_sources: [],
+            label_reference: null, manufacturer_label_url: null, regulator_label_url: null };
+          const patch = { action: status === "candidate" ? "structured_master_preview" : "structured",
+            country: "Italy", registrationScheme: undefined, registrationNumber: undefined };
+          const response = await request(patch);
+          assertEquals(response.status, 200);
+          const served = await response.json();
+          assertEquals(served.master.master_chemical_id, candidate.id);
+          assertEquals(served.product_category, category);
+          assertEquals(served.registration.scheme, null);
+          assertEquals(served.registration.registration_number, null);
+          assertEquals(served.jurisdiction.resolved_country_code, "IT");
+          assertEquals(served.default_rate_options.per_hectare, []);
+          assertEquals(served.default_rate_options.per_100_litres, []);
+          expectedStatus = "candidate";
+          row = structuredClone(candidate);
+        });
+      }
+    }
+    await t.step("canonical country codes beyond AU/NZ need no register adapter", async () => {
+      for (const country of ["GB", "IT", "ES", "CL", "AR", "CA", "PT"]) {
+        row = { ...structuredClone(candidate), registration_country: country, registration_scheme: null,
+          registration_number: null, registration_identity_key: null };
+        assertEquals((await request({ country, registrationScheme: undefined, registrationNumber: undefined })).status, 200);
+      }
+      row = structuredClone(candidate);
+    });
+    await t.step("approved exact read failures never substitute discovery or candidates", async () => {
+      expectedStatus = "approved";
+      const patch = { action: "structured" };
+      row = null;
+      assertEquals((await request(patch)).status, 404);
+      row = { ...structuredClone(candidate), review_status: "approved" };
+      row.verification_unresolved_fields.push("RATES:GRAPEVINE:Phalaris");
+      assertEquals((await request(patch)).status, 503);
+      dbUnavailable = true;
+      const response = await request(patch);
+      assertEquals(response.status, 503);
+      assertEquals((await response.json()).code, "catalogue_hydration_unavailable");
+      dbUnavailable = false;
+      expectedStatus = "candidate";
+      row = structuredClone(candidate);
     });
     await t.step("non-candidate returned by DB rejected", async () => {
       row = { ...candidate, review_status: "approved" };

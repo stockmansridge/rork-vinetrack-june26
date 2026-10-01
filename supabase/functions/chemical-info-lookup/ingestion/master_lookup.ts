@@ -30,6 +30,7 @@ import {
   selectLabelReferences,
 } from "../grapevine_label.ts";
 import { inspectDefaultRateOptionIdentityReadiness } from "../default_rate_options.ts";
+import { resolveLookupCountry } from "./jurisdiction.ts";
 import { classifyUrl, manufacturerHostEligible } from "../research/classify.ts";
 
 /** Resolve retained catalogue label evidence without fetching, rewriting, or equating document versions. */
@@ -70,6 +71,30 @@ export function resolveMasterLabelEvidence(row: any): {
 
 /** PostgREST query executor over master_chemicals. Null = table unavailable. */
 export type MasterSelect = (query: string) => Promise<any[] | null>;
+
+/** Validate exact catalogue identity without requiring a government-register adapter. */
+export function exactMasterIdentityMatches(
+  row: any,
+  masterId: string,
+  countryCode: string,
+  status: "candidate" | "approved",
+  scheme: string = "",
+  number: string = "",
+): boolean {
+  if (row?.id !== masterId || row?.review_status !== status) return false;
+  const rowCountryRaw = String(row.registration_country ?? "").trim();
+  const rowCountry = resolveLookupCountry(rowCountryRaw).code;
+  if (rowCountryRaw && rowCountry !== countryCode) return false;
+  const rowScheme = String(row.registration_scheme ?? "").trim().toLowerCase();
+  const rowNumber = String(row.registration_number ?? "").trim().toUpperCase();
+  if (scheme && scheme !== rowScheme) return false;
+  if (number && number !== rowNumber) return false;
+  // When a complete persisted registration lock exists, it must agree with
+  // its own metadata. Partial or absent metadata is not a missing Master ID.
+  const key = String(row.registration_identity_key ?? "").trim();
+  if (key && rowCountry && rowScheme && rowNumber && key !== `${rowCountry}:${rowScheme}:${rowNumber}`) return false;
+  return true;
+}
 
 /** PostgREST double-quoted value (for or=() expressions). */
 export function pgQuote(value: string): string {
@@ -169,7 +194,7 @@ export async function fetchApprovedMaster(
  *
  * So the row must state its own sufficiency, from evidence it already carries:
  *
- *   * a registration number, or there is no identity to enrich;
+ *   * Master ID is the catalogue identity; registration metadata is optional;
  *   * an official label reference, or nothing established the rates;
  *   * no unresolved GRAPEVINE rate entry, because that IS the row saying the
  *     vineyard-critical field is missing.
@@ -206,8 +231,16 @@ export function masterHasCompleteVineyardData(row: any): boolean {
 
   const hasOfficialLabel = Boolean(resolveMasterLabelEvidence(row).references.label_reference);
 
-  return Boolean(row?.registration_number) && hasOfficialLabel &&
-    !grapeRatesUnresolved && masterHasDefaultIdentityReadiness(row);
+  return hasOfficialLabel && !grapeRatesUnresolved && masterHasDefaultIdentityReadiness(row);
+}
+
+/** Exact hydration also permits a reviewed product with no operational rates or label. */
+export function masterHasExactHydrationReadiness(row: any): boolean {
+  if (masterHasCompleteVineyardData(row)) return true;
+  const unresolved = Array.isArray(row?.verification_unresolved_fields) ? row.verification_unresolved_fields : [];
+  if (unresolved.some((value: unknown) => String(value).toUpperCase().startsWith("RATES:GRAPEVINE"))) return false;
+  const readiness = inspectDefaultRateOptionIdentityReadiness(row?.registered_uses);
+  return readiness.ready && readiness.identified_rate_count === 0;
 }
 
 /**

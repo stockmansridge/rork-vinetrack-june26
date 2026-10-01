@@ -10,8 +10,10 @@
 //   { "action": "structured", "productName": string, "country"?: string,
 //     "registrationNumber"?: string }   // optional identity hint (sql/199)
 //   { "action": "structured_master_preview", "master_chemical_id": uuid,
-//     "country": string, "registrationScheme": string, "registrationNumber": string }
+//     "country": string, "registrationScheme"?: string, "registrationNumber"?: string }
 //     // authenticated current System Admin only; read-only exact candidate hydration
+//   { "action": "structured", "master_chemical_id": uuid, "country": string,
+//     "registrationScheme"?: string, "registrationNumber"?: string } // approved exact hydration
 //   { "action": "master_refresh", "masterChemicalId": uuid,
 //     "apply"?: boolean }               // system admins only (Stage 3)
 //   { "action": "master_review_preview", "masterChemicalId": uuid }
@@ -171,6 +173,8 @@ import {
 } from "./ingestion/jurisdiction.ts";
 import {
   buildMasterStructuredResponse,
+  exactMasterIdentityMatches,
+  masterHasExactHydrationReadiness,
   fetchApprovedMaster,
   masterHasCompleteVineyardData,
   searchMaster,
@@ -1233,7 +1237,8 @@ Deno.serve(async (req: Request) => {
   const action = String(body?.action ?? "").toLowerCase();
   if (body?.capture_indexed_response !== undefined && action !== "master_backfill_preview_v2")
     return json({ error: "Capture unavailable" }, 403);
-  if (!apiKey && action !== "discover_label" && action !== "structured_master_preview") {
+  const exactApprovedHydration = action === "structured" && body?.master_chemical_id !== undefined;
+  if (!apiKey && action !== "discover_label" && action !== "structured_master_preview" && !exactApprovedHydration) {
     return json({ error: "Server is missing OPENAI_API_KEY secret" }, 500);
   }
 
@@ -2266,41 +2271,44 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    if (action === "structured_master_preview") {
-      // Separate authorization boundary, same structured builder and option producer.
-      // Never fall through into discovery, enrichment, parsing, caching or writes.
+    if (action === "structured_master_preview" || exactApprovedHydration) {
+      // Exact catalogue hydration never restarts discovery or mints rate identities.
+      const isPreview = action === "structured_master_preview";
+      const status = isPreview ? "candidate" : "approved";
       const signal = AbortSignal.timeout(8000);
-      const previewFailure = () => json({ error: "Catalogue rate details could not be loaded", code: "catalogue_preview_unavailable" }, 503);
+      const previewFailure = () => json({ error: "Catalogue rate details could not be loaded",
+        code: isPreview ? "catalogue_preview_unavailable" : "catalogue_hydration_unavailable" }, 503);
       try {
-        if (!await authenticatedUserId(req, signal)) {
+        if (isPreview && !await authenticatedUserId(req, signal)) {
           return signal.aborted ? previewFailure() : json({ error: "Authentication required" }, 401);
         }
-        if (!await isSystemAdmin(req, signal)) {
+        if (isPreview && !await isSystemAdmin(req, signal)) {
           return signal.aborted ? previewFailure() : json({ error: "Admin access required" }, 403);
         }
         const masterId = typeof body?.master_chemical_id === "string" ? body.master_chemical_id.trim().toLowerCase() : "";
         const scheme = typeof body?.registrationScheme === "string" ? body.registrationScheme.trim().toLowerCase() : "";
         const number = typeof body?.registrationNumber === "string" ? body.registrationNumber.trim().toUpperCase() : "";
         if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(masterId) ||
-          !countryCode || !scheme || !number || scheme !== registrationSchemeForCode(jur.code)) {
-          return json({ error: "Exact Master ID and registration identity required" }, 400);
+          !countryCode) {
+          return json({ error: "Exact Master ID and country required" }, 400);
         }
-        const identity = `${countryCode}:${scheme}:${number}`;
-        const rows = await masterSelect(`select=*&id=eq.${encodeURIComponent(masterId)}&review_status=eq.candidate&limit=1`, signal);
+        if ((body?.registrationScheme != null && typeof body.registrationScheme !== "string") ||
+          (body?.registrationNumber != null && typeof body.registrationNumber !== "string")) {
+          return json({ error: "Registration metadata must be text when supplied" }, 400);
+        }
+        const rows = await masterSelect(`select=*&id=eq.${encodeURIComponent(masterId)}&review_status=eq.${status}&limit=1`, signal);
         if (!rows) return previewFailure();
-        if (rows.length !== 1) return json({ error: "Candidate not found" }, 404);
+        if (rows.length !== 1) return json({ error: isPreview ? "Candidate not found" : "Approved Master not found" }, 404);
         const row = rows[0];
-        if (row.id !== masterId || row.review_status !== "candidate" ||
-          row.registration_identity_key !== identity || row.registration_country !== countryCode ||
-          row.registration_scheme !== scheme || row.registration_number !== number) {
+        if (!exactMasterIdentityMatches(row, masterId, countryCode, status, scheme, number)) {
           return json({ error: "Master identity mismatch", code: "master_identity_mismatch" }, 409);
         }
-        if (!masterHasCompleteVineyardData(row)) return previewFailure();
+        if (!masterHasExactHydrationReadiness(row)) return previewFailure();
         const payload = { ...buildMasterStructuredResponse(row), jurisdiction: jurEnv,
-          admin_preview: { read_only: true, catalogue_status: "candidate", approved_for_customer_use: false } };
+          ...(isPreview ? { admin_preview: { read_only: true, catalogue_status: "candidate", approved_for_customer_use: false } } : {}) };
         if (applyDefaultRateOptions(payload).length) return previewFailure();
         return json(withDiagnostics(payload, { query: row.registered_product_name,
-          selectedRegistration: number, method: "master_catalogue", cache: "none" }));
+          selectedRegistration: row.registration_number ?? null, method: "master_catalogue", cache: "none" }));
       } catch {
         return previewFailure();
       }

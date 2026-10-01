@@ -1,5 +1,51 @@
 # Weedmaster revision-2 coordinated release handoff
 
+## 2026-10-01: international Master identity correction (not deployed)
+
+This correction supersedes the registration-required candidate request below. **`master_chemical_id` is the primary VineTrack identity. Country is jurisdiction context. Registration scheme/number are optional evidence, never a prerequisite and never invented from an adapter.**
+
+Exact candidate hydration (authenticated current System Admin session Bearer token required):
+
+```json
+{
+  "action": "structured_master_preview",
+  "master_chemical_id": "03dfb9e8-6592-4746-a3bc-295890d32cd1",
+  "country": "AU"
+}
+```
+
+Exact approved hydration through the existing structured action (no productName required for this path):
+
+```json
+{
+  "action": "structured",
+  "master_chemical_id": "03dfb9e8-6592-4746-a3bc-295890d32cd1",
+  "country": "AU"
+}
+```
+
+The approved request above will not serve the actual Weedmaster candidate. Only an approved exact row is customer-serviceable. When populated, optionally include `registrationScheme` and/or `registrationNumber` (camelCase request keys); each supplied nonempty hint must independently match its corresponding persisted field, including schemes without a wired adapter. Omitted, null or blank registration hints do not block hydration. Supplied non-text metadata is a 400.
+
+Both exact paths read by ID and required status, verify returned ID/status, validate populated row country using the existing canonical country resolver, and validate every supplied registration hint. A complete persisted `registration_identity_key` is additionally checked against its own populated country/scheme/number; it is preserved in `master.registration_identity_key` and never fabricated. Missing registration metadata is not an identity failure. Response metadata remains under `registration.country_code`, `registration.scheme`, `registration.registration_number`; jurisdiction context is the existing `jurisdiction` envelope. Master ID/revision/status remain under `master`. The candidate response retains the explicit read-only/not-approved `admin_preview` marker.
+
+Neither exact path falls through to another product, online discovery, register lookup, manufacturer/PDF/AI work, enrichment or writes on failure. Both work without an OpenAI key and have an eight-second shared network deadline. Missing exact row is 404; mismatched ID/country/status/supplied registration is 409; invalid ID or missing/unresolvable country is 400; unavailable read or incomplete canonical rates is 503 (`catalogue_preview_unavailable` for candidate, `catalogue_hydration_unavailable` for approved). Candidate authentication and current-admin failures remain 401/403.
+
+The shared readiness gate no longer requires a registration number. Existing retained-label evidence and persisted operational-rate identities still protect rates. Exact hydration can also serve a reviewed input with no calculable vineyard rates and no label, provided it has no unresolved vineyard-rate gap; it returns empty options, not invented rates. Product category is retained unchanged, with no pesticide-only gate. No rate/direction IDs are minted. Existing name-only discovery and register-adapter behaviour are not redesigned in this correction.
+
+**Lovable handoff (Portal source absent here):**
+
+- Remove registration-number/country prerequisites from selected Master hydration. Send the selected exact Master ID and the canonical product/vineyard country. Candidate + System Admin uses `structured_master_preview`; approved uses `structured` with that ID.
+- Include each registration hint only when populated. Never infer APVMA, ACVM or another scheme.
+- Always validate `master.master_chemical_id` against the selected ID and country/jurisdiction consistency when populated. Compare number/scheme when present on both sides; absence alone is not failure. Preserve existing metadata and canonical default-rate options.
+- Use VineTrack's supplied canonical country values and backend `jurisdiction` envelope, not an AU/NZ-only Portal map. Unknown country never becomes Australia. Existing backend country resolution already supports AU, NZ, US, GB, FR, IT, ES, ZA, CL, AR, CA and other vineyard countries/ISO-2 contexts regardless of adapter availability.
+- Keep the existing grouped options, persistence fields and Retry/manual/Back failure UX specified below. No Portal UI execution or save/reopen acceptance is claimed by these backend tests.
+
+Focused coverage adds synthetic, disposable international row variants for AU/APVMA, NZ/ACVM, FR without registration, US/EPA metadata, ZA without an adapter, and unregistered fertiliser/biostimulant products, each through candidate and approved exact handler paths. It covers omitted hints, supplied mismatches, exact-ID/status/country mismatch, no-rate/no-label inputs and failure without fallback, while the unchanged actual Weedmaster fixture protects 70 directions and 9 + 8 grouped options. These synthetic variants are not production catalogue claims or new extraction evidence.
+
+Validation: **23 tests passed, 27 handler substeps passed, zero failures** across `master_candidate_preview_test.ts`, `weedmaster_catalogue_release_test.ts`, and `master_default_identity_test.ts`. Targeted `deno check` passed for the handler, shared Master module and modified contract tests; `git diff --check` passed. No broad build ran.
+
+Changed code: `supabase/functions/chemical-info-lookup/index.ts`, `ingestion/master_lookup.ts`, and `master_candidate_preview_test.ts`. Only the existing handoff is updated. No production data changes, approval, deployment, SQL, broad/mobile build or Portal source changes occurred. Prior preview implementation is now recorded in Rork commit `e3288b7abbed4d538afbda7506cc104d9d0677ac`; the current international correction's commit is pending automatic sync at the time of this edit.
+
 ## 2026-10-01: exact candidate hydration repair (not deployed)
 
 Root cause of the reported live minute-long hydration: ordinary `structured` serving queries approved rows only; the selected candidate misses that read and enters the existing discovery/enrichment path. The Portal's flattened-rate fallback then presents 137 rate entries instead of canonical options. No Master correction, extraction or apply is needed.
@@ -16,7 +62,7 @@ New read-only action on `chemical-info-lookup`, with the caller's authenticated 
 }
 ```
 
-The server verifies the session through Auth and checks the existing authoritative `is_system_admin()` RPC using the CALLER's JWT, never the service role. Only then does it read `master_chemicals` by exact ID with candidate status. Returned ID, candidate status, country, scheme, number and persisted registration identity must all match. It uses `buildMasterStructuredResponse` and `applyDefaultRateOptions`, without minting a second contract or changing the candidate. The response has the existing `master` linkage and an explicit `admin_preview: { read_only: true, catalogue_status: "candidate", approved_for_customer_use: false }`. Ordinary `structured` behaviour is unchanged and approved-only for Master serving.
+The server verifies the session through Auth and checks the existing authoritative `is_system_admin()` RPC using the CALLER's JWT, never the service role. Only then does it read `master_chemicals` by exact ID with candidate status. Returned ID and candidate status must match; populated country and supplied optional registration hints are validated under the international correction above. It uses `buildMasterStructuredResponse` and `applyDefaultRateOptions`, without minting a second contract or changing the candidate. The response has the existing `master` linkage and an explicit `admin_preview: { read_only: true, catalogue_status: "candidate", approved_for_customer_use: false }`. Master serving remains approved-only for `structured`; its additive exact-ID hydration path is specified above.
 
 The preview has one shared eight-second network deadline across session verification, current-admin check and DB read. It never enters manufacturer discovery, AI, PDF fetch/parsing, cache writes or Master writes, and works without an OpenAI API key. Missing candidate returns 404; identity mismatch 409; failed/incomplete canonical hydration 503 with `catalogue_preview_unavailable`, never an enrichment fallback.
 
