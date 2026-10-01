@@ -84,7 +84,7 @@ export function exactMasterIdentityMatches(
   if (row?.id !== masterId || row?.review_status !== status) return false;
   const rowCountryRaw = String(row.registration_country ?? "").trim();
   const rowCountry = resolveLookupCountry(rowCountryRaw).code;
-  if (rowCountryRaw && rowCountry !== countryCode) return false;
+  if (countryCode && rowCountryRaw && rowCountry !== countryCode) return false;
   const rowScheme = String(row.registration_scheme ?? "").trim().toLowerCase();
   const rowNumber = String(row.registration_number ?? "").trim().toUpperCase();
   if (scheme && scheme !== rowScheme) return false;
@@ -361,11 +361,13 @@ export function buildMasterStructuredResponse(row: any): any {
     registration: {
       country_code: row.registration_country ?? "",
       scheme: row.registration_scheme ?? null,
+      raw_scheme: row.registration_scheme ?? null,
       registration_number: row.registration_number ?? null,
       registrant: row.registrant ?? null,
       registered_product_name: row.registered_product_name ?? null,
       label_reference: labelRefs.label_reference ?? row.label_reference ?? null,
       manufacturer_label_url: labelRefs.manufacturer_label_url,
+      manufacturer_product_url: labelRefs.manufacturer_product_url ?? row.product_url ?? null,
       regulator_label_url: labelRefs.regulator_label_url,
       label_version: labelVersion,
       stored_register_label_version: row.label_version ?? null,
@@ -445,7 +447,6 @@ export async function searchMaster(
   countryCode: string,
 ): Promise<any[]> {
   try {
-    if (!countryCode) return [];
     const trimmed = query.trim();
     if (!trimmed) return [];
 
@@ -456,7 +457,6 @@ export async function searchMaster(
     }
     const rows = await select(
       `select=*&review_status=eq.approved` +
-        `&registration_country=eq.${encodeURIComponent(countryCode)}` +
         `&or=${encodeURIComponent(`(${exprs.join(",")})`)}` +
         `&order=registered_product_name.asc&limit=3`,
     );

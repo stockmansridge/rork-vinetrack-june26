@@ -10,12 +10,14 @@ import { selectLabelReferences } from "./grapevine_label.ts";
 import { enrichFromManufacturerLabel } from "./ingestion/manufacturer_enrichment.ts";
 import { normaliseRegisteredUses } from "./registered_use_normaliser.ts";
 import { projectGrapevineUses } from "./grapevine_label.ts";
+import { applyRateIdentities } from "./rate_identity.ts";
+import { applyDefaultRateOptions } from "./default_rate_options.ts";
 
 const label = "https://cropsure.com/wp-content/uploads/2023/03/cropsure-beast-200-herbicide-label-v2.pdf";
 const master = {
   registered_product_name: "CropSure Beast 200 Herbicide", registrant: "CROPSURE PTY LTD",
   registration_country: "AU", registration_scheme: "apvma", registration_number: "90143",
-  review_status: "candidate", verification_status: "partially_verified", source_kind: "official_register",
+  review_status: "approved", verification_status: "partially_verified", source_kind: "official_register",
   product_category: "herbicide", active_ingredients: [], registered_uses: Array(512).fill({ crop: "Wheat" }),
   viticulture_rates: { per_hectare: [], per_100_litres: [] },
   verification_sources: [
@@ -25,7 +27,7 @@ const master = {
   ],
 };
 
-Deno.test("incomplete Master Beast remains an identity candidate; regulator URL tags cannot promote manufacturer evidence", async () => {
+Deno.test("incomplete approved Master Beast remains an identity lead; regulator URL tags cannot promote manufacturer evidence", async () => {
   let calls = 0;
   const found = await findWebMasterIdentities(async (query) => {
     calls++;
@@ -44,6 +46,41 @@ Deno.test("incomplete Master Beast remains an identity candidate; regulator URL 
   assertEquals(selectedIdentity(found, "CropSure Beast 200 Herbicide")?.name, found[0].name);
   assertEquals(selectedIdentity(found, "Beast Cattle Drench"), null);
   assertEquals(manufacturerUrlsFromMaster({ verification_sources: [{ kind: "manufacturer_label", reference: label }] }, "AU").labels, [label]);
+});
+
+Deno.test("customer manufacturer fallback excludes candidate Master rows and accepts international optional registration", async () => {
+  assertEquals(await findWebMasterIdentities(async () => [{ ...master, review_status: "candidate" }], "Beast", "AU"), []);
+  for (const country of ["AU", "NZ", "FR", "US", "ZA"]) {
+    const found = await findWebMasterIdentities(async () => [{ ...master, registration_country: country,
+      registration_scheme: null, registration_number: null }], "Beast", country);
+    assertEquals(found.length, 1);
+    assertEquals(found[0].registrationNumber, null);
+  }
+});
+
+Deno.test("accepted manufacturer directions without registration get product-bound canonical options, not invented rates", () => {
+  const payload = { registration: { country_code: "FR", scheme: null, registration_number: null },
+    registered_uses: [{ crop: "Vineyards", target_raw: "Nutrition", rates: [{ basis: "per_hectare", value: 2, unit: "L", label: "Foliar" }] },
+      { crop: "Wheat", target_raw: "Nutrition", rates: [{ basis: "per_hectare", value: 9, unit: "L" }] }] };
+  const noLock = structuredClone(payload);
+  applyRateIdentities(noLock);
+  assertEquals(applyDefaultRateOptions(noLock).length > 0, true);
+  applyRateIdentities(payload, { url: "https://maker.example/label.pdf", productName: "Vineyard input" });
+  assertEquals(applyDefaultRateOptions(payload), []);
+  const served = payload as typeof payload & { default_rate_options: { per_hectare: Array<{ value: number; option_key: string; rate_ids: string[] }> } };
+  assertEquals(served.default_rate_options.per_hectare.length, 1);
+  assertEquals(served.default_rate_options.per_hectare[0].value, 2);
+  const other = structuredClone(noLock);
+  applyRateIdentities(other, { url: "https://maker.example/label.pdf", productName: "Different product" });
+  applyDefaultRateOptions(other);
+  assert((other as unknown as typeof served).default_rate_options.per_hectare[0].option_key !== served.default_rate_options.per_hectare[0].option_key);
+});
+
+Deno.test("found product without vineyard rates stays in the staged response for manual rate review", async () => {
+  const candidate = { name: "Seaweed input", brand: "Maker", activeIngredient: "", product_category: "biostimulant", source: "research" as const };
+  const detail = { product_name: candidate.name, product_category: "biostimulant", registered_uses: [], registration: { country_code: "ZA", scheme: null, registration_number: null } };
+  const result = await withWebEnrichment([candidate], 1, async () => ({ candidates: [candidate], detail }));
+  assertEquals(result.detail, detail);
 });
 
 Deno.test("manufacturer URL discovery timeout makes one low-effort Terra call, never Sol", async () => {

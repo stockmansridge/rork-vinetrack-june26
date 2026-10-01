@@ -42,24 +42,8 @@ nonisolated enum ChemicalSearchV2OperationalDefaults {
 
     /// Summarise only numeric rates read from one manufacturer's vineyard label, keeping bases and printed units separate.
     static func manufacturerEnvelope(from rates: ViticultureRates) -> [ChemicalDefaultRateBasis: ChemicalLabelRate] {
-        var result: [ChemicalDefaultRateBasis: ChemicalLabelRate] = [:]
-        for (basis, rows, rangeBasis) in [
-            (ChemicalDefaultRateBasis.perHectare, rates.perHectare, ChemicalLabelRateBasis.rangePerHectare),
-            (.per100Litres, rates.per100Litres, .rangePer100Litres)
-        ] {
-            let usable = rows.filter { !$0.conditionIsAmbiguous && $0.rawText != nil && !$0.unit.isEmpty &&
-                ($0.value != nil || ($0.minValue != nil && $0.maxValue != nil)) }
-            let units = Set(usable.map { $0.unit.lowercased() })
-            guard units.count == 1, let first = usable.first else { continue }
-            let lows = usable.compactMap { $0.minValue ?? $0.value }
-            let highs = usable.compactMap { $0.maxValue ?? $0.value }
-            guard lows.count == usable.count, highs.count == usable.count,
-                  let low = lows.min(), let high = highs.max(), low > 0, high >= low else { continue }
-            result[basis] = low == high
-                ? ChemicalLabelRate(label: "Vineyard rate", basis: first.basis == rangeBasis ? (basis == .perHectare ? .perHectare : .per100Litres) : first.basis, value: low, unit: first.unit, rawText: first.rawText)
-                : ChemicalLabelRate(label: "Vineyard rate", basis: rangeBasis, minValue: low, maxValue: high, unit: first.unit, rawText: usable.compactMap(\.rawText).joined(separator: "; "))
-        }
-        return result
+        // Never synthesize a band across distinct printed directions.
+        unambiguousRates(from: rates)
     }
 
     static func effectiveRates(
@@ -73,7 +57,8 @@ nonisolated enum ChemicalSearchV2OperationalDefaults {
 
     static func storedDefaults(
         rates: [ChemicalLabelRate],
-        selectedAt: String
+        selectedAt: String,
+        selectedOption: ChemicalServerDefaultRateOption? = nil
     ) -> StoredChemicalDefaultRates? {
         var defaults = StoredChemicalDefaultRates()
         for rate in rates {
@@ -86,7 +71,13 @@ nonisolated enum ChemicalSearchV2OperationalDefaults {
             } else {
                 slot = nil
             }
-            if let slot { defaults = defaults.withSlot(basis, slot) }
+            if let option = selectedOption, option.isValid, option.decisionBasis == basis,
+               rate.unit == option.unit, rate.value == option.value,
+               rate.minValue == option.minValue, rate.maxValue == option.maxValue {
+                defaults = defaults.withSlot(basis, StoredChemicalDefaultRate(
+                    optionKey: option.optionKey, rateIds: option.rateIds, basis: option.basis, unit: option.unit,
+                    value: option.value, minValue: option.minValue, maxValue: option.maxValue, selectedAt: selectedAt))
+            } else if let slot { defaults = defaults.withSlot(basis, slot) }
         }
         return defaults.isEmpty ? nil : defaults
     }
@@ -94,9 +85,9 @@ nonisolated enum ChemicalSearchV2OperationalDefaults {
 
 nonisolated struct MasterChemicalV2: Codable, Identifiable, Sendable, Hashable {
     let id: UUID
-    let registrationCountry: String
-    let registrationScheme: String
-    let registrationNumber: String
+    let registrationCountry: String?
+    let registrationScheme: String?
+    let registrationNumber: String?
     let registrant: String?
     let registeredProductName: String
     let commonNames: [String]
@@ -147,9 +138,9 @@ nonisolated struct MasterChemicalV2: Codable, Identifiable, Sendable, Hashable {
 
     var intelligence: ChemicalIntelligence {
         let status = ChemicalVerificationStatus(rawValue: verificationStatus) ?? .unverified
-        let registration = ChemicalRegistration(
-            countryCode: registrationCountry,
-            scheme: ChemicalRegistrationScheme(rawValue: registrationScheme) ?? .other,
+        var registration = ChemicalRegistration(
+            countryCode: registrationCountry ?? "",
+            scheme: registrationScheme.flatMap(ChemicalRegistrationScheme.init(rawValue:)),
             registrationNumber: registrationNumber,
             registrant: registrant,
             registeredProductName: registeredProductName,
@@ -159,6 +150,7 @@ nonisolated struct MasterChemicalV2: Codable, Identifiable, Sendable, Hashable {
             manufacturerProductURL: manufacturerProductURL,
             labelVersion: labelVersion
         )
+        registration.rawScheme = registrationScheme
         return ChemicalIntelligence(
             activeIngredients: activeIngredients,
             registration: registration,
@@ -246,6 +238,7 @@ nonisolated enum ChemicalSearchV2ManualPrefill {
 }
 
 nonisolated struct ChemicalSearchV2ManualDetails: Sendable, Hashable {
+    var country: String = ""
     var manufacturer: String = ""
     var registrationNumber: String = ""
     var productCategory: String = ""
@@ -277,16 +270,12 @@ nonisolated struct ChemicalSearchV2ManualDetails: Sendable, Hashable {
                 groupCode: index == 0 ? activityGroupCode : ""
             )
         }
-        let hasRegistration = !manufacturer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !registrationNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !labelURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !productURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let draft = ChemicalManualDraft(
             productName: productName,
-            countryCode: hasRegistration ? "AU" : "",
+            countryCode: country,
             productCategory: productCategory,
             registrant: manufacturer,
-            registrationScheme: hasRegistration ? .apvma : nil,
+            registrationScheme: nil,
             registrationNumber: registrationNumber,
             labelReference: labelURL,
             productReference: productURL,
@@ -423,6 +412,9 @@ struct ChemicalSearchV2View: View {
     @State private var externalRequestID: UUID?
     @State private var photoRequestID: UUID?
     @State private var diagnostics = ChemicalSearchV2Diagnostics()
+    @State private var failedMaster: MasterChemicalV2?
+
+    private var country: String { ChemicalInfoService.resolveCountry(vineyardCountry: store.selectedVineyard?.country) }
 
     private let repository = MasterChemicalV2Repository()
     private let externalService = ChemicalInfoService()
@@ -439,6 +431,8 @@ struct ChemicalSearchV2View: View {
         var viticultureRates: ViticultureRates
         var selectedRegisteredRateID: String?
         var automaticRates: [ChemicalDefaultRateBasis: ChemicalLabelRate]
+        var canonicalOptions: ChemicalServerDefaultRateOptions? = nil
+        var selectedOption: ChemicalServerDefaultRateOption? = nil
         var masterMatch: ChemicalMasterMatch? = nil
         var isManual: Bool = false
         var manualDetails = ChemicalSearchV2ManualDetails()
@@ -491,6 +485,11 @@ struct ChemicalSearchV2View: View {
                     }
                 }
                 if let message { Text(message).foregroundStyle(.secondary) }
+                if let failedMaster {
+                    Button("Retry") { openMaster(failedMaster) }
+                    Button("Enter rate manually") { openMasterManual(failedMaster) }
+                    Button("Back") { self.failedMaster = nil; message = nil }
+                }
 
                 if !savedMatches.isEmpty {
                     Section("Already in your Chemical Store") {
@@ -508,7 +507,7 @@ struct ChemicalSearchV2View: View {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(alignment: .top, spacing: 12) {
                                 MasterFrontLabelView(media: approvedMedia[result.id].flatMap {
-                                    $0.belongs(to: result.id, identity: "\(result.registrationCountry):\(result.registrationScheme):\(result.registrationNumber)") ? $0 : nil
+                                    $0.belongs(to: result.id, identity: "\(result.registrationCountry ?? ""):\(result.registrationScheme ?? ""):\(result.registrationNumber ?? "")") ? $0 : nil
                                 })
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(result.registeredProductName).font(.headline)
@@ -516,7 +515,11 @@ struct ChemicalSearchV2View: View {
                                 }
                             }
                             if let registrant = result.registrant { Text(registrant).font(.subheadline).foregroundStyle(.secondary) }
-                            Text("APVMA \(result.registrationNumber)").font(.caption.monospaced())
+                            if let number = result.registrationNumber, !number.isEmpty {
+                                Text("\(result.registrationScheme?.uppercased() ?? "Registration") \(number)").font(.caption.monospaced())
+                            }
+                            if let context = result.registrationCountry, !context.isEmpty { Text(context).font(.caption) }
+                            if result.reviewStatus == "candidate" { Text("Candidate — not approved; admin testing only").font(.caption).foregroundStyle(.orange) }
                             if !result.activeIngredients.isEmpty {
                                 Text(result.activeIngredients.map(\.name).joined(separator: ", ")).font(.caption)
                             }
@@ -646,16 +649,38 @@ struct ChemicalSearchV2View: View {
             results = []
             return
         }
-        let automatic = master.viticultureRates.all.count > 1 ? [:] : ChemicalSearchV2OperationalDefaults.unambiguousRates(from: master.viticultureRates)
-        let selected = automatic[.perHectare] ?? automatic[.per100Litres]
-        let initial = selected.map(draftRate) ?? ChemicalManualRateDraft()
-        if photoRegistration != master.registrationNumber { photoData = nil }
-        review = ReviewDraft(
-            source: "VineTrack Master", master: master, intelligence: master.intelligence,
-            formType: master.formType, productName: master.registeredProductName,
-            unit: unit(for: initial.unit), rate: initial, viticultureRates: master.viticultureRates,
-            selectedRegisteredRateID: selected?.id, automaticRates: automatic
-        )
+        guard !isExternalLookupRunning else { return }
+        let token = UUID(); externalRequestID = token
+        isExternalLookupRunning = true; failedMaster = nil
+        message = "Loading catalogue rate details…"
+        Task {
+            do {
+                let detail = try await externalService.hydrateMaster(master, country: country)
+                guard externalRequestID == token else { return }
+                review = ReviewDraft(
+                    source: master.reviewStatus == "candidate" ? "VineTrack Master — candidate, not approved" : "VineTrack Master",
+                    master: master, intelligence: detail.intelligence(), formType: detail.formType,
+                    productName: detail.productName ?? master.registeredProductName, unit: .litres,
+                    rate: ChemicalManualRateDraft(), viticultureRates: ViticultureRates(perHectare: [], per100Litres: []),
+                    automaticRates: [:], canonicalOptions: detail.defaultRateOptions, masterMatch: detail.master
+                )
+                message = nil
+            } catch {
+                if externalRequestID == token {
+                    failedMaster = master
+                    message = "Catalogue rate details could not be loaded. Try again or enter a rate manually."
+                }
+            }
+            if externalRequestID == token { isExternalLookupRunning = false; externalRequestID = nil }
+        }
+    }
+
+    private func openMasterManual(_ master: MasterChemicalV2) {
+        review = ReviewDraft(source: master.reviewStatus == "candidate" ? "VineTrack Master — candidate, not approved" : "VineTrack Master",
+            master: master, intelligence: master.intelligence, formType: master.formType,
+            productName: master.registeredProductName, unit: .litres, rate: ChemicalManualRateDraft(),
+            viticultureRates: ViticultureRates(perHectare: [], per100Litres: []), automaticRates: [:])
+        failedMaster = nil
     }
 
     private func openManual() {
@@ -670,7 +695,7 @@ struct ChemicalSearchV2View: View {
             viticultureRates: ViticultureRates(perHectare: [], per100Litres: []),
             selectedRegisteredRateID: nil,
             automaticRates: [:],
-            isManual: true
+            isManual: true, manualDetails: ChemicalSearchV2ManualDetails(country: country)
         )
     }
 
@@ -687,7 +712,7 @@ struct ChemicalSearchV2View: View {
         onlineCandidates = []; diagnostics.fallbackInvoked = true
         Task {
             do {
-                let response = try await externalService.lookupOnlineCandidates(query: trimmed)
+                let response = try await externalService.lookupOnlineCandidates(query: trimmed, country: country)
                 guard externalRequestID == token else { return }
                 onlineCandidates = response.detail == nil ? response.candidates : []
                 if let detail = response.detail { openWebReview(detail, fallbackName: response.candidates.first?.name ?? trimmed) }
@@ -708,16 +733,26 @@ struct ChemicalSearchV2View: View {
     private func openWebReview(_ lookup: ChemicalStructuredLookup, fallbackName: String) {
         let intel = lookup.intelligence()
         let rates = ViticultureRates.fromRegisteredUses(intel.registeredUses)
-        let automatic = intel.registration?.manufacturerLabelURL == nil ? [:] :
-            ChemicalSearchV2OperationalDefaults.manufacturerEnvelope(from: rates)
+        let automatic: [ChemicalDefaultRateBasis: ChemicalLabelRate] = [:]
         let selected = automatic[.perHectare] ?? automatic[.per100Litres]
         let initial = selected.map(draftRate) ?? ChemicalManualRateDraft()
         review = ReviewDraft(
             source: "Product label / web", master: nil, intelligence: intel,
             formType: lookup.formType, productName: lookup.productName ?? fallbackName,
             unit: unit(for: initial.unit), rate: initial, viticultureRates: rates,
-            selectedRegisteredRateID: selected?.id, automaticRates: automatic
+            selectedRegisteredRateID: selected?.id, automaticRates: automatic,
+            canonicalOptions: lookup.defaultRateOptions, masterMatch: lookup.master
         )
+    }
+
+    private func openFoundManualRate(_ candidate: ChemicalInfoService.WebV2Candidate) {
+        let intel = ChemicalIntelligence(
+            activeIngredients: candidate.activeIngredient.isEmpty ? [] : [ChemicalActiveIngredient(name: candidate.activeIngredient, identitySource: .aiInterpretation)],
+            registration: ChemicalRegistration(countryCode: country, registrationNumber: candidate.registrationNumber, registrant: candidate.brand, registeredProductName: candidate.name),
+            productCategory: candidate.productCategory ?? "")
+        review = ReviewDraft(source: "Online lookup — details unconfirmed; manual rate", master: nil, intelligence: intel,
+            formType: nil, productName: candidate.name, unit: .litres, rate: ChemicalManualRateDraft(),
+            viticultureRates: ViticultureRates(perHectare: [], per100Litres: []), automaticRates: [:])
     }
 
     private func openOnlineCandidate(_ candidate: ChemicalInfoService.WebV2Candidate) {
@@ -726,12 +761,12 @@ struct ChemicalSearchV2View: View {
         message = "Reading manufacturer product label…"
         Task {
             do {
-                let response = try await externalService.lookupSelectedOnlineCandidate(candidate, query: query)
+                let response = try await externalService.lookupSelectedOnlineCandidate(candidate, query: query, country: country)
                 guard externalRequestID == token else { return }
                 if let detail = response.detail { openWebReview(detail, fallbackName: candidate.name) }
-                else { message = "Product identified, but manufacturer label details could not be completed. Try again or create manually." }
+                else { openFoundManualRate(candidate); message = "No usable vineyard rate found. Enter a rate manually." }
             } catch {
-                if externalRequestID == token { message = "Could not read this product. Try again or create manually." }
+                if externalRequestID == token { openFoundManualRate(candidate); message = "Product details are unconfirmed. Check the source and enter a rate manually." }
             }
             if externalRequestID == token { isExternalLookupRunning = false; externalRequestID = nil }
         }
@@ -743,7 +778,7 @@ struct ChemicalSearchV2View: View {
         Task {
             do {
                 let evidence = try await ChemicalLabelIdentityOCR.recognise(data)
-                let name = try? await externalService.identifyLabel(ocrText: evidence.text)
+                let name = try? await externalService.identifyLabel(ocrText: evidence.text, country: country)
                 guard photoRequestID == token else { return }
                 photoRegistration = evidence.apvmaNumber
                 photoProductName = name
@@ -940,32 +975,40 @@ private struct ChemicalSearchV2ReviewView: View {
                     }
                 }
                 Section {
-                    let rates = draft.viticultureRates.all
-                    if rates.count > 1 && draft.source != "Product label / web" {
-                        Picker("Registered rate", selection: $draft.selectedRegisteredRateID) {
-                            Text("Enter/edit manually").tag(String?.none)
-                            ForEach(rates) { rate in Text(rate.displayRate).tag(Optional(rate.id)) }
-                        }
-                        .onChange(of: draft.selectedRegisteredRateID) { _, id in
-                            guard let rate = rates.first(where: { $0.id == id }) else {
+                    ForEach(ChemicalDefaultRateBasis.allCases, id: \.self) { basis in
+                        let options = draft.canonicalOptions?.validOptions(basis) ?? []
+                        if !options.isEmpty { Text(basis == .perHectare ? "Per hectare" : "Per 100 L").font(.headline) }
+                        ForEach(options, id: \.optionKey) { option in
+                            Button {
+                                let rate = option.toLabelRate()
+                                draft.selectedOption = option
                                 draft.automaticRates = [:]
-                                draft.rate = ChemicalManualRateDraft()
-                                return
+                                draft.rate = ChemicalManualRateDraft(label: rate.label, basis: rate.basis,
+                                    valueText: rate.value.map(ChemicalReviewSession.formatRate) ?? "",
+                                    minText: rate.minValue.map(ChemicalReviewSession.formatRate) ?? "",
+                                    maxText: rate.maxValue.map(ChemicalReviewSession.formatRate) ?? "", unit: rate.unit)
+                                draft.unit = ChemicalUnit.fromLabelRateToken(rate.unit) ?? draft.unit
+                            } label: {
+                                HStack(alignment: .top) {
+                                    Image(systemName: draft.selectedOption?.optionKey == option.optionKey ? "largecircle.fill.circle" : "circle")
+                                    VStack(alignment: .leading) {
+                                        Text(option.toLabelRate().displayRate).font(.headline)
+                                        Text(option.targets.prefix(3).joined(separator: ", ") + (option.targets.count > 3 ? " + \(option.targets.count - 3) more" : "")).font(.caption)
+                                    }
+                                }
                             }
-                            if let basis = ChemicalDefaultRateBasis.of(rate.basis) {
-                                draft.automaticRates = [basis: rate]
+                            if option.targets.count > 3 {
+                                DisclosureGroup("All targets") { Text(option.targets.joined(separator: ", ")) }
                             }
-                            draft.rate = ChemicalManualRateDraft(
-                                label: rate.label, basis: rate.basis,
-                                valueText: rate.value.map(ChemicalReviewSession.formatRate) ?? "",
-                                minText: rate.minValue.map(ChemicalReviewSession.formatRate) ?? "",
-                                maxText: rate.maxValue.map(ChemicalReviewSession.formatRate) ?? "",
-                                unit: rate.unit.isEmpty ? "L" : rate.unit,
-                                rawText: rate.rawText ?? "",
-                                conditionIsAmbiguous: rate.conditionIsAmbiguous
-                            )
-                            draft.unit = ChemicalUnit.fromLabelRateToken(draft.rate.unit) ?? draft.unit
+                            if !option.conditions.isEmpty {
+                                DisclosureGroup("Supporting directions / restrictions") {
+                                    ForEach(option.conditions, id: \.self) { Text($0).font(.caption) }
+                                }
+                            }
                         }
+                    }
+                    Button("Enter rate manually") {
+                        draft.selectedOption = nil; draft.automaticRates = [:]; draft.rate = ChemicalManualRateDraft()
                     }
                     ChemicalManualRateEditor(rate: $draft.rate, allowsRemoval: false, onRemove: {})
                     Picker("Product unit *", selection: $draft.unit) {
@@ -979,7 +1022,7 @@ private struct ChemicalSearchV2ReviewView: View {
                 Section {
                     DisclosureGroup("Fill missing details", isExpanded: $isOptionalDetailsExpanded) {
                             if draft.source == "Product label / web", let number = draft.intelligence.registration?.registrationNumber {
-                                LabeledContent("APVMA (printed on label)", value: number)
+                                LabeledContent("Registration (printed on label)", value: number)
                             }
                             if !draft.isManual {
                                 TextField("Category", text: $draft.manualDetails.productCategory)
@@ -992,7 +1035,7 @@ private struct ChemicalSearchV2ReviewView: View {
                             }
                             if draft.isManual {
                             TextField("Manufacturer / registrant", text: $draft.manualDetails.manufacturer)
-                            TextField("APVMA registration number", text: $draft.manualDetails.registrationNumber)
+                            TextField("Registration number (optional)", text: $draft.manualDetails.registrationNumber)
                                 .keyboardType(.numberPad)
                             TextField("Category", text: $draft.manualDetails.productCategory)
                             TextField("Product form", text: $draft.manualDetails.productForm)
@@ -1109,8 +1152,7 @@ private struct ChemicalSearchV2ReviewView: View {
             [ChemicalRate(label: rate.label, value: draft.unit.toBase($0), basis: basis)]
         } ?? []
         let defaults = ChemicalSearchV2OperationalDefaults.storedDefaults(
-            rates: effectiveRates,
-            selectedAt: Date().ISO8601Format()
+            rates: effectiveRates, selectedAt: Date().ISO8601Format(), selectedOption: draft.selectedOption
         )
         let parseOptional: (String) -> Double? = {
             Double($0.replacingOccurrences(of: ",", with: "."))
@@ -1134,7 +1176,7 @@ private struct ChemicalSearchV2ReviewView: View {
             ratePerHa: basis == .perHectare && rate.value != nil ? display : nil,
             unit: draft.unit, chemicalGroup: canonicalIntelligence.legacyChemicalGroup,
             manufacturer: draft.isManual ? details.manufacturer : (draft.intelligence.registration?.registrant ?? ""),
-            notes: draft.isManual ? details.notes : "",
+            notes: draft.isManual ? details.notes : (draft.master?.reviewStatus == "candidate" ? "Candidate Master — not approved; admin testing only." : ""),
             activeIngredient: canonicalIntelligence.legacyActiveIngredient,
             rates: legacyRates,
             purchase: purchase,
@@ -1149,7 +1191,7 @@ private struct ChemicalSearchV2ReviewView: View {
             inventoryUnit: draft.isManual ? details.inventoryUnit : "",
             chemicalIntelligence: canonicalIntelligence,
             masterChemicalId: draft.master?.id ?? draft.masterMatch?.masterChemicalId,
-            masterSourceRevision: draft.master?.catalogueVersion ?? draft.masterMatch?.masterRevision,
+            masterSourceRevision: draft.masterMatch?.masterRevision ?? draft.master?.catalogueVersion,
             defaultRates: defaults,
             entrySource: SavedChemicalEntrySource.reviewed(
                 isManual: draft.isManual, isMaster: draft.master != nil || draft.masterMatch != nil, intelligence: canonicalIntelligence

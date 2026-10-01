@@ -62,31 +62,8 @@ object ChemicalSearchV2OperationalDefaults {
     }
 
     /** Only same-unit, same-basis numeric vineyard rates actually transcribed from a manufacturer label. */
-    fun manufacturerEnvelope(rates: ViticultureRates): Map<ChemicalDefaultRateBasis, ChemicalLabelRate> = buildMap {
-        listOf(
-            Triple(ChemicalDefaultRateBasis.PER_HECTARE, rates.perHectare, ChemicalLabelRateBasis.RANGE_PER_HECTARE),
-            Triple(ChemicalDefaultRateBasis.PER_100_LITRES, rates.per100Litres, ChemicalLabelRateBasis.RANGE_PER_100_LITRES),
-        ).forEach { (basis, rows, rangeBasis) ->
-            val usable = rows.filter { it.conditionAmbiguous != true && !it.rawText.isNullOrBlank() && it.unit.isNotBlank() &&
-                (it.value != null || (it.minValue != null && it.maxValue != null)) }
-            if (usable.isEmpty() || usable.map { it.unit.lowercase() }.distinct().size != 1) return@forEach
-            val low = usable.mapNotNull { it.minValue ?: it.value }.minOrNull() ?: return@forEach
-            val high = usable.mapNotNull { it.maxValue ?: it.value }.maxOrNull() ?: return@forEach
-            if (low <= 0 || high < low) return@forEach
-            val first = usable.first()
-            put(basis, first.copy(
-                label = "Vineyard rate",
-                basis = if (low == high) {
-                    if (basis == ChemicalDefaultRateBasis.PER_HECTARE) ChemicalLabelRateBasis.PER_HECTARE else ChemicalLabelRateBasis.PER_100_LITRES
-                } else rangeBasis,
-                value = if (low == high) low else null,
-                minValue = if (low == high) null else low,
-                maxValue = if (low == high) null else high,
-                rawText = usable.mapNotNull { it.rawText }.joinToString("; "),
-                rateId = null,
-            ))
-        }
-    }
+    fun manufacturerEnvelope(rates: ViticultureRates): Map<ChemicalDefaultRateBasis, ChemicalLabelRate> =
+        unambiguousRates(rates)
 
     fun effectiveRates(
         automatic: Map<ChemicalDefaultRateBasis, ChemicalLabelRate>,
@@ -97,7 +74,7 @@ object ChemicalSearchV2OperationalDefaults {
         return ChemicalDefaultRateBasis.entries.mapNotNull(result::get)
     }
 
-    fun storedDefaults(rates: List<ChemicalLabelRate>, selectedAt: String): StoredChemicalDefaultRates? {
+    fun storedDefaults(rates: List<ChemicalLabelRate>, selectedAt: String, selectedOption: ChemicalServerDefaultRateOption? = null): StoredChemicalDefaultRates? {
         var defaults = StoredChemicalDefaultRates()
         rates.forEach { rate ->
             val basis = ChemicalDefaultRateBasis.of(rate.basis) ?: return@forEach
@@ -111,7 +88,13 @@ object ChemicalSearchV2OperationalDefaults {
                 )
                 else -> null
             }
-            if (slot != null) defaults = defaults.withSlot(basis, slot)
+            val option = selectedOption?.takeIf { it.isValid && it.decisionBasis == basis && rate.unit == it.unit &&
+                rate.value == it.value && rate.minValue == it.minValue && rate.maxValue == it.maxValue }
+            if (option != null) {
+                defaults = defaults.withSlot(basis, StoredChemicalDefaultRate(
+                    optionKey = option.optionKey, rateIds = option.rateIds, basis = option.basis, unit = option.unit,
+                    value = option.value, minValue = option.minValue, maxValue = option.maxValue, selectedAt = selectedAt))
+            } else if (slot != null) defaults = defaults.withSlot(basis, slot)
         }
         return defaults.takeIf { !it.isEmpty }
     }
@@ -120,9 +103,9 @@ object ChemicalSearchV2OperationalDefaults {
 @Serializable
 data class MasterChemicalV2(
     val id: String,
-    @SerialName("registration_country") val registrationCountry: String,
-    @SerialName("registration_scheme") val registrationScheme: String,
-    @SerialName("registration_number") val registrationNumber: String,
+    @SerialName("registration_country") val registrationCountry: String? = null,
+    @SerialName("registration_scheme") val registrationScheme: String? = null,
+    @SerialName("registration_number") val registrationNumber: String? = null,
     val registrant: String? = null,
     @SerialName("registered_product_name") val registeredProductName: String,
     @SerialName("common_names") val commonNames: List<String> = emptyList(),
@@ -155,8 +138,8 @@ data class MasterChemicalV2(
         get() = ChemicalIntelligence(
             activeIngredients = activeIngredients,
             registration = ChemicalRegistration.of(
-                countryCode = registrationCountry,
-                scheme = ChemicalRegistrationScheme.from(registrationScheme),
+                countryCode = registrationCountry.orEmpty(),
+                scheme = registrationScheme?.let(ChemicalRegistrationScheme::from),
                 registrationNumber = registrationNumber,
                 registrant = registrant,
                 registeredProductName = registeredProductName,
@@ -165,7 +148,7 @@ data class MasterChemicalV2(
                 regulatorLabelUrl = regulatorLabelUrl,
                 manufacturerProductUrl = manufacturerProductUrl,
                 labelVersion = labelVersion,
-            ),
+            ).copy(rawScheme = registrationScheme),
             verification = ChemicalVerification(
                 status = ChemicalVerificationStatus.from(verificationStatus),
                 sources = verificationSources,

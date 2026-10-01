@@ -903,9 +903,9 @@ nonisolated struct ChemicalInfoService: Sendable {
         enum CodingKeys: String, CodingKey { case productName = "product_name" }
     }
 
-    func identifyLabel(ocrText: String) async throws -> String? {
+    func identifyLabel(ocrText: String, country: String = "") async throws -> String? {
         let data = try await postEdge(path: "chemical-info-lookup", payload: [
-            "action": "identify_label", "ocrText": ocrText, "country": "AU"
+            "action": "identify_label", "ocrText": ocrText, "country": country
         ], timeout: 30)
         return try JSONDecoder().decode(LabelIdentityResponse.self, from: data).productName
     }
@@ -951,24 +951,50 @@ nonisolated struct ChemicalInfoService: Sendable {
         }
     }
 
-    func lookupOnlineCandidates(query: String) async throws -> WebV2Lookup {
-        try await lookupWebV2(query: query)
+    func lookupOnlineCandidates(query: String, country: String = "") async throws -> WebV2Lookup {
+        try await lookupWebV2(query: query, country: country)
     }
 
-    func lookupSelectedOnlineCandidate(_ candidate: WebV2Candidate, query: String) async throws -> WebV2Lookup {
-        try await lookupWebV2(query: query, selectedName: candidate.name)
+    func lookupSelectedOnlineCandidate(_ candidate: WebV2Candidate, query: String, country: String = "") async throws -> WebV2Lookup {
+        try await lookupWebV2(query: query, selectedName: candidate.name, country: country)
     }
 
-    func lookupWebV2(query: String, selectedName: String? = nil) async throws -> WebV2Lookup {
-        var payload: [String: Any] = ["action": "web_lookup_v2", "query": query, "country": "AU"]
+    func lookupWebV2(query: String, selectedName: String? = nil, country: String = "") async throws -> WebV2Lookup {
+        var payload: [String: Any] = ["action": "web_lookup_v2", "query": query, "country": country]
         if let selectedName { payload["selectedName"] = selectedName }
         let data = try await postEdge(path: "chemical-info-lookup", payload: payload, timeout: 110)
         return try JSONDecoder().decode(WebV2Lookup.self, from: data)
     }
 
-    func discoverLabel(query: String) async throws -> ChemicalStructuredLookup {
+    /// Database-only selected Master hydration. Candidate authorization remains server-side.
+    func hydrateMaster(_ selected: MasterChemicalV2, country: String) async throws -> ChemicalStructuredLookup {
+        let selectedCountry = selected.registrationCountry ?? ""
+        var payload: [String: Any] = [
+            "action": selected.reviewStatus == "candidate" ? "structured_master_preview" : "structured",
+            "master_chemical_id": selected.id.uuidString.lowercased(),
+            "country": selectedCountry.isEmpty ? country : selectedCountry
+        ]
+        if let scheme = selected.registrationScheme, !scheme.isEmpty { payload["registrationScheme"] = scheme }
+        if let number = selected.registrationNumber, !number.isEmpty { payload["registrationNumber"] = number }
+        let data = try await postEdge(path: "chemical-info-lookup", payload: payload, timeout: 15)
+        let detail = try JSONDecoder().decode(ChemicalStructuredLookup.self, from: data)
+        guard detail.master?.masterChemicalId == selected.id,
+              detail.master?.catalogueStatus == selected.reviewStatus else { throw ChemicalLookupError.parseFailed }
+        if let actual = detail.registration {
+            if !selectedCountry.isEmpty, !actual.countryCode.isEmpty,
+               ChemicalRegistration.normaliseCountry(selectedCountry) != ChemicalRegistration.normaliseCountry(actual.countryCode) { throw ChemicalLookupError.parseFailed }
+            if let number = selected.registrationNumber, !number.isEmpty,
+               let actualNumber = actual.registrationNumber, !actualNumber.isEmpty,
+               number.uppercased() != actualNumber.uppercased() { throw ChemicalLookupError.parseFailed }
+            if let scheme = selected.registrationScheme, !scheme.isEmpty,
+               let actualScheme = actual.rawScheme ?? actual.scheme?.rawValue, scheme.lowercased() != actualScheme.lowercased() { throw ChemicalLookupError.parseFailed }
+        }
+        return detail
+    }
+
+    func discoverLabel(query: String, country: String = "") async throws -> ChemicalStructuredLookup {
         let data = try await postEdge(path: "chemical-info-lookup", payload: [
-            "action": "discover_label", "query": query, "country": "AU"
+            "action": "discover_label", "query": query, "country": country
         ], timeout: 75)
         return try JSONDecoder().decode(ChemicalStructuredLookup.self, from: data)
     }

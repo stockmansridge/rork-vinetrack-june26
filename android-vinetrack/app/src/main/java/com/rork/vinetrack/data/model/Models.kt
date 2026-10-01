@@ -2162,7 +2162,8 @@ data class SavedChemical(
             val actives = activeIngredients ?: emptyList()
             val uses = registeredUses ?: emptyList()
             val hasRegistration = !registrationNumber.isNullOrBlank() ||
-                !registrationCountry.isNullOrBlank()
+                !registrationCountry.isNullOrBlank() || !registrant.isNullOrBlank() ||
+                !registeredProductName.isNullOrBlank() || !labelReference.isNullOrBlank() || productUrl.isNotBlank()
             if (actives.isEmpty() && uses.isEmpty() && !hasRegistration) return null
             return ChemicalIntelligence(
                 activeIngredients = actives,
@@ -2194,7 +2195,7 @@ data class SavedChemical(
                         regulatorLabelUrl = labelReference,
                         manufacturerProductUrl = productUrl.takeIf { it.isNotBlank() },
                         labelVersion = labelVersion,
-                    )
+                    ).copy(rawScheme = registrationScheme)
                 } else {
                     null
                 },

@@ -92,6 +92,22 @@ class SavedChemicalCreateSyncTest {
         }
     }
 
+    @Test fun internationalFoundInputManualRateSurvivesOfflineSaveAndRestart() {
+        for (country in listOf("AU", "NZ", "FR", "US", "ZA", "")) {
+            val rate = com.rork.vinetrack.data.chemical.ChemicalLabelRate(basis = com.rork.vinetrack.data.chemical.ChemicalLabelRateBasis.PER_HECTARE, value = 2.0, unit = "L")
+            val defaults = com.rork.vinetrack.data.chemical.ChemicalSearchV2OperationalDefaults.storedDefaults(listOf(rate), "2026-10-01T00:00:00Z")
+            val intel = com.rork.vinetrack.data.chemical.ChemicalIntelligence(registration = com.rork.vinetrack.data.chemical.ChemicalRegistration(countryCode = country, registrant = "Supplier"), productCategory = "biostimulant")
+            val original = coordinator().save("vineyard", input.copy(name = "Seaweed $country", intelligence = intel, defaultRates = defaults, entrySource = "label_lookup"))
+            val reopened = coordinator().rows("owner", "vineyard").first { it.id == original.id }
+            assertEquals(defaults, reopened.defaultRates)
+            assertEquals("manual", reopened.defaultRates?.perHectare?.entryMethod)
+            assertEquals(emptyList<String>(), reopened.defaultRates?.perHectare?.rateIds)
+            assertEquals("Supplier", reopened.storedIntelligence?.registration?.registrant)
+            assertEquals("label_lookup", reopened.entrySource)
+            assertEquals(null, reopened.masterChemicalId)
+        }
+    }
+
     @Test fun offlineSaveSurvivesRestartAndSavedFirstSearchUsesSameObject() = runBlocking {
         val original = coordinator().save("vineyard", input)
         val marker = PendingWriteRepository(pendingStore).list().single()

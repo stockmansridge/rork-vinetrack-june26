@@ -1,5 +1,72 @@
 # Weedmaster revision-2 coordinated release handoff
 
+## 2026-10-01: Chemical Search customer MVP consolidated closeout (not deployed)
+
+This MVP section supersedes any earlier registration-required or country-required exact hydration text. No production Master data, approval, SQL execution, Edge deployment or backfill was performed. Existing layouts and saved-chemical/default-rate schema are retained. No Phase 2 work is added.
+
+### MVP blockers found and corrected
+
+1. SQL 238's search eligibility required AU/APVMA and allowed specific AWRI-backed candidates into customer search. SQL 258 replaces only the two shared predicates: authenticated approved rows; candidates only for the current System Admin; genuine structured vineyard/grape crop evidence or actual vineyard numeric rates. Generic reference URLs alone no longer confer relevance. The authenticated SQL 256 RPC signature, ranking, feature flag and output remain unchanged. RLS already restricts customer table reads to approved rows. No SQL has been executed here, so this server search correction is not yet live.
+2. Both mobile clients opened raw search snapshots instead of selected-ID hydration. They now call exact `structured` for approved rows or admin-only `structured_master_preview` for candidates, with a 15-second client bound and the existing shared eight-second server network bound. ID/status, populated country and supplied optional registration hints are checked. These paths never restart discovery or mint existing catalogue identities.
+3. Both V2 review UIs offered flattened rates and generated a cross-direction manufacturer min/max envelope. They now offer only backend canonical choices, separate /ha and /100 L sections, first-three-target summaries, full-target expansion and retained qualified supporting conditions. No local regrouping/key minting or 137-row selectable fallback remains. Canonical selection persists the supplied option/rate IDs and exact scalar/range; edits become explicit manual entries with no fake IDs.
+4. Source lookup hardcoded AU in both transports, and the backend discarded a found product with no vineyard rates. Both clients now pass the vineyard's actual country (empty stays empty); backend source lookup and exact Master hydration no longer require country or registration. Available regulator candidate help is fail-soft before manufacturer/source lookup. A found product with no usable rates can reach review and save a manual operational rate, without approval/promotion.
+5. Manufacturer fallback's service-role identity query exposed candidate Master identities and required APVMA/official-register metadata. It now reads approved rows only, omits registration/advanced verification prerequisites and uses a new cache namespace to avoid reusing old candidate-backed payloads. Independent manufacturer discovery can still find the same commercially available product; that is source research, not access to a candidate Master record.
+6. International scheme metadata could be lost or fail Android decoding. Both preserve the original metadata and flatten it to the existing `registration_scheme` database column; unknown schemes are non-blocking. Saved records with manufacturer/name/source but no registration retain their structured metadata on reopening. Manual entry no longer infers APVMA from a manufacturer or URL.
+7. Newly found, identity-checked manufacturer labels without registration could not receive canonical choices. The existing backend minter now accepts an explicit accepted-document/product-name lock ONLY from that manufacturer handler. Registration-based hashes and existing Master options remain unchanged. Unknown product/research leads still mint nothing; manual operational typing never enters this minter. No new saved-selection format or Master revision/direction persistence format is introduced.
+
+### Exact changed files
+
+**SQL (review/apply separately):**
+- `sql/258_chemical_search_mvp_international.sql`
+
+**Edge Function / shared backend:**
+- `supabase/functions/chemical-info-lookup/index.ts`
+- `supabase/functions/chemical-info-lookup/ingestion/master_lookup.ts`
+- `supabase/functions/chemical-info-lookup/web_identity.ts`
+- `supabase/functions/chemical-info-lookup/rate_identity.ts`
+- `supabase/functions/chemical-info-lookup/master_candidate_preview_test.ts`
+- `supabase/functions/chemical-info-lookup/web_identity_test.ts`
+
+**iOS:**
+- `ios/VineTrack/App/ChemicalInfoService.swift`
+- `ios/VineTrack/App/ChemicalIntelligence/ChemicalRegistration.swift`
+- `ios/VineTrack/App/ChemicalIntelligence/ChemicalSearchV2View.swift`
+- `ios/VineTrack/Backend/Models/BackendManagement.swift`
+- `ios/VineTrackTests/ChemicalSearchV2Tests.swift`
+- `ios/VineTrackTests/ChemicalSearchMVPTests.swift`
+
+**Android:**
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/ChemicalInfoService.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SavedChemicalRepository.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/ChemicalRegistration.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/ChemicalRegistrationSchemeSerializer.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/ChemicalSearchV2.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/Models.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ChemicalSearchV2Sheet.kt`
+- `android-vinetrack/app/src/test/java/com/rork/vinetrack/data/ChemicalSearchV2Test.kt`
+- `android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SavedChemicalCreateSyncTest.kt`
+
+**Consolidated report:** this existing file, `docs/weedmaster-acceptance/catalogue-release-handoff.md`. Temporary test logs are cleaned up; the actual Weedmaster fixture is unchanged.
+
+### Focused validation and honest acceptance boundary
+
+- Backend: **35 tests, 28 handler substeps passed**, zero failures, in the candidate/exact handler, actual Weedmaster fixture, readiness regression and manufacturer/source suites. Additional `rate_identity_test.ts --filter D1.3`: **9 passed, 37 filtered out**. Targeted Deno typechecks passed. No live external chemical lookup or production write ran.
+- iOS: `VineTrackTests/ChemicalSearchMVPTests` through the managed simulator runner: **4 passed**. Covers canonical amount/IDs/revision save-model round-trip, found/manual no-registration inputs across AU/NZ/FR/US/ZA/unknown, manual edit provenance, original international scheme metadata and no synthetic envelope. Final simulator build passed; device/App Store release is not asserted.
+- Android: focused JVM `ChemicalSearchV2Test` **26 passed** and `SavedChemicalCreateSyncTest` **7 passed**, zero failures/errors/skips. Covers canonical round-trip, manual-rate defaults, international metadata, non-Master offline save/reopen, and existing idempotent local-first persistence. The initial foreground command hit the shell's 60-second bound; a bounded-work background execution with a CLI-only heap override completed successfully. No Gradle project configuration was changed. Final release build passed.
+- Weedmaster's unchanged revision-2 fixture retains **70 Vineyard directions**, **9 /ha + 8 /100 L options**, and Phalaris Handgun **500–1000 mL/100 L**, canonical key `default_option_v1_5f58b1d9f422213e1ecf8632036c1356`. Tests establish backend grouping and persisted selection, not a live screenshot count.
+- Cases A/B/C are covered at the mocked exact hydration and local persistence boundaries; D at manufacturer/source resolution and local save boundaries; E/F at manual-rate save/reopen boundaries. **Full live search → tap → server save → app restart/reopen → Spray Calculator acceptance for A–F is still pending deployment/application and an authorized test vineyard.** SQL candidate visibility has been reviewed statically, not executed against Postgres. Do not label these unit/contract tests full end-to-end UI acceptance. No Portal source or UI acceptance is claimed.
+
+### Synced commits and deployment/application steps
+
+Prior international exact-hydration correction is now observed in synced HEAD `e3a6c4feb38214be38a03ca1d82333020fce781b` (previous preview base `e3288b7abbed4d538afbda7506cc104d9d0677ac`). The MVP changes in this section are pending automatic end-of-turn sync at report time; no new hash is invented and no manual Git commit/push is performed.
+
+1. Confirm the intended V2 Supabase project and its existing SQL 238/239/256 search contract plus existing saved-chemical defaults/provenance schema. Do not replay the whole SQL directory or apply parked SQL 257/media work.
+2. Review and manually apply **only SQL 258** to replace the search visibility/relevance predicates. It contains no Master row writes, approval, flag changes, rate backfill or schema expansion. Verify customer versus current-admin visibility using existing rows in an authorized test context before enabling customer acceptance.
+3. Deploy the updated **`chemical-info-lookup`** directory with its changed shared imports (`master_lookup.ts`, `web_identity.ts`, `rate_identity.ts`). Use the existing Supabase/auth/OpenAI configuration for source discovery; exact Master hydration needs no OpenAI call. Preserve the existing function authentication configuration; candidate action checks caller session/current admin inside the handler.
+4. Distribute these checked iOS/Android builds using the existing delivery process. No Store submission was performed. Keep the existing `chemical_search_v2` flag rollout policy; do not toggle production flags as part of this handoff.
+5. On a permitted test vineyard, execute A–F on both platforms: search, select, inspect populated/source fields, select canonical or enter manual rate, save, close/relaunch, reopen and choose in Spray Calculator. For B verify only current System Admin can find DUO, visible candidate/not-approved wording, database-only hydration, 9+8 choices and exact Phalaris selection. A normal customer must never receive the candidate from Master search/preview.
+6. Do not approve/promote/re-extract Weedmaster or alter any production Master chemical to obtain these results. Record live results separately from the passing mocked/local results above.
+
 ## 2026-10-01: international Master identity correction (not deployed)
 
 This correction supersedes the registration-required candidate request below. **`master_chemical_id` is the primary VineTrack identity. Country is jurisdiction context. Registration scheme/number are optional evidence, never a prerequisite and never invented from an adapter.**

@@ -48,6 +48,8 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
     /// Upper-cased on the way in.
     var countryCode: String
     var scheme: ChemicalRegistrationScheme?
+    /// Original international scheme metadata, retained even without an adapter.
+    var rawScheme: String? = nil
     /// The register's product number, e.g. an APVMA product number.
     var registrationNumber: String?
     /// The registrant/manufacturer of record, which can differ from the brand
@@ -100,10 +102,12 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
         manufacturerLabelURL: String? = nil,
         regulatorLabelURL: String? = nil,
         manufacturerProductURL: String? = nil,
-        labelVersion: String? = nil
+        labelVersion: String? = nil,
+        rawScheme: String? = nil
     ) {
         self.countryCode = ChemicalRegistration.normaliseCountry(countryCode)
         self.scheme = scheme
+        self.rawScheme = rawScheme
         self.registrationNumber = ChemicalRegistration.trimmed(registrationNumber)
         self.registrant = ChemicalRegistration.trimmed(registrant)
         self.registeredProductName = ChemicalRegistration.trimmed(registeredProductName)
@@ -117,6 +121,7 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
     nonisolated enum CodingKeys: String, CodingKey {
         case countryCode = "country_code"
         case scheme
+        case rawScheme = "raw_scheme"
         case registrationNumber = "registration_number"
         case registrant
         case registeredProductName = "registered_product_name"
@@ -132,6 +137,7 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
         countryCode = ChemicalRegistration.normaliseCountry(
             try c.decodeIfPresent(String.self, forKey: .countryCode) ?? ""
         )
+        rawScheme = try c.decodeIfPresent(String.self, forKey: .rawScheme) ?? c.decodeIfPresent(String.self, forKey: .scheme)
         if let raw = try c.decodeIfPresent(String.self, forKey: .scheme) {
             scheme = ChemicalRegistrationScheme(rawValue: raw) ?? .other
         } else {

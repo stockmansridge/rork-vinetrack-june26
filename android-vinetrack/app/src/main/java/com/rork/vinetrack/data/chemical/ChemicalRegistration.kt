@@ -11,7 +11,7 @@ import kotlinx.serialization.Serializable
  * products can share a brand name across the Tasman and be different
  * registrations with different actives, different rates and different labels.
  */
-@Serializable
+@Serializable(with = ChemicalRegistrationSchemeSerializer::class)
 enum class ChemicalRegistrationScheme(val raw: String, val label: String) {
     /** Australian Pesticides and Veterinary Medicines Authority. */
     @SerialName("apvma")
@@ -62,6 +62,7 @@ data class ChemicalRegistration(
     /** ISO country code, e.g. `"AU"`, `"NZ"`. */
     @SerialName("country_code") val countryCode: String = "",
     val scheme: ChemicalRegistrationScheme? = null,
+    @SerialName("raw_scheme") val rawScheme: String? = null,
     @SerialName("registration_number") val registrationNumber: String? = null,
     /** The registrant of record, which can differ from the brand a grower knows. */
     val registrant: String? = null,

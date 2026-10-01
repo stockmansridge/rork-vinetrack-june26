@@ -31,6 +31,31 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ChemicalSearchV2Test {
+    @Test fun canonicalSelectionAndManualEditsRoundTripWithoutFakeIds() {
+        val option = com.rork.vinetrack.data.chemical.ChemicalServerDefaultRateOption(
+            optionKey = "default_option_v1_5f58b1d9f422213e1ecf8632036c1356", rateIds = listOf("rate_v1_4efec198ead373a3286939ced245fadf"),
+            basis = "per_100_litres", unit = "mL", minValue = 500.0, maxValue = 1000.0,
+            targets = listOf("Phalaris"), conditions = listOf("Handgun"), crops = listOf("Vineyards"))
+        val defaults = ChemicalSearchV2OperationalDefaults.storedDefaults(listOf(option.toLabelRate()), "2026-10-01T00:00:00Z", option)
+        val saved = SavedChemical(id = "saved", vineyardId = "vineyard", name = "Weedmaster DUO", masterChemicalId = "03dfb9e8-6592-4746-a3bc-295890d32cd1", masterSourceRevision = 2, defaultRates = defaults)
+        val reopened = SupabaseClient.json.decodeFromString<SavedChemical>(SupabaseClient.json.encodeToString(SavedChemical.serializer(), saved))
+        assertEquals(defaults, reopened.defaultRates)
+        assertEquals(500.0, reopened.defaultRates?.per100Litres?.minValue)
+        assertEquals(1000.0, reopened.defaultRates?.per100Litres?.maxValue)
+        assertEquals(option.rateIds, reopened.defaultRates?.per100Litres?.rateIds)
+        assertEquals("canonical", reopened.defaultRates?.per100Litres?.entryMethod)
+        assertEquals(2, reopened.masterSourceRevision)
+        val manual = ChemicalSearchV2OperationalDefaults.storedDefaults(listOf(option.toLabelRate().copy(minValue = 600.0)), "2026-10-01T00:00:00Z", option)
+        assertEquals("manual", manual?.per100Litres?.entryMethod)
+        assertEquals(emptyList<String>(), manual?.per100Litres?.rateIds)
+    }
+
+    @Test fun internationalRawRegistrationSchemeDoesNotBlockHydration() {
+        val detail = SupabaseClient.json.decodeFromString<ChemicalInfoService.ChemicalStructuredLookup>("""{"product_name":"US input","registration":{"country_code":"US","scheme":"epa","raw_scheme":"epa","registration_number":"123-456"}}""")
+        assertEquals("epa", detail.registration?.rawScheme)
+        assertEquals("US", detail.registration?.countryCode)
+    }
+
     @Test fun manufacturerBeastEnvelopePrefillsIndependentRateBases() {
         val rates = ViticultureRates(
             perHectare = listOf(
@@ -40,17 +65,13 @@ class ChemicalSearchV2Test {
             per100Litres = listOf(ChemicalLabelRate(basis = ChemicalLabelRateBasis.PER_100_LITRES, value = 100.0, unit = "mL", rawText = "100 mL/100 L")),
         )
         val summary = ChemicalSearchV2OperationalDefaults.manufacturerEnvelope(rates)
-        val area = summary[ChemicalDefaultRateBasis.PER_HECTARE]!!
-        assertEquals(ChemicalLabelRateBasis.RANGE_PER_HECTARE, area.basis)
-        assertEquals(1.0, area.minValue)
-        assertEquals(5.0, area.maxValue)
+        assertNull(summary[ChemicalDefaultRateBasis.PER_HECTARE])
         assertEquals(100.0, summary[ChemicalDefaultRateBasis.PER_100_LITRES]?.value)
         val defaults = ChemicalSearchV2OperationalDefaults.storedDefaults(summary.values.toList(), "2026-09-27T00:00:00Z")
-        assertEquals(1.0, defaults?.perHectare?.minValue)
-        assertEquals(5.0, defaults?.perHectare?.maxValue)
+        assertNull(defaults?.perHectare)
         assertTrue(ChemicalSearchV2OperationalDefaults.manufacturerEnvelope(ViticultureRates(
             perHectare = listOf(ChemicalLabelRate(basis = ChemicalLabelRateBasis.PER_HECTARE, value = 5.0, unit = "L")),
-        )).isEmpty())
+        )).size == 1)
     }
 
     @Test fun registerFirstDiscoveryKeepsCropBeastButNotVeterinaryOrSuggestions() {

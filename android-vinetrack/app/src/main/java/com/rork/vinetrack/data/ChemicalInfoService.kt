@@ -307,9 +307,9 @@ class ChemicalInfoService {
     @Serializable
     private data class LabelIdentityResponse(@SerialName("product_name") val productName: String? = null)
 
-    suspend fun identifyLabel(ocrText: String): String? = withContext(Dispatchers.IO) {
+    suspend fun identifyLabel(ocrText: String, country: String = ""): String? = withContext(Dispatchers.IO) {
         SupabaseClient.json.decodeFromString<LabelIdentityResponse>(
-            withTimeout(30_000L) { postEdge(mapOf("action" to "identify_label", "ocrText" to ocrText, "country" to "AU")) },
+            withTimeout(30_000L) { postEdge(mapOf("action" to "identify_label", "ocrText" to ocrText, "country" to country)) },
         ).productName
     }
 
@@ -341,16 +341,16 @@ class ChemicalInfoService {
         WebV2Candidate(row.name, row.brand, row.activeIngredient, row.productCategory, row.registrationNumber)
     }
 
-    suspend fun lookupOnlineCandidates(query: String): WebV2Lookup = lookupWebV2(query)
+    suspend fun lookupOnlineCandidates(query: String, country: String = ""): WebV2Lookup = lookupWebV2(query, country = country)
 
-    suspend fun lookupSelectedOnlineCandidate(candidate: WebV2Candidate, query: String): WebV2Lookup =
-        lookupWebV2(query, candidate.name)
+    suspend fun lookupSelectedOnlineCandidate(candidate: WebV2Candidate, query: String, country: String = ""): WebV2Lookup =
+        lookupWebV2(query, candidate.name, country)
 
-    suspend fun lookupWebV2(query: String, selectedName: String? = null): WebV2Lookup = withContext(Dispatchers.IO) {
+    suspend fun lookupWebV2(query: String, selectedName: String? = null, country: String = ""): WebV2Lookup = withContext(Dispatchers.IO) {
         val payload = buildMap {
             put("action", "web_lookup_v2")
             put("query", query)
-            put("country", "AU")
+            put("country", country)
             if (selectedName != null) put("selectedName", selectedName)
         }
         SupabaseClient.json.decodeFromString<WebV2Lookup>(
@@ -358,9 +358,35 @@ class ChemicalInfoService {
         )
     }
 
-    suspend fun discoverLabel(query: String): ChemicalStructuredLookup = withContext(Dispatchers.IO) {
+    /** Exact database-only hydration; candidate permission is enforced by the server. */
+    suspend fun hydrateMaster(selected: com.rork.vinetrack.data.chemical.MasterChemicalV2, country: String): ChemicalStructuredLookup = withContext(Dispatchers.IO) {
+        val payload = buildMap {
+            put("action", if (selected.reviewStatus == "candidate") "structured_master_preview" else "structured")
+            put("master_chemical_id", selected.id)
+            put("country", selected.registrationCountry?.takeIf(String::isNotBlank) ?: country)
+            selected.registrationScheme?.takeIf(String::isNotBlank)?.let { put("registrationScheme", it) }
+            selected.registrationNumber?.takeIf(String::isNotBlank)?.let { put("registrationNumber", it) }
+        }
+        val detail = SupabaseClient.json.decodeFromString<ChemicalStructuredLookup>(withTimeout(15_000L) { postEdge(payload) })
+        if (detail.master?.masterChemicalId != selected.id || detail.master?.catalogueStatus != selected.reviewStatus)
+            throw LookupException("Master identity mismatch")
+        val registration = detail.registration
+        if (registration != null) {
+            val expectedCountry = selected.registrationCountry.orEmpty()
+            if (expectedCountry.isNotBlank() && registration.countryCode.isNotBlank() &&
+                ChemicalRegistration.normaliseCountry(expectedCountry) != ChemicalRegistration.normaliseCountry(registration.countryCode))
+                throw LookupException("Master jurisdiction mismatch")
+            if (!selected.registrationNumber.isNullOrBlank() && !registration.registrationNumber.isNullOrBlank() &&
+                !selected.registrationNumber.equals(registration.registrationNumber, ignoreCase = true)) throw LookupException("Master registration mismatch")
+            if (!selected.registrationScheme.isNullOrBlank() && registration.scheme != null &&
+                !selected.registrationScheme.equals(registration.rawScheme ?: registration.scheme.raw, ignoreCase = true)) throw LookupException("Master registration mismatch")
+        }
+        detail
+    }
+
+    suspend fun discoverLabel(query: String, country: String = ""): ChemicalStructuredLookup = withContext(Dispatchers.IO) {
         SupabaseClient.json.decodeFromString<ChemicalStructuredLookup>(
-            withTimeout(75_000L) { postEdge(mapOf("action" to "discover_label", "query" to query, "country" to "AU")) },
+            withTimeout(75_000L) { postEdge(mapOf("action" to "discover_label", "query" to query, "country" to country)) },
         )
     }
 

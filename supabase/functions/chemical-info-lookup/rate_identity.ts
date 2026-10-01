@@ -58,6 +58,8 @@ export interface RateIdentityProduct {
   country?: string | null;
   scheme?: string | null;
   registration_number?: string | null;
+  /** Explicit product-bound accepted manufacturer document identity, never an AI lead. */
+  source_identity?: string | null;
 }
 
 /**
@@ -192,10 +194,10 @@ export interface DirectionSeed {
  * Whether a product identity is LOCKED — confirmed enough to bind an identity
  * that a client may persist.
  *
- * Requires all three canonical product fields. A research lead carrying only a
- * guessed number is not locked, and neither is a register outage that left the
- * scheme unknown: in both cases the honest answer is to mint nothing, because
- * an identity minted against the wrong product is worse than no identity.
+ * Requires complete registration metadata OR an explicitly accepted, product-bound
+ * manufacturer document identity. A research lead or guessed number alone never locks.
+ * The source lock is supplied only by the verified manufacturer handler, not decoded
+ * from a caller's request. Existing registration hashes remain unchanged.
  */
 export function isLockedProduct(
   product: RateIdentityProduct | null | undefined,
@@ -205,7 +207,7 @@ export function isLockedProduct(
     normaliseIdentityText(product.country) &&
       normaliseIdentityText(product.scheme) &&
       normaliseIdentityText(product.registration_number),
-  );
+  ) || Boolean(product.source_identity?.trim());
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +292,7 @@ export function canonicalDirectionIdentityInput(
     `country=${normaliseIdentityToken(product?.country)}`,
     `scheme=${normaliseIdentityToken(product?.scheme)}`,
     `number=${normaliseIdentityToken(product?.registration_number)}`,
+    ...(product?.source_identity ? [`source=${product.source_identity.trim()}`] : []),
     `crop=${orDash(normaliseIdentityText(direction?.crop))}`,
     `targets=${targets.join("\u001e") || "-"}`,
     `condition=${orDash(normaliseIdentityText(direction?.condition))}`,
@@ -338,6 +341,7 @@ export function canonicalRateIdentityInput(
     `country=${normaliseIdentityToken(product?.country)}`,
     `scheme=${normaliseIdentityToken(product?.scheme)}`,
     `number=${normaliseIdentityToken(product?.registration_number)}`,
+    ...(product?.source_identity ? [`source=${product.source_identity.trim()}`] : []),
     // The direction, never the projected target.
     `direction=${orDash(normaliseIdentityText(directionId))}`,
     `basis=${basis}`,
@@ -493,7 +497,7 @@ export function assignRateIds(
  * three are stamped; because minting is deterministic, a shared object simply
  * receives the same value twice.
  */
-export function applyRateIdentities(structured: unknown): void {
+export function applyRateIdentities(structured: unknown, acceptedSource?: { url: string; productName: string }): void {
   const s = structured as Record<string, unknown> | null;
   if (!s || typeof s !== "object") return;
 
@@ -504,6 +508,11 @@ export function applyRateIdentities(structured: unknown): void {
     registration_number: (registration?.registration_number as string | undefined) ?? null,
   };
 
+  // Existing complete registration identities retain byte-for-byte hashes.
+  // Only the verified manufacturer handler supplies this additional product lock.
+  if (!isLockedProduct(product) && acceptedSource?.productName.trim() && /^https?:\/\//i.test(acceptedSource.url)) {
+    product.source_identity = `${acceptedSource.url.trim()}#${acceptedSource.productName.trim().toLowerCase()}`;
+  }
   assignRateIds(s.registered_uses, product);
   assignRateIds(s.grapevine_uses, product);
   assignRateIds(s.other_crop_uses, product);

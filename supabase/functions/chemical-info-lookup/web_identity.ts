@@ -10,6 +10,7 @@ export interface WebIdentity {
   name: string;
   registrant: string;
   registrationNumber: string | null;
+  registrationScheme?: string | null;
   category: string | null;
   activeNames: string;
   pageUrls: string[];
@@ -60,24 +61,19 @@ export async function findWebMasterIdentities(
   const needle = query.trim().toLowerCase();
   const safe = needle.replace(/[\\%_*,().]/g, "").replace(/\s+/g, " ");
   if (safe.length < 2) return [];
-  const rows = await select(`select=registered_product_name,registration_number,registrant,registration_country,registration_scheme,product_category,active_ingredients,resistance_classification_state,verification_status,verification_sources,source_kind,source_reference,review_status&registration_country=eq.${encodeURIComponent(country)}&registered_product_name=ilike.${encodeURIComponent(`*${safe}*`)}&limit=25`) ?? [];
+  const rows = await select(`select=registered_product_name,registration_number,registrant,registration_country,registration_scheme,product_category,active_ingredients,resistance_classification_state,verification_status,verification_sources,source_kind,source_reference,review_status&review_status=eq.approved&registration_country=eq.${encodeURIComponent(country)}&registered_product_name=ilike.${encodeURIComponent(`*${safe}*`)}&limit=25`) ?? [];
   return rows.filter((row) => {
     const name = String(row.registered_product_name ?? "");
     const category = String(row.product_category ?? "");
     return String(row.registration_country).toUpperCase() === country &&
-      String(row.registration_scheme).toLowerCase() === "apvma" &&
-      String(row.registration_number ?? "").trim().length > 0 &&
-      ["approved", "candidate"].includes(String(row.review_status)) &&
-      ["verified", "partially_verified"].includes(String(row.verification_status)) &&
-      CROP.test(`${name} ${category}`) && !ANIMAL.test(`${name} ${category}`) &&
-      (String(row.source_kind) === "official_register" ||
-        (Array.isArray(row.verification_sources) && row.verification_sources.some((s: unknown) =>
-          typeof s === "object" && s !== null && (s as Record<string, unknown>).kind === "official_register")));
+      row.review_status === "approved" &&
+      CROP.test(`${name} ${category}`) && !ANIMAL.test(`${name} ${category}`);
   }).map((row) => {
     const urls = manufacturerUrlsFromMaster(row, country);
     const actives = Array.isArray(row.active_ingredients) ? row.active_ingredients : [];
     return { name: String(row.registered_product_name), registrant: String(row.registrant ?? ""),
-      registrationNumber: String(row.registration_number), category: String(row.product_category ?? "") || null,
+      registrationNumber: String(row.registration_number ?? "").trim() || null,
+      registrationScheme: String(row.registration_scheme ?? "").trim() || null, category: String(row.product_category ?? "") || null,
       activeNames: actives.map((a: unknown) => typeof a === "object" && a !== null ? String((a as Record<string, unknown>).name ?? "") : "").filter(Boolean).join(", "),
       pageUrls: urls.pages, labelUrls: urls.labels,
       resistanceState: ["classified", "not_applicable", "unresolved"].includes(String(row.resistance_classification_state))

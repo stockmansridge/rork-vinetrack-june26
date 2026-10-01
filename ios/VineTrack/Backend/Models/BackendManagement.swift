@@ -437,7 +437,7 @@ extension BackendSavedChemical {
             activityGroupScheme: intel?.activityGroups.first?.scheme.rawValue,
             resistanceClassificationState: intel?.resistanceClassificationState ?? .unresolved,
             registrationCountry: intel?.registration?.countryCode,
-            registrationScheme: intel?.registration?.scheme?.rawValue,
+            registrationScheme: intel?.registration?.rawScheme ?? intel?.registration?.scheme?.rawValue,
             registrationNumber: intel?.registration?.registrationNumber,
             registrant: intel?.registration?.registrant,
             registeredProductName: intel?.registration?.registeredProductName,
@@ -479,17 +479,20 @@ extension BackendSavedChemical {
         let uses = registeredUses ?? []
         let hasRegistration = (registrationNumber?.isEmpty == false)
             || (registrationCountry?.isEmpty == false)
+            || (registrant?.isEmpty == false) || (registeredProductName?.isEmpty == false)
+            || (labelReference?.isEmpty == false)
         guard !actives.isEmpty || !uses.isEmpty || hasRegistration else { return nil }
 
         let registration: ChemicalRegistration? = hasRegistration
             ? ChemicalRegistration(
                 countryCode: registrationCountry ?? "",
-                scheme: registrationScheme.flatMap { ChemicalRegistrationScheme(rawValue: $0) },
+                scheme: registrationScheme.flatMap { ChemicalRegistrationScheme(rawValue: $0) ?? .other },
                 registrationNumber: registrationNumber,
                 registrant: registrant,
                 registeredProductName: registeredProductName,
                 labelReference: labelReference,
-                labelVersion: labelVersion
+                labelVersion: labelVersion,
+                rawScheme: registrationScheme
             )
             : nil
 

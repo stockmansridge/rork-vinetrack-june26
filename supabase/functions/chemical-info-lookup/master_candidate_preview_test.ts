@@ -94,11 +94,18 @@ Deno.test("exact candidate preview: authorization, identities, grouped rates and
       }
       admin = true;
     });
-    await t.step("missing exact ID or jurisdiction rejected, with no Australia fallback", async () => {
-      for (const patch of [{ master_chemical_id: undefined }, { master_chemical_id: "not-an-id" }, { country: "" }, { country: "unrecognised country" }]) {
+    await t.step("missing exact ID rejected", async () => {
+      for (const patch of [{ master_chemical_id: undefined }, { master_chemical_id: "not-an-id" }]) {
         calls.length = 0;
         assertEquals((await request(patch)).status, 400);
         assert(!calls.includes("/rest/v1/master_chemicals"));
+      }
+    });
+    await t.step("missing or unknown jurisdiction never defaults to Australia or blocks exact identity", async () => {
+      for (const country of ["", "unrecognised country"]) {
+        const response = await request({ country });
+        assertEquals(response.status, 200);
+        assertEquals((await response.json()).jurisdiction.resolved_country_code, null);
       }
     });
     await t.step("returned Master ID mismatch rejected", async () => {

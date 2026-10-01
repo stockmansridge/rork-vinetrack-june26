@@ -607,7 +607,7 @@ function buildStructuredResponse(
     sdsUrl: parsed?.sdsURL ?? parsed?.sds_url,
   });
 
-  const registration = registrationNumber || countryCode
+  const registration = registrationNumber || countryCode || parseString(parsed?.registrant) || labelRefs.label_reference || labelRefs.manufacturer_product_url
     ? {
       country_code: countryCode,
       scheme: registrationNumber ? registrationSchemeForCode(countryCode || null) : null,
@@ -786,7 +786,7 @@ const REVIEW_PREVIEWS_URL = (() => {
 })();
 const MASTER_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const WEB_V2_CACHE_URL = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "") + "/rest/v1/chemical_web_v2_cache";
-const WEB_V2_CACHE_VERSION = "manufacturer-v2-2-resistance";
+const WEB_V2_CACHE_VERSION = "manufacturer-v2-3-mvp-approved-only";
 
 function webV2CacheKey(country: string, name: string): string {
   return `${WEB_V2_CACHE_VERSION}:${country}:${name.trim().toLowerCase().replace(/\s+/g, " ")}`;
@@ -1430,7 +1430,7 @@ Deno.serve(async (req: Request) => {
       }
       const query = backfillRow?.registered_product_name ?? (typeof body?.query === "string" ? body.query.trim() : "");
       if (query.length < 2 || query.length > 200) return json({ error: "Enter a product name" }, 400);
-      if (!countryCode) return json({ error: "Select a vineyard country" }, 422);
+      // Missing/unknown jurisdiction stays unknown; it never becomes Australia.
       const selectedName = backfillRow?.registered_product_name ?? (typeof body?.selectedName === "string" ? body.selectedName.trim() : "");
       const subject = selectedName || query;
       const cachedWeb = backfill ? null : await readWebV2Cache(countryCode, subject);
@@ -1440,7 +1440,17 @@ Deno.serve(async (req: Request) => {
         return backfill ? await finishBackfill(cachedWeb) : json(cachedWeb);
       const searchStarted = Date.now();
       // Identity lookup does NOT apply Master vineyard completeness or approval gates.
-      const identities = backfillRow ? [] : await findWebMasterIdentities(masterSelect, subject, countryCode);
+      let identities = backfillRow ? [] : await findWebMasterIdentities(masterSelect, subject, countryCode);
+      if (!backfill && !identities.length && jurEnv.register_support === "supported") {
+        try {
+          const registerRows = await discoverRegisterCandidates(countryCode, subject, { fetchFn: fetch, now: () => new Date() });
+          identities = registerRows.filter((row) => !/\b(cattle|horse|sheep|livestock|veterinary|drench)\b/i.test(`${row.registered_product_name} ${row.product_category ?? ""}`))
+            .map((row) => ({ name: row.registered_product_name, registrant: row.registrant ?? "",
+              registrationNumber: row.registration_number, registrationScheme: registrationSchemeForCode(countryCode),
+              category: row.product_category ?? null, activeNames: row.actives_summary,
+              pageUrls: [], labelUrls: [] }));
+        } catch { /* Optional register help never blocks manufacturer/source discovery. */ }
+      }
       let identity: WebIdentity | null = backfillRow ? lockedWebIdentity(backfillRow) : selectedName
         ? selectedIdentity(identities, selectedName)
         : identities.length === 1 ? identities[0] : null;
@@ -1756,7 +1766,8 @@ Deno.serve(async (req: Request) => {
       // This number was read from the accepted label, not resolved through the register.
       // Keep scheme null so SavedChemical provenance remains label_lookup.
       if (detail.registration) {
-        detail.registration.scheme = backfill ? backfillRow!.registration_scheme : null;
+        detail.registration.scheme = backfill ? backfillRow!.registration_scheme : identity.registrationScheme ?? null;
+        detail.registration.raw_scheme = detail.registration.scheme;
         detail.registration.label_reference = label;
         detail.registration.manufacturer_label_url = label;
         detail.registration.regulator_label_url = null;
@@ -1782,12 +1793,12 @@ Deno.serve(async (req: Request) => {
           ...(detail.registered_uses.length ? { registered_uses: "manufacturer_label" } : {}) };
       }
       detail.match_source = "ai_candidate";
-      if (backfill) applyRateIdentities(detail); // original label direction seeds still present here
+      if (label) applyRateIdentities(detail, { url: label, productName: canonicalName }); // Accepted product-bound source; not manual typing.
       stripStructuredDirectionSeeds(detail);
       applyDefaultRateOptions(detail);
       const totalMs = Date.now() - searchStarted;
       const vineyardRates = vineyardRateSummary(detail.registered_uses as Array<Record<string, unknown>>);
-      if (!vineyardRates.length && !backfill) return null;
+      // A found product without rates remains saveable with an operator-entered rate.
       const payload = { candidates, detail, label_printed_registration_number: printedApproval,
         resistance_classification_state: detail.resistance_classification_state,
         vineyard_rate_summary: vineyardRates,
@@ -2288,9 +2299,8 @@ Deno.serve(async (req: Request) => {
         const masterId = typeof body?.master_chemical_id === "string" ? body.master_chemical_id.trim().toLowerCase() : "";
         const scheme = typeof body?.registrationScheme === "string" ? body.registrationScheme.trim().toLowerCase() : "";
         const number = typeof body?.registrationNumber === "string" ? body.registrationNumber.trim().toUpperCase() : "";
-        if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(masterId) ||
-          !countryCode) {
-          return json({ error: "Exact Master ID and country required" }, 400);
+        if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(masterId)) {
+          return json({ error: "Exact Master ID required" }, 400);
         }
         if ((body?.registrationScheme != null && typeof body.registrationScheme !== "string") ||
           (body?.registrationNumber != null && typeof body.registrationNumber !== "string")) {
