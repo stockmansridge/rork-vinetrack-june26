@@ -85,6 +85,7 @@ declare
   v_actors uuid[]; v_all_sprays uuid[]; v_rejected uuid[];
   v_index integer; v_state text; v_message text; v_result jsonb; v_retry jsonb;
   v_before jsonb; v_after jsonb; v_rejected_before jsonb;
+  v_paused_trip_before jsonb;
   v_trips_before jsonb; v_actuals_before jsonb; v_jobs_before jsonb;
   v_weather_before jsonb; v_costs_before jsonb; v_manual_ops_before jsonb;
   v_guard_before text; v_guard_triggers_before jsonb;
@@ -198,7 +199,7 @@ begin
   values(v_vineyard, v_ended_trip, 2026, v_block, 'T259 Block', 30, 10, 20, 60, 'area', 'complete');
 
   v_rejected := array[v_template,v_deleted,v_active,v_unfinished,v_missing,v_dead_link,
-    v_cross_link,v_bad_link,v_paused_link,v_manual_trip_link,v_manual,v_manual_id_only];
+    v_cross_link,v_bad_link,v_manual_trip_link,v_manual,v_manual_id_only];
   select jsonb_agg(to_jsonb(r) order by r.id) into v_rejected_before
     from public.spray_records r where r.id = any(v_rejected);
   select jsonb_agg(to_jsonb(t) order by t.id) into v_trips_before
@@ -266,7 +267,24 @@ begin
   perform pg_temp.t259_expect_error(v_dead_link, true, '55000', 'LINKED_TRIP_UNAVAILABLE');
   perform pg_temp.t259_expect_error(v_cross_link, true, '55000', 'LINKED_TRIP_VINEYARD_MISMATCH');
   perform pg_temp.t259_expect_error(v_bad_link, true, '55000', 'LINKED_TRIP_INCONSISTENT');
-  perform pg_temp.t259_expect_error(v_paused_link, true, '55000', 'LINKED_TRIP_INCONSISTENT');
+  -- An ended, inactive Trip remains authoritative despite a stale paused flag.
+  select to_jsonb(t) into v_paused_trip_before from public.trips t where t.id = v_paused_trip;
+  if (v_paused_trip_before->>'end_time')::timestamptz is distinct from v_end
+     or (v_paused_trip_before->>'is_active')::boolean is distinct from false
+     or (v_paused_trip_before->>'is_paused')::boolean is distinct from true then
+    raise exception 'Paused-ended Trip fixture does not match the completion scenario';
+  end if;
+  v_result := public.complete_spray_record(v_paused_link, false);
+  select to_jsonb(r) into v_after from public.spray_records r where r.id = v_paused_link;
+  if (v_after->>'end_time')::timestamptz is distinct from v_end
+     or (v_result->>'endTime')::timestamptz is distinct from v_end
+     or v_result->>'completionSource' is distinct from 'trip_end' then
+    raise exception 'Paused-ended Trip did not supply exact Spray completion';
+  end if;
+  select to_jsonb(t) into v_after from public.trips t where t.id = v_paused_trip;
+  if v_after is distinct from v_paused_trip_before then
+    raise exception 'Paused-ended Trip row mutated during Spray completion';
+  end if;
   perform pg_temp.t259_expect_error(v_manual_trip_link, true, '55000', 'LINKED_TRIP_INCONSISTENT');
 
   -- T8/12/13/15/16: exact microsecond Trip completion; strict full-row comparison

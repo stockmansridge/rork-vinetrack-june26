@@ -1,4 +1,4 @@
--- 259: DRAFT FOR REVIEW ONLY. Do not apply until explicitly approved.
+-- 259: Server-authoritative completion of operational Spray records.
 -- Narrow, online/server-confirmed completion of an existing operational Spray.
 -- Prerequisites: 007 (sync), 232 (manual provenance/guard). No schema/backfill.
 -- Tests: sql/tests/259_complete_spray_record_tests.sql (isolated DB only).
@@ -78,7 +78,6 @@ begin
       -- Reject contradictory ended states, without repairing historical data.
       -- A missing historical start is not itself grounds to invent a start.
       if v_trip.entry_source = 'manual' or v_trip.manual_entry_id is not null
-         or v_trip.is_paused is true
          or not isfinite(v_trip.end_time)
          or (v_trip.start_time is not null and v_trip.end_time < v_trip.start_time) then
         raise exception 'LINKED_TRIP_INCONSISTENT' using errcode = '55000';
