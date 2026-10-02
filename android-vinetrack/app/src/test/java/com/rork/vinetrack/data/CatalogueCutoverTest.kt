@@ -35,6 +35,37 @@ class CatalogueCutoverTest {
         assertEquals(listOf("Powdery mildew", "Downy mildew", "Eutypa dieback"), result.targets)
         assertTrue(result.targets.joinToString().contains("downy", true)); assertEquals("FRAC 3", result.groupText)
     }
+    @Test fun inventoryContainersKeepPhysicalStockSeparate() {
+        val fields = CatalogueInventoryContainer.fields(1.0, 20.0, "L")
+        val stock = CatalogueInventoryContainer.stockFields(12.0, "L")
+        assertEquals(20.0, fields.getValue("p_container_size").jsonPrimitive.double, 0.0)
+        assertEquals(1.0, fields.getValue("p_container_count").jsonPrimitive.double, 0.0)
+        assertEquals(12.0, stock.getValue("p_current_quantity").jsonPrimitive.double, 0.0)
+        assertEquals("L", stock.getValue("p_current_unit").jsonPrimitive.content)
+        assertFalse(fields.containsKey("p_quantity")); assertFalse(fields.containsKey("p_percent_remaining"))
+        assertEquals(60.0, row("""{"current_quantity":12,"percent_remaining":60}""").number("percent_remaining")!!, 0.0)
+        assertEquals("2 × 20 L = 40 L total", CatalogueInventoryContainer.preview(2.0, 20.0, "L"))
+        assertEquals(listOf("kg", "g"), CatalogueInventoryContainer.units("solid", ""))
+        assertEquals(listOf("L", "mL"), CatalogueInventoryContainer.units("liquid", ""))
+        assertEquals(listOf("kg", "g"), CatalogueInventoryContainer.units("", "g"))
+        assertFalse(CatalogueInventoryContainer.valid(1.5, 20.0)); assertFalse(CatalogueInventoryContainer.valid(1.0, 0.0))
+    }
+    @Test fun inventoryV2HistoryAndLegacyFallback() {
+        assertEquals("2 × 20 L · 40 L total", CatalogueInventoryContainer.historyText(row("""{"container_count":2,"container_size":20,"container_unit":"L","quantity":40,"unit":"L"}""")))
+        assertEquals("8 kg total", CatalogueInventoryContainer.historyText(row("""{"container_count":null,"quantity":8,"unit":"kg"}""")))
+        assertEquals("chemical_inventory_purchase_history_v2", CatalogueInventoryMutation.HISTORY)
+    }
+    @Test fun inventoryV2AdminGateAndCompatibility() = kotlinx.coroutines.runBlocking {
+        var writes = 0; val refreshed = mutableListOf<String>()
+        for (operation in listOf(CatalogueInventoryMutation.PURCHASE, CatalogueInventoryMutation.STOCKTAKE)) {
+            try { CatalogueInventoryMutation.perform(false, operation, "affected", { writes++; Unit }, { refreshed.add(it); Unit }) } catch (_: Exception) { }
+            assertEquals(0, writes); assertTrue(refreshed.isEmpty())
+        }
+        CatalogueInventoryMutation.perform(true, CatalogueInventoryMutation.PURCHASE, "affected", { writes++; Unit }, { refreshed.add(it); Unit })
+        assertEquals(1, writes); assertEquals(listOf("affected"), refreshed)
+        assertTrue("chemical_inventory_record_purchase" in CatalogueInventoryMutation.operations)
+        assertTrue("chemical_inventory_record_stocktake" in CatalogueInventoryMutation.operations)
+    }
     @Test fun `unknown inventory is not zero and stock value is backend supplied`() {
         val unknown = row("""{"tracking_status":"needs_opening_stock","current_quantity":null,"estimated_stock_value":null,"out_of_stock":false}""")
         assertEquals("Opening stock not set", unknown.inventoryStatus); assertNull(unknown.number("current_quantity")); assertNull(unknown.number("estimated_stock_value"))

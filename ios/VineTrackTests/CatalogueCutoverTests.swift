@@ -33,6 +33,40 @@ import Testing
         #expect(product.groupText == "FRAC 3")
         #expect(product.targets.joined(separator: " ").localizedStandardContains("powdery"))
     }
+    @Test func inventoryContainersKeepPhysicalStockSeparate() throws {
+        let fields = CatalogueInventoryContainer.fields(count: 1, size: 20, unit: "L")
+        let stock = CatalogueInventoryContainer.stockFields(quantity: 12, unit: "L")
+        #expect(fields["p_container_size"] == .number(20))
+        #expect(fields["p_container_count"] == .number(1))
+        #expect(stock["p_current_quantity"] == .number(12))
+        #expect(stock["p_current_unit"] == .string("L"))
+        #expect(fields["p_quantity"] == nil && fields["p_percent_remaining"] == nil)
+        #expect(try row(#"{"current_quantity":12,"percent_remaining":60}"#).number("percent_remaining") == 60)
+        #expect(CatalogueInventoryContainer.preview(count: 2, size: 20, unit: "L") == "2 × 20 L = 40 L total")
+        #expect(CatalogueInventoryContainer.units(form: "solid", packUnit: "") == ["kg", "g"])
+        #expect(CatalogueInventoryContainer.units(form: "liquid", packUnit: "") == ["L", "mL"])
+        #expect(CatalogueInventoryContainer.units(form: "", packUnit: "g") == ["kg", "g"])
+        #expect(!CatalogueInventoryContainer.valid(count: 1.5, size: 20))
+        #expect(!CatalogueInventoryContainer.valid(count: 1, size: 0))
+    }
+    @Test func inventoryV2HistoryAndLegacyFallback() throws {
+        let modern = try row(#"{"container_count":2,"container_size":20,"container_unit":"L","quantity":40,"unit":"L"}"#)
+        #expect(CatalogueInventoryContainer.historyText(modern) == "2 × 20 L · 40 L total")
+        let legacy = try row(#"{"container_count":null,"quantity":8,"unit":"kg"}"#)
+        #expect(CatalogueInventoryContainer.historyText(legacy) == "8 kg total")
+        #expect(CatalogueInventoryMutation.history == "chemical_inventory_purchase_history_v2")
+    }
+    @Test func inventoryV2AdminGateAndCompatibility() async throws {
+        let id = UUID(); var writes = 0; var refreshed: [UUID] = []
+        for operation in [CatalogueInventoryMutation.purchase, CatalogueInventoryMutation.stocktake] {
+            do { try await CatalogueInventoryMutation.perform(systemAdmin: false, operation: operation, chemicalId: id, mutate: { writes += 1 }, refresh: { refreshed.append($0) }) } catch { }
+            #expect(writes == 0 && refreshed.isEmpty)
+        }
+        try await CatalogueInventoryMutation.perform(systemAdmin: true, operation: CatalogueInventoryMutation.purchase, chemicalId: id, mutate: { writes += 1 }, refresh: { refreshed.append($0) })
+        #expect(writes == 1 && refreshed == [id])
+        #expect(CatalogueInventoryMutation.operations.contains("chemical_inventory_record_purchase"))
+        #expect(CatalogueInventoryMutation.operations.contains("chemical_inventory_record_stocktake"))
+    }
     @Test func inventoryUnknownIsNotZeroAndUsesServedValue() throws {
         let unknown = try row(#"{"tracking_status":"needs_opening_stock","current_quantity":null,"estimated_stock_value":null,"out_of_stock":false}"#)
         #expect(unknown.inventoryStatus == "Opening stock not set")
