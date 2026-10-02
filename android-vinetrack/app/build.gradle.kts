@@ -357,10 +357,8 @@ if (providers.gradleProperty("programPDFFocusedTests").orNull == "true") {
         testLogging { events("passed", "failed", "skipped") }
     }
     afterEvaluate {
-        listOf("compileDebugUnitTestKotlin", "compileReleaseUnitTestKotlin").forEach { taskName ->
-            tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>(taskName) {
-                setSource(fileTree("src/test/java") { include("**/ProgramGroupedPDFTest.kt") })
-            }
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") { include("**/ProgramGroupedPDFTest.kt") })
         }
     }
 }

@@ -41,7 +41,6 @@ object SprayProgramReferenceExporter {
         val blocks = ProgramStepExportBlock.grouped(rows)
         val columns = ProgramPDFLayout.columns(blocks)
         val widths = ProgramPDFLayout.widths(columns).map { it.toFloat() }
-        val document = PdfDocument()
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         val green = Color.rgb(41, 74, 56)
         fun configure(size: Float, bold: Boolean = false, color: Int = Color.BLACK) {
@@ -58,6 +57,7 @@ object SprayProgramReferenceExporter {
         val headerTop = 50f + title.size * 20f
         val bodyTop = headerTop + 24f
         require(bodyTop < 508f) { "The vineyard heading is too long to fit this report." }
+        val document = PdfDocument()
         var pageNumber = 0
         var page: PdfDocument.Page? = null
         var y = bodyTop
