@@ -18,8 +18,9 @@ data class CatalogueRow(val fields: JsonObject) {
     val groupText: String get() = listOf(text("activity_group_scheme")?.uppercase().orEmpty(), strings("activity_groups").joinToString(" + ")).filter { it.isNotBlank() }.joinToString(" ")
     val inventoryStatus: String get() = when {
         text("tracking_status") == "needs_opening_stock" -> "Opening stock not set"
-        bool("out_of_stock") -> "Out of stock"
-        bool("low_stock") -> "Low stock"
+        text("tracking_status") == "finished" -> "Finished"
+        text("tracking_status") == "out_of_stock" || bool("out_of_stock") -> "Out of stock"
+        text("tracking_status") == "low_stock" || bool("low_stock") -> "Low stock"
         else -> "In stock"
     }
     fun rateRows(key: String): List<CatalogueRow> = (fields["default_rate_options"] as? JsonObject)?.let { CatalogueRow(it).rows(key) }.orEmpty()

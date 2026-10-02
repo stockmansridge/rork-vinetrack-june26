@@ -7,11 +7,12 @@ struct CatalogueSavedChemicalView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                CatalogueLabelView(path: revision?.text("front_label_image_path"), labelURL: chemical.labelURL.isEmpty ? revision?.text("manufacturer_label_url") : chemical.labelURL)
+                CatalogueLabelView(path: revision?.text("front_label_image_path"), labelURL: revision?.text("manufacturer_label_url") ?? (chemical.labelURL.isEmpty ? nil : chemical.labelURL))
                 VStack(alignment: .leading) {
                     Text(chemical.name).font(.headline)
                     Text(CatalogueWire.compactManufacturer(chemical.manufacturer)).font(.caption)
-                    Text(revision?.badge ?? "VineTrack catalogue").font(.caption)
+                    if let revision { Text(revision.badge).font(.caption) }
+                    else if chemical.chemicalV3RevisionId != nil { Text("Catalogue information unavailable").font(.caption) }
                     Text(revision?.groupText ?? [chemical.backendActivityGroupScheme?.uppercased() ?? "", chemical.backendActivityGroups.joined(separator: " + ")].filter { !$0.isEmpty }.joined(separator: " "))
                 }
             }

@@ -2182,6 +2182,8 @@ private fun SpraySheet(
             }
             tanks.forEachIndexed { idx, tank ->
                 TankEditor(
+                    vm = vm,
+                    state = state,
                     tank = tank,
                     index = idx,
                     canRemove = tanks.size > 1,
@@ -2444,6 +2446,8 @@ private fun ChemicalNameField(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TankEditor(
+    vm: AppViewModel,
+    state: AppUiState,
     tank: TankDraft,
     index: Int,
     canRemove: Boolean,
@@ -2455,6 +2459,17 @@ private fun TankEditor(
     onRemove: () -> Unit,
 ) {
     val vine = LocalVineColors.current
+    var catalogueTarget by remember { mutableStateOf<ChemicalDraft?>(null) }
+    catalogueTarget?.let { target ->
+        CatalogueSearchSheet(vm, state, onDismiss = { catalogueTarget = null }, onSaved = { saved ->
+            if (tank.chemicals.any { it.id == target.id }) {
+                target.name = saved.displayName
+                target.savedChemicalId = saved.id
+                target.unit = saved.unit
+            }
+            catalogueTarget = null
+        })
+    }
     var presetMenu by remember { mutableStateOf(false) }
     var pendingPreset by remember { mutableStateOf<com.rork.vinetrack.data.model.SavedSprayPreset?>(null) }
 
@@ -2544,6 +2559,7 @@ private fun TankEditor(
         }
         tank.chemicals.forEachIndexed { ci, chem ->
             Spacer(Modifier.height(6.dp))
+            TextButton(onClick = { catalogueTarget = chem }) { Text("Chemical Search") }
             ChemicalNameField(
                 chem = chem,
                 savedChemicals = savedChemicals,

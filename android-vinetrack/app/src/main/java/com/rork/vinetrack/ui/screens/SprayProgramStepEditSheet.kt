@@ -484,6 +484,7 @@ fun SprayProgramStepEditSheet(
         val line = current?.products?.firstOrNull { it.lineKey == lineKey }
         if (current != null && line != null) {
             SprayProductPickerDialog(
+                vm = vm,
                 state = state,
                 currentName = line.trimmedName,
                 onPick = { chemical ->
@@ -757,6 +758,7 @@ private fun ChooserRow(tag: SprayTargetTag, isSelected: Boolean, onSelect: () ->
 /** Explicit product replacement — the operator taps a product in the Chemical Store, and THAT identity is written. */
 @Composable
 private fun SprayProductPickerDialog(
+    vm: AppViewModel,
     state: AppUiState,
     currentName: String,
     onPick: (com.rork.vinetrack.data.model.SavedChemical) -> Unit,
@@ -765,6 +767,10 @@ private fun SprayProductPickerDialog(
 ) {
     val vine = LocalVineColors.current
     var query by remember { mutableStateOf("") }
+    var showCatalogue by remember { mutableStateOf(false) }
+    if (showCatalogue) {
+        CatalogueSearchSheet(vm, state, onDismiss = { showCatalogue = false }, onSaved = onPick)
+    }
     val matches = state.savedChemicals
         .filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
         .sortedBy { it.name.lowercase() }
@@ -782,6 +788,7 @@ private fun SprayProductPickerDialog(
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                     singleLine = true,
                 )
+                TextButton(onClick = { showCatalogue = true }) { Text("Add Chemical") }
                 LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
                     if (currentName.isNotEmpty()) {
                         item {

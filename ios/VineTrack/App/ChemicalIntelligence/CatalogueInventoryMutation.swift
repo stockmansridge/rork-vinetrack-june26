@@ -31,6 +31,10 @@ nonisolated enum CatalogueInventoryContainer {
     static func stockFields(quantity: Double, unit: String) -> [String: SprayReportPayloadV1.JSONValue] {
         ["p_current_quantity": .number(quantity), "p_current_unit": .string(unit)]
     }
+    static func openingQuantity(count: String, size: String, physical: String, edited: Bool) -> String {
+        guard !edited, let count = Double(count), let size = Double(size), valid(count: count, size: size) else { return physical }
+        return number(count * size)
+    }
     static func number(_ value: Double) -> String { value.formatted(.number.grouping(.never).precision(.fractionLength(0...6))) }
     static func preview(count: Double, size: Double, unit: String) -> String {
         "\(number(count)) × \(number(size)) \(unit) = \(number(count * size)) \(unit) total"

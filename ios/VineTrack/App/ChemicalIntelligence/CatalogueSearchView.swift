@@ -87,9 +87,10 @@ struct CatalogueSearchView: View {
             }
             .onChange(of: photo) { _, item in
                 Task {
-                    guard let data = try? await item?.loadTransferable(type: Data.self),
+                    guard let item else { return }
+                    guard let data = try? await item.loadTransferable(type: Data.self),
                           let image = UIImage(data: data), let jpeg = image.jpegData(compressionQuality: 0.85),
-                          let vineyard = store.selectedVineyardId else { return }
+                          let vineyard = store.selectedVineyardId else { model.error = "Unable to read this photo. Please choose another image."; return }
                     await model.discover(vineyard: vineyard, country: country, photo: jpeg)
                 }
             }

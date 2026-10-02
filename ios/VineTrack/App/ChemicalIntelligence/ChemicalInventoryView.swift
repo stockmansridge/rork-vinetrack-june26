@@ -9,6 +9,7 @@ struct ChemicalInventoryView: View {
     @State private var search: String = ""
     @State private var filter: String = "All"
     @State private var error: String?
+    @State private var loading: Bool = false
     private var rows: [SavedChemical] {
         store.savedChemicals.filter { chemical in
             let status = summaries[chemical.id]?.inventoryStatus
@@ -53,18 +54,29 @@ struct ChemicalInventoryView: View {
                             }
                         }.buttonStyle(.plain)
                     }
-                    if let error { Text(error) }
+                    if loading { ProgressView("Loading inventory…") }
+                    if rows.isEmpty && !loading { Text("No chemicals match this search or filter.") }
+                    if let error {
+                        Text(error)
+                        Button("Retry") { Task { await loadSummaries() } }
+                    }
                 }
                 .searchable(text: $search)
                 .task(id: store.selectedVineyardId) {
                     summaries = [:]
-                    for chemical in store.savedChemicals { await refresh(chemical.id) }
+                    await loadSummaries()
                 }
+                .onChange(of: store.savedChemicals.map(\.id)) { _, _ in Task { await loadSummaries() } }
                 .sheet(item: $selected) { chemical in
                     ChemicalInventoryActionsView(chemical: chemical, summary: summaries[chemical.id]) { await refresh(chemical.id) }
                 }
             } else { ContentUnavailableView("Inventory pilot", systemImage: "lock", description: Text("System Admin access required.")) }
         }.navigationTitle("Chemical Inventory")
+    }
+    private func loadSummaries() async {
+        loading = true; error = nil
+        defer { loading = false }
+        for chemical in store.savedChemicals { await refresh(chemical.id) }
     }
     private func refresh(_ id: UUID) async {
         guard admin.isSystemAdmin else { return }

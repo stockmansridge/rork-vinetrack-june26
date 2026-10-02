@@ -865,7 +865,7 @@ struct SprayCalculatorView: View {
                         onSaved: { saved in appendChemicalLine(for: saved) }
                     )
                 } else {
-                    ChemicalMatchFlowView()
+                    ChemicalMatchFlowView(onSaved: { saved in appendChemicalLine(for: saved) })
                 }
             }
             .sheet(isPresented: $showStartConfirmation) {

@@ -4,6 +4,8 @@ import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -28,11 +30,12 @@ import java.io.ByteArrayOutputStream
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss: () -> Unit,
-    onOpenExisting: (SavedChemical) -> Unit = {}, onSaved: (SavedChemical) -> Unit = {}, modifier: Modifier = Modifier) {
+    onOpenExisting: (SavedChemical) -> Unit = {}, onSaved: (SavedChemical) -> Unit = {}, modifier: Modifier = Modifier, prefillQuery: String = "") {
     val model: CatalogueSearchViewModel = viewModel(key = "catalogue:${state.selectedVineyardId}")
     val search by model.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var photoError by remember { mutableStateOf<String?>(null) }
     val vineyard = state.selectedVineyardId ?: return
     val country = ChemicalRegistration.normaliseCountry(state.selectedVineyard?.country.orEmpty())
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -40,10 +43,11 @@ internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss
             val bytes = runCatching { context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }?.let { bitmap ->
                 ByteArrayOutputStream().use { out -> bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out); out.toByteArray() }
             } }.getOrNull()
-            if (bytes != null) model.discover(vineyard, country, bytes)
+            if (bytes != null) { photoError = null; model.discover(vineyard, country, bytes) }
+            else photoError = "Unable to read this photo. Please choose another image."
         }
     }
-    LaunchedEffect(vineyard) { model.restore(vineyard) }
+    LaunchedEffect(vineyard) { model.restore(vineyard); if (prefillQuery.isNotBlank() && model.state.value.context == null) model.query(prefillQuery) }
     ModalBottomSheet(onDismissRequest = onDismiss, modifier = modifier, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("Chemical Search", style = MaterialTheme.typography.headlineSmall)
@@ -92,6 +96,7 @@ internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss
             }
             if (search.busy) CircularProgressIndicator()
             search.error?.let { Text(it) }
+            photoError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             TextButton(onClick = onDismiss) { Text("Close") }
             Spacer(Modifier.height(32.dp))
         }
@@ -104,7 +109,9 @@ internal fun CatalogueLabel(path: String?, labelUrl: String?, modifier: Modifier
     val uriHandler = LocalUriHandler.current
     var image by remember(path) { mutableStateOf<android.graphics.Bitmap?>(null) }
     LaunchedEffect(path) { image = path?.let { runCatching { CatalogueRepository(context).media(it).let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) } }.getOrNull() } }
-    TextButton(onClick = { if (labelUrl?.startsWith("https://") == true) uriHandler.openUri(labelUrl) }, modifier = modifier.size(70.dp, 90.dp)) {
+    TextButton(onClick = { if (labelUrl?.startsWith("https://") == true) uriHandler.openUri(labelUrl) },
+        contentPadding = PaddingValues(0.dp), shape = RoundedCornerShape(8.dp),
+        modifier = modifier.size(64.dp, 82.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))) {
         image?.let { Image(it.asImageBitmap(), "Product label", Modifier.fillMaxSize()) } ?: Icon(Icons.Filled.Science, "No label image")
     }
 }

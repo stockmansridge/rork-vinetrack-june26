@@ -33,6 +33,14 @@ import Testing
         #expect(product.groupText == "FRAC 3")
         #expect(product.targets.joined(separator: " ").localizedStandardContains("powdery"))
     }
+    @Test func openingDefaultsRespectPhysicalOverrideAndFinishedStatus() throws {
+        #expect(CatalogueInventoryContainer.openingQuantity(count: "1", size: "20", physical: "", edited: false) == "20")
+        #expect(CatalogueInventoryContainer.openingQuantity(count: "2", size: "20", physical: "20", edited: false) == "40")
+        #expect(CatalogueInventoryContainer.openingQuantity(count: "2", size: "20", physical: "12", edited: true) == "12")
+        #expect(try row(#"{"tracking_status":"finished","out_of_stock":true}"#).inventoryStatus == "Finished")
+        #expect(try row(#"{"tracking_status":"needs_opening_stock","out_of_stock":true}"#).inventoryStatus == "Opening stock not set")
+        #expect(try row(#"{"tracking_status":"low_stock"}"#).inventoryStatus == "Low stock")
+    }
     @Test func inventoryContainersKeepPhysicalStockSeparate() throws {
         let fields = CatalogueInventoryContainer.fields(count: 1, size: 20, unit: "L")
         let stock = CatalogueInventoryContainer.stockFields(quantity: 12, unit: "L")
@@ -160,6 +168,13 @@ import Testing
         #expect(saved.id == backend.savedId)
         #expect(store.savedChemicals.first?.id == backend.savedId)
         #expect(store.sprayRecords == [spray]); #expect(store.trips == [trip])
+    }
+    @Test(arguments: ["failed", "cancelled"])
+    func unsuccessfulDiscoveryNeverResolvesAnOldRevision(_ status: String) async throws {
+        let job = try row("{\"status\":\"\(status)\",\"revision_id\":\"old-revision\"}")
+        var fetched = false
+        do { _ = try await CatalogueTerminalResolver.result(job: job, fetch: { _ in fetched = true; return job }); Issue.record("Failed job must not produce a result") } catch { }
+        #expect(job.isTerminal && !job.isSuccess && !fetched)
     }
     @Test func ratesRemainSeparate() throws {
         let product = try row(#"{"default_rate_options":{"per_hectare":[{"value":2,"unit":"L"}],"per_100_litres":[{"min_value":150,"max_value":200,"unit":"g"}]}}"#)

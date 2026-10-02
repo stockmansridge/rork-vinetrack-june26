@@ -32,6 +32,11 @@ object CatalogueInventoryContainer {
     fun stockFields(quantity: Double, unit: String) = buildJsonObject {
         put("p_current_quantity", quantity); put("p_current_unit", unit)
     }
+    fun openingQuantity(count: String, size: String, physical: String, edited: Boolean): String {
+        if (edited) return physical
+        val countValue = count.toDoubleOrNull(); val sizeValue = size.toDoubleOrNull()
+        return if (countValue != null && sizeValue != null && valid(countValue, sizeValue)) number(countValue * sizeValue) else physical
+    }
     fun number(value: Double): String = BigDecimal.valueOf(value).stripTrailingZeros().toPlainString()
     fun preview(count: Double, size: Double, unit: String) = "${number(count)} × ${number(size)} $unit = ${number(count * size)} $unit total"
     fun historyText(row: CatalogueRow): String {

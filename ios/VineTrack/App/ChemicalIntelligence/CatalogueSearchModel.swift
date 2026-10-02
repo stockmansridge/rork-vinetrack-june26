@@ -54,7 +54,7 @@ final class CatalogueSearchModel {
     func discover(vineyard: UUID, country: String, photo: Data? = nil) async {
         guard !busy else { return }
         if context != nil { poll(); return }
-        busy = true; error = nil
+        busy = true; error = nil; result = nil; job = nil
         defer { busy = false }
         do {
             let user = try await SupabaseClientProvider.shared.client.auth.session.user.id.uuidString
@@ -92,7 +92,11 @@ final class CatalogueSearchModel {
                             // Persist the presented result BEFORE removing the pending context.
                             try self.persistence.saveOrThrow(exact, key: "chemical_catalogue_result_\(context.userId)_\(context.vineyardId)")
                             self.result = exact
-                        } else { self.error = "Discovery could not finish. You can search again." }
+                        } else {
+                            self.result = nil
+                            self.persistence.remove(key: "chemical_catalogue_result_\(context.userId)_\(context.vineyardId)")
+                            self.error = "Discovery could not finish. You can search again."
+                        }
                         self.persistence.remove(key: self.key(context.userId, context.vineyardId))
                         self.context = nil
                         return

@@ -35,6 +35,14 @@ class CatalogueCutoverTest {
         assertEquals(listOf("Powdery mildew", "Downy mildew", "Eutypa dieback"), result.targets)
         assertTrue(result.targets.joinToString().contains("downy", true)); assertEquals("FRAC 3", result.groupText)
     }
+    @Test fun openingDefaultsRespectPhysicalOverrideAndFinishedStatus() {
+        assertEquals("20", CatalogueInventoryContainer.openingQuantity("1", "20", "", false))
+        assertEquals("40", CatalogueInventoryContainer.openingQuantity("2", "20", "20", false))
+        assertEquals("12", CatalogueInventoryContainer.openingQuantity("2", "20", "12", true))
+        assertEquals("Finished", row("""{"tracking_status":"finished","out_of_stock":true}""").inventoryStatus)
+        assertEquals("Opening stock not set", row("""{"tracking_status":"needs_opening_stock","out_of_stock":true}""").inventoryStatus)
+        assertEquals("Low stock", row("""{"tracking_status":"low_stock"}""").inventoryStatus)
+    }
     @Test fun inventoryContainersKeepPhysicalStockSeparate() {
         val fields = CatalogueInventoryContainer.fields(1.0, 20.0, "L")
         val stock = CatalogueInventoryContainer.stockFields(12.0, "L")
@@ -110,6 +118,14 @@ class CatalogueCutoverTest {
         val changed = com.rork.vinetrack.ui.CatalogueSavedHandoff.applying(original, saved)
         assertEquals("server-saved-id", changed.savedChemicals.single().id)
         assertEquals(original, changed.copy(savedChemicals = original.savedChemicals))
+    }
+    @Test fun unsuccessfulDiscoveryNeverResolvesAnOldRevision() = kotlinx.coroutines.runBlocking {
+        for (status in listOf("failed", "cancelled")) {
+            val job = row("""{"status":"$status","revision_id":"old-revision"}""")
+            var fetched = false
+            try { CatalogueTerminalResolver.result(job) { fetched = true; job }; fail("Failed job must not produce a result") } catch (_: IllegalStateException) { }
+            assertTrue(job.isTerminal); assertFalse(job.isSuccess); assertFalse(fetched)
+        }
     }
     @Test fun `rates are separate and ranges unmodified`() {
         val result = row("""{"default_rate_options":{"per_hectare":[{"value":2,"unit":"L"}],"per_100_litres":[{"min_value":150,"max_value":200,"unit":"g"}]}}""")

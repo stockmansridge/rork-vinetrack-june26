@@ -27,8 +27,9 @@ nonisolated struct CatalogueWire: Codable, Sendable, Identifiable, Hashable {
     var groupText: String { [text("activity_group_scheme")?.uppercased() ?? "", strings("activity_groups").joined(separator: " + ")].filter { !$0.isEmpty }.joined(separator: " ") }
     var inventoryStatus: String {
         if text("tracking_status") == "needs_opening_stock" { return "Opening stock not set" }
-        if bool("out_of_stock") { return "Out of stock" }
-        if bool("low_stock") { return "Low stock" }
+        if text("tracking_status") == "finished" { return "Finished" }
+        if text("tracking_status") == "out_of_stock" || bool("out_of_stock") { return "Out of stock" }
+        if text("tracking_status") == "low_stock" || bool("low_stock") { return "Low stock" }
         return "In stock"
     }
     static func compactManufacturer(_ name: String) -> String {

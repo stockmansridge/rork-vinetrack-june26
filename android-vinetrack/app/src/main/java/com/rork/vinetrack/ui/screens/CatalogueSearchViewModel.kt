@@ -59,7 +59,7 @@ class CatalogueSearchViewModel(app: Application) : AndroidViewModel(app) {
         if (_state.value.busy) return
         if (_state.value.context != null) { poll(); return }
         viewModelScope.launch {
-            _state.update { it.copy(busy = true, error = null) }
+            _state.update { it.copy(busy = true, error = null, result = null, job = null) }
             try {
                 val path = photo?.let { repository.upload(it) }
                 val kind = if (photo == null) "text" else "photo"
@@ -94,7 +94,10 @@ class CatalogueSearchViewModel(app: Application) : AndroidViewModel(app) {
                             val result = CatalogueTerminalResolver.result(job, repository::revision)
                             check(prefs.edit().putString("result:${key(context.vineyardId)}", result.fields.toString()).commit())
                             _state.update { it.copy(result = result) }
-                        } else _state.update { it.copy(error = "Discovery could not finish. You can search again.") }
+                        } else {
+                            prefs.edit().remove("result:${key(context.vineyardId)}").commit()
+                            _state.update { it.copy(result = null, error = "Discovery could not finish. You can search again.") }
+                        }
                         prefs.edit().remove(key(context.vineyardId)).commit()
                         _state.update { it.copy(context = null) }; return@launch
                     }
@@ -105,6 +108,7 @@ class CatalogueSearchViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
     fun add(vineyard: String, onSaved: (SavedChemical) -> Unit) {
+        if (_state.value.busy || _state.value.context != null) return
         val result = _state.value.result ?: return
         viewModelScope.launch {
             _state.update { it.copy(busy = true) }
