@@ -173,6 +173,7 @@ object SprayProgramPdfExporter {
         tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual> = emptyList(),
         logo: Bitmap? = null,
         canonicalReports: Map<String, SprayReportPayloadV1> = emptyMap(),
+        exportFilename: String? = null,
     ): Boolean {
         if (records.isEmpty()) return false
         return try {
@@ -182,7 +183,7 @@ object SprayProgramPdfExporter {
             s.finish()
 
             val dir = File(context.cacheDir, "exports").apply { mkdirs() }
-            val file = File(dir, fileName(vineyardName))
+            val file = File(dir, exportFilename ?: fileName(vineyardName))
             file.outputStream().use { doc.writeTo(it) }
             doc.close()
 

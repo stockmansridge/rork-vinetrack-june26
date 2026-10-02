@@ -334,6 +334,15 @@ if (providers.gradleProperty("canopyReferenceFocusedTests").orNull == "true") {
     }
 }
 
+// Compile only Round 2 contract coverage, leaving unrelated legacy suites untouched.
+if (providers.gradleProperty("sprayProgramRound2FocusedTests").orNull == "true") {
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") { include("**/SprayProgramRound2Test.kt") })
+        }
+    }
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

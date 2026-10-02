@@ -193,8 +193,9 @@ struct SprayProgramExportService {
                 let operator_ = trip?.personName ?? "–"
                 (operator_ as NSString).draw(in: CGRect(x: columns[9].1 + 3, y: rowY, width: columns[9].2 - 6, height: 14), withAttributes: rowAttrs)
 
-                let status = record.endTime != nil ? "Done" : "Active"
-                let statusColor = record.endTime != nil ? accentColor : UIColor.systemRed
+                let resolvedStatus = SprayCompletionResolver.status(record: record, trip: trip)
+                let status = resolvedStatus == .completed ? "Done" : resolvedStatus == .inProgress ? "Active" : "Upcoming"
+                let statusColor = resolvedStatus == .completed ? accentColor : UIColor.systemRed
                 let statusAttrs: [NSAttributedString.Key: Any] = [.font: bodyBoldFont, .foregroundColor: statusColor]
                 (status as NSString).draw(at: CGPoint(x: columns[10].1 + 3, y: rowY), withAttributes: statusAttrs)
 
@@ -433,7 +434,8 @@ struct SprayProgramExportService {
             let gear = escapeCSV(record.tractorGear)
             let operator_ = escapeCSV(trip?.personName ?? "")
             let notes = escapeCSV(record.notes)
-            let status = record.endTime != nil ? "Completed" : "In Progress"
+            let resolvedStatus = SprayCompletionResolver.status(record: record, trip: trip)
+            let status = resolvedStatus == .completed ? "Completed" : resolvedStatus == .inProgress ? "In Progress" : "Upcoming"
 
             csv += "\(date),\(name),\(block),\(chemicals),\(tanks),\(avgRate),\(avgWater),\(avgCF),\(temp),\(wind),\(windDir),\(humidity),\(equipment),\(tractor),\(gear),\(operator_),\(notes),\(status)\n"
         }

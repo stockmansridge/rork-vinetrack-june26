@@ -11777,6 +11777,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      *
      * The trip-coupled spray-create variants, import, and delete are untouched.
      */
+    fun completeSprayRecord(id: String, allowUnlinked: Boolean, onResult: (Result<Unit>) -> Unit) {
+        if (!_ui.value.isOnline) {
+            onResult(Result.failure(IllegalStateException("End Spray requires a connection. Connect and try again.")))
+            return
+        }
+        viewModelScope.launch {
+            _ui.update { it.copy(sprayBusy = true) }
+            try {
+                val response = sprayRepo.completeSprayRecord(id, allowUnlinked)
+                _ui.update { st -> st.copy(sprayRecords = st.sprayRecords.map {
+                    if (it.id == id) response.applyingTo(it) else it
+                }) }
+                onResult(Result.success(Unit))
+            } catch (error: Exception) {
+                onResult(Result.failure(if (error is com.rork.vinetrack.data.spray.SprayCompletionRejected) error
+                    else IllegalStateException("Unable to complete spray. Check your connection, sync and try again.")))
+            } finally { _ui.update { it.copy(sprayBusy = false) } }
+        }
+    }
+
     fun updateSprayRecord(id: String, input: SprayRecordRepository.SprayInput, onResult: (Boolean) -> Unit) {
         val previous = _ui.value.sprayRecords
         val clientUpdatedAt = Instant.now().toString()

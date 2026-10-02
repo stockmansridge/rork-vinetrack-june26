@@ -343,6 +343,10 @@ private fun SprayListView(
     // dated, so "Newest" would sort it by a field that means nothing on it.
     var programSort by rememberSaveable { mutableStateOf(SprayProgramSort.EL_ASC) }
     var sortMenu by remember { mutableStateOf(false) }
+    var showExportMenu by remember { mutableStateOf(false) }
+    var showProgramData by remember { mutableStateOf(false) }
+    var exportKind by remember { mutableStateOf<String?>(null) }
+    var exporting by remember { mutableStateOf(false) }
     var showProgramPicker by remember { mutableStateOf(false) }
     // CSV import: pick a document, parse it, then confirm in a preview sheet.
     var importResult by remember { mutableStateOf<SprayProgramCsvImporter.ImportResult?>(null) }
@@ -396,6 +400,12 @@ private fun SprayListView(
             sort,
         )
     }
+    val vintageRecords = com.rork.vinetrack.data.spray.SprayProgramProgression.completed(
+        all, state.trips, state.selectedVineyardId,
+        com.rork.vinetrack.data.SeasonWindow.forVintage(state.currentSeasonVintage, state.seasonStartMonth, state.seasonStartDay), state.seasonZone,
+    )
+    val nextProgramSteps = com.rork.vinetrack.data.spray.SprayProgramProgression.remaining(allTemplates, vintageRecords)
+        .filter { query.isEmpty() || SprayProgramLanding.programStepMatches(it, query, targetLabels) }
     val filtered = remember(operational, filter, state.trips) {
         when (filter) {
             SprayFilter.ALL -> operational
@@ -404,6 +414,61 @@ private fun SprayListView(
             SprayFilter.COMPLETED -> operational.filter { sprayRecordStatus(it, state.trips) == SprayStatus.COMPLETED }
         }
     }
+
+    fun export(pdf: Boolean) {
+        val kind = exportKind ?: return
+        exportKind = null
+        if (exporting) return
+        val vineyard = state.selectedVineyard?.name ?: "Vineyard"
+        if (kind == "Program" && allTemplates.isEmpty()) {
+            Toast.makeText(context, "No Spray Program to export.", Toast.LENGTH_LONG).show(); return
+        }
+        if (kind == "Vintage" && vintageRecords.isEmpty()) {
+            Toast.makeText(context, "No completed sprays found for Vintage ${state.currentSeasonVintage}.", Toast.LENGTH_LONG).show(); return
+        }
+        val records = vintageRecords.sortedBy { it.dateEpochMs }
+        exportScope.launch {
+            exporting = true
+            val ok = try {
+                if (kind == "Program") {
+                    val rows = com.rork.vinetrack.data.spray.SprayProgramReferenceDataset.rows(allTemplates, state.savedChemicals,
+                        state.sprayEquipment.associate { it.id to it.displayName }, targetLabels)
+                    com.rork.vinetrack.data.SprayProgramReferenceExporter.exportAndShare(context, rows, vineyard, pdf, state.selectedVineyardLogo)
+                } else {
+                    val reports = vm.canonicalSprayReports(records.mapNotNull { it.tripId })
+                    val filename = "${vineyard.replace('/', '-')} - Vintage ${state.currentSeasonVintage} Spray Report.${if (pdf) "pdf" else "csv"}"
+                    val financials = state.currentRole in setOf("owner", "manager")
+                    if (pdf) SprayProgramPdfExporter.exportAndShare(context, records, state.trips, vineyard,
+                        canViewFinancials = financials, machines = state.machines, fuelPurchases = state.fuelPurchases,
+                        operatorCategories = state.operatorCategories, paddocks = state.paddocks,
+                        tankActuals = records.flatMap { record -> record.tripId?.let { tripId -> record.tanks.orEmpty().mapNotNull { vm.actualTankUse(tripId, it.tankNumber) } }.orEmpty() },
+                        logo = state.selectedVineyardLogo, canonicalReports = reports, exportFilename = filename)
+                    else SprayProgramCsvExporter.exportAndShare(context, records, state.trips, vineyard,
+                        canViewFinancials = financials, machines = state.machines, fuelPurchases = state.fuelPurchases,
+                        operatorCategories = state.operatorCategories, paddocks = state.paddocks,
+                        canonicalReports = reports, exportFilename = filename)
+                }
+            } catch (_: Exception) { false } finally { exporting = false }
+            if (!ok) Toast.makeText(context, "Unable to create the export. Please try again.", Toast.LENGTH_LONG).show()
+        }
+    }
+    if (showExportMenu) AlertDialog(onDismissRequest = { showExportMenu = false }, title = { Text("Export") },
+        text = { Column {
+            TextButton(onClick = { showExportMenu = false; exportKind = "Program" }) { Text("Program Export") }
+            TextButton(onClick = { showExportMenu = false; exportKind = "Vintage" }) { Text("Vintage Export") }
+        } }, confirmButton = { TextButton(onClick = { showExportMenu = false }) { Text("Cancel") } })
+    if (exportKind != null) AlertDialog(onDismissRequest = { exportKind = null }, title = { Text("Export as") },
+        text = { Column {
+            TextButton(onClick = { export(true) }) { Text("PDF") }
+            TextButton(onClick = { export(false) }) { Text("CSV") }
+        } }, confirmButton = { TextButton(onClick = { exportKind = null }) { Text("Cancel") } })
+    if (showProgramData) AlertDialog(onDismissRequest = { showProgramData = false }, title = { Text("Program Data") },
+        text = { Column {
+            TextButton(onClick = { showProgramData = false
+                if (!SprayProgramCsvExporter.exportTemplateAndShare(context)) Toast.makeText(context, "Unable to download Import CSV.", Toast.LENGTH_LONG).show()
+            }) { Text("Download Import CSV") }
+            TextButton(onClick = { showProgramData = false; importPicker.launch(arrayOf("*/*")) }) { Text("Import CSV") }
+        } }, confirmButton = { TextButton(onClick = { showProgramData = false }) { Text("Cancel") } })
 
     Scaffold(
         containerColor = vine.appBackground,
@@ -486,75 +551,10 @@ private fun SprayListView(
                                 )
                             }
                             HorizontalDivider()
-                            DropdownMenuItem(
-                                text = { Text("Export CSV") },
-                                leadingIcon = { Icon(Icons.Filled.TableChart, contentDescription = null) },
-                                enabled = operational.isNotEmpty(),
-                                onClick = {
-                                    sortMenu = false
-                                    exportScope.launch {
-                                        val canonicalReports = vm.canonicalSprayReports(operational.mapNotNull { it.tripId })
-                                        val ok = SprayProgramCsvExporter.exportAndShare(
-                                            context = context,
-                                            records = operational,
-                                            trips = state.trips,
-                                            vineyardName = state.selectedVineyard?.name ?: "Vineyard",
-                                            canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager",
-                                            machines = state.machines,
-                                            fuelPurchases = state.fuelPurchases,
-                                            operatorCategories = state.operatorCategories,
-                                            paddocks = state.paddocks,
-                                            canonicalReports = canonicalReports,
-                                        )
-                                        if (!ok) Toast.makeText(context, "Couldn't export the CSV. Please try again.", Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Export PDF") },
-                                leadingIcon = { Icon(Icons.Filled.PictureAsPdf, contentDescription = null) },
-                                enabled = operational.isNotEmpty(),
-                                onClick = {
-                                    sortMenu = false
-                                    exportScope.launch {
-                                        val canonicalReports = vm.canonicalSprayReports(operational.mapNotNull { it.tripId })
-                                        val ok = SprayProgramPdfExporter.exportAndShare(
-                                            context = context,
-                                            records = operational,
-                                            trips = state.trips,
-                                            vineyardName = state.selectedVineyard?.name ?: "Vineyard",
-                                            canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager",
-                                            machines = state.machines,
-                                            fuelPurchases = state.fuelPurchases,
-                                            operatorCategories = state.operatorCategories,
-                                            paddocks = state.paddocks,
-                                            tankActuals = operational.flatMap { record -> record.tripId?.let { tripId -> record.tanks.orEmpty().mapNotNull { vm.actualTankUse(tripId, it.tankNumber) } }.orEmpty() },
-                                            logo = state.selectedVineyardLogo,
-                                            canonicalReports = canonicalReports,
-                                        )
-                                        if (!ok) Toast.makeText(context, "Couldn't export the PDF. Please try again.", Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Download Import CSV") },
-                                leadingIcon = { Icon(Icons.Filled.Description, contentDescription = null) },
-                                onClick = {
-                                    sortMenu = false
-                                    val ok = SprayProgramCsvExporter.exportTemplateAndShare(context = context)
-                                    if (!ok) {
-                                        Toast.makeText(context, "Couldn't export the template. Please try again.", Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Import CSV") },
-                                leadingIcon = { Icon(Icons.Filled.UploadFile, contentDescription = null) },
-                                onClick = {
-                                    sortMenu = false
-                                    importPicker.launch(arrayOf("*/*"))
-                                },
-                            )
+                            DropdownMenuItem(text = { Text("Export") }, enabled = !exporting,
+                                onClick = { sortMenu = false; showExportMenu = true })
+                            DropdownMenuItem(text = { Text("Program Data") },
+                                onClick = { sortMenu = false; showProgramData = true })
                         }
                     }
                 },
@@ -658,7 +658,7 @@ private fun SprayListView(
                     }
                 }
 
-                tab == SprayProgramTabChoice.SPRAYS && filtered.isEmpty() && pendingManualSaves.isEmpty() -> {
+                tab == SprayProgramTabChoice.SPRAYS && filtered.isEmpty() && pendingManualSaves.isEmpty() && (filter != SprayFilter.NOT_STARTED || nextProgramSteps.isEmpty()) -> {
                     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                         if (hasSearch) {
                             EmptyState(
@@ -709,6 +709,7 @@ private fun SprayListView(
                                 }
                             }
                         } else {
+                            if (filter == SprayFilter.NOT_STARTED) item { SectionHeader("Planned Sprays", onLight = true) }
                             items(pendingManualSaves, key = { "pending-manual-${it.id}" }) { operation ->
                                 VineyardCard {
                                     Text(operation.payload.reference, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
@@ -723,6 +724,20 @@ private fun SprayListView(
                                     isPortalTemplate = false,
                                     onClick = { onSelect(record) },
                                 )
+                            }
+                            if (filter == SprayFilter.NOT_STARTED) {
+                                item { SectionHeader("Next from Program", onLight = true) }
+                                val known = nextProgramSteps.filter { com.rork.vinetrack.data.spray.SprayProgramProgression.stage(it) != null }
+                                items(known, key = { "next-${it.id}" }) { step ->
+                                    SprayProgramStepRow(record = step, isPortalManaged = state.sprayRecords.none { it.id == step.id },
+                                        canEdit = state.canManageSprayProgram, onClick = { onSelect(step) }, targetLabels = targetLabels)
+                                }
+                                val other = nextProgramSteps.filter { com.rork.vinetrack.data.spray.SprayProgramProgression.stage(it) == null }
+                                if (other.isNotEmpty()) item { SectionHeader("Other Program Steps", onLight = true) }
+                                items(other, key = { "other-${it.id}" }) { step ->
+                                    SprayProgramStepRow(record = step, isPortalManaged = state.sprayRecords.none { it.id == step.id },
+                                        canEdit = state.canManageSprayProgram, onClick = { onSelect(step) }, targetLabels = targetLabels)
+                                }
                             }
                         }
                     }
@@ -1098,10 +1113,49 @@ private fun SprayDetailView(
     var correctedDisplayReport by remember { mutableStateOf<SprayReportPayloadV1?>(null) }
     var loadingCorrection by remember { mutableStateOf(false) }
     var exportingPdf by remember { mutableStateOf(false) }
+    var confirmCompletion by remember { mutableStateOf(false) }
+    var completionAllowUnlinked by remember { mutableStateOf(false) }
+    var completionMessage by remember { mutableStateOf<String?>(null) }
+    var canonicalCompletionTripId by remember { mutableStateOf<String?>(null) }
 
     if (record == null) {
         LaunchedEffectBack(onBack)
         return
+    }
+
+    val completionTrip = resolveSprayTrip(record, state.trips)
+    if (confirmCompletion) {
+        AlertDialog(
+            onDismissRequest = { confirmCompletion = false },
+            title = { Text("End Spray") },
+            text = { Text(if (completionAllowUnlinked)
+                "No linked Trip is available. Mark this spray complete now?"
+                else "The linked Trip has already finished. This will mark this spray as completed using the Trip completion time.") },
+            confirmButton = { TextButton(onClick = {
+                confirmCompletion = false
+                vm.completeSprayRecord(record.id, completionAllowUnlinked) { result ->
+                    result.onFailure { error ->
+                        canonicalCompletionTripId = (error as? com.rork.vinetrack.data.spray.SprayCompletionRejected)?.tripId
+                        completionMessage = error.message
+                    }
+                }
+            }) { Text("End Spray") } },
+            dismissButton = { TextButton(onClick = { confirmCompletion = false }) { Text("Cancel") } },
+        )
+    }
+    completionMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = { completionMessage = null },
+            title = { Text("End Spray") }, text = { Text(message) },
+            confirmButton = {
+                if (message == com.rork.vinetrack.data.spray.SprayCompletionErrors.message("ACTIVE_TRIP") && (canonicalCompletionTripId ?: completionTrip?.id) != null && onJobStarted != null) {
+                    TextButton(onClick = { completionMessage = null; (canonicalCompletionTripId ?: completionTrip?.id)?.let(onJobStarted) }) { Text("Open Trip") }
+                } else if (message == com.rork.vinetrack.data.spray.SprayCompletionErrors.message("UNLINKED_CONFIRMATION_REQUIRED")) {
+                    TextButton(onClick = { completionMessage = null; completionAllowUnlinked = true; confirmCompletion = true }) { Text("Continue") }
+                } else { TextButton(onClick = { completionMessage = null }) { Text("OK") } }
+            },
+            dismissButton = { TextButton(onClick = { completionMessage = null }) { Text("Cancel") } },
+        )
     }
 
     fun localCorrectionReport(trip: Trip): SprayReportPayloadV1 {
@@ -1277,6 +1331,17 @@ private fun SprayDetailView(
                         Text("  Plan Spray")
                     }
                 }
+            }
+            if (!record.isTemplate && record.endTime.isNullOrBlank() && record.entrySource != "manual" &&
+                record.manualEntryId == null && state.currentRole in setOf("owner", "manager", "supervisor", "operator")) {
+                OutlinedButton(enabled = !state.sprayBusy, modifier = Modifier.fillMaxWidth(), onClick = {
+                    when {
+                        completionTrip?.isActive == true -> completionMessage = com.rork.vinetrack.data.spray.SprayCompletionErrors.message("ACTIVE_TRIP")
+                        record.tripId == null -> { completionAllowUnlinked = true; confirmCompletion = true }
+                        completionTrip != null && !completionTrip.endTime.isNullOrBlank() -> { completionAllowUnlinked = false; confirmCompletion = true }
+                        else -> completionMessage = "The linked Trip is unavailable or has not finished. Sync and end the Trip first."
+                    }
+                }) { Text("End Spray") }
             }
             // Details
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

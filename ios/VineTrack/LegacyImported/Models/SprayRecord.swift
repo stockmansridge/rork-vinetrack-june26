@@ -52,6 +52,8 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
     var manualEntryId: UUID?
     /// Authoritative optimistic-lock version from the shared spray row.
     var syncVersion: Int?
+    /// Local-only provenance: a display fallback is not an operational event date.
+    var hasRecordedEventDate: Bool
     var isManualEntry: Bool { entrySource == "manual" }
 
     init(
@@ -82,7 +84,8 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         sprayJobId: UUID? = nil,
         entrySource: String? = nil,
         manualEntryId: UUID? = nil,
-        syncVersion: Int? = nil
+        syncVersion: Int? = nil,
+        hasRecordedEventDate: Bool = true
     ) {
         self.id = id
         self.tripId = tripId
@@ -112,6 +115,7 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         self.entrySource = entrySource
         self.manualEntryId = manualEntryId
         self.syncVersion = syncVersion
+        self.hasRecordedEventDate = hasRecordedEventDate
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -122,7 +126,7 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         case machineId, tractorId, sprayEquipmentId, isTemplate, operationType
         case applicationGeometry
         case sprayJobId
-        case entrySource, manualEntryId, syncVersion
+        case entrySource, manualEntryId, syncVersion, hasRecordedEventDate
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -162,6 +166,7 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         entrySource = try container.decodeIfPresent(String.self, forKey: .entrySource)
         manualEntryId = try container.decodeIfPresent(UUID.self, forKey: .manualEntryId)
         syncVersion = try container.decodeIfPresent(Int.self, forKey: .syncVersion)
+        hasRecordedEventDate = try container.decodeIfPresent(Bool.self, forKey: .hasRecordedEventDate) ?? true
     }
 }
 

@@ -117,18 +117,30 @@ final class SprayRecordSyncService {
         let createdBy = auth?.userId
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
+            // Read before replay. A failed read blocks replay rather than risking
+            // clearing a completion confirmed on another device.
+            let remote = try await repository.fetchAllSprayRecords(vineyardId: vineyardId)
+            let serverById = Dictionary(remote.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             let byId = Dictionary(store.sprayRecords.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendSprayRecordUpsert] = []
             var pushedIds: [UUID] = []
             for (recordId, ts) in dirty {
-                guard let record = byId[recordId], record.vineyardId == vineyardId else { continue }
+                guard var record = byId[recordId], record.vineyardId == vineyardId else { continue }
+                if let server = serverById[recordId] {
+                    if server.deletedAt != nil {
+                        applyRemote(server, vineyardId: vineyardId, store: store)
+                        continue
+                    }
+                    record = SprayCompletionResolver.preservingServerCompletion(local: record, server: server.toSprayRecord())
+                    store.applyRemoteSprayRecordUpsert(record)
+                }
                 payloads.append(BackendSprayRecord.upsert(from: record, createdBy: createdBy, clientUpdatedAt: ts))
                 pushedIds.append(recordId)
             }
             if !payloads.isEmpty {
                 do {
                     try await repository.upsertSprayRecords(payloads)
-                    metadata.clearDirty(pushedIds)
+                    metadata.clearDirty(pushedIds.filter { metadata.pendingUpserts[$0] == dirty[$0] })
                 } catch {
                     metadata.markUpsertsFailed(pushedIds)
                     throw error
@@ -207,6 +219,17 @@ final class SprayRecordSyncService {
             store.applyRemoteSprayRecordDelete(backendRecord.id)
             metadata.clearDirty([backendRecord.id])
             metadata.clearDeleted([backendRecord.id])
+            return
+        }
+
+        // Completion is authoritative independently of form-edit timestamps.
+        // Keep the pending marker and ALL unrelated edits until their push succeeds.
+        if metadata.pendingUpserts[backendRecord.id] != nil,
+           let local = store.sprayRecords.first(where: { $0.id == backendRecord.id }),
+           backendRecord.endTime != nil {
+            store.applyRemoteSprayRecordUpsert(
+                SprayCompletionResolver.preservingServerCompletion(local: local, server: backendRecord.toSprayRecord())
+            )
             return
         }
 

@@ -243,6 +243,7 @@ object SprayProgramCsvExporter {
         operatorCategories: List<OperatorCategory> = emptyList(),
         paddocks: List<Paddock> = emptyList(),
         canonicalReports: Map<String, SprayReportPayloadV1> = emptyMap(),
+        exportFilename: String? = null,
     ): Boolean {
         return try {
             val csv = buildCsv(
@@ -258,7 +259,7 @@ object SprayProgramCsvExporter {
             )
 
             val dir = File(context.cacheDir, "exports").apply { mkdirs() }
-            val file = File(dir, fileName(vineyardName))
+            val file = File(dir, exportFilename ?: fileName(vineyardName))
             file.writeText(csv, Charsets.UTF_8)
 
             val uri: Uri = FileProvider.getUriForFile(

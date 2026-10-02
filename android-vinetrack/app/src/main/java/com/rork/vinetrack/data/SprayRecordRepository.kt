@@ -6,6 +6,7 @@ import com.rork.vinetrack.data.model.SprayTank
 import com.rork.vinetrack.data.spray.SprayApplicationBlockSnapshot
 import com.rork.vinetrack.data.spray.SprayApplicationSnapshot
 import io.ktor.client.call.body
+import io.ktor.client.request.get
 import io.ktor.client.request.headers
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
@@ -369,6 +370,40 @@ class SprayRecordRepository(private val session: SessionStore) {
                 setBody(patch)
             }
             firstRow(response)
+        }
+
+    @Serializable
+    private data class CompleteArgs(
+        @SerialName("p_spray_record_id") val id: String,
+        @SerialName("p_allow_unlinked") val allowUnlinked: Boolean,
+    )
+
+    @Serializable
+    private data class CompletionTripLink(@SerialName("trip_id") val tripId: String? = null)
+
+    suspend fun completeSprayRecord(id: String, allowUnlinked: Boolean): com.rork.vinetrack.data.spray.SprayCompletionResponse =
+        withContext(Dispatchers.IO) {
+            requireConfig()
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("complete_spray_record")) {
+                authHeaders(token)
+                contentType(ContentType.Application.Json)
+                setBody(CompleteArgs(id, allowUnlinked))
+            }
+            if (!response.status.isSuccess()) {
+                val body = response.bodyAsText()
+                val code = runCatching { SupabaseClient.json.parseToJsonElement(body)
+                    .let { (it as? kotlinx.serialization.json.JsonObject)?.get("message") }
+                    .let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content } }.getOrNull() ?: ""
+                val tripId = if (code == "ACTIVE_TRIP") runCatching {
+                    val canonical = SupabaseClient.http.get(SupabaseClient.restUrl("spray_records?id=eq.$id&select=trip_id")) {
+                        authHeaders(token)
+                    }
+                    if (canonical.status.isSuccess()) canonical.body<List<CompletionTripLink>>().firstOrNull()?.tripId else null
+                }.getOrNull() else null
+                throw com.rork.vinetrack.data.spray.SprayCompletionRejected(code, tripId)
+            }
+            response.body<com.rork.vinetrack.data.spray.SprayCompletionResponse>()
         }
 
     suspend fun softDeleteSprayRecord(id: String) = withContext(Dispatchers.IO) {

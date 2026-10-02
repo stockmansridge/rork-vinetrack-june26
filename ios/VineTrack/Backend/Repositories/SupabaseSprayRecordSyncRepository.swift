@@ -34,19 +34,45 @@ final class SupabaseSprayRecordSyncRepository: SprayRecordSyncRepositoryProtocol
 
     func upsertSprayRecord(_ record: BackendSprayRecordUpsert) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        try await provider.client
-            .from("spray_records")
-            .upsert(record, onConflict: "id")
-            .execute()
+        let existing: [BackendSprayRecord] = try await provider.client.from("spray_records")
+            .select().eq("id", value: record.id.uuidString).execute().value
+        if let server = existing.first {
+            // Never regress server completion, including confirmation between
+            // this read and the write. Keep every unrelated queued form field.
+            let fields = try Self.editableFieldsPreservingCompletion(record)
+            if server.endTime == nil, let end = record.endTime {
+                var completingFields = fields
+                completingFields["end_time"] = .string(end.ISO8601Format(.init(includingFractionalSeconds: true)))
+                let updated: [BackendSprayRecord] = try await provider.client.from("spray_records")
+                    .update(completingFields).eq("id", value: record.id.uuidString)
+                    .is("end_time", value: nil).select().execute().value
+                if updated.count == 1 { return }
+                // A concurrent server completion won: replay only form edits.
+            }
+            let updated: [BackendSprayRecord] = try await provider.client.from("spray_records")
+                .update(fields).eq("id", value: record.id.uuidString).select().execute().value
+            guard updated.count == 1 else { throw BackendRepositoryError.emptyResponse }
+        } else {
+            try await provider.client.from("spray_records").upsert(record, onConflict: "id").execute()
+        }
     }
 
     func upsertSprayRecords(_ records: [BackendSprayRecordUpsert]) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         guard !records.isEmpty else { return }
-        try await provider.client
-            .from("spray_records")
-            .upsert(records, onConflict: "id")
-            .execute()
+        for record in records { try await upsertSprayRecord(record) }
+    }
+
+    nonisolated static func editableFieldsPreservingCompletion(_ record: BackendSprayRecordUpsert) throws -> [String: SprayReportPayloadV1.JSONValue] {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(date.ISO8601Format(.init(includingFractionalSeconds: true)))
+        }
+        var fields = try JSONDecoder().decode([String: SprayReportPayloadV1.JSONValue].self, from: encoder.encode(record))
+        fields.removeValue(forKey: "end_time")
+        fields.removeValue(forKey: "created_by")
+        return fields
     }
 
     func softDeleteSprayRecord(id: UUID) async throws {

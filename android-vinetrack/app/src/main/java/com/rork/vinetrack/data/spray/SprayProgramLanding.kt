@@ -42,7 +42,7 @@ object SprayProgramLanding {
     /** Presentation-boundary repair for duplicate cache snapshots; newest wins. */
     fun uniqueOperational(records: List<SprayRecord>): List<SprayRecord> = records
         .asSequence()
-        .filter { !it.isTemplate }
+        .filter { !it.isTemplate && it.deletedAt == null }
         .groupBy { it.id }
         .values
         .mapNotNull { copies -> copies.maxWithOrNull(compareBy<SprayRecord> { it.dateEpochMs ?: 0L }.thenBy { it.id }) }
@@ -116,10 +116,10 @@ object SprayProgramLanding {
         localRecords: List<SprayRecord>,
         portalTemplates: List<SprayRecord>,
     ): List<SprayRecord> {
-        val local = localRecords.filter { it.isTemplate }
+        val local = localRecords.filter { it.isTemplate && it.deletedAt == null }
         val localIds = local.map { it.id }.toSet()
         val seenPortal = mutableSetOf<String>()
-        val portal = portalTemplates.filter { it.id !in localIds && seenPortal.add(it.id) }
+        val portal = portalTemplates.filter { it.deletedAt == null && it.id !in localIds && seenPortal.add(it.id) }
         return local + portal
     }
 

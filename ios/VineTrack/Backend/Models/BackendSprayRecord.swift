@@ -337,7 +337,7 @@ extension BackendSprayRecord {
             id: id,
             tripId: tripId ?? UUID(),
             vineyardId: vineyardId,
-            date: date ?? Date(),
+            date: date ?? startTime ?? Date(),
             startTime: startTime ?? Date(),
             endTime: endTime,
             temperature: temperature,
@@ -361,7 +361,8 @@ extension BackendSprayRecord {
             sprayJobId: sprayJobId,
             entrySource: entrySource,
             manualEntryId: manualEntryId,
-            syncVersion: syncVersion
+            syncVersion: syncVersion,
+            hasRecordedEventDate: date != nil || startTime != nil
         )
     }
 

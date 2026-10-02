@@ -47,6 +47,7 @@ struct SprayRecordDetailView: View {
         ScrollView {
             VStack(spacing: 16) {
                 headerCard
+                EndSprayView(recordId: record.id)
                 templateCard
 
                 if let trip = tripForRecord, trip.pathPoints.count > 1 {

@@ -109,6 +109,9 @@ struct SprayProgramView: View {
     @State private var sharePDFURL: ShareURL?
     @State private var isExporting: Bool = false
     @State private var exportError: String?
+    @State private var exportKind: String?
+    @State private var isChoosingExportFormat: Bool = false
+    @State private var showImportCSV: Bool = false
 
     @AppStorage("sprayProgramSortOption") private var sortOptionRaw: String = SprayProgramSortOption.newestFirst.rawValue
     /// Program defaults to phenological order, not date.
@@ -158,9 +161,11 @@ struct SprayProgramView: View {
     }
 
     private func recordStatus(_ record: SprayRecord) -> SprayStatusFilter {
-        if record.endTime != nil { return .completed }
-        if let trip = tripForRecord(record), trip.isActive { return .inProgress }
-        return .notStarted
+        switch SprayCompletionResolver.status(record: record, trip: tripForRecord(record)) {
+        case .completed: return .completed
+        case .inProgress: return .inProgress
+        case .upcoming: return .notStarted
+        }
     }
 
     private func applySort(_ records: [SprayRecord]) -> [SprayRecord] {
@@ -210,6 +215,17 @@ struct SprayProgramView: View {
         return applySort(records)
     }
 
+    private var vintageRecords: [SprayRecord] {
+        SprayProgramProgression.completed(records: store.sprayRecords, trips: store.trips,
+            vineyardId: store.selectedVineyardId,
+            window: store.settings.seasonWindow(for: store.settings.currentSeasonVintage))
+    }
+
+    private var nextProgramSteps: [SprayProgramStep] {
+        SprayProgramCatalog.filtered(
+            SprayProgramProgression.remaining(steps: allProgramSteps, completed: vintageRecords), query: searchText)
+    }
+
     private var filteredSprays: [SprayRecord] {
         switch spraysStatus {
         case .all: return operationalRecords
@@ -256,6 +272,27 @@ struct SprayProgramView: View {
                                     } label: {
                                         Label("Delete", systemImage: "trash")
                                     }
+                                }
+                            }
+                        }
+                    } else if spraysStatus == .upcoming {
+                        Section("Planned Sprays") {
+                            ForEach(filteredSprays) { sprayRow($0) }
+                        }
+                        Section("Next from Program") {
+                            ForEach(nextProgramSteps.filter { SprayProgramProgression.stage($0) != nil }) { step in
+                                Button { selectedStep = step } label: {
+                                    SprayProgramStepRow(step: step, formatter: store.settings.regionFormatter)
+                                }.buttonStyle(.plain)
+                            }
+                        }
+                        let other = nextProgramSteps.filter { SprayProgramProgression.stage($0) == nil }
+                        if !other.isEmpty {
+                            Section("Other Program Steps") {
+                                ForEach(other) { step in
+                                    Button { selectedStep = step } label: {
+                                        SprayProgramStepRow(step: step, formatter: store.settings.regionFormatter)
+                                    }.buttonStyle(.plain)
                                 }
                             }
                         }
@@ -345,6 +382,18 @@ struct SprayProgramView: View {
                     DispatchQueue.main.async { planningStep = chosen }
                 }
             }
+            .confirmationDialog("Export as", isPresented: $isChoosingExportFormat, titleVisibility: .visible) {
+                Button("PDF") {
+                    if exportKind == "Program" { exportReference(pdf: true) } else { exportProgramPDF() }
+                    exportKind = nil
+                }
+                Button("CSV") {
+                    if exportKind == "Program" { exportReference(pdf: false) } else { exportCSV() }
+                    exportKind = nil
+                }
+                Button("Cancel", role: .cancel) { exportKind = nil }
+            }
+            .sheet(isPresented: $showImportCSV) { SprayProgramImportView() }
             .sheet(item: $sharePDFURL) { wrapper in
                 ShareSheet(items: [wrapper.url])
             }
@@ -469,26 +518,14 @@ struct SprayProgramView: View {
                 }
             }
 
-            // Exports describe APPLICATIONS, so they stay attached to the
-            // operational record set regardless of which tab is showing.
-            Section("Export") {
-                Button {
-                    exportCSV()
-                } label: {
-                    Label("Export CSV", systemImage: "tablecells")
-                }
-                Button {
-                    exportProgramPDF()
-                } label: {
-                    Label("Export PDF", systemImage: "doc.richtext")
-                }
-                Button {
-                    exportImportCSV()
-                } label: {
-                    // Named for what it is — a blank import sheet. "Template"
-                    // now means a Program Step everywhere else in this screen.
-                    Label("Download Import CSV", systemImage: "arrow.down.doc")
-                }
+            Menu("Export") {
+                Button("Program Export") { exportKind = "Program"; isChoosingExportFormat = true }
+                Button("Vintage Export") { exportKind = "Vintage"; isChoosingExportFormat = true }
+            }
+            Menu("Program Data") {
+                Button("Download Import CSV") { exportImportCSV() }
+                Button("Import CSV") { showImportCSV = true }
+                    .disabled(accessControl?.canEditRecords != true)
             }
         } label: {
             if isExporting {
@@ -518,7 +555,7 @@ struct SprayProgramView: View {
                     .buttonStyle(.borderedProminent)
                 }
             }
-        } else if tab == .sprays && filteredSprays.isEmpty {
+        } else if tab == .sprays && filteredSprays.isEmpty && (spraysStatus != .upcoming || nextProgramSteps.isEmpty) {
             ContentUnavailableView {
                 Label("No Sprays", systemImage: "drop")
             } description: {
@@ -660,10 +697,37 @@ struct SprayProgramView: View {
 
     // MARK: - Export
 
+    private func namedVintageExport(_ original: URL) throws -> URL {
+        let name = (store.selectedVineyard?.name ?? "Vineyard").replacingOccurrences(of: "/", with: "-")
+        let target = original.deletingLastPathComponent().appendingPathComponent("\(name) - Vintage \(store.settings.currentSeasonVintage) Spray Report.\(original.pathExtension)")
+        try Data(contentsOf: original).write(to: target)
+        return target
+    }
+
+    private func exportReference(pdf: Bool) {
+        guard !isExporting else { return }
+        guard !allProgramSteps.isEmpty else { exportError = "No Spray Program to export."; return }
+        isExporting = true
+        defer { isExporting = false }
+        let rows = SprayProgramReferenceDataset.rows(steps: allProgramSteps, chemicals: store.savedChemicals,
+            unitNames: Dictionary(store.sprayEquipment.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first }))
+        do {
+            let vineyard = store.selectedVineyard?.name ?? "Vineyard"
+            let url = try pdf ? SprayProgramReferenceExport.pdf(rows: rows, vineyard: vineyard, logo: store.selectedVineyard?.logoData)
+                : SprayProgramReferenceExport.csv(rows: rows, vineyard: vineyard)
+            sharePDFURL = ShareURL(url: url)
+        } catch { exportError = "Unable to create the Program Export. Please try again." }
+    }
+
     private func exportCSV() {
         guard !isExporting else { return }
         isExporting = true
-        let records = operationalRecords
+        let records = vintageRecords.sorted { $0.date < $1.date }
+        guard !records.isEmpty else {
+            exportError = "No completed sprays found for Vintage \(store.settings.currentSeasonVintage)."
+            isExporting = false
+            return
+        }
         let trips = store.trips
         let vineyardName = store.selectedVineyard?.name ?? "Vineyard"
         let includeCostings = accessControl?.canViewCosting ?? false
@@ -685,7 +749,8 @@ struct SprayProgramView: View {
                 historicalYieldRecords: includeCostings ? store.historicalYieldRecords : [],
                 canonicalReports: canonicalReports
             )
-            sharePDFURL = ShareURL(url: url)
+            do { sharePDFURL = ShareURL(url: try namedVintageExport(url)) }
+            catch { exportError = "Unable to prepare the export file. Please try again." }
             isExporting = false
         }
     }
@@ -700,7 +765,12 @@ struct SprayProgramView: View {
         isExporting = true
         let vineyardName = store.selectedVineyard?.name ?? "Vineyard"
         let logoData = store.selectedVineyard?.logoData
-        let records = operationalRecords
+        let records = vintageRecords.sorted { $0.date < $1.date }
+        guard !records.isEmpty else {
+            exportError = "No completed sprays found for Vintage \(store.settings.currentSeasonVintage)."
+            isExporting = false
+            return
+        }
         let trips = store.trips
         let paddocks = store.paddocks
         // Reference data for resolving the exported records' own equipment.
@@ -740,7 +810,8 @@ struct SprayProgramView: View {
                 canonicalReports: canonicalReports
             )
             await MainActor.run {
-                sharePDFURL = ShareURL(url: url)
+                do { sharePDFURL = ShareURL(url: try namedVintageExport(url)) }
+                catch { exportError = "Unable to prepare the export file. Please try again." }
                 isExporting = false
             }
         }
