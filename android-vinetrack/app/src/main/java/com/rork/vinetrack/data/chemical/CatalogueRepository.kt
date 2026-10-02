@@ -32,6 +32,11 @@ class CatalogueRepository(context: Context) {
         put("p_query", query); put("p_country_code", country.takeIf { it.isNotBlank() }?.let(::JsonPrimitive) ?: JsonNull); put("p_limit", 20)
     }))
     suspend fun revision(id: String): CatalogueRow = rows(get("chemical_v3_product_revisions?id=eq.$id&select=*")).single().also { check(it.id == id) }
+    /** Image-only fallback; no saved-chemical writes or catalogue-field substitution. */
+    suspend fun resolvedFrontLabelPath(exactRevision: CatalogueRow): String? =
+        CatalogueFrontLabelResolver.resolve(exactRevision,
+            product = { id -> rows(get("chemical_v3_products?id=eq.$id&select=id,approved_revision_id")).single() },
+            revision = { id -> revision(id) })
     suspend fun job(id: String): CatalogueRow = rows(get("chemical_v3_discovery_jobs?id=eq.$id&select=id,status,stage,revision_id,product_id,progress_percent,user_message")).single()
     suspend fun invoke(id: String) = withContext(Dispatchers.IO) {
         val response = SupabaseClient.http.post(SupabaseClient.functionUrl("chemical-lookup-v3")) {

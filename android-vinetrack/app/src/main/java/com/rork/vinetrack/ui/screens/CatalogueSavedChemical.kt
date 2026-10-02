@@ -10,18 +10,30 @@ import androidx.compose.ui.unit.dp
 import com.rork.vinetrack.data.chemical.CatalogueRepository
 import com.rork.vinetrack.data.chemical.CatalogueRow
 import com.rork.vinetrack.data.model.SavedChemical
+import kotlinx.coroutines.CancellationException
 
 @Composable
 internal fun CatalogueSavedChemical(chemical: SavedChemical, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
+    val repository = remember(context) { CatalogueRepository(context) }
     var revision by remember(chemical.chemicalV3RevisionId) { mutableStateOf<CatalogueRow?>(null) }
+    var frontLabelPath by remember(chemical.chemicalV3RevisionId) { mutableStateOf<String?>(null) }
     LaunchedEffect(chemical.chemicalV3RevisionId) {
-        revision = chemical.chemicalV3RevisionId?.let { runCatching { CatalogueRepository(context).revision(it) }.getOrNull() }
+        val id = chemical.chemicalV3RevisionId ?: return@LaunchedEffect
+        try {
+            val exactRevision = repository.revision(id)
+            revision = exactRevision
+            frontLabelPath = repository.resolvedFrontLabelPath(exactRevision)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Keep any loaded exact catalogue fields; an unavailable fallback stays a placeholder.
+        }
     }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row {
-            CatalogueLabel(revision?.text("front_label_image_path"), revision?.text("manufacturer_label_url") ?: chemical.labelUrl.takeIf { it.isNotBlank() })
+            CatalogueLabel(frontLabelPath, revision?.text("manufacturer_label_url") ?: chemical.labelUrl.takeIf { it.isNotBlank() })
             Column(Modifier.weight(1f).padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(chemical.displayName, style = MaterialTheme.typography.titleMedium)
                 Text(CatalogueRow.compactManufacturer(chemical.manufacturer), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

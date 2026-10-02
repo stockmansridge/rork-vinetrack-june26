@@ -4,10 +4,11 @@ import SwiftUI
 struct CatalogueSavedChemicalView: View {
     let chemical: SavedChemical
     @State private var revision: CatalogueWire?
+    @State private var frontLabelPath: String?
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                CatalogueLabelView(path: revision?.text("front_label_image_path"), labelURL: revision?.text("manufacturer_label_url") ?? (chemical.labelURL.isEmpty ? nil : chemical.labelURL))
+                CatalogueLabelView(path: frontLabelPath, labelURL: revision?.text("manufacturer_label_url") ?? (chemical.labelURL.isEmpty ? nil : chemical.labelURL))
                 VStack(alignment: .leading) {
                     Text(chemical.name).font(.headline)
                     Text(CatalogueWire.compactManufacturer(chemical.manufacturer)).font(.caption)
@@ -23,7 +24,15 @@ struct CatalogueSavedChemicalView: View {
             }
         }
         .task(id: chemical.chemicalV3RevisionId) {
-            if let id = chemical.chemicalV3RevisionId { revision = try? await CatalogueRepository().revision(id.uuidString) }
+            revision = nil
+            frontLabelPath = nil
+            guard let id = chemical.chemicalV3RevisionId else { return }
+            let repository = CatalogueRepository()
+            guard let exactRevision = try? await repository.revision(id.uuidString), !Task.isCancelled else { return }
+            revision = exactRevision
+            let path = try? await repository.resolvedFrontLabelPath(for: exactRevision)
+            guard !Task.isCancelled else { return }
+            frontLabelPath = path
         }
     }
 }

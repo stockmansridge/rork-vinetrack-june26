@@ -15,6 +15,14 @@ final class CatalogueRepository: CatalogueBackendProtocol {
         guard row.id.lowercased() == id.lowercased() else { throw BackendRepositoryError.emptyResponse }
         return row
     }
+    /// Display-only fallback. Never changes the saved chemical or its linked revision.
+    func resolvedFrontLabelPath(for exactRevision: CatalogueWire) async throws -> String? {
+        try await CatalogueFrontLabelResolver.resolve(exactRevision: exactRevision, product: { id in
+            let row: CatalogueWire = try await self.client.from("chemical_v3_products")
+                .select("id,approved_revision_id").eq("id", value: id).single().execute().value
+            return row
+        }, revision: { id in try await self.revision(id) })
+    }
     func job(_ id: String) async throws -> CatalogueWire {
         try await client.from("chemical_v3_discovery_jobs").select("id,status,stage,revision_id,product_id,progress_percent,user_message").eq("id", value: id).single().execute().value
     }
