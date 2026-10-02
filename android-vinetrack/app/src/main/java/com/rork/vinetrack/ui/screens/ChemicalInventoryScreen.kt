@@ -15,6 +15,7 @@ import com.rork.vinetrack.data.model.SavedChemical
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
 import java.time.LocalDate
+import android.app.DatePickerDialog
 
 /** Pilot access depends on System Admin, never vineyard Owner/Manager role. */
 @Composable
@@ -46,7 +47,7 @@ internal fun ChemicalInventoryScreen(state: AppUiState, onClose: () -> Unit, mod
         val stockValues = summaries.values.mapNotNull { row -> row.number("estimated_stock_value")?.let { (row.text("currency") ?: "") to it } }
         if (stockValues.isEmpty()) Text("Estimated stock value: —")
         else stockValues.groupBy { it.first }.forEach { (currency, values) -> Text("Estimated stock value: ${values.sumOf { it.second }} $currency") }
-        OutlinedTextField(search, { search = it }, label = { Text("Chemical name or manufacturer") })
+        OutlinedTextField(search, { search = it }, label = { Text("Chemical name or manufacturer") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("All", "In stock", "Low stock", "Out of stock", "Opening stock not set").forEach { option ->
                 FilterChip(selected = filter == option, onClick = { filter = option }, label = { Text(option) })
@@ -56,13 +57,13 @@ internal fun ChemicalInventoryScreen(state: AppUiState, onClose: () -> Unit, mod
         state.savedChemicals.filter { (search.isBlank() || "${it.name} ${it.manufacturer}".contains(search, true)) &&
             (filter == "All" || summaries[it.id]?.inventoryStatus == filter) }.forEach { chemical ->
             OutlinedCard(onClick = { selected = chemical }, modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     CatalogueSavedChemical(chemical)
                     summaries[chemical.id]?.let { summary ->
                         Text(summary.inventoryStatus)
                         if (summary.inventoryStatus != "Opening stock not set") {
                             Text("${summary.number("current_quantity")?.toString() ?: "—"} ${summary.text("display_unit").orEmpty()}")
-                            summary.number("percent_remaining")?.let { percent -> LinearProgressIndicator(progress = { (percent / 100).toFloat() }); Text("${percent.toInt()}%") }
+                            summary.number("percent_remaining")?.let { percent -> LinearProgressIndicator(progress = { (percent / 100).toFloat() }, modifier = Modifier.fillMaxWidth()); Text("${percent.toInt()}%") }
                         }
                         Text("Estimated stock value: ${summary.number("estimated_stock_value")?.toString() ?: "—"} ${summary.text("currency").orEmpty()}")
                         Text("Latest purchase: ${summary.text("latest_purchase_date") ?: "—"} · Batch: ${summary.text("latest_batch_number") ?: "—"}")
@@ -116,6 +117,12 @@ private fun InventoryActions(chemical: SavedChemical, summary: CatalogueRow?, sy
         if (opening) quantity = CatalogueInventoryContainer.openingQuantity(containerCount, containerSize, quantity, physicalEdited)
     }
     LaunchedEffect(action) { if (action == "Purchase history") loadHistory() }
+    fun chooseDate(value: String, onSelected: (String) -> Unit) {
+        val initial = runCatching { LocalDate.parse(value) }.getOrElse { LocalDate.now() }
+        DatePickerDialog(context, { _, year, month, day ->
+            onSelected(LocalDate.of(year, month + 1, day).toString())
+        }, initial.year, initial.monthValue - 1, initial.dayOfMonth).show()
+    }
     AlertDialog(modifier = modifier, onDismissRequest = { if (!busy) onDismiss() }, title = { Text(chemical.name) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             var choosingAction by remember { mutableStateOf(false) }
@@ -127,7 +134,6 @@ private fun InventoryActions(chemical: SavedChemical, summary: CatalogueRow?, sy
                     }
                 }
             }
-            Text(action, style = MaterialTheme.typography.titleMedium)
             summary?.let { row ->
                 Text(row.inventoryStatus)
                 if (row.inventoryStatus != "Opening stock not set") Text("${row.number("current_quantity") ?: "—"} ${row.text("display_unit").orEmpty()}")
@@ -136,6 +142,7 @@ private fun InventoryActions(chemical: SavedChemical, summary: CatalogueRow?, sy
                 Text("Low-stock threshold: ${row.number("low_stock_threshold_quantity") ?: "—"} ${row.text("display_unit").orEmpty()}")
             }
             if (action == "Purchase history") {
+                if (history.isEmpty() && error == null) Text("No purchases recorded.", style = MaterialTheme.typography.bodySmall)
                 TextButton(onClick = { scope.launch { loadHistory() } }) { Text("Load history") }
                 history.forEach { row ->
                     Text("${row.text("purchase_date").orEmpty()} · ${CatalogueInventoryContainer.historyText(row)}")
@@ -163,13 +170,14 @@ private fun InventoryActions(chemical: SavedChemical, summary: CatalogueRow?, sy
                     }
                 }
                 if (action == "Record purchase") {
-                    OutlinedTextField(cost, { cost = it }, label = { Text("Total cost") })
-                    OutlinedTextField(currency, { currency = it }, label = { Text("Currency") })
-                    OutlinedTextField(date, { date = it }, label = { Text("Purchase date YYYY-MM-DD") })
+                    OutlinedButton(enabled = !busy, onClick = { chooseDate(date) { date = it } }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("Purchase date: $date") }
+                    OutlinedTextField(cost, { cost = it }, label = { Text("Total cost") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(currency, { currency = it }, label = { Text("Currency") }, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(batch, { batch = it }, label = { Text("Batch") })
                     OutlinedTextField(supplier, { supplier = it }, label = { Text("Supplier") })
                     OutlinedTextField(invoice, { invoice = it }, label = { Text("Invoice reference") })
-                    OutlinedTextField(expiry, { expiry = it }, label = { Text("Expiry date YYYY-MM-DD (optional)") })
+                    OutlinedButton(enabled = !busy, onClick = { chooseDate(expiry) { expiry = it } }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("Expiry date: ${expiry.ifBlank { "Not set (optional)" }}") }
+                    if (expiry.isNotBlank()) TextButton(enabled = !busy, onClick = { expiry = "" }) { Text("Clear expiry date") }
                 }
                 if (action == "Low-stock settings") Row { Checkbox(warnings, { warnings = it }); Text("Low-stock warnings") }
                 OutlinedTextField(notes, { notes = it }, label = { Text("Notes") })

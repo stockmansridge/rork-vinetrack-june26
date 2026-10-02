@@ -147,7 +147,7 @@ struct ChemicalsManagementView: View {
                         Button {
                             editingChemical = chemical
                         } label: {
-                            Label("Find Missing Information", systemImage: "magnifyingglass")
+                            Label("Edit Chemical", systemImage: "pencil")
                         }
                         .tint(VineyardTheme.info)
                     }

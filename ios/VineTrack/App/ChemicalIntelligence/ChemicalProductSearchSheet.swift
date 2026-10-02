@@ -34,7 +34,10 @@ struct ChemicalProductSearchSheet: View {
         self.coordinator = coordinator; self.initialQuery = initialQuery; self.existing = existing
         self.onManualEntry = onManualEntry; self.onReviewed = onReviewed
     }
-    var body: some View { CatalogueSearchView(prefillQuery: initialQuery, onSaved: onReviewed) }
+    var body: some View {
+        if let existing { ChemicalReverifyFlowView(chemical: existing) }
+        else { CatalogueSearchView(prefillQuery: initialQuery, onSaved: onReviewed) }
+    }
 }
 
 private struct RetiredChemicalProductSearchSheet: View {

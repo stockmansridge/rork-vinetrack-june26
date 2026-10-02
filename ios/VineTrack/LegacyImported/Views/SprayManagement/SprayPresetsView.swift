@@ -464,13 +464,13 @@ struct EditSavedChemicalSheet: View {
                     // The SAME lookup the Add Chemical flow uses. It hands back a
                     // merged draft, which is applied to this session — one
                     // lookup, one merge, one review. Nothing is saved here.
-                    CatalogueSearchView(prefillQuery: session.name, onSaved: { saved in
+                    if chemical == nil { CatalogueSearchView(prefillQuery: session.name, onSaved: { saved in
                         // The backend add has its own identity; never copy it into
                         // the old record or queue another full-field save.
                         onSaved?(saved)
                         activeSheet = nil
                         dismiss()
-                    })
+                    }) } else { Text("Automatic chemical updates are unavailable.") }
                 case .reverify:
                     if let chemical {
                         // Closing this form after a successful re-verification is
@@ -478,11 +478,7 @@ struct EditSavedChemicalSheet: View {
                         // when the editor opened, so a Save afterwards would write
                         // the pre-check values straight back over the update just
                         // accepted.
-                        CatalogueSearchView(prefillQuery: chemical.name, onSaved: { saved in
-                            onSaved?(saved)
-                            activeSheet = nil
-                            dismiss()
-                        })
+                        ChemicalReverifyFlowView(chemical: chemical)
                     }
                 }
             }
@@ -554,15 +550,8 @@ struct EditSavedChemicalSheet: View {
                 Label("Label not found", systemImage: "doc.text")
                     .foregroundStyle(.secondary)
             }
-            Button {
-                if chemical != nil {
-                    activeSheet = .reverify
-                } else {
-                    activeSheet = .search
-                }
-            } label: {
-                Label("Find Missing Information", systemImage: "magnifyingglass")
-            }
+            Text("Automatic chemical updates are unavailable. You can edit this saved chemical manually without changing its identity.")
+                .font(.caption).foregroundStyle(.secondary)
         } footer: {
             Text("Review any new information before applying it. Nothing changes just by opening a label or starting a check.")
         }
@@ -1349,7 +1338,7 @@ struct EditSavedChemicalSheet: View {
                     activeSheet = .reverify
                 } label: {
                     Label("Re-verify Chemical", systemImage: "arrow.triangle.2.circlepath")
-                }
+                }.disabled(true)
             } else if let reason {
                 Text(reason)
                     .font(.caption)

@@ -57,21 +57,24 @@ internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss
                 TextButton(onClick = { picker.launch("image/*") }, enabled = !search.busy && search.context == null) { Text("Search by Photo") }
             }
             if (search.context != null) {
-                Text("Finding your product")
+                Text("Finding your product", style = MaterialTheme.typography.titleMedium)
                 LinearProgressIndicator(progress = { ((search.job?.number("progress_percent") ?: 0.0) / 100).toFloat() }, modifier = Modifier.fillMaxWidth())
                 Text(search.job?.text("user_message") ?: "Finding product information…")
-                Text("You can close this screen. This search is saved.")
                 TextButton(onClick = model::poll) { Text("Resume discovery") }
+                Text("You can close this screen. This search is saved.", style = MaterialTheme.typography.bodySmall)
+                Text(search.context?.query.orEmpty(), style = MaterialTheme.typography.bodySmall)
             }
             if (search.matches.isNotEmpty()) {
                 Text("Matches in the VineTrack catalogue", style = MaterialTheme.typography.titleMedium)
                 search.matches.forEach { row ->
-                    OutlinedButton(onClick = { model.select(row) }, enabled = search.context == null && !search.busy, modifier = Modifier.fillMaxWidth()) {
-                        CatalogueLabel(row.text("front_label_image_path"), row.text("manufacturer_label_url"))
-                        Column(Modifier.weight(1f).padding(8.dp)) {
-                            Text(row.text("product_name") ?: "Product")
-                            Text(CatalogueRow.compactManufacturer(row.text("manufacturer").orEmpty()))
-                            Text("VineTrack catalogue")
+                    OutlinedCard(onClick = { model.select(row) }, enabled = search.context == null && !search.busy, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+                        Row(Modifier.padding(12.dp)) {
+                            CatalogueLabel(row.text("front_label_image_path"), row.text("manufacturer_label_url"))
+                            Column(Modifier.weight(1f).padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(row.text("product_name") ?: "Product", style = MaterialTheme.typography.titleSmall)
+                                Text(CatalogueRow.compactManufacturer(row.text("manufacturer").orEmpty()), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("VineTrack catalogue", style = MaterialTheme.typography.labelSmall)
+                            }
                         }
                     }
                 }
@@ -83,11 +86,15 @@ internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss
             }
             search.result?.let { result ->
                 Text(result.badge, style = MaterialTheme.typography.titleMedium)
-                CatalogueLabel(result.text("front_label_image_path"), result.text("manufacturer_label_url"))
-                Text(result.text("product_name").orEmpty(), style = MaterialTheme.typography.headlineSmall)
-                Text(result.text("manufacturer").orEmpty())
-                Text(result.groupText)
-                Text(result.targets.joinToString(" · "))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CatalogueLabel(result.text("front_label_image_path"), result.text("manufacturer_label_url"))
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(result.text("product_name").orEmpty(), style = MaterialTheme.typography.titleMedium)
+                        Text(result.text("manufacturer").orEmpty(), style = MaterialTheme.typography.bodyMedium)
+                        Text(result.groupText, style = MaterialTheme.typography.bodyMedium)
+                        Text(result.targets.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
                 listOf("per_hectare" to "Per hectare", "per_100_litres" to "Per 100 L").forEach { (key, title) ->
                     val rates = result.rateRows(key)
                     if (rates.isNotEmpty()) { Text(title, style = MaterialTheme.typography.titleSmall); rates.forEach { Text(it.rateText) } }
@@ -95,7 +102,7 @@ internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss
                 Button(onClick = { model.add(vineyard) { saved -> vm.acceptCatalogueChemical(saved); onSaved(saved); onDismiss() } }, enabled = !search.busy) { Text("Add to Vineyard") }
             }
             if (search.busy) CircularProgressIndicator()
-            search.error?.let { Text(it) }
+            search.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             photoError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             TextButton(onClick = onDismiss) { Text("Close") }
             Spacer(Modifier.height(32.dp))

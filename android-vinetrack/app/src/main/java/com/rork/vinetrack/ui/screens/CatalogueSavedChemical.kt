@@ -19,12 +19,12 @@ internal fun CatalogueSavedChemical(chemical: SavedChemical, modifier: Modifier 
     LaunchedEffect(chemical.chemicalV3RevisionId) {
         revision = chemical.chemicalV3RevisionId?.let { runCatching { CatalogueRepository(context).revision(it) }.getOrNull() }
     }
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row {
             CatalogueLabel(revision?.text("front_label_image_path"), revision?.text("manufacturer_label_url") ?: chemical.labelUrl.takeIf { it.isNotBlank() })
-            Column(Modifier.padding(8.dp)) {
+            Column(Modifier.weight(1f).padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(chemical.displayName, style = MaterialTheme.typography.titleMedium)
-                Text(CatalogueRow.compactManufacturer(chemical.manufacturer))
+                Text(CatalogueRow.compactManufacturer(chemical.manufacturer), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (revision != null) Text(revision!!.badge, style = MaterialTheme.typography.bodySmall)
                 else if (chemical.chemicalV3RevisionId != null) Text("Catalogue information unavailable", style = MaterialTheme.typography.bodySmall)
                 Text(revision?.groupText ?: listOf(chemical.activityGroupScheme?.uppercase().orEmpty(), chemical.activityGroups.orEmpty().joinToString(" + ")).filter { it.isNotBlank() }.joinToString(" "))
@@ -36,6 +36,6 @@ internal fun CatalogueSavedChemical(chemical: SavedChemical, modifier: Modifier 
                 TextButton(onClick = { uriHandler.openUri(url) }) { Text("Manufacturer product") }
             }
         }
-        Text(chemical.manufacturer, style = MaterialTheme.typography.bodySmall)
+        if (revision != null) Text(chemical.manufacturer, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

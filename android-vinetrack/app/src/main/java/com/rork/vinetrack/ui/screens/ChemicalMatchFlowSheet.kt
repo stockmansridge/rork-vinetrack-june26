@@ -125,7 +125,8 @@ private enum class MatchStep { SEARCH, REVIEW }
 @Composable
 internal fun ChemicalMatchFlowSheet(vm: AppViewModel, state: AppUiState, existing: SavedChemical?, prefillQuery: String,
     onDismiss: () -> Unit, onEnterManually: () -> Unit, onCheckForUpdates: (SavedChemical) -> Unit = {}, onCreated: () -> Unit = {}) {
-    CatalogueSearchSheet(vm, state, onDismiss, onSaved = { onCreated() }, prefillQuery = prefillQuery.ifBlank { existing?.name.orEmpty() })
+    if (existing != null) ChemicalReverifySheet(state, existing, onDismiss, onUseUpdatedInformation = {})
+    else CatalogueSearchSheet(vm, state, onDismiss, onSaved = { onCreated() }, prefillQuery = prefillQuery)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

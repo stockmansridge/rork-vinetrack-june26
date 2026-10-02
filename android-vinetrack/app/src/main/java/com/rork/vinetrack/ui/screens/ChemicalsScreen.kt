@@ -707,6 +707,7 @@ private fun ChemicalRow(
                 // fresh brand-name search under a re-verification label.
                 if (canManage && canReverify) {
                     TextButton(
+                        enabled = false,
                         onClick = onReverify,
                         contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
                     ) {
@@ -721,6 +722,7 @@ private fun ChemicalRow(
                     status != ChemicalVerificationStatus.PARTIALLY_VERIFIED
                 ) {
                     TextButton(
+                        enabled = false,
                         onClick = onMatchVerify,
                         contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
                     ) {
@@ -1320,6 +1322,7 @@ internal fun ChemicalFormSheet(
             // only its blurb was.
             if (state != null) {
                 OutlinedButton(
+                    enabled = false,
                     onClick = {
                         val target = existing
                         if (target != null) {
@@ -1340,7 +1343,7 @@ internal fun ChemicalFormSheet(
                     Text("Find Missing Information")
                 }
                 Text(
-                    "Review new information before applying it. Checking does not change this chemical.",
+                    "Automatic chemical updates are unavailable. Manual edits preserve this saved chemical's identity.",
                     fontSize = 11.sp,
                     color = vine.textSecondary,
                 )

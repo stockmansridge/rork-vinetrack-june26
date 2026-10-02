@@ -18,7 +18,13 @@ import SwiftUI
 struct ChemicalReverifyFlowView: View {
     let chemical: SavedChemical
     var onProposed: (SavedChemical) -> Void = { _ in }
-    var body: some View { CatalogueSearchView(prefillQuery: chemical.name, onSaved: onProposed) }
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationStack {
+            ContentUnavailableView("Chemical updates unavailable", systemImage: "info.circle", description: Text("Automatic updates cannot currently preserve this saved chemical's identity. Existing spray references remain unchanged."))
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+        }
+    }
 }
 
 private struct RetiredChemicalReverifyFlowView: View {

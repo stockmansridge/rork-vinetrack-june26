@@ -9,6 +9,7 @@ struct ChemicalMatchFlowView: View {
         self.existing = existing; self.prefillQuery = prefillQuery; self.onSaved = onSaved
     }
     var body: some View {
-        CatalogueSearchView(prefillQuery: prefillQuery.isEmpty ? existing?.name ?? "" : prefillQuery, onSaved: { onSaved?($0) })
+        if let existing { ChemicalReverifyFlowView(chemical: existing) }
+        else { CatalogueSearchView(prefillQuery: prefillQuery, onSaved: { onSaved?($0) }) }
     }
 }

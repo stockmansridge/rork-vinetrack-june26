@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -119,8 +120,10 @@ private sealed interface ReverifyPhase {
 @Composable
 internal fun ChemicalReverifySheet(state: AppUiState, chemical: SavedChemical, onDismiss: () -> Unit,
     onUseUpdatedInformation: (ChemicalReverifyFlow.Draft) -> Unit) {
-    val vm: com.rork.vinetrack.ui.AppViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-    CatalogueSearchSheet(vm, state, onDismiss, prefillQuery = chemical.name)
+    AlertDialog(onDismissRequest = onDismiss,
+        title = { Text("Chemical updates unavailable") },
+        text = { Text("Automatic updates cannot currently preserve this saved chemical's identity. Existing spray references remain unchanged.") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } })
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
