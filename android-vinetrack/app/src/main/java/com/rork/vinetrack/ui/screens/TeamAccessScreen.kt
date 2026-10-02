@@ -78,7 +78,11 @@ fun TeamAccessScreen(
     val canManage = role.canManageTeam
     val isOwner = role == TeamRole.Owner
 
-    LaunchedEffect(state.selectedVineyardId) { vm.loadPendingInvitations(); vm.refreshOperatorCategories() }
+    LaunchedEffect(state.selectedVineyardId) {
+        vm.clearInvitationFeedback(clearNotice = false)
+        vm.loadPendingInvitations()
+        vm.refreshOperatorCategories()
+    }
 
     var showInvite by remember { mutableStateOf(false) }
     var editMember by remember { mutableStateOf<VineyardMember?>(null) }
@@ -93,7 +97,7 @@ fun TeamAccessScreen(
                 navigationIcon = { BackNavIcon(onBack) },
                 actions = {
                     if (canManage) {
-                        IconButton(onClick = { showInvite = true }) {
+                        IconButton(onClick = { vm.clearInvitationFeedback(); showInvite = true }) {
                             Icon(Icons.Filled.PersonAddAlt, contentDescription = "Invite member", tint = VineColors.Primary)
                         }
                     }
@@ -223,10 +227,11 @@ fun TeamAccessScreen(
     if (showInvite) {
         InviteMemberDialog(
             busy = state.teamBusy,
+            error = state.teamError,
             vineyardName = state.selectedVineyard?.name?.takeIf { it.isNotBlank() } ?: "this vineyard",
             categories = state.operatorCategories.filter { it.deletedAt == null }
                 .sortedBy { it.displayName.lowercase() },
-            onDismiss = { showInvite = false },
+            onDismiss = { showInvite = false; vm.clearInvitationFeedback(clearNotice = false) },
             onInvite = { email, r, categoryId ->
                 vm.inviteMember(email, r.raw, categoryId) { ok -> if (ok) showInvite = false }
             },
@@ -336,6 +341,7 @@ private fun roleColor(role: TeamRole): Color = when (role) {
 @Composable
 private fun InviteMemberDialog(
     busy: Boolean,
+    error: String?,
     vineyardName: String,
     categories: List<OperatorCategory>,
     onDismiss: () -> Unit,
@@ -396,6 +402,7 @@ private fun InviteMemberDialog(
                         color = vine.textSecondary,
                     )
                 }
+                error?.let { Text(it, fontSize = 12.sp, color = VineColors.Destructive) }
             }
         },
         confirmButton = {

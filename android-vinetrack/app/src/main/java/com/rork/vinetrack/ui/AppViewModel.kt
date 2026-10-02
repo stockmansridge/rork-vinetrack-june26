@@ -916,6 +916,10 @@ data class AppUiState(
      */
     val locallyDeletedTripIds: Set<String> = emptySet(),
 ) {
+    /** Called only at explicit invite/screen boundaries, never in response to a new error. */
+    internal fun clearedInvitationFeedback(clearNotice: Boolean): AppUiState =
+        copy(teamError = null, teamNotice = if (clearNotice) null else teamNotice)
+
     val selectedVineyard: Vineyard? get() = vineyards.firstOrNull { it.id == selectedVineyardId }
 
     /** Central, region-aware formatter for all display values (units/currency). */
@@ -12974,6 +12978,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(false)
             }
         }
+    }
+
+    /** Reset stale invite feedback without changing session, invitations or an in-flight request. */
+    fun clearInvitationFeedback(clearNotice: Boolean = true) {
+        _ui.update { it.clearedInvitationFeedback(clearNotice) }
     }
 
     fun clearTeamError() { _ui.update { it.copy(teamError = null) } }

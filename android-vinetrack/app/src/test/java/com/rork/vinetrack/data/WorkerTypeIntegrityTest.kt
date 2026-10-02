@@ -14,6 +14,40 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class WorkerTypeIntegrityTest {
+    @Test fun invitationWithoutWorkerTypeKeepsExplicitNullsOnWire() {
+        val payload = createInvitationArgs("vineyard", " Worker@Example.com ", "operator", null)
+        val wire = SupabaseClient.json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), payload)
+        assertEquals("{\"p_vineyard_id\":\"vineyard\",\"p_email\":\"worker@example.com\",\"p_role\":\"operator\",\"p_operator_category_id\":null,\"p_expires_at\":null}", wire)
+        val decoded = SupabaseClient.json.parseToJsonElement(wire) as kotlinx.serialization.json.JsonObject
+        assertEquals(JsonNull, decoded["p_operator_category_id"])
+        assertEquals(JsonNull, decoded["p_expires_at"])
+        // The integer overload has no p_expires_at parameter and cannot match these named arguments.
+        org.junit.Assert.assertFalse(decoded.containsKey("p_expires_in_days"))
+        org.junit.Assert.assertTrue(decoded.containsKey("p_expires_at"))
+    }
+
+    @Test fun invitationWithWorkerTypePreservesRoleAndCanonicalExpiryKey() {
+        val payload = createInvitationArgs("vineyard", "worker@example.com", "manager", "worker-type")
+        val wire = SupabaseClient.json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), payload)
+        assertEquals("{\"p_vineyard_id\":\"vineyard\",\"p_email\":\"worker@example.com\",\"p_role\":\"manager\",\"p_operator_category_id\":\"worker-type\",\"p_expires_at\":null}", wire)
+    }
+
+    @Test fun invitationFeedbackClearsWithoutLogoutAndDoesNotClearNewFailures() {
+        val failed = com.rork.vinetrack.ui.AppUiState(
+            currentUserId = "signed-in-user", selectedVineyardId = "vineyard",
+            teamError = "Couldn't send the invitation.", teamNotice = "Previous notice",
+        )
+        val startingNewInvite = failed.clearedInvitationFeedback(clearNotice = true)
+        assertEquals(failed.copy(teamError = null, teamNotice = null), startingNewInvite)
+        val newFailure = startingNewInvite.copy(teamError = "New invite failure")
+        assertEquals("New invite failure", newFailure.teamError)
+        val dismissedOrReopened = newFailure.clearedInvitationFeedback(clearNotice = false)
+        assertEquals(newFailure.copy(teamError = null), dismissedOrReopened)
+        assertEquals("signed-in-user", dismissedOrReopened.currentUserId)
+        assertEquals("vineyard", dismissedOrReopened.selectedVineyardId)
+        assertEquals(failed.copy(teamError = null), failed.clearedInvitationFeedback(clearNotice = false))
+    }
+
     @Test fun `server shaped worker type retains Mitch identity and hourly rate`() {
         val json = """[{"id":"14a43189-ebe4-4343-80d0-baa4a738b008","vineyard_id":"fe952afe-437f-4be7-8cbf-fdd8e630411c","name":"Vineyard Manager (Mitch)","cost_per_hour":38,"created_at":"2026-09-01T12:34:56.123456+00:00","updated_at":"2026-09-02T12:34:56+00:00","deleted_at":null,"client_updated_at":null}]"""
         val rows = SupabaseClient.json.decodeFromString(ListSerializer(OperatorCategory.serializer()), json)

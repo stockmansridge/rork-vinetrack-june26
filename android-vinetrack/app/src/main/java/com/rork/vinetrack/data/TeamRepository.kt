@@ -34,6 +34,15 @@ internal fun workerTypeAssignmentArgs(vineyardId: String, userId: String, worker
     put("p_worker_type_id", workerTypeId?.let(::JsonPrimitive) ?: JsonNull)
 }
 
+/** Explicit expiry key selects the SETOF invitations/timestamptz overload, not expires-in-days. */
+internal fun createInvitationArgs(vineyardId: String, email: String, role: String, operatorCategoryId: String?) = buildJsonObject {
+    put("p_vineyard_id", vineyardId)
+    put("p_email", email.trim().lowercase())
+    put("p_role", role)
+    put("p_operator_category_id", operatorCategoryId?.let(::JsonPrimitive) ?: JsonNull)
+    put("p_expires_at", JsonNull)
+}
+
 class TeamRepository(private val session: SessionStore) {
 
     /** Pending invitations for a vineyard (joined to the vineyard name). */
@@ -174,15 +183,7 @@ class TeamRepository(private val session: SessionStore) {
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("create_invitation")) {
             authHeaders(token)
             contentType(ContentType.Application.Json)
-            setBody(
-                CreateInvitationArgs(
-                    vineyardId = vineyardId,
-                    email = email.trim().lowercase(),
-                    role = role,
-                    operatorCategoryId = operatorCategoryId,
-                    expiresAt = null,
-                )
-            )
+            setBody(createInvitationArgs(vineyardId, email, role, operatorCategoryId))
         }
         when {
             response.status.isSuccess() -> response.body<List<Invitation>>().firstOrNull()
@@ -317,12 +318,4 @@ class TeamRepository(private val session: SessionStore) {
         @SerialName("emailStatus") val emailStatus: String? = null,
     )
 
-    @Serializable
-    private data class CreateInvitationArgs(
-        @SerialName("p_vineyard_id") val vineyardId: String,
-        @SerialName("p_email") val email: String,
-        @SerialName("p_role") val role: String,
-        @SerialName("p_operator_category_id") val operatorCategoryId: String?,
-        @SerialName("p_expires_at") val expiresAt: String?,
-    )
 }
