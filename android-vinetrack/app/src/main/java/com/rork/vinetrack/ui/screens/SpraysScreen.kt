@@ -23,6 +23,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -89,8 +93,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -237,6 +241,18 @@ fun SpraysScreen(
                 onAddTemplate = { creatingTemplate = true },
                 onOpenCalculator = { calculatorPrefillId = null; calculating = true },
                 onPlanFromProgram = { step -> calculatorPrefillId = step.id; calculating = true },
+            )
+        } else if (record.isTemplate) {
+            val isPortal = state.sprayRecords.none { it.id == record.id } &&
+                state.sprayJobTemplates.any { it.id == record.id }
+            SprayProgramStepDetailScreen(
+                record = record,
+                state = state,
+                isPortalManaged = isPortal,
+                onBack = { selectedId = null },
+                onEdit = { editingProgramStep = record to isPortal },
+                onDelete = { vm.deleteSprayRecord(record.id) { ok -> if (ok) selectedId = null } },
+                onPlanSpray = { calculatorPrefillId = record.id; calculating = true },
             )
         } else {
             SprayDetailView(
@@ -547,34 +563,49 @@ private fun SprayListView(
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            // Program | Sprays — the reusable program and the sprays actually
-            // applied are different kinds of thing (iOS SprayProgramTab).
-            TabRow(selectedTabIndex = tab.ordinal, containerColor = vine.appBackground) {
-                SprayProgramTabChoice.entries.forEach { choice ->
-                    Tab(
-                        selected = tab == choice,
-                        onClick = { tab = choice },
-                        text = { Text(choice.label) },
-                    )
-                }
-            }
-            // Search bar
-            OutlinedTextField(
+            val controlBackground = if (vine.isDark) vine.cardBackground else Color(0xFFE9E9EB)
+            TextField(
                 value = search,
                 onValueChange = { search = it },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).heightIn(min = 56.dp),
                 placeholder = { Text(if (tab == SprayProgramTabChoice.PROGRAM) "Search program" else "Search sprays") },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 trailingIcon = {
-                    if (hasSearch) {
+                    if (search.isNotEmpty()) {
                         IconButton(onClick = { search = "" }) {
                             Icon(Icons.Filled.Close, contentDescription = "Clear search")
                         }
                     }
                 },
                 singleLine = true,
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(50),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = controlBackground,
+                    unfocusedContainerColor = controlBackground,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    disabledIndicatorColor = Color.Transparent,
+                    focusedTextColor = vine.textPrimary,
+                    unfocusedTextColor = vine.textPrimary,
+                ),
             )
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp)
+                    .fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(controlBackground)
+                    .selectableGroup().padding(3.dp),
+            ) {
+                SprayProgramTabChoice.entries.forEach { choice ->
+                    Box(
+                        modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp))
+                            .background(if (tab == choice) vine.cardBackground else Color.Transparent)
+                            .selectable(selected = tab == choice, role = Role.Tab, onClick = { tab = choice })
+                            .heightIn(min = 44.dp).padding(horizontal = 8.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(choice.label, fontSize = 14.sp, fontWeight = if (tab == choice) FontWeight.SemiBold else FontWeight.Medium, color = vine.textPrimary)
+                    }
+                }
+            }
 
             // Status filter chips — Sprays tab only. A Program Step has no
             // status, so the chips would be meaningless on the Program tab.
@@ -651,18 +682,31 @@ private fun SprayListView(
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(if (tab == SprayProgramTabChoice.PROGRAM) 0.dp else 12.dp),
                     ) {
                         if (tab == SprayProgramTabChoice.PROGRAM) {
-                            items(templates, key = { it.id }) { record ->
-                                SprayRow(
-                                    record = record,
-                                    trips = state.trips,
-                                    syncBadge = state.spraySyncState(record.id),
-                                    isPortalTemplate = state.sprayRecords.none { it.id == record.id },
-                                    onClick = { onSelect(record) },
-                                    targetLabels = targetLabels,
+                            itemsIndexed(templates, key = { _, record -> record.id }) { index, record ->
+                                val isPortal = state.sprayRecords.none { it.id == record.id }
+                                val canEdit = SprayProgramStepPermissions.canEdit(isPortal, state.canManageSprayProgram, canEditRecords = true)
+                                val shape = RoundedCornerShape(
+                                    topStart = if (index == 0) 14.dp else 0.dp,
+                                    topEnd = if (index == 0) 14.dp else 0.dp,
+                                    bottomStart = if (index == templates.lastIndex) 14.dp else 0.dp,
+                                    bottomEnd = if (index == templates.lastIndex) 14.dp else 0.dp,
                                 )
+                                Column(Modifier.fillMaxWidth().clip(shape).background(vine.cardBackground)) {
+                                    SprayProgramStepRow(
+                                        record = record,
+                                        isPortalManaged = isPortal,
+                                        canEdit = canEdit,
+                                        onClick = { onSelect(record) },
+                                        targetLabels = targetLabels,
+                                    )
+                                    if (index != templates.lastIndex) HorizontalDivider(
+                                        modifier = Modifier.padding(start = 86.dp, end = 16.dp),
+                                        color = vine.cardBorder.copy(alpha = 0.5f),
+                                    )
+                                }
                             }
                         } else {
                             items(pendingManualSaves, key = { "pending-manual-${it.id}" }) { operation ->
