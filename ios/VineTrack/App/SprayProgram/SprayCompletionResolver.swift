@@ -8,12 +8,15 @@ nonisolated enum SprayCompletionResolver {
         return .upcoming
     }
 
-    /// Reconcile only completion metadata; retain legitimate pending form edits.
+    /// Reconcile server-owned Trip provenance and completion; retain pending form edits.
     static func preservingServerCompletion(local: SprayRecord, server: SprayRecord) -> SprayRecord {
-        guard let end = server.endTime else { return local }
         var reconciled = local
-        reconciled.endTime = end
-        reconciled.syncVersion = server.syncVersion
+        if let tripId = server.canonicalTripId { reconciled.tripId = tripId }
+        reconciled.hasRecordedTripLink = server.hasRecordedTripLink
+        if let end = server.endTime {
+            reconciled.endTime = end
+            reconciled.syncVersion = server.syncVersion
+        }
         return reconciled
     }
 }

@@ -157,7 +157,7 @@ struct SprayProgramView: View {
     // MARK: - Sprays data source
 
     private func tripForRecord(_ record: SprayRecord) -> Trip? {
-        store.trips.first(where: { $0.id == record.tripId })
+        store.trips.first(where: { $0.id == record.canonicalTripId })
     }
 
     private func recordStatus(_ record: SprayRecord) -> SprayStatusFilter {
@@ -411,7 +411,7 @@ struct SprayProgramView: View {
     @MainActor
     private func deleteManualRecord(_ record: SprayRecord) async {
         guard accessControl?.canManageManualSprays == true, let manualEntryId = record.manualEntryId,
-              let trip = store.trips.first(where: { $0.id == record.tripId }) else { return }
+              let trip = store.trips.first(where: { $0.id == record.canonicalTripId }) else { return }
         let payload = ManualSprayPayload(
             vineyardId: record.vineyardId, manualEntryId: manualEntryId, sprayRecordId: record.id, tripId: trip.id,
             reference: record.sprayReference, operationType: record.operationType.rawValue,
@@ -732,7 +732,7 @@ struct SprayProgramView: View {
         let vineyardName = store.selectedVineyard?.name ?? "Vineyard"
         let includeCostings = accessControl?.canViewCosting ?? false
         Task {
-            let canonicalReports = await SprayReportRepository.shared.fetchAll(tripIds: records.compactMap(\.tripId))
+            let canonicalReports = await SprayReportRepository.shared.fetchAll(tripIds: records.compactMap(\.canonicalTripId))
             let url = SprayProgramCSVService.exportRecords(
                 records: records,
                 trips: trips,
@@ -789,7 +789,7 @@ struct SprayProgramView: View {
         let tankActuals = SprayTankActualStore.shared.records.filter { actual in records.contains { $0.id == actual.sprayRecordId } }
 
         Task {
-            let includedTripIds = records.compactMap(\.tripId)
+            let includedTripIds = records.compactMap(\.canonicalTripId)
             let canonicalReports = await SprayReportRepository.shared.fetchAll(tripIds: includedTripIds)
             let url = SprayProgramExportService.generateProgramPDF(
                 records: records,

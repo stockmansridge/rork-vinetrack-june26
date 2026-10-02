@@ -25,7 +25,7 @@ struct SprayRecordDetailView: View {
     @State private var manualDeleteError: String?
 
     private var tripForRecord: Trip? {
-        store.trips.first(where: { $0.id == record.tripId })
+        store.trips.first(where: { $0.id == record.canonicalTripId })
     }
 
     /// Portal templates come from `spray_jobs` and are read-only on mobile:
@@ -989,7 +989,7 @@ struct SprayRecordDetailView: View {
     }
 
     private var paddockIdsForTrip: [UUID] {
-        if let trip = store.trips.first(where: { $0.id == record.tripId }) {
+        if let trip = store.trips.first(where: { $0.id == record.canonicalTripId }) {
             return trip.paddockIds
         }
         return []

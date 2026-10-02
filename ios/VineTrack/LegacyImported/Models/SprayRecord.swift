@@ -54,11 +54,14 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
     var syncVersion: Int?
     /// Local-only provenance: a display fallback is not an operational event date.
     var hasRecordedEventDate: Bool
+    /// Local-only provenance: a compatibility UUID must never become a server Trip link.
+    var hasRecordedTripLink: Bool
+    var canonicalTripId: UUID? { hasRecordedTripLink ? tripId : nil }
     var isManualEntry: Bool { entrySource == "manual" }
 
     init(
         id: UUID = UUID(),
-        tripId: UUID = UUID(),
+        tripId: UUID? = nil,
         vineyardId: UUID = UUID(),
         date: Date = Date(),
         startTime: Date = Date(),
@@ -85,10 +88,12 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         entrySource: String? = nil,
         manualEntryId: UUID? = nil,
         syncVersion: Int? = nil,
-        hasRecordedEventDate: Bool = true
+        hasRecordedEventDate: Bool = true,
+        hasRecordedTripLink: Bool? = nil
     ) {
         self.id = id
-        self.tripId = tripId
+        self.tripId = tripId ?? UUID()
+        self.hasRecordedTripLink = hasRecordedTripLink ?? (tripId != nil)
         self.vineyardId = vineyardId
         self.date = date
         self.startTime = startTime
@@ -126,7 +131,7 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         case machineId, tractorId, sprayEquipmentId, isTemplate, operationType
         case applicationGeometry
         case sprayJobId
-        case entrySource, manualEntryId, syncVersion, hasRecordedEventDate
+        case entrySource, manualEntryId, syncVersion, hasRecordedEventDate, hasRecordedTripLink
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -167,6 +172,8 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         manualEntryId = try container.decodeIfPresent(UUID.self, forKey: .manualEntryId)
         syncVersion = try container.decodeIfPresent(Int.self, forKey: .syncVersion)
         hasRecordedEventDate = try container.decodeIfPresent(Bool.self, forKey: .hasRecordedEventDate) ?? true
+        // Preserve pre-existing cached links; server reconciliation supplies authoritative provenance.
+        hasRecordedTripLink = try container.decodeIfPresent(Bool.self, forKey: .hasRecordedTripLink) ?? true
     }
 }
 

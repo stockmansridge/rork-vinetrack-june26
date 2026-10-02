@@ -13,7 +13,7 @@ struct EndSprayView: View {
     @State private var showTrip: Bool = false
 
     private var record: SprayRecord? { store.sprayRecords.first { $0.id == recordId } }
-    private var trip: Trip? { record.flatMap { record in store.trips.first { $0.id == record.tripId } } }
+    private var trip: Trip? { record.flatMap { record in store.trips.first { $0.id == record.canonicalTripId } } }
 
     var body: some View {
         if let record, !record.isTemplate, record.endTime == nil,
@@ -55,12 +55,10 @@ struct EndSprayView: View {
                 message = SprayCompletionFailure.message("MANUAL_SPRAY_WORKFLOW_REQUIRED")
                 return
             }
-            if server.endTime != nil {
-                if let local = record {
-                    store.applyRemoteSprayRecordUpsert(SprayCompletionResolver.preservingServerCompletion(local: local, server: server.toSprayRecord()))
-                }
-                return
+            if let local = record {
+                store.applyRemoteSprayRecordUpsert(SprayCompletionResolver.preservingServerCompletion(local: local, server: server.toSprayRecord()))
             }
+            if server.endTime != nil { return }
             allowUnlinked = server.tripId == nil
             if let linkedId = server.tripId {
                 let linked: BackendTrip = try await SupabaseClientProvider.shared.client.from("trips")

@@ -271,7 +271,7 @@ extension BackendSprayRecord {
         return BackendSprayRecordUpsert(
             id: record.id,
             vineyardId: record.vineyardId,
-            tripId: record.tripId,
+            tripId: record.canonicalTripId,
             date: record.date,
             startTime: record.startTime,
             endTime: record.endTime,
@@ -335,7 +335,7 @@ extension BackendSprayRecord {
     func toSprayRecord() -> SprayRecord {
         SprayRecord(
             id: id,
-            tripId: tripId ?? UUID(),
+            tripId: tripId,
             vineyardId: vineyardId,
             date: date ?? startTime ?? Date(),
             startTime: startTime ?? Date(),
@@ -362,7 +362,8 @@ extension BackendSprayRecord {
             entrySource: entrySource,
             manualEntryId: manualEntryId,
             syncVersion: syncVersion,
-            hasRecordedEventDate: date != nil || startTime != nil
+            hasRecordedEventDate: date != nil || startTime != nil,
+            hasRecordedTripLink: tripId != nil
         )
     }
 

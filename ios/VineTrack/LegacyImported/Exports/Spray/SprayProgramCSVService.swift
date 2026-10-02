@@ -119,7 +119,7 @@ struct SprayProgramCSVService {
         dateFormatter.timeZone = timeZone
 
         for record in records {
-            let trip = trips.first { $0.id == record.tripId }
+            let trip = trips.first { $0.id == record.canonicalTripId }
             let canonical = trip.flatMap { canonicalReports[$0.id] }
             let canonicalWeather = canonical?.weather.first { $0.sourceKind == "observed" || $0.sourceKind == "manual" }
 

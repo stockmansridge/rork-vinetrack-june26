@@ -127,7 +127,7 @@ struct SprayProgramExportService {
             for (index, record) in records.enumerated() {
                 checkPageBreak(needed: 22)
 
-                let trip = trips.first { $0.id == record.tripId }
+                let trip = trips.first { $0.id == record.canonicalTripId }
                 let canonical = trip.flatMap { canonicalReports[$0.id] }
 
                 if index % 2 == 0 {
@@ -288,7 +288,7 @@ struct SprayProgramExportService {
             var totalFuelCost: Double = 0
             var totalOperatorCost: Double = 0
             for record in records {
-                guard let trip = trips.first(where: { $0.id == record.tripId }) else { continue }
+                guard let trip = trips.first(where: { $0.id == record.canonicalTripId }) else { continue }
                 let tractor = tractors.first(where: { $0.displayName == record.tractor || $0.name == record.tractor })
                 if let tractor, tractor.fuelUsageLPerHour > 0, seasonFuelCostPerLitre > 0 {
                     let end = trip.endTime ?? Date()
@@ -399,7 +399,7 @@ struct SprayProgramExportService {
         var csv = "Date,Name,Block,Chemicals,Tanks,Avg Rate (L/\(rateUnit)),Water Vol (\(volumeUnit)),CF,Temp (°C),Wind (km/h),Wind Dir,Humidity (%),Equipment,Tractor,Gear,Operator,Notes,Status\n"
 
         for record in records {
-            let trip = trips.first { $0.id == record.tripId }
+            let trip = trips.first { $0.id == record.canonicalTripId }
 
             let date = formatter.formatDate(record.date)
             let name = escapeCSV(record.sprayReference)

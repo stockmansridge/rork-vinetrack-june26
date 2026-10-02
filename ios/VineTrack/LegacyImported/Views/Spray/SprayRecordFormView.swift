@@ -890,7 +890,8 @@ struct SprayRecordFormView: View {
             applicationGeometry: SprayManualBlockAttribution.geometryToPersist(
                 existing: existingRecord?.applicationGeometry,
                 blocks: attributionBlocks
-            )
+            ),
+            hasRecordedTripLink: existingRecord?.hasRecordedTripLink ?? store.trips.contains { $0.id == tripId }
         )
         if existingRecord != nil {
             store.updateSprayRecord(record)

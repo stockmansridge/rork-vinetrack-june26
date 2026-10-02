@@ -28,6 +28,96 @@ struct SprayProgramRound2Tests {
         #expect(applied.tripId == record.tripId)
     }
 
+    @Test func unlinkedServerEditDoesNotEncodeCompatibilityTrip() throws {
+        let json = """
+        {"id":"\(UUID())","vineyard_id":"\(UUID())","trip_id":null,"notes":"Original"}
+        """
+        let server = try JSONDecoder().decode(BackendSprayRecord.self, from: Data(json.utf8))
+        var local = server.toSprayRecord()
+        local.notes = "Ordinary edit"
+        let payload = BackendSprayRecord.upsert(from: local, createdBy: nil, clientUpdatedAt: Date())
+        #expect(!local.hasRecordedTripLink)
+        #expect(local.canonicalTripId == nil)
+        #expect(payload.tripId == nil)
+        let fields = try SupabaseSprayRecordSyncRepository.editableFieldsPreservingCompletion(payload)
+        #expect(fields["trip_id"] == nil)
+        #expect(fields["notes"] == .string("Ordinary edit"))
+    }
+
+    @Test func linkedServerMappingAndReplayKeepCanonicalTrip() throws {
+        let tripId = UUID()
+        let json = """
+        {"id":"\(UUID())","vineyard_id":"\(UUID())","trip_id":"\(tripId)"}
+        """
+        let server = try JSONDecoder().decode(BackendSprayRecord.self, from: Data(json.utf8)).toSprayRecord()
+        #expect(server.hasRecordedTripLink)
+        #expect(server.tripId == tripId)
+        let stale = SprayRecord(id: server.id, vineyardId: server.vineyardId, notes: "Pending edit")
+        let reconciled = SprayCompletionResolver.preservingServerCompletion(local: stale, server: server)
+        #expect(reconciled.hasRecordedTripLink)
+        #expect(reconciled.canonicalTripId == tripId)
+        #expect(reconciled.notes == stale.notes)
+        let payload = BackendSprayRecord.upsert(from: reconciled, createdBy: nil, clientUpdatedAt: Date())
+        #expect(payload.tripId == tripId)
+        // Existing-row edits do not rewrite or clear the server's legitimate link.
+        let fields = try SupabaseSprayRecordSyncRepository.editableFieldsPreservingCompletion(payload)
+        #expect(fields["trip_id"] == nil)
+    }
+
+    @Test func unlinkedCompletionThenPersistedOrdinaryEditKeepsNullTrip() throws {
+        let json = """
+        {"id":"\(UUID())","vineyard_id":"\(UUID())","trip_id":null}
+        """
+        let server = try JSONDecoder().decode(BackendSprayRecord.self, from: Data(json.utf8)).toSprayRecord()
+        let legacyLocal = SprayRecord(id: server.id, tripId: UUID(), vineyardId: server.vineyardId, notes: "Pending edit")
+        let reconciled = SprayCompletionResolver.preservingServerCompletion(local: legacyLocal, server: server)
+        #expect(!reconciled.hasRecordedTripLink)
+        let end = Date(timeIntervalSince1970: 1770000000.123456)
+        let response = SprayCompletionResponse(sprayRecordId: server.id, endTime: end, completionSource: "server_now",
+            serverConfirmed: true, updatedAt: end, updatedBy: nil, clientUpdatedAt: end, syncVersion: 8)
+        let completed = try response.applying(to: reconciled)
+        var restored = try JSONDecoder().decode(SprayRecord.self, from: JSONEncoder().encode(completed))
+        restored.notes = "Later ordinary edit"
+        #expect(!restored.hasRecordedTripLink)
+        #expect(restored.canonicalTripId == nil)
+        #expect(restored.endTime == end)
+        let payload = BackendSprayRecord.upsert(from: restored, createdBy: nil, clientUpdatedAt: Date())
+        #expect(payload.tripId == nil)
+        let fields = try SupabaseSprayRecordSyncRepository.editableFieldsPreservingCompletion(payload)
+        #expect(fields["trip_id"] == nil)
+        #expect(fields["end_time"] == nil)
+        #expect(fields["notes"] == .string(restored.notes))
+    }
+
+    @Test func newLocalAndLegacyCachedTripProvenance() throws {
+        let tripId = UUID()
+        let linked = SprayRecord(tripId: tripId)
+        #expect(linked.hasRecordedTripLink)
+        #expect(linked.canonicalTripId == tripId)
+        #expect(!SprayRecord().hasRecordedTripLink)
+        let compatibility = SprayRecord(tripId: UUID(), hasRecordedTripLink: false)
+        let restored = try JSONDecoder().decode(SprayRecord.self, from: JSONEncoder().encode(compatibility))
+        #expect(!restored.hasRecordedTripLink)
+        #expect(restored.canonicalTripId == nil)
+        var fields = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(linked)) as? [String: Any])
+        fields.removeValue(forKey: "hasRecordedTripLink")
+        let oldCache = try JSONDecoder().decode(SprayRecord.self, from: JSONSerialization.data(withJSONObject: fields))
+        #expect(oldCache.hasRecordedTripLink)
+        #expect(oldCache.canonicalTripId == tripId)
+    }
+
+    @Test func vintageAndReportLookupIgnoreCompatibilityTrip() {
+        let vineyard = UUID()
+        let window = SeasonWindow.window(vintage: 2027, seasonStartMonth: 7, seasonStartDay: 1, timeZone: TimeZone(secondsFromGMT: 0)!)
+        let unrelated = Trip(vineyardId: vineyard, endTime: window.start.addingTimeInterval(300), isActive: false)
+        var record = SprayRecord(tripId: unrelated.id, vineyardId: vineyard, date: window.start, hasRecordedTripLink: false)
+        #expect([record].compactMap(\.canonicalTripId).isEmpty)
+        #expect(SprayProgramProgression.completed(records: [record], trips: [unrelated], vineyardId: vineyard, window: window).isEmpty)
+        record.endTime = window.start.addingTimeInterval(600)
+        #expect(SprayProgramProgression.completed(records: [record], trips: [unrelated], vineyardId: vineyard, window: window).map(\.id) == [record.id])
+        #expect([record].compactMap(\.canonicalTripId).isEmpty)
+    }
+
     @Test func completionErrors() {
         #expect(SprayCompletionFailure.message("ACTIVE_TRIP") == "This spray still has an active Trip. End the Trip to complete the spray.")
         #expect(SprayCompletionFailure.message("UNLINKED_CONFIRMATION_REQUIRED") == "No linked Trip is available. Mark this spray complete now?")
@@ -76,6 +166,8 @@ struct SprayProgramRound2Tests {
         let payload = await repository.pushed.first
         #expect(payload?.notes == local.notes)
         #expect(payload?.endTime == server.endTime)
+        #expect(payload?.tripId == nil)
+        #expect(store.sprayRecords.first?.hasRecordedTripLink == false)
         #expect(store.sprayRecords.first?.endTime == server.endTime)
         #expect(store.sprayRecords.first?.notes == local.notes)
         #expect(service.isPendingUpsert(local.id) == fails)
@@ -136,7 +228,21 @@ struct SprayProgramRound2Tests {
         #expect(rate.contains("250")); #expect(rate.contains("300"))
         #expect(!rate.contains("175")); #expect(!rate.contains("999"))
         let unmatched = SprayProgramStep(record: step.record, source: .portal, targetRaw: "Unknown target")
-        #expect(SprayProgramReferenceDataset.rate(product, step: unmatched, chemicals: [chemical]).isEmpty)
+        #expect(SprayProgramReferenceDataset.rate(product, step: unmatched, chemicals: [chemical]) == "Rate set when planning")
+    }
+
+    @Test func programNoSafeRateUsesPlanningWordingInRowsAndCSV() {
+        let product = SprayChemical(name: "Unresolved product")
+        let step = SprayProgramStep(record: SprayRecord(sprayReference: "EL9 — Leaves",
+            tanks: [SprayTank(chemicals: [product])], isTemplate: true), source: .local)
+        #expect(SprayProgramReferenceDataset.rate(product, step: step, chemicals: []) == "Rate set when planning")
+        let noTarget = SavedChemical(name: product.name)
+        #expect(SprayProgramReferenceDataset.rate(product, step: step, chemicals: [noTarget]) == "Rate set when planning")
+        let rows = SprayProgramReferenceDataset.rows(steps: [step], chemicals: [])
+        #expect(rows.map(\.rate) == ["Rate set when planning"])
+        #expect(SprayProgramReferenceDataset.csv(rows).contains("\"Rate set when planning\""))
+        let emptyStep = SprayProgramStep(record: SprayRecord(isTemplate: true), source: .local)
+        #expect(SprayProgramReferenceDataset.rows(steps: [emptyStep], chemicals: []).first?.rate == "Rate set when planning")
     }
 
     @Test func exactSmallRatesAndProvenanceWithoutReferenceStage() {

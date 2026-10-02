@@ -85,7 +85,20 @@ class SprayProgramRound2Test {
         assertTrue(rate.contains("150")); assertTrue(rate.contains("200"))
         assertTrue(rate.contains("250")); assertTrue(rate.contains("300"))
         assertFalse(rate.contains("175")); assertFalse(rate.contains("999"))
-        assertEquals("", SprayProgramReferenceDataset.rate(product, step.copy(targets = listOf("unknown")), listOf(chemical), emptyMap()))
+        assertEquals("Rate set when planning", SprayProgramReferenceDataset.rate(product, step.copy(targets = listOf("unknown")), listOf(chemical), emptyMap()))
+    }
+
+    @Test fun `no deterministic rate uses planning wording in shared export rows and CSV`() {
+        val product = SprayChemical(id = "product", name = "Unresolved product")
+        val step = SprayRecord(id = "step", vineyardId = "vineyard", isTemplate = true,
+            tanks = listOf(SprayTank(id = "tank", chemicals = listOf(product))))
+        assertEquals("Rate set when planning", SprayProgramReferenceDataset.rate(product, step, emptyList(), emptyMap()))
+        val noTarget = SavedChemical(id = "chemical", vineyardId = "vineyard", name = product.name)
+        assertEquals("Rate set when planning", SprayProgramReferenceDataset.rate(product, step, listOf(noTarget), emptyMap()))
+        val rows = SprayProgramReferenceDataset.rows(listOf(step), emptyList())
+        assertEquals(listOf("Rate set when planning"), rows.map { it.rate })
+        assertTrue(SprayProgramReferenceDataset.csv(rows).contains("\"Rate set when planning\""))
+        assertEquals("Rate set when planning", SprayProgramReferenceDataset.rows(listOf(step.copy(tanks = emptyList())), emptyList()).single().rate)
     }
 
     @Test fun `small precise programmed rates never round to zero`() {

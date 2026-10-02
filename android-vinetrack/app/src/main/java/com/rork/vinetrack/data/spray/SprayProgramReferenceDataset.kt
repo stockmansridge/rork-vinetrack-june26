@@ -18,6 +18,7 @@ data class SprayProgramReferenceRow(
 
 /** Configuration only, identical PDF and CSV dataset; no calculated doses or operational fields. */
 object SprayProgramReferenceDataset {
+    const val UNPLANNED_RATE = "Rate set when planning"
     const val FOOTER = "Program reference only. Always follow the current product label and registration. Application quantities are determined when the spray is planned."
     val headers = listOf("E-L stage", "Growth-stage description", "Program Step", "Targets / purpose", "Application method", "Spray unit", "Product", "Programmed / registered rate", "Program notes / instructions")
 
@@ -35,16 +36,16 @@ object SprayProgramReferenceDataset {
             if (product.savedChemicalId != null) it.id == product.savedChemicalId
             else SprayProgramProgression.normalizedName(it.name) == SprayProgramProgression.normalizedName(product.name)
         }
-        val chemical = matches.singleOrNull() ?: return ""
+        val chemical = matches.singleOrNull() ?: return UNPLANNED_RATE
         val targets = SprayTargetVocabulary.tags(step.targets.orEmpty(), null, targetLabels)
             .map { SprayProgramProgression.normalizedName(it.label) }.toSet()
-        if (targets.isEmpty()) return ""
+        if (targets.isEmpty()) return UNPLANNED_RATE
         return SprayRegisteredUseRates.vineyardRates(chemical).filter { rate ->
             rate.origin == SprayRateOrigin.REGISTERED_USE && rate.preset == null && rate.isSelectable &&
                 chemical.registeredUses.orEmpty().any { use -> use.isViticultural && (use.directionId ?: use.id) == rate.registeredUseId } &&
                 SprayProgramProgression.normalizedName(rate.targetRaw.orEmpty()) in targets
         }.map { "${it.targetRaw.orEmpty()}${it.label.takeIf { label -> label.isNotBlank() }?.let { label -> " — $label" }.orEmpty()}: ${it.labelRangeText ?: it.displayText}${it.condition?.let { condition -> " ($condition)" }.orEmpty()} (registered)" }
-            .distinct().sorted().joinToString("; ")
+            .distinct().sorted().joinToString("; ").ifEmpty { UNPLANNED_RATE }
     }
 
     fun rows(steps: List<SprayRecord>, chemicals: List<SavedChemical>, unitNames: Map<String, String> = emptyMap(), targetLabels: Map<String, String> = emptyMap()): List<SprayProgramReferenceRow> =
@@ -59,7 +60,7 @@ object SprayProgramReferenceDataset {
                 name = step.displayLabel,
                 targets = SprayTargetVocabulary.tags(step.targets.orEmpty(), null, targetLabels).joinToString(" · ") { it.label },
                 method = step.operationType.orEmpty(), equipment = unitNames[step.sprayEquipmentId] ?: step.equipmentType.orEmpty(),
-                product = product?.name.orEmpty(), rate = product?.let { rate(it, step, chemicals, targetLabels) }.orEmpty(), notes = step.notes.orEmpty(),
+                product = product?.name.orEmpty(), rate = product?.let { rate(it, step, chemicals, targetLabels) } ?: UNPLANNED_RATE, notes = step.notes.orEmpty(),
             ) }
         }
 

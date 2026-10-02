@@ -70,6 +70,8 @@ final class SupabaseSprayRecordSyncRepository: SprayRecordSyncRepositoryProtocol
             try container.encode(date.ISO8601Format(.init(includingFractionalSeconds: true)))
         }
         var fields = try JSONDecoder().decode([String: SprayReportPayloadV1.JSONValue].self, from: encoder.encode(record))
+        // Ordinary edits cannot relink a spray or write a UUID from an older local cache.
+        fields.removeValue(forKey: "trip_id")
         fields.removeValue(forKey: "end_time")
         fields.removeValue(forKey: "created_by")
         return fields

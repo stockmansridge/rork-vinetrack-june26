@@ -29,7 +29,7 @@ nonisolated enum SprayProgramProgression {
     static func completed(records: [SprayRecord], trips: [Trip], vineyardId: UUID?, window: SeasonWindow) -> [SprayRecord] {
         SprayProgramOperationalRecords.unique(records).filter { record in
             record.vineyardId == vineyardId && record.hasRecordedEventDate && window.contains(record.date) &&
-            SprayCompletionResolver.status(record: record, trip: trips.first { $0.id == record.tripId }) == .completed
+            SprayCompletionResolver.status(record: record, trip: trips.first { $0.id == record.canonicalTripId }) == .completed
         }
     }
 
