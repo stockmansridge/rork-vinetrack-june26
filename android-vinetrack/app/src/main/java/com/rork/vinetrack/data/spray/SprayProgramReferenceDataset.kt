@@ -12,6 +12,7 @@ import java.math.BigDecimal
 data class SprayProgramReferenceRow(
     val stage: String, val description: String, val name: String, val targets: String,
     val method: String, val equipment: String, val product: String, val rate: String, val notes: String,
+    val pdfStepId: String = "", val pdfProduct: ProgramPDFProduct? = null,
 ) {
     val cells: List<String> get() = listOf(stage, description, name, targets, method, equipment, product, rate, notes)
 }
@@ -61,6 +62,7 @@ object SprayProgramReferenceDataset {
                 targets = SprayTargetVocabulary.tags(step.targets.orEmpty(), null, targetLabels).joinToString(" · ") { it.label },
                 method = step.operationType.orEmpty(), equipment = unitNames[step.sprayEquipmentId] ?: step.equipmentType.orEmpty(),
                 product = product?.name.orEmpty(), rate = product?.let { rate(it, step, chemicals, targetLabels) } ?: UNPLANNED_RATE, notes = step.notes.orEmpty(),
+                pdfStepId = step.id, pdfProduct = product?.let { ProgramPDFProduct.make(it, step, chemicals, targetLabels) },
             ) }
         }
 

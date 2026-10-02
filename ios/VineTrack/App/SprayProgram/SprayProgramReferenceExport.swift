@@ -12,6 +12,8 @@ nonisolated struct SprayProgramReferenceRow: Equatable, Sendable {
     let product: String
     let rate: String
     let notes: String
+    var pdfStepID: String = ""
+    var pdfProduct: ProgramPDFProduct? = nil
     var cells: [String] { [stage, description, name, targets, method, equipment, product, rate, notes] }
 }
 
@@ -69,7 +71,9 @@ nonisolated enum SprayProgramReferenceDataset {
                     description: stage.flatMap { number in GrowthStage.allStages.first { ELStageParser.stageNumber(fromCode: $0.code) == number }?.description } ?? "",
                     name: step.name, targets: step.targetDisplay ?? "", method: step.operationType.rawValue,
                     equipment: step.record.sprayEquipmentId.flatMap { unitNames[$0] } ?? step.record.equipmentType,
-                    product: product?.name ?? "", rate: product.map { rate($0, step: step, chemicals: chemicals) } ?? unplannedRate, notes: step.notes)
+                    product: product?.name ?? "", rate: product.map { rate($0, step: step, chemicals: chemicals) } ?? unplannedRate, notes: step.notes,
+                    pdfStepID: step.id.uuidString,
+                    pdfProduct: product.map { ProgramPDFProduct.make($0, step: step, chemicals: chemicals) })
             }
         }
     }
@@ -93,61 +97,6 @@ nonisolated enum SprayProgramReferenceExport {
     }
 
     @MainActor static func pdf(rows: [SprayProgramReferenceRow], vineyard: String, logo: Data?) throws -> URL {
-        let bounds = CGRect(x: 0, y: 0, width: 842, height: 595)
-        let renderer = UIGraphicsPDFRenderer(bounds: bounds)
-        let font = UIFont.systemFont(ofSize: 10)
-        let widths: [CGFloat] = [74, 290, 178, 228]
-        func wrap(_ text: String, width: CGFloat) -> [String] {
-            var lines: [String] = []
-            for paragraph in text.components(separatedBy: "\n") {
-                var line = ""
-                for character in paragraph {
-                    let next = line + String(character)
-                    if !line.isEmpty && (next as NSString).size(withAttributes: [.font: font]).width > width - 12 {
-                        lines.append(line); line = String(character)
-                    } else { line = next }
-                }
-                lines.append(line)
-            }
-            return lines
-        }
-        let data = renderer.pdfData { context in
-            var y: CGFloat = 108
-            var page = 0
-            func newPage() {
-                context.beginPage(); page += 1; y = 108
-                ("\(vineyard) — Spray Program" as NSString).draw(at: CGPoint(x: 36, y: 32), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 18)])
-                ("VineTrack · Program reference" as NSString).draw(at: CGPoint(x: 36, y: 57), withAttributes: [.font: font])
-                if let logo, let image = UIImage(data: logo) { image.draw(in: CGRect(x: 766, y: 28, width: 40, height: 40)) }
-                var x: CGFloat = 36
-                for (i, title) in ["E-L STAGE", "PROGRAM STEP / PURPOSE / INSTRUCTIONS", "PRODUCT", "RATE / RANGE"].enumerated() {
-                    (title as NSString).draw(in: CGRect(x: x + 6, y: 83, width: widths[i] - 12, height: 23), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 9)])
-                    x += widths[i]
-                }
-                (SprayProgramReferenceDataset.footer as NSString).draw(in: CGRect(x: 36, y: 551, width: 705, height: 32), withAttributes: [.font: UIFont.systemFont(ofSize: 8)])
-                ("Page \(page)" as NSString).draw(at: CGPoint(x: 764, y: 554), withAttributes: [.font: font])
-            }
-            newPage()
-            for row in rows {
-                let detail = [row.name, row.description, row.targets, row.method, row.equipment, row.notes].filter { !$0.isEmpty }.joined(separator: "\n")
-                let columns = [row.stage, detail, row.product, row.rate].enumerated().map { wrap($0.element, width: widths[$0.offset]) }
-                let count = columns.map(\.count).max() ?? 1
-                for line in 0..<count {
-                    if y + 14 > 536 { newPage() }
-                    var x: CGFloat = 36
-                    for column in 0..<4 {
-                        if line < columns[column].count {
-                            (columns[column][line] as NSString).draw(at: CGPoint(x: x + 6, y: y), withAttributes: [.font: font])
-                        }
-                        x += widths[column]
-                    }
-                    y += 14
-                }
-                y += 12
-            }
-        }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename(vineyard: vineyard, extension: "pdf"))
-        try data.write(to: url)
-        return url
+        return try ProgramGroupedPDFRenderer.write(rows: rows, vineyard: vineyard, logo: logo)
     }
 }

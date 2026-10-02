@@ -351,6 +351,20 @@ if (providers.gradleProperty("sprayProgramRound2FocusedTests").orNull == "true")
     }
 }
 
+// Compile only the grouped reference PDF contracts; no unrelated legacy suites.
+if (providers.gradleProperty("programPDFFocusedTests").orNull == "true") {
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+        testLogging { events("passed", "failed", "skipped") }
+    }
+    afterEvaluate {
+        listOf("compileDebugUnitTestKotlin", "compileReleaseUnitTestKotlin").forEach { taskName ->
+            tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>(taskName) {
+                setSource(fileTree("src/test/java") { include("**/ProgramGroupedPDFTest.kt") })
+            }
+        }
+    }
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
