@@ -2520,7 +2520,7 @@ private fun AddChemicalToSprayFlow(
     // A newly-armed snapshot starts a fresh run.
     LaunchedEffect(idsBeforeAdd) { if (idsBeforeAdd != null) created = false }
 
-    if (showRegisterFlow && ChemicalCreationRouting.usesV2(state.systemFeatureFlags)) {
+    if (showRegisterFlow) {
         ChemicalSearchV2Sheet(
             vm = vm,
             state = state,
@@ -2537,7 +2537,7 @@ private fun AddChemicalToSprayFlow(
         )
     }
 
-    if (showRegisterFlow && !ChemicalCreationRouting.usesV2(state.systemFeatureFlags)) {
+    if (false) { // Retired fallback: never route a customer through snapshot/name inference.
         // The SAME workflow the Chemical Store uses: search the register,
         // review the grapevine information, confirm the default rate, save.
         //

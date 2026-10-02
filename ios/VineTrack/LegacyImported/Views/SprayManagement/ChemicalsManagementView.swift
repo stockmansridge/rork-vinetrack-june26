@@ -33,6 +33,7 @@ struct ChemicalsManagementView: View {
     @State private var reverifyingChemical: SavedChemical?
     @State private var searchText: String = ""
     @State private var approvedMedia: [UUID: MasterFrontLabel] = [:]
+    @State private var catalogueRevisions: [UUID: CatalogueWire] = [:]
     @State private var filter: ChemicalVerificationFilter = .all
     @State private var deleteCoordinator = ChemicalDeleteCoordinator()
 
@@ -60,7 +61,8 @@ struct ChemicalsManagementView: View {
         let trimmed = searchText.trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty {
             list = list.filter { chem in
-                let combined = "\(chem.name) \(chem.activeIngredient) \(chem.chemicalGroup) \(chem.manufacturer) \(chem.problem) \(chem.modeOfAction)"
+                let targets = chem.chemicalV3RevisionId.flatMap { catalogueRevisions[$0] }?.targets.joined(separator: " ") ?? CatalogueWire.manualTargets(problem: chem.problem, use: chem.use)
+                let combined = "\(chem.name) \(chem.activeIngredient) \(chem.chemicalGroup) \(chem.manufacturer) \(targets) \(chem.modeOfAction)"
                 return combined.localizedStandardContains(trimmed)
             }
         }
@@ -112,6 +114,9 @@ struct ChemicalsManagementView: View {
                 }
             }
 
+            if systemAdmin.isSystemAdmin {
+                Section { NavigationLink { ChemicalInventoryView() } label: { Label("Chemical Inventory", systemImage: "shippingbox") } }
+            }
             ForEach(filteredChemicals) { chemical in
                 Group {
                     if canManageSetup {
@@ -160,9 +165,10 @@ struct ChemicalsManagementView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .task(id: store.savedChemicals.map(\.masterChemicalId)) {
-            let ids = store.savedChemicals.compactMap(\.masterChemicalId)
-            approvedMedia = (try? await MasterFrontLabelRepository().list(ids)) ?? [:]
+        .task(id: store.savedChemicals.map(\.chemicalV3RevisionId)) {
+            for id in Set(store.savedChemicals.compactMap(\.chemicalV3RevisionId)) {
+                catalogueRevisions[id] = try? await CatalogueRepository().revision(id.uuidString)
+            }
         }
         .navigationTitle("Chemicals")
         .navigationBarTitleDisplayMode(.inline)
@@ -270,6 +276,9 @@ struct ChemicalDetailRow: View {
     }
 
     var body: some View {
+        if chemical.chemicalV3RevisionId != nil {
+            CatalogueSavedChemicalView(chemical: chemical)
+        } else {
         HStack {
             MasterFrontLabelView(media: media, interactive: false)
             VStack(alignment: .leading, spacing: 6) {
@@ -318,8 +327,9 @@ struct ChemicalDetailRow: View {
                                 .foregroundStyle(VineyardTheme.olive)
                                 .clipShape(Capsule())
                         }
-                        if !chemical.problem.isEmpty {
-                            Text(chemical.problem)
+                        let usedFor = CatalogueWire.manualTargets(problem: chemical.problem, use: chemical.use)
+                        if !usedFor.isEmpty {
+                            Text("Used for: \(usedFor)")
                                 .font(.caption2.weight(.semibold))
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 3)
@@ -369,5 +379,6 @@ struct ChemicalDetailRow: View {
                 .foregroundStyle(.tertiary)
         }
         .contentShape(Rectangle())
+        }
     }
 }

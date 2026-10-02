@@ -169,7 +169,14 @@ private data class ChemicalReviewV2Draft(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun ChemicalSearchV2Sheet(
+internal fun ChemicalSearchV2Sheet(vm: AppViewModel, state: AppUiState, onDismiss: () -> Unit,
+    onOpenExisting: (SavedChemical) -> Unit = {}, onSaved: (SavedChemical) -> Unit = {}) {
+    CatalogueSearchSheet(vm, state, onDismiss, onOpenExisting, onSaved)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RetiredChemicalSearchV2Sheet(
     vm: AppViewModel,
     state: AppUiState,
     onDismiss: () -> Unit,

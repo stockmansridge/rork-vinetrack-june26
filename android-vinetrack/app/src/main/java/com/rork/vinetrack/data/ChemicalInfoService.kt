@@ -430,43 +430,9 @@ class ChemicalInfoService {
         }
     }
 
-    private suspend fun postEdge(payload: Map<String, String>): String {
-        if (!SupabaseClient.isConfigured) {
-            throw LookupException("AI lookup is not configured. Please try again later.")
-        }
-        val anonKey = SupabaseClient.anonKey
-        if (anonKey.isBlank()) {
-            throw LookupException("AI lookup is not configured. Please try again later.")
-        }
-        val response = try {
-            SupabaseClient.http.post(SupabaseClient.functionUrl("chemical-info-lookup")) {
-                headers {
-                    append("apikey", anonKey)
-                    append("Authorization", "Bearer $anonKey")
-                }
-                contentType(ContentType.Application.Json)
-                setBody(payload)
-            }
-        } catch (e: CancellationException) {
-            // Includes the withTimeout bound above — cancellation must
-            // propagate for the caller to translate, never be swallowed into
-            // a generic failure message.
-            throw e
-        } catch (e: Exception) {
-            throw LookupException("AI lookup failed: ${e.message ?: "network error"}")
-        }
-        val text = response.bodyAsText()
-        if (response.status.isSuccess()) return text
-        val message = try {
-            SupabaseClient.json.decodeFromString<EdgeError>(text).error
-        } catch (e: Exception) {
-            null
-        }
-        if (message != null && message.contains("OPENAI_API_KEY")) {
-            throw LookupException("AI provider key is not set on the server. Ask an admin to configure it.")
-        }
-        throw LookupException(message?.let { "AI lookup failed: $it" } ?: "AI lookup failed: HTTP ${response.status.value}")
-    }
+    /** Compatibility-only API; all customer screens use CatalogueRepository. No legacy HTTP request exists. */
+    private suspend fun postEdge(payload: Map<String, String>): String =
+        throw LookupException("Open Chemical Search to use the VineTrack catalogue.")
 
     companion object {
         /** Search action bound, matching the iOS `ChemicalInfoService.searchTimeout`. */

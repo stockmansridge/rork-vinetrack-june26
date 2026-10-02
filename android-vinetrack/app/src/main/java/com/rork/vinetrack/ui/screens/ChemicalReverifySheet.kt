@@ -117,7 +117,15 @@ private sealed interface ReverifyPhase {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun ChemicalReverifySheet(
+internal fun ChemicalReverifySheet(state: AppUiState, chemical: SavedChemical, onDismiss: () -> Unit,
+    onUseUpdatedInformation: (ChemicalReverifyFlow.Draft) -> Unit) {
+    val vm: com.rork.vinetrack.ui.AppViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    CatalogueSearchSheet(vm, state, onDismiss)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RetiredChemicalReverifySheet(
     state: AppUiState,
     chemical: SavedChemical,
     onDismiss: () -> Unit,

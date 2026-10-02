@@ -123,7 +123,14 @@ private enum class MatchStep { SEARCH, REVIEW }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun ChemicalMatchFlowSheet(
+internal fun ChemicalMatchFlowSheet(vm: AppViewModel, state: AppUiState, existing: SavedChemical?, prefillQuery: String,
+    onDismiss: () -> Unit, onEnterManually: () -> Unit, onCheckForUpdates: (SavedChemical) -> Unit = {}, onCreated: () -> Unit = {}) {
+    CatalogueSearchSheet(vm, state, onDismiss, onSaved = { onCreated() })
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RetiredChemicalMatchFlowSheet(
     vm: AppViewModel,
     state: AppUiState,
     /**

@@ -17,6 +17,12 @@ import SwiftUI
 /// "Mark Verified" button to be found anywhere.
 struct ChemicalReverifyFlowView: View {
     let chemical: SavedChemical
+    var onProposed: (SavedChemical) -> Void = { _ in }
+    var body: some View { CatalogueSearchView(prefillQuery: chemical.name, onSaved: onProposed) }
+}
+
+private struct RetiredChemicalReverifyFlowView: View {
+    let chemical: SavedChemical
     /// Returns a reviewed proposal to the Edit Chemical form; this screen never writes.
     var onProposed: (SavedChemical) -> Void = { _ in }
 

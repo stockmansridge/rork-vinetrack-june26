@@ -1067,50 +1067,8 @@ nonisolated struct ChemicalInfoService: Sendable {
         payload: [String: Any],
         timeout: TimeInterval
     ) async throws -> Data {
-        guard AppConfig.isSupabaseConfigured else { throw ChemicalLookupError.notConfigured }
-        let base = AppConfig.supabaseURL.absoluteString
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: "\(base)/functions/v1/\(path)") else {
-            throw ChemicalLookupError.network("Invalid edge function URL")
-        }
-        let anonKey = AppConfig.supabaseAnonKey
-        guard !anonKey.isEmpty else { throw ChemicalLookupError.notConfigured }
-
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.timeoutInterval = timeout
-        req.cachePolicy = .reloadIgnoringLocalCacheData
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue(anonKey, forHTTPHeaderField: "apikey")
-        req.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
-        req.httpBody = try JSONSerialization.data(withJSONObject: payload)
-
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await Self.session(timeout: timeout).data(for: req)
-        } catch let error as URLError where error.code == .timedOut {
-            // Reported as its own case so the caller can say "ask again"
-            // instead of quietly falling back to a half-populated draft.
-            throw ChemicalLookupError.timedOut
-        } catch let error as URLError where error.code == .cancelled {
-            // The operator left the screen. Their decision, not a fault:
-            // surface it as cancellation so no error banner is raised for it.
-            throw CancellationError()
-        }
-        guard let http = response as? HTTPURLResponse else {
-            throw ChemicalLookupError.network("No HTTP response")
-        }
-        if (200..<300).contains(http.statusCode) { return data }
-
-        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let msg = obj["error"] as? String {
-            if msg.contains("OPENAI_API_KEY") {
-                throw ChemicalLookupError.missingProviderKey
-            }
-            throw ChemicalLookupError.network(msg)
-        }
-        throw ChemicalLookupError.network("HTTP \(http.statusCode)")
+        // Compatibility definitions are retained, but no legacy HTTP transport remains.
+        throw ChemicalLookupError.network("Open Chemical Search to use the VineTrack catalogue.")
     }
 
     /// A session whose deadline is the WHOLE request, not the idle gap.

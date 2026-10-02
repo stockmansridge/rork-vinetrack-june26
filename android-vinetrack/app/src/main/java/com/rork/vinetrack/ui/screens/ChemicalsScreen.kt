@@ -153,11 +153,24 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
     var editing by remember { mutableStateOf<SavedChemical?>(null) }
     var pendingDelete by remember { mutableStateOf<SavedChemical?>(null) }
     var search by remember { mutableStateOf("") }
+    var showInventory by remember { mutableStateOf(false) }
+    var catalogueRevisions by remember { mutableStateOf<Map<String, com.rork.vinetrack.data.chemical.CatalogueRow>>(emptyMap()) }
+    val catalogueContext = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(state.savedChemicals.map { it.chemicalV3RevisionId }) {
+        val repository = com.rork.vinetrack.data.chemical.CatalogueRepository(catalogueContext)
+        val rows = mutableMapOf<String, com.rork.vinetrack.data.chemical.CatalogueRow>()
+        state.savedChemicals.mapNotNull { it.chemicalV3RevisionId }.distinct().forEach { id ->
+            runCatching { repository.revision(id) }.getOrNull()?.let { rows[id] = it }
+        }
+        catalogueRevisions = rows
+    }
+    if (showInventory && state.isSystemAdmin) {
+        ChemicalInventoryScreen(state, onClose = { showInventory = false }, modifier = modifier)
+        return
+    }
     var approvedMedia by remember { mutableStateOf<Map<String, MasterFrontLabel>>(emptyMap()) }
     val masterIds = remember(state.savedChemicals) { state.savedChemicals.mapNotNull { it.masterChemicalId }.distinct() }
-    LaunchedEffect(masterIds) {
-        approvedMedia = runCatching { MasterFrontLabelRepository().list(masterIds) }.getOrDefault(emptyMap())
-    }
+    LaunchedEffect(masterIds) { approvedMedia = emptyMap() }
     /**
      * Null = "All". Filters on the RESOLVED status, never on display text.
      *
@@ -199,11 +212,12 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
     val needsAttentionCount: Int = (statusCounts[ChemicalStoreFilter.BASIC] ?: 0) +
         (statusCounts[ChemicalStoreFilter.REVIEW_REQUIRED] ?: 0)
 
-    val filteredChemicals = remember(state.savedChemicals, search, verificationFilter) {
+    val filteredChemicals = remember(state.savedChemicals, search, verificationFilter, catalogueRevisions) {
         state.savedChemicals.filter { chem ->
             val matchesSearch = search.isBlank() ||
                 chem.displayName.contains(search.trim(), true) ||
-                chem.manufacturer.contains(search.trim(), true)
+                chem.manufacturer.contains(search.trim(), true) ||
+                (chem.chemicalV3RevisionId?.let { catalogueRevisions[it]?.targets }?.joinToString(" ") ?: com.rork.vinetrack.data.chemical.CatalogueRow.manualTargets(chem.problem, chem.use)).contains(search.trim(), true)
             val matchesStatus = verificationFilter?.matches(chem) ?: true
             matchesSearch && matchesStatus
         }
@@ -231,6 +245,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
         topBar = {
             TopAppBar(
                 title = { Text("Chemicals") },
+                actions = { if (state.isSystemAdmin) TextButton(onClick = { showInventory = true }) { Text("Inventory") } },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
@@ -562,6 +577,8 @@ private fun ChemicalRow(
     val status = chemical.verificationStatus
     VineyardCard(modifier = if (canManage) Modifier.clickable { onEdit() } else Modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            if (chemical.chemicalV3RevisionId != null) CatalogueSavedChemical(chemical, Modifier.weight(1f))
+            else {
             MasterFrontLabelThumbnail(media, modifier = Modifier.padding(end = 12.dp), interactive = false)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(
@@ -594,7 +611,9 @@ private fun ChemicalRow(
                 // manufacturer follows when present.
                 val subtitle = buildList {
                     chemical.activeIngredient.takeIf { it.isNotBlank() }?.let { add(it) }
-                    chemical.manufacturer.takeIf { it.isNotBlank() }?.let { add(it) }
+                    val usedFor = com.rork.vinetrack.data.chemical.CatalogueRow.manualTargets(chemical.problem, chemical.use)
+                if (usedFor.isNotBlank()) Text("Used for: $usedFor", fontSize = 13.sp, color = vine.textSecondary)
+                chemical.manufacturer.takeIf { it.isNotBlank() }?.let { add(it) }
                 }.joinToString(" · ")
                 if (subtitle.isNotEmpty()) {
                     Text(subtitle, fontSize = 13.sp, color = vine.textSecondary)
@@ -713,6 +732,7 @@ private fun ChemicalRow(
                         )
                     }
                 }
+            }
             }
             if (canManage) {
                 IconButton(onClick = onDelete) {
@@ -840,14 +860,7 @@ internal fun ChemicalFormSheet(
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val isEdit = existing != null
     var approvedFrontLabel by remember(existing?.masterChemicalId) { mutableStateOf<MasterFrontLabel?>(null) }
-    LaunchedEffect(existing?.masterChemicalId) {
-        val id = existing?.masterChemicalId
-        approvedFrontLabel = if (id == null) null else runCatching {
-            MasterFrontLabelRepository().list(listOf(id))[id]?.takeIf {
-                it.belongsTo(id, existing.resolvedIntelligence.registration?.identityKey)
-            }
-        }.getOrNull()
-    }
+    LaunchedEffect(existing?.chemicalV3RevisionId) { approvedFrontLabel = null }
     val isCreatingManual = existing == null && pendingIntelligence == null
     // The record a re-verification is running against. Usually [existing], but
     // the register search can surface a DIFFERENT stored product with the same
@@ -1251,6 +1264,7 @@ internal fun ChemicalFormSheet(
                 color = vine.textPrimary,
             )
 
+            if (existing?.chemicalV3RevisionId != null) CatalogueSavedChemical(existing)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Details", modifier = Modifier.weight(1f), color = vine.textSecondary)
                 if (existing != null) ChemicalVerificationBadge(existing)

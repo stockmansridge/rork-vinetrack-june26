@@ -350,6 +350,9 @@ struct EditSavedChemicalSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                if let chemical, chemical.chemicalV3RevisionId != nil {
+                    Section("VineTrack catalogue") { CatalogueSavedChemicalView(chemical: chemical) }
+                }
                 topActionsSection
                 if hasProposedLookup {
                     Section {
@@ -443,9 +446,8 @@ struct EditSavedChemicalSheet: View {
             }
             .task(id: chemical?.masterChemicalId) {
                 guard let id = chemical?.masterChemicalId else { approvedFrontLabel = nil; return }
-                let found = (try? await MasterFrontLabelRepository().list([id]))?[id]
-                approvedFrontLabel = found?.belongs(to: id,
-                    identity: chemical?.resolvedIntelligence.registration?.identityKey) == true ? found : nil
+                _ = id
+                approvedFrontLabel = nil
             }
             .navigationTitle(reviewTitle)
             .navigationBarTitleDisplayMode(.inline)
@@ -462,25 +464,13 @@ struct EditSavedChemicalSheet: View {
                     // The SAME lookup the Add Chemical flow uses. It hands back a
                     // merged draft, which is applied to this session — one
                     // lookup, one merge, one review. Nothing is saved here.
-                    ChemicalProductSearchSheet(
-                        coordinator: lookupCoordinator,
-                        initialQuery: session.name,
-                        existing: chemical
-                    ) { reviewed in
-                        // The re-search replaces the product, so it must also
-                        // replace the server options: keeping the previous
-                        // product's identities would attach one product's
-                        // register rates to another.
-                        session.apply(
-                            reviewed: reviewed,
-                            serverDefaultRateOptions: lookupCoordinator
-                                .reviewDefaultRateOptions,
-                            fallbackCountry: resolvedCountry
-                        )
-                        lookupCoordinator.finishReview()
-                        hasProposedLookup = chemical != nil
+                    CatalogueSearchView(prefillQuery: session.name, onSaved: { saved in
+                        // The backend add has its own identity; never copy it into
+                        // the old record or queue another full-field save.
+                        onSaved?(saved)
                         activeSheet = nil
-                    }
+                        dismiss()
+                    })
                 case .reverify:
                     if let chemical {
                         // Closing this form after a successful re-verification is
@@ -488,11 +478,11 @@ struct EditSavedChemicalSheet: View {
                         // when the editor opened, so a Save afterwards would write
                         // the pre-check values straight back over the update just
                         // accepted.
-                        ChemicalReverifyFlowView(chemical: chemical) { proposed in
-                            session.apply(reviewed: proposed, fallbackCountry: resolvedCountry)
-                            hasProposedLookup = true
+                        CatalogueSearchView(prefillQuery: chemical.name, onSaved: { saved in
+                            onSaved?(saved)
                             activeSheet = nil
-                        }
+                            dismiss()
+                        })
                     }
                 }
             }

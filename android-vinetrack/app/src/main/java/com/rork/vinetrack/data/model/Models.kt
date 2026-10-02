@@ -2000,6 +2000,7 @@ data class SavedChemical(
     @SerialName("label_url") val labelUrl: String = "",
     @SerialName("product_url") val productUrl: String = "",
     @SerialName("mode_of_action") val modeOfAction: String = "",
+    @Serializable(with = com.rork.vinetrack.data.chemical.CatalogueLegacyRatesSerializer::class)
     val rates: List<ChemicalRate> = emptyList(),
     val purchase: ChemicalPurchase? = null,
     // Unified product-library fields (sql/111). Fertilisers and nutrient
@@ -2083,6 +2084,8 @@ data class SavedChemical(
     // offers a diff instead. Null forever is valid (unlinked chemical).
     @SerialName("master_chemical_id") val masterChemicalId: String? = null,
     @SerialName("master_source_revision") val masterSourceRevision: Int? = null,
+    @SerialName("chemical_v3_revision_id") val chemicalV3RevisionId: String? = null,
+    @SerialName("chemical_v3_product_id") val chemicalV3ProductId: String? = null,
     @SerialName("entry_source") val entrySource: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {

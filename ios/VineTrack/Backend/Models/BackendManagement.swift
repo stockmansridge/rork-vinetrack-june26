@@ -66,6 +66,8 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
     let masterChemicalId: UUID?
     let masterSourceRevision: Int?
     let entrySource: String?
+    var chemicalV3RevisionId: UUID? = nil
+    var chemicalV3ProductId: UUID? = nil
     let createdAt: Date?
     let updatedAt: Date?
     let deletedAt: Date?
@@ -129,6 +131,8 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         case masterChemicalId = "master_chemical_id"
         case masterSourceRevision = "master_source_revision"
         case entrySource = "entry_source"
+        case chemicalV3RevisionId = "chemical_v3_revision_id"
+        case chemicalV3ProductId = "chemical_v3_product_id"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
@@ -178,6 +182,8 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         self.applicationNotes = try c.decodeIfPresent(String.self, forKey: .applicationNotes)
         self.isActive = try c.decodeIfPresent(Bool.self, forKey: .isActive)
         self.entrySource = try? c.decodeIfPresent(String.self, forKey: .entrySource)
+        self.chemicalV3RevisionId = try? c.decodeIfPresent(UUID.self, forKey: .chemicalV3RevisionId)
+        self.chemicalV3ProductId = try? c.decodeIfPresent(UUID.self, forKey: .chemicalV3ProductId)
         // Chemical Intelligence columns were added in sql/194. Every one is
         // read with `try?` so a backend without the migration — or a payload
         // written by a newer build — degrades to nil instead of failing the
@@ -517,7 +523,7 @@ extension BackendSavedChemical {
     }
 
     func toSavedChemical() -> SavedChemical {
-        SavedChemical(
+        var saved = SavedChemical(
             id: id,
             vineyardId: vineyardId,
             name: name ?? "",
@@ -559,6 +565,11 @@ extension BackendSavedChemical {
             defaultRates: defaultRates,
             entrySource: entrySource
         )
+        saved.chemicalV3RevisionId = chemicalV3RevisionId
+        saved.chemicalV3ProductId = chemicalV3ProductId
+        saved.backendActivityGroupScheme = activityGroupScheme
+        saved.backendActivityGroups = activityGroups ?? []
+        return saved
     }
 }
 

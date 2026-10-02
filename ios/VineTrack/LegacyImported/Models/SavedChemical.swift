@@ -249,6 +249,10 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
     var masterSourceRevision: Int?
     /// Vineyard-level creation provenance. Nil for legacy records.
     var entrySource: String?
+    var chemicalV3RevisionId: UUID? = nil
+    var chemicalV3ProductId: UUID? = nil
+    var backendActivityGroupScheme: String? = nil
+    var backendActivityGroups: [String] = []
 
     // MARK: Confirmed operational default (sql/214)
 
@@ -356,7 +360,7 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         case applicationNotes, isActive
         case chemicalIntelligence
         case masterChemicalId, masterSourceRevision
-        case defaultRates, entrySource
+        case defaultRates, entrySource, chemicalV3RevisionId, chemicalV3ProductId, backendActivityGroupScheme, backendActivityGroups
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -418,6 +422,10 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         defaultRates = try? container.decodeIfPresent(
             StoredChemicalDefaultRates.self, forKey: .defaultRates)
         entrySource = try? container.decodeIfPresent(String.self, forKey: .entrySource)
+        chemicalV3RevisionId = try? container.decodeIfPresent(UUID.self, forKey: .chemicalV3RevisionId)
+        chemicalV3ProductId = try? container.decodeIfPresent(UUID.self, forKey: .chemicalV3ProductId)
+        backendActivityGroupScheme = try? container.decodeIfPresent(String.self, forKey: .backendActivityGroupScheme)
+        backendActivityGroups = (try? container.decodeIfPresent([String].self, forKey: .backendActivityGroups)) ?? []
     }
 }
 

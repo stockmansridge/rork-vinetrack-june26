@@ -301,11 +301,7 @@ struct MasterChemicalV2Repository: Sendable {
     }
 
     func search(_ query: String) async throws -> [MasterChemicalV2] {
-        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let response: [MasterChemicalV2] = try await provider.client
-            .rpc("search_master_chemicals_v2", params: SearchParams(query: query, limit: 25))
-            .execute().value
-        return response
+        throw ChemicalLookupError.network("Open Chemical Search to use the VineTrack catalogue.")
     }
 }
 
@@ -378,7 +374,18 @@ enum ChemicalLabelIdentityOCR {
 }
 
 @MainActor
+/// Compatibility entry point; customer runtime uses the production catalogue client only.
 struct ChemicalSearchV2View: View {
+    let prefillQuery: String
+    let onOpenExisting: (SavedChemical) -> Void
+    let onSaved: (SavedChemical) -> Void
+    init(prefillQuery: String = "", onOpenExisting: @escaping (SavedChemical) -> Void = { _ in }, onSaved: @escaping (SavedChemical) -> Void = { _ in }) {
+        self.prefillQuery = prefillQuery; self.onOpenExisting = onOpenExisting; self.onSaved = onSaved
+    }
+    var body: some View { CatalogueSearchView(prefillQuery: prefillQuery, onOpenExisting: onOpenExisting, onSaved: onSaved) }
+}
+
+private struct RetiredChemicalSearchV2View: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(MigratedDataStore.self) private var store
 
@@ -816,7 +823,7 @@ struct ChemicalSearchV2View: View {
 private struct ChemicalSearchV2ReviewView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(MigratedDataStore.self) private var store
-    @State private var draft: ChemicalSearchV2View.ReviewDraft
+    @State private var draft: RetiredChemicalSearchV2View.ReviewDraft
     @State private var notice: String?
     @State private var isSaving: Bool = false
     @State private var isOptionalDetailsExpanded: Bool = false
@@ -827,7 +834,7 @@ private struct ChemicalSearchV2ReviewView: View {
     let onComplete: (String) -> Void
 
     init(
-        draft: ChemicalSearchV2View.ReviewDraft,
+        draft: RetiredChemicalSearchV2View.ReviewDraft,
         photoData: Data?,
         onOpenExisting: @escaping (SavedChemical) -> Void,
         onSaved: @escaping (SavedChemical) -> Void,

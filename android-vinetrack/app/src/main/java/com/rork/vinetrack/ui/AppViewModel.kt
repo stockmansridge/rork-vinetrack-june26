@@ -12156,6 +12156,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Returns the exact locally committed record, never an inferred match from the UI list. */
+    /** Apply the exact backend-created row; never enqueue another create. */
+    fun acceptCatalogueChemical(saved: SavedChemical) {
+        val user = session.userId ?: return
+        val local = SavedChemicalLocalStore(getApplication())
+        val cached = local.load(user, saved.vineyardId)
+        check(local.save(user, saved.vineyardId, cached.filterNot { it.id == saved.id } + saved))
+        _ui.update { state -> CatalogueSavedHandoff.applying(state, saved) }
+    }
+
     fun createSavedChemicalV2(input: SavedChemicalRepository.ChemicalInput, labelJpeg: ByteArray? = null, onResult: (SavedChemical?) -> Unit) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(null); return }
         viewModelScope.launch {

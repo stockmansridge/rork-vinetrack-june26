@@ -25,6 +25,19 @@ import SwiftUI
 /// screenshot takes, and cancelling a 180 s resolve from it meant turning the
 /// phone sideways killed the lookup.
 struct ChemicalProductSearchSheet: View {
+    @Bindable var coordinator: ChemicalLookupCoordinator
+    let initialQuery: String
+    let existing: SavedChemical?
+    let onReviewed: (SavedChemical) -> Void
+    let onManualEntry: (() -> Void)?
+    init(coordinator: ChemicalLookupCoordinator, initialQuery: String = "", existing: SavedChemical? = nil, onManualEntry: (() -> Void)? = nil, onReviewed: @escaping (SavedChemical) -> Void) {
+        self.coordinator = coordinator; self.initialQuery = initialQuery; self.existing = existing
+        self.onManualEntry = onManualEntry; self.onReviewed = onReviewed
+    }
+    var body: some View { CatalogueSearchView(prefillQuery: initialQuery, onSaved: onReviewed) }
+}
+
+private struct RetiredChemicalProductSearchSheet: View {
     /// The session. Owned by the presenter, not by this view.
     @Bindable var coordinator: ChemicalLookupCoordinator
     /// Seeds the search box.

@@ -215,20 +215,8 @@ object ChemicalSearchV2Duplicate {
 
 class MasterChemicalV2Repository {
     companion object { const val INVOKES_AI: Boolean = false }
-    suspend fun search(query: String): List<MasterChemicalV2> = withContext(Dispatchers.IO) {
-        val token = SupabaseClient.sessionRefresher?.sessionAccessToken ?: throw BackendError.Unauthorized
-        val started = System.nanoTime()
-        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("search_master_chemicals_v2")) {
-            headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
-            contentType(ContentType.Application.Json)
-            setBody(buildJsonObject { put("p_query", query.trim()); put("p_limit", 25) })
-        }
-        if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
-        val rows = SupabaseClient.json.decodeFromString<List<MasterChemicalV2>>(response.bodyAsText())
-        val elapsed = (System.nanoTime() - started) / 1_000_000
-        Log.d("ChemicalSearchV2", "query=${query.trim()} duration_ms=$elapsed results=${rows.size} master_hit=${rows.isNotEmpty()}")
-        rows
-    }
+    suspend fun search(query: String): List<MasterChemicalV2> =
+        throw IllegalStateException("Open Chemical Search to use the VineTrack catalogue.")
 }
 
 class ChemicalLabelAttachmentV2Repository {

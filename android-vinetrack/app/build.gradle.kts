@@ -334,6 +334,14 @@ if (providers.gradleProperty("canopyReferenceFocusedTests").orNull == "true") {
     }
 }
 
+if (providers.gradleProperty("catalogueCutoverFocusedTests").orNull == "true") {
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") { include("**/CatalogueCutoverTest.kt") })
+        }
+    }
+}
+
 // Compile only Round 2 contract coverage, leaving unrelated legacy suites untouched.
 if (providers.gradleProperty("sprayProgramRound2FocusedTests").orNull == "true") {
     afterEvaluate {
