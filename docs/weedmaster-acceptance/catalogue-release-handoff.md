@@ -1,5 +1,77 @@
 # Weedmaster revision-2 coordinated release handoff
 
+## 2026-10-02: Chemical Search mobile production cutover — backend V6 contract addendum
+
+**Required for BOTH iOS and Android. Requirements appended, not implementation certification.** The production behaviour below was supplied by the project owner. No live lookup, discovery, add, backend mutation or deployment was performed to verify it in this documentation task. This addendum governs the new mobile cutover; older V2 deployment instructions below are historical and must not be replayed to implement this cutover.
+
+### Scope and backend ownership
+
+- Do not change backend, SQL, production flags or Portal. Do not touch Trip Stop/End, tank lifecycle, actual confirmation, tracking, snapshots or costing.
+- Backend V6 owns fuzzy approved-catalogue matching, catalogue-first matching, existing-product discovery short-circuit, manufacturer PDF extraction, hosted-label/viewer resolution, front-label recovery, manufacturer web fallback and regulator-verified exact-registration rate fallback.
+- Do not duplicate any of those in Swift/Kotlin: no second fuzzy/ranking algorithm, web research, OCR-based label extraction, label scraping, regulator lookup, dose inference or rate calculation. Consume the backend's results exactly; do not discard close matches with a client exact-name filter.
+- `chemical_v3_match_revision_to_catalogue(...)`, “Already in the VineTrack catalogue” and “Use existing catalogue product” are System Admin catalogue-curation functions in Portal ONLY. Do not add mobile matching/review/admin UI.
+
+### Catalogue-first text search
+
+1. Send the user's query to `search_chemical_v3_catalogue(p_query, p_country_code, p_limit)` using the existing vineyard-country context. The RPC already supports partial names, manufacturer/product combinations, reasonable spelling errors, registration numbers and close wording.
+2. Display ALL useful returned catalogue matches under **Matches in the VineTrack catalogue**, without a local fuzzy algorithm or automatic discovery.
+3. When one or more matches exist, do NOT replace them with “We haven't seen this product before” and do not make discovery the primary next action. Below the results show the smaller secondary action **Can't find the right product?** / **✨ Find a different product**. Only a deliberate selection may start new discovery despite matches.
+4. Only a successful ZERO-match search enters **We haven't seen this product before** / **✨ Find this product**. A catalogue-read error is not zero matches.
+
+### Discovery terminal results, including photo and resumed jobs
+
+Customer-success terminal statuses are `completed`, `pending_review` and `needs_attention`:
+
+| Job result | Required result handling | Customer badge | Add action |
+|---|---|---|---|
+| `completed` + `stage = catalogue_match` | Fetch `job.revision_id` EXACTLY: it is an existing APPROVED catalogue revision. Keep the supplied `product_id`; no new candidate is required. | **VineTrack catalogue** | **Add to Vineyard** using that exact revision |
+| `pending_review` | Fetch the job's exact result revision, not an unrelated/latest revision. | **Pending VineTrack review** | **Add to Vineyard** |
+| `needs_attention` | Fetch the exact revision; keep raw admin warnings out of customer UI. | **Pending VineTrack review** | **Add to Vineyard** when backend permits it; never bypass a rejection |
+
+- `completed/catalogue_match` is SUCCESS, never failure, missing result, pending review or needs attention. Do not call `start_chemical_v3_discovery` again or retry discovery merely because no NEW candidate revision was created.
+- Photo discovery has the SAME terminal handling as text discovery. Photo input does not force a Pending review badge; an existing approved result is **VineTrack catalogue**.
+- Locally persisted jobs may resume as `completed`, `pending_review`, `needs_attention`, `failed` or `cancelled`. Persist the original job identity and resume it, rather than starting another discovery.
+- For `completed/catalogue_match`, clear the pending local job ONLY AFTER the exact revision was fetched AND the result was presented/persisted appropriately. A fetch failure retains the job for exact-revision retrieval; it must not restart discovery. Treat failed/cancelled as explicit terminal states, not as successful candidates or endless polling.
+- Customers must never see raw `V3`, `V2`, `Master Catalogue`, `catalogue_match` or `needs_attention` terminology.
+
+### Exact approved add and structured rate display
+
+- Catalogue search results and `completed/catalogue_match` discovery results add through `chemical_v3_add_to_vineyard(p_revision_id, p_vineyard_id, null, null)` with the EXACT selected/job `revision_id`. Do not substitute a newly created candidate or rebuild Saved Chemical fields client-side.
+- Use the RPC's returned **`saved_chemical_id`** for the active Spray Program/Calculator draft. Reconcile/hydrate the backend-created saved record through the existing store path; do not generate a replacement UUID or bind a catalogue product/revision ID as the Saved Chemical ID.
+- Display discovered `default_rate_options` as backend-structured values. Keep **per hectare** and **per 100 L** separate. Do not flatten into a synthetic envelope, choose arbitrary ranges, calculate doses or infer rates. Kocide/rate extraction remains backend-owned.
+
+### Stifle acceptance scenario
+
+Exact query: **`socoa stifle`**.
+
+Expected backend catalogue result: **STIFLE™ DORMANT SPRAY OIL** / **SACOA Pty Ltd**. The project owner reports this as a confirmed live fuzzy match; mobile must show the approved result before suggesting discovery.
+
+If the user deliberately chooses **✨ Find a different product**, the same product/registration may short-circuit discovery with `status = completed`, `stage = catalogue_match`, and the EXISTING approved Stifle revision. Mobile must fetch that revision, display **VineTrack catalogue**, and add it. Never create/present another Pending Review Stifle or launch discovery again. Use synthetic approved revision/product/saved IDs in unit fixtures, not fabricated claims about real production UUIDs.
+
+### Required focused acceptance checks — pending on each platform
+
+- [ ] A — Query `socoa stifle`: fixture-backed RPC results display STIFLE™ DORMANT SPRAY OIL / SACOA Pty Ltd, without client fuzzy correction. Distinguish fixture coverage from a live backend acceptance check.
+- [ ] B — Nonempty catalogue results are shown first under the required heading; the full not-found box does not replace them; secondary Find a different product remains available and discovery starts only after deliberate selection. Zero matches retain the normal Find this product flow.
+- [ ] C — `completed/catalogue_match` fixture fetches the exact approved revision, presents VineTrack catalogue, enables Add to Vineyard, has no pending-review badge and performs no second start/new search.
+- [ ] D — Photo `completed/catalogue_match` behaves identically to an approved text-search result.
+- [ ] E — `pending_review` displays Pending VineTrack review and remains addable.
+- [ ] F — `needs_attention` uses Pending VineTrack review, hides raw admin warnings and respects backend add permission/rejection.
+- [ ] G — The returned `saved_chemical_id` is the exact ID selected in the still-active Spray Program/Calculator draft after add/reopen; no client field recreation or replacement UUID.
+- [ ] Durability — Resume each terminal status; retain completed job on revision-fetch failure; clear it only after exact result fetch/presentation/persistence; never restart discovery on catalogue_match.
+- [ ] Rates — Backend `default_rate_options` retain separate hectare/100 L sections and supplied values/identities, including range evidence; no mobile extraction or inference.
+- [ ] Run only relevant iOS/Android unit tests, necessary app build validation and `git diff --check`. Backend and Portal validation/mutations are out of scope.
+
+### Required final cutover report and current checked-in boundary
+
+The implementation report must explicitly answer all eight items: iOS completed/catalogue_match handling; Android completed/catalogue_match handling; backend-only fuzzy matching; catalogue-before-discovery UI; focused `socoa stifle` coverage; photo returning an approved existing result; no mobile System Admin matching/review UI; and every remaining old runtime path.
+
+**Current source inspection on 2026-10-02:** no use of `search_chemical_v3_catalogue`, `start_chemical_v3_discovery` or `catalogue_match` was found in either app. Thus the new handling, new Stifle test and new discovery durability are NOT certified as implemented. Existing runtime paths still include:
+
+- iOS `ChemicalSearchV2View.swift` / `MasterChemicalRepository` → `search_master_chemicals_v2`; `ChemicalInfoService.swift` → synchronous `chemical-info-lookup` actions `web_lookup_v2`, `structured`, `structured_master_preview`. Entry points include Spray Calculator, Spray Line Chemical Picker, Chemicals Management and Spray Presets.
+- Android `ChemicalSearchV2.kt` / `MasterChemicalV2Repository` → `search_master_chemicals_v2`; `ChemicalInfoService.kt` → synchronous old Edge lookup/hydration; `ChemicalSearchV2Sheet.kt` → `AppViewModel.createSavedChemicalV2`. Entry points include Chemicals and Spray Calculator. Existing saved-record replay is not persisted discovery-job handling.
+
+This addendum appends the owner's updated contract to the existing release handoff; it does not assert a finished mobile cutover or live production verification.
+
 ## 2026-10-01: live V2 evidence-retention regression / targeted repair handoff
 
 This section concerns the current Chemical Search V2 and Master Catalogue, not a new app/search version. `catalogue_version` means a Master record revision only. No live deployment, SQL, preview insertion, Master repair, approval or history write was executed by this task.

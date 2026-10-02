@@ -13,6 +13,22 @@ Sources of truth (in order):
 
 If this document and the code ever disagree, the code wins — fix the document.
 
+## 2026-10-02 mobile cutover contract addendum
+
+The new Chemical Search mobile cutover must consume the production backend V6 contract supplied by the project owner. This is an additive cutover requirement, NOT a claim that the new mobile runtime is implemented; the persisted Chemical Intelligence schemas below are unchanged.
+
+- Search uses `search_chemical_v3_catalogue(p_query, p_country_code, p_limit)`. Fuzzy/partial/manufacturer/registration/spelling matching is backend-only. Display useful returned matches first under **Matches in the VineTrack catalogue**; do not add mobile fuzzy filtering or automatically start discovery. With matches, offer secondary **Can't find the right product?** / **✨ Find a different product**. With zero matches, use **We haven't seen this product before** / **✨ Find this product**.
+- Discovery success terminals include `completed`, `pending_review`, `needs_attention`. `completed` with `stage = catalogue_match` points at an EXISTING approved `revision_id` and `product_id`: fetch that exact revision, show **VineTrack catalogue**, and allow Add to Vineyard. Do not require a new candidate, show pending review or restart discovery. The same rule applies to photo input and resumed jobs.
+- `pending_review` and `needs_attention` show **Pending VineTrack review**; add remains available when backend permits it. Hide raw admin warnings and backend/internal status/version names from customers.
+- Approved adds call `chemical_v3_add_to_vineyard(p_revision_id, p_vineyard_id, null, null)` with the exact selected/job revision. Bind returned `saved_chemical_id` to the active Spray Program/Calculator draft; do not create fields or IDs client-side.
+- Resume persisted jobs into `completed`, `pending_review`, `needs_attention`, `failed`, `cancelled`. Clear a completed/catalogue-match local job only after exact-revision fetch and appropriate result presentation/persistence. On fetch failure retain the job and retry retrieval, not discovery.
+- Display backend `default_rate_options` with hectare and 100 L options separate. No mobile PDF/hosted-viewer extraction, scraping, regulator fallback, synthetic range grouping, dose calculation or rate inference.
+- System Admin existing-product matching (`chemical_v3_match_revision_to_catalogue`) and catalogue review remain Portal-only. No backend/Portal or Trip/tank changes are authorized by this addendum.
+
+Full Stifle (`socoa stifle` → **STIFLE™ DORMANT SPRAY OIL** / **SACOA Pty Ltd**), photo, terminal, durability, exact saved-ID acceptance checks and mandatory report items are appended in `docs/weedmaster-acceptance/catalogue-release-handoff.md`, section **2026-10-02: Chemical Search mobile production cutover — backend V6 contract addendum**. These new mobile checks remain pending until implemented and executed; earlier test totals do not cover them.
+
+---
+
 See also: `docs/chemical-custodia-parity-fixture.md` (the pinned cross-platform lookup regression fixture — Custodia, AU:apvma:66541) and `docs/master-chemical-catalogue-design.md` (proposed shared catalogue design; no schema applied yet).
 
 ---
