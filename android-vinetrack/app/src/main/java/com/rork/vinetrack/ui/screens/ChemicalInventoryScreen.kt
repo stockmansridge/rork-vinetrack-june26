@@ -19,7 +19,7 @@ import android.app.DatePickerDialog
 
 /** Pilot access depends on System Admin, never vineyard Owner/Manager role. */
 @Composable
-internal fun ChemicalInventoryScreen(state: AppUiState, onClose: () -> Unit, modifier: Modifier = Modifier) {
+internal fun ChemicalInventoryScreen(state: AppUiState, onClose: () -> Unit, modifier: Modifier = Modifier, recordPurchase: Boolean = false) {
     if (!CatalogueTerminalResolver.inventoryAllowed(state.isSystemAdmin)) return
     val context = LocalContext.current
     val repository = remember { CatalogueRepository(context) }
@@ -40,13 +40,16 @@ internal fun ChemicalInventoryScreen(state: AppUiState, onClose: () -> Unit, mod
     }
     LaunchedEffect(state.selectedVineyardId, state.savedChemicals.map { it.id }) { summaries = emptyMap(); loadSummaries() }
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Chemical Inventory", style = MaterialTheme.typography.headlineSmall)
+        Text(if (recordPurchase) "Chemical Purchase" else "Chemical Inventory", style = MaterialTheme.typography.headlineSmall)
+        if (recordPurchase) Text("Select a chemical to record a purchase.")
         TextButton(onClick = onClose) { Text("Close") }
-        Text("Tracked chemicals: ${summaries.values.count { it.bool("tracked") }}")
-        Text("Low stock: ${summaries.values.count { it.bool("low_stock") }} · Out of stock: ${summaries.values.count { it.bool("out_of_stock") }}")
-        val stockValues = summaries.values.mapNotNull { row -> row.number("estimated_stock_value")?.let { (row.text("currency") ?: "") to it } }
-        if (stockValues.isEmpty()) Text("Estimated stock value: —")
-        else stockValues.groupBy { it.first }.forEach { (currency, values) -> Text("Estimated stock value: ${values.sumOf { it.second }} $currency") }
+        if (!recordPurchase) {
+            Text("Tracked chemicals: ${summaries.values.count { it.bool("tracked") }}")
+            Text("Low stock: ${summaries.values.count { it.bool("low_stock") }} · Out of stock: ${summaries.values.count { it.bool("out_of_stock") }}")
+            val stockValues = summaries.values.mapNotNull { row -> row.number("estimated_stock_value")?.let { (row.text("currency") ?: "") to it } }
+            if (stockValues.isEmpty()) Text("Estimated stock value: —")
+            else stockValues.groupBy { it.first }.forEach { (currency, values) -> Text("Estimated stock value: ${values.sumOf { it.second }} $currency") }
+        }
         OutlinedTextField(search, { search = it }, label = { Text("Chemical name or manufacturer") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("All", "In stock", "Low stock", "Out of stock", "Opening stock not set").forEach { option ->
@@ -77,17 +80,17 @@ internal fun ChemicalInventoryScreen(state: AppUiState, onClose: () -> Unit, mod
             TextButton(onClick = { overviewScope.launch { loadSummaries() } }) { Text("Retry") }
         }
     }
-    selected?.let { chemical -> InventoryActions(chemical, summaries[chemical.id], systemAdmin = state.isSystemAdmin, onDismiss = { selected = null }, onMutation = { refresh(chemical.id) }) }
+    selected?.let { chemical -> InventoryActions(chemical, summaries[chemical.id], systemAdmin = state.isSystemAdmin, onDismiss = { selected = null }, onMutation = { refresh(chemical.id) }, recordPurchase = recordPurchase) }
 }
 
 @Composable
-private fun InventoryActions(chemical: SavedChemical, summary: CatalogueRow?, systemAdmin: Boolean, onDismiss: () -> Unit, onMutation: suspend () -> Unit, modifier: Modifier = Modifier) {
+private fun InventoryActions(chemical: SavedChemical, summary: CatalogueRow?, systemAdmin: Boolean, onDismiss: () -> Unit, onMutation: suspend () -> Unit, modifier: Modifier = Modifier, recordPurchase: Boolean = false) {
     val context = LocalContext.current
     val repository = remember { CatalogueRepository(context) }
     val scope = rememberCoroutineScope()
     val opening = summary?.text("tracking_status") == "needs_opening_stock"
     val stockAction = if (opening) "Set Opening Stock" else "Stocktake / Adjust"
-    var action by remember { mutableStateOf(stockAction) }
+    var action by remember { mutableStateOf(if (recordPurchase) "Record purchase" else stockAction) }
     var quantity by remember { mutableStateOf(if (opening) "" else summary?.number("current_quantity")?.let(CatalogueInventoryContainer::number).orEmpty()) }
     var physicalEdited by remember { mutableStateOf(false) }
     var lowStockPercent by remember { mutableStateOf(summary?.number("low_stock_percent")?.let(CatalogueInventoryContainer::number).orEmpty()) }

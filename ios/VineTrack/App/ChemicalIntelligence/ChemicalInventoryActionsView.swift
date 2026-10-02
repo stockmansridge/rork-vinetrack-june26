@@ -4,6 +4,7 @@ import Supabase
 struct ChemicalInventoryActionsView: View {
     let chemical: SavedChemical
     let summary: CatalogueWire?
+    var recordPurchase: Bool = false
     let refresh: () async -> Void
     @Environment(SystemAdminService.self) private var admin
     @Environment(\.dismiss) private var dismiss
@@ -100,7 +101,7 @@ struct ChemicalInventoryActionsView: View {
         .onChange(of: containerSize) { _, _ in updateOpeningQuantity() }
         .onChange(of: action) { _, value in if value == "Purchase history" { Task { await loadHistory() } } }
         .task {
-            action = stockAction
+            action = recordPurchase ? "Record purchase" : stockAction
             warnings = summary?.fields["warnings_enabled"] == nil ? true : summary?.bool("warnings_enabled") == true
             lowStockPercent = summary?.number("low_stock_percent").map(CatalogueInventoryContainer.number) ?? ""
             if !opening { quantity = summary?.number("current_quantity").map(CatalogueInventoryContainer.number) ?? "" }

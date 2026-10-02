@@ -85,6 +85,7 @@ struct SprayProgramView: View {
     @Environment(SprayRecordSyncService.self) private var sprayRecordSync
     @Environment(SprayJobTemplateService.self) private var portalTemplates
     @Environment(\.accessControl) private var accessControl
+    @Environment(SystemAdminService.self) private var systemAdmin
 
     // Navigation
     /// Opens on Program: the master spray program is the primary landing view.
@@ -104,6 +105,9 @@ struct SprayProgramView: View {
     @State private var showProgramStepForm: Bool = false
     @State private var showManualRecordForm: Bool = false
     @State private var showProgramPicker: Bool = false
+    @State private var showChemicalSearch: Bool = false
+    @State private var showChemicalInventory: Bool = false
+    @State private var recordChemicalPurchase: Bool = false
 
     // Export
     @State private var sharePDFURL: ShareURL?
@@ -393,6 +397,21 @@ struct SprayProgramView: View {
                 }
                 Button("Cancel", role: .cancel) { exportKind = nil }
             }
+            .sheet(isPresented: $showChemicalSearch) {
+                if accessControl?.canManageSetup == true { CatalogueSearchView() }
+            }
+            .sheet(isPresented: $showChemicalInventory) {
+                if systemAdmin.isSystemAdmin {
+                    NavigationStack {
+                        ChemicalInventoryView(recordPurchase: recordChemicalPurchase)
+                            .toolbar {
+                                ToolbarItem(placement: .cancellationAction) {
+                                    Button("Close") { showChemicalInventory = false }
+                                }
+                            }
+                    }
+                }
+            }
             .sheet(isPresented: $showImportCSV) { SprayProgramImportView() }
             .sheet(item: $sharePDFURL) { wrapper in
                 ShareSheet(items: [wrapper.url])
@@ -495,6 +514,30 @@ struct SprayProgramView: View {
                     showManualRecordForm = true
                 } label: {
                     Label("Add manual spray", systemImage: "square.and.pencil")
+                }
+            }
+
+            if accessControl?.canManageSetup == true || systemAdmin.isSystemAdmin {
+                Section("Chemicals") {
+                    if accessControl?.canManageSetup == true {
+                        Button { showChemicalSearch = true } label: {
+                            Label("Add Chemical", systemImage: "flask")
+                        }
+                    }
+                    if systemAdmin.isSystemAdmin {
+                        Button {
+                            recordChemicalPurchase = true
+                            showChemicalInventory = true
+                        } label: {
+                            Label("Chemical Purchase", systemImage: "cart")
+                        }
+                        Button {
+                            recordChemicalPurchase = false
+                            showChemicalInventory = true
+                        } label: {
+                            Label("Chemical Inventory", systemImage: "shippingbox")
+                        }
+                    }
                 }
             }
         } label: {

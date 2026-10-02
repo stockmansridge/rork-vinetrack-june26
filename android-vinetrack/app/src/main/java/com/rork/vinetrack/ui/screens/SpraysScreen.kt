@@ -56,6 +56,14 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Science
+import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SortByAlpha
@@ -335,6 +343,10 @@ private fun SprayListView(
     var tab by rememberSaveable { mutableStateOf(SprayProgramTabChoice.PROGRAM) }
     var filter by remember { mutableStateOf(SprayFilter.ALL) }
     var addMenu by remember { mutableStateOf(false) }
+    var showChemicalSearch by remember { mutableStateOf(false) }
+    var showChemicalInventory by remember { mutableStateOf(false) }
+    var recordChemicalPurchase by remember { mutableStateOf(false) }
+    val canAddChemical = state.currentRole == "owner" || state.currentRole == "manager"
     var search by remember { mutableStateOf("") }
     // Survives leaving/re-entering the tab and rotation while working in the
     // Spray Program (iOS persists the same choices via AppStorage).
@@ -470,6 +482,17 @@ private fun SprayListView(
             TextButton(onClick = { showProgramData = false; importPicker.launch(arrayOf("*/*")) }) { Text("Import CSV") }
         } }, confirmButton = { TextButton(onClick = { showProgramData = false }) { Text("Cancel") } })
 
+    if (showChemicalSearch && canAddChemical) {
+        CatalogueSearchSheet(vm, state, onDismiss = { showChemicalSearch = false })
+    }
+    if (showChemicalInventory && state.isSystemAdmin) {
+        Dialog(onDismissRequest = { showChemicalInventory = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), color = vine.appBackground) {
+                ChemicalInventoryScreen(state, onClose = { showChemicalInventory = false }, recordPurchase = recordChemicalPurchase)
+            }
+        }
+    }
+
     Scaffold(
         containerColor = vine.appBackground,
         topBar = {
@@ -508,6 +531,30 @@ private fun SprayListView(
                                 leadingIcon = { Icon(Icons.Filled.WaterDrop, contentDescription = null) },
                                 onClick = { addMenu = false; onAdd() },
                             )
+                            if (canAddChemical || state.isSystemAdmin) {
+                                HorizontalDivider()
+                                Text("Chemicals", style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                                    color = vine.textSecondary, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                                if (canAddChemical) {
+                                    DropdownMenuItem(
+                                        text = { Text("Add Chemical") },
+                                        leadingIcon = { Icon(Icons.Filled.Science, contentDescription = null) },
+                                        onClick = { addMenu = false; showChemicalSearch = true },
+                                    )
+                                }
+                                if (state.isSystemAdmin) {
+                                    DropdownMenuItem(
+                                        text = { Text("Chemical Purchase") },
+                                        leadingIcon = { Icon(Icons.Filled.ShoppingCart, contentDescription = null) },
+                                        onClick = { addMenu = false; recordChemicalPurchase = true; showChemicalInventory = true },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Chemical Inventory") },
+                                        leadingIcon = { Icon(Icons.Filled.Inventory2, contentDescription = null) },
+                                        onClick = { addMenu = false; recordChemicalPurchase = false; showChemicalInventory = true },
+                                    )
+                                }
+                            }
                         }
                     }
                     Box {

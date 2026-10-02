@@ -2,6 +2,7 @@ import SwiftUI
 
 /// System Admin pilot, using inventory RPCs exclusively.
 struct ChemicalInventoryView: View {
+    var recordPurchase: Bool = false
     @Environment(SystemAdminService.self) private var admin
     @Environment(MigratedDataStore.self) private var store
     @State private var summaries: [UUID: CatalogueWire] = [:]
@@ -20,18 +21,23 @@ struct ChemicalInventoryView: View {
         Group {
             if CatalogueTerminalResolver.inventoryAllowed(systemAdmin: admin.isSystemAdmin) {
                 List {
-                    Section("Overview") {
-                        LabeledContent("Tracked chemicals", value: "\(summaries.values.filter { $0.bool("tracked") }.count)")
-                        LabeledContent("Low stock", value: "\(summaries.values.filter { $0.bool("low_stock") }.count)")
-                        LabeledContent("Out of stock", value: "\(summaries.values.filter { $0.bool("out_of_stock") }.count)")
-                        let values = summaries.values.compactMap { row -> (String, Double)? in
-                            guard let value = row.number("estimated_stock_value") else { return nil }
-                            return (row.text("currency") ?? "", value)
-                        }
-                        if values.isEmpty { LabeledContent("Estimated stock value", value: "—") }
-                        else {
-                            ForEach(Dictionary(grouping: values, by: { $0.0 }).keys.sorted(), id: \.self) { currency in
-                                LabeledContent("Estimated stock value (\(currency))", value: String(values.filter { $0.0 == currency }.reduce(0) { $0 + $1.1 }))
+                    if recordPurchase {
+                        Text("Select a chemical to record a purchase.")
+                    }
+                    if !recordPurchase {
+                        Section("Overview") {
+                            LabeledContent("Tracked chemicals", value: "\(summaries.values.filter { $0.bool("tracked") }.count)")
+                            LabeledContent("Low stock", value: "\(summaries.values.filter { $0.bool("low_stock") }.count)")
+                            LabeledContent("Out of stock", value: "\(summaries.values.filter { $0.bool("out_of_stock") }.count)")
+                            let values = summaries.values.compactMap { row -> (String, Double)? in
+                                guard let value = row.number("estimated_stock_value") else { return nil }
+                                return (row.text("currency") ?? "", value)
+                            }
+                            if values.isEmpty { LabeledContent("Estimated stock value", value: "—") }
+                            else {
+                                ForEach(Dictionary(grouping: values, by: { $0.0 }).keys.sorted(), id: \.self) { currency in
+                                    LabeledContent("Estimated stock value (\(currency))", value: String(values.filter { $0.0 == currency }.reduce(0) { $0 + $1.1 }))
+                                }
                             }
                         }
                     }
@@ -68,10 +74,10 @@ struct ChemicalInventoryView: View {
                 }
                 .onChange(of: store.savedChemicals.map(\.id)) { _, _ in Task { await loadSummaries() } }
                 .sheet(item: $selected) { chemical in
-                    ChemicalInventoryActionsView(chemical: chemical, summary: summaries[chemical.id]) { await refresh(chemical.id) }
+                    ChemicalInventoryActionsView(chemical: chemical, summary: summaries[chemical.id], recordPurchase: recordPurchase) { await refresh(chemical.id) }
                 }
             } else { ContentUnavailableView("Inventory pilot", systemImage: "lock", description: Text("System Admin access required.")) }
-        }.navigationTitle("Chemical Inventory")
+        }.navigationTitle(recordPurchase ? "Chemical Purchase" : "Chemical Inventory")
     }
     private func loadSummaries() async {
         loading = true; error = nil
