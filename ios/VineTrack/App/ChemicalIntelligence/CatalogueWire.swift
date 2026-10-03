@@ -24,7 +24,21 @@ nonisolated struct CatalogueWire: Codable, Sendable, Identifiable, Hashable {
     var badge: String { text("review_status") == "approved" ? "VineTrack catalogue" : "Pending VineTrack review" }
     var isSuccess: Bool { ["completed", "pending_review", "needs_attention"].contains(text("status") ?? "") }
     var isTerminal: Bool { isSuccess || ["failed", "cancelled"].contains(text("status") ?? "") }
-    var groupText: String { [text("activity_group_scheme")?.uppercased() ?? "", strings("activity_groups").joined(separator: " + ")].filter { !$0.isEmpty }.joined(separator: " ") }
+    var groupText: String {
+        guard !["not_applicable", "unresolved"].contains(text("resistance_classification_state")?.lowercased() ?? "") else { return "" }
+        return Self.resistanceText(scheme: text("activity_group_scheme"), codes: strings("activity_groups"))
+    }
+    var resistanceWarning: String? {
+        text("resistance_classification_state")?.lowercased() == "unresolved" ? "Resistance group unknown" : nil
+    }
+    static func resistanceText(scheme: String?, codes: [String]) -> String {
+        let scheme = (scheme ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard ["FRAC", "HRAC", "IRAC"].contains(scheme) else { return "" }
+        let codes = codes.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter {
+            !$0.isEmpty && !["NOT_APPLICABLE", "UNRESOLVED", "CLASSIFIED"].contains($0.uppercased())
+        }
+        return codes.isEmpty ? "" : scheme + " " + codes.joined(separator: " + ")
+    }
     var inventoryStatus: String {
         if text("tracking_status") == "needs_opening_stock" { return "Opening stock not set" }
         if text("tracking_status") == "finished" { return "Finished" }
@@ -39,6 +53,26 @@ nonisolated struct CatalogueWire: Codable, Sendable, Identifiable, Hashable {
     func rateRows(_ key: String) -> [CatalogueWire] {
         guard case let .object(options) = fields["default_rate_options"] else { return [] }
         return CatalogueWire(fields: options).rows(key)
+    }
+    /// Presentation only: retain each backend option and its complete range/basis.
+    func registeredRateLines(_ key: String) -> [String] {
+        rateRows(key).map { rate in
+            let amount = rate.number("value").map(Self.displayNumber) ?? [rate.number("min_value"), rate.number("max_value")].compactMap { $0.map(Self.displayNumber) }.joined(separator: "–")
+            let unit = rate.text("unit") ?? ""
+            let basis = unit.contains("/") ? "" : (key == "per_hectare" ? "/ha" : "/100 L")
+            let dose = amount.isEmpty ? (rate.text("raw_text") ?? "") : "\(amount) \(unit)\(basis)"
+            return [dose, rate.strings("targets").joined(separator: ", "), rate.text("condition") ?? "", rate.strings("methods").joined(separator: " · ")].filter { !$0.isEmpty }.joined(separator: " · ")
+        }.filter { !$0.isEmpty }
+    }
+    static func displayNumber(_ number: Double) -> String {
+        let text = String(number)
+        return text.hasSuffix(".0") ? String(text.dropLast(2)) : text
+    }
+    var activeIngredientLines: [String] {
+        rows("active_ingredients").compactMap { active in
+            guard let name = active.text("name"), !name.isEmpty else { return nil }
+            return [name, active.number("concentration").map(Self.displayNumber) ?? "", active.text("concentration_unit") ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
+        }
     }
     var rateText: String {
         let amount = number("value").map { String($0) } ?? [number("min_value"), number("max_value")].compactMap { $0.map { String($0) } }.joined(separator: "–")

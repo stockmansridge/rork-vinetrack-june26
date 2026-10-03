@@ -30,7 +30,10 @@ final class ChemicalDeleteCoordinator {
         do {
             let outcome = try await service.archive(id: chemical.id)
             switch outcome {
-            case .archived, .notFound:
+            case .archived:
+                store.archiveSavedChemicalLocallyOnly(chemical.id)
+                didDeleteId = chemical.id
+            case .notFound:
                 store.removeSavedChemicalLocallyOnly(chemical.id)
                 didDeleteId = chemical.id
             case .hardDeleted:
@@ -55,7 +58,7 @@ final class ChemicalDeleteCoordinator {
                 store.removeSavedChemicalLocallyOnly(chemical.id)
                 didDeleteId = chemical.id
             case .archived:
-                store.removeSavedChemicalLocallyOnly(chemical.id)
+                store.archiveSavedChemicalLocallyOnly(chemical.id)
                 didDeleteId = chemical.id
             case .chemicalInUse(let message):
                 alertMessage = message

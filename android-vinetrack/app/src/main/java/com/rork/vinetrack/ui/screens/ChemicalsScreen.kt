@@ -44,6 +44,7 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -149,6 +150,9 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
     // Cost editing/visibility mirrors the spray form's canViewFinancials gate.
     val canViewFinancials = canManage
 
+    val activeChemicals = remember(state.savedChemicals) {
+        com.rork.vinetrack.data.chemical.ChemicalStorePresentation.active(state.savedChemicals)
+    }
     var creating by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<SavedChemical?>(null) }
     var pendingDelete by remember { mutableStateOf<SavedChemical?>(null) }
@@ -156,10 +160,10 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
     var showInventory by remember { mutableStateOf(false) }
     var catalogueRevisions by remember { mutableStateOf<Map<String, com.rork.vinetrack.data.chemical.CatalogueRow>>(emptyMap()) }
     val catalogueContext = androidx.compose.ui.platform.LocalContext.current
-    LaunchedEffect(state.savedChemicals.map { it.chemicalV3RevisionId }) {
+    LaunchedEffect(activeChemicals.map { it.chemicalV3RevisionId }) {
         val repository = com.rork.vinetrack.data.chemical.CatalogueRepository(catalogueContext)
         val rows = mutableMapOf<String, com.rork.vinetrack.data.chemical.CatalogueRow>()
-        state.savedChemicals.mapNotNull { it.chemicalV3RevisionId }.distinct().forEach { id ->
+        activeChemicals.mapNotNull { it.chemicalV3RevisionId }.distinct().forEach { id ->
             runCatching { repository.revision(id) }.getOrNull()?.let { rows[id] = it }
         }
         catalogueRevisions = rows
@@ -169,7 +173,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
         return
     }
     var approvedMedia by remember { mutableStateOf<Map<String, MasterFrontLabel>>(emptyMap()) }
-    val masterIds = remember(state.savedChemicals) { state.savedChemicals.mapNotNull { it.masterChemicalId }.distinct() }
+    val masterIds = remember(activeChemicals) { activeChemicals.mapNotNull { it.masterChemicalId }.distinct() }
     LaunchedEffect(masterIds) { approvedMedia = emptyMap() }
     /**
      * Null = "All". Filters on the RESOLVED status, never on display text.
@@ -204,16 +208,16 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
 
     // Counts come from each record's resolved verification status, so a stale
     // stored status can never inflate the "Verified" tally.
-    val statusCounts: Map<ChemicalStoreFilter, Int> = remember(state.savedChemicals) {
-        state.savedChemicals.groupingBy { chemical ->
+    val statusCounts: Map<ChemicalStoreFilter, Int> = remember(activeChemicals) {
+        activeChemicals.groupingBy { chemical ->
             ChemicalStoreFilter.entries.first { it.matches(chemical) }
         }.eachCount()
     }
     val needsAttentionCount: Int = (statusCounts[ChemicalStoreFilter.BASIC] ?: 0) +
         (statusCounts[ChemicalStoreFilter.REVIEW_REQUIRED] ?: 0)
 
-    val filteredChemicals = remember(state.savedChemicals, search, verificationFilter, catalogueRevisions) {
-        state.savedChemicals.filter { chem ->
+    val filteredChemicals = remember(activeChemicals, search, verificationFilter, catalogueRevisions) {
+        activeChemicals.filter { chem ->
             val matchesSearch = search.isBlank() ||
                 chem.displayName.contains(search.trim(), true) ||
                 chem.manufacturer.contains(search.trim(), true) ||
@@ -266,7 +270,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
             }
         },
     ) { padding ->
-        if (state.savedChemicals.isEmpty()) {
+        if (activeChemicals.isEmpty()) {
             EmptyState(
                 icon = Icons.Filled.Science,
                 title = "No Chemicals",
@@ -356,7 +360,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
                     ) {
                         VerificationFilterPill(
                             label = "All",
-                            count = state.savedChemicals.size,
+                            count = activeChemicals.size,
                             selected = verificationFilter == null,
                             tint = ChemTint,
                         ) { verificationFilter = null }
@@ -593,9 +597,6 @@ private fun ChemicalRow(
                     )
                     ChemicalVerificationBadge(chemical)
                 }
-                com.rork.vinetrack.data.chemical.ChemicalDetailsCompleteness.assess(chemical).missingText?.let {
-                    Text(it, fontSize = 11.sp, color = vine.textSecondary)
-                }
                 // A verified FOREIGN registration must never read as verified
                 // for this vineyard: its label facts belong to another country's
                 // law. Identity and chemistry still stand — only label authority
@@ -607,17 +608,9 @@ private fun ChemicalRow(
                         suitability.vineyardCountry,
                     )
                 }
-                // Active ingredient leads the subtitle (matches iOS ChemicalDetailRow);
-                // manufacturer follows when present.
-                val subtitle = buildList {
-                    chemical.activeIngredient.takeIf { it.isNotBlank() }?.let { add(it) }
-                    val usedFor = com.rork.vinetrack.data.chemical.CatalogueRow.manualTargets(chemical.problem, chemical.use)
+                if (chemical.manufacturer.isNotBlank()) Text(chemical.manufacturer, fontSize = 13.sp, color = vine.textSecondary)
+                val usedFor = com.rork.vinetrack.data.chemical.CatalogueRow.manualTargets(chemical.problem, chemical.use)
                 if (usedFor.isNotBlank()) Text("Used for: $usedFor", fontSize = 13.sp, color = vine.textSecondary)
-                chemical.manufacturer.takeIf { it.isNotBlank() }?.let { add(it) }
-                }.joinToString(" · ")
-                if (subtitle.isNotEmpty()) {
-                    Text(subtitle, fontSize = 13.sp, color = vine.textSecondary)
-                }
                 // Category / group / target-problem chips. The group chip is
                 // DERIVED from structured actives whenever they exist; the legacy
                 // free-text column is only a fallback for records that have not
@@ -626,13 +619,11 @@ private fun ChemicalRow(
                 val groupChip = if (structuredGroups.isNotEmpty()) {
                     structuredGroups.legacyGroupProjection()
                 } else {
-                    chemical.chemicalGroup.takeIf { it.isNotBlank() }
+                    com.rork.vinetrack.data.chemical.ChemicalStorePresentation.safeLegacyGroup(chemical.chemicalGroup).takeIf { it.isNotBlank() }
                 }
                 val chips = buildList {
                     chemical.productCategory.takeIf { it.isNotBlank() }?.let { add(ProductCategories.label(it)) }
                     groupChip?.takeIf { it.isNotBlank() }?.let { add(it) }
-                    chemical.problem.takeIf { it.isNotBlank() }?.let { add(it) }
-                    chemical.modeOfAction.takeIf { it.isNotBlank() }?.let { add("MOA $it") }
                 }
                 if (chips.isNotEmpty()) {
                     FlowRow(
@@ -642,63 +633,6 @@ private fun ChemicalRow(
                     ) {
                         chips.forEach { ChemChip(it) }
                     }
-                }
-                // The OPERATIONAL rate line.
-                //
-                // `default_rates` is the only thing that may be shown as this
-                // vineyard's confirmed rate. The legacy `rates`/`rate_per_ha`
-                // columns are still rendered for a genuinely legacy record,
-                // clearly marked as such, but a structured product with no
-                // confirmed default says so instead of borrowing a number
-                // nobody agreed to. Units come from inside each default slot
-                // — never `chemical.unit`, which is the INVENTORY unit and
-                // would print a 560 g/ha default as "560 Kg/ha".
-                val confirmedLine = ChemicalDefaultRateDisplay.line(chemical)
-                if (confirmedLine != null) {
-                    Text(
-                        confirmedLine,
-                        fontSize = 13.sp,
-                        color = if (ChemicalDefaultRateDisplay.needsConfirmation(chemical)) {
-                            VineColors.Warning
-                        } else {
-                            vine.textSecondary
-                        },
-                        fontWeight = if (ChemicalDefaultRateDisplay.needsConfirmation(chemical)) {
-                            FontWeight.Medium
-                        } else {
-                            FontWeight.Normal
-                        },
-                    )
-                } else {
-                    // Legacy/manual record: no structured intelligence at all,
-                    // so its own stored numbers remain the best answer there is.
-                    val legacyLines = buildList {
-                        chemical.ratePerHaDisplay?.takeIf { it > 0 }
-                            ?.let {
-                                add(
-                                    "${trimNum(fmt.sprayRateValue(it))} " +
-                                        "${chemical.unit}/${fmt.sprayRateAreaAbbreviation}",
-                                )
-                            }
-                        chemical.ratePer100LDisplay?.takeIf { it > 0 }
-                            ?.let { add("${trimNum(it)} ${chemical.unit}/100L") }
-                    }
-                    if (legacyLines.isNotEmpty()) {
-                        Text(
-                            legacyLines.joinToString("  ·  ") + "  ·  manually entered",
-                            fontSize = 13.sp,
-                            color = vine.textSecondary,
-                        )
-                    }
-                }
-                if (canViewFinancials) {
-                    val cost = chemical.costPerUnit
-                    Text(
-                        if (cost != null && cost > 0) "${formatChemCurrency(cost)} / ${chemical.unit}" else "No cost set",
-                        fontSize = 13.sp,
-                        color = if (cost != null && cost > 0) ChemTint else vine.textSecondary,
-                        fontWeight = FontWeight.Medium,
-                    )
                 }
                 // Re-verify for records VineTrack can already identify;
                 // Match & Verify for the ones it cannot. A legacy product with
@@ -857,6 +791,10 @@ internal fun ChemicalFormSheet(
      */
     onCreated: () -> Unit = {},
 ) {
+    if (existing != null && com.rork.vinetrack.data.chemical.ChemicalStorePresentation.editorKind(existing) == com.rork.vinetrack.data.chemical.ChemicalStorePresentation.EditorKind.CATALOGUE) {
+        CatalogueChemicalEditorSheet(vm = vm, chemical = existing, onDismiss = onDismiss)
+        return
+    }
     val vine = LocalVineColors.current
     val uriHandler = LocalUriHandler.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
@@ -938,6 +876,9 @@ internal fun ChemicalFormSheet(
     var unitMenu by remember { mutableStateOf(false) }
     var containerUnitMenu by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
+    var showsOptionalDetails by remember { mutableStateOf(false) }
+    var showsCostingSnapshot by remember { mutableStateOf(false) }
+    var hasEditedCosting by remember { mutableStateOf(false) }
     var confirmProposedUpdates by remember { mutableStateOf(false) }
     // The ONE research entry point this form offers: the same register search
     // and matching flow Add Chemical uses. There is no second lookup here.
@@ -1024,8 +965,16 @@ internal fun ChemicalFormSheet(
         }
     }
 
+    fun editableDetailsSnapshot(): List<Any?> = listOf(name, formType, unit, activeIngredient, chemicalGroup, use, problem, manufacturer, modeOfAction, labelUrl, productUrl, ratePerHa, ratePer100L, defaultRatesDraft, trackPurchase, containerSize, containerUnit, cost, category, densityText, nText, pText, kText, oxideBasis, organicCertified, applicationNotes, chemistryDraft)
+    val initialDetails = remember(existing?.id) { editableDetailsSnapshot() }
+
     fun save() {
         if (saving) return
+        if (existing != null && pendingIntelligence == null && editableDetailsSnapshot() == initialDetails) {
+            saving = true
+            vm.updateSavedChemicalNotes(existing, notes) { ok -> saving = false; if (ok) onDismiss() }
+            return
+        }
         val trimmedName = name.trim()
         if (trimmedName.isEmpty()) return
         // The CONTRACT decides, not the button. The button is disabled for the
@@ -1067,7 +1016,8 @@ internal fun ChemicalFormSheet(
         saving = true
         val perHaDisplay = ratePerHa.toDoubleSafe() ?: existing?.ratePerHaDisplay ?: 0.0
         val per100LDisplay = ratePer100L.toDoubleSafe() ?: 0.0
-        val rates = buildList {
+        val ratesChanged = ratePerHa != (existing?.ratePerHaDisplay?.let(::formatRate) ?: "") || ratePer100L != (existing?.ratePer100LDisplay?.let(::formatRate) ?: "")
+        val rates = if (existing != null && !ratesChanged) existing.rates else buildList {
             if (perHaDisplay > 0) add(
                 ChemicalRate(
                     id = existingPerHaId ?: UUID.randomUUID().toString(),
@@ -1087,7 +1037,7 @@ internal fun ChemicalFormSheet(
         }
         // Owners/managers author purchase data; others keep the existing snapshot
         // so editing other details never clears pricing (mirrors iOS save()).
-        val purchase: ChemicalPurchase? = if (!canViewFinancials) {
+        val purchase: ChemicalPurchase? = if (!canViewFinancials || !hasEditedCosting) {
             existing?.purchase
         } else if (trackPurchase) {
             val cs = containerSize.toDoubleSafe() ?: 0.0
@@ -1147,19 +1097,19 @@ internal fun ChemicalFormSheet(
             productUrl = productUrl.trim().ifBlank { null },
             purchase = purchase,
             productCategory = category,
-            productForm = if (formType == "Solid") "solid" else "liquid",
-            packSize = packSizeText.toDoubleSafe(),
-            packUnit = if (formType == "Solid") "kg" else "L",
+            productForm = if (existing != null && formType == formForUnit(existing.unit)) existing.productForm else if (formType == "Solid") "solid" else "liquid",
+            packSize = existing?.packSize,
+            packUnit = existing?.packUnit ?: if (formType == "Solid") "kg" else "L",
             // Owners/managers author pack pricing; others keep the existing value.
-            pricePerPack = if (canViewFinancials) packPriceText.toDoubleSafe() else existing?.pricePerPack,
+            pricePerPack = existing?.pricePerPack,
             density = densityText.toDoubleSafe(),
             nitrogenPercent = nText.toDoubleSafe(),
             phosphorusPercent = pText.toDoubleSafe(),
             potassiumPercent = kText.toDoubleSafe(),
             analysisBasis = if (oxideBasis) "oxide" else "elemental",
             organicCertified = organicCertified,
-            inventoryQuantity = inventoryText.toDoubleSafe(),
-            inventoryUnit = if (inventoryText.toDoubleSafe() != null) "packs" else (existing?.inventoryUnit ?: ""),
+            inventoryQuantity = existing?.inventoryQuantity,
+            inventoryUnit = existing?.inventoryUnit.orEmpty(),
             applicationNotes = applicationNotes.trim(),
             // Re-resolved intelligence when resistance-critical text changed, so a
             // hand-edited group cannot leave a stale `verified` status behind.
@@ -1266,7 +1216,8 @@ internal fun ChemicalFormSheet(
                 color = vine.textPrimary,
             )
 
-            if (existing?.chemicalV3RevisionId != null) CatalogueSavedChemical(existing)
+            if (isCreatingManual) Text("Manually entered · unverified", style = MaterialTheme.typography.bodySmall)
+            if (!isCreatingManual) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Details", modifier = Modifier.weight(1f), color = vine.textSecondary)
                 if (existing != null) ChemicalVerificationBadge(existing)
@@ -1353,6 +1304,7 @@ internal fun ChemicalFormSheet(
                 Text("Proposed information", fontWeight = FontWeight.SemiBold, color = ChemTint)
                 Text("Review the updated fields below before saving. Nothing changes until you confirm the update.", fontSize = 11.sp, color = vine.textSecondary)
             }
+            }
             SectionLabel("Product")
             OutlinedTextField(
                 value = name,
@@ -1381,7 +1333,10 @@ internal fun ChemicalFormSheet(
                 onSelect = { unit = it; unitMenu = false },
                 modifier = Modifier.fillMaxWidth(),
             )
-            Text("Optional details", fontSize = 11.sp, color = vine.textSecondary)
+            TextButton(onClick = { showsOptionalDetails = !showsOptionalDetails }) {
+                Text(if (showsOptionalDetails) "Hide optional product & chemistry details" else "Optional product & chemistry details")
+            }
+            if (!isCreatingManual || showsOptionalDetails) {
             CategoryDropdown(
                 value = category,
                 expanded = categoryMenu,
@@ -1407,7 +1362,10 @@ internal fun ChemicalFormSheet(
             )
 
 
-            // Edit the structured active rows in the section itself; no second editor.
+            }
+
+            if (showsOptionalDetails) {
+            // Optional structured chemistry repair; never shown on the catalogue editor.
             val structuredActives = chemistryDraft.actives.filter { it.name.isNotBlank() }
             val groupSummary = ChemicalManualEntry.groupSummary(chemistryDraft)
             // The summary describes only directions this vineyard can act on.
@@ -1417,7 +1375,7 @@ internal fun ChemicalFormSheet(
             }
             val labelRateCount = chemistryDraft.productRates.size +
                 grapevineDraftUses.sumOf { it.rates.size }
-            SectionLabel("Active Ingredients & Resistance")
+            SectionLabel("Active Ingredients & Resistance (optional)")
             if (structuredActives.isEmpty()) {
                 Text(
                     "No active ingredients recorded",
@@ -1525,6 +1483,8 @@ internal fun ChemicalFormSheet(
                 color = vine.textSecondary,
             )
 
+            }
+
             // ---- Registered uses & safety ----
             //
             // The crop, the target, the label's rate, the withholding period,
@@ -1563,6 +1523,7 @@ internal fun ChemicalFormSheet(
             val displayUses = ChemicalVineyardScope.operationalUses(
                 displayIntelligence.registeredUses,
             )
+            if (!isCreatingManual || showsOptionalDetails) {
             SectionLabel("Grapevine Uses & Registered Rates")
             if (displayUses.isNotEmpty()) {
                 // The registered rate, stated ONCE at the top — then the
@@ -1612,7 +1573,7 @@ internal fun ChemicalFormSheet(
                     Text(warning, fontSize = 12.sp, color = vine.textSecondary)
                 }
             }
-            if (displayUses.none { it.isViticultural }) {
+            if (existing != null && !ChemicalDefaultRateDisplay.isStructured(existing) && displayUses.none { it.isViticultural }) {
                 OutlinedTextField(
                     value = use,
                     onValueChange = { use = it },
@@ -1627,6 +1588,7 @@ internal fun ChemicalFormSheet(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
+            }
             }
             if (isCreatingManual) {
                 SectionLabel("Operational Rate *")
@@ -1804,6 +1766,7 @@ internal fun ChemicalFormSheet(
                 }
             }
 
+            if (!isStructuredRecord) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = ratePerHa,
@@ -1825,18 +1788,14 @@ internal fun ChemicalFormSheet(
                 )
             }
             Text(
-                if (isStructuredRecord) {
-                    "Kept for older app versions only. Spray calculations use the " +
-                        "confirmed rate above."
-                } else {
-                    "Enter either or both. The spray calculator lets the operator pick " +
-                        "which basis to use per job."
-                },
+                "Recorded operational rates for this historical chemical. Choose the basis when planning a spray.",
                 fontSize = 11.sp,
                 color = vine.textSecondary,
             )
             }
 
+            }
+            if (!isCreatingManual || showsOptionalDetails) {
             SectionLabel("Labels & References")
             val manufacturerLabelUrl = displayIntelligence.registration?.manufacturerLabelUrl
                 ?.trim()?.takeIf { it.isNotEmpty() }
@@ -1862,16 +1821,14 @@ internal fun ChemicalFormSheet(
             Text("Product pages are not approved labels.", fontSize = 11.sp, color = vine.textSecondary)
             ChemicalFieldGuidance("label_reference", blockingViolations, carriedOverViolations)
 
-            SectionLabel("Purchase & Inventory")
-            if (ProductCategories.isFertiliser(category)) {
+            }
+            if (showsOptionalDetails && ProductCategories.isFertiliser(category)) {
+                SectionLabel("Fertiliser calculation details (optional)")
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text("Organic certified", fontSize = 15.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
                     Switch(checked = organicCertified, onCheckedChange = { organicCertified = it })
                 }
-                OutlinedTextField(value = packSizeText, onValueChange = { packSizeText = it.numericFilter() }, label = { Text(if (formType == "Solid") "Pack size (kg)" else "Pack size (L)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
-                if (canViewFinancials) OutlinedTextField(value = packPriceText, onValueChange = { packPriceText = it.numericFilter() }, label = { Text("Price per pack ($)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
                 if (formType != "Solid") OutlinedTextField(value = densityText, onValueChange = { densityText = it.numericFilter() }, label = { Text("Density (kg/L)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
-                OutlinedTextField(value = inventoryText, onValueChange = { inventoryText = it.numericFilter() }, label = { Text("Stock on hand (packs)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
                 Text("Nutrient analysis (%)", fontSize = 12.sp, color = vine.textSecondary)
                 OutlinedTextField(value = nText, onValueChange = { nText = it.numericFilter() }, label = { Text("Nitrogen (N)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
                 OutlinedTextField(value = pText, onValueChange = { pText = it.numericFilter() }, label = { Text("Phosphorus (P)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
@@ -1883,15 +1840,19 @@ internal fun ChemicalFormSheet(
                 OutlinedTextField(value = applicationNotes, onValueChange = { applicationNotes = it }, label = { Text("Application notes (optional)") }, modifier = Modifier.fillMaxWidth())
             }
             if (canViewFinancials) {
+                TextButton(onClick = { showsCostingSnapshot = !showsCostingSnapshot }) { Text("Spray costing settings (optional)") }
+            }
+            if (canViewFinancials && showsCostingSnapshot) {
+                SectionLabel("Spray costing snapshot")
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text("Track purchase info", fontSize = 15.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
-                    Switch(checked = trackPurchase, onCheckedChange = { trackPurchase = it })
+                    Text("Use purchase cost snapshot", fontSize = 15.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
+                    Switch(checked = trackPurchase, onCheckedChange = { trackPurchase = it; hasEditedCosting = true })
                 }
                 if (trackPurchase) {
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         OutlinedTextField(
                             value = containerSize,
-                            onValueChange = { containerSize = it.numericFilter() },
+                            onValueChange = { containerSize = it.numericFilter(); hasEditedCosting = true },
                             label = { Text("Container size") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -1903,13 +1864,13 @@ internal fun ChemicalFormSheet(
                             options = unitsForForm(formType),
                             expanded = containerUnitMenu,
                             onExpandedChange = { containerUnitMenu = it },
-                            onSelect = { containerUnit = it; containerUnitMenu = false },
+                            onSelect = { containerUnit = it; containerUnitMenu = false; hasEditedCosting = true },
                             modifier = Modifier.weight(1f),
                         )
                     }
                     OutlinedTextField(
                         value = cost,
-                        onValueChange = { cost = it.numericFilter() },
+                        onValueChange = { cost = it.numericFilter(); hasEditedCosting = true },
                         label = { Text("Cost") },
                         placeholder = { Text("0.00") },
                         prefix = { Text("$") },
@@ -1918,7 +1879,7 @@ internal fun ChemicalFormSheet(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
-                        "Used to calculate chemical cost in spray reports. Visible to owners and managers only.",
+                        "Compatibility cost used by existing spray reports. Manage stock and purchase history in Chemical Inventory.",
                         fontSize = 11.sp,
                         color = vine.textSecondary,
                     )
@@ -1934,7 +1895,8 @@ internal fun ChemicalFormSheet(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            SectionLabel("Advanced / Verification Evidence")
+            if (showsOptionalDetails) {
+            SectionLabel("Verification details (optional)")
             if (existing != null && state != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Details", color = vine.textSecondary, modifier = Modifier.width(96.dp))
@@ -1951,6 +1913,7 @@ internal fun ChemicalFormSheet(
             }
             Text("Information from a label is only applied after you review and confirm it.", fontSize = 11.sp, color = vine.textSecondary)
 
+            }
             Spacer(Modifier.height(4.dp))
             // What is still missing, said as the next action rather than as an
             // error. Save stays disabled until these are cleared, so the button

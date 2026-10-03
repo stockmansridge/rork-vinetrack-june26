@@ -23,6 +23,17 @@ final class CatalogueRepository: CatalogueBackendProtocol {
             return row
         }, revision: { id in try await self.revision(id) })
     }
+    /// Sparse operator-note edit: catalogue identity, chemistry, rates and costing are omitted.
+    func updateNotes(for chemical: SavedChemical, notes: String) async throws -> SavedChemical {
+        guard let revisionId = chemical.chemicalV3RevisionId else { throw BackendRepositoryError.emptyResponse }
+        var patch = ChemicalStorePresentation.notesPatch(notes)
+        patch["client_updated_at"] = .string(ISO8601DateFormatter().string(from: Date()))
+        let backend: BackendSavedChemical = try await client.from("saved_chemicals").update(patch)
+            .eq("id", value: chemical.id.uuidString).eq("vineyard_id", value: chemical.vineyardId.uuidString)
+            .eq("chemical_v3_revision_id", value: revisionId.uuidString).select().single().execute().value
+        guard backend.id == chemical.id, backend.chemicalV3RevisionId == revisionId else { throw BackendRepositoryError.emptyResponse }
+        return backend.toSavedChemical()
+    }
     func job(_ id: String) async throws -> CatalogueWire {
         try await client.from("chemical_v3_discovery_jobs").select("id,status,stage,revision_id,product_id,progress_percent,user_message").eq("id", value: id).single().execute().value
     }

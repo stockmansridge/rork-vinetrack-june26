@@ -558,7 +558,7 @@ extension BackendSavedChemical {
             inventoryQuantity: inventoryQuantity,
             inventoryUnit: inventoryUnit ?? "",
             applicationNotes: applicationNotes ?? "",
-            isActive: isActive ?? true,
+            isActive: deletedAt == nil && (isActive ?? true),
             chemicalIntelligence: decodedIntelligence(),
             masterChemicalId: masterChemicalId,
             masterSourceRevision: masterSourceRevision,

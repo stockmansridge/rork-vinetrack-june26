@@ -56,8 +56,10 @@ struct ChemicalsManagementView: View {
         ChemicalReverification.isOffered(for: chemical, fallbackCountry: countryCode)
     }
 
+    private var activeChemicals: [SavedChemical] { ChemicalStorePresentation.active(store.savedChemicals) }
+
     private var filteredChemicals: [SavedChemical] {
-        var list = store.savedChemicals.filter { filter.matches($0) }
+        var list = activeChemicals.filter { filter.matches($0) }
         let trimmed = searchText.trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty {
             list = list.filter { chem in
@@ -70,7 +72,7 @@ struct ChemicalsManagementView: View {
     }
 
     private func count(for filter: ChemicalVerificationFilter) -> Int {
-        store.savedChemicals.filter { filter.matches($0) }.count
+        activeChemicals.filter { filter.matches($0) }.count
     }
 
     private var needsAttentionCount: Int {
@@ -165,8 +167,10 @@ struct ChemicalsManagementView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .task(id: store.savedChemicals.map(\.chemicalV3RevisionId)) {
-            for id in Set(store.savedChemicals.compactMap(\.chemicalV3RevisionId)) {
+        .task(id: activeChemicals.map(\.chemicalV3RevisionId)) {
+            catalogueRevisions = [:]
+            for id in Set(activeChemicals.compactMap(\.chemicalV3RevisionId)) {
+                guard !Task.isCancelled else { return }
                 catalogueRevisions[id] = try? await CatalogueRepository().revision(id.uuidString)
             }
         }
@@ -215,7 +219,7 @@ struct ChemicalsManagementView: View {
             }
         }
         .overlay {
-            if store.savedChemicals.isEmpty {
+            if activeChemicals.isEmpty {
                 ContentUnavailableView {
                     Label("No Chemicals", systemImage: "flask")
                 } description: {
@@ -256,14 +260,6 @@ struct ChemicalDetailRow: View {
     var vineyardCountry: String = ""
     var media: MasterFrontLabel? = nil
 
-    private var ratesPerHa: [ChemicalRate] {
-        chemical.rates.filter { $0.basis == .perHectare }
-    }
-
-    private var ratesPer100L: [ChemicalRate] {
-        chemical.rates.filter { $0.basis == .per100Litres }
-    }
-
     /// Group text for the row.
     ///
     /// Derived from structured actives whenever they exist, so a verified
@@ -272,7 +268,7 @@ struct ChemicalDetailRow: View {
     private var groupDisplay: String {
         let groups = chemical.resolvedIntelligence.activityGroups
         if !groups.isEmpty { return groups.legacyGroupProjection }
-        return chemical.chemicalGroup
+        return ChemicalStorePresentation.safeLegacyGroup(chemical.chemicalGroup)
     }
 
     var body: some View {
@@ -340,38 +336,8 @@ struct ChemicalDetailRow: View {
                     }
                 }
 
-                if !ratesPerHa.isEmpty {
-                    Text(ratesPerHa.map { "\($0.label): \(SprayRateFormatter.format(chemical.unit.fromBase($0.value)))/ha" }.joined(separator: " · "))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                if !ratesPer100L.isEmpty {
-                    Text(ratesPer100L.map { "\($0.label): \(SprayRateFormatter.format(chemical.unit.fromBase($0.value)))/100L" }.joined(separator: " · "))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                // Legacy-only fallback, shown when a historical chemical carries
-                // no structured rates at all. A nil projection means there is no
-                // valid per-hectare scalar (sql/222) — a confirmed 2–3 L/100 L
-                // rate, for instance — so the row stays silent rather than
-                // printing a fabricated "0 L/Ha".
-                if ratesPerHa.isEmpty,
-                   ratesPer100L.isEmpty,
-                   let legacyPerHa = chemical.ratePerHa,
-                   legacyPerHa > 0 {
-                    Text("\(SprayRateFormatter.format(legacyPerHa)) \(chemical.unit.rawValue)/Ha")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                if !chemical.manufacturer.isEmpty { Text(chemical.manufacturer).font(.caption).foregroundStyle(.secondary) }
 
-                if !chemical.activeIngredient.isEmpty {
-                    Text(chemical.activeIngredient)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
             }
             Spacer()
             Image(systemName: "chevron.right")

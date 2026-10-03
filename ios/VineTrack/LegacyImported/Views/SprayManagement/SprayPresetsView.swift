@@ -277,6 +277,10 @@ struct EditSavedChemicalSheet: View {
     /// cannot empty it, and there is no `onAppear` that quietly rewrites part
     /// of it on the sheet's second appearance.
     @State private var session: ChemicalReviewSession
+    private let initialSession: ChemicalReviewSession
+    @State private var showsOptionalDetails: Bool = false
+    @State private var showsCostingSnapshot: Bool = false
+    @State private var hasEditedCosting: Bool = false
 
     @State private var activeSheet: ChemicalEditorSheet?
     @State private var linkAlertMessage: String?
@@ -321,12 +325,14 @@ struct EditSavedChemicalSheet: View {
         // differs. `@State` keeps the value produced here for the lifetime of
         // the editor, so re-running this initialiser on a parent redraw cannot
         // overwrite anything the operator has typed.
-        _session = State(initialValue: ChemicalReviewSession.make(
+        let initial = ChemicalReviewSession.make(
             chemical: chemical,
             prefill: prefill,
             fallbackCountry: "",
             serverDefaultRateOptions: serverDefaultRateOptions
-        ))
+        )
+        initialSession = initial
+        _session = State(initialValue: initial)
     }
 
     private static func formatRate(_ value: Double) -> String {
@@ -348,12 +354,21 @@ struct EditSavedChemicalSheet: View {
     }
 
     var body: some View {
+        if let chemical, ChemicalStorePresentation.editorKind(chemical) == .catalogue {
+            CatalogueChemicalEditorView(chemical: chemical, onSaved: onSaved)
+        } else {
+            legacyEditor
+        }
+    }
+
+    private var legacyEditor: some View {
         NavigationStack {
             Form {
-                if let chemical, chemical.chemicalV3RevisionId != nil {
-                    Section("VineTrack catalogue") { CatalogueSavedChemicalView(chemical: chemical) }
+                if ChemicalStorePresentation.editorKind(chemical) == .manual && !session.isReviewingLookup {
+                    Section { Text("Manually entered · unverified").font(.caption).foregroundStyle(.secondary) }
+                } else {
+                    topActionsSection
                 }
-                topActionsSection
                 if hasProposedLookup {
                     Section {
                         Label("Proposed information", systemImage: "sparkles")
@@ -370,18 +385,17 @@ struct EditSavedChemicalSheet: View {
                 // because none of them is why the operator opened the screen.
                 //
                 // 1. Product
-                productSection
+                if session.isCreatingManual { manualProductSection } else { productSection }
+                Section {
+                    Toggle("Optional product & chemistry details", isOn: $showsOptionalDetails)
+                }
                 // 2. Optional chemistry details. A blank manual create stays
                 // intentionally short; existing and looked-up products retain
                 // all structured information and editing surfaces.
-                if !session.isCreatingManual {
-                    activeIngredientsSection
-                }
+                if showsOptionalDetails { activeIngredientsSection }
                 // 3. Grapevine uses and registered label rates.
-                if !session.isCreatingManual {
-                    registeredUsesSection
-                }
-                if session.isCreatingManual { legacyUseSection }
+                if !session.isCreatingManual || showsOptionalDetails { registeredUsesSection }
+                if session.isCreatingManual && showsOptionalDetails { legacyUseSection }
                 // 4. The optional operational default.
                 //
                 // While ADDING a product to the Chemical Store this is a
@@ -418,7 +432,7 @@ struct EditSavedChemicalSheet: View {
                     }
                 }
                 // 5. Labels & References
-                labelsSection
+                if !session.isCreatingManual || showsOptionalDetails { labelsSection }
                 if let chemical, let media = approvedFrontLabel,
                    session.masterChemicalId == chemical.masterChemicalId,
                    session.name == chemical.name,
@@ -438,11 +452,17 @@ struct EditSavedChemicalSheet: View {
                     }
                 }
                 // 6. Purchase & Inventory
-                purchaseSection
+                if showsOptionalDetails && session.productCategory?.isFertiliser == true {
+                    Section("Fertiliser calculation details (optional)") { fertiliserFields }
+                }
+                if canViewFinancials {
+                    Section { Toggle("Spray costing settings (optional)", isOn: $showsCostingSnapshot) }
+                    if showsCostingSnapshot { purchaseSection }
+                }
                 // 7. Notes
                 notesSection
                 // 8. Advanced / Verification Evidence — collapsed by default
-                advancedSection
+                if !session.isCreatingManual || showsOptionalDetails { advancedSection }
             }
             .task(id: chemical?.masterChemicalId) {
                 guard let id = chemical?.masterChemicalId else { approvedFrontLabel = nil; return }
@@ -521,6 +541,23 @@ struct EditSavedChemicalSheet: View {
                 }
             }
         }
+    }
+
+    private var manualProductSection: some View {
+        Section("Product") {
+            TextField("Product / chemical name *", text: $session.name)
+            Picker("Product unit *", selection: $session.unit) {
+                ForEach(ChemicalUnit.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            if showsOptionalDetails {
+                Picker("Category (optional)", selection: $session.productCategory) {
+                    Text("Uncategorised").tag(ProductCategory?.none)
+                    ForEach(ProductCategory.allCases) { Text($0.label).tag(ProductCategory?.some($0)) }
+                }
+                TextField("Manufacturer (optional)", text: $session.manufacturer)
+            }
+        }
+        .onChange(of: session.unit) { _, unit in session.formType = unit.dimension == .mass ? .solid : .liquid }
     }
 
     /// Re-run the product lookup from inside the editor.
@@ -665,29 +702,12 @@ struct EditSavedChemicalSheet: View {
     private var fertiliserFields: some View {
         Group {
                 Toggle("Organic certified", isOn: $session.organicCertified)
-                LabeledContent("Pack size (\(session.formType == .liquid ? "L" : "kg"))") {
-                    TextField("25", text: $session.packSizeText)
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                }
-                if canViewFinancials {
-                    LabeledContent("Price per pack ($)") {
-                        TextField("Optional", text: $session.packPriceText)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                    }
-                }
                 if session.formType == .liquid {
                     LabeledContent("Density (kg/L)") {
                         TextField("Optional", text: $session.densityText)
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
                     }
-                }
-                LabeledContent("Stock on hand (packs)") {
-                    TextField("Optional", text: $session.inventoryText)
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
                 }
                 Text("Nutrient analysis (%)")
                     .font(.caption)
@@ -1371,9 +1391,6 @@ struct EditSavedChemicalSheet: View {
 
     private var purchaseSection: some View {
         Section {
-            if session.productCategory?.isFertiliser == true {
-                fertiliserFields
-            }
             if canViewFinancials {
                 Toggle("Track Purchase Info", isOn: $session.trackPurchase.animation())
             }
@@ -1405,10 +1422,14 @@ struct EditSavedChemicalSheet: View {
                 }
             }
         } header: {
-            Text("Purchase & Inventory")
+            Text("Spray costing snapshot")
         } footer: {
-            Text("Used to calculate chemical cost in spray reports. AI does not fill in pricing — enter it from your invoice.")
+            Text("Compatibility cost used by existing spray reports. Manage stock and purchase history in Chemical Inventory.")
         }
+        .onChange(of: session.trackPurchase) { _, _ in hasEditedCosting = true }
+        .onChange(of: session.containerSizeText) { _, _ in hasEditedCosting = true }
+        .onChange(of: session.containerUnit) { _, _ in hasEditedCosting = true }
+        .onChange(of: session.costText) { _, _ in hasEditedCosting = true }
     }
 
     private var sharingSection: some View {
@@ -1486,6 +1507,11 @@ struct EditSavedChemicalSheet: View {
     /// `saved_chemicals` written from here.
     @discardableResult
     private func save() -> SavedChemical? {
+        if let chemical, prefill == nil,
+           let notesOnly = ChemicalStorePresentation.notesOnlyEdit(chemical, session: session, initialSession: initialSession) {
+            store.updateSavedChemical(notesOnly)
+            return store.savedChemicals.first { $0.id == notesOnly.id }
+        }
         // The legacy scalars are DERIVED here, from the structured record, and
         // written alongside it for older clients and the existing API. Nothing
         // on this screen edits them, so a stale scalar has no way back into the
@@ -1500,8 +1526,9 @@ struct EditSavedChemicalSheet: View {
         // Preserve existing purchase data when the editor cannot see/edit
         // financials so that owners/managers don't lose cost values when a
         // supervisor/operator edits the same chemical for other details.
-        var purchase: ChemicalPurchase? = canViewFinancials ? nil : chemical?.purchase
-        if canViewFinancials, session.trackPurchase {
+        var purchase: ChemicalPurchase? = chemical?.purchase
+        if canViewFinancials, hasEditedCosting { purchase = nil }
+        if canViewFinancials, hasEditedCosting, session.trackPurchase {
             let containerSize = Double(session.containerSizeText) ?? 0
             let cost = Double(session.costText) ?? 0
             if containerSize > 0 || cost > 0 {
@@ -1530,7 +1557,8 @@ struct EditSavedChemicalSheet: View {
             existing.manufacturer = legacy.manufacturer
             existing.notes = session.notes
             existing.problem = legacy.problem
-            existing.ratePerHa = legacy.ratePerHa
+            let ratesChanged = session.selectedDefaultRateIds != initialSession.selectedDefaultRateIds || session.defaultRateValues != initialSession.defaultRateValues || session.chemistryDraft.productRates != initialSession.chemistryDraft.productRates
+            if ratesChanged { existing.ratePerHa = legacy.ratePerHa }
             existing.activeIngredient = legacy.activeIngredient
             // Mode of action is no longer an editable chemistry input — the group
             // is structured per active now — so whatever the record already held
@@ -1538,27 +1566,23 @@ struct EditSavedChemicalSheet: View {
             existing.modeOfAction = session.modeOfAction
             existing.labelURL = legacy.labelURL
             existing.productURL = session.productURL
-            existing.rates = rates
+            if ratesChanged { existing.rates = rates }
             existing.purchase = purchase
             existing.productCategory = session.productCategory?.rawValue ?? ""
-            existing.productForm = productForm
-            existing.packSize = parseOptional(session.packSizeText)
-            existing.packUnit = packUnit
+            if session.formType != initialSession.formType { existing.productForm = productForm }
+            existing.packSize = chemical?.packSize
+            existing.packUnit = chemical?.packUnit ?? packUnit
             // Preserve pricing authored by owners/managers when the current
             // editor cannot see financials.
-            existing.pricePerPack = canViewFinancials
-                ? parseOptional(session.packPriceText)
-                : chemical?.pricePerPack
+            existing.pricePerPack = chemical?.pricePerPack
             existing.density = parseOptional(session.densityText)
             existing.nitrogenPercent = parseOptional(session.nitrogenText)
             existing.phosphorusPercent = parseOptional(session.phosphorusText)
             existing.potassiumPercent = parseOptional(session.potassiumText)
             existing.analysisBasis = session.analysisBasis.rawValue
             existing.organicCertified = session.organicCertified
-            existing.inventoryQuantity = parseOptional(session.inventoryText)
-            existing.inventoryUnit = parseOptional(session.inventoryText) != nil
-                ? "packs"
-                : existing.inventoryUnit
+            existing.inventoryQuantity = chemical?.inventoryQuantity
+            existing.inventoryUnit = chemical?.inventoryUnit ?? existing.inventoryUnit
             existing.applicationNotes = session.applicationNotes
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             // Master catalogue reference (sql/199). Set only when the product

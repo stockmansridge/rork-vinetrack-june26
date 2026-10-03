@@ -366,7 +366,7 @@ final class SavedChemicalSyncService {
         }
         for item in remote {
             if item.deletedAt != nil {
-                store.applyRemoteSavedChemicalDelete(item.id)
+                store.applyRemoteSavedChemicalUpsert(item.toSavedChemical())
                 metadata.clearDirty([item.id])
                 metadata.clearDeleted([item.id])
                 continue

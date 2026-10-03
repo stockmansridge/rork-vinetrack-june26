@@ -47,7 +47,7 @@ internal class SavedChemicalCreateSync(
 
     /** Local snapshot plus unsynced inserts; the outbox also repairs a torn two-store commit. */
     fun rows(userId: String, vineyardId: String): List<SavedChemical> {
-        val cached = local.load(userId, vineyardId).filter { it.deletedAt == null && it.isActive }
+        val cached = local.load(userId, vineyardId)
         val queued = pending.list().filter { it.entityType == PendingEntityType.SAVED_CHEMICAL &&
             it.opType == PendingOpType.CREATE && it.status != PendingWriteStatus.SYNCED }
             .mapNotNull { write -> decode(write)?.takeIf { it.ownerId == userId && it.insert.vineyardId == vineyardId }
@@ -61,10 +61,18 @@ internal class SavedChemicalCreateSync(
         val unresolved = pending.list().filter { it.entityType == PendingEntityType.SAVED_CHEMICAL &&
             it.opType == PendingOpType.CREATE && it.status != PendingWriteStatus.SYNCED }
             .mapNotNull { write -> decode(write)?.takeIf { it.ownerId == userId }?.insert?.id }.toSet()
-        val merged = (remote.filter { it.id !in unresolved } + localRows.filter { it.id in unresolved })
+        val remoteIds = remote.map { it.id }.toSet()
+        val archivedHistory = localRows.filter { (!it.isActive || it.deletedAt != null) && it.id !in remoteIds }
+        val merged = (remote.filter { it.id !in unresolved } + localRows.filter { it.id in unresolved } + archivedHistory)
             .distinctBy { it.id }.sortedBy { it.displayName.lowercase() }
         local.save(userId, vineyardId, merged)
         return merged
+    }
+
+    fun archiveLocal(userId: String, vineyardId: String, id: String) {
+        local.save(userId, vineyardId, local.load(userId, vineyardId).map {
+            if (it.id == id) com.rork.vinetrack.data.chemical.ChemicalStorePresentation.archived(it) else it
+        })
     }
 
     fun removeLocal(userId: String, vineyardId: String, id: String) {

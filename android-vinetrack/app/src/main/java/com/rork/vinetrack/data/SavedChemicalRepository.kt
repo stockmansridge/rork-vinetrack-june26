@@ -33,6 +33,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import java.time.Instant
 
 /**
@@ -540,14 +541,37 @@ class SavedChemicalRepository(private val session: SessionStore? = null) {
                 masterSourceRevision = input.masterSourceRevision,
                 entrySource = SavedChemicalEntrySource.repaired(input.entrySource, input.intelligence),
             )
+            val body = com.rork.vinetrack.data.chemical.ChemicalStorePresentation.preservingUnchangedResistance(
+                SupabaseClient.json.encodeToJsonElement(ChemicalPatch.serializer(), patch).jsonObject,
+                intelligenceChanged = input.intelligence != null,
+            )
             val response = SupabaseClient.http.patch(SupabaseClient.restUrl("saved_chemicals?id=eq.$id")) {
                 authHeaders(token)
                 headers { append("Prefer", "return=representation") }
                 contentType(ContentType.Application.Json)
-                setBody(patch)
+                setBody(body)
             }
             firstRow(response)
         }
+
+    /** Sparse note edit; no hidden catalogue, rate, resistance or cost fields are sent. */
+    suspend fun updateNotes(chemical: SavedChemical, notes: String): SavedChemical = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session?.accessToken ?: throw BackendError.Unauthorized
+        val revision = chemical.chemicalV3RevisionId
+        val revisionFilter = revision?.let { "&chemical_v3_revision_id=eq.$it" }.orEmpty()
+        val patch = kotlinx.serialization.json.JsonObject(
+            com.rork.vinetrack.data.chemical.ChemicalStorePresentation.notesPatch(notes) +
+                mapOf("client_updated_at" to kotlinx.serialization.json.JsonPrimitive(nowIso()))
+        )
+        val response = SupabaseClient.http.patch(SupabaseClient.restUrl("saved_chemicals?id=eq.${chemical.id}&vineyard_id=eq.${chemical.vineyardId}$revisionFilter")) {
+            authHeaders(token)
+            headers { append("Prefer", "return=representation") }
+            contentType(ContentType.Application.Json)
+            setBody(patch)
+        }
+        firstRow(response).also { check(it.id == chemical.id && it.chemicalV3RevisionId == revision) }
+    }
 
     /** Archive (soft-delete) via the owner/manager-gated server RPC. */
     suspend fun softDelete(id: String) = withContext(Dispatchers.IO) {

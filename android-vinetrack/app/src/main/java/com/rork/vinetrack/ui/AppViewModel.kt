@@ -12224,18 +12224,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Archive (soft-delete) a saved chemical via the server RPC, optimistically removing it. */
+    /** Save vineyard notes without routing catalogue records through the legacy full-field editor. */
+    fun updateSavedChemicalNotes(chemical: SavedChemical, notes: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val updated = savedChemicalRepo.updateNotes(chemical, notes)
+                _ui.update { st ->
+                    val rows = st.savedChemicals.map { if (it.id == updated.id) updated else it }
+                    session.userId?.let { owner -> savedChemicalCreateSync.mergeRemote(owner, updated.vineyardId, rows) }
+                    st.copy(savedChemicals = rows, sprayError = null)
+                }
+                onResult(true)
+            } catch (_: BackendError.Unauthorized) {
+                onUnauthorized("updateSavedChemicalNotes"); onResult(false)
+            } catch (_: Exception) {
+                _ui.update { it.copy(sprayError = "Couldn't save notes. Check your connection and try again.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Archive through the existing RPC; retain the inactive row for historical resolution. */
     fun deleteSavedChemical(id: String, onResult: (Boolean) -> Unit) {
         val previous = _ui.value.savedChemicals
-        _ui.update { st -> st.copy(savedChemicals = st.savedChemicals.filterNot { it.id == id }) }
+        _ui.update { st -> st.copy(savedChemicals = st.savedChemicals.map {
+            if (it.id == id) com.rork.vinetrack.data.chemical.ChemicalStorePresentation.archived(it) else it
+        }) }
         viewModelScope.launch {
             try {
                 savedChemicalRepo.softDelete(id)
                 session.userId?.let { owner -> previous.firstOrNull { it.id == id }?.let { row ->
-                    savedChemicalCreateSync.removeLocal(owner, row.vineyardId, id) } }
-                chemicalLabelPhotos.removeForChemical(id)
+                    savedChemicalCreateSync.archiveLocal(owner, row.vineyardId, id) } }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(savedChemicals = previous) }
                 onUnauthorized("deleteSavedChemical"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(savedChemicals = previous, sprayError = friendlyWriteError(e.code)) }

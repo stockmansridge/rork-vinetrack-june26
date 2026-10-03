@@ -363,6 +363,20 @@ if (providers.gradleProperty("programPDFFocusedTests").orNull == "true") {
     }
 }
 
+if (providers.gradleProperty("chemicalStorePresentationFocusedTests").orNull == "true") {
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+        testLogging { events("passed", "failed", "skipped") }
+    }
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/ChemicalStorePresentationTest.kt")
+                include("**/ChemicalManualMinimumSaveContractTest.kt")
+            })
+        }
+    }
+}
+
 // Image-only saved catalogue fallback coverage; do not compile unrelated legacy suites.
 if (providers.gradleProperty("catalogueFrontLabelFocusedTests").orNull == "true") {
     tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {

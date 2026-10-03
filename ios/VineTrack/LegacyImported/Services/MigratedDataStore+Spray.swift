@@ -64,6 +64,14 @@ extension MigratedDataStore {
         onSavedChemicalDeleted?(chemical.id)
     }
 
+    /// Retains an archived row for historical resolution without queuing an upsert.
+    func archiveSavedChemicalLocallyOnly(_ id: UUID) {
+        guard let vineyardId = selectedVineyardId,
+              let index = savedChemicals.firstIndex(where: { $0.id == id }) else { return }
+        savedChemicals[index] = ChemicalStorePresentation.archived(savedChemicals[index])
+        sprayRepo.saveChemicalsSlice(savedChemicals, for: vineyardId)
+    }
+
     /// Removes the chemical from local state without queuing another remote
     /// delete (used after the backend RPC has already archived/hard-deleted it).
     func removeSavedChemicalLocallyOnly(_ id: UUID) {
