@@ -55,28 +55,43 @@ internal class SavedChemicalCreateSync(
         return (cached + queued).distinctBy { it.id }.sortedBy { it.displayName.lowercase() }
     }
 
-    /** Overlay local creates by id; never replace an unsynced local row with a stale server list. */
+    /** Complete server reconciliation: tombstones win, only explicit CREATE outbox IDs may stay active when absent. */
     fun mergeRemote(userId: String, vineyardId: String, remote: List<SavedChemical>): List<SavedChemical> {
+        require(remote.all { it.vineyardId == vineyardId }) { "Chemical reconciliation vineyard mismatch." }
         val localRows = rows(userId, vineyardId)
         val unresolved = pending.list().filter { it.entityType == PendingEntityType.SAVED_CHEMICAL &&
             it.opType == PendingOpType.CREATE && it.status != PendingWriteStatus.SYNCED }
-            .mapNotNull { write -> decode(write)?.takeIf { it.ownerId == userId }?.insert?.id }.toSet()
+            .mapNotNull { write -> decode(write)?.takeIf { it.ownerId == userId && it.insert.vineyardId == vineyardId }?.insert?.id }.toSet()
         val remoteIds = remote.map { it.id }.toSet()
-        val archivedHistory = localRows.filter { (!it.isActive || it.deletedAt != null) && it.id !in remoteIds }
-        val merged = (remote.filter { it.id !in unresolved } + localRows.filter { it.id in unresolved } + archivedHistory)
-            .distinctBy { it.id }.sortedBy { it.displayName.lowercase() }
-        local.save(userId, vineyardId, merged)
+        val historyOrCreates = localRows.filter { it.id !in remoteIds }.map { row ->
+            if (row.id in unresolved) row else com.rork.vinetrack.data.chemical.ChemicalStorePresentation.archived(row)
+        }
+        val authoritative = remote.map { row ->
+            if (row.deletedAt != null || !row.isActive) com.rork.vinetrack.data.chemical.ChemicalStorePresentation.archived(row) else row
+        }
+        val merged = (authoritative + historyOrCreates).distinctBy { it.id }.sortedBy { it.displayName.lowercase() }
+        check(local.save(userId, vineyardId, merged)) { "Chemical reconciliation could not be persisted." }
+        // Observing the exact ID remotely acknowledges a lost CREATE response too.
+        remoteIds.forEach { cancelCreate(userId, vineyardId, it) }
         return merged
     }
 
+    private fun cancelCreate(userId: String, vineyardId: String, id: String) {
+        pending.list().filter { it.entityType == PendingEntityType.SAVED_CHEMICAL && it.opType == PendingOpType.CREATE }
+            .filter { write -> decode(write)?.let { it.ownerId == userId && it.insert.vineyardId == vineyardId && it.insert.id == id } == true }
+            .forEach { pending.remove(it.id) }
+    }
+
     fun archiveLocal(userId: String, vineyardId: String, id: String) {
-        local.save(userId, vineyardId, local.load(userId, vineyardId).map {
+        check(local.save(userId, vineyardId, rows(userId, vineyardId).map {
             if (it.id == id) com.rork.vinetrack.data.chemical.ChemicalStorePresentation.archived(it) else it
-        })
+        })) { "Chemical archive could not be persisted." }
+        cancelCreate(userId, vineyardId, id)
     }
 
     fun removeLocal(userId: String, vineyardId: String, id: String) {
-        local.save(userId, vineyardId, local.load(userId, vineyardId).filterNot { it.id == id })
+        check(local.save(userId, vineyardId, local.load(userId, vineyardId).filterNot { it.id == id }))
+        cancelCreate(userId, vineyardId, id)
     }
 
     suspend fun replayAll(onSynced: (SavedChemical) -> Unit = {}) {
@@ -97,8 +112,9 @@ internal class SavedChemicalCreateSync(
                 pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
                 val body = payload.insert
                 try {
+                    val existingBeforeUpload = findById(body.id)
                     val saved = try {
-                        upload(body)
+                        existingBeforeUpload ?: upload(body)
                     } catch (error: BackendError.Server) {
                         if (error.code != 409) throw error
                         // A conflict is only success after reading the SAME primary key in the SAME vineyard.
@@ -110,9 +126,13 @@ internal class SavedChemicalCreateSync(
                         pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Saved Chemical identity mismatch.")
                         continue
                     }
-                    check(storeRow(owner, saved)) { "Saved Chemical could not be committed locally." }
+                    // A concurrent archive/reconciliation may have cancelled this CREATE while IO was suspended.
+                    if (pending.list().none { it.id == write.id }) continue
+                    val authoritative = if (saved.deletedAt != null || !saved.isActive)
+                        com.rork.vinetrack.data.chemical.ChemicalStorePresentation.archived(saved) else saved
+                    check(storeRow(owner, authoritative)) { "Saved Chemical could not be committed locally." }
                     pending.remove(write.id)
-                    onSynced(saved)
+                    onSynced(authoritative)
                 } catch (cancelled: CancellationException) {
                     pending.updateStatus(write.id, PendingWriteStatus.FAILED, "Sync interrupted.")
                     throw cancelled
@@ -128,6 +148,14 @@ internal class SavedChemicalCreateSync(
         } finally {
             lock.unlock()
         }
+    }
+
+    /** A single server-confirmed edit is not a complete remote list and must not acknowledge other creates. */
+    fun acceptRemoteRow(userId: String, row: SavedChemical) {
+        val authoritative = if (row.deletedAt != null || !row.isActive)
+            com.rork.vinetrack.data.chemical.ChemicalStorePresentation.archived(row) else row
+        check(storeRow(userId, authoritative)) { "Chemical edit could not be persisted." }
+        cancelCreate(userId, row.vineyardId, row.id)
     }
 
     private fun storeRow(userId: String, row: SavedChemical): Boolean =

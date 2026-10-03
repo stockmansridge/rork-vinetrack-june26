@@ -371,7 +371,23 @@ if (providers.gradleProperty("chemicalStorePresentationFocusedTests").orNull == 
         tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
             setSource(fileTree("src/test/java") {
                 include("**/ChemicalStorePresentationTest.kt")
+                include("**/ChemicalStoreAssessmentTest.kt")
                 include("**/ChemicalManualMinimumSaveContractTest.kt")
+            })
+        }
+    }
+}
+
+if (providers.gradleProperty("savedChemicalReconciliationFocusedTests").orNull == "true") {
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+        testLogging { events("passed", "failed", "skipped") }
+    }
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/SavedChemicalReconciliationTest.kt")
+                include("**/SavedChemicalCreateSyncTest.kt")
+                include("**/ChemicalStorePresentationTest.kt")
             })
         }
     }

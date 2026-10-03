@@ -207,7 +207,7 @@ private fun SprayManagementHub(
                     subtitle = "Tank presets for quick selection",
                     icon = Icons.Filled.Science,
                     tint = VineColors.LeafGreen,
-                    trailing = "${state.savedChemicals.size} chemicals",
+                    trailing = "${com.rork.vinetrack.data.chemical.ChemicalStorePresentation.active(state.savedChemicals).size} chemicals",
                     enabled = true,
                     onClick = onOpenPresets,
                 )
@@ -222,7 +222,7 @@ private fun SprayManagementHub(
                     subtitle = "Saved products & costs",
                     icon = Icons.Filled.Science,
                     tint = VineColors.Info,
-                    trailing = state.savedChemicals.size.toString(),
+                    trailing = com.rork.vinetrack.data.chemical.ChemicalStorePresentation.active(state.savedChemicals).size.toString(),
                     enabled = true,
                     onClick = onOpenChemicals,
                 )

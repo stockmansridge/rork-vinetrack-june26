@@ -41,12 +41,16 @@ struct SprayPresetsView: View {
         .sheet(item: $editingPreset) { preset in
             EditSavedSprayPresetSheet(preset: preset)
         }
+        .onChange(of: ChemicalStorePresentation.active(store.savedChemicals).map(\.id)) { _, ids in
+            if let editingChemical, !ids.contains(editingChemical.id) { self.editingChemical = nil }
+            if let pending = deleteCoordinator.pending, !ids.contains(pending.id) { deleteCoordinator.pending = nil }
+        }
         .chemicalDeletionActions(coordinator: deleteCoordinator, store: store)
     }
 
     private var chemicalsSection: some View {
         Section {
-            ForEach(store.savedChemicals) { chemical in
+            ForEach(ChemicalStorePresentation.active(store.savedChemicals)) { chemical in
                 Group {
                     if canManageSetup {
                         Button {

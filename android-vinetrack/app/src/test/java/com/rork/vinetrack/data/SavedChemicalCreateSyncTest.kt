@@ -162,7 +162,7 @@ class SavedChemicalCreateSyncTest {
             assertEquals(localRow.id, body.id)
             if (calls == 1) throw IllegalStateException("ack lost")
             throw BackendError.Server(409, "duplicate key")
-        }, find = { id -> if (id == localRow.id) localRow else null })
+        }, find = { id -> if (calls >= 2 && id == localRow.id) localRow else null })
         afterRestart.replayAll()
         assertEquals(PendingWriteStatus.FAILED, PendingWriteRepository(pendingStore).list().single().status)
         var synced: SavedChemical? = null

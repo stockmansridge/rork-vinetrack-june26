@@ -2664,7 +2664,7 @@ private fun ExistingChemicalPickerSheet(
     val vine = LocalVineColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var query by remember { mutableStateOf("") }
-    val matches = chemicals
+    val matches = com.rork.vinetrack.data.chemical.ChemicalStorePresentation.active(chemicals)
         .filter { query.isBlank() || it.displayName.contains(query.trim(), ignoreCase = true) }
         .sortedBy { it.displayName.lowercase() }
 
@@ -3268,7 +3268,7 @@ private fun CalcChemicalLineCard(
                 if (savedChemicals.isNotEmpty()) {
                     HorizontalDivider()
                 }
-                savedChemicals.forEach { saved ->
+                com.rork.vinetrack.data.chemical.ChemicalStorePresentation.active(savedChemicals).forEach { saved ->
                     DropdownMenuItem(
                         text = {
                             Column {

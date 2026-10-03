@@ -110,7 +110,7 @@ fun chemicalVerificationTint(status: ChemicalVerificationStatus): Color = when (
 enum class ChemicalStoreFilter(val label: String) {
     COMPLETE("Complete details"), BASIC("Basic details"), REVIEW_REQUIRED("Review required");
 
-    fun matches(chemical: SavedChemical): Boolean = ChemicalDetailsCompleteness.assess(chemical).title == label
+    fun matches(assessment: com.rork.vinetrack.data.chemical.ChemicalStoreAssessment): Boolean = assessment.title == label
 }
 
 /** Compact trust chip used in lists and pickers. */
@@ -119,9 +119,9 @@ fun ChemicalVerificationBadge(
     chemical: SavedChemical,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    storeTitle: String? = null,
 ) {
-    val completeness = ChemicalDetailsCompleteness.assess(chemical)
-    val label = completeness.title
+    val label = storeTitle ?: ChemicalDetailsCompleteness.assess(chemical).title
     val (icon, tint) = when (label) {
         "Complete details" -> Icons.Filled.Verified to VineColors.Success
         "Review required" -> Icons.Filled.Warning to VineColors.Destructive

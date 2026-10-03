@@ -11,13 +11,12 @@ private enum ChemicalVerificationFilter: String, CaseIterable, Identifiable {
         case .review: return "Review required"
         }
     }
-    func matches(_ chemical: SavedChemical) -> Bool {
-        let details = ChemicalDetailsCompleteness.assess(chemical)
+    func matches(_ assessment: ChemicalStoreAssessment) -> Bool {
         switch self {
         case .all: return true
-        case .complete: return details.title == "Complete details"
-        case .basic: return details.title == "Basic details"
-        case .review: return details.hasConflict
+        case .complete: return assessment.title == "Complete details"
+        case .basic: return assessment.title == "Basic details"
+        case .review: return assessment.title == "Review required"
         }
     }
 }
@@ -33,7 +32,7 @@ struct ChemicalsManagementView: View {
     @State private var reverifyingChemical: SavedChemical?
     @State private var searchText: String = ""
     @State private var approvedMedia: [UUID: MasterFrontLabel] = [:]
-    @State private var catalogueRevisions: [UUID: CatalogueWire] = [:]
+    @State private var catalogueRevisions: [UUID: ChemicalStoreAssessment.RevisionResolution] = [:]
     @State private var filter: ChemicalVerificationFilter = .all
     @State private var deleteCoordinator = ChemicalDeleteCoordinator()
 
@@ -58,12 +57,19 @@ struct ChemicalsManagementView: View {
 
     private var activeChemicals: [SavedChemical] { ChemicalStorePresentation.active(store.savedChemicals) }
 
+    private var assessments: [UUID: ChemicalStoreAssessment] {
+        ChemicalStoreAssessment.activeAssessments(activeChemicals, resolutions: catalogueRevisions)
+    }
+
     private var filteredChemicals: [SavedChemical] {
-        var list = activeChemicals.filter { filter.matches($0) }
+        let statuses = assessments
+        var list = activeChemicals.filter { chemical in
+            statuses[chemical.id].map { filter.matches($0) } ?? false
+        }
         let trimmed = searchText.trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty {
             list = list.filter { chem in
-                let targets = chem.chemicalV3RevisionId.flatMap { catalogueRevisions[$0] }?.targets.joined(separator: " ") ?? CatalogueWire.manualTargets(problem: chem.problem, use: chem.use)
+                let targets = chem.chemicalV3RevisionId.flatMap { catalogueRevisions[$0]?.revision }?.targets.joined(separator: " ") ?? CatalogueWire.manualTargets(problem: chem.problem, use: chem.use)
                 let combined = "\(chem.name) \(chem.activeIngredient) \(chem.chemicalGroup) \(chem.manufacturer) \(targets) \(chem.modeOfAction)"
                 return combined.localizedStandardContains(trimmed)
             }
@@ -72,11 +78,28 @@ struct ChemicalsManagementView: View {
     }
 
     private func count(for filter: ChemicalVerificationFilter) -> Int {
-        activeChemicals.filter { filter.matches($0) }.count
+        assessments.values.filter { filter.matches($0) }.count
     }
 
     private var needsAttentionCount: Int {
-        count(for: .basic) + count(for: .review)
+        assessments.values.filter(\.needsAttention).count
+    }
+
+    private func loadCatalogueRevisions() async {
+        let ids = Set(activeChemicals.compactMap(\.chemicalV3RevisionId))
+        catalogueRevisions = catalogueRevisions.filter { ids.contains($0.key) }
+        for id in ids {
+            guard !Task.isCancelled else { return }
+            if catalogueRevisions[id]?.revision == nil { catalogueRevisions[id] = .loading }
+            do {
+                let revision = try await CatalogueRepository().revision(id.uuidString)
+                guard !Task.isCancelled else { return }
+                catalogueRevisions[id] = .resolved(revision)
+            } catch {
+                guard !Task.isCancelled else { return }
+                if catalogueRevisions[id]?.revision == nil { catalogueRevisions[id] = .unavailable }
+            }
+        }
     }
 
     var body: some View {
@@ -125,14 +148,14 @@ struct ChemicalsManagementView: View {
                         Button {
                             editingChemical = chemical
                         } label: {
-                            ChemicalDetailRow(chemical: chemical, vineyardCountry: countryCode,
+                            ChemicalDetailRow(chemical: chemical, assessment: assessments[chemical.id], vineyardCountry: countryCode,
                                               media: chemical.masterChemicalId.flatMap { approvedMedia[$0] }.flatMap {
                                                   $0.belongs(to: chemical.masterChemicalId,
                                                               identity: chemical.resolvedIntelligence.registration?.identityKey) ? $0 : nil
                                               })
                         }
                     } else {
-                        ChemicalDetailRow(chemical: chemical, vineyardCountry: countryCode,
+                        ChemicalDetailRow(chemical: chemical, assessment: assessments[chemical.id], vineyardCountry: countryCode,
                                               media: chemical.masterChemicalId.flatMap { approvedMedia[$0] }.flatMap {
                                                   $0.belongs(to: chemical.masterChemicalId,
                                                               identity: chemical.resolvedIntelligence.registration?.identityKey) ? $0 : nil
@@ -167,13 +190,8 @@ struct ChemicalsManagementView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .task(id: activeChemicals.map(\.chemicalV3RevisionId)) {
-            catalogueRevisions = [:]
-            for id in Set(activeChemicals.compactMap(\.chemicalV3RevisionId)) {
-                guard !Task.isCancelled else { return }
-                catalogueRevisions[id] = try? await CatalogueRepository().revision(id.uuidString)
-            }
-        }
+        .task(id: activeChemicals.map(\.chemicalV3RevisionId)) { await loadCatalogueRevisions() }
+        .refreshable { await loadCatalogueRevisions() }
         .navigationTitle("Chemicals")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search chemicals...")
@@ -249,12 +267,18 @@ struct ChemicalsManagementView: View {
         .sheet(item: $editingChemical) { chem in
             EditSavedChemicalSheet(chemical: chem)
         }
+        .onChange(of: activeChemicals.map(\.id)) { _, ids in
+            if let editingChemical, !ids.contains(editingChemical.id) { self.editingChemical = nil }
+            if let matchingChemical, !ids.contains(matchingChemical.id) { self.matchingChemical = nil }
+            if let pending = deleteCoordinator.pending, !ids.contains(pending.id) { deleteCoordinator.pending = nil }
+        }
         .chemicalDeletionActions(coordinator: deleteCoordinator, store: store)
     }
 }
 
 struct ChemicalDetailRow: View {
     let chemical: SavedChemical
+    var assessment: ChemicalStoreAssessment? = nil
     /// The vineyard's country, for marking foreign-registered products. Empty
     /// (the default) renders no jurisdiction mark — suitability is unknown.
     var vineyardCountry: String = ""
@@ -273,7 +297,15 @@ struct ChemicalDetailRow: View {
 
     var body: some View {
         if chemical.chemicalV3RevisionId != nil {
-            CatalogueSavedChemicalView(chemical: chemical)
+            VStack(alignment: .leading, spacing: 6) {
+                CatalogueSavedChemicalView(chemical: chemical)
+                if let assessment {
+                    ChemicalVerificationBadge(status: chemical.verificationStatus, chemical: chemical, storeTitle: assessment.title)
+                    if let reason = assessment.attentionReasons.first {
+                        Text(reason).font(.caption).foregroundStyle(VineyardTheme.warning)
+                    }
+                }
+            }
         } else {
         HStack {
             MasterFrontLabelView(media: media, interactive: false)
@@ -282,7 +314,10 @@ struct ChemicalDetailRow: View {
                     Text(chemical.name)
                         .font(.body.weight(.medium))
                         .foregroundStyle(.primary)
-                    ChemicalVerificationBadge(status: chemical.verificationStatus, chemical: chemical)
+                    ChemicalVerificationBadge(status: chemical.verificationStatus, chemical: chemical, storeTitle: assessment?.title)
+                }
+                if let reason = assessment?.attentionReasons.first {
+                    Text(reason).font(.caption).foregroundStyle(VineyardTheme.warning)
                 }
                 if let missing = ChemicalDetailsCompleteness.assess(chemical).missingText {
                     Text(missing).font(.caption2).foregroundStyle(.secondary)

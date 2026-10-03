@@ -118,6 +118,9 @@ import com.rork.vinetrack.data.model.ChemicalPurchase
 import com.rork.vinetrack.data.model.ChemicalRate
 import com.rork.vinetrack.data.model.ProductCategories
 import com.rork.vinetrack.data.model.SavedChemical
+import com.rork.vinetrack.data.chemical.ChemicalStoreAssessment
+import com.rork.vinetrack.data.chemical.ChemicalStoreAssessment.RevisionResolution
+import kotlinx.coroutines.CancellationException
 import com.rork.vinetrack.data.model.chemicalUnitToBase
 import java.util.UUID
 import com.rork.vinetrack.ui.AppUiState
@@ -156,17 +159,30 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
     var creating by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<SavedChemical?>(null) }
     var pendingDelete by remember { mutableStateOf<SavedChemical?>(null) }
+    LaunchedEffect(state.selectedVineyardId, activeChemicals.map { it.id }) {
+        val ids = activeChemicals.map { it.id }.toSet()
+        if (editing?.id !in ids) editing = null
+        if (pendingDelete?.id !in ids) pendingDelete = null
+    }
     var search by remember { mutableStateOf("") }
     var showInventory by remember { mutableStateOf(false) }
-    var catalogueRevisions by remember { mutableStateOf<Map<String, com.rork.vinetrack.data.chemical.CatalogueRow>>(emptyMap()) }
+    var catalogueRevisions by remember { mutableStateOf<Map<String, RevisionResolution>>(emptyMap()) }
     val catalogueContext = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(activeChemicals.map { it.chemicalV3RevisionId }) {
         val repository = com.rork.vinetrack.data.chemical.CatalogueRepository(catalogueContext)
-        val rows = mutableMapOf<String, com.rork.vinetrack.data.chemical.CatalogueRow>()
-        activeChemicals.mapNotNull { it.chemicalV3RevisionId }.distinct().forEach { id ->
-            runCatching { repository.revision(id) }.getOrNull()?.let { rows[id] = it }
+        val ids = activeChemicals.mapNotNull { it.chemicalV3RevisionId }.distinct()
+        catalogueRevisions = catalogueRevisions.filterKeys { it in ids }
+        ids.forEach { id ->
+            if (catalogueRevisions[id]?.revision == null) catalogueRevisions = catalogueRevisions + (id to RevisionResolution.Loading)
+            try {
+                val revision = repository.revision(id)
+                catalogueRevisions = catalogueRevisions + (id to RevisionResolution.Resolved(revision))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (catalogueRevisions[id]?.revision == null) catalogueRevisions = catalogueRevisions + (id to RevisionResolution.Unavailable)
+            }
         }
-        catalogueRevisions = rows
     }
     if (showInventory && state.isSystemAdmin) {
         ChemicalInventoryScreen(state, onClose = { showInventory = false }, modifier = modifier)
@@ -206,23 +222,23 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
         )
     }
 
-    // Counts come from each record's resolved verification status, so a stale
-    // stored status can never inflate the "Verified" tally.
-    val statusCounts: Map<ChemicalStoreFilter, Int> = remember(activeChemicals) {
-        activeChemicals.groupingBy { chemical ->
-            ChemicalStoreFilter.entries.first { it.matches(chemical) }
+    val assessments = remember(activeChemicals, catalogueRevisions) {
+        ChemicalStoreAssessment.activeAssessments(activeChemicals, catalogueRevisions)
+    }
+    val statusCounts: Map<ChemicalStoreFilter, Int> = remember(assessments) {
+        assessments.values.groupingBy { assessment ->
+            ChemicalStoreFilter.entries.first { it.matches(assessment) }
         }.eachCount()
     }
-    val needsAttentionCount: Int = (statusCounts[ChemicalStoreFilter.BASIC] ?: 0) +
-        (statusCounts[ChemicalStoreFilter.REVIEW_REQUIRED] ?: 0)
+    val needsAttentionCount: Int = assessments.values.count { it.needsAttention }
 
-    val filteredChemicals = remember(activeChemicals, search, verificationFilter, catalogueRevisions) {
+    val filteredChemicals = remember(activeChemicals, search, verificationFilter, catalogueRevisions, assessments) {
         activeChemicals.filter { chem ->
             val matchesSearch = search.isBlank() ||
                 chem.displayName.contains(search.trim(), true) ||
                 chem.manufacturer.contains(search.trim(), true) ||
-                (chem.chemicalV3RevisionId?.let { catalogueRevisions[it]?.targets }?.joinToString(" ") ?: com.rork.vinetrack.data.chemical.CatalogueRow.manualTargets(chem.problem, chem.use)).contains(search.trim(), true)
-            val matchesStatus = verificationFilter?.matches(chem) ?: true
+                (chem.chemicalV3RevisionId?.let { catalogueRevisions[it]?.revision?.targets }?.joinToString(" ") ?: com.rork.vinetrack.data.chemical.CatalogueRow.manualTargets(chem.problem, chem.use)).contains(search.trim(), true)
+            val matchesStatus = verificationFilter?.let { option -> assessments[chem.id]?.let { option.matches(it) } } ?: true
             matchesSearch && matchesStatus
         }
     }
@@ -396,6 +412,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
                 items(filteredChemicals, key = { it.id }) { chem ->
                     ChemicalRow(
                         chemical = chem,
+                        assessment = assessments.getValue(chem.id),
                         media = chem.masterChemicalId?.let { approvedMedia[it] }?.takeIf {
                             it.belongsTo(chem.masterChemicalId, chem.resolvedIntelligence.registration?.identityKey)
                         },
@@ -524,13 +541,15 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
             confirmButton = {
                 Column {
                     TextButton(onClick = {
-                        vm.deleteSavedChemical(chem.id) {}
                         pendingDelete = null
+                        if (editing?.id == chem.id) editing = null
+                        vm.deleteSavedChemical(chem.id) {}
                     }) { Text("Archive Chemical") }
                     if (!inUse) {
                         TextButton(onClick = {
                             val target = chem
                             pendingDelete = null
+                            if (editing?.id == target.id) editing = null
                             vm.hardDeleteSavedChemical(target.id) { outcome ->
                                 if (outcome is SavedChemicalRepository.HardDeleteOutcome.InUse) {
                                     inUseChem = target
@@ -566,6 +585,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
 @Composable
 private fun ChemicalRow(
     chemical: SavedChemical,
+    assessment: ChemicalStoreAssessment,
     media: MasterFrontLabel?,
     canManage: Boolean,
     canViewFinancials: Boolean,
@@ -581,7 +601,13 @@ private fun ChemicalRow(
     val status = chemical.verificationStatus
     VineyardCard(modifier = if (canManage) Modifier.clickable { onEdit() } else Modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (chemical.chemicalV3RevisionId != null) CatalogueSavedChemical(chemical, Modifier.weight(1f))
+            if (chemical.chemicalV3RevisionId != null) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    CatalogueSavedChemical(chemical)
+                    ChemicalVerificationBadge(chemical, storeTitle = assessment.title)
+                    assessment.attentionReasons.firstOrNull()?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = VineColors.Warning) }
+                }
+            }
             else {
             MasterFrontLabelThumbnail(media, modifier = Modifier.padding(end = 12.dp), interactive = false)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -595,8 +621,9 @@ private fun ChemicalRow(
                         color = vine.textPrimary,
                         fontSize = 16.sp,
                     )
-                    ChemicalVerificationBadge(chemical)
+                    ChemicalVerificationBadge(chemical, storeTitle = assessment.title)
                 }
+                assessment.attentionReasons.firstOrNull()?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = VineColors.Warning) }
                 // A verified FOREIGN registration must never read as verified
                 // for this vineyard: its label facts belong to another country's
                 // law. Identity and chemistry still stand — only label authority

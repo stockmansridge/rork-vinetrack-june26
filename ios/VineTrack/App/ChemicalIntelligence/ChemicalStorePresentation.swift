@@ -14,7 +14,9 @@ nonisolated enum ChemicalStorePresentation {
         ["NOT_APPLICABLE", "UNRESOLVED", "CLASSIFIED"].contains(text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()) ? "" : text
     }
     static func active(_ chemicals: [SavedChemical]) -> [SavedChemical] {
-        chemicals.filter(\.isActive)
+        // Old caches can contain duplicate UUIDs. Identity, not product name, governs projection.
+        var ids: Set<UUID> = []
+        return chemicals.filter { $0.isActive && ids.insert($0.id).inserted }
     }
     static func archived(_ chemical: SavedChemical) -> SavedChemical {
         var archived = chemical

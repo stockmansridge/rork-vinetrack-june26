@@ -4830,7 +4830,7 @@ private struct CalcChemicalLineCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Chemical").font(.caption).foregroundStyle(.secondary)
                 Menu {
-                    ForEach(chemicals) { chem in
+                    ForEach(ChemicalStorePresentation.active(chemicals)) { chem in
                         Button {
                             if line.chemicalId != chem.id {
                                 // Re-seed from the NEW product's confirmed rate,

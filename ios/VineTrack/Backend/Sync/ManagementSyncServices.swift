@@ -13,6 +13,8 @@ final class ManagementSyncMetadata {
         var lastSyncByVineyard: [UUID: Date] = [:]
         var pendingUpserts: [UUID: Date] = [:]
         var pendingDeletes: [UUID: Date] = [:]
+        // CREATE evidence is optional for decoding existing installs without resetting queues.
+        var pendingCreates: [UUID: Date]?
         /// Rows the server REFUSED on sql/198 revision grounds.
         ///
         /// OPTIONAL, not a defaulted non-optional: Swift's synthesized `Codable` ignores
@@ -36,6 +38,20 @@ final class ManagementSyncMetadata {
 
     var pendingUpserts: [UUID: Date] { state.pendingUpserts }
     var pendingDeletes: [UUID: Date] { state.pendingDeletes }
+    var pendingCreates: Set<UUID> { Set((state.pendingCreates ?? [:]).keys) }
+
+    func acknowledgeCreate(_ id: UUID) {
+        guard state.pendingCreates?[id] != nil else { return }
+        state.pendingCreates?.removeValue(forKey: id)
+        save()
+    }
+
+    func markCreated(_ id: UUID, at date: Date) {
+        var creates = state.pendingCreates ?? [:]
+        creates[id] = date
+        state.pendingCreates = creates
+        markDirty(id, at: date)
+    }
 
     // MARK: - sql/198 revision state
 
@@ -100,13 +116,17 @@ final class ManagementSyncMetadata {
 
     func markDeleted(_ id: UUID, at date: Date) {
         state.pendingUpserts.removeValue(forKey: id)
+        state.pendingCreates?.removeValue(forKey: id)
         state.pendingDeletes[id] = date
         save()
     }
 
     func clearDirty(_ ids: [UUID]) {
         guard !ids.isEmpty else { return }
-        for id in ids { state.pendingUpserts.removeValue(forKey: id) }
+        for id in ids {
+            state.pendingUpserts.removeValue(forKey: id)
+            state.pendingCreates?.removeValue(forKey: id)
+        }
         // A row with nothing queued has no unresolved conflict left to review.
         if var conflicts = state.revisionConflicts, !conflicts.isEmpty {
             for id in ids { conflicts.removeValue(forKey: id) }
@@ -244,19 +264,14 @@ final class SavedChemicalSyncService {
     private weak var auth: NewBackendAuthService?
     private let repository: any SavedChemicalSyncRepositoryProtocol
     private let metadata: ManagementSyncMetadata
+    private let backendConfigured: () -> Bool
     private var isConfigured: Bool = false
 
-    init(repository: (any SavedChemicalSyncRepositoryProtocol)? = nil) {
+    init(repository: (any SavedChemicalSyncRepositoryProtocol)? = nil, persistence: PersistenceStore = .shared,
+         backendConfigured: @escaping () -> Bool = { SupabaseClientProvider.shared.isConfigured }) {
         self.repository = repository ?? SupabaseSavedChemicalSyncRepository()
-        self.metadata = ManagementSyncMetadata(key: "vinetrack_saved_chemical_sync_metadata")
-
-        // One-time recovery: re-attempt initial seed push for rows that
-        // pre-date sync wiring but were never pushed remotely.
-        let migrationKey = "vinetrack_saved_chemical_sync_reset_v1"
-        if !UserDefaults.standard.bool(forKey: migrationKey) {
-            self.metadata.resetAllLastSync()
-            UserDefaults.standard.set(true, forKey: migrationKey)
-        }
+        self.metadata = ManagementSyncMetadata(key: "vinetrack_saved_chemical_sync_metadata", persistence: persistence)
+        self.backendConfigured = backendConfigured
     }
 
     func configure(store: MigratedDataStore, auth: NewBackendAuthService) {
@@ -264,8 +279,13 @@ final class SavedChemicalSyncService {
         self.auth = auth
         guard !isConfigured else { return }
         isConfigured = true
+        store.onSavedChemicalCreated = { [weak self] id in self?.metadata.markCreated(id, at: Date()) }
         store.onSavedChemicalChanged = { [weak self] id in self?.metadata.markDirty(id, at: Date()) }
         store.onSavedChemicalDeleted = { [weak self] id in self?.metadata.markDeleted(id, at: Date()) }
+        store.onSavedChemicalRetired = { [weak self] id in
+            self?.metadata.clearDirty([id])
+            self?.metadata.clearDeleted([id])
+        }
     }
 
     func syncForSelectedVineyard() async {
@@ -275,16 +295,19 @@ final class SavedChemicalSyncService {
     }
 
     func sync(vineyardId: UUID) async {
-        guard SupabaseClientProvider.shared.isConfigured else {
+        guard backendConfigured() else {
             errorMessage = "Supabase not configured"
             syncStatus = .failure("Supabase not configured")
             return
         }
+        guard syncStatus != .syncing else { return }
         syncStatus = .syncing
         errorMessage = nil
         do {
-            try await push(vineyardId: vineyardId)
-            try await pull(vineyardId: vineyardId)
+            let remote = try await reconcile(vineyardId: vineyardId)
+            let activeIds = Set(remote.filter { $0.deletedAt == nil && ($0.isActive ?? true) }.map(\.id))
+            try await push(vineyardId: vineyardId, activeRemoteIds: activeIds)
+            _ = try await reconcile(vineyardId: vineyardId)
             metadata.setLastSync(Date(), for: vineyardId)
             lastSyncDate = Date()
             syncStatus = .success
@@ -294,23 +317,22 @@ final class SavedChemicalSyncService {
         }
     }
 
-    private func push(vineyardId: UUID) async throws {
+    private func push(vineyardId: UUID, activeRemoteIds: Set<UUID>) async throws {
         guard let store else { return }
         let createdBy = auth?.userId
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
-            // A queued ID may belong to a different vineyard than the visible slice.
+            // Only the vineyard whose authority has been checked may replay.
             // Rebuild its payload from the persisted record and preserve its UUID.
             let byId = Dictionary(store.sprayRepo.loadAllChemicals().map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendSavedChemicalUpsert] = []
             var pushed: [UUID] = []
             var orphans: [UUID] = []
             for (id, ts) in dirty {
-                // Reclaim queue entries whose local record no longer exists — they
-                // can never upload and used to wedge the queue forever. Records from
-                // another vineyard are still uploaded: the payload carries its own
-                // vineyard id.
+                // Reclaim orphaned entries, but replay only the reconciled vineyard.
                 guard let item = byId[id] else { orphans.append(id); continue }
+                guard item.vineyardId == vineyardId, item.isActive,
+                      activeRemoteIds.contains(id) || metadata.pendingCreates.contains(id) else { continue }
                 payloads.append(BackendSavedChemical.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
                 pushed.append(id)
             }
@@ -322,55 +344,52 @@ final class SavedChemicalSyncService {
                 payloads: payloads,
                 queuedAt: dirty,
                 vineyardId: vineyardId
-            ) { try await repository.upsertMany($0) }
+            ) { items in
+                for item in items {
+                    if activeRemoteIds.contains(item.id) {
+                        try await repository.updateExisting(item)
+                    } else {
+                        try await repository.upsertMany([item])
+                    }
+                }
+            }
             metadata.clearDirty(result.uploaded)
             SyncIssueCenter.shared.notePending(entity: "Saved Chemicals", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }
         }
         for (id, _) in metadata.pendingDeletes {
-            do {
-                try await repository.softDelete(id: id)
-                metadata.clearDeleted([id])
-            } catch {
-                if isMissingRowError(error) {
-                    metadata.clearDeleted([id])
-                }
-            }
+            let result = try await repository.softDeleteRPC(id: id)
+            guard result.ok || result.reason == "not_found" else { throw SavedChemicalDeletionError.archiveFailed }
+            metadata.clearDeleted([id])
         }
     }
 
-    private func pull(vineyardId: UUID) async throws {
-        guard let store else { return }
-        let lastSync = metadata.lastSync(for: vineyardId)
-        let remote = try await repository.fetch(vineyardId: vineyardId, since: lastSync)
-        if lastSync == nil {
-            let remoteIds = Set(remote.map { $0.id })
-            let local = store.savedChemicals.filter { $0.vineyardId == vineyardId }
-            let missing = local.filter { !remoteIds.contains($0.id) }
-            if !missing.isEmpty {
-                let now = Date()
-                let createdBy = auth?.userId
-                let payloads = missing.map { BackendSavedChemical.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now) }
-                do {
-                    try await repository.upsertMany(payloads)
-                    #if DEBUG
-                    print("[SavedChemicalSync] initial seed pushed \(payloads.count) local row(s) missing remotely")
-                    #endif
-                } catch {
-                    #if DEBUG
-                    print("[SavedChemicalSync] initial seed push failed: \(error.localizedDescription)")
-                    #endif
-                }
-            }
-            if remote.isEmpty { return }
+    /// Complete reconciliation repairs old installs and hard deletes independently of the delta cursor.
+    @discardableResult
+    func reconcile(vineyardId: UUID) async throws -> [BackendSavedChemical] {
+        guard let store else { return [] }
+        let owner = auth?.userId
+        let remote = try await repository.fetch(vineyardId: vineyardId, since: nil)
+        try Task.checkCancellation()
+        guard auth?.userId == owner else { throw CancellationError() }
+        guard remote.allSatisfy({ $0.vineyardId == vineyardId }) else {
+            throw SavedChemicalDeletionError.archiveFailed
+        }
+        let remoteIds = Set(remote.map(\.id))
+        let local = store.sprayRepo.loadAllChemicals().filter { $0.vineyardId == vineyardId }
+        for row in local where !remoteIds.contains(row.id) && !metadata.pendingCreates.contains(row.id) {
+            store.applyRemoteSavedChemicalUpsert(ChemicalStorePresentation.archived(row))
+            // Ambiguous old pending edits are retained, but can never authorize an INSERT.
         }
         for item in remote {
-            if item.deletedAt != nil {
+            metadata.acknowledgeCreate(item.id)
+            if item.deletedAt != nil || item.isActive == false {
                 store.applyRemoteSavedChemicalUpsert(item.toSavedChemical())
                 metadata.clearDirty([item.id])
                 metadata.clearDeleted([item.id])
                 continue
             }
+            if metadata.pendingDeletes[item.id] != nil { continue }
             if let pendingAt = metadata.pendingUpserts[item.id] {
                 let remoteAt = item.clientUpdatedAt ?? item.updatedAt ?? .distantPast
                 if pendingAt > remoteAt { continue }
@@ -378,6 +397,7 @@ final class SavedChemicalSyncService {
             store.applyRemoteSavedChemicalUpsert(item.toSavedChemical())
             metadata.clearDirty([item.id])
         }
+        return remote
     }
 }
 

@@ -35,10 +35,11 @@ struct ChemicalVerificationBadge: View {
     let status: ChemicalVerificationStatus
     var compact: Bool = false
     var chemical: SavedChemical? = nil
+    var storeTitle: String? = nil
 
     var body: some View {
-        let label = status == .conflict ? "Review required"
-            : (chemical.map { ChemicalDetailsCompleteness.assess($0).title } ?? "Basic details")
+        let label = storeTitle ?? (status == .conflict ? "Review required"
+            : (chemical.map { ChemicalDetailsCompleteness.assess($0).title } ?? "Basic details"))
         let tint: Color = label == "Review required" ? .red : (label == "Complete details" ? VineyardTheme.success : VineyardTheme.info)
         HStack(spacing: 4) {
             Image(systemName: label == "Review required" ? "exclamationmark.triangle.fill" : "info.circle.fill")

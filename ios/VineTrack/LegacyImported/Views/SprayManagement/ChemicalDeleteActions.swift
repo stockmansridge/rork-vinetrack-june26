@@ -21,23 +21,29 @@ final class ChemicalDeleteCoordinator {
 
     var isWorking: Bool = false
 
-    fileprivate let service = SavedChemicalDeletionService()
+    fileprivate let service: SavedChemicalDeletionService
+
+    init(service: SavedChemicalDeletionService = SavedChemicalDeletionService()) {
+        self.service = service
+    }
 
     func archive(_ chemical: SavedChemical, store: MigratedDataStore) async {
         guard !isWorking else { return }
         isWorking = true
+        pending = nil
+        let vineyardId = chemical.vineyardId
         defer { isWorking = false }
         do {
             let outcome = try await service.archive(id: chemical.id)
             switch outcome {
             case .archived:
-                store.archiveSavedChemicalLocallyOnly(chemical.id)
+                store.archiveSavedChemicalLocallyOnly(chemical.id, vineyardId: vineyardId)
                 didDeleteId = chemical.id
             case .notFound:
-                store.removeSavedChemicalLocallyOnly(chemical.id)
+                store.removeSavedChemicalLocallyOnly(chemical.id, vineyardId: vineyardId)
                 didDeleteId = chemical.id
             case .hardDeleted:
-                store.removeSavedChemicalLocallyOnly(chemical.id)
+                store.removeSavedChemicalLocallyOnly(chemical.id, vineyardId: vineyardId)
                 didDeleteId = chemical.id
             case .chemicalInUse(let message):
                 alertMessage = message
@@ -50,15 +56,17 @@ final class ChemicalDeleteCoordinator {
     func hardDelete(_ chemical: SavedChemical, store: MigratedDataStore) async {
         guard !isWorking else { return }
         isWorking = true
+        pending = nil
+        let vineyardId = chemical.vineyardId
         defer { isWorking = false }
         do {
             let outcome = try await service.hardDelete(id: chemical.id)
             switch outcome {
             case .hardDeleted, .notFound:
-                store.removeSavedChemicalLocallyOnly(chemical.id)
+                store.removeSavedChemicalLocallyOnly(chemical.id, vineyardId: vineyardId)
                 didDeleteId = chemical.id
             case .archived:
-                store.archiveSavedChemicalLocallyOnly(chemical.id)
+                store.archiveSavedChemicalLocallyOnly(chemical.id, vineyardId: vineyardId)
                 didDeleteId = chemical.id
             case .chemicalInUse(let message):
                 alertMessage = message

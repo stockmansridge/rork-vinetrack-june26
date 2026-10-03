@@ -19,18 +19,49 @@ final class SupabaseSavedChemicalSyncRepository: SavedChemicalSyncRepositoryProt
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendSavedChemical] {
-        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let q = provider.client.from("saved_chemicals").select().eq("vineyard_id", value: vineyardId.uuidString)
-        if let since {
-            return try await q.gte("updated_at", value: iso(since)).order("updated_at", ascending: true).execute().value
+        try await withThrowingTaskGroup(of: [BackendSavedChemical].self) { group in
+            group.addTask { try await self.fetchPages(vineyardId: vineyardId, since: since) }
+            group.addTask {
+                try await Task.sleep(for: .seconds(30))
+                throw URLError(.timedOut)
+            }
+            defer { group.cancelAll() }
+            return try await group.next() ?? []
         }
-        return try await q.order("updated_at", ascending: true).execute().value
+    }
+
+    private func fetchPages(vineyardId: UUID, since: Date?) async throws -> [BackendSavedChemical] {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        // Do not mistake the PostgREST page limit for an authoritative complete set.
+        var rows: [BackendSavedChemical] = []
+        for page in 0..<20 {
+            try Task.checkCancellation()
+            let q = provider.client.from("saved_chemicals").select().eq("vineyard_id", value: vineyardId.uuidString)
+            let batch: [BackendSavedChemical]
+            if let since {
+                batch = try await q.gte("updated_at", value: iso(since)).order("id").range(from: page * 500, to: page * 500 + 499).execute().value
+            } else {
+                batch = try await q.order("id").range(from: page * 500, to: page * 500 + 499).execute().value
+            }
+            rows.append(contentsOf: batch)
+            if batch.count < 500 { return rows }
+        }
+        // Fail closed: never reconcile absence against a truncated response.
+        throw SavedChemicalDeletionError.archiveFailed
     }
 
     func upsertMany(_ items: [BackendSavedChemicalUpsert]) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         guard !items.isEmpty else { return }
-        try await provider.client.from("saved_chemicals").upsert(items, onConflict: "id").execute()
+        try await provider.client.from("saved_chemicals").upsert(items, onConflict: "id", ignoreDuplicates: true).execute()
+    }
+
+    func updateExisting(_ item: BackendSavedChemicalUpsert) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        // PATCH cannot recreate a hard-deleted ID; the archive predicate closes the fetch/write race.
+        try await provider.client.from("saved_chemicals").update(item)
+            .eq("id", value: item.id.uuidString).eq("vineyard_id", value: item.vineyardId.uuidString)
+            .is("deleted_at", value: nil).or("is_active.eq.true,is_active.is.null").execute()
     }
 
     func softDelete(id: UUID) async throws {

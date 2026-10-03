@@ -12206,8 +12206,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val updated = savedChemicalRepo.update(id, input)
                 _ui.update { st ->
-                    session.userId?.let { owner -> savedChemicalCreateSync.mergeRemote(owner, updated.vineyardId,
-                        st.savedChemicals.map { if (it.id == id) updated else it }) }
+                    session.userId?.let { owner -> savedChemicalCreateSync.acceptRemoteRow(owner, updated) }
                     st.copy(savedChemicals = st.savedChemicals.map { if (it.id == id) updated else it }
                         .sortedBy { it.displayName.lowercase() })
                 }
@@ -12231,7 +12230,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val updated = savedChemicalRepo.updateNotes(chemical, notes)
                 _ui.update { st ->
                     val rows = st.savedChemicals.map { if (it.id == updated.id) updated else it }
-                    session.userId?.let { owner -> savedChemicalCreateSync.mergeRemote(owner, updated.vineyardId, rows) }
+                    session.userId?.let { owner -> savedChemicalCreateSync.acceptRemoteRow(owner, updated) }
                     st.copy(savedChemicals = rows, sprayError = null)
                 }
                 onResult(true)
@@ -12246,24 +12245,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Archive through the existing RPC; retain the inactive row for historical resolution. */
     fun deleteSavedChemical(id: String, onResult: (Boolean) -> Unit) {
-        val previous = _ui.value.savedChemicals
-        _ui.update { st -> st.copy(savedChemicals = st.savedChemicals.map {
-            if (it.id == id) com.rork.vinetrack.data.chemical.ChemicalStorePresentation.archived(it) else it
-        }) }
+        val row = _ui.value.savedChemicals.firstOrNull { it.id == id } ?: return onResult(true)
+        val owner = session.userId ?: return onResult(false)
+        val referenced = _ui.value.sprayRecords.any { record ->
+            record.tanks.orEmpty().any { tank -> tank.chemicals.any { it.savedChemicalId == id } }
+        }
         viewModelScope.launch {
             try {
-                savedChemicalRepo.softDelete(id)
-                session.userId?.let { owner -> previous.firstOrNull { it.id == id }?.let { row ->
-                    savedChemicalCreateSync.archiveLocal(owner, row.vineyardId, id) } }
-                onResult(true)
+                val exists = savedChemicalRepo.softDelete(id)
+                val retainHistory = exists || referenced
+                if (retainHistory) savedChemicalCreateSync.archiveLocal(owner, row.vineyardId, id)
+                else savedChemicalCreateSync.removeLocal(owner, row.vineyardId, id)
+                if (session.userId == owner && _ui.value.selectedVineyardId == row.vineyardId) {
+                    _ui.update { st -> st.copy(savedChemicals = if (retainHistory) st.savedChemicals.map {
+                        if (it.id == id) com.rork.vinetrack.data.chemical.ChemicalStorePresentation.archived(it) else it
+                    } else st.savedChemicals.filterNot { it.id == id }) }
+                    onResult(true)
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(savedChemicals = previous) }
                 onUnauthorized("deleteSavedChemical"); onResult(false)
             } catch (e: BackendError.Server) {
-                _ui.update { it.copy(savedChemicals = previous, sprayError = friendlyWriteError(e.code)) }
+                _ui.update { it.copy(sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
-            } catch (e: Exception) {
-                _ui.update { it.copy(savedChemicals = previous, sprayError = "Couldn't archive the chemical. Check your connection.") }
+            } catch (_: Exception) {
+                _ui.update { it.copy(sprayError = "Couldn't archive the chemical. Check your connection.") }
                 onResult(false)
             }
         }
@@ -12279,27 +12286,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         id: String,
         onResult: (SavedChemicalRepository.HardDeleteOutcome?) -> Unit,
     ) {
-        val previous = _ui.value.savedChemicals
-        _ui.update { st -> st.copy(savedChemicals = st.savedChemicals.filterNot { it.id == id }) }
+        val row = _ui.value.savedChemicals.firstOrNull { it.id == id }
+            ?: return onResult(SavedChemicalRepository.HardDeleteOutcome.NotFound)
+        val owner = session.userId ?: return onResult(null)
+        val retainHistory = _ui.value.sprayRecords.any { record ->
+            record.tanks.orEmpty().any { tank -> tank.chemicals.any { it.savedChemicalId == id } }
+        }
         viewModelScope.launch {
             try {
                 val outcome = savedChemicalRepo.hardDeleteUnused(id)
-                if (outcome is SavedChemicalRepository.HardDeleteOutcome.InUse) {
-                    // Server kept the row — restore it locally so the list stays truthful.
-                    _ui.update { it.copy(savedChemicals = previous) }
-                } else {
-                    session.userId?.let { owner -> previous.firstOrNull { it.id == id }?.let { row ->
-                        savedChemicalCreateSync.removeLocal(owner, row.vineyardId, id) } }
-                    chemicalLabelPhotos.removeForChemical(id)
+                if (outcome !is SavedChemicalRepository.HardDeleteOutcome.InUse) {
+                    if (retainHistory) savedChemicalCreateSync.archiveLocal(owner, row.vineyardId, id)
+                    else savedChemicalCreateSync.removeLocal(owner, row.vineyardId, id)
+                    if (session.userId == owner && _ui.value.selectedVineyardId == row.vineyardId) {
+                        _ui.update { st -> st.copy(savedChemicals = if (retainHistory) st.savedChemicals.map {
+                            if (it.id == id) com.rork.vinetrack.data.chemical.ChemicalStorePresentation.archived(it) else it
+                        } else st.savedChemicals.filterNot { it.id == id }) }
+                    }
+                    if (!retainHistory) chemicalLabelPhotos.removeForChemical(id)
                 }
-                onResult(outcome)
+                if (session.userId == owner && _ui.value.selectedVineyardId == row.vineyardId) onResult(outcome)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (e: BackendError.Unauthorized) {
                 onUnauthorized("hardDeleteSavedChemical"); onResult(null)
             } catch (e: BackendError.Server) {
-                _ui.update { it.copy(savedChemicals = previous, sprayError = friendlyWriteError(e.code)) }
+                _ui.update { it.copy(sprayError = friendlyWriteError(e.code)) }
                 onResult(null)
-            } catch (e: Exception) {
-                _ui.update { it.copy(savedChemicals = previous, sprayError = "Couldn't delete the chemical. Check your connection.") }
+            } catch (_: Exception) {
+                _ui.update { it.copy(sprayError = "Couldn't delete the chemical. Check your connection.") }
                 onResult(null)
             }
         }

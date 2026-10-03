@@ -2401,9 +2401,10 @@ private fun ChemicalNameField(
     var open by remember { mutableStateOf(false) }
     val matches = remember(chem.name, savedChemicals) {
         val query = chem.name.trim()
-        if (savedChemicals.isEmpty()) emptyList()
-        else if (query.isEmpty()) savedChemicals.take(8)
-        else savedChemicals.filter { it.displayName.contains(query, ignoreCase = true) }.take(8)
+        val active = com.rork.vinetrack.data.chemical.ChemicalStorePresentation.active(savedChemicals)
+        if (active.isEmpty()) emptyList()
+        else if (query.isEmpty()) active.take(8)
+        else active.filter { it.displayName.contains(query, ignoreCase = true) }.take(8)
     }
     val hasSuggestions = matches.isNotEmpty()
     ExposedDropdownMenuBox(

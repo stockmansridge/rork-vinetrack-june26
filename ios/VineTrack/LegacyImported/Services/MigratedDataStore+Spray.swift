@@ -39,9 +39,11 @@ extension MigratedDataStore {
             item.chemicalIntelligence = canonical
         }
         item.vineyardId = vineyardId
+        guard !sprayRepo.loadAllChemicals().contains(where: { $0.id == item.id }) else { return }
+        // Durably identify a real CREATE; disk presence and generic edits are insufficient.
+        onSavedChemicalCreated?(item.id)
         savedChemicals.append(item)
         sprayRepo.saveChemicalsSlice(savedChemicals, for: vineyardId)
-        onSavedChemicalChanged?(item.id)
     }
 
     func updateSavedChemical(_ chemical: SavedChemical) {
@@ -65,20 +67,30 @@ extension MigratedDataStore {
     }
 
     /// Retains an archived row for historical resolution without queuing an upsert.
-    func archiveSavedChemicalLocallyOnly(_ id: UUID) {
-        guard let vineyardId = selectedVineyardId,
-              let index = savedChemicals.firstIndex(where: { $0.id == id }) else { return }
-        savedChemicals[index] = ChemicalStorePresentation.archived(savedChemicals[index])
-        sprayRepo.saveChemicalsSlice(savedChemicals, for: vineyardId)
+    func archiveSavedChemicalLocallyOnly(_ id: UUID, vineyardId: UUID? = nil) {
+        guard let vineyard = vineyardId ?? selectedVineyardId else { return }
+        let rows = selectedVineyardId == vineyard ? savedChemicals : sprayRepo.loadChemicals(for: vineyard)
+        guard rows.contains(where: { $0.id == id }) else { return }
+        onSavedChemicalRetired?(id)
+        let archived = rows.map { $0.id == id ? ChemicalStorePresentation.archived($0) : $0 }
+        sprayRepo.saveChemicalsSlice(archived, for: vineyard)
+        if selectedVineyardId == vineyard { savedChemicals = archived }
     }
 
     /// Removes the chemical from local state without queuing another remote
     /// delete (used after the backend RPC has already archived/hard-deleted it).
-    func removeSavedChemicalLocallyOnly(_ id: UUID) {
-        guard let vineyardId = selectedVineyardId else { return }
-        guard savedChemicals.contains(where: { $0.id == id }) else { return }
-        savedChemicals.removeAll { $0.id == id }
-        sprayRepo.saveChemicalsSlice(savedChemicals, for: vineyardId)
+    func removeSavedChemicalLocallyOnly(_ id: UUID, vineyardId: UUID? = nil) {
+        guard let vineyard = vineyardId ?? selectedVineyardId else { return }
+        let rows = selectedVineyardId == vineyard ? savedChemicals : sprayRepo.loadChemicals(for: vineyard)
+        guard rows.contains(where: { $0.id == id }) else { return }
+        if isSavedChemicalInUseLocally(id) {
+            archiveSavedChemicalLocallyOnly(id, vineyardId: vineyard)
+            return
+        }
+        onSavedChemicalRetired?(id)
+        let retained = rows.filter { $0.id != id }
+        sprayRepo.saveChemicalsSlice(retained, for: vineyard)
+        if selectedVineyardId == vineyard { savedChemicals = retained }
     }
 
     /// Best-effort local check for whether a saved chemical has been used in
@@ -86,7 +98,7 @@ extension MigratedDataStore {
     /// authority — this is only used to decide whether to surface the
     /// "Delete Permanently" option in the UI.
     func isSavedChemicalInUseLocally(_ id: UUID) -> Bool {
-        for record in sprayRecords {
+        for record in sprayRepo.loadAllRecords() + sprayRecords {
             for tank in record.tanks {
                 if tank.chemicals.contains(where: { $0.savedChemicalId == id }) {
                     return true
@@ -98,19 +110,13 @@ extension MigratedDataStore {
 
     func applyRemoteSavedChemicalUpsert(_ chemical: SavedChemical) {
         if selectedVineyardId == chemical.vineyardId {
-            if let idx = savedChemicals.firstIndex(where: { $0.id == chemical.id }) {
-                savedChemicals[idx] = chemical
-            } else {
-                savedChemicals.append(chemical)
-            }
+            savedChemicals.removeAll { $0.id == chemical.id }
+            savedChemicals.append(chemical)
             sprayRepo.saveChemicalsSlice(savedChemicals, for: chemical.vineyardId)
         } else {
             var all = sprayRepo.loadAllChemicals()
-            if let idx = all.firstIndex(where: { $0.id == chemical.id }) {
-                all[idx] = chemical
-            } else {
-                all.append(chemical)
-            }
+            all.removeAll { $0.id == chemical.id }
+            all.append(chemical)
             sprayRepo.replaceChemicals(all.filter { $0.vineyardId == chemical.vineyardId }, for: chemical.vineyardId)
         }
     }

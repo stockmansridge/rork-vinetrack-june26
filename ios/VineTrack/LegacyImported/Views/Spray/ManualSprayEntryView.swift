@@ -126,7 +126,7 @@ struct ManualSprayEntryView: View {
                     }
                 }
                 Menu("Add chemical from store", systemImage: "plus") {
-                    ForEach(store.savedChemicals.filter { $0.vineyardId == vineyardId }) { product in
+                    ForEach(store.savedChemicals.filter { $0.vineyardId == vineyardId && $0.isActive }) { product in
                         Button(product.name) { addChemical(product, to: tank.id) }
                     }
                 }

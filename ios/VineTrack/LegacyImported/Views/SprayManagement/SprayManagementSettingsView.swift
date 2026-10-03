@@ -14,7 +14,7 @@ struct SprayManagementSettingsView: View {
                         Label("Spray Presets", systemImage: "flask")
                             .foregroundStyle(.primary)
                         Spacer()
-                        Text("\(store.savedChemicals.count) chemicals")
+                        Text("\(ChemicalStorePresentation.active(store.savedChemicals).count) chemicals")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -33,7 +33,7 @@ struct SprayManagementSettingsView: View {
                         Label("Chemicals", systemImage: "flask.fill")
                             .foregroundStyle(.primary)
                         Spacer()
-                        Text("\(store.savedChemicals.count)")
+                        Text("\(ChemicalStorePresentation.active(store.savedChemicals).count)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

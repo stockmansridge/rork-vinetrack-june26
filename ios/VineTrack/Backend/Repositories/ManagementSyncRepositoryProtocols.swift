@@ -2,7 +2,9 @@ import Foundation
 
 protocol SavedChemicalSyncRepositoryProtocol: Sendable {
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendSavedChemical]
+    /// INSERT-only replay for explicitly queued creates; never overwrite an existing ID.
     func upsertMany(_ items: [BackendSavedChemicalUpsert]) async throws
+    func updateExisting(_ item: BackendSavedChemicalUpsert) async throws
     func softDelete(id: UUID) async throws
     /// Calls the `soft_delete_saved_chemicals` RPC and returns the structured result.
     func softDeleteRPC(id: UUID) async throws -> SoftDeleteSavedChemicalResult

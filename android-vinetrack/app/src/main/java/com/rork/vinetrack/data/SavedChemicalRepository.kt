@@ -331,6 +331,11 @@ class SavedChemicalRepository(private val session: SessionStore? = null) {
     private data class SoftDeleteArgs(@SerialName("p_id") val id: String)
 
     @Serializable
+    internal data class ArchiveResult(val ok: Boolean, val reason: String? = null) {
+        fun isReconciled(): Boolean = ok || reason == "not_found"
+    }
+
+    @Serializable
     private data class HardDeleteResult(
         val ok: Boolean = false,
         val reason: String? = null,
@@ -573,8 +578,8 @@ class SavedChemicalRepository(private val session: SessionStore? = null) {
         firstRow(response).also { check(it.id == chemical.id && it.chemicalV3RevisionId == revision) }
     }
 
-    /** Archive (soft-delete) via the owner/manager-gated server RPC. */
-    suspend fun softDelete(id: String) = withContext(Dispatchers.IO) {
+    /** Archive via the gated RPC. False means not_found: successful reconciliation, not a failed delete. */
+    suspend fun softDelete(id: String): Boolean = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session?.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("soft_delete_saved_chemicals")) {
@@ -583,7 +588,11 @@ class SavedChemicalRepository(private val session: SessionStore? = null) {
             setBody(SoftDeleteArgs(id))
         }
         when {
-            response.status.isSuccess() -> Unit
+            response.status.isSuccess() -> {
+                val result = response.body<ArchiveResult>()
+                if (!result.isReconciled()) throw BackendError.Server(response.status.value, "archive_failed")
+                result.ok
+            }
             response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
             else -> throw BackendError.Server(response.status.value, response.bodyAsText())
         }

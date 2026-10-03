@@ -124,7 +124,16 @@ class VineyardRepository(private val session: SessionStore) {
     }
 
     suspend fun listSavedChemicals(vineyardId: String): List<SavedChemical> = withContext(Dispatchers.IO) {
-        get("saved_chemicals?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=name.asc")
+        kotlinx.coroutines.withTimeout(30_000) {
+            val rows = mutableListOf<SavedChemical>()
+            for (page in 0 until 20) {
+                val batch: List<SavedChemical> = get("saved_chemicals?select=*&vineyard_id=eq.$vineyardId&order=id.asc&limit=500&offset=${page * 500}")
+                rows.addAll(batch)
+                if (batch.size < 500) return@withTimeout rows.toList()
+            }
+            // Absence is authoritative only after every page has been read.
+            error("Chemical reconciliation exceeded its safe page limit.")
+        }
     }
 
     suspend fun listSavedSprayPresets(vineyardId: String): List<SavedSprayPreset> = withContext(Dispatchers.IO) {

@@ -771,7 +771,7 @@ private fun SprayProductPickerDialog(
     if (showCatalogue) {
         CatalogueSearchSheet(vm, state, onDismiss = { showCatalogue = false }, onSaved = onPick)
     }
-    val matches = state.savedChemicals
+    val matches = com.rork.vinetrack.data.chemical.ChemicalStorePresentation.active(state.savedChemicals)
         .filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
         .sortedBy { it.name.lowercase() }
 
