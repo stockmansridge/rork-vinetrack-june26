@@ -12223,14 +12223,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Offline-first operational preference; owner/manager only, using the Saved Chemical outbox. */
+    fun setVineyardPreferredRate(chemical: SavedChemical, rate: com.rork.vinetrack.data.chemical.VineyardPreferredRate?, onResult: (Boolean) -> Unit) {
+        if (!_ui.value.canManageSprayProgram || _ui.value.selectedVineyardId != chemical.vineyardId || !chemical.isActive) { onResult(false); return }
+        try {
+            val saved = savedChemicalCreateSync.savePreference(chemical, rate?.copy(updatedAt = java.time.Instant.now().toString(), updatedBy = session.userId))
+            _ui.update { st -> st.copy(savedChemicals = st.savedChemicals.map { if (it.id == saved.id) saved else it }) }
+            onResult(true)
+            viewModelScope.launch { savedChemicalCreateSync.replayAll { row ->
+                _ui.update { st -> if (st.selectedVineyardId == row.vineyardId) st.copy(savedChemicals = st.savedChemicals.map { if (it.id == row.id) row else it }) else st }
+            } }
+        } catch (_: Exception) { onResult(false) }
+    }
+
     /** Save vineyard notes without routing catalogue records through the legacy full-field editor. */
     fun updateSavedChemicalNotes(chemical: SavedChemical, notes: String, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {
                 val updated = savedChemicalRepo.updateNotes(chemical, notes)
                 _ui.update { st ->
-                    val rows = st.savedChemicals.map { if (it.id == updated.id) updated else it }
                     session.userId?.let { owner -> savedChemicalCreateSync.acceptRemoteRow(owner, updated) }
+                    val effective = session.userId?.let { owner -> savedChemicalCreateSync.rows(owner, updated.vineyardId).firstOrNull { it.id == updated.id } } ?: updated
+                    val rows = st.savedChemicals.map { if (it.id == updated.id) effective else it }
                     st.copy(savedChemicals = rows, sprayError = null)
                 }
                 onResult(true)

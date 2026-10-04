@@ -476,7 +476,7 @@ struct SprayCalculatorView: View {
                 : (line.basis == .perHectare
                     ? chemical.ratePerHa.map { chemical.unit.toBase($0) }
                     : nil)
-            let hasInvalidStoredRate = SprayRegisteredUseRates.hasInvalidStructuredRates(chemical)
+            let hasInvalidStoredRate = line.operationalRateSource == nil && SprayRegisteredUseRates.hasInvalidStructuredRates(chemical)
             let rate = hasInvalidStoredRate ? 0 : (line.overrideRate ?? seededRate ?? legacyScalarRate ?? 0)
             let chosenAreaBasis = productAreaBasis[line.id]
             let basis: SprayProductRateBasis = {
@@ -504,12 +504,13 @@ struct SprayCalculatorView: View {
             let confirmedUnit = confirmed?.prefill?.unit ?? confirmed?.rangeSelection?.unit
             // A confirmed manual/default rate's amount, unit and basis are one
             // contract. The inventory/pack unit must never replace its rate unit.
-            let labelUnit = selectedRate?.labelUnit.trimmedNonEmpty
+            let labelUnit = line.operationalRateUnit ?? selectedRate?.labelUnit.trimmedNonEmpty
                 ?? confirmedUnit?.trimmedNonEmpty
                 ?? chemical.unit.rawValue
             let labelRate: SprayLabelRateDescriptor? = {
                 guard rate > 0 else { return nil }
-                let shown = SprayRegisteredUseRates.displayValue(
+                let operationalUnit = line.operationalRateUnit.map { VineyardPreferredRate(amount: 1, unit: $0, basis: line.basis).chemicalUnit }
+                let shown = operationalUnit?.fromBase(rate) ?? SprayRegisteredUseRates.displayValue(
                     rate,
                     labelUnit: labelUnit,
                     chemical: chemical
@@ -519,10 +520,10 @@ struct SprayCalculatorView: View {
             return SprayProductLineInput(
                 productId: chemical.id.uuidString,
                 name: chemical.name,
-                unit: chemical.unit.rawValue,
+                unit: line.operationalRateUnit ?? chemical.unit.rawValue,
                 basis: basis,
                 rate: rate,
-                costPerUnit: chemical.purchase?.costPerBaseUnit,
+                costPerUnit: line.operationalRateUnit.map { VineyardPreferredRate(amount: 1, unit: $0, basis: line.basis).chemicalUnit.isDimensionallyCompatible(with: chemical.unit) } == false ? nil : chemical.purchase?.costPerBaseUnit,
                 // Whole block is what the screen SHOWS until the operator
                 // chooses, but on a banded pass it is not yet a decision. The
                 // flag keeps that distinction so the flow can insist on an
@@ -533,8 +534,8 @@ struct SprayCalculatorView: View {
                 // not 526.5 of something unstated. This is the only place base
                 // units are converted, and it happens at the display edge.
                 unitDisplay: SprayProductUnitDisplay(
-                    displayUnit: chemical.unit.rawValue,
-                    baseUnitsPerDisplayUnit: chemical.unit.toBase(1)
+                    displayUnit: line.operationalRateUnit.map { VineyardPreferredRate(amount: 1, unit: $0, basis: line.basis).chemicalUnit.isDimensionallyCompatible(with: chemical.unit) ? chemical.unit.rawValue : $0 } ?? chemical.unit.rawValue,
+                    baseUnitsPerDisplayUnit: line.operationalRateUnit.map { VineyardPreferredRate(amount: 1, unit: $0, basis: line.basis).chemicalUnit.isDimensionallyCompatible(with: chemical.unit) ? chemical.unit.toBase(1) : VineyardPreferredRate(amount: 1, unit: $0, basis: line.basis).chemicalUnit.toBase(1) } ?? chemical.unit.toBase(1)
                 )
             )
         }
@@ -1059,8 +1060,9 @@ struct SprayCalculatorView: View {
                 // selected product, so amount + unit + per-100-L basis remain
                 // one contract across save and reopen.
                 lines.append(
-                    SprayConfirmedRateSeeding.seededLine(
+                    SprayConfirmedRateSeeding.plannedLine(
                         for: saved,
+                        program: r.isTemplate ? OperationalRateResolver.rateFromProgram(chem) : nil,
                         preferring: preferredOrder,
                         fallbackBasis: preferredBasis
                     )
@@ -3772,6 +3774,10 @@ struct SprayCalculatorView: View {
                                     .foregroundStyle(line.isUnresolved ? .orange : VineyardTheme.olive)
                                     .monospacedDigit()
                             }
+                            if let editorLine = chemicalLines.first(where: { $0.chemicalId.uuidString == line.productId }), let source = editorLine.operationalRateSource {
+                                Text(source == .operatorPlanning ? "Rate source: Operator-entered" : source == .programStep ? "Rate source: Program Step" : "Rate source: \(store.selectedVineyard?.name ?? "Vineyard") preferred rate")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                             Text(SprayGuidedFormat.productBasisLabel(line.basis))
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
@@ -3922,7 +3928,7 @@ struct SprayCalculatorView: View {
             for: saved,
             basis: line.basis
         ) != nil
-        if !stillResolves && !stillHasConfirmedRate {
+        if !stillResolves && !stillHasConfirmedRate && line.operationalRateSource == nil {
             chemicalLines[index].selectedRateId = UUID()
             chemicalLines[index].overrideRate = nil
         }
@@ -4356,7 +4362,7 @@ private struct CalcChemicalLineCard: View {
 
     /// The CONFIRMED rate governing this line's basis, from `default_rates`.
     private var confirmedResolution: ChemicalSprayRateHandoff.Resolution? {
-        guard let chem = selectedChemical else { return nil }
+        guard line.operationalRateSource == nil, let chem = selectedChemical else { return nil }
         return SprayConfirmedRateSeeding.resolution(for: chem, basis: line.basis)
     }
 
@@ -4408,7 +4414,7 @@ private struct CalcChemicalLineCard: View {
     }
 
     private var hasInvalidStoredRate: Bool {
-        selectedChemical.map(SprayRegisteredUseRates.hasInvalidStructuredRates) ?? false
+        line.operationalRateSource == nil && (selectedChemical.map(SprayRegisteredUseRates.hasInvalidStructuredRates) ?? false)
     }
 
     // MARK: - P6 — rate basis as a primary control
@@ -4622,6 +4628,7 @@ private struct CalcChemicalLineCard: View {
     /// in kilograms, is an invitation to enter a rate 1000× wrong.
     private var appliedRateUnit: String {
         guard let chem = selectedChemical, !hasInvalidStoredRate else { return "" }
+        if let operational = line.operationalRateUnit { return operational }
         // A confirmed rate's own unit leads: the operator confirmed `2–3 L`
         // and must answer in litres.
         if let confirmed = confirmedResolution {
@@ -4658,6 +4665,7 @@ private struct CalcChemicalLineCard: View {
     /// The applied rate as the operator should read it, in the label's unit.
     private var effectiveAppliedDisplay: Double? {
         guard let chem = selectedChemical, let base = effectiveAppliedBaseValue else { return nil }
+        if let unit = line.operationalRateUnit { return VineyardPreferredRate(amount: 1, unit: unit, basis: line.basis).chemicalUnit.fromBase(base) }
         return SprayRegisteredUseRates.displayValue(
             base,
             labelUnit: appliedRateUnit,
@@ -4911,6 +4919,14 @@ private struct CalcChemicalLineCard: View {
                 }
 
                 Divider().padding(.leading, 14)
+                if let source = line.operationalRateSource {
+                    Text(source == .operatorPlanning ? "Operator-entered rate" : source == .programStep ? "Program Step rate" : "Preferred vineyard rate — vineyard-defined")
+                        .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 14)
+                    if let unit = line.operationalRateUnit, let base = line.overrideRate {
+                        let rate = VineyardPreferredRate(amount: VineyardPreferredRate(amount: 1, unit: unit, basis: line.basis).chemicalUnit.fromBase(base), unit: unit, basis: line.basis)
+                        if let warning = OperationalRateResolver.warning(rate, chemical: chem) { Text(warning).font(.caption).foregroundStyle(.orange).padding(.horizontal, 14) }
+                    }
+                }
                 overrideRateRow(chem: chem)
             }
         }
@@ -4922,6 +4938,8 @@ private struct CalcChemicalLineCard: View {
             // A registered-rate selection clears an override. A synthetic id
             // used by a confirmed manual/default rate must retain that rate.
             if selectedOfferedRate != nil, line.overrideRate != nil {
+                line.operationalRateSource = nil
+                line.operationalRateUnit = nil
                 line.overrideRate = nil
             }
         }
@@ -4944,7 +4962,7 @@ private struct CalcChemicalLineCard: View {
         let isOverridden = line.overrideRate != nil
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(confirmedResolution?.prefill?.isUserEntered == true
+                Text(line.operationalRateSource != nil ? "Applied operational rate" : confirmedResolution?.prefill?.isUserEntered == true
                      ? "Confirmed manual rate"
                      : "Applied label rate")
                     .font(.caption).foregroundStyle(.secondary)
@@ -4961,6 +4979,8 @@ private struct CalcChemicalLineCard: View {
                 if isOverridden {
                     Button {
                         line.overrideRate = nil
+                        line.operationalRateSource = nil
+                        line.operationalRateUnit = nil
                         overrideText = ""
                     } label: {
                         Label("Reset", systemImage: "arrow.uturn.backward")
@@ -5071,11 +5091,12 @@ private struct CalcChemicalLineCard: View {
                         // `SprayRegisteredUseRates.seedValue` returns, so the
                         // typed and the seeded paths cannot mean different
                         // things by the same number.
-                        line.overrideRate = SprayRegisteredUseRates.baseValue(
-                            typed,
-                            labelUnit: unitLabel,
-                            chemical: chem
-                        ) ?? typed
+                        if let unit = line.operationalRateUnit {
+                            line.overrideRate = VineyardPreferredRate(amount: typed, unit: unit, basis: line.basis).chemicalUnit.toBase(typed)
+                            line.operationalRateSource = .operatorPlanning
+                        } else {
+                            line.overrideRate = SprayRegisteredUseRates.baseValue(typed, labelUnit: unitLabel, chemical: chem) ?? typed
+                        }
                     }
                 }
                 Text("\(unitLabel)\(basisLabel)")
@@ -5154,7 +5175,8 @@ private struct CalcChemicalLineCard: View {
 
     private func syncOverrideText() {
         if let value = line.overrideRate {
-            let shown = selectedChemical.flatMap {
+            let operationalShown = line.operationalRateUnit.map { VineyardPreferredRate(amount: 1, unit: $0, basis: line.basis).chemicalUnit.fromBase(value) }
+            let shown = operationalShown ?? selectedChemical.flatMap {
                 SprayRegisteredUseRates.displayValue(
                     value,
                     labelUnit: appliedRateUnit,

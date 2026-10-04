@@ -20,12 +20,38 @@ internal class SavedChemicalCreateSync(
     private val ownerId: () -> String?,
     private val upload: suspend (SavedChemicalRepository.ChemicalInsert) -> SavedChemical = repository::create,
     private val findById: suspend (String) -> SavedChemical? = repository::findById,
+    private val updatePreference: suspend (SavedChemical, com.rork.vinetrack.data.chemical.VineyardPreferredRate?, String) -> SavedChemical = repository::updatePreferredRate,
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
     private val lock = Mutex()
 
     @Serializable
     internal data class Payload(val ownerId: String, val insert: SavedChemicalRepository.ChemicalInsert)
+
+    @Serializable
+    internal data class PreferencePayload(val ownerId: String, val chemicalId: String, val vineyardId: String,
+        val rate: com.rork.vinetrack.data.chemical.VineyardPreferredRate?, val at: String)
+    private fun preference(write: PendingWrite): PreferencePayload? = runCatching {
+        json.decodeFromString(PreferencePayload.serializer(), write.payloadJson)
+    }.getOrNull()?.takeIf { it.chemicalId == write.clientId }
+
+    fun savePreference(chemical: SavedChemical, rate: com.rork.vinetrack.data.chemical.VineyardPreferredRate?): SavedChemical {
+        require(rate == null || rate.isValid)
+        val owner = requireNotNull(ownerId())
+        val payload = PreferencePayload(owner, chemical.id, chemical.vineyardId, rate, Instant.now().toString())
+        pending.upsertCoalesced(PendingEntityType.SAVED_CHEMICAL, chemical.id,
+            json.encodeToString(PreferencePayload.serializer(), payload))
+        return chemical.copy(vineyardPreferredRate = rate).also { check(storeRow(owner, it)) }
+    }
+
+    private fun preferenceWrites(user: String, vineyard: String): List<Pair<PendingWrite, PreferencePayload>> =
+        pending.list().filter { it.entityType == PendingEntityType.SAVED_CHEMICAL && it.opType == PendingOpType.UPDATE }
+            .mapNotNull { write -> preference(write)?.takeIf { it.ownerId == user && it.vineyardId == vineyard }?.let { write to it } }
+
+    private fun overlayPreferences(user: String, vineyard: String, rows: List<SavedChemical>): List<SavedChemical> {
+        val edits = preferenceWrites(user, vineyard).associate { it.second.chemicalId to it.second }
+        return rows.map { row -> edits[row.id]?.let { if (row.isActive && row.deletedAt == null) row.copy(vineyardPreferredRate = it.rate) else row } ?: row }
+    }
 
     private fun decode(write: PendingWrite): Payload? = runCatching {
         json.decodeFromString(Payload.serializer(), write.payloadJson)
@@ -52,7 +78,7 @@ internal class SavedChemicalCreateSync(
             it.opType == PendingOpType.CREATE && it.status != PendingWriteStatus.SYNCED }
             .mapNotNull { write -> decode(write)?.takeIf { it.ownerId == userId && it.insert.vineyardId == vineyardId }
                 ?.let { repository.localCreate(it.insert) } }
-        return (cached + queued).distinctBy { it.id }.sortedBy { it.displayName.lowercase() }
+        return overlayPreferences(userId, vineyardId, (cached + queued).distinctBy { it.id }).sortedBy { it.displayName.lowercase() }
     }
 
     /** Complete server reconciliation: tombstones win, only explicit CREATE outbox IDs may stay active when absent. */
@@ -69,7 +95,10 @@ internal class SavedChemicalCreateSync(
         val authoritative = remote.map { row ->
             if (row.deletedAt != null || !row.isActive) com.rork.vinetrack.data.chemical.ChemicalStorePresentation.archived(row) else row
         }
-        val merged = (authoritative + historyOrCreates).distinctBy { it.id }.sortedBy { it.displayName.lowercase() }
+        preferenceWrites(userId, vineyardId).filter { (_, edit) ->
+            remote.none { it.id == edit.chemicalId && it.isActive && it.deletedAt == null } && edit.chemicalId !in unresolved
+        }.forEach { pending.remove(it.first.id) }
+        val merged = overlayPreferences(userId, vineyardId, (authoritative + historyOrCreates).distinctBy { it.id }).sortedBy { it.displayName.lowercase() }
         check(local.save(userId, vineyardId, merged)) { "Chemical reconciliation could not be persisted." }
         // Observing the exact ID remotely acknowledges a lost CREATE response too.
         remoteIds.forEach { cancelCreate(userId, vineyardId, it) }
@@ -87,11 +116,13 @@ internal class SavedChemicalCreateSync(
             if (it.id == id) com.rork.vinetrack.data.chemical.ChemicalStorePresentation.archived(it) else it
         })) { "Chemical archive could not be persisted." }
         cancelCreate(userId, vineyardId, id)
+        preferenceWrites(userId, vineyardId).filter { it.second.chemicalId == id }.forEach { pending.remove(it.first.id) }
     }
 
     fun removeLocal(userId: String, vineyardId: String, id: String) {
         check(local.save(userId, vineyardId, local.load(userId, vineyardId).filterNot { it.id == id }))
         cancelCreate(userId, vineyardId, id)
+        preferenceWrites(userId, vineyardId).filter { it.second.chemicalId == id }.forEach { pending.remove(it.first.id) }
     }
 
     suspend fun replayAll(onSynced: (SavedChemical) -> Unit = {}) {
@@ -145,6 +176,24 @@ internal class SavedChemicalCreateSync(
                     retryOrBlock(write, "No connection to sync this chemical.")
                 }
             }
+            val edits = pending.list().filter { it.entityType == PendingEntityType.SAVED_CHEMICAL && it.opType == PendingOpType.UPDATE }
+            for (write in edits) {
+                val edit = preference(write)?.takeIf { it.ownerId == owner } ?: continue
+                try {
+                    val remote = findById(edit.chemicalId)
+                    if (remote == null) {
+                        if (pending.list().any { it.entityType == PendingEntityType.SAVED_CHEMICAL && it.opType == PendingOpType.CREATE && it.clientId == edit.chemicalId }) continue
+                        pending.remove(write.id); continue
+                    }
+                    if (remote.vineyardId != edit.vineyardId || !remote.isActive || remote.deletedAt != null) { pending.remove(write.id); continue }
+                    val saved = updatePreference(remote, edit.rate, edit.at)
+                    // A coalesced newer edit must not be acknowledged by the old suspended request.
+                    if (pending.list().any { it.id == write.id && it.payloadJson == write.payloadJson }) {
+                        check(storeRow(owner, saved)); pending.remove(write.id); if (ownerId() == owner) onSynced(saved)
+                    }
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { pending.updateStatus(write.id, PendingWriteStatus.FAILED, "Preferred rate waiting to sync.") }
+            }
         } finally {
             lock.unlock()
         }
@@ -154,7 +203,8 @@ internal class SavedChemicalCreateSync(
     fun acceptRemoteRow(userId: String, row: SavedChemical) {
         val authoritative = if (row.deletedAt != null || !row.isActive)
             com.rork.vinetrack.data.chemical.ChemicalStorePresentation.archived(row) else row
-        check(storeRow(userId, authoritative)) { "Chemical edit could not be persisted." }
+        val overlaid = overlayPreferences(userId, row.vineyardId, listOf(authoritative)).single()
+        check(storeRow(userId, overlaid)) { "Chemical edit could not be persisted." }
         cancelCreate(userId, row.vineyardId, row.id)
     }
 

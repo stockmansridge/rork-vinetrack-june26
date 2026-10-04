@@ -435,6 +435,7 @@ struct EditSavedChemicalSheet: View {
                         ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "rates"))
                     }
                 }
+                if let chemical { VineyardPreferredRateSection(chemical: chemical) }
                 // 5. Labels & References
                 if !session.isCreatingManual || showsOptionalDetails { labelsSection }
                 if let chemical, let media = approvedFrontLabel,

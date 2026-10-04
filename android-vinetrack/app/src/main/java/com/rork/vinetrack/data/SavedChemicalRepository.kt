@@ -578,6 +578,24 @@ class SavedChemicalRepository(private val session: SessionStore? = null) {
         firstRow(response).also { check(it.id == chemical.id && it.chemicalV3RevisionId == revision) }
     }
 
+    /** Sparse preference-only PATCH; explicit JsonNull clears without touching registered data. */
+    suspend fun updatePreferredRate(chemical: SavedChemical, rate: com.rork.vinetrack.data.chemical.VineyardPreferredRate?, at: String): SavedChemical = withContext(Dispatchers.IO) {
+        requireConfig()
+        require(rate == null || rate.isValid)
+        val token = session?.accessToken ?: throw BackendError.Unauthorized
+        val patch = kotlinx.serialization.json.buildJsonObject {
+            put("vineyard_preferred_rate", rate?.let { SupabaseClient.json.encodeToJsonElement(com.rork.vinetrack.data.chemical.VineyardPreferredRate.serializer(), it) } ?: JsonNull)
+            put("client_updated_at", JsonPrimitive(at))
+        }
+        val response = SupabaseClient.http.patch(SupabaseClient.restUrl("saved_chemicals?id=eq.${chemical.id}&vineyard_id=eq.${chemical.vineyardId}&deleted_at=is.null&is_active=eq.true")) {
+            authHeaders(token)
+            headers { append("Prefer", "return=representation") }
+            contentType(ContentType.Application.Json)
+            setBody(patch)
+        }
+        firstRow(response)
+    }
+
     /** Archive via the gated RPC. False means not_found: successful reconciliation, not a failed delete. */
     suspend fun softDelete(id: String): Boolean = withContext(Dispatchers.IO) {
         requireConfig()

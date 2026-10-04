@@ -2075,6 +2075,7 @@ data class SavedChemical(
      * numbers have no link back to a registered direction.
      */
     @SerialName("default_rates") val defaultRates: StoredChemicalDefaultRates? = null,
+    @SerialName("vineyard_preferred_rate") val vineyardPreferredRate: com.rork.vinetrack.data.chemical.VineyardPreferredRate? = null,
     @SerialName("activity_group_table_version") val activityGroupTableVersion: Int? = null,
     @SerialName("intelligence_schema_version") val intelligenceSchemaVersion: Int? = null,
     // ---- Master Chemical Catalogue (sql/199) ----

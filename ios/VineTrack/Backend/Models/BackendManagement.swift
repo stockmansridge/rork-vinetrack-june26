@@ -3,6 +3,7 @@ import Foundation
 // MARK: - Saved Chemicals
 
 nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
+    var vineyardPreferredRate: VineyardPreferredRate? = nil
     let id: UUID
     let vineyardId: UUID
     let name: String?
@@ -125,6 +126,7 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         case verifiedAt = "verified_at"
         case registeredUses = "registered_uses"
         case labelRateBases = "label_rate_bases"
+        case vineyardPreferredRate = "vineyard_preferred_rate"
         case defaultRates = "default_rates"
         case activityGroupTableVersion = "activity_group_table_version"
         case intelligenceSchemaVersion = "intelligence_schema_version"
@@ -209,6 +211,7 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         // Confirmed operational default (sql/214) — tolerant for the same
         // reason as every column above: a backend without the migration, or a
         // malformed value, must degrade to nil rather than empty the store.
+        self.vineyardPreferredRate = try? c.decodeIfPresent(VineyardPreferredRate.self, forKey: .vineyardPreferredRate)
         self.defaultRates = try? c.decodeIfPresent(StoredChemicalDefaultRates.self, forKey: .defaultRates)
         self.activityGroupTableVersion = try? c.decodeIfPresent(Int.self, forKey: .activityGroupTableVersion)
         self.intelligenceSchemaVersion = try? c.decodeIfPresent(Int.self, forKey: .intelligenceSchemaVersion)
@@ -250,6 +253,8 @@ nonisolated struct ExplicitlyNullable<Wrapped: Encodable & Sendable>: Encodable,
 }
 
 nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
+    var preferredRateOnly: Bool = false
+    var vineyardPreferredRate: ExplicitlyNullable<VineyardPreferredRate>? = nil
     let id: UUID
     let vineyardId: UUID
     let name: String
@@ -378,6 +383,7 @@ nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
         case verifiedAt = "verified_at"
         case registeredUses = "registered_uses"
         case labelRateBases = "label_rate_bases"
+        case vineyardPreferredRate = "vineyard_preferred_rate"
         case defaultRates = "default_rates"
         case activityGroupTableVersion = "activity_group_table_version"
         case intelligenceSchemaVersion = "intelligence_schema_version"
@@ -399,6 +405,8 @@ extension BackendSavedChemical {
         // chemical must never rewrite it.
         let legacy = c.legacyProjection
         return BackendSavedChemicalUpsert(
+            preferredRateOnly: c.vineyardPreferredRateOnly,
+            vineyardPreferredRate: c.vineyardPreferredRatePending ? ExplicitlyNullable(c.vineyardPreferredRate) : nil,
             id: c.id,
             vineyardId: c.vineyardId,
             name: c.name,
@@ -565,6 +573,7 @@ extension BackendSavedChemical {
             defaultRates: defaultRates,
             entrySource: entrySource
         )
+        saved.vineyardPreferredRate = vineyardPreferredRate
         saved.chemicalV3RevisionId = chemicalV3RevisionId
         saved.chemicalV3ProductId = chemicalV3ProductId
         saved.backendActivityGroupScheme = activityGroupScheme

@@ -1,5 +1,7 @@
 package com.rork.vinetrack.ui.screens
 
+import androidx.compose.material3.MaterialTheme
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -212,6 +214,7 @@ private class CalcChemLine(
     var rateUnit by mutableStateOf(rateUnit)
 
     var overrideText by mutableStateOf("")
+    var operationalSource by mutableStateOf<com.rork.vinetrack.data.chemical.OperationalRateResolver.Source?>(null)
 }
 
 /**
@@ -237,6 +240,7 @@ private fun CalcChemLine.adoptProduct(chem: SavedChemical) {
     rateAmount = replacement.rateAmount
     rateUnit = replacement.rateUnit
     overrideText = ""
+    operationalSource = replacement.operationalSource
 }
 
 /**
@@ -317,6 +321,7 @@ private fun lineCostPerUnit(chem: SavedChemical, rateUnit: String): Double? =
 
 /** Effective rate: manual override (when valid) else the recommended rate. */
 private fun effectiveRateDisplay(chem: SavedChemical, line: CalcChemLine): Double {
+    if (line.operationalSource != null) return line.overrideText.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 } ?: recommendedRateDisplay(chem, line)
     if (SprayRegisteredUseRates.hasInvalidStructuredRates(chem)) return Double.NaN
     val selected = SprayRegisteredUseRates.rate(chem, line.selectedRateId)
     selected?.labelRange?.let {
@@ -343,7 +348,10 @@ private fun effectiveRateDisplay(chem: SavedChemical, line: CalcChemLine): Doubl
  * A genuinely legacy record keeps its previous seeding behaviour, so an
  * existing manual chemical stays usable exactly as it was.
  */
-private fun newLineFor(chem: SavedChemical): CalcChemLine {
+private fun newLineFor(chem: SavedChemical, program: com.rork.vinetrack.data.chemical.VineyardPreferredRate? = null): CalcChemLine {
+    com.rork.vinetrack.data.chemical.OperationalRateResolver.resolve(chem, program)?.takeIf { it.source != com.rork.vinetrack.data.chemical.OperationalRateResolver.Source.CONFIRMED_DEFAULT }?.let { choice ->
+        return CalcChemLine(chem.id, null, basisOf(choice.rate.basis), choice.rate.amount, choice.rate.unit).also { it.operationalSource = choice.source }
+    }
     // The product's CONFIRMED rate (`default_rates`) leads: a confirmed scalar
     // populates the line; a confirmed band fixes the basis and unit and leaves
     // the dose for the operator to enter inside it.
@@ -926,7 +934,7 @@ fun SprayCalculatorScreen(
                 // product switches only.
                 val wantBasis = if (chem.ratePer100L > 0) CHEMICAL_RATE_PER_100L else CHEMICAL_RATE_PER_HECTARE
                 val storedRate = if (chem.ratePer100L > 0) chem.ratePer100L else chem.ratePerHa
-                val restored = CalcChemLine(
+                val restored = if (r.isTemplate) newLineFor(saved, com.rork.vinetrack.data.chemical.OperationalRateResolver.rateFromProgram(chem)) else CalcChemLine(
                     chemicalId = saved.id,
                     selectedRateId = null,
                     basis = basisOf(wantBasis),
@@ -1051,6 +1059,7 @@ fun SprayCalculatorScreen(
                 isOverride = line.overrideText.toDoubleOrNull()?.let { it > 0 } == true,
                 capturedAt = iso,
                 selectedRate = SprayRegisteredUseRates.rate(chem, line.selectedRateId),
+                isOperationalPreference = line.operationalSource != null,
             )?.let { line.chemicalId to it }
         }.toMap()
         return SprayRecordRepository.SprayInput(
@@ -2275,6 +2284,9 @@ fun SprayCalculatorScreen(
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             guidedPlan.productLines.forEach { line ->
                                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    chemLines.firstOrNull { it.chemicalId == line.productId }?.operationalSource?.let { source ->
+                                        Text(if (chemLines.firstOrNull { it.chemicalId == line.productId }?.overrideText?.isNotBlank() == true) "Rate source: Operator-entered" else if (source == com.rork.vinetrack.data.chemical.OperationalRateResolver.Source.PROGRAM_STEP) "Rate source: Program Step" else "Rate source: ${state.vineyards.firstOrNull { it.id == state.selectedVineyardId }?.name ?: "Vineyard"} preferred rate", style = MaterialTheme.typography.bodySmall)
+                                    }
                                     Row(Modifier.fillMaxWidth()) {
                                         Text(
                                             line.name,
@@ -3161,7 +3173,7 @@ private fun CalcChemicalLineCard(
     // A trip-selected registered range validates in its label unit. If no
     // trip selection is active, the confirmed Chemical Store band remains the gate.
     val selectedRange = selectedRate?.labelRange
-    val confirmedRange = if (selectedRate == null) chem?.let { SprayConfirmedRateSeeding.rangeFor(it, line.basis) } else null
+    val confirmedRange = if (selectedRate == null && line.operationalSource == null) chem?.let { SprayConfirmedRateSeeding.rangeFor(it, line.basis) } else null
     val rangeRejection = when {
         selectedRange != null && line.overrideText.isNotBlank() &&
             SprayRegisteredUseRates.validateManual(line.overrideText, selectedRate) == null ->
@@ -3171,10 +3183,17 @@ private fun CalcChemicalLineCard(
     }
     // A structured product whose rate nobody confirmed. The line is genuinely
     // unresolved and says so, rather than showing a borrowed zero.
-    val hasInvalidStoredRate = chem?.let(SprayRegisteredUseRates::hasInvalidStructuredRates) == true
+    val hasInvalidStoredRate = line.operationalSource == null && chem?.let(SprayRegisteredUseRates::hasInvalidStructuredRates) == true
     val needsRate = chem != null && !hasInvalidStoredRate && recommended <= 0 && !isOverridden && confirmedRange == null
 
     VineyardCard {
+        line.operationalSource?.let { source ->
+            Text(if (source == com.rork.vinetrack.data.chemical.OperationalRateResolver.Source.PROGRAM_STEP) "Program Step rate" else "Preferred vineyard rate — vineyard-defined", style = MaterialTheme.typography.bodySmall)
+            if (chem != null) line.rateAmount?.let { amount ->
+                val preferred = com.rork.vinetrack.data.chemical.VineyardPreferredRate(amount, line.rateUnit.orEmpty(), if (line.basis == SprayCalculator.RateBasis.PER_100L) "per_100_litres" else "per_hectare")
+                com.rork.vinetrack.data.chemical.OperationalRateResolver.warning(preferred, chem)?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            }
+        }
         // Header
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(Icons.Filled.Science, contentDescription = null, tint = VineColors.LeafGreen, modifier = Modifier.size(18.dp))
@@ -3320,7 +3339,7 @@ private fun CalcChemicalLineCard(
             // Override rate
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    if (selectedRange != null || confirmedRange != null) "Applied label rate" else "Applied label rate",
+                    if (line.operationalSource != null) "Applied operational rate" else "Applied label rate",
                     fontSize = 11.sp,
                     color = vine.textSecondary,
                 )
@@ -3501,6 +3520,7 @@ private fun applySuggestedRate(line: CalcChemLine, rate: SpraySelectableRate) {
     line.selectedRateId = rate.id
     line.basis = basis
     line.rateUnit = unit
+    line.operationalSource = null
     line.rateAmount = (rate.amount as? SprayRateAmount.Fixed)?.value
     line.overrideText = ""
 }
@@ -3590,6 +3610,7 @@ private fun ConfirmedRatePickerRow(
                         // number without its unit is the defect this whole
                         // handoff exists to prevent: it prints a gram rate
                         // against a kilogram pack unit.
+                        line.operationalSource = null
                         line.rateAmount = choice.rate
                         line.rateUnit = choice.unit
                         line.basis = choice.basis
@@ -3696,6 +3717,7 @@ private fun LegacyRatePickerRow(
                         onClick = {
                             line.selectedRateId = rate.id
                             line.basis = SprayCalculator.RateBasis.PER_HECTARE
+                            line.operationalSource = null
                             line.rateAmount = chemicalUnitFromBase(chem.unit, rate.value)
                             line.rateUnit = chem.unit
                             line.overrideText = ""
@@ -3729,6 +3751,7 @@ private fun LegacyRatePickerRow(
                         onClick = {
                             line.selectedRateId = rate.id
                             line.basis = SprayCalculator.RateBasis.PER_100L
+                            line.operationalSource = null
                             line.rateAmount = chemicalUnitFromBase(chem.unit, rate.value)
                             line.rateUnit = chem.unit
                             line.overrideText = ""

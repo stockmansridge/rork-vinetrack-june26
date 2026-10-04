@@ -77,6 +77,7 @@ nonisolated struct SprayProgramProductDraft: Identifiable, Sendable, Hashable {
     var activeIngredient: String?
     /// The rate in `unit`, as the operator reads and types it.
     var rate: Double
+    var rateSource: OperationalRateResolver.Source? = nil
     var unit: ChemicalUnit
     var basis: SprayProductRateBasis
     /// The portal's per-line carrier rate. Mobile does not edit it; it is
@@ -153,16 +154,19 @@ nonisolated struct SprayProgramProductDraft: Identifiable, Sendable, Hashable {
         chemicalSnapshot = nil
         costPerUnit = 0
 
-        if let seedRate, let seed = seedRate.seed.seedableValue, let seedBasis = seedRate.basis {
+        if let resolved = OperationalRateResolver.resolve(chemical: chemical) {
+            unit = resolved.rate.chemicalUnit
+            rate = resolved.rate.amount
+            basis = resolved.rate.basis == .per100Litres ? .per100Litres : .wholeBlockArea
+            rateSource = resolved.source
+        } else if let seedRate, let seed = seedRate.seed.seedableValue, let seedBasis = seedRate.basis {
             unit = chemical.unit
             rate = chemical.unit.fromBase(seed)
             basis = seedBasis == .per100Litres ? .per100Litres : .wholeBlockArea
         } else {
-            // Keep the operator's number but restate it in the new product's
-            // unit, so "2" does not silently change meaning from 2 L to 2 kg.
-            let previousBase = baseRate
             unit = chemical.unit
-            rate = chemical.unit.fromBase(previousBase)
+            rate = 0
+            rateSource = nil
         }
     }
 
@@ -302,7 +306,7 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
         if products.contains(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
             return "Every product needs a name."
         }
-        if products.contains(where: { $0.rate < 0 }) {
+        if products.contains(where: { !$0.rate.isFinite || $0.rate < 0 }) {
             return "A product rate cannot be negative."
         }
         // A shared Program Step is stored as `spray_jobs.chemical_lines`, whose

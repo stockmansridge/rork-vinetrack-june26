@@ -58,6 +58,18 @@ final class SupabaseSavedChemicalSyncRepository: SavedChemicalSyncRepositoryProt
 
     func updateExisting(_ item: BackendSavedChemicalUpsert) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        if item.preferredRateOnly, let preference = item.vineyardPreferredRate {
+            struct PreferencePatch: Encodable {
+                let vineyard_preferred_rate: ExplicitlyNullable<VineyardPreferredRate>
+                let client_updated_at: Date
+            }
+            let rows: [BackendSavedChemical] = try await provider.client.from("saved_chemicals")
+                .update(PreferencePatch(vineyard_preferred_rate: preference, client_updated_at: item.clientUpdatedAt))
+                .eq("id", value: item.id.uuidString).eq("vineyard_id", value: item.vineyardId.uuidString)
+                .is("deleted_at", value: nil).or("is_active.eq.true,is_active.is.null").select().execute().value
+            guard rows.contains(where: { $0.id == item.id }) else { throw BackendRepositoryError.emptyResponse }
+            return
+        }
         // PATCH cannot recreate a hard-deleted ID; the archive predicate closes the fetch/write race.
         try await provider.client.from("saved_chemicals").update(item)
             .eq("id", value: item.id.uuidString).eq("vineyard_id", value: item.vineyardId.uuidString)

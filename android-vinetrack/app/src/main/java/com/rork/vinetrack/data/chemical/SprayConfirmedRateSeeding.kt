@@ -130,6 +130,7 @@ object SprayConfirmedRateSeeding {
         isOverride: Boolean,
         capturedAt: String,
         selectedRate: SpraySelectableRate? = null,
+        isOperationalPreference: Boolean = false,
     ): ChemicalLineSnapshot? {
         if (!appliedRate.isFinite() || appliedRate <= 0.0) return base
         val contractBasis = if (basis == SprayProductRateBasis.PER_100_LITRES) {
@@ -139,8 +140,9 @@ object SprayConfirmedRateSeeding {
         }
         val slot = ChemicalDefaultRateValidity.confirmedSlots(chemical.defaultRates)
             .firstOrNull { it.basis == contractBasis }
-        val range = slot?.range
+        val range = if (isOperationalPreference) null else slot?.range
         val entryMethod = when {
+            isOperationalPreference -> StoredChemicalDefaultRate.ENTRY_MANUAL
             selectedRate?.preset != null && !isOverride -> StoredChemicalDefaultRate.ENTRY_CANONICAL
             selectedRate != null && isOverride -> StoredChemicalDefaultRate.ENTRY_MANUAL
             slot == null -> if (isOverride) StoredChemicalDefaultRate.ENTRY_MANUAL else StoredChemicalDefaultRate.ENTRY_CANONICAL
@@ -159,7 +161,7 @@ object SprayConfirmedRateSeeding {
             basis = contractBasis,
             entryMethod = entryMethod,
             confirmedRange = range,
-            selectedRate = selectedRate,
+            selectedRate = if (isOperationalPreference) null else selectedRate,
         )
     }
 

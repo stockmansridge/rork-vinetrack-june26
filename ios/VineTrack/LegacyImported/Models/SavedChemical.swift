@@ -269,6 +269,11 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
     /// default derived from them would carry a provenance the data cannot
     /// support.
     var defaultRates: StoredChemicalDefaultRates?
+    var vineyardPreferredRate: VineyardPreferredRate? = nil
+    /// Local durable write intent; remote rows always reset it.
+    var vineyardPreferredRatePending: Bool = false
+    var vineyardPreferredRateOnly: Bool = false
+    var savedChemicalGeneralPending: Bool = false
 
     init(
         id: UUID = UUID(),
@@ -360,6 +365,7 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         case applicationNotes, isActive
         case chemicalIntelligence
         case masterChemicalId, masterSourceRevision
+        case vineyardPreferredRate, vineyardPreferredRatePending, vineyardPreferredRateOnly, savedChemicalGeneralPending
         case defaultRates, entrySource, chemicalV3RevisionId, chemicalV3ProductId, backendActivityGroupScheme, backendActivityGroups
     }
 
@@ -419,6 +425,10 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         // malformed value degrades to nil rather than taking the chemical
         // down — the label evidence in `chemicalIntelligence` is untouched
         // either way, so nothing a calculation needs is ever lost here.
+        vineyardPreferredRate = try? container.decodeIfPresent(VineyardPreferredRate.self, forKey: .vineyardPreferredRate)
+        savedChemicalGeneralPending = (try? container.decodeIfPresent(Bool.self, forKey: .savedChemicalGeneralPending)) ?? false
+        vineyardPreferredRateOnly = (try? container.decodeIfPresent(Bool.self, forKey: .vineyardPreferredRateOnly)) ?? false
+        vineyardPreferredRatePending = (try? container.decodeIfPresent(Bool.self, forKey: .vineyardPreferredRatePending)) ?? false
         defaultRates = try? container.decodeIfPresent(
             StoredChemicalDefaultRates.self, forKey: .defaultRates)
         entrySource = try? container.decodeIfPresent(String.self, forKey: .entrySource)

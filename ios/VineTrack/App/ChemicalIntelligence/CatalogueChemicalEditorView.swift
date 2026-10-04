@@ -20,6 +20,7 @@ struct CatalogueChemicalEditorView: View {
         NavigationStack {
             Form {
                 Section("Product") { CatalogueSavedChemicalView(chemical: chemical, showsDetails: true) }
+                VineyardPreferredRateSection(chemical: chemical)
                 Section("Notes") { TextField("Vineyard notes (optional)", text: $notes, axis: .vertical).lineLimit(3...8) }
                 Section {
                     Text("Stock and purchases are managed in Chemical Inventory. Existing spray-cost information is retained.").font(.caption).foregroundStyle(.secondary)
@@ -45,7 +46,12 @@ struct CatalogueChemicalEditorView: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            let saved = try await CatalogueRepository().updateNotes(for: chemical, notes: notes)
+            var saved = try await CatalogueRepository().updateNotes(for: chemical, notes: notes)
+            if let local = store.savedChemicals.first(where: { $0.id == chemical.id }), local.vineyardPreferredRatePending {
+                saved.vineyardPreferredRate = local.vineyardPreferredRate
+                saved.vineyardPreferredRatePending = true
+                saved.vineyardPreferredRateOnly = local.vineyardPreferredRateOnly
+            }
             store.applyRemoteSavedChemicalUpsert(saved)
             onSaved?(saved)
             dismiss()

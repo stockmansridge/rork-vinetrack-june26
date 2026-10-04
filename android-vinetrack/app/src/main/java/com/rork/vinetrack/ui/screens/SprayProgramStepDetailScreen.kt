@@ -199,7 +199,9 @@ internal fun SprayProgramStepDetailScreen(
             if (products.isNotEmpty()) {
                 ProgramStepSection("Products & Rates", Icons.Filled.Science) {
                     products.forEach { product ->
-                        val rate = SprayProgramStepPresentation.rate(product)
+                        val stored = SprayProgramStepPresentation.rate(product)
+                        val preference = state.savedChemicals.firstOrNull { it.id == product.savedChemicalId }?.vineyardPreferredRate?.takeIf { it.isValid }
+                        val rate = stored?.let { "Planned rate: $it" } ?: preference?.let { "${it.text} — preferred vineyard rate" }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text(product.name, fontSize = 15.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
                             Text(rate ?: "Rate set when planning", fontSize = if (rate == null) 12.sp else 15.sp,

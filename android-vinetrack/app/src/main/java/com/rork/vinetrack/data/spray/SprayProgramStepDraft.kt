@@ -80,6 +80,7 @@ data class SprayProgramProductDraft(
     val activeIngredient: String? = null,
     /** The rate in [unitRaw], as the operator reads and types it. */
     val rate: Double = 0.0,
+    val rateSource: com.rork.vinetrack.data.chemical.OperationalRateResolver.Source? = null,
     val unitRaw: String = "Litres",
     val basis: SprayProductRateBasis = SprayProductRateBasis.WHOLE_BLOCK_AREA,
     /** The portal's per-line carrier rate. Carried so a round trip cannot drop it. */
@@ -106,19 +107,28 @@ data class SprayProgramProductDraft(
 
     /**
      * Point this line at a different Saved Chemical. Explicit replacement only
-     * — never called from a name match. Deliberately NO seed rate: the dose
-     * belongs to the spray, not the programme. The operator's number is
-     * restated in the new product's unit so "2" does not silently change
-     * meaning from 2 L to 2 kg.
+     * — never called from a name match. Seeds this product's operational
+     * preference/default, otherwise a single registered scalar. Never carries
+     * the outgoing product's dose into a different chemical identity.
      */
     fun replacedWith(chemical: SavedChemical): SprayProgramProductDraft {
-        val previousBase = baseRate
+        val resolved = com.rork.vinetrack.data.chemical.OperationalRateResolver.resolve(chemical)
+        val choices = com.rork.vinetrack.data.chemical.SprayRegisteredUseRates.vineyardRates(chemical).filter { it.isSelectable && it.preset == null }
+        val choice = choices.singleOrNull()
+        val amount = resolved?.rate?.amount ?: choice?.appliedValue ?: 0.0
+        val chosenUnit = resolved?.rate?.productUnit ?: choice?.unit?.let { raw ->
+            when (com.rork.vinetrack.data.chemical.ChemicalDefaultRateValidity.canonicalUnit(raw)) { "L" -> "Litres"; "kg" -> "Kg"; else -> raw }
+        } ?: chemical.unit
+        val per100 = resolved?.rate?.basis?.let { it == "per_100_litres" }
+            ?: (choice?.basis == com.rork.vinetrack.data.SprayCalculator.RateBasis.PER_100L)
         return copy(
             savedChemicalId = chemical.id,
             name = chemical.name,
             activeIngredient = chemical.activeIngredient.trim().ifEmpty { null },
-            unitRaw = chemical.unit,
-            rate = chemicalUnitFromBase(chemical.unit, previousBase),
+            unitRaw = chosenUnit,
+            rate = amount,
+            basis = if (per100) SprayProductRateBasis.PER_100_LITRES else SprayProductRateBasis.WHOLE_BLOCK_AREA,
+            rateSource = resolved?.source,
             chemicalSnapshot = null,
             rawLine = null,
             costPerUnit = 0.0,
@@ -259,7 +269,7 @@ data class SprayProgramStepDraft(
         get() {
             if (trimmedName.isEmpty()) return "Give the Program Step a name."
             if (products.any { it.trimmedName.isEmpty() }) return "Every product needs a name."
-            if (products.any { it.rate < 0 }) return "A product rate cannot be negative."
+            if (products.any { !it.rate.isFinite() || it.rate < 0 }) return "A product rate cannot be negative."
             if (isPortalManaged) {
                 // `spray_jobs.chemical_lines` unit strings can only express /ha
                 // and /100 L. Rather than write "/ha" over a treated-area rate

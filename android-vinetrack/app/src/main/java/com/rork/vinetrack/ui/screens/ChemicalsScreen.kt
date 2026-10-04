@@ -604,6 +604,7 @@ private fun ChemicalRow(
             if (chemical.chemicalV3RevisionId != null) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     CatalogueSavedChemical(chemical)
+                    chemical.vineyardPreferredRate?.takeIf { it.isValid }?.let { Text("Preferred vineyard rate: ${it.text}", style = MaterialTheme.typography.bodySmall) }
                     ChemicalVerificationBadge(chemical, storeTitle = assessment.title)
                     assessment.attentionReasons.firstOrNull()?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = VineColors.Warning) }
                 }
@@ -635,6 +636,7 @@ private fun ChemicalRow(
                         suitability.vineyardCountry,
                     )
                 }
+                chemical.vineyardPreferredRate?.takeIf { it.isValid }?.let { Text("Preferred vineyard rate: ${it.text}", style = MaterialTheme.typography.bodySmall) }
                 if (chemical.manufacturer.isNotBlank()) Text(chemical.manufacturer, fontSize = 13.sp, color = vine.textSecondary)
                 val usedFor = com.rork.vinetrack.data.chemical.CatalogueRow.manualTargets(chemical.problem, chemical.use)
                 if (usedFor.isNotBlank()) Text("Used for: $usedFor", fontSize = 13.sp, color = vine.textSecondary)
@@ -1913,6 +1915,7 @@ internal fun ChemicalFormSheet(
                 }
             }
 
+            existing?.let { VineyardPreferredRateEditor(vm, it) }
             SectionLabel("Notes")
             OutlinedTextField(
                 value = notes,

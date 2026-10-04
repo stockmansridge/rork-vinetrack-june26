@@ -22,6 +22,7 @@ internal fun CatalogueChemicalEditorSheet(vm: AppViewModel, chemical: SavedChemi
         Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Chemical details", style = MaterialTheme.typography.titleLarge)
             CatalogueSavedChemical(chemical, showsDetails = true)
+            VineyardPreferredRateEditor(vm, chemical)
             OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Vineyard notes (optional)") }, minLines = 3, enabled = !isSaving, modifier = Modifier.fillMaxWidth())
             Text("Stock and purchases are managed in Chemical Inventory. Existing spray-cost information is retained.", style = MaterialTheme.typography.bodySmall)
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }

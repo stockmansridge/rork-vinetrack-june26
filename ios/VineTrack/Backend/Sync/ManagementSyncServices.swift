@@ -281,6 +281,7 @@ final class SavedChemicalSyncService {
         isConfigured = true
         store.onSavedChemicalCreated = { [weak self] id in self?.metadata.markCreated(id, at: Date()) }
         store.onSavedChemicalChanged = { [weak self] id in self?.metadata.markDirty(id, at: Date()) }
+        store.savedChemicalHasPendingWrite = { [weak self] id in self?.metadata.pendingUpserts[id] != nil }
         store.onSavedChemicalDeleted = { [weak self] id in self?.metadata.markDeleted(id, at: Date()) }
         store.onSavedChemicalRetired = { [weak self] id in
             self?.metadata.clearDirty([id])
@@ -353,7 +354,7 @@ final class SavedChemicalSyncService {
                     }
                 }
             }
-            metadata.clearDirty(result.uploaded)
+            metadata.clearDirty(result.uploaded.filter { metadata.pendingUpserts[$0] == dirty[$0] })
             SyncIssueCenter.shared.notePending(entity: "Saved Chemicals", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }
         }

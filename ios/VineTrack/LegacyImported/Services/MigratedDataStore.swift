@@ -200,6 +200,7 @@ final class MigratedDataStore {
     // Phase 15C: management data sync hooks.
     var onSavedChemicalCreated: ((UUID) -> Void)?
     var onSavedChemicalChanged: ((UUID) -> Void)?
+    var savedChemicalHasPendingWrite: ((UUID) -> Bool)?
     var onSavedChemicalDeleted: ((UUID) -> Void)?
     var onSavedChemicalRetired: ((UUID) -> Void)?
     var onSavedInputChanged: ((UUID) -> Void)?

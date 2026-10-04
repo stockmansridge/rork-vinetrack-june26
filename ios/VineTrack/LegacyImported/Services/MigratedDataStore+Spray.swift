@@ -54,7 +54,28 @@ extension MigratedDataStore {
             guard let canonical = ChemicalLabelRateNormalizer.normalize(intelligence) else { return }
             item.chemicalIntelligence = canonical
         }
+        if savedChemicals[idx].vineyardPreferredRatePending && !item.vineyardPreferredRatePending {
+            item.vineyardPreferredRate = savedChemicals[idx].vineyardPreferredRate
+            item.vineyardPreferredRatePending = true
+        }
+        item.vineyardPreferredRateOnly = false
+        item.savedChemicalGeneralPending = true
         savedChemicals[idx] = item
+        sprayRepo.saveChemicalsSlice(savedChemicals, for: vineyardId)
+        onSavedChemicalChanged?(item.id)
+    }
+
+    /// Queues an operational preference independently of catalogue/default-rate fields.
+    func setVineyardPreferredRate(_ rate: VineyardPreferredRate?, chemicalId: UUID) {
+        guard rate == nil || rate?.isValid == true,
+              let vineyardId = selectedVineyardId,
+              let index = savedChemicals.firstIndex(where: { $0.id == chemicalId && $0.vineyardId == vineyardId && $0.isActive }) else { return }
+        var item = savedChemicals[index]
+        item.vineyardPreferredRate = rate
+        let hasOlderGeneralWrite = (savedChemicalHasPendingWrite?(item.id) ?? false) && !item.vineyardPreferredRateOnly
+        item.vineyardPreferredRateOnly = !item.savedChemicalGeneralPending && !hasOlderGeneralWrite
+        item.vineyardPreferredRatePending = true
+        savedChemicals[index] = item
         sprayRepo.saveChemicalsSlice(savedChemicals, for: vineyardId)
         onSavedChemicalChanged?(item.id)
     }

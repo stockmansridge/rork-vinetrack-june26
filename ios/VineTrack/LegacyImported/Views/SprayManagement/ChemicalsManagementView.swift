@@ -299,6 +299,7 @@ struct ChemicalDetailRow: View {
         if chemical.chemicalV3RevisionId != nil {
             VStack(alignment: .leading, spacing: 6) {
                 CatalogueSavedChemicalView(chemical: chemical)
+                if let rate = chemical.vineyardPreferredRate, rate.isValid { Text("Preferred vineyard rate: \(rate.text)").font(.caption) }
                 if let assessment {
                     ChemicalVerificationBadge(status: chemical.verificationStatus, chemical: chemical, storeTitle: assessment.title)
                     if let reason = assessment.attentionReasons.first {
@@ -316,6 +317,7 @@ struct ChemicalDetailRow: View {
                         .foregroundStyle(.primary)
                     ChemicalVerificationBadge(status: chemical.verificationStatus, chemical: chemical, storeTitle: assessment?.title)
                 }
+                if let rate = chemical.vineyardPreferredRate, rate.isValid { Text("Preferred vineyard rate: \(rate.text)").font(.caption) }
                 if let reason = assessment?.attentionReasons.first {
                     Text(reason).font(.caption).foregroundStyle(VineyardTheme.warning)
                 }

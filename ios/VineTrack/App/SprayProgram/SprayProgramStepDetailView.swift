@@ -335,9 +335,12 @@ struct SprayProgramStepDetailView: View {
             if product.reportedRateBaseValue > 0 {
                 // Stored configuration, reported on the basis it was recorded
                 // on (P10). Nothing here is recalculated.
-                Text(product.reportedRateText(formatter: formatter))
+                Text("Planned rate: " + product.reportedRateText(formatter: formatter))
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(VineyardTheme.olive)
+            } else if let chemical = store.savedChemicals.first(where: { $0.id == product.savedChemicalId }),
+                      let rate = chemical.vineyardPreferredRate, rate.isValid {
+                Text("\(rate.text) — \(store.selectedVineyard?.name ?? "Vineyard") preferred rate").font(.caption).foregroundStyle(.secondary)
             } else {
                 Text("Rate set when planning")
                     .font(.caption)

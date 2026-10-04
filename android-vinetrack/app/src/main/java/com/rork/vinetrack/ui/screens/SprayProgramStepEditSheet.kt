@@ -350,17 +350,9 @@ fun SprayProgramStepEditSheet(
                                 )
                             }
                         }
-                        // NO rate entry, and no rate basis — a Program Step says
-                        // WHICH product, not what dose: the dose depends on the
-                        // canopy on the day and is chosen in the Spray
-                        // Calculator against today's registered uses. A stored
-                        // legacy rate is still shown, read-only, so nothing
-                        // looks thrown away.
-                        Text(
-                            storedRateSummary(product) ?: "Rate set when planning",
-                            fontSize = 11.sp,
-                            color = vine.textSecondary,
-                        )
+                        ProgramPlannedRateEditor(product, vineyardName = state.vineyards.firstOrNull { it.id == state.selectedVineyardId }?.name ?: "Vineyard", enabled = state.canManageSprayProgram, chemical = state.savedChemicals.firstOrNull { it.id == product.savedChemicalId }) { updated ->
+                            draft = current.copy(products = current.products.map { if (it.lineKey == product.lineKey) updated else it })
+                        }
                     }
                 }
                 TextButton(onClick = {
@@ -372,9 +364,7 @@ fun SprayProgramStepEditSheet(
                     Text("  Add Product")
                 }
                 Text(
-                    "A step sets which products this spray uses. The label rate, carrier volume, " +
-                        "tanks and quantities are chosen when you plan the spray against the canopy " +
-                        "on the day.",
+                    "A step remembers the intended product rate. Carrier volume, tanks and final application choices are confirmed when planning the spray.",
                     fontSize = 11.sp,
                     color = vine.textSecondary,
                 )
@@ -511,14 +501,6 @@ fun SprayProgramStepEditSheet(
             replacingLineKey = null
         }
     }
-}
-
-/** A stored legacy programme rate, shown read-only. Null when there is none. */
-private fun storedRateSummary(product: com.rork.vinetrack.data.spray.SprayProgramProductDraft): String? {
-    if (product.rate <= 0) return null
-    val basis = if (product.basis == com.rork.vinetrack.data.spray.SprayProductRateBasis.PER_100_LITRES) "/100 L" else "/ha"
-    val value = if (product.rate % 1.0 == 0.0) product.rate.toInt().toString() else product.rate.toString()
-    return "Stored programme rate: $value ${product.unitRaw}$basis — you'll confirm the applied rate when you plan the spray."
 }
 
 @Composable

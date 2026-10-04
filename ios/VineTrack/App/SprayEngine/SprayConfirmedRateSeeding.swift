@@ -82,6 +82,12 @@ nonisolated enum SprayConfirmedRateSeeding {
     ) {
         line.chemicalId = chemical.id
         line.overrideRate = nil
+        line.operationalRateSource = nil
+        line.operationalRateUnit = nil
+        if let selection = OperationalRateResolver.resolve(chemical: chemical), selection.source == .vineyardPreferred {
+            applyOperational(selection, to: &line)
+            return
+        }
 
         guard let confirmed = ChemicalSprayRateHandoff.resolution(chemical.defaultRates) else {
             let selection = SprayRegisteredUseRates.defaultSelection(for: chemical, preferring: order)
@@ -123,6 +129,22 @@ nonisolated enum SprayConfirmedRateSeeding {
             // The band is selected; the dose deliberately is not.
             line.selectedRateId = match?.id ?? UUID()
         }
+    }
+
+    static func applyOperational(_ selection: OperationalRateResolver.Selection, to line: inout ChemicalLine) {
+        line.basis = selection.rate.basis
+        line.selectedRateId = UUID()
+        line.overrideRate = selection.rate.chemicalUnit.toBase(selection.rate.amount)
+        line.operationalRateUnit = selection.rate.unit
+        line.operationalRateSource = selection.source
+    }
+
+    static func plannedLine(for chemical: SavedChemical, program: VineyardPreferredRate?, preferring order: [ChemicalRateBasis], fallbackBasis: ChemicalRateBasis) -> ChemicalLine {
+        var line = seededLine(for: chemical, preferring: order, fallbackBasis: fallbackBasis)
+        if let selection = OperationalRateResolver.resolve(program: program, chemical: chemical), selection.source != .confirmedDefault {
+            applyOperational(selection, to: &line)
+        }
+        return line
     }
 
     /// Checks a dose the operator typed for a line governed by a confirmed
@@ -199,7 +221,9 @@ nonisolated enum SprayConfirmedRateSeeding {
         let slot = ChemicalDefaultRateValidity.confirmedSlots(chemical.defaultRates)
             .first { $0.basis == basis }
         let entryMethod: String
-        if let slot {
+        if line.operationalRateSource != nil {
+            entryMethod = StoredChemicalDefaultRate.entryManual
+        } else if let slot {
             // A confirmed scalar that was then overridden with a DIFFERENT
             // number is a dose the operator typed for this spray. The same
             // number, however it reached the line, keeps the slot's provenance.
@@ -226,7 +250,7 @@ nonisolated enum SprayConfirmedRateSeeding {
             unit: unit,
             basis: basis,
             entryMethod: entryMethod,
-            confirmedRange: slot?.range
+            confirmedRange: line.operationalRateSource == nil ? slot?.range : nil
         )
     }
 

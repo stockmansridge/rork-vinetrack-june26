@@ -33,6 +33,8 @@ nonisolated struct ChemicalLine: Identifiable, Sendable, Codable {
     /// uses this value instead of the saved/recommended rate, and the UI
     /// flags the line as manually overridden until the operator taps Reset.
     var overrideRate: Double?
+    var operationalRateUnit: String? = nil
+    var operationalRateSource: OperationalRateResolver.Source? = nil
 
     init(
         id: UUID = UUID(),
@@ -49,7 +51,7 @@ nonisolated struct ChemicalLine: Identifiable, Sendable, Codable {
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
-        case id, chemicalId, selectedRateId, basis, overrideRate
+        case id, chemicalId, selectedRateId, basis, overrideRate, operationalRateUnit, operationalRateSource
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -59,6 +61,8 @@ nonisolated struct ChemicalLine: Identifiable, Sendable, Codable {
         selectedRateId = try c.decode(UUID.self, forKey: .selectedRateId)
         basis = try c.decodeIfPresent(RateBasis.self, forKey: .basis) ?? .perHectare
         overrideRate = try c.decodeIfPresent(Double.self, forKey: .overrideRate)
+        operationalRateUnit = try c.decodeIfPresent(String.self, forKey: .operationalRateUnit)
+        operationalRateSource = try c.decodeIfPresent(OperationalRateResolver.Source.self, forKey: .operationalRateSource)
     }
 }
 
