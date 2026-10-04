@@ -1,16 +1,35 @@
 -- LOCAL disposable fixture harness only: scripts/test_chemical_inventory_contract.py.
 -- Exercises actual inspected inventory function bodies plus migration, not live data.
 begin;
+-- The Python runner establishes this marker only after checking its local connection.
+do $$
+begin
+  if current_database() <> 'inventory_contract_test'
+    or inet_server_addr() is not null
+    or current_setting('request.inventory_contract_runner',true) is distinct from 'local-fixture' then
+    raise exception 'Run only through scripts/test_chemical_inventory_contract.py in the disposable local inventory_contract_test database';
+  end if;
+end;
+$$;
 do $$
 declare
   vineyard uuid := gen_random_uuid(); chemical uuid := gen_random_uuid(); other uuid := gen_random_uuid();
+  other_vineyard uuid := gen_random_uuid();
   owner_id uuid := gen_random_uuid(); manager_id uuid := gen_random_uuid();
   supervisor_id uuid := gen_random_uuid(); operator_id uuid := gen_random_uuid(); admin_id uuid := gen_random_uuid();
   legacy_id uuid; new_id uuid; duplicate_id uuid; r record; actor uuid; operation text; n integer;
   before_summary jsonb; after_summary jsonb;
 begin
+  -- Before creating vineyards, the fixture must reproduce the real FK rejection.
+  begin
+    insert into public.saved_chemicals(id,vineyard_id,product_form) values (chemical,vineyard,'liquid');
+    raise exception 'Fixture allowed a saved chemical with a nonexistent vineyard';
+  exception when foreign_key_violation then null; end;
+  raise notice 'PASS fixture: nonexistent vineyard rejected by saved_chemicals FK';
+  insert into public.vineyards(id,name) values
+    (vineyard,'Inventory Contract Test'),(other_vineyard,'Inventory Contract Other');
   insert into public.saved_chemicals(id,vineyard_id,product_form) values
-    (chemical,vineyard,'liquid'),(other,gen_random_uuid(),'liquid');
+    (chemical,vineyard,'liquid'),(other,other_vineyard,'liquid');
   insert into public.vineyard_members values (vineyard,owner_id,'owner'),(vineyard,manager_id,'manager'),
     (vineyard,supervisor_id,'supervisor'),(vineyard,operator_id,'operator');
   perform set_config('request.jwt.claim.sub',owner_id::text,true);

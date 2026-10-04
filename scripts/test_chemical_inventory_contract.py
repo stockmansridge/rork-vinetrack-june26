@@ -14,6 +14,13 @@ from pathlib import Path
 schema = json.loads(Path(sys.argv[1]).read_text())[0]["jsonb_build_object"]
 functions = json.loads(Path(sys.argv[2]).read_text())
 setup = """
+-- Refuse before any fixture DDL unless this is the dedicated local socket database.
+do $$ begin
+if current_database() <> 'inventory_contract_test' or inet_server_addr() is not null then
+  raise exception 'Inventory contract fixtures require the local inventory_contract_test database';
+end if;
+end $$;
+select set_config('request.inventory_contract_runner','local-fixture',false);
 do $$ begin
 if not exists(select 1 from pg_roles where rolname='anon') then create role anon; end if;
 if not exists(select 1 from pg_roles where rolname='authenticated') then create role authenticated; end if;
@@ -23,7 +30,8 @@ create function auth.uid() returns uuid language sql stable as $$
 select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
 create function public.is_system_admin() returns boolean language sql stable as $$
 select coalesce(current_setting('request.test_admin',true),'false')::boolean $$;
-create table public.saved_chemicals(id uuid primary key, vineyard_id uuid, deleted_at timestamptz,
+create table public.vineyards(id uuid primary key, name text not null);
+create table public.saved_chemicals(id uuid primary key, vineyard_id uuid references public.vineyards(id), deleted_at timestamptz,
 product_form text, purchase jsonb, updated_at timestamptz);
 create table public.vineyard_members(vineyard_id uuid,user_id uuid,role text);
 create function public.vineyard_role(p_vineyard_id uuid) returns text language sql stable security definer
@@ -70,7 +78,7 @@ print("PASS: iOS and Android production helpers expose identical RPC traceabilit
 migration = (root / "sql/261_chemical_inventory_traceability_owner_manager.sql").read_text()
 setup += migration + "\n" + migration + "\n"
 setup += (root / "sql/tests/261_chemical_inventory_traceability_tests.sql").read_text()
-result = subprocess.run(["sudo", "-u", "postgres", "psql", "-X", "-v", "ON_ERROR_STOP=1", "-d", "inventory_contract_test"],
+result = subprocess.run(["sudo", "-u", "postgres", "psql", "-X", "-h", "/var/run/postgresql", "-p", "5432", "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-d", "inventory_contract_test"],
                         input=setup, text=True, capture_output=True)
 print(result.stdout)
 print(result.stderr, file=sys.stderr)
