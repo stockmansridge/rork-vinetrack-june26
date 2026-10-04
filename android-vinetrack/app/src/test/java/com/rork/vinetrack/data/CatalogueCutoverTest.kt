@@ -63,7 +63,7 @@ class CatalogueCutoverTest {
         assertEquals("8 kg total", CatalogueInventoryContainer.historyText(row("""{"container_count":null,"quantity":8,"unit":"kg"}""")))
         assertEquals("chemical_inventory_purchase_history_v2", CatalogueInventoryMutation.HISTORY)
     }
-    @Test fun inventoryV2AdminGateAndCompatibility() = kotlinx.coroutines.runBlocking {
+    @Test fun inventoryV2PermissionGateAndCompatibility() = kotlinx.coroutines.runBlocking {
         var writes = 0; val refreshed = mutableListOf<String>()
         for (operation in listOf(CatalogueInventoryMutation.PURCHASE, CatalogueInventoryMutation.STOCKTAKE)) {
             try { CatalogueInventoryMutation.perform(false, operation, "affected", { writes++; Unit }, { refreshed.add(it); Unit }) } catch (_: Exception) { }
@@ -90,9 +90,8 @@ class CatalogueCutoverTest {
         val result = CatalogueTerminalResolver.result(job) { id -> fetched = id; row("""{"id":"$id","review_status":"approved"}""") }
         assertEquals("approved-stifle", fetched); assertEquals("VineTrack catalogue", result.badge)
     }
-    @Test fun `inventory policy excludes ordinary owners and managers`() {
-        assertTrue(CatalogueTerminalResolver.inventoryAllowed(true))
-        assertFalse(CatalogueTerminalResolver.inventoryAllowed(false))
+    @Test fun inventoryRequiresSelectedVineyardPermissionNotAdminStatus() {
+        assertFalse(com.rork.vinetrack.ui.AppUiState(isSystemAdmin = true).canManageInventory)
     }
     @Test fun `Belanty Greenshield Sprayseal and THIOVIT target display uses exact revision targets`() {
         for ((product, targets) in listOf("Belanty" to listOf("Powdery mildew"), "Greenshield" to listOf("Black spot", "Downy mildew", "Phomopsis Cane and Leaf spot"), "Sprayseal" to listOf("Eutypa dieback", "Botryosphaeria dieback"), "THIOVIT" to listOf("Powdery mildew", "Bud mite"))) {

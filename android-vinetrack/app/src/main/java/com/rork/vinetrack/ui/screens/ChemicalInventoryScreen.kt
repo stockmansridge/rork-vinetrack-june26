@@ -17,10 +17,10 @@ import kotlinx.serialization.json.*
 import java.time.LocalDate
 import android.app.DatePickerDialog
 
-/** Pilot access depends on System Admin, never vineyard Owner/Manager role. */
+/** Inventory access follows selected-vineyard Owner/Manager membership. */
 @Composable
 internal fun ChemicalInventoryScreen(state: AppUiState, onClose: () -> Unit, modifier: Modifier = Modifier, recordPurchase: Boolean = false) {
-    if (!CatalogueTerminalResolver.inventoryAllowed(state.isSystemAdmin)) return
+    if (!state.canManageInventory) return
     val context = LocalContext.current
     val repository = remember { CatalogueRepository(context) }
     val overviewScope = rememberCoroutineScope()
@@ -69,7 +69,8 @@ internal fun ChemicalInventoryScreen(state: AppUiState, onClose: () -> Unit, mod
                             summary.number("percent_remaining")?.let { percent -> LinearProgressIndicator(progress = { (percent / 100).toFloat() }, modifier = Modifier.fillMaxWidth()); Text("${percent.toInt()}%") }
                         }
                         Text("Estimated stock value: ${summary.number("estimated_stock_value")?.toString() ?: "—"} ${summary.text("currency").orEmpty()}")
-                        Text("Latest purchase: ${summary.text("latest_purchase_date") ?: "—"} · Batch: ${summary.text("latest_batch_number") ?: "—"}")
+                        ChemicalInventoryTraceability.display(summary, latest = true).forEach { Text(it) }
+                        Text("Latest purchase: ${summary.text("latest_purchase_date") ?: "—"}")
                     }
                 }
             }
@@ -80,11 +81,11 @@ internal fun ChemicalInventoryScreen(state: AppUiState, onClose: () -> Unit, mod
             TextButton(onClick = { overviewScope.launch { loadSummaries() } }) { Text("Retry") }
         }
     }
-    selected?.let { chemical -> InventoryActions(chemical, summaries[chemical.id], systemAdmin = state.isSystemAdmin, onDismiss = { selected = null }, onMutation = { refresh(chemical.id) }, recordPurchase = recordPurchase) }
+    selected?.let { chemical -> InventoryActions(chemical, summaries[chemical.id], canManageInventory = state.canManageInventory && chemical.vineyardId == state.selectedVineyardId, onDismiss = { selected = null }, onMutation = { refresh(chemical.id) }, recordPurchase = recordPurchase) }
 }
 
 @Composable
-private fun InventoryActions(chemical: SavedChemical, summary: CatalogueRow?, systemAdmin: Boolean, onDismiss: () -> Unit, onMutation: suspend () -> Unit, modifier: Modifier = Modifier, recordPurchase: Boolean = false) {
+private fun InventoryActions(chemical: SavedChemical, summary: CatalogueRow?, canManageInventory: Boolean, onDismiss: () -> Unit, onMutation: suspend () -> Unit, modifier: Modifier = Modifier, recordPurchase: Boolean = false) {
     val context = LocalContext.current
     val repository = remember { CatalogueRepository(context) }
     val scope = rememberCoroutineScope()
@@ -106,6 +107,8 @@ private fun InventoryActions(chemical: SavedChemical, summary: CatalogueRow?, sy
     var cost by remember { mutableStateOf("") }
     var currency by remember { mutableStateOf("AUD") }
     var batch by remember { mutableStateOf("") }
+    var batchDate by remember { mutableStateOf<String?>(null) }
+    var serialNumber by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
     var date by remember { mutableStateOf(LocalDate.now().toString()) }
     var warnings by remember { mutableStateOf(if (summary?.fields?.containsKey("warnings_enabled") == true) summary.bool("warnings_enabled") else true) }
@@ -113,6 +116,7 @@ private fun InventoryActions(chemical: SavedChemical, summary: CatalogueRow?, sy
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     suspend fun loadHistory() {
+        if (!canManageInventory) return
         try { history = repository.rows(repository.rpc(CatalogueInventoryMutation.HISTORY, buildJsonObject { put("p_saved_chemical_id", chemical.id) })) }
         catch (_: Exception) { error = "Unable to load purchase history." }
     }
@@ -149,13 +153,17 @@ private fun InventoryActions(chemical: SavedChemical, summary: CatalogueRow?, sy
                 TextButton(onClick = { scope.launch { loadHistory() } }) { Text("Load history") }
                 history.forEach { row ->
                     Text("${row.text("purchase_date").orEmpty()} · ${CatalogueInventoryContainer.historyText(row)}")
-                    Text("${row.number("total_cost") ?: "—"} ${row.text("currency").orEmpty()} · ${row.text("batch_number").orEmpty()}")
+                    Text("${row.number("total_cost") ?: "—"} ${row.text("currency").orEmpty()}")
+                    ChemicalInventoryTraceability.display(row).forEach { Text(it) }
                     row.number("unit_cost")?.let { Text("Unit cost: $it ${row.text("currency").orEmpty()}") }
                     Text(listOfNotNull(row.text("supplier"), row.text("invoice_reference")).filter { it.isNotBlank() }.joinToString(" · "))
                     HorizontalDivider()
                 }
             } else {
                 if (action == "Low-stock settings") OutlinedTextField(lowStockPercent, { lowStockPercent = it }, label = { Text("Low stock percent (0–100)") })
+                if (action == "Record purchase") {
+                    OutlinedButton(enabled = !busy, onClick = { chooseDate(date) { date = it } }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("Purchase date: $date") }
+                }
                 if (action == "Record purchase" || action == stockAction) {
                     if (knownUnits.isEmpty()) Row {
                         listOf("liquid", "solid").forEach { value -> FilterChip(selected = family == value, onClick = { family = value; unit = if (value == "solid") "kg" else "L" }, label = { Text(value) }) }
@@ -173,12 +181,14 @@ private fun InventoryActions(chemical: SavedChemical, summary: CatalogueRow?, sy
                     }
                 }
                 if (action == "Record purchase") {
-                    OutlinedButton(enabled = !busy, onClick = { chooseDate(date) { date = it } }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("Purchase date: $date") }
                     OutlinedTextField(cost, { cost = it }, label = { Text("Total cost") }, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(currency, { currency = it }, label = { Text("Currency") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(batch, { batch = it }, label = { Text("Batch") })
+                    OutlinedTextField(batch, { batch = it }, label = { Text("Batch / Lot number") })
+                    OutlinedButton(enabled = !busy, onClick = { chooseDate(batchDate.orEmpty()) { batchDate = it } }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("Production / Batch date: ${batchDate ?: "Not set"}") }
+                    if (batchDate != null) TextButton(enabled = !busy, onClick = { batchDate = null }) { Text("Clear Production / Batch date") }
+                    OutlinedTextField(serialNumber, { serialNumber = it }, label = { Text("Serial number (if applicable)") })
                     OutlinedTextField(supplier, { supplier = it }, label = { Text("Supplier") })
-                    OutlinedTextField(invoice, { invoice = it }, label = { Text("Invoice reference") })
+                    OutlinedTextField(invoice, { invoice = it }, label = { Text("Invoice / reference") })
                     OutlinedButton(enabled = !busy, onClick = { chooseDate(expiry) { expiry = it } }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("Expiry date: ${expiry.ifBlank { "Not set (optional)" }}") }
                     if (expiry.isNotBlank()) TextButton(enabled = !busy, onClick = { expiry = "" }) { Text("Clear expiry date") }
                 }
@@ -188,7 +198,8 @@ private fun InventoryActions(chemical: SavedChemical, summary: CatalogueRow?, sy
             error?.let { Text(it) }
         }
     }, confirmButton = {
-        TextButton(enabled = systemAdmin && !busy && action != "Purchase history", onClick = {
+        TextButton(enabled = canManageInventory && !busy && action != "Purchase history", onClick = {
+            if (!canManageInventory) return@TextButton
             val value = (if (action == "Low-stock settings") lowStockPercent else quantity).toDoubleOrNull()
             val total = cost.toDoubleOrNull()
             val count = containerCount.toDoubleOrNull(); val size = containerSize.toDoubleOrNull()
@@ -201,12 +212,12 @@ private fun InventoryActions(chemical: SavedChemical, summary: CatalogueRow?, sy
                 put("p_saved_chemical_id", chemical.id)
                 if (action == "Low-stock settings") { put("p_low_stock_percent", value!!); put("p_warnings_enabled", warnings) }
                 else {
-                    put("p_notes", notes)
+                    put("p_notes", ChemicalInventoryTraceability.nullableText(notes))
                     if (containerAction) CatalogueInventoryContainer.fields(count!!, size!!, unit).forEach { (key, field) -> put(key, field) }
                     if (action == "Record purchase") {
-                        put("p_total_cost", total!!); put("p_currency", currency.uppercase()); put("p_batch_number", batch); put("p_purchase_date", date)
-                        put("p_supplier", supplier.takeIf { it.isNotBlank() }?.let(::JsonPrimitive) ?: JsonNull)
-                        put("p_invoice_reference", invoice.takeIf { it.isNotBlank() }?.let(::JsonPrimitive) ?: JsonNull)
+                        put("p_total_cost", total!!); put("p_currency", currency.trim().uppercase()); ChemicalInventoryTraceability.fields(batch, batchDate, serialNumber).forEach { (key, field) -> put(key, field) }; put("p_purchase_date", date)
+                        put("p_supplier", ChemicalInventoryTraceability.nullableText(supplier))
+                        put("p_invoice_reference", ChemicalInventoryTraceability.nullableText(invoice))
                         put("p_expiry_date", expiry.takeIf { it.isNotBlank() }?.let(::JsonPrimitive) ?: JsonNull)
                     }
                     if (action == stockAction) {
@@ -217,7 +228,7 @@ private fun InventoryActions(chemical: SavedChemical, summary: CatalogueRow?, sy
                 }
             }
             scope.launch { busy = true; try {
-                CatalogueInventoryMutation.perform(systemAdmin = systemAdmin, operation = name, chemicalId = chemical.id,
+                CatalogueInventoryMutation.perform(canManageInventory = canManageInventory, operation = name, chemicalId = chemical.id,
                     mutate = { repository.rpc(name, args); Unit }, refresh = { onMutation() })
                 if (name == CatalogueInventoryMutation.PURCHASE) loadHistory()
                 onDismiss()

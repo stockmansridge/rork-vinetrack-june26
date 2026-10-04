@@ -8,9 +8,9 @@ object CatalogueInventoryMutation {
     const val STOCKTAKE = "chemical_inventory_record_stocktake_v2"
     const val HISTORY = "chemical_inventory_purchase_history_v2"
     val operations = setOf("chemical_inventory_record_purchase", "chemical_inventory_record_stocktake", PURCHASE, STOCKTAKE, "chemical_inventory_mark_finished", "chemical_inventory_set_settings")
-    suspend fun perform(systemAdmin: Boolean, operation: String, chemicalId: String,
+    suspend fun perform(canManageInventory: Boolean, operation: String, chemicalId: String,
         mutate: suspend () -> Unit, refresh: suspend (String) -> Unit) {
-        check(systemAdmin && operation in operations)
+        check(canManageInventory && operation in operations)
         mutate()
         refresh(chemicalId)
     }

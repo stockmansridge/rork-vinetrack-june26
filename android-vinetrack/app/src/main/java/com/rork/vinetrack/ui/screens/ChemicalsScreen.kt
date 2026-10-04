@@ -184,7 +184,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
             }
         }
     }
-    if (showInventory && state.isSystemAdmin) {
+    if (showInventory && state.canManageInventory) {
         ChemicalInventoryScreen(state, onClose = { showInventory = false }, modifier = modifier)
         return
     }
@@ -265,7 +265,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
         topBar = {
             TopAppBar(
                 title = { Text("Chemicals") },
-                actions = { if (state.isSystemAdmin) TextButton(onClick = { showInventory = true }) { Text("Inventory") } },
+                actions = { if (state.canManageInventory) TextButton(onClick = { showInventory = true }) { Text("Inventory") } },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )

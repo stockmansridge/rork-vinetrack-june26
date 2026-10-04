@@ -85,7 +85,6 @@ struct SprayProgramView: View {
     @Environment(SprayRecordSyncService.self) private var sprayRecordSync
     @Environment(SprayJobTemplateService.self) private var portalTemplates
     @Environment(\.accessControl) private var accessControl
-    @Environment(SystemAdminService.self) private var systemAdmin
 
     // Navigation
     /// Opens on Program: the master spray program is the primary landing view.
@@ -401,7 +400,7 @@ struct SprayProgramView: View {
                 if accessControl?.canManageSetup == true { CatalogueSearchView() }
             }
             .sheet(isPresented: $showChemicalInventory) {
-                if systemAdmin.isSystemAdmin {
+                if accessControl?.canManageSetup == true {
                     NavigationStack {
                         ChemicalInventoryView(recordPurchase: recordChemicalPurchase)
                             .toolbar {
@@ -517,14 +516,14 @@ struct SprayProgramView: View {
                 }
             }
 
-            if accessControl?.canManageSetup == true || systemAdmin.isSystemAdmin {
+            if accessControl?.canManageSetup == true {
                 Section("Chemicals") {
                     if accessControl?.canManageSetup == true {
                         Button { showChemicalSearch = true } label: {
                             Label("Add Chemical", systemImage: "flask")
                         }
                     }
-                    if systemAdmin.isSystemAdmin {
+                    if accessControl?.canManageSetup == true {
                         Button {
                             recordChemicalPurchase = true
                             showChemicalInventory = true

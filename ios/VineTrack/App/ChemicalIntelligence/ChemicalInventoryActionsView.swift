@@ -6,7 +6,9 @@ struct ChemicalInventoryActionsView: View {
     let summary: CatalogueWire?
     var recordPurchase: Bool = false
     let refresh: () async -> Void
-    @Environment(SystemAdminService.self) private var admin
+    @Environment(\.accessControl) private var accessControl
+    @Environment(MigratedDataStore.self) private var store
+    private var canManageInventory: Bool { (accessControl?.canManageSetup ?? false) && store.selectedVineyardId == chemical.vineyardId }
     @Environment(\.dismiss) private var dismiss
     @State private var action: String = "Stocktake / Adjust"
     @State private var physicalEdited: Bool = false
@@ -24,6 +26,10 @@ struct ChemicalInventoryActionsView: View {
     @State private var cost: String = ""
     @State private var currency: String = "AUD"
     @State private var batch: String = ""
+    @State private var batchDate: Date? = nil
+    @State private var serialNumber: String = ""
+    @State private var choosingBatchDate: Bool = false
+    @State private var batchDateDraft: Date = Date()
     @State private var notes: String = ""
     @State private var purchaseDate: Date = Date()
     @State private var warnings: Bool = true
@@ -50,7 +56,8 @@ struct ChemicalInventoryActionsView: View {
                     ForEach(history) { row in
                         VStack(alignment: .leading) {
                             Text("\(row.text("purchase_date") ?? "") · \(CatalogueInventoryContainer.historyText(row))")
-                            Text("\(row.number("total_cost").map { String($0) } ?? "—") \(row.text("currency") ?? "") · \(row.text("batch_number") ?? "")")
+                            Text("\(row.number("total_cost").map { String($0) } ?? "—") \(row.text("currency") ?? "")")
+                            ForEach(ChemicalInventoryTraceability.display(row), id: \.self) { Text($0).font(.caption) }
                             if let unitCost = row.number("unit_cost") { Text("Unit cost: \(unitCost) \(row.text("currency") ?? "")") }
                             Text([row.text("supplier"), row.text("invoice_reference")].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption)
                         }
@@ -59,6 +66,9 @@ struct ChemicalInventoryActionsView: View {
                 } else {
                     if action == "Low-stock settings" {
                         TextField("Low stock percent (0–100)", text: $lowStockPercent).keyboardType(.decimalPad)
+                    }
+                    if action == "Record purchase" {
+                        DatePicker("Purchase date", selection: $purchaseDate, displayedComponents: .date)
                     }
                     if action == "Record purchase" || action == stockAction {
                         if CatalogueInventoryContainer.units(form: chemical.productForm, packUnit: chemical.packUnit).isEmpty {
@@ -80,21 +90,45 @@ struct ChemicalInventoryActionsView: View {
                         }
                     }
                     if action == "Record purchase" {
-                        DatePicker("Purchase date", selection: $purchaseDate, displayedComponents: .date)
                         TextField("Total cost", text: $cost).keyboardType(.decimalPad)
                         TextField("Currency", text: $currency)
-                        TextField("Batch", text: $batch)
+                        TextField("Batch / Lot number", text: $batch)
+                        Button {
+                            batchDateDraft = batchDate ?? Date()
+                            choosingBatchDate = true
+                        } label: {
+                            LabeledContent("Production / Batch date", value: batchDate.map(ChemicalInventoryTraceability.dateText) ?? "Not set")
+                        }.disabled(busy)
+                        if batchDate != nil {
+                            Button("Clear Production / Batch date") { batchDate = nil }.disabled(busy)
+                        }
+                        TextField("Serial number (if applicable)", text: $serialNumber)
                         TextField("Supplier", text: $supplier)
-                        TextField("Invoice reference", text: $invoice)
+                        TextField("Invoice / reference", text: $invoice)
                         TextField("Expiry date YYYY-MM-DD (optional)", text: $expiry)
                     }
                     if action == "Low-stock settings" { Toggle("Low-stock warnings", isOn: $warnings) }
                     TextField("Notes", text: $notes)
-                    Button("Save") { Task { await save() } }.disabled(busy || !admin.isSystemAdmin)
+                    Button("Save") { Task { await save() } }.disabled(busy || !canManageInventory)
                 }
                 if let error { Text(error) }
             }.navigationTitle("Inventory")
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() }.disabled(busy) } }
+        }
+        .sheet(isPresented: $choosingBatchDate) {
+            NavigationStack {
+                Form {
+                    DatePicker("Production / Batch date", selection: $batchDateDraft, displayedComponents: .date)
+                    Text("Optional manufacturer date; it may pre-date purchase.")
+                }
+                .navigationTitle("Production / Batch date")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { choosingBatchDate = false } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Use date") { batchDate = batchDateDraft; choosingBatchDate = false }
+                    }
+                }
+            }.presentationDetents([.medium])
         }
         .interactiveDismissDisabled(busy)
         .onChange(of: containerCount) { _, _ in updateOpeningQuantity() }
@@ -117,12 +151,12 @@ struct ChemicalInventoryActionsView: View {
         quantity = CatalogueInventoryContainer.openingQuantity(count: containerCount, size: containerSize, physical: quantity, edited: physicalEdited)
     }
     private func loadHistory() async {
-        guard admin.isSystemAdmin else { return }
+        guard canManageInventory else { return }
         do { history = try await CatalogueRepository().rpc(CatalogueInventoryMutation.history, ["p_saved_chemical_id": .string(chemical.id.uuidString)]) }
         catch { self.error = "Unable to load purchase history." }
     }
     private func save() async {
-        guard admin.isSystemAdmin else { return }
+        guard canManageInventory else { return }
         var params: [String: SprayReportPayloadV1.JSONValue] = ["p_saved_chemical_id": .string(chemical.id.uuidString)]
         var name = "chemical_inventory_mark_finished"
         if action != "Mark finished" {
@@ -135,7 +169,7 @@ struct ChemicalInventoryActionsView: View {
                     guard let count = Double(containerCount), let size = Double(containerSize), CatalogueInventoryContainer.valid(count: count, size: size) else { error = "Enter a positive whole container count and positive container size."; return }
                     params.merge(CatalogueInventoryContainer.fields(count: count, size: size, unit: unit)) { _, new in new }
                 }
-                params["p_notes"] = .string(notes)
+                params["p_notes"] = ChemicalInventoryTraceability.nullableText(notes)
                 if action == "Record purchase" {
                     guard let total = Double(cost), total.isFinite, total >= 0 else { error = "Enter a valid total cost."; return }
                     if !expiry.isEmpty {
@@ -143,10 +177,11 @@ struct ChemicalInventoryActionsView: View {
                         guard let date = formatter.date(from: expiry), formatter.string(from: date) == expiry else { error = "Enter expiry as YYYY-MM-DD."; return }
                     }
                     name = CatalogueInventoryMutation.purchase
-                    params["p_supplier"] = supplier.isEmpty ? .null : .string(supplier)
-                    params["p_invoice_reference"] = invoice.isEmpty ? .null : .string(invoice)
+                    params["p_supplier"] = ChemicalInventoryTraceability.nullableText(supplier)
+                    params["p_invoice_reference"] = ChemicalInventoryTraceability.nullableText(invoice)
                     params["p_expiry_date"] = expiry.isEmpty ? .null : .string(expiry)
-                    params["p_total_cost"] = .number(total); params["p_currency"] = .string(currency.uppercased()); params["p_batch_number"] = .string(batch)
+                    params["p_total_cost"] = .number(total); params["p_currency"] = .string(currency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased())
+                    params.merge(ChemicalInventoryTraceability.fields(batch: batch, batchDate: batchDate.map(ChemicalInventoryTraceability.dateText), serial: serialNumber)) { _, new in new }
                     params["p_purchase_date"] = .string(purchaseDate.formatted(.iso8601.year().month().day().dateSeparator(.dash)))
                 } else {
                     guard let value = Double(quantity), value.isFinite, value >= 0 else { error = "Enter a valid physically remaining quantity."; return }
@@ -156,11 +191,11 @@ struct ChemicalInventoryActionsView: View {
                     params["p_effective_at"] = .string(Date().formatted(.iso8601))
                 }
             }
-        } else { params["p_notes"] = .string(notes) }
+        } else { params["p_notes"] = ChemicalInventoryTraceability.nullableText(notes) }
         busy = true; defer { busy = false }
         do {
             // Mutations return scalar IDs/void, not summary rows.
-            try await CatalogueInventoryMutation.perform(systemAdmin: admin.isSystemAdmin, operation: name, chemicalId: chemical.id,
+            try await CatalogueInventoryMutation.perform(canManageInventory: canManageInventory, operation: name, chemicalId: chemical.id,
                 mutate: { _ = try await SupabaseClientProvider.shared.client.rpc(name, params: params).execute() },
                 refresh: { _ in await refresh() })
             if name == CatalogueInventoryMutation.purchase { await loadHistory() }

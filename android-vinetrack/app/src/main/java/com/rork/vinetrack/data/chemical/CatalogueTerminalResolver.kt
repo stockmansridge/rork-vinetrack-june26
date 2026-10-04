@@ -8,5 +8,4 @@ object CatalogueTerminalResolver {
         check(exact.id == id && (job.text("stage") != "catalogue_match" || exact.text("review_status") == "approved"))
         return exact
     }
-    fun inventoryAllowed(systemAdmin: Boolean): Boolean = systemAdmin
 }

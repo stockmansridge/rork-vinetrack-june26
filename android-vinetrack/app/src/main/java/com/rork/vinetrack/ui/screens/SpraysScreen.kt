@@ -485,7 +485,7 @@ private fun SprayListView(
     if (showChemicalSearch && canAddChemical) {
         CatalogueSearchSheet(vm, state, onDismiss = { showChemicalSearch = false })
     }
-    if (showChemicalInventory && state.isSystemAdmin) {
+    if (showChemicalInventory && state.canManageInventory) {
         Dialog(onDismissRequest = { showChemicalInventory = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             Surface(modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), color = vine.appBackground) {
                 ChemicalInventoryScreen(state, onClose = { showChemicalInventory = false }, recordPurchase = recordChemicalPurchase)
@@ -531,7 +531,7 @@ private fun SprayListView(
                                 leadingIcon = { Icon(Icons.Filled.WaterDrop, contentDescription = null) },
                                 onClick = { addMenu = false; onAdd() },
                             )
-                            if (canAddChemical || state.isSystemAdmin) {
+                            if (canAddChemical || state.canManageInventory) {
                                 HorizontalDivider()
                                 Text("Chemicals", style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
                                     color = vine.textSecondary, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
@@ -542,7 +542,7 @@ private fun SprayListView(
                                         onClick = { addMenu = false; showChemicalSearch = true },
                                     )
                                 }
-                                if (state.isSystemAdmin) {
+                                if (state.canManageInventory) {
                                     DropdownMenuItem(
                                         text = { Text("Chemical Purchase") },
                                         leadingIcon = { Icon(Icons.Filled.ShoppingCart, contentDescription = null) },

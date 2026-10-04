@@ -64,13 +64,13 @@ import Testing
         #expect(CatalogueInventoryContainer.historyText(legacy) == "8 kg total")
         #expect(CatalogueInventoryMutation.history == "chemical_inventory_purchase_history_v2")
     }
-    @Test func inventoryV2AdminGateAndCompatibility() async throws {
+    @Test func inventoryV2PermissionGateAndCompatibility() async throws {
         let id = UUID(); var writes = 0; var refreshed: [UUID] = []
         for operation in [CatalogueInventoryMutation.purchase, CatalogueInventoryMutation.stocktake] {
-            do { try await CatalogueInventoryMutation.perform(systemAdmin: false, operation: operation, chemicalId: id, mutate: { writes += 1 }, refresh: { refreshed.append($0) }) } catch { }
+            do { try await CatalogueInventoryMutation.perform(canManageInventory: false, operation: operation, chemicalId: id, mutate: { writes += 1 }, refresh: { refreshed.append($0) }) } catch { }
             #expect(writes == 0 && refreshed.isEmpty)
         }
-        try await CatalogueInventoryMutation.perform(systemAdmin: true, operation: CatalogueInventoryMutation.purchase, chemicalId: id, mutate: { writes += 1 }, refresh: { refreshed.append($0) })
+        try await CatalogueInventoryMutation.perform(canManageInventory: true, operation: CatalogueInventoryMutation.purchase, chemicalId: id, mutate: { writes += 1 }, refresh: { refreshed.append($0) })
         #expect(writes == 1 && refreshed == [id])
         #expect(CatalogueInventoryMutation.operations.contains("chemical_inventory_record_purchase"))
         #expect(CatalogueInventoryMutation.operations.contains("chemical_inventory_record_stocktake"))
@@ -130,8 +130,8 @@ import Testing
         }
     }
     @Test func inventoryAccessAndLinkedRevisionFixtures() throws {
-        #expect(CatalogueTerminalResolver.inventoryAllowed(systemAdmin: true))
-        #expect(!CatalogueTerminalResolver.inventoryAllowed(systemAdmin: false))
+        #expect(BackendRole.owner.canChangeSettings && BackendRole.manager.canChangeSettings)
+        #expect(!BackendRole.supervisor.canChangeSettings && !BackendRole.operator.canChangeSettings)
         for (name, targets) in [("Belanty", ["Powdery mildew"]), ("Greenshield", ["Black spot", "Downy mildew", "Phomopsis Cane and Leaf spot"]), ("Sprayseal", ["Eutypa dieback", "Botryosphaeria dieback"]), ("THIOVIT", ["Powdery mildew", "Bud mite"])] {
             let revision = CatalogueWire(fields: ["product_name": .string(name), "front_label_image_path": .string("labels/\(name).jpg"), "vineyard_uses": .array([.object(["targets": .array(targets.map { .string($0) })])])])
             #expect(revision.targets == targets)
@@ -140,12 +140,12 @@ import Testing
     }
     @Test func inventoryMutationRefreshesOnlyAffectedSummary() async throws {
         let id = UUID(); var mutated = false; var refreshed: [UUID] = []
-        try await CatalogueInventoryMutation.perform(systemAdmin: true, operation: "chemical_inventory_record_stocktake", chemicalId: id,
+        try await CatalogueInventoryMutation.perform(canManageInventory: true, operation: "chemical_inventory_record_stocktake", chemicalId: id,
             mutate: { mutated = true }, refresh: { refreshed.append($0) })
         #expect(mutated); #expect(refreshed == [id])
         mutated = false; refreshed = []
         do {
-            try await CatalogueInventoryMutation.perform(systemAdmin: false, operation: "chemical_inventory_record_purchase", chemicalId: id,
+            try await CatalogueInventoryMutation.perform(canManageInventory: false, operation: "chemical_inventory_record_purchase", chemicalId: id,
                 mutate: { mutated = true }, refresh: { refreshed.append($0) })
         } catch { }
         #expect(!mutated && refreshed.isEmpty)

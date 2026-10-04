@@ -5,9 +5,9 @@ nonisolated enum CatalogueInventoryMutation {
     static let stocktake = "chemical_inventory_record_stocktake_v2"
     static let history = "chemical_inventory_purchase_history_v2"
     static let operations = ["chemical_inventory_record_purchase", "chemical_inventory_record_stocktake", purchase, stocktake, "chemical_inventory_mark_finished", "chemical_inventory_set_settings"]
-    @MainActor static func perform(systemAdmin: Bool, operation: String, chemicalId: UUID,
+    @MainActor static func perform(canManageInventory: Bool, operation: String, chemicalId: UUID,
         mutate: () async throws -> Void, refresh: (UUID) async -> Void) async throws {
-        guard systemAdmin, operations.contains(operation) else { throw BackendRepositoryError.missingAuthenticatedUser }
+        guard canManageInventory, operations.contains(operation) else { throw BackendRepositoryError.missingAuthenticatedUser }
         try await mutate()
         await refresh(chemicalId)
     }

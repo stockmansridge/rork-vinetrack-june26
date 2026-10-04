@@ -8,5 +8,4 @@ nonisolated enum CatalogueTerminalResolver {
               job.text("stage") != "catalogue_match" || exact.text("review_status") == "approved" else { throw BackendRepositoryError.emptyResponse }
         return exact
     }
-    static func inventoryAllowed(systemAdmin: Bool) -> Bool { systemAdmin }
 }

@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// System Admin pilot, using inventory RPCs exclusively.
+/// Selected-vineyard Owner/Manager inventory, using authorized RPCs exclusively.
 struct ChemicalInventoryView: View {
     var recordPurchase: Bool = false
-    @Environment(SystemAdminService.self) private var admin
+    @Environment(\.accessControl) private var accessControl
+    private var canManageInventory: Bool { store.selectedVineyardId != nil && (accessControl?.canManageSetup ?? false) }
     @Environment(MigratedDataStore.self) private var store
     @State private var summaries: [UUID: CatalogueWire] = [:]
     @State private var selected: SavedChemical?
@@ -19,7 +20,7 @@ struct ChemicalInventoryView: View {
     }
     var body: some View {
         Group {
-            if CatalogueTerminalResolver.inventoryAllowed(systemAdmin: admin.isSystemAdmin) {
+            if canManageInventory {
                 List {
                     if recordPurchase {
                         Text("Select a chemical to record a purchase.")
@@ -55,7 +56,8 @@ struct ChemicalInventoryView: View {
                                         if let percent = summary.number("percent_remaining") { ProgressView(value: percent / 100); Text("\(Int(percent))%") }
                                     }
                                     Text("Estimated stock value: \(summary.number("estimated_stock_value").map { String($0) } ?? "—") \(summary.text("currency") ?? "")")
-                                    Text("Latest purchase: \(summary.text("latest_purchase_date") ?? "—") · Batch: \(summary.text("latest_batch_number") ?? "—")").font(.caption)
+                                    ForEach(ChemicalInventoryTraceability.display(summary, latest: true), id: \.self) { Text($0).font(.caption) }
+                                    Text("Latest purchase: \(summary.text("latest_purchase_date") ?? "—")").font(.caption)
                                 }
                             }
                         }.buttonStyle(.plain)
@@ -76,7 +78,7 @@ struct ChemicalInventoryView: View {
                 .sheet(item: $selected) { chemical in
                     ChemicalInventoryActionsView(chemical: chemical, summary: summaries[chemical.id], recordPurchase: recordPurchase) { await refresh(chemical.id) }
                 }
-            } else { ContentUnavailableView("Inventory pilot", systemImage: "lock", description: Text("System Admin access required.")) }
+            } else { ContentUnavailableView("Inventory access", systemImage: "lock", description: Text("Vineyard Owner or Manager access required.")) }
         }.navigationTitle(recordPurchase ? "Chemical Purchase" : "Chemical Inventory")
     }
     private func loadSummaries() async {
@@ -85,7 +87,7 @@ struct ChemicalInventoryView: View {
         for chemical in store.savedChemicals { await refresh(chemical.id) }
     }
     private func refresh(_ id: UUID) async {
-        guard admin.isSystemAdmin else { return }
+        guard canManageInventory else { return }
         do { summaries[id] = try await CatalogueRepository().rpc("chemical_inventory_summary", ["p_saved_chemical_id": .string(id.uuidString)]).first }
         catch { self.error = "Unable to load inventory. Check access and try again." }
     }
