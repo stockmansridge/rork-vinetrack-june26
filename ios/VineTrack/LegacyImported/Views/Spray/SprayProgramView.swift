@@ -400,7 +400,7 @@ struct SprayProgramView: View {
                 if accessControl?.canManageSetup == true { CatalogueSearchView() }
             }
             .sheet(isPresented: $showChemicalInventory) {
-                if accessControl?.canManageSetup == true {
+                if accessControl?.canViewInventory == true {
                     NavigationStack {
                         ChemicalInventoryView(recordPurchase: recordChemicalPurchase)
                             .toolbar {
@@ -516,20 +516,22 @@ struct SprayProgramView: View {
                 }
             }
 
-            if accessControl?.canManageSetup == true {
+            if accessControl?.canManageSetup == true || accessControl?.canViewInventory == true {
                 Section("Chemicals") {
                     if accessControl?.canManageSetup == true {
                         Button { showChemicalSearch = true } label: {
                             Label("Add Chemical", systemImage: "flask")
                         }
                     }
-                    if accessControl?.canManageSetup == true {
+                    if accessControl?.canRecordInventoryPurchase == true {
                         Button {
                             recordChemicalPurchase = true
                             showChemicalInventory = true
                         } label: {
                             Label("Chemical Purchase", systemImage: "cart")
                         }
+                    }
+                    if accessControl?.canViewInventory == true {
                         Button {
                             recordChemicalPurchase = false
                             showChemicalInventory = true

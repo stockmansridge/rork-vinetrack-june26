@@ -6,6 +6,12 @@ nonisolated enum BackendRole: String, Codable, CaseIterable, Sendable {
     case supervisor
     case `operator`
 
+    /// Inventory capabilities are membership-based, never System Admin permissions.
+    var canViewInventory: Bool { true }
+    var canRecordInventoryPurchase: Bool { self != .operator }
+    var canManageInventory: Bool { self == .owner || self == .manager }
+    var canViewInventoryCosts: Bool { canManageInventory }
+
     var canViewFinancials: Bool {
         switch self {
         case .owner, .manager:

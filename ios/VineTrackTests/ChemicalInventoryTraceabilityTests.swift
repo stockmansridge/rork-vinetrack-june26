@@ -6,23 +6,33 @@ import Testing
     @Test(arguments: BackendRole.allCases)
     func inventoryUsesVineyardPermission(_ role: BackendRole) async throws {
         let allowed = role == .owner || role == .manager
-        #expect(role.canChangeSettings == allowed)
-        let access = BackendAccessControl()
-        access.currentRole = role
-        #expect(access.legacyAccessControl.canManageSetup == allowed)
-        var wrote = false
-        var refreshed = false
-        do {
-            try await CatalogueInventoryMutation.perform(canManageInventory: access.legacyAccessControl.canManageSetup,
-                operation: CatalogueInventoryMutation.purchase, chemicalId: UUID(),
-                mutate: { wrote = true }, refresh: { _ in refreshed = true })
-            #expect(allowed)
-        } catch { #expect(!allowed) }
-        #expect(wrote == allowed && refreshed == allowed)
+        #expect(role.canViewInventory)
+        #expect(role.canRecordInventoryPurchase == (role != .operator))
+        #expect(role.canManageInventory == allowed)
+        #expect(role.canViewInventoryCosts == allowed)
+        for operation in CatalogueInventoryMutation.operations {
+            let expected = [CatalogueInventoryMutation.purchase, "chemical_inventory_record_purchase"].contains(operation) ? role != .operator : allowed
+            var wrote = false
+            var refreshed = false
+            do {
+                try await CatalogueInventoryMutation.perform(canManageInventory: role.canManageInventory,
+                    canRecordInventoryPurchase: role.canRecordInventoryPurchase,
+                    operation: operation, chemicalId: UUID(),
+                    mutate: { wrote = true }, refresh: { _ in refreshed = true })
+                #expect(expected)
+            } catch { #expect(!expected) }
+            #expect(wrote == expected && refreshed == expected)
+        }
+        #expect(!CatalogueInventoryMutation.allows(operation: "unknown", canRecordInventoryPurchase: true, canManageInventory: true))
     }
     @Test func noMembershipCannotMutateRegardlessOfAdminStatus() async {
         let access = BackendAccessControl()
-        #expect(!access.legacyAccessControl.canManageSetup)
+        let permissions = access.legacyAccessControl(for: UUID(), userId: UUID())
+        #expect(!permissions.canViewInventory && !permissions.canRecordInventoryPurchase)
+        #expect(!permissions.canManageInventory && !permissions.canViewInventoryCosts)
+        access.currentRole = .owner
+        let unscoped = access.legacyAccessControl(for: UUID(), userId: UUID())
+        #expect(!unscoped.canViewInventory, "A role without selected-vineyard membership is insufficient")
         var wrote = false
         do {
             try await CatalogueInventoryMutation.perform(canManageInventory: false,

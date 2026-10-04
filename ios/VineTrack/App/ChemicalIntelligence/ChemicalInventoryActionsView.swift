@@ -8,7 +8,16 @@ struct ChemicalInventoryActionsView: View {
     let refresh: () async -> Void
     @Environment(\.accessControl) private var accessControl
     @Environment(MigratedDataStore.self) private var store
-    private var canManageInventory: Bool { (accessControl?.canManageSetup ?? false) && store.selectedVineyardId == chemical.vineyardId }
+    private var canViewInventory: Bool { store.selectedVineyardId != nil && accessControl?.inventoryVineyardId == store.selectedVineyardId && store.selectedVineyardId == chemical.vineyardId && accessControl?.canViewInventory == true }
+    private var canRecordInventoryPurchase: Bool { canViewInventory && accessControl?.canRecordInventoryPurchase == true }
+    private var canManageInventory: Bool { canViewInventory && accessControl?.canManageInventory == true }
+    private var canViewInventoryCosts: Bool { canViewInventory && accessControl?.canViewInventoryCosts == true }
+    private var actions: [String] {
+        (canRecordInventoryPurchase ? ["Record purchase"] : []) +
+        (canManageInventory ? [stockAction, "Mark finished", "Low-stock settings"] : []) +
+        (canViewInventory ? ["Purchase history"] : [])
+    }
+    private var canSave: Bool { actions.contains(action) && action != "Purchase history" && (action == "Record purchase" ? canRecordInventoryPurchase : canManageInventory) }
     @Environment(\.dismiss) private var dismiss
     @State private var action: String = "Stocktake / Adjust"
     @State private var physicalEdited: Bool = false
@@ -50,20 +59,21 @@ struct ChemicalInventoryActionsView: View {
                     LabeledContent("Low-stock threshold", value: "\(summary.number("low_stock_threshold_quantity").map { String($0) } ?? "—") \(summary.text("display_unit") ?? "")")
                 }
                 Picker("Action", selection: $action) {
-                    ForEach(["Record purchase", stockAction, "Mark finished", "Low-stock settings", "Purchase history"], id: \.self) { Text($0) }
+                    ForEach(actions, id: \.self) { Text($0) }
                 }.disabled(busy)
                 if action == "Purchase history" {
                     ForEach(history) { row in
                         VStack(alignment: .leading) {
                             Text("\(row.text("purchase_date") ?? "") · \(CatalogueInventoryContainer.historyText(row))")
-                            Text("\(row.number("total_cost").map { String($0) } ?? "—") \(row.text("currency") ?? "")")
+                            if canViewInventoryCosts { Text("\(row.number("total_cost").map { String($0) } ?? "—") \(row.text("currency") ?? "")") }
                             ForEach(ChemicalInventoryTraceability.display(row), id: \.self) { Text($0).font(.caption) }
-                            if let unitCost = row.number("unit_cost") { Text("Unit cost: \(unitCost) \(row.text("currency") ?? "")") }
+                            if canViewInventoryCosts, let unitCost = row.number("unit_cost") { Text("Unit cost: \(unitCost) \(row.text("currency") ?? "")") }
+                            if let expiry = row.text("expiry_date") { Text("Expiry: \(expiry)").font(.caption) }
                             Text([row.text("supplier"), row.text("invoice_reference")].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption)
                         }
                     }
                     Button("Load history") { Task { await loadHistory() } }
-                } else {
+                } else if canSave {
                     if action == "Low-stock settings" {
                         TextField("Low stock percent (0–100)", text: $lowStockPercent).keyboardType(.decimalPad)
                     }
@@ -109,7 +119,7 @@ struct ChemicalInventoryActionsView: View {
                     }
                     if action == "Low-stock settings" { Toggle("Low-stock warnings", isOn: $warnings) }
                     TextField("Notes", text: $notes)
-                    Button("Save") { Task { await save() } }.disabled(busy || !canManageInventory)
+                    Button("Save") { Task { await save() } }.disabled(busy || !canSave)
                 }
                 if let error { Text(error) }
             }.navigationTitle("Inventory")
@@ -135,7 +145,8 @@ struct ChemicalInventoryActionsView: View {
         .onChange(of: containerSize) { _, _ in updateOpeningQuantity() }
         .onChange(of: action) { _, value in if value == "Purchase history" { Task { await loadHistory() } } }
         .task {
-            action = recordPurchase ? "Record purchase" : stockAction
+            action = recordPurchase && canRecordInventoryPurchase ? "Record purchase" : (canManageInventory ? stockAction : "Purchase history")
+            if action == "Purchase history" { await loadHistory() }
             warnings = summary?.fields["warnings_enabled"] == nil ? true : summary?.bool("warnings_enabled") == true
             lowStockPercent = summary?.number("low_stock_percent").map(CatalogueInventoryContainer.number) ?? ""
             if !opening { quantity = summary?.number("current_quantity").map(CatalogueInventoryContainer.number) ?? "" }
@@ -151,12 +162,16 @@ struct ChemicalInventoryActionsView: View {
         quantity = CatalogueInventoryContainer.openingQuantity(count: containerCount, size: containerSize, physical: quantity, edited: physicalEdited)
     }
     private func loadHistory() async {
-        guard canManageInventory else { return }
-        do { history = try await CatalogueRepository().rpc(CatalogueInventoryMutation.history, ["p_saved_chemical_id": .string(chemical.id.uuidString)]) }
+        guard canViewInventory else { return }
+        do {
+            let rows = try await CatalogueRepository().rpc(CatalogueInventoryMutation.history, ["p_saved_chemical_id": .string(chemical.id.uuidString)])
+            guard canViewInventory, !Task.isCancelled else { return }
+            history = rows
+        }
         catch { self.error = "Unable to load purchase history." }
     }
     private func save() async {
-        guard canManageInventory else { return }
+        guard canSave else { return }
         var params: [String: SprayReportPayloadV1.JSONValue] = ["p_saved_chemical_id": .string(chemical.id.uuidString)]
         var name = "chemical_inventory_mark_finished"
         if action != "Mark finished" {
@@ -195,7 +210,7 @@ struct ChemicalInventoryActionsView: View {
         busy = true; defer { busy = false }
         do {
             // Mutations return scalar IDs/void, not summary rows.
-            try await CatalogueInventoryMutation.perform(canManageInventory: canManageInventory, operation: name, chemicalId: chemical.id,
+            try await CatalogueInventoryMutation.perform(canManageInventory: canManageInventory, canRecordInventoryPurchase: canRecordInventoryPurchase, operation: name, chemicalId: chemical.id,
                 mutate: { _ = try await SupabaseClientProvider.shared.client.rpc(name, params: params).execute() },
                 refresh: { _ in await refresh() })
             if name == CatalogueInventoryMutation.purchase { await loadHistory() }

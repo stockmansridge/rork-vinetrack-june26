@@ -117,7 +117,7 @@ struct NewMainTabView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape.fill") }
                 .tag(4)
         }
-        .environment(\.accessControl, accessControl.legacyAccessControl)
+        .environment(\.accessControl, accessControl.legacyAccessControl(for: store.selectedVineyardId, userId: auth.userId))
         .safeAreaInset(edge: .top, spacing: 0) {
             OfflineGraceBanner()
                 .animation(.easeInOut(duration: 0.25), value: subscription.isRelyingOnOfflineGrace)

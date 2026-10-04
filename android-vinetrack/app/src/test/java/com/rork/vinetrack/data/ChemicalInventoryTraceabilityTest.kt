@@ -13,29 +13,40 @@ class ChemicalInventoryTraceabilityTest {
         for (role in listOf("owner", "manager")) {
             val state = AppUiState(selectedVineyardId = "vineyard", currentUserId = "user",
                 members = listOf(VineyardMember(userId = "user", vineyardId = "vineyard", role = role)))
-            assertTrue(state.canManageInventory)
-            var wrote = false; var refreshed = false
-            CatalogueInventoryMutation.perform(state.canManageInventory, CatalogueInventoryMutation.PURCHASE, "chemical",
-                mutate = { wrote = true }, refresh = { refreshed = true })
-            assertTrue(wrote && refreshed)
+            assertTrue(state.canViewInventory && state.canRecordInventoryPurchase && state.canManageInventory && state.canViewInventoryCosts)
+            for (operation in CatalogueInventoryMutation.operations) {
+                var wrote = false; var refreshed = false
+                CatalogueInventoryMutation.perform(state.canManageInventory, operation, "chemical",
+                    mutate = { wrote = true }, refresh = { refreshed = true }, canRecordInventoryPurchase = state.canRecordInventoryPurchase)
+                assertTrue(wrote && refreshed)
+            }
         }
     }
-    @Test fun supervisorAndOperatorCannotMutate() = runBlocking {
+    @Test fun supervisorCanPurchaseAndOperatorIsReadOnly() = runBlocking {
         for (role in listOf("supervisor", "operator")) {
             val state = AppUiState(selectedVineyardId = "vineyard", currentUserId = "user", isSystemAdmin = true,
                 members = listOf(VineyardMember(userId = "user", vineyardId = "vineyard", role = role)))
-            assertFalse(state.canManageInventory)
-            var wrote = false
-            try {
-                CatalogueInventoryMutation.perform(state.canManageInventory, "chemical_inventory_mark_finished", "chemical",
-                    mutate = { wrote = true }, refresh = {})
-                fail("Denied membership must not write")
-            } catch (_: IllegalStateException) { }
-            assertFalse(wrote)
+            assertTrue(state.canViewInventory)
+            assertEquals(role == "supervisor", state.canRecordInventoryPurchase)
+            assertFalse(state.canManageInventory || state.canViewInventoryCosts)
+            for (operation in CatalogueInventoryMutation.operations) {
+                val expected = role == "supervisor" && operation in setOf(CatalogueInventoryMutation.PURCHASE, "chemical_inventory_record_purchase")
+                var wrote = false; var refreshed = false
+                try {
+                    CatalogueInventoryMutation.perform(state.canManageInventory, operation, "chemical",
+                        mutate = { wrote = true }, refresh = { refreshed = true }, canRecordInventoryPurchase = state.canRecordInventoryPurchase)
+                    assertTrue(expected)
+                } catch (_: IllegalStateException) { assertFalse(expected) }
+                assertEquals(expected, wrote); assertEquals(expected, refreshed)
+            }
+            assertFalse(CatalogueInventoryMutation.allows("unknown", true, true))
         }
     }
     @Test fun adminStatusAloneAndOtherVineyardMembershipDoNotGrantAccess() {
-        assertFalse(AppUiState(selectedVineyardId = "vineyard", currentUserId = "user", isSystemAdmin = true).canManageInventory)
+        val admin = AppUiState(selectedVineyardId = "vineyard", currentUserId = "user", isSystemAdmin = true)
+        assertFalse(admin.canViewInventory || admin.canRecordInventoryPurchase || admin.canManageInventory || admin.canViewInventoryCosts)
+        assertFalse(admin.copy(members = listOf(VineyardMember(userId = "user", role = "manager"))).canViewInventory)
+        assertFalse(admin.copy(members = listOf(VineyardMember(userId = "user", vineyardId = "other", role = "manager"))).canViewInventory)
         assertFalse(AppUiState(currentUserId = "user", isSystemAdmin = true,
             members = listOf(VineyardMember(userId = "user", role = "manager"))).canManageInventory)
         assertFalse(AppUiState(selectedVineyardId = "vineyard", currentUserId = "user", isSystemAdmin = true,

@@ -1014,7 +1014,16 @@ data class AppUiState(
      */
     val canManageSprayProgram: Boolean get() = currentRole == "owner" || currentRole == "manager"
     /** Inventory is scoped to selected-vineyard membership, not System Admin status. */
-    val canManageInventory: Boolean get() = selectedVineyardId != null && canEditLauncherButtons
+    private val inventoryRole: String?
+        get() {
+            val vineyardId = selectedVineyardId?.takeIf { it.isNotBlank() } ?: return null
+            val userId = currentUserId?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            return members.firstOrNull { it.userId.trim().equals(userId, true) && it.vineyardId?.equals(vineyardId, true) == true }?.role?.trim()?.lowercase()
+        }
+    val canViewInventory: Boolean get() = inventoryRole in setOf("owner", "manager", "supervisor", "operator")
+    val canRecordInventoryPurchase: Boolean get() = canViewInventory && inventoryRole in setOf("owner", "manager", "supervisor")
+    val canManageInventory: Boolean get() = canViewInventory && inventoryRole in setOf("owner", "manager")
+    val canViewInventoryCosts: Boolean get() = canManageInventory
     val openPins: Int get() = pins.count { !it.isCompleted }
     val totalHectares: Double get() = paddocks.sumOf { it.areaHectares }
     val activeTrips: Int get() = trips.count { it.isActive }

@@ -65,6 +65,20 @@ final class BackendAccessControl {
         )
     }
 
+    /// Only Inventory flags are scoped here; unrelated legacy permissions stay unchanged.
+    func legacyAccessControl(for vineyardId: UUID?, userId: UUID?) -> LegacyAccessControl {
+        var access = legacyAccessControl
+        guard let vineyardId, let userId, !isLoading,
+              loadedVineyardId == vineyardId, loadedUserId == userId,
+              let role = currentRole else { return access }
+        access.inventoryVineyardId = vineyardId
+        access.canViewInventory = role.canViewInventory
+        access.canRecordInventoryPurchase = role.canRecordInventoryPurchase
+        access.canManageInventory = role.canManageInventory
+        access.canViewInventoryCosts = role.canViewInventoryCosts
+        return access
+    }
+
     // MARK: - Loading
 
     func refresh(for vineyardId: UUID?, auth: NewBackendAuthService) async {
@@ -83,6 +97,7 @@ final class BackendAccessControl {
 
         do {
             let members = try await teamRepository.listMembers(vineyardId: vineyardId)
+            guard !Task.isCancelled else { return }
             let ownMembership = members.first { $0.userId == userId }
             currentRole = ownMembership?.role
             currentWorkerTypeId = ownMembership?.operatorCategoryId

@@ -139,7 +139,7 @@ struct ChemicalsManagementView: View {
                 }
             }
 
-            if canManageSetup {
+            if accessControl?.canViewInventory == true {
                 Section { NavigationLink { ChemicalInventoryView() } label: { Label("Chemical Inventory", systemImage: "shippingbox") } }
             }
             ForEach(filteredChemicals) { chemical in

@@ -25,6 +25,11 @@ struct LegacyAccessControl {
     /// vineyard setup data such as chemicals, presets, equipment, tractors,
     /// operator categories, varieties, and button templates.
     var canManageSetup: Bool = false
+    var inventoryVineyardId: UUID? = nil
+    var canViewInventory: Bool = false
+    var canRecordInventoryPurchase: Bool = false
+    var canManageInventory: Bool = false
+    var canViewInventoryCosts: Bool = false
     /// Owner/manager only — may edit the vineyard's shared Spray Program,
     /// including the Program Steps that are synced with the Admin Portal.
     /// Mirrors the `spray_jobs` UPDATE policy (sql/032) rather than reusing a

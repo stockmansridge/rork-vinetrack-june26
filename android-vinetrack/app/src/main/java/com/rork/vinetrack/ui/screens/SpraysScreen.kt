@@ -485,7 +485,7 @@ private fun SprayListView(
     if (showChemicalSearch && canAddChemical) {
         CatalogueSearchSheet(vm, state, onDismiss = { showChemicalSearch = false })
     }
-    if (showChemicalInventory && state.canManageInventory) {
+    if (showChemicalInventory && state.canViewInventory) {
         Dialog(onDismissRequest = { showChemicalInventory = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             Surface(modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), color = vine.appBackground) {
                 ChemicalInventoryScreen(state, onClose = { showChemicalInventory = false }, recordPurchase = recordChemicalPurchase)
@@ -531,7 +531,7 @@ private fun SprayListView(
                                 leadingIcon = { Icon(Icons.Filled.WaterDrop, contentDescription = null) },
                                 onClick = { addMenu = false; onAdd() },
                             )
-                            if (canAddChemical || state.canManageInventory) {
+                            if (canAddChemical || state.canViewInventory) {
                                 HorizontalDivider()
                                 Text("Chemicals", style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
                                     color = vine.textSecondary, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
@@ -542,12 +542,14 @@ private fun SprayListView(
                                         onClick = { addMenu = false; showChemicalSearch = true },
                                     )
                                 }
-                                if (state.canManageInventory) {
+                                if (state.canRecordInventoryPurchase) {
                                     DropdownMenuItem(
                                         text = { Text("Chemical Purchase") },
                                         leadingIcon = { Icon(Icons.Filled.ShoppingCart, contentDescription = null) },
                                         onClick = { addMenu = false; recordChemicalPurchase = true; showChemicalInventory = true },
                                     )
+                                }
+                                if (state.canViewInventory) {
                                     DropdownMenuItem(
                                         text = { Text("Chemical Inventory") },
                                         leadingIcon = { Icon(Icons.Filled.Inventory2, contentDescription = null) },
