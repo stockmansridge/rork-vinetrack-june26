@@ -124,6 +124,8 @@ import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.text.SimpleDateFormat
 import java.time.Instant
+import java.time.ZoneOffset
+import com.rork.vinetrack.data.WorkTaskCompletion
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.util.Date
@@ -1386,7 +1388,14 @@ private fun WorkTaskSheet(
         }
     }
     var selectedBlockIds by remember(existing?.id) { mutableStateOf(initialBlockIds) }
-    var dateMs by remember { mutableStateOf(existing?.startEpochMs ?: System.currentTimeMillis()) }
+    var workDay by remember(existing?.id) {
+        mutableStateOf(existing?.let { WorkTaskCompletion.workDate(it, state.seasonZone) }
+            ?: Instant.now().atZone(state.seasonZone).toLocalDate())
+    }
+    var workDateIso by remember(existing?.id) {
+        mutableStateOf(existing?.startDate ?: existing?.date
+            ?: workDay.atStartOfDay(state.seasonZone).toInstant().toString())
+    }
     var hoursText by remember { mutableStateOf(existing?.durationHours?.takeIf { it > 0 }?.let { trimHours(it) } ?: "") }
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
     var saving by remember { mutableStateOf(false) }
@@ -1403,7 +1412,7 @@ private fun WorkTaskSheet(
     fun save() {
         if (saving || taskType.isBlank()) return
         saving = true
-        val iso = Instant.ofEpochMilli(dateMs).toString()
+        val iso = workDateIso
         val hours = hoursText.replace(',', '.').toDoubleOrNull() ?: 0.0
         val blockIds = selectedBlockIds.toList()
         val currentId = lifecycle.persistedTaskId
@@ -1451,7 +1460,7 @@ private fun WorkTaskSheet(
     }
 
     val currentTask = lifecycle.persistedTaskId?.let { id -> state.workTasks.firstOrNull { it.id == id } }
-    val taskWorkDate = currentTask?.date ?: Instant.ofEpochMilli(dateMs).toString()
+    val taskWorkDate = currentTask?.date ?: workDateIso
     val labourLines = lifecycle.persistedTaskId?.let { id -> state.taskLabourLines.filter { it.workTaskId == id }.sortedBy { it.workDate } }.orEmpty()
     val machineLines = lifecycle.persistedTaskId?.let { id -> state.taskMachineLines.filter { it.workTaskId == id }.sortedBy { it.workDate } }.orEmpty()
 
@@ -1539,7 +1548,7 @@ private fun WorkTaskSheet(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Icon(Icons.Filled.Schedule, contentDescription = null, modifier = Modifier.size(18.dp))
-                Text("  " + (formatTaskDate(dateMs) ?: "Pick date"))
+                Text("  " + (formatTaskDate(workDay.atStartOfDay(state.seasonZone).toInstant().toEpochMilli()) ?: "Pick date"))
             }
 
             OutlinedTextField(
@@ -1674,12 +1683,18 @@ private fun WorkTaskSheet(
     }
 
     if (showDatePicker) {
-        val dpState = rememberDatePickerState(initialSelectedDateMillis = dateMs)
+        val dpState = rememberDatePickerState(
+            initialSelectedDateMillis = workDay.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+        )
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 TextButton(onClick = {
-                    dpState.selectedDateMillis?.let { dateMs = it }
+                    dpState.selectedDateMillis?.let {
+                        val instant = WorkTaskCompletion.workDateFromPicker(it, state.seasonZone)
+                        workDay = instant.atZone(state.seasonZone).toLocalDate()
+                        workDateIso = instant.toString()
+                    }
                     showDatePicker = false
                 }) { Text("OK") }
             },

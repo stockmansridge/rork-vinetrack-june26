@@ -38,6 +38,58 @@ class WorkTaskCompletionTest {
         }
     }
 
+    @Test fun `Sydney Work Date selection round trips the UTC picker calendar day`() {
+        val sydney = ZoneId.of("Australia/Sydney")
+        val selected = Instant.parse("2026-10-05T00:00:00Z").toEpochMilli()
+        val stored = WorkTaskCompletion.workDateFromPicker(selected, sydney).toString()
+        assertEquals("2026-10-04T13:00:00Z", stored)
+        assertEquals(LocalDate.parse("2026-10-05"), WorkTaskCompletion.workDate(task.copy(startDate = stored, date = stored), sydney))
+    }
+
+    @Test fun `Los Angeles Work Date selection round trips the UTC picker calendar day`() {
+        val la = ZoneId.of("America/Los_Angeles")
+        val selected = Instant.parse("2026-10-05T00:00:00Z").toEpochMilli()
+        val stored = WorkTaskCompletion.workDateFromPicker(selected, la).toString()
+        assertEquals("2026-10-05T07:00:00Z", stored)
+        assertEquals(LocalDate.parse("2026-10-05"), WorkTaskCompletion.workDate(task.copy(startDate = stored, date = stored), la))
+    }
+
+    @Test fun `legacy UTC midnight Work Date in Los Angeles preserves encoded day without mutation`() {
+        val la = ZoneId.of("America/Los_Angeles")
+        for (value in listOf("2026-10-05T00:00:00Z", "2026-10-05T00:00:00.000Z", "2026-10-05T00:00:00+00:00")) {
+            val decoded = json.decodeFromString<WorkTask>("""{"id":"legacy","vineyard_id":"vineyard","start_date":"$value","date":"$value"}""")
+            assertEquals(LocalDate.parse("2026-10-05"), WorkTaskCompletion.workDate(decoded, la))
+            assertEquals(value, decoded.startDate)
+            assertEquals(value, decoded.date)
+            assertEquals(LocalDate.parse("2026-10-05"), WorkTaskCompletion.workDate(decoded.copy(startDate = null), la))
+        }
+    }
+
+    @Test fun `new local midnight Work Date resolves through vineyard timezone`() {
+        val la = ZoneId.of("America/Los_Angeles")
+        val stored = "2026-10-05T07:00:00Z"
+        assertEquals(LocalDate.parse("2026-10-05"), WorkTaskCompletion.localDate(stored, la))
+        assertEquals(LocalDate.parse("2026-10-04"), WorkTaskCompletion.localDate(stored, ZoneId.of("Pacific/Honolulu")))
+        assertEquals(LocalDate.parse("2026-10-04"), WorkTaskCompletion.localDate("2026-10-05T00:00:00.001Z", la))
+    }
+
+    @Test fun `completion cannot precede correctly resolved legacy or new Work Date`() {
+        val la = ZoneId.of("America/Los_Angeles")
+        val audit = Instant.parse("2026-10-06T12:00:00Z")
+        for (stored in listOf("2026-10-05T00:00:00Z", "2026-10-05T07:00:00Z")) {
+            val work = task.copy(startDate = stored, date = stored)
+            assertFalse(WorkTaskCompletion.isValid(work, LocalDate.parse("2026-10-04"), la, audit))
+            assertTrue(runCatching { WorkTaskCompletion.complete(work, LocalDate.parse("2026-10-04"), la, audit, "user") }.isFailure)
+            assertTrue(WorkTaskCompletion.isValid(work, LocalDate.parse("2026-10-05"), la, audit))
+        }
+    }
+
+    @Test fun `midnight completion audit remains a real instant rather than a legacy business day`() {
+        val la = ZoneId.of("America/Los_Angeles")
+        val completed = task.copy(isFinalized = true, finalizedAt = "2026-10-05T00:00:00Z", endDate = null)
+        assertEquals(LocalDate.parse("2026-10-04"), WorkTaskCompletion.completedDate(completed, la))
+    }
+
     @Test fun `customer A B C keeps work date and separate audit`() {
         val completed = WorkTaskCompletion.complete(task, LocalDate.parse("2026-09-30"), zone, now, "android-user")
         assertEquals(task.date, completed.date)
