@@ -34,6 +34,7 @@ struct AddEditWorkTaskView: View {
     @State private var lifecycle: WorkTaskEditorLifecycle
     @State private var childRoute: WorkTaskChildRoute?
     @State private var showsSavedFeedback: Bool = false
+    @State private var showCompletion: Bool = false
 
     init(existingTask: WorkTask? = nil) {
         self.existingTask = existingTask
@@ -367,8 +368,29 @@ struct AddEditWorkTaskView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if let task = currentTask {
+                    Section("Completion") {
+                        if task.isFinalized {
+                            if let completed = WorkTaskCompletion.displayedDate(task) {
+                                LabeledContent("Completed", value: completionDateLabel(completed))
+                            } else {
+                                Text("Completed")
+                            }
+                            Button("Edit Completed Date") { showCompletion = true }
+                            Button("Reopen") {
+                                workTaskSync.saveCompletion(WorkTaskCompletion.reopen(task), dateOnly: false)
+                                Task { await workTaskSync.syncForSelectedVineyard() }
+                            }
+                        } else {
+                            LabeledContent("Completion", value: "To do")
+                            Button("Complete") { showCompletion = true }
+                                .disabled(auth.userId == nil)
+                        }
+                    }
+                }
                 Section("Task Details") {
-                    DatePicker("Date", selection: $date, displayedComponents: .date)
+                    DatePicker("Work Date", selection: $date, displayedComponents: .date)
+                        .environment(\.timeZone, tz)
 
                     Menu {
                         ForEach(mergedTaskTypeNames, id: \.self) { t in
@@ -614,6 +636,24 @@ struct AddEditWorkTaskView: View {
                 Button("Cancel", role: .cancel) {}
             }
             .onAppear(perform: loadIfEditing)
+            .sheet(isPresented: $showCompletion) {
+                if let task = currentTask {
+                    WorkTaskCompletionSheet(task: task, timeZone: tz) { selected in
+                        guard let current = currentTask else { return false }
+                        let updated: WorkTask?
+                        if current.isFinalized {
+                            updated = WorkTaskCompletion.editDate(current, selected: selected, timeZone: tz, now: Date())
+                        } else {
+                            guard let user = auth.userId else { return false }
+                            updated = WorkTaskCompletion.complete(current, selected: selected, timeZone: tz, now: Date(), userId: user.uuidString)
+                        }
+                        guard let updated else { return false }
+                        workTaskSync.saveCompletion(updated, dateOnly: current.isFinalized)
+                        Task { await workTaskSync.syncForSelectedVineyard() }
+                        return true
+                    }
+                }
+            }
             .sheet(isPresented: $showBlockPicker) {
                 BlockMultiSelectSheet(blocks: assignableBlocks, selected: $selectedBlockIds)
             }
@@ -1049,6 +1089,13 @@ struct AddEditWorkTaskView: View {
             notes = t.notes
             resources = t.resources
         }
+    }
+
+    private func completionDateLabel(_ value: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.timeZone = tz
+        formatter.dateStyle = .long
+        return formatter.string(from: value)
     }
 
     private func saveTask() {

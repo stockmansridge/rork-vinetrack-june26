@@ -3536,12 +3536,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             workTaskCreateSync.replayAll { task ->
                 _ui.update { st ->
                     if (st.workTasks.any { it.id == task.id }) {
-                        st.copy(workTasks = st.workTasks.map { if (it.id == task.id) task else it })
+                        st.copy(workTasks = st.workTasks.map { if (it.id == task.id) PendingWriteOverlay.overlayWorkTaskHeaders(listOf(task), pendingWrites.list(), task.vineyardId).single() else it })
                     } else {
-                        st.copy(workTasks = listOf(task) + st.workTasks)
+                        st.copy(workTasks = PendingWriteOverlay.overlayWorkTaskHeaders(listOf(task), pendingWrites.list(), task.vineyardId) + st.workTasks)
                     }
                 }
             }
+            replayPendingWorkTaskUpdates()
         }
     }
 
@@ -9513,6 +9514,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             isFinalized = markCompleted,
             finalizedAt = if (markCompleted) clientUpdatedAt else null,
             finalizedBy = if (markCompleted) session.userId else null,
+            endDate = if (markCompleted) Instant.parse(clientUpdatedAt).atZone(_ui.value.seasonZone).toLocalDate().atStartOfDay(_ui.value.seasonZone).toInstant().toString() else null,
             costingMethod = costingMethod.storedValue,
             pieceRatePerVine = pieceRatePerVine.takeIf { costingMethod == WorkTaskCostingMethod.PIECE_RATE },
             pieceVineCount = pieceVineCount.takeIf { costingMethod == WorkTaskCostingMethod.PIECE_RATE },
@@ -9527,11 +9529,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             id, vineyardId, paddockId, paddockName, date, trimmedType,
             durationHours, trimmedNotes, clientUpdatedAt,
             isFinalized = markCompleted, pruningActivityId = pruningActivityId,
+            endDate = optimistic.endDate, finalizedAt = optimistic.finalizedAt, finalizedBy = optimistic.finalizedBy,
         )
 
         // Known-offline: queue the create marker without touching the network.
         if (!_ui.value.isOnline) {
-            workTaskCreateSync.enqueue(id, vineyardId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, clientUpdatedAt, isFinalized = markCompleted, pruningActivityId = pruningActivityId)
+            workTaskCreateSync.enqueue(id, vineyardId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, clientUpdatedAt, isFinalized = markCompleted, pruningActivityId = pruningActivityId, endDate = optimistic.endDate, finalizedAt = optimistic.finalizedAt, finalizedBy = optimistic.finalizedBy)
             // Join rows queue too — gated behind the header create until it syncs.
             reconcileWorkTaskPaddocks(id, vineyardId, paddockIds)
             // The labour line queues behind the header for the same reason.
@@ -9555,6 +9558,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     notes = trimmedNotes,
                     id = id,
                     clientUpdatedAt = clientUpdatedAt,
+                    isFinalized = markCompleted,
+                    endDate = optimistic.endDate,
+                    finalizedAt = optimistic.finalizedAt,
+                    finalizedBy = optimistic.finalizedBy,
                     costingMethod = costingMethod,
                     pieceRatePerVine = pieceRatePerVine,
                     pieceVineCount = pieceVineCount,
@@ -9566,7 +9573,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     st.copy(
                         workTasks = st.workTasks.map {
                             if (it.id == id) {
-                                if (markCompleted) created.copy(isFinalized = true, finalizedAt = clientUpdatedAt, finalizedBy = session.userId) else created
+                                PendingWriteOverlay.overlayWorkTaskHeaders(listOf(created), pendingWrites.list().filter { it.opType == PendingOpType.UPDATE }, vineyardId).single()
                             } else {
                                 it
                             }
@@ -9589,13 +9596,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 // ... and the hourly labour line, now that its parent exists.
                 labourSeed?.let { seedLabourLine(id, it) }
-                // Work created from the Pruning Tracker has already occurred —
-                // finalize it now that the header exists server-side.
-                if (markCompleted) {
-                    setWorkTaskComplete(id, true)
-                }
                 inFlightWorkTaskCreates.remove(id)
                 workTaskCreateSync.cancelPendingCreate(id)
+                replayPendingWorkTaskUpdates()
                 // Child rows entered while this insert was in flight were queued
                 // against the same UUID. Parent now exists, so replay them now.
                 replayPendingWorkTaskPaddocks()
@@ -9618,7 +9621,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 // Transient network failure — keep the optimistic row and queue a
                 // create marker for automatic replay rather than rolling back.
-                workTaskCreateSync.enqueue(id, vineyardId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, clientUpdatedAt, isFinalized = markCompleted, pruningActivityId = pruningActivityId)
+                workTaskCreateSync.enqueue(id, vineyardId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, clientUpdatedAt, isFinalized = markCompleted, pruningActivityId = pruningActivityId, endDate = optimistic.endDate, finalizedAt = optimistic.finalizedAt, finalizedBy = optimistic.finalizedBy)
                 inFlightWorkTaskCreates.remove(id)
                 // Join rows queue behind the now-pending header create.
                 reconcileWorkTaskPaddocks(id, vineyardId, paddockIds)
@@ -9808,16 +9811,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         // Edit-before-create: fold into the still-pending create rather than
         // queueing a separate UPDATE (and never PATCH a row that doesn't exist).
-        if (workTaskCreateSync.foldEdit(taskId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, isFinalized, clientUpdatedAt)) {
+        if (!inFlightWorkTaskCreates.contains(taskId) && workTaskCreateSync.foldEdit(taskId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, isFinalized, clientUpdatedAt, current?.endDate, current?.finalizedAt, current?.finalizedBy)) {
             _ui.update { it.copy(workTaskError = "Work task edit saved offline — will sync when connection is available.") }
             onResult(true)
             return
         }
 
-        // Known-offline: queue the update marker without touching the network.
-        if (!_ui.value.isOnline) {
-            workTaskUpdateSync.enqueue(taskId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, isFinalized, current?.finalizedAt, current?.finalizedBy, clientUpdatedAt)
-            _ui.update { it.copy(workTaskError = "Work task edit saved offline — will sync when connection is available.") }
+        // Coalesce metadata with a pending completion so replay cannot restore an older header.
+        if (!_ui.value.isOnline || inFlightWorkTaskCreates.contains(taskId) || pendingWrites.list().any {
+                it.clientId == taskId && it.entityType == PendingEntityType.WORK_TASK &&
+                    it.opType == PendingOpType.UPDATE && it.status != PendingWriteStatus.SYNCED
+            }) {
+            workTaskUpdateSync.enqueue(taskId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, isFinalized, current?.finalizedAt, current?.finalizedBy, clientUpdatedAt, endDate = current?.endDate)
+            _ui.update { it.copy(workTaskError = if (it.isOnline) null else "Work task edit saved offline — will sync when connection is available.") }
+            replayPendingWorkTaskUpdates()
             onResult(true)
             return
         }
@@ -9834,19 +9841,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     notes = trimmedNotes,
                     clientUpdatedAt = clientUpdatedAt,
                 )
-                _ui.update { st -> st.copy(workTasks = st.workTasks.map { if (it.id == taskId) updated else it }) }
+                _ui.update { st -> st.copy(workTasks = st.workTasks.map { if (it.id == taskId) PendingWriteOverlay.overlayWorkTaskHeaders(listOf(updated), pendingWrites.list(), vineyardId).single() else it }) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 onUnauthorized("updateWorkTask"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll the optimistic edit
                 // back, surface, don't queue as retryable.
-                _ui.update { it.copy(workTasks = previous, workTaskError = friendlyWriteError(e.code)) }
+                _ui.update { it.copy(workTasks = PendingWriteOverlay.overlayWorkTaskHeaders(previous, pendingWrites.list(), vineyardId), workTaskError = friendlyWriteError(e.code)) }
                 onResult(false)
             } catch (e: Exception) {
                 // Transient network failure — keep the optimistic edit and queue
                 // an update marker for automatic replay rather than rolling back.
-                workTaskUpdateSync.enqueue(taskId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, isFinalized, current?.finalizedAt, current?.finalizedBy, clientUpdatedAt)
+                workTaskUpdateSync.enqueue(taskId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, isFinalized, current?.finalizedAt, current?.finalizedBy, clientUpdatedAt, endDate = current?.endDate)
                 _ui.update { it.copy(workTaskError = "Work task edit saved offline — will sync when connection is available.") }
                 onResult(true)
             }
@@ -9960,54 +9967,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      *  - Permanent (validation / permission) rejection: roll the list back and
      *    surface the error. Unauthorized signs out.
      */
-    fun setWorkTaskComplete(taskId: String, complete: Boolean, onResult: (Boolean) -> Unit = {}) {
-        val previous = _ui.value.workTasks
-        val current = previous.firstOrNull { it.id == taskId }
-        val clientUpdatedAt = Instant.now().toString()
-        val finalizedAt = if (complete) clientUpdatedAt else null
-        val finalizedBy = if (complete) session.userId else null
-        _ui.update { st ->
-            st.copy(
-                workTasks = st.workTasks.map {
-                    if (it.id == taskId) it.copy(isFinalized = complete, finalizedAt = finalizedAt, finalizedBy = finalizedBy) else it
-                },
-                workTaskError = null,
-            )
-        }
+    fun setWorkTaskComplete(taskId: String, complete: Boolean, completedDate: java.time.LocalDate? = null, onResult: (Boolean) -> Unit = {}) {
+        val current = _ui.value.workTasks.firstOrNull { it.id == taskId } ?: run { onResult(false); return }
+        val now = Instant.now()
+        val updated = if (complete) {
+            val user = session.userId ?: run { onResult(false); return }
+            val selected = completedDate ?: now.atZone(_ui.value.seasonZone).toLocalDate()
+            runCatching { com.rork.vinetrack.data.WorkTaskCompletion.complete(current, selected, _ui.value.seasonZone, now, user) }
+                .getOrElse { _ui.update { it.copy(workTaskError = "Completed Date must be between Work Date and today.") }; onResult(false); return }
+        } else com.rork.vinetrack.data.WorkTaskCompletion.reopen(current)
+        onResult(runCatching { persistWorkTaskCompletion(updated, now.toString(), dateOnly = false) }
+            .fold({ true }, { _ui.update { it.copy(workTaskError = "Could not save completion on this device. Please try again.") }; false }))
+    }
 
-        // Finalize-before-create: fold the new state into the still-pending
-        // create rather than queueing a separate UPDATE.
-        if (current != null && workTaskCreateSync.foldEdit(taskId, current.paddockId, current.paddockName, current.date ?: "", current.taskType ?: "", current.durationHours, current.notes, complete, clientUpdatedAt)) {
-            _ui.update { it.copy(workTaskError = "Work task update saved offline — will sync when connection is available.") }
-            onResult(true)
-            return
-        }
+    /** Corrects only the business date; the original completion audit is immutable. */
+    fun editWorkTaskCompletedDate(taskId: String, selected: java.time.LocalDate, onResult: (Boolean) -> Unit = {}) {
+        val current = _ui.value.workTasks.firstOrNull { it.id == taskId } ?: run { onResult(false); return }
+        val now = Instant.now()
+        val updated = runCatching { com.rork.vinetrack.data.WorkTaskCompletion.editDate(current, selected, _ui.value.seasonZone, now) }
+            .getOrElse { onResult(false); return }
+        onResult(runCatching { persistWorkTaskCompletion(updated, now.toString(), dateOnly = true) }
+            .fold({ true }, { _ui.update { it.copy(workTaskError = "Could not save Completed Date on this device. Please try again.") }; false }))
+    }
 
-        // Known-offline: queue the update marker without touching the network.
-        if (!_ui.value.isOnline) {
-            workTaskUpdateSync.enqueue(taskId, current?.paddockId, current?.paddockName, current?.date ?: "", current?.taskType ?: "", current?.durationHours ?: 0.0, current?.notes, complete, finalizedAt, finalizedBy, clientUpdatedAt)
-            _ui.update { it.copy(workTaskError = "Work task update saved offline — will sync when connection is available.") }
-            onResult(true)
-            return
+    private fun persistWorkTaskCompletion(task: WorkTask, stamp: String, dateOnly: Boolean) {
+        // Persist before reporting local success, including on an online device.
+        val folded = !inFlightWorkTaskCreates.contains(task.id) && workTaskCreateSync.foldEdit(task.id, task.paddockId, task.paddockName, task.date ?: "", task.taskType ?: "",
+            task.durationHours, task.notes, task.isFinalized, stamp, task.endDate, task.finalizedAt, task.finalizedBy)
+        if (!folded) {
+            workTaskUpdateSync.enqueue(task.id, task.paddockId, task.paddockName, task.date ?: "", task.taskType ?: "",
+                task.durationHours, task.notes, task.isFinalized, task.finalizedAt, task.finalizedBy, stamp,
+                endDate = task.endDate, completionOnly = !dateOnly, dateOnly = dateOnly)
         }
-
-        viewModelScope.launch {
-            try {
-                val updated = workTaskRepo.setFinalized(taskId, complete, clientUpdatedAt)
-                _ui.update { st -> st.copy(workTasks = st.workTasks.map { if (it.id == taskId) updated else it }) }
-                onResult(true)
-            } catch (e: BackendError.Unauthorized) {
-                onUnauthorized("setWorkTaskComplete"); onResult(false)
-            } catch (e: BackendError.Server) {
-                _ui.update { it.copy(workTasks = previous, workTaskError = friendlyWriteError(e.code)) }
-                onResult(false)
-            } catch (e: Exception) {
-                // Transient network failure — keep the optimistic flip and queue
-                // an update marker for automatic replay rather than rolling back.
-                workTaskUpdateSync.enqueue(taskId, current?.paddockId, current?.paddockName, current?.date ?: "", current?.taskType ?: "", current?.durationHours ?: 0.0, current?.notes, complete, finalizedAt, finalizedBy, clientUpdatedAt)
-                _ui.update { it.copy(workTaskError = "Work task update saved offline — will sync when connection is available.") }
-                onResult(true)
-            }
+        _ui.update { st -> st.copy(workTasks = st.workTasks.map { if (it.id == task.id) task else it },
+            workTaskError = if (st.isOnline) null else "Work task update saved offline — will sync when connection is available.") }
+        if (_ui.value.isOnline) {
+            replayPendingWorkTaskCreates()
+            replayPendingWorkTaskUpdates()
         }
     }
 

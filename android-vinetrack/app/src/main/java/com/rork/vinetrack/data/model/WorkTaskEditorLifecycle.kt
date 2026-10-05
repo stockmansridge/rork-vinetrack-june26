@@ -13,7 +13,7 @@ data class WorkTaskEditorLifecycle(
     val hasPersistedTask: Boolean get() = persistedTaskId != null
     val saveOperation: WorkTaskEditorSaveOperation
         get() = if (hasPersistedTask) WorkTaskEditorSaveOperation.UPDATE else WorkTaskEditorSaveOperation.CREATE
-    val saveTitle: String get() = if (hasPersistedTask) "Save & Close" else "Save"
+    val saveTitle: String get() = if (hasPersistedTask) "Save & Close" else "Save & add resources"
     val childControlsEnabled: Boolean get() = hasPersistedTask
 
     /** First save retains the minted id and keeps the editor open. */

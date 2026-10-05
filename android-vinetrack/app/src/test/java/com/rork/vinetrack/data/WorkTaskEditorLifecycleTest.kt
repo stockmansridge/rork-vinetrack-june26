@@ -10,7 +10,7 @@ import org.junit.Test
 class WorkTaskEditorLifecycleTest {
     @Test fun `new task starts unsaved with children unavailable`() {
         val lifecycle = WorkTaskEditorLifecycle()
-        assertEquals("Save", lifecycle.saveTitle)
+        assertEquals("Save & add resources", lifecycle.saveTitle)
         assertEquals(WorkTaskEditorSaveOperation.CREATE, lifecycle.saveOperation)
         assertFalse(lifecycle.childControlsEnabled)
         assertFalse(lifecycle.shouldCloseAfterAcceptedSave())

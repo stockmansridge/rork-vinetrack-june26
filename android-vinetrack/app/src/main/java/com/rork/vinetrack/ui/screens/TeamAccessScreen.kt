@@ -97,8 +97,9 @@ fun TeamAccessScreen(
                 navigationIcon = { BackNavIcon(onBack) },
                 actions = {
                     if (canManage) {
-                        IconButton(onClick = { vm.clearInvitationFeedback(); showInvite = true }) {
-                            Icon(Icons.Filled.PersonAddAlt, contentDescription = "Invite member", tint = VineColors.Primary)
+                        TextButton(onClick = { vm.clearInvitationFeedback(); showInvite = true }) {
+                            Icon(Icons.Filled.PersonAddAlt, contentDescription = null, tint = VineColors.Primary)
+                            Text("Invite member")
                         }
                     }
                 },

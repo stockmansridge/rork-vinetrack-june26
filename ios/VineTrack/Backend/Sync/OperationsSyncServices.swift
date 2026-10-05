@@ -31,6 +31,8 @@ final class OperationsSyncMetadata {
         /// The read-side anchor: a pull carrying an OLDER revision came from a replica that
         /// has not caught up, and must not overwrite a newer confirmed local state.
         var observedRevisions: [UUID: Int64]?
+        /// Optional for old outboxes: false = completion/reopen; true = date correction.
+        var workTaskCompletionModes: [UUID: Bool]?
     }
 
     init(key: String, persistence: PersistenceStore = .shared) {
@@ -41,6 +43,14 @@ final class OperationsSyncMetadata {
 
     var pendingUpserts: [UUID: Date] { state.pendingUpserts }
     var pendingDeletes: [UUID: Date] { state.pendingDeletes }
+
+    func completionMode(for id: UUID) -> Bool? { state.workTaskCompletionModes?[id] }
+    func setCompletionMode(_ mode: Bool, for id: UUID) {
+        var modes = state.workTaskCompletionModes ?? [:]
+        modes[id] = mode
+        state.workTaskCompletionModes = modes
+        save()
+    }
 
     // MARK: - sql/198 revision state
 
@@ -125,6 +135,7 @@ final class OperationsSyncMetadata {
     }
     func markDirty(_ id: UUID, at date: Date) {
         state.pendingUpserts[id] = date
+        state.workTaskCompletionModes?.removeValue(forKey: id)
         // A fresh local edit supersedes any stale failure for this record.
         state.failedUpserts.remove(id)
         save()
@@ -136,7 +147,7 @@ final class OperationsSyncMetadata {
     }
     func clearDirty(_ ids: [UUID]) {
         guard !ids.isEmpty else { return }
-        for id in ids { state.pendingUpserts.removeValue(forKey: id); state.failedUpserts.remove(id) }
+        for id in ids { state.pendingUpserts.removeValue(forKey: id); state.failedUpserts.remove(id); state.workTaskCompletionModes?.removeValue(forKey: id) }
         // A row with nothing queued has no unresolved conflict left to review.
         if var conflicts = state.revisionConflicts, !conflicts.isEmpty {
             for id in ids { conflicts.removeValue(forKey: id) }
@@ -210,6 +221,9 @@ final class WorkTaskSyncService {
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
     private let repository: any WorkTaskSyncRepositoryProtocol
+    private var hasActiveSync: Bool = false
+    private var needsFollowupSync: Bool = false
+    private var isPushing: Bool = false
     private let metadata: OperationsSyncMetadata
     private var isConfigured: Bool = false
     private var eagerPushTask: Task<Void, Never>?
@@ -256,8 +270,17 @@ final class WorkTaskSyncService {
     }
 
     func sync(vineyardId: UUID) async {
+        guard !hasActiveSync else { needsFollowupSync = true; return }
         guard SupabaseClientProvider.shared.isConfigured else {
             errorMessage = "Supabase not configured"; syncStatus = .failure("Supabase not configured"); return
+        }
+        hasActiveSync = true
+        defer {
+            hasActiveSync = false
+            if needsFollowupSync {
+                needsFollowupSync = false
+                scheduleEagerPush()
+            }
         }
         syncStatus = .syncing; errorMessage = nil
         do {
@@ -272,8 +295,22 @@ final class WorkTaskSyncService {
         }
     }
 
-    private func push(vineyardId: UUID) async throws {
+    /// Persists the authored row and existing durable marker before returning local success.
+    func saveCompletion(_ task: WorkTask, dateOnly: Bool) {
         guard let store else { return }
+        let hadPendingHeader = metadata.pendingUpserts[task.id] != nil
+        let earlierMode = metadata.completionMode(for: task.id)
+        store.updateWorkTask(task)
+        // Pending CREATE/metadata edits require a full upsert, not PATCH of a missing row.
+        if !hadPendingHeader || earlierMode != nil {
+            metadata.setCompletionMode(dateOnly && (earlierMode ?? true), for: task.id)
+        }
+    }
+
+    func push(vineyardId: UUID) async throws {
+        guard !isPushing, let store else { return }
+        isPushing = true
+        defer { isPushing = false }
         let createdBy = auth?.userId
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
@@ -300,14 +337,24 @@ final class WorkTaskSyncService {
             }
             metadata.clearDirty(orphans)
             SyncIssueCenter.shared.clearIssues(orphans)
+            let completionModes = Dictionary(uniqueKeysWithValues: pushed.compactMap { id in metadata.completionMode(for: id).map { (id, $0) } })
             let result = await SyncQueuePush.run(
                 entity: "Work Tasks",
                 ids: pushed,
                 payloads: payloads,
                 queuedAt: dirty,
                 vineyardId: vineyardId
-            ) { try await repository.upsertMany($0) }
-            metadata.clearDirty(result.uploaded)
+            ) { items in
+                let headers = items.filter { completionModes[$0.id] == nil }
+                if !headers.isEmpty { try await repository.upsertMany(headers) }
+                for item in items {
+                    if let dateOnly = completionModes[item.id] {
+                        try await repository.updateCompletion(.init(task: item, dateOnly: dateOnly))
+                    }
+                }
+            }
+            // An older upload must not acknowledge a newer local edit.
+            metadata.clearDirty(result.uploaded.filter { metadata.pendingUpserts[$0] == dirty[$0] })
             metadata.markUpsertsFailed(result.failed)
             SyncIssueCenter.shared.notePending(entity: "Work Tasks", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }
@@ -379,7 +426,7 @@ final class WorkTaskSyncService {
             }
             if let pendingAt = metadata.pendingUpserts[item.id] {
                 let remoteAt = item.clientUpdatedAt ?? item.updatedAt ?? .distantPast
-                if pendingAt > remoteAt { continue }
+                if metadata.completionMode(for: item.id) != nil || pendingAt >= remoteAt { continue }
             }
             store.applyRemoteWorkTaskUpsert(item.toWorkTask())
             metadata.clearDirty([item.id])

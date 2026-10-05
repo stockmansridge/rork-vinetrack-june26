@@ -761,6 +761,10 @@ object PendingWriteOverlay {
         durationHours = durationHours,
         notes = notes,
         isFinalized = isFinalized,
+        endDate = endDate,
+        finalizedAt = finalizedAt,
+        finalizedBy = finalizedBy,
+        pruningActivityId = pruningActivityId,
     )
 
     private fun WorkTaskUpdateSync.Payload.applyTo(row: WorkTask): WorkTask =
@@ -774,6 +778,7 @@ object PendingWriteOverlay {
             isFinalized = isFinalized,
             finalizedAt = finalizedAt,
             finalizedBy = finalizedBy,
+            endDate = if (endDatePresent) endDate else row.endDate,
         )
 
     private fun WorkTaskLabourSync.UpsertPayload.toRow(): WorkTaskLabourLine = WorkTaskLabourLine(

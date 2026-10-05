@@ -36,6 +36,15 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
      */
     val pendingCount: StateFlow<Int> = _pendingCount.asStateFlow()
 
+    init {
+        // A terminated process cannot still own an in-flight Work Task upload.
+        // Retain the frozen payload and make just these header writes retryable.
+        _writes.value.filter {
+            it.entityType == com.rork.vinetrack.data.model.PendingEntityType.WORK_TASK &&
+                it.status == PendingWriteStatus.IN_PROGRESS
+        }.forEach { updateStatus(it.id, PendingWriteStatus.FAILED, "Work task sync was interrupted. Ready to retry.") }
+    }
+
     /** Current pending count without collecting the flow. */
     fun currentPendingCount(): Int = countUnresolved(_writes.value)
 
@@ -67,17 +76,17 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
     }
 
     /** Atomically replace one unresolved marker's payload, keeping its identity and earliest baseline. */
-    fun upsertCoalesced(entityType: String, clientId: String, payloadJson: String): PendingWrite {
+    fun upsertCoalesced(entityType: String, clientId: String, payloadJson: String, opType: String = com.rork.vinetrack.data.model.PendingOpType.UPDATE): PendingWrite {
         val now = System.currentTimeMillis()
         val existing = _writes.value.firstOrNull {
             it.entityType == entityType && it.clientId == clientId &&
-                it.opType == com.rork.vinetrack.data.model.PendingOpType.UPDATE &&
+                it.opType == opType &&
                 it.status in PendingWriteStatus.unresolved
         }
         val next = existing?.copy(payloadJson = payloadJson, status = PendingWriteStatus.PENDING,
             lastError = null, updatedAt = now) ?: PendingWrite(
             id = UUID.randomUUID().toString(), entityType = entityType,
-            opType = com.rork.vinetrack.data.model.PendingOpType.UPDATE,
+            opType = opType,
             payloadJson = payloadJson, clientId = clientId, createdAt = now, updatedAt = now,
         )
         check(update { rows -> rows.filterNot { it.entityType == entityType && it.clientId == clientId &&

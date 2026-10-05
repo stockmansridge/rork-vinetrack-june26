@@ -1107,6 +1107,8 @@ data class WorkTask(
     @SerialName("is_finalized") val isFinalized: Boolean = false,
     @SerialName("finalized_at") val finalizedAt: String? = null,
     @SerialName("finalized_by") val finalizedBy: String? = null,
+    @SerialName("start_date") val startDate: String? = null,
+    @SerialName("end_date") val endDate: String? = null,
     // sql/188 additive piece-rate costing fields. All optional — every task
     // written before this existed decodes as an HOURLY job and costs exactly
     // as it always did.

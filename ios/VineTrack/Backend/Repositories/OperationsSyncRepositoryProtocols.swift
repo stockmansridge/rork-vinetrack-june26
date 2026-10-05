@@ -3,7 +3,14 @@ import Foundation
 protocol WorkTaskSyncRepositoryProtocol: Sendable {
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendWorkTask]
     func upsertMany(_ items: [BackendWorkTaskUpsert]) async throws
+    func updateCompletion(_ patch: BackendWorkTaskCompletionPatch) async throws
     func softDelete(id: UUID) async throws
+}
+
+extension WorkTaskSyncRepositoryProtocol {
+    func updateCompletion(_ patch: BackendWorkTaskCompletionPatch) async throws {
+        try await upsertMany([patch.task])
+    }
 }
 
 protocol WorkTaskLabourLineSyncRepositoryProtocol: Sendable {

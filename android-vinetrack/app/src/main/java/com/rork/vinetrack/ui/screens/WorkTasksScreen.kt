@@ -890,6 +890,7 @@ private fun WorkTaskDetailView(
     val fmt = LocalRegionFormatter.current
     val task = state.workTasks.firstOrNull { it.id == taskId }
     var confirmDelete by remember { mutableStateOf(false) }
+    var showCompletion by remember { mutableStateOf(false) }
     var editLabour by remember { mutableStateOf<WorkTaskLabourLine?>(null) }
     var addingLabour by remember { mutableStateOf(false) }
     var editMachine by remember { mutableStateOf<WorkTaskMachineLine?>(null) }
@@ -909,6 +910,13 @@ private fun WorkTaskDetailView(
 
     LaunchedEffect(task == null) { if (task == null) onBack() }
     if (task == null) return
+    if (showCompletion) {
+        com.rork.vinetrack.ui.components.WorkTaskCompletionDialog(task, state.seasonZone,
+            onConfirm = { selected ->
+                if (task.isComplete) vm.editWorkTaskCompletedDate(task.id, selected) { ok -> if (ok) showCompletion = false }
+                else vm.setWorkTaskComplete(task.id, true, selected) { ok -> if (ok) showCompletion = false }
+            }, onDismiss = { showCompletion = false })
+    }
 
     // Count GPS trips grouped under this task (mirrors iOS work_task_id link).
     val linkedTrips = remember(state.trips, taskId) { state.trips.filter { it.workTaskId == taskId } }
@@ -1000,7 +1008,7 @@ private fun WorkTaskDetailView(
                     StatusBadge(if (task.isComplete) "Completed" else "To do", if (task.isComplete) VineColors.Success else VineColors.Orange)
                     Spacer(Modifier.weight(1f))
                     Button(
-                        onClick = { vm.setWorkTaskComplete(task.id, !task.isComplete) },
+                        onClick = { if (task.isComplete) vm.setWorkTaskComplete(task.id, false) else showCompletion = true },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (task.isComplete) vine.cardBorder else VineColors.Success,
                             contentColor = if (task.isComplete) vine.textPrimary else Color.White,
@@ -1019,14 +1027,15 @@ private fun WorkTaskDetailView(
                     DividerWT(vine.cardBorder)
                     DetailRowWT(Icons.Filled.Grass, "Block", task.paddockName?.takeIf { it.isNotBlank() } ?: "No block linked", VineColors.LeafGreen)
                     DividerWT(vine.cardBorder)
-                    DetailRowWT(Icons.Filled.Schedule, "Date", formatTaskDate(task.startEpochMs) ?: "—", VineColors.Cyan)
+                    DetailRowWT(Icons.Filled.Schedule, "Work Date", com.rork.vinetrack.data.WorkTaskCompletion.workDate(task, state.seasonZone)?.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy")) ?: "—", VineColors.Cyan)
                     if (task.durationHours > 0) {
                         DividerWT(vine.cardBorder)
                         DetailRowWT(Icons.Filled.Schedule, "Duration", formatHours(task.durationHours), VineColors.Orange)
                     }
                     if (task.isComplete) {
                         DividerWT(vine.cardBorder)
-                        DetailRowWT(Icons.Filled.CheckCircle, "Completed", formatTaskDate(task.finalizedEpochMs) ?: "Yes", VineColors.Success)
+                        DetailRowWT(Icons.Filled.CheckCircle, "Completed", com.rork.vinetrack.data.WorkTaskCompletion.completedDate(task, state.seasonZone)?.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy")) ?: "Completed", VineColors.Success)
+                        TextButton(onClick = { showCompletion = true }) { Text("Edit Completed Date") }
                     }
                 }
             }
@@ -1045,6 +1054,7 @@ private fun WorkTaskDetailView(
                         Text("  Add", color = VineColors.PrimaryAccent)
                     }
                 }
+                Text("Add the people/labour used for this task, including worker type, number of people and hours worked.", color = vine.textSecondary, fontSize = 13.sp)
                 VineyardCard {
                     if (state.taskLinesLoading && labourLines.isEmpty()) {
                         Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
@@ -1425,7 +1435,7 @@ private fun WorkTaskSheet(
 
     LaunchedEffect(showsSavedFeedback) {
         if (showsSavedFeedback) {
-            kotlinx.coroutines.delay(1_500)
+            kotlinx.coroutines.delay(8_000)
             showsSavedFeedback = false
         }
     }
@@ -1456,6 +1466,10 @@ private fun WorkTaskSheet(
                     Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = VineColors.Success, modifier = Modifier.size(18.dp))
                     Text("  Saved", color = VineColors.Success, fontWeight = FontWeight.SemiBold)
                 }
+            }
+
+            if (showsSavedFeedback) {
+                Text("Work Task saved. You can now add Labour, Machine Work and Materials below.", color = VineColors.Success)
             }
 
             // Task type
@@ -1546,14 +1560,7 @@ private fun WorkTaskSheet(
 
             if (!lifecycle.childControlsEnabled) {
                 VineyardCard {
-                    Text("Labour", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                    Text("Save this task first to add labour lines.", color = vine.textSecondary, fontSize = 13.sp)
-                    HorizontalDivider(Modifier.padding(vertical = 10.dp), color = vine.cardBorder)
-                    Text("Materials", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                    Text("Save this task first to add materials.", color = vine.textSecondary, fontSize = 13.sp)
-                    HorizontalDivider(Modifier.padding(vertical = 10.dp), color = vine.cardBorder)
-                    Text("Machine Work", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                    Text("Save this task first to add machine work.", color = vine.textSecondary, fontSize = 13.sp)
+                    Text("Save this Work Task first. You can then add Labour, Machine Work and Materials.", color = vine.textSecondary, fontSize = 14.sp)
                 }
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1565,6 +1572,7 @@ private fun WorkTaskSheet(
                             Text("  Add")
                         }
                     }
+                    Text("Add the people/labour used for this task, including worker type, number of people and hours worked.", color = vine.textSecondary, fontSize = 13.sp)
                     VineyardCard {
                         if (labourLines.isEmpty()) {
                             Text("No labour resources added", color = vine.textSecondary, fontSize = 14.sp)

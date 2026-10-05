@@ -32,10 +32,27 @@ import java.util.UUID
  * Online-first with queued replay for creates ([WorkTaskCreateSync]) and
  * header updates ([WorkTaskUpdateSync]). Every mutation sends only the
  * columns Android edits, leaving the iOS-managed `resources` JSONB and the
- * Phase-16 costing fields (start_date, end_date, area_ha, description, …)
- * intact.
+ * Phase-16 costing fields (start_date, area_ha, description, …) intact.
+ * Completion owns end_date independently of the Work Date.
  */
-class WorkTaskRepository(private val session: SessionStore) {
+class WorkTaskRepository(private val session: SessionStore) : WorkTaskHeaderWriting {
+
+    override suspend fun replayCreate(payload: WorkTaskCreateSync.Payload): WorkTask = createWorkTask(
+        vineyardId = payload.vineyardId, paddockId = payload.paddockId, paddockName = payload.paddockName,
+        date = payload.date, taskType = payload.taskType, durationHours = payload.durationHours, notes = payload.notes,
+        id = payload.id, clientUpdatedAt = payload.clientUpdatedAt, isFinalized = payload.isFinalized,
+        endDate = payload.endDate, finalizedAt = payload.finalizedAt, finalizedBy = payload.finalizedBy,
+        pruningActivityId = payload.pruningActivityId,
+    )
+
+    override suspend fun replayUpdate(payload: WorkTaskUpdateSync.Payload): WorkTask = when {
+        payload.dateOnly -> setCompletedDate(payload.id, payload.endDate, payload.clientUpdatedAt)
+        payload.completionOnly -> setFinalized(payload.id, payload.isFinalized, payload.clientUpdatedAt,
+            payload.endDate, payload.finalizedAt, payload.finalizedBy)
+        else -> applyHeaderUpdate(payload.id, payload.paddockId, payload.paddockName, payload.date,
+            payload.taskType, payload.durationHours, payload.notes, payload.isFinalized,
+            payload.finalizedAt, payload.finalizedBy, payload.clientUpdatedAt, payload.endDate, payload.endDatePresent)
+    }
 
     /** Insert payload when logging a new work task. */
     @Serializable
@@ -51,6 +68,7 @@ class WorkTaskRepository(private val session: SessionStore) {
         @SerialName("is_finalized") val isFinalized: Boolean = false,
         @SerialName("finalized_at") val finalizedAt: String? = null,
         @SerialName("finalized_by") val finalizedBy: String? = null,
+        @SerialName("end_date") val endDate: String? = null,
         @SerialName("created_by") val createdBy: String? = null,
         // sql/188 piece-rate costing. Defaults keep every existing caller an
         // HOURLY job with no piece-rate basis, exactly as before.
@@ -114,15 +132,6 @@ class WorkTaskRepository(private val session: SessionStore) {
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
 
-    /** Complete / reopen patch — toggles the iOS `is_finalized` convention. */
-    @Serializable
-    private data class WorkTaskFinalizePatch(
-        @SerialName("is_finalized") val isFinalized: Boolean,
-        @SerialName("finalized_at") val finalizedAt: String? = null,
-        @SerialName("finalized_by") val finalizedBy: String? = null,
-        @SerialName("client_updated_at") val clientUpdatedAt: String,
-    )
-
     @Serializable
     private data class SoftDeleteArgs(@SerialName("p_id") val id: String)
 
@@ -170,6 +179,9 @@ class WorkTaskRepository(private val session: SessionStore) {
         id: String? = null,
         clientUpdatedAt: String? = null,
         isFinalized: Boolean = false,
+        endDate: String? = null,
+        finalizedAt: String? = null,
+        finalizedBy: String? = null,
         // sql/188. Defaults preserve the existing hourly behaviour exactly.
         costingMethod: WorkTaskCostingMethod = WorkTaskCostingMethod.HOURLY,
         pieceRatePerVine: Double? = null,
@@ -191,8 +203,9 @@ class WorkTaskRepository(private val session: SessionStore) {
             durationHours = durationHours,
             notes = notes ?: "",
             isFinalized = isFinalized,
-            finalizedAt = if (isFinalized) stamp else null,
-            finalizedBy = if (isFinalized) session.userId else null,
+            finalizedAt = if (isFinalized) finalizedAt ?: stamp else null,
+            finalizedBy = if (isFinalized) finalizedBy ?: session.userId else null,
+            endDate = endDate,
             createdBy = session.userId,
             costingMethod = costingMethod.storedValue,
             pieceRatePerVine = pieceRatePerVine.takeIf {
@@ -289,17 +302,35 @@ class WorkTaskRepository(private val session: SessionStore) {
         id: String,
         finalized: Boolean,
         clientUpdatedAt: String? = null,
+        endDate: String? = null,
+        finalizedAt: String? = null,
+        finalizedBy: String? = null,
     ): WorkTask = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val stamp = clientUpdatedAt ?: nowIso()
-        val patch = WorkTaskFinalizePatch(
-            isFinalized = finalized,
-            finalizedAt = if (finalized) stamp else null,
-            finalizedBy = if (finalized) session.userId else null,
-            clientUpdatedAt = stamp,
-        )
-        patchTask(id, patch, token)
+        patchTask(id, completionPatch(finalized, endDate, finalizedAt, finalizedBy, stamp), token)
+    }
+
+    /** A business-date correction does not write the completion audit columns. */
+    suspend fun setCompletedDate(id: String, endDate: String?, clientUpdatedAt: String): WorkTask = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        patchTask(id, buildJsonObject {
+            put("end_date", endDate?.let(::JsonPrimitive) ?: JsonNull)
+            put("client_updated_at", JsonPrimitive(clientUpdatedAt))
+        }, token)
+    }
+
+    companion object {
+        /** Explicit NULLs are required when reopening, regardless of client JSON configuration. */
+        fun completionPatch(finalized: Boolean, endDate: String?, finalizedAt: String?, finalizedBy: String?, stamp: String): JsonObject = buildJsonObject {
+            put("is_finalized", JsonPrimitive(finalized))
+            put("end_date", endDate?.takeIf { finalized }?.let(::JsonPrimitive) ?: JsonNull)
+            put("finalized_at", finalizedAt?.takeIf { finalized }?.let(::JsonPrimitive) ?: JsonNull)
+            put("finalized_by", finalizedBy?.takeIf { finalized }?.let(::JsonPrimitive) ?: JsonNull)
+            put("client_updated_at", JsonPrimitive(stamp))
+        }
     }
 
     /**
@@ -320,6 +351,8 @@ class WorkTaskRepository(private val session: SessionStore) {
         finalizedAt: String?,
         finalizedBy: String?,
         clientUpdatedAt: String,
+        endDate: String? = null,
+        endDatePresent: Boolean = false,
     ): WorkTask = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -335,7 +368,12 @@ class WorkTaskRepository(private val session: SessionStore) {
             finalizedBy = finalizedBy,
             clientUpdatedAt = clientUpdatedAt,
         )
-        patchTask(id, patch, token)
+        val encoded = kotlinx.serialization.json.Json { encodeDefaults = true; explicitNulls = true }
+            .encodeToJsonElement(WorkTaskHeaderPatch.serializer(), patch) as JsonObject
+        val body = JsonObject(encoded + buildJsonObject {
+            if (endDatePresent) put("end_date", endDate?.let(::JsonPrimitive) ?: JsonNull)
+        })
+        patchTask(id, body, token)
     }
 
     suspend fun softDeleteWorkTask(id: String) = withContext(Dispatchers.IO) {

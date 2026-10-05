@@ -32,7 +32,7 @@ import kotlinx.serialization.json.Json
  * the moment the operator actually saved the task, not when it later synced.
  */
 class WorkTaskCreateSync(
-    private val workTaskRepo: WorkTaskRepository,
+    private val workTaskRepo: WorkTaskHeaderWriting,
     private val pending: PendingWriteRepository,
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -58,6 +58,9 @@ class WorkTaskCreateSync(
         val durationHours: Double,
         val notes: String,
         val isFinalized: Boolean = false,
+        val endDate: String? = null,
+        val finalizedAt: String? = null,
+        val finalizedBy: String? = null,
         /**
          * sql/200: the ORIGINATING pruning activity. Stored IN the queued
          * marker so a task created from an activity while offline replays WITH
@@ -87,15 +90,10 @@ class WorkTaskCreateSync(
         clientUpdatedAt: String,
         isFinalized: Boolean = false,
         pruningActivityId: String? = null,
+        endDate: String? = null,
+        finalizedAt: String? = null,
+        finalizedBy: String? = null,
     ): PendingWrite {
-        pending.list()
-            .filter {
-                it.entityType == PendingEntityType.WORK_TASK &&
-                    it.opType == PendingOpType.CREATE &&
-                    it.clientId == id &&
-                    it.status != PendingWriteStatus.SYNCED
-            }
-            .forEach { pending.remove(it.id) }
         val payload = Payload(
             id = id,
             vineyardId = vineyardId,
@@ -106,10 +104,13 @@ class WorkTaskCreateSync(
             durationHours = durationHours,
             notes = notes ?: "",
             isFinalized = isFinalized,
+            endDate = endDate,
+            finalizedAt = finalizedAt,
+            finalizedBy = finalizedBy,
             pruningActivityId = pruningActivityId,
             clientUpdatedAt = clientUpdatedAt,
         )
-        return pending.enqueue(
+        return pending.upsertCoalesced(
             entityType = PendingEntityType.WORK_TASK,
             opType = PendingOpType.CREATE,
             payloadJson = json.encodeToString(Payload.serializer(), payload),
@@ -158,6 +159,9 @@ class WorkTaskCreateSync(
         notes: String?,
         isFinalized: Boolean,
         clientUpdatedAt: String,
+        endDate: String? = null,
+        finalizedAt: String? = null,
+        finalizedBy: String? = null,
     ): Boolean {
         val existing = pending.list().filter {
             it.entityType == PendingEntityType.WORK_TASK &&
@@ -165,7 +169,7 @@ class WorkTaskCreateSync(
                 it.clientId == id &&
                 it.status != PendingWriteStatus.SYNCED
         }
-        if (existing.isEmpty()) return false
+        if (existing.isEmpty() || existing.any { it.status == PendingWriteStatus.IN_PROGRESS }) return false
         // Preserve the vineyard scope AND the originating-activity link
         // (sql/200) captured when the create was first queued — an edit folded
         // into a pending create must never strip the link the task was born with.
@@ -178,6 +182,9 @@ class WorkTaskCreateSync(
             durationHours, notes, clientUpdatedAt,
             isFinalized = isFinalized,
             pruningActivityId = original.pruningActivityId,
+            endDate = if (isFinalized) endDate ?: original.endDate else null,
+            finalizedAt = if (isFinalized) finalizedAt ?: original.finalizedAt else null,
+            finalizedBy = if (isFinalized) finalizedBy ?: original.finalizedBy else null,
         )
         return true
     }
@@ -213,20 +220,7 @@ class WorkTaskCreateSync(
                     continue
                 }
                 try {
-                    val created = workTaskRepo.createWorkTask(
-                        vineyardId = payload.vineyardId,
-                        paddockId = payload.paddockId,
-                        paddockName = payload.paddockName,
-                        date = payload.date,
-                        taskType = payload.taskType,
-                        durationHours = payload.durationHours,
-                        notes = payload.notes,
-                        id = payload.id,
-                        clientUpdatedAt = payload.clientUpdatedAt,
-                        isFinalized = payload.isFinalized,
-                        // sql/200: the link replays with the insert itself.
-                        pruningActivityId = payload.pruningActivityId,
-                    )
+                    val created = workTaskRepo.replayCreate(payload)
                     pending.remove(write.id)
                     onSynced(created)
                 } catch (e: BackendError.Unauthorized) {
@@ -237,7 +231,23 @@ class WorkTaskCreateSync(
                         // Duplicate primary key — the client id is already on the
                         // server, so the work task exists. Idempotent success;
                         // the optimistic row stays as-is.
-                        e.code == 409 -> pending.remove(write.id)
+                        e.code == 409 -> {
+                            // The original insert may have landed before a later completion
+                            // was folded offline. Apply the frozen latest header before ack.
+                            try {
+                                val updated = workTaskRepo.replayUpdate(WorkTaskUpdateSync.Payload(
+                                    id = payload.id, paddockId = payload.paddockId, paddockName = payload.paddockName,
+                                    date = payload.date, taskType = payload.taskType, durationHours = payload.durationHours,
+                                    notes = payload.notes, isFinalized = payload.isFinalized,
+                                    finalizedAt = payload.finalizedAt, finalizedBy = payload.finalizedBy,
+                                    clientUpdatedAt = payload.clientUpdatedAt, endDate = payload.endDate, endDatePresent = true,
+                                ))
+                                pending.remove(write.id)
+                                onSynced(updated)
+                            } catch (patchError: Exception) {
+                                retryOrBlock(write, "Waiting to sync the latest work task completion.")
+                            }
+                        }
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
                         else -> pending.updateStatus(
                             write.id,

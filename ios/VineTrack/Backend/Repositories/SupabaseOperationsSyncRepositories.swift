@@ -29,6 +29,13 @@ final class SupabaseWorkTaskSyncRepository: WorkTaskSyncRepositoryProtocol {
         try await provider.client.from("work_tasks").upsert(items, onConflict: "id").execute()
     }
 
+    func updateCompletion(_ patch: BackendWorkTaskCompletionPatch) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        try await provider.client.from("work_tasks").update(patch)
+            .eq("id", value: patch.task.id.uuidString)
+            .eq("vineyard_id", value: patch.task.vineyardId.uuidString).execute()
+    }
+
     func softDelete(id: UUID) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         try await provider.client.rpc("soft_delete_work_task", params: OpsSoftDeleteByIdRequest(id: id)).execute()

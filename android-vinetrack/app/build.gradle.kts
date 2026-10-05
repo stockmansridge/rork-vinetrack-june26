@@ -342,6 +342,21 @@ if (providers.gradleProperty("catalogueCutoverFocusedTests").orNull == "true") {
     }
 }
 
+if (providers.gradleProperty("workTaskCompletionFocusedTests").orNull == "true") {
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+        testLogging { events("passed", "failed", "skipped") }
+    }
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/WorkTaskCompletionTest.kt")
+                include("**/WorkTaskEditorLifecycleTest.kt")
+                include("**/WorkTaskFullRefreshParityTest.kt")
+            })
+        }
+    }
+}
+
 // Compile only Round 2 contract coverage, leaving unrelated legacy suites untouched.
 if (providers.gradleProperty("sprayProgramRound2FocusedTests").orNull == "true") {
     afterEvaluate {

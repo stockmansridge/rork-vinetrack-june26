@@ -43,7 +43,7 @@ import kotlinx.serialization.json.Json
  * that single marker.
  */
 class WorkTaskUpdateSync(
-    private val workTaskRepo: WorkTaskRepository,
+    private val workTaskRepo: WorkTaskHeaderWriting,
     private val pending: PendingWriteRepository,
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -70,6 +70,10 @@ class WorkTaskUpdateSync(
         val finalizedAt: String? = null,
         val finalizedBy: String? = null,
         val clientUpdatedAt: String,
+        val endDate: String? = null,
+        val endDatePresent: Boolean = false,
+        val completionOnly: Boolean = false,
+        val dateOnly: Boolean = false,
     )
 
     /**
@@ -90,15 +94,18 @@ class WorkTaskUpdateSync(
         finalizedAt: String?,
         finalizedBy: String?,
         clientUpdatedAt: String,
+        endDate: String? = null,
+        endDatePresent: Boolean = true,
+        completionOnly: Boolean = false,
+        dateOnly: Boolean = false,
     ): PendingWrite {
-        pending.list()
-            .filter {
-                it.entityType == PendingEntityType.WORK_TASK &&
-                    it.opType == PendingOpType.UPDATE &&
-                    it.clientId == id &&
-                    it.status != PendingWriteStatus.SYNCED
-            }
-            .forEach { pending.remove(it.id) }
+        val previous = pending.list().firstOrNull {
+            it.entityType == PendingEntityType.WORK_TASK && it.opType == PendingOpType.UPDATE &&
+                it.clientId == id && it.status in PendingWriteStatus.unresolved
+        }?.let { runCatching { json.decodeFromString(Payload.serializer(), it.payloadJson) }.getOrNull() }
+        val mergedDateOnly = dateOnly && (previous == null || previous.dateOnly)
+        val mergedCompletionOnly = (completionOnly || dateOnly) &&
+            (previous == null || previous.completionOnly || previous.dateOnly) && !mergedDateOnly
         val payload = Payload(
             id = id,
             paddockId = paddockId,
@@ -111,8 +118,12 @@ class WorkTaskUpdateSync(
             finalizedAt = finalizedAt,
             finalizedBy = finalizedBy,
             clientUpdatedAt = clientUpdatedAt,
+            endDate = endDate,
+            endDatePresent = endDatePresent,
+            completionOnly = mergedCompletionOnly,
+            dateOnly = mergedDateOnly,
         )
-        return pending.enqueue(
+        return pending.upsertCoalesced(
             entityType = PendingEntityType.WORK_TASK,
             opType = PendingOpType.UPDATE,
             payloadJson = json.encodeToString(Payload.serializer(), payload),
@@ -165,24 +176,15 @@ class WorkTaskUpdateSync(
                     continue
                 }
                 try {
-                    val updated = workTaskRepo.applyHeaderUpdate(
-                        id = payload.id,
-                        paddockId = payload.paddockId,
-                        paddockName = payload.paddockName,
-                        date = payload.date,
-                        taskType = payload.taskType,
-                        durationHours = payload.durationHours,
-                        notes = payload.notes,
-                        isFinalized = payload.isFinalized,
-                        finalizedAt = payload.finalizedAt,
-                        finalizedBy = payload.finalizedBy,
-                        clientUpdatedAt = payload.clientUpdatedAt,
-                    )
-                    pending.remove(write.id)
-                    onSynced(updated)
+                    val updated = workTaskRepo.replayUpdate(payload)
+                    if (pending.list().firstOrNull { it.id == write.id }?.payloadJson == write.payloadJson) {
+                        pending.remove(write.id)
+                        onSynced(updated)
+                    }
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to sync this work task edit.")
                 } catch (e: BackendError.Server) {
+                    if (!isCurrent(write)) continue
                     when {
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
                         else -> pending.updateStatus(
@@ -214,7 +216,10 @@ class WorkTaskUpdateSync(
         }
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
+    private fun isCurrent(write: PendingWrite): Boolean = pending.list().firstOrNull { it.id == write.id }?.payloadJson == write.payloadJson
+
     private fun retryOrBlock(write: PendingWrite, error: String) {
+        if (!isCurrent(write)) return
         pending.incrementAttempt(write.id)
         val attempts = write.attemptCount + 1
         val status = if (attempts >= MAX_ATTEMPTS) PendingWriteStatus.BLOCKED else PendingWriteStatus.FAILED
