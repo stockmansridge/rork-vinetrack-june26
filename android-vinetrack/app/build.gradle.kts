@@ -1,5 +1,6 @@
 import com.android.build.api.variant.HasUnitTestBuilder
 import java.util.Properties
+import java.lang.management.ManagementFactory
 
 plugins {
     alias(libs.plugins.android.application)
@@ -133,8 +134,9 @@ android {
 }
 
 androidComponents {
-    // The unit tests are pure JVM and already run against the debug variant
-    // (identical bytecode) — building them AGAIN for release adds no coverage
+    // The unit tests run against the debug variant. This is not release-variant
+    // test certification: BuildConfig and debug-only dependencies can differ.
+    // Building release tests separately
     // but drags `releaseUnitTestRuntimeClasspath` → `generateReleaseLintModel`
     // → LintModelWriterTask into the AAB export, which fails on the export
     // machine's constrained/cold lint classpath (missing VariantInputs class).
@@ -163,9 +165,9 @@ androidComponents {
 
 // The AAB export pipeline invokes `testReleaseUnitTest` by name. With the
 // release unit-test variant disabled above, provide that task name as an alias
-// that runs the IDENTICAL pure-JVM test suite against the debug variant — same
-// bytecode, full coverage, and none of the release lint-model task chain that
-// broke the export machine.
+// that runs the JVM test suite against the debug variant, avoiding the release
+// lint-model task chain. This is debug-variant coverage, not proof that release
+// bytecode or variant-specific configuration is identical.
 //
 // The guard MUST satisfy two independent constraints at once:
 //
@@ -195,6 +197,29 @@ afterEvaluate {
                 "Alias: runs the unit tests against the debug variant (release unit tests are disabled)."
             dependsOn("testDebugUnitTest")
         }
+    }
+}
+
+tasks.register("androidBuildDiagnostics") {
+    group = "help"
+    description = "Prints non-secret build identity and effective memory settings for CI troubleshooting."
+    doLast {
+        logger.lifecycle("VineTrack applicationId=${android.defaultConfig.applicationId}")
+        logger.lifecycle("VineTrack versionName=${android.defaultConfig.versionName} versionCode=${android.defaultConfig.versionCode}")
+        logger.lifecycle("Gradle ${gradle.gradleVersion}; Java ${System.getProperty("java.version")}")
+        logger.lifecycle("Active Gradle JVM max heap MiB=${Runtime.getRuntime().maxMemory() / (1024 * 1024)}")
+        val memoryArgs = ManagementFactory.getRuntimeMXBean().inputArguments
+            .filter { it.startsWith("-Xmx") || it.startsWith("-Xms") || it.startsWith("-XX:+Use") || it.startsWith("-XX:MaxMetaspaceSize=") }
+        logger.lifecycle("Active Gradle JVM memory arguments=${memoryArgs.joinToString(" ")}")
+        listOf(
+            "org.gradle.jvmargs",
+            "kotlin.compiler.execution.strategy",
+            "kotlin.daemon.jvmargs",
+            "org.gradle.workers.max",
+            "kotlin.incremental",
+        ).forEach { key -> logger.lifecycle("Configured property $key=${providers.gradleProperty(key).orNull ?: "<plugin default>"}") }
+        logger.lifecycle("testReleaseUnitTest delegates to debug=${"compileReleaseUnitTestKotlin" !in tasks.names}")
+        logger.lifecycle("Release lint is non-blocking; APK/AAB success is not Google Play delivery confirmation.")
     }
 }
 
@@ -230,9 +255,9 @@ if (providers.gradleProperty("pinEvidenceFocusedTests").orNull == "true") {
     }
 }
 
-// The full legacy JVM source set currently contains two unrelated, stale tests
-// that do not compile. This opt-in keeps focused Optimal Ripeness certification
-// deterministic without weakening the normal test task.
+// Opt-in source narrowing keeps focused Optimal Ripeness validation fast.
+// The full JVM test source set compiled successfully in the 2026-10-05 build
+// audit; this selector is not evidence that other tests are broken.
 if (providers.gradleProperty("optimalRipenessFocusedTests").orNull == "true") {
     afterEvaluate {
         tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
