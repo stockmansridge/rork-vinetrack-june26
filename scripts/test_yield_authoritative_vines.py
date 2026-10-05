@@ -7,12 +7,16 @@ copied calculations. Minimal table fixture omits unrelated production triggers/R
 Everything, including applying SQL 263 twice, runs inside a rolled-back transaction.
 Never connects to a production URL or uses environment credentials.
 """
+import argparse
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--refresh-format", choices=("canonical", "compact-crlf"), default="canonical")
+args = parser.parse_args()
 
 
 def function(path: str, name: str) -> str:
@@ -72,7 +76,14 @@ for path, name in [
     ("sql/221_season_yield_estimates.sql", "_pruning_block_estimate"),
     ("sql/221_season_yield_estimates.sql", "_refresh_pruning_yield_estimates"),
 ]:
-    setup += function(path, name)
+    definition = function(path, name)
+    if name == "_refresh_pruning_yield_estimates" and args.refresh_format == "compact-crlf":
+        # Reproduce the supplied live function's single-space indentation and CRLF body.
+        definition = "\r\n".join(
+            " " + line.strip() if line[:1].isspace() else line
+            for line in definition.splitlines()
+        ) + "\r\n"
+    setup += definition
 migration = (root / "sql/263_yield_authoritative_vine_counts.sql").read_text()
 migration = re.sub(r"^begin;\s*$|^commit;\s*$", "", migration, flags=re.M)
 setup += migration + "\n" + migration + "\n"

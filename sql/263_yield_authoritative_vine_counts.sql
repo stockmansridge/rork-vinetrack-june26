@@ -86,19 +86,23 @@ revoke all on function public._pruning_block_estimate(uuid,uuid) from public, an
 do $patch$
 declare
   v_def text := pg_get_functiondef('public._refresh_pruning_yield_estimates(uuid,integer)'::regprocedure);
-  v_start text := E'begin\n  for r in';
-  v_select text := E'         and e.deleted_at is null\n       limit 1;';
-  v_insert text := E'        );\n\n        v_inserted := v_inserted + 1;';
+  -- Match only whitespace differences (including CRLF), not changed SQL logic.
+  v_start text := 'begin[[:space:]]+for r in';
+  v_select text := 'and e\.deleted_at is null[[:space:]]+limit 1;';
+  v_insert text := '\);[[:space:]]+v_inserted := v_inserted \+ 1;';
 begin
   if position('yield-pruning-refresh:' in v_def) = 0 then
-    if position(v_start in v_def) = 0 or position(v_select in v_def) = 0 or position(v_insert in v_def) = 0 then
-      raise exception 'SQL 263: unexpected pruning refresh definition; review before applying';
+    if (select count(*) from regexp_matches(v_def, v_start, 'g')) <> 1
+       or (select count(*) from regexp_matches(v_def, v_select, 'g')) <> 1
+       or (select count(*) from regexp_matches(v_def, v_insert, 'g')) <> 1 then
+      raise exception 'SQL 263: unexpected pruning refresh definition; review before applying'
+        using detail = 'Expected exactly one loop entry, active-estimate lookup, and insert counter; whitespace differences are accepted.';
     end if;
-    v_def := replace(v_def, v_start, E'begin\n  perform pg_advisory_xact_lock(hashtextextended(''yield-pruning-refresh:'' || p_vineyard_id::text, 0));\n  for r in');
-    v_def := replace(v_def, v_select, E'         and e.deleted_at is null\n       limit 1 for update;');
+    v_def := regexp_replace(v_def, v_start, E'begin\n  perform pg_advisory_xact_lock(hashtextextended(''yield-pruning-refresh:'' || p_vineyard_id::text, 0));\n  for r in');
+    v_def := regexp_replace(v_def, v_select, E'and e.deleted_at is null\n       limit 1 for update;');
     -- A higher-priority writer may insert while no row existed at the SELECT.
     -- Never overwrite that insert, and do not fail an offline paddock replay.
-    v_def := replace(v_def, v_insert, E'        ) on conflict (vineyard_id, vintage, paddock_id, planting_group_key) where deleted_at is null do nothing;\n\n        get diagnostics v_n = row_count;\n        v_inserted := v_inserted + v_n;\n        if v_n = 0 then v_skipped := v_skipped + 1; end if;');
+    v_def := regexp_replace(v_def, v_insert, E'        ) on conflict (vineyard_id, vintage, paddock_id, planting_group_key) where deleted_at is null do nothing;\n\n        get diagnostics v_n = row_count;\n        v_inserted := v_inserted + v_n;\n        if v_n = 0 then v_skipped := v_skipped + 1; end if;');
     execute v_def;
   end if;
 end;
