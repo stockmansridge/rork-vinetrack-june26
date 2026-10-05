@@ -269,15 +269,27 @@ extension Paddock {
     /// calculations continue to use `effectiveVineCount`; no stored value is changed.
     var authoritativeVineCount: Int {
         if let override = vineCountOverride, override > 0 { return override }
-        if hasAuthoritativeVineOverride { return rowsEffectiveVineCount }
+        if let rowTotal = completeRowEffectiveVineCount { return rowTotal }
         return estimatedVineCount
     }
 
     /// Whether a valid physical manual count supersedes saved pruning density.
     var hasAuthoritativeVineOverride: Bool {
-        (vineCountOverride ?? 0) > 0 || rows.contains {
+        (vineCountOverride ?? 0) > 0 || completeRowEffectiveVineCount != nil
+    }
+
+    /// Yield may use row totals only when a valid manual override exists and
+    /// every row has a known effective count. Unknown rows never contribute zero.
+    var completeRowEffectiveVineCount: Int? {
+        guard rows.contains(where: {
             PaddockRowVineCount.sanitiseOverride($0.vineCountOverride) != nil
+        }) else { return nil }
+        var total: Int = 0
+        for row in rows {
+            guard let count = effectiveVineCount(for: row) else { return nil }
+            total += count
         }
+        return total
     }
 
     var summaryVineCount: Int { authoritativeVineCount }

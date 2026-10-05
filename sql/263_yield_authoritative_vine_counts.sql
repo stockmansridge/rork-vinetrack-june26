@@ -3,7 +3,9 @@
 -- Does not write paddocks overrides, pruning density, sessions or historical snapshots.
 begin;
 
--- NULL means no VALID manual row override: preserve SQL 221's density fallback.
+-- NULL means no valid manual row override OR an incomplete row total:
+-- preserve SQL 221's density fallback rather than treating a partial sum as a block.
+-- All-manual rows need neither spacing nor geometry.
 -- Geometry and rounding match Paddock.rowLengthMetres / PaddockRowVineCount:
 -- 111320 m/latitude degree, cos(polygon centroid latitude), per-row half-away rounding.
 create or replace function public._yield_row_effective_vine_count(
@@ -38,16 +40,17 @@ begin
       continue;
     end if;
     if p_spacing is null or p_spacing <= 0 or p_spacing >= 'Infinity'::double precision then
-      continue;
+      return null;
     end if;
     v_lat1 := public._season_alloc_number(r -> 'startPoint', array['latitude']);
     v_lat2 := public._season_alloc_number(r -> 'endPoint', array['latitude']);
     v_lon1 := public._season_alloc_number(r -> 'startPoint', array['longitude']);
     v_lon2 := public._season_alloc_number(r -> 'endPoint', array['longitude']);
-    if v_lat1 is null or v_lat2 is null or v_lon1 is null or v_lon2 is null then continue; end if;
+    if v_lat1 is null or v_lat2 is null or v_lon1 is null or v_lon2 is null then return null; end if;
     v_length := sqrt(power((v_lat2 - v_lat1) * 111320.0, 2)
       + power((v_lon2 - v_lon1) * 111320.0 * cos(radians(coalesce(v_centroid, v_lat1))), 2));
-    if v_length > 0 then v_total := v_total + floor(v_length / p_spacing + 0.5); end if;
+    if not (v_length > 0 and v_length < 'Infinity'::double precision) then return null; end if;
+    v_total := v_total + floor(v_length / p_spacing + 0.5);
   end loop;
   return case when v_has_manual then v_total else null end;
 end;

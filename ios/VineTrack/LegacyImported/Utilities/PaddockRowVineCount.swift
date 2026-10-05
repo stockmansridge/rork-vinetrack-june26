@@ -18,12 +18,15 @@ import Foundation
 /// `vineCountOverride` is OPTIONAL. Rows without it keep the calculated
 /// estimate, so every row ever written stays valid.
 ///
-/// RELATIONSHIP TO THE BLOCK-LEVEL OVERRIDE (unchanged, do not conflate):
-/// * `paddocks.vine_count_override` — the BLOCK total. Still drives water,
-///   spray, fertiliser and yield estimates exactly as before.
-/// * `rows[].vineCountOverride` — per-ROW truth. Drives row-based work,
-///   specifically the pruning piece-rate quantity.
-/// Neither writes to the other.
+/// RELATIONSHIP TO THE BLOCK-LEVEL OVERRIDE (do not conflate):
+/// * `paddocks.vine_count_override` — the BLOCK total. Water, spray and
+///   fertiliser retain their existing block-level contract.
+/// * `rows[].vineCountOverride` — per-ROW truth for row-based work, including
+///   pruning piece-rate quantity. Yield uses a complete row-effective total
+///   only when a valid row override exists and every row has a known count.
+/// * Yield precedence: positive block override, complete row-effective total,
+///   then the existing block calculation (Bunch Count) or saved density (Pruning).
+/// Neither stored override writes to the other; piece-rate aggregation is unchanged.
 nonisolated enum PaddockRowVineCount {
 
     /// A manual count above this is a typo, not a row.

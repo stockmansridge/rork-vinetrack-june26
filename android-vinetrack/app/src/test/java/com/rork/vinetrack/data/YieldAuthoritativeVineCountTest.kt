@@ -60,9 +60,62 @@ class YieldAuthoritativeVineCountTest {
         val p = block(first = 158)
         val e = estimate(p)
         assertEquals(493, e.totalVines)
+        assertEquals(493, p.completeRowEffectiveVineCount)
         assertEquals(0.5916, e.estimatedYieldTonnes, 1e-10)
         assertNull(p.vineCountOverride)
         assertEquals(494, p.effectiveVineCount)
+    }
+
+    @Test fun allManualRowsDriveYieldWithoutSpacingOrGeometry() {
+        val original = block(first = 158, second = 150)
+        val p = original.copy(vineSpacing = null, rows = original.rows.orEmpty().mapIndexed { index, row ->
+            row.copy(startPoint = null, endPoint = null, vineCountOverride = if (index == 2) 167 else row.vineCountOverride)
+        })
+        assertEquals(475, estimate(p).totalVines)
+        assertEquals(475, p.completeRowEffectiveVineCount)
+        assertTrue(p.hasAuthoritativeVineOverride)
+        assertEquals(475.0, p.pruningYieldVinesPerHa(2200.0) * p.areaHectares, 1e-8)
+    }
+
+    @Test fun incompleteRowsFallBackInsteadOfUsingPartialCount() {
+        val original = block(first = 158)
+        val missingSpacing = original.copy(vineSpacing = null)
+        val missingGeometry = original.copy(rows = original.rows.orEmpty().mapIndexed { index, row ->
+            if (index == 1) row.copy(endPoint = row.startPoint) else row
+        })
+        for (p in listOf(missingSpacing, missingGeometry)) {
+            assertNull(p.completeRowEffectiveVineCount)
+            assertTrue(p.rowsEffectiveVineCount > 0)
+            assertEquals(p.effectiveVineCount, p.authoritativeVineCount)
+            assertEquals(p.effectiveVineCount, p.summaryVineCount)
+            assertEquals(p.effectiveVineCount, estimate(p).totalVines)
+            assertFalse(p.hasAuthoritativeVineOverride)
+            assertEquals(2200.0, p.pruningYieldVinesPerHa(2200.0), 0.0)
+            assertEquals(0.0, p.pruningYieldVinesPerHa(0.0), 0.0)
+            assertEquals(500, estimate(p.copy(vineCountOverride = 500)).totalVines)
+        }
+    }
+
+    @Test fun repairingMissingRowDataReactivatesRowTotal() {
+        val original = block(first = 158)
+        val missingSpacing = original.copy(vineSpacing = null)
+        assertFalse(missingSpacing.hasAuthoritativeVineOverride)
+        val repairedSpacing = missingSpacing.copy(vineSpacing = 1.5)
+        assertEquals(493, estimate(repairedSpacing).totalVines)
+        val missingGeometry = repairedSpacing.copy(rows = repairedSpacing.rows.orEmpty().mapIndexed { index, row ->
+            if (index == 1) row.copy(endPoint = row.startPoint) else row
+        })
+        assertFalse(missingGeometry.hasAuthoritativeVineOverride)
+        val repairedGeometry = missingGeometry.copy(rows = original.rows)
+        assertEquals(493, estimate(repairedGeometry).totalVines)
+        assertEquals(493.0, repairedGeometry.pruningYieldVinesPerHa(2200.0) * repairedGeometry.areaHectares, 1e-8)
+        val manuallyRepaired = missingGeometry.copy(rows = missingGeometry.rows.orEmpty().mapIndexed { index, row ->
+            if (index == 1) row.copy(vineCountOverride = 150) else row
+        })
+        assertEquals(475, estimate(manuallyRepaired).totalVines)
+        val cleared = manuallyRepaired.copy(rows = missingGeometry.rows)
+        assertFalse(cleared.hasAuthoritativeVineOverride)
+        assertEquals(2200.0, cleared.pruningYieldVinesPerHa(2200.0), 0.0)
     }
 
     @Test fun multipleRowOverridesDriveYield() {

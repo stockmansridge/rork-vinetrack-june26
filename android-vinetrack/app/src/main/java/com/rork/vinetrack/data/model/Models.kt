@@ -340,14 +340,25 @@ data class Paddock(
     val authoritativeVineCount: Int
         get() {
             vineCountOverride?.takeIf { it > 0 }?.let { return it }
-            if (hasAuthoritativeVineOverride) return rowsEffectiveVineCount
+            completeRowEffectiveVineCount?.let { return it }
             return estimatedVineCount
         }
 
     /** Whether a valid physical manual count supersedes saved pruning density. */
     val hasAuthoritativeVineOverride: Boolean
-        get() = (vineCountOverride ?: 0) > 0 || rows.orEmpty().any {
-            PaddockRowVineCount.sanitiseOverride(it.vineCountOverride) != null
+        get() = (vineCountOverride ?: 0) > 0 || completeRowEffectiveVineCount != null
+
+    /** Yield requires a valid manual override and a known effective count for every row. */
+    val completeRowEffectiveVineCount: Int?
+        get() {
+            val blockRows = rows.orEmpty()
+            if (blockRows.none { PaddockRowVineCount.sanitiseOverride(it.vineCountOverride) != null }) return null
+            var total: Int = 0
+            for (row in blockRows) {
+                val count = effectiveVineCount(row) ?: return null
+                total += count
+            }
+            return total
         }
 
     val summaryVineCount: Int get() = authoritativeVineCount

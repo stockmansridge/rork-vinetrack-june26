@@ -128,10 +128,37 @@ begin
   perform pg_temp.yield_check(v,b,493,'row_effective_vine_count');
   raise notice 'T11 passed: validity parity';
 
-  -- 12: missing spacing/geometry contributes nothing, never invents rows.
-  perform pg_temp.yield_assert(public._yield_row_effective_vine_count(manual_rows,polygon,0)=158,'manual row survives unavailable spacing');
-  perform pg_temp.yield_assert(public._yield_row_effective_vine_count('[{"vineCountOverride":158},{"number":2}]',polygon,1.5)=158,'unmapped row contributes nothing');
-  raise notice 'T12 passed: unavailable row behaviour';
+  -- 12: only COMPLETE row totals can supersede saved pruning density.
+  perform pg_temp.yield_assert(public._yield_row_effective_vine_count(manual_rows,polygon,0) is null,'missing spacing rejects partial total');
+  perform pg_temp.yield_assert(public._yield_row_effective_vine_count('[{"vineCountOverride":158},{"number":2}]',polygon,1.5) is null,'unmapped untouched row rejects partial total');
+  perform pg_temp.yield_assert(public._yield_row_effective_vine_count('[{"vineCountOverride":158},{"vineCountOverride":150},{"vineCountOverride":167}]',null,null)=475,'all manual counts need neither spacing nor geometry');
+  -- Re-enable current pruning refresh after T9's priority-protection assertions.
+  update public.season_yield_estimates set estimate_source='pruning_calculator'
+    where paddock_id=b and vintage=v_current and deleted_at is null;
+  update public.paddocks set rows=manual_rows,vine_spacing=null where id=b;
+  perform pg_temp.yield_check(v,b,fallback,'block_area_x_vines_per_ha');
+  select source_inputs into e from public.season_yield_estimates where paddock_id=b and vintage=v_current and deleted_at is null;
+  perform pg_temp.yield_assert((e ->> 'vine_count')::double precision=fallback and e ->> 'vine_count_basis'='block_area_x_vines_per_ha','synced incomplete rows persist density fallback');
+  update public.paddocks set vine_count_override=500 where id=b;
+  perform pg_temp.yield_check(v,b,500,'block_vine_count_override');
+  update public.paddocks set vine_count_override=-1,vine_spacing=1.5 where id=b;
+  perform pg_temp.yield_check(v,b,493,'row_effective_vine_count');
+  new_rows := jsonb_set(manual_rows,'{1,endPoint}',manual_rows #> '{1,startPoint}');
+  update public.paddocks set rows=new_rows where id=b;
+  perform pg_temp.yield_check(v,b,fallback,'block_area_x_vines_per_ha');
+  update public.paddocks set rows=jsonb_set(new_rows,'{1,vineCountOverride}','150') where id=b;
+  perform pg_temp.yield_check(v,b,475,'row_effective_vine_count');
+  update public.paddocks set rows=new_rows where id=b;
+  perform pg_temp.yield_check(v,b,fallback,'block_area_x_vines_per_ha');
+  update public.paddocks set rows=manual_rows where id=b;
+  perform pg_temp.yield_check(v,b,493,'row_effective_vine_count');
+  select source_inputs into e from public.season_yield_estimates where paddock_id=b and vintage=v_current and deleted_at is null;
+  perform pg_temp.yield_assert((e ->> 'vine_count')::double precision=493 and e ->> 'vine_count_basis'='row_effective_vine_count','geometry repair restores persisted row basis');
+  update public.paddocks set rows='[{"vineCountOverride":158},{"vineCountOverride":150},{"vineCountOverride":167}]',vine_spacing=null where id=b;
+  perform pg_temp.yield_check(v,b,475,'row_effective_vine_count');
+  update public.paddocks set rows=manual_rows,vine_spacing=1.5 where id=b;
+  perform pg_temp.yield_assert((select vines_per_ha=2200 from public.pruning_yield_settings where paddock_id=b),'completeness changes preserve saved density');
+  raise notice 'T12 passed: complete totals only, all-manual counts and sync-safe repair';
 
   -- 13: updates unrelated to count-driving data do not refresh anything.
   select to_jsonb(s) into before_priority from public.season_yield_estimates s where paddock_id=b and vintage=v_current and deleted_at is null;

@@ -55,9 +55,62 @@ struct YieldAuthoritativeVineCountTests {
         let p = block(first: 158)
         let e = try estimate(p)
         #expect(e.totalVines == 493)
+        #expect(p.completeRowEffectiveVineCount == 493)
         #expect(abs(e.estimatedYieldTonnes - 0.5916) < 1e-10)
         #expect(p.vineCountOverride == nil)
         #expect(p.effectiveVineCount == 494)
+    }
+
+    @Test func allManualRowsDriveYieldWithoutSpacingOrGeometry() throws {
+        var p = block(first: 158, second: 150)
+        p.vineSpacing = 0
+        p.rows[2].vineCountOverride = 167
+        for index in p.rows.indices { p.rows[index].endPoint = p.rows[index].startPoint }
+        #expect(try estimate(p).totalVines == 475)
+        #expect(p.completeRowEffectiveVineCount == 475)
+        #expect(p.hasAuthoritativeVineOverride)
+        #expect(abs(p.pruningYieldVinesPerHa(savedDensity: 2200) * p.areaHectares - 475) < 1e-8)
+    }
+
+    @Test func incompleteRowsFallBackInsteadOfUsingPartialCount() throws {
+        let original = block(first: 158)
+        var missingSpacing = original
+        missingSpacing.vineSpacing = 0
+        var missingGeometry = original
+        missingGeometry.rows[1].endPoint = missingGeometry.rows[1].startPoint
+        for p in [missingSpacing, missingGeometry] {
+            #expect(p.completeRowEffectiveVineCount == nil)
+            #expect(p.rowsEffectiveVineCount > 0)
+            #expect(p.authoritativeVineCount == p.estimatedVineCount)
+            #expect(p.summaryVineCount == p.estimatedVineCount)
+            #expect(try estimate(p).totalVines == p.estimatedVineCount)
+            #expect(!p.hasAuthoritativeVineOverride)
+            #expect(p.pruningYieldVinesPerHa(savedDensity: 2200) == 2200)
+            #expect(p.pruningYieldVinesPerHa(savedDensity: 0) == 0)
+            var overridden = p
+            overridden.vineCountOverride = 500
+            #expect(try estimate(overridden).totalVines == 500)
+        }
+    }
+
+    @Test func repairingMissingRowDataReactivatesRowTotal() throws {
+        let original = block(first: 158)
+        var p = original
+        p.vineSpacing = 0
+        #expect(!p.hasAuthoritativeVineOverride)
+        p.vineSpacing = 1.5
+        #expect(try estimate(p).totalVines == 493)
+        p.rows[1].endPoint = p.rows[1].startPoint
+        #expect(!p.hasAuthoritativeVineOverride)
+        p.rows[1].endPoint = original.rows[1].endPoint
+        #expect(try estimate(p).totalVines == 493)
+        #expect(abs(p.pruningYieldVinesPerHa(savedDensity: 2200) * p.areaHectares - 493) < 1e-8)
+        p.rows[1].endPoint = p.rows[1].startPoint
+        p.rows[1].vineCountOverride = 150
+        #expect(try estimate(p).totalVines == 475)
+        p.rows[1].vineCountOverride = nil
+        #expect(!p.hasAuthoritativeVineOverride)
+        #expect(p.pruningYieldVinesPerHa(savedDensity: 2200) == 2200)
     }
 
     @Test func multipleRowOverridesDriveYield() throws {
