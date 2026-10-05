@@ -7,6 +7,38 @@ import org.junit.Test
 import kotlinx.serialization.json.*
 
 class ChemicalSeasonPricingTest {
+    @Test fun legacyEditorPreservesOnlyUnchangedHistoricalLines() {
+        val frozen = 0.0123456789
+        assertEquals(frozen, SprayChemicalPricingPolicy.roundTripLegacyCost(frozen, false, true, true), 0.0)
+        assertEquals(0.0, SprayChemicalPricingPolicy.roundTripLegacyCost(frozen, true, true, true), 0.0)
+        assertEquals(0.0, SprayChemicalPricingPolicy.roundTripLegacyCost(frozen, false, false, true), 0.0)
+        assertEquals(0.0, SprayChemicalPricingPolicy.roundTripLegacyCost(frozen, false, true, false), 0.0)
+        val line = SprayChemical("line", "Product", costPerUnit = SprayChemicalPricingPolicy.roundTripLegacyCost(frozen, true, true, true))
+        val json = SupabaseClient.json.encodeToJsonElement(line).jsonObject
+        assertEquals(0.0, json.getValue("costPerUnit").jsonPrimitive.double, 0.0)
+    }
+
+    @Test fun tripCsvUsesSeasonalResultAndLabelsUnavailableAndLegacy() {
+        val trip = Trip("trip", "vineyard")
+        val line = SprayChemical("line", "Product", 1000.0, costPerUnit = 99.0, savedChemicalId = "chemical")
+        val record = SprayRecord("spray", "vineyard", tripId = trip.id, tanks = listOf(SprayTank("tank", chemicals = listOf(line))))
+        val batch = ChemicalSeasonPriceBatch("vineyard", 2027, listOf(ChemicalSeasonPrice("chemical", 2027, 0.006, "mL", "AUD", 2, 30000.0, 180.0, "season_weighted_purchase_average")))
+        val csv = TripCsvExporter.buildCsv(trip, "Test", "", null, true, record, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), batch)
+        val rows = csv.trim().lines().map { it.split(',') }
+        val chemicalColumn = rows[0].indexOf("chemical_cost")
+        assertEquals("6.00", rows[1][chemicalColumn])
+        assertTrue(csv.contains("season_weighted_purchase_average"))
+        assertFalse(csv.contains("99000.00"))
+        val missing = record.copy(tanks = listOf(SprayTank("tank", chemicals = listOf(line.copy(costPerUnit = 0.0)))))
+        val unavailable = TripCsvExporter.buildCsv(trip, "Test", "", null, true, missing, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), null)
+        assertEquals("", unavailable.trim().lines()[1].split(',')[chemicalColumn])
+        assertTrue(unavailable.contains("season_purchase_cost_unavailable"))
+        val legacy = TripCsvExporter.buildCsv(trip, "Test", "", null, true, record, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), null)
+        assertTrue(legacy.contains("legacy_stored_spray_snapshot"))
+        val compliance = TripCsvExporter.buildCsv(trip, "Test", "", null, false, record, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), batch)
+        assertFalse(compliance.contains("chemical_cost"))
+    }
+
     @Test fun canonicalOverridesLegacyAndZeroIsAvailable() {
         val trip = Trip("trip", "vineyard")
         val line = SprayChemical("line", "Product", 1000.0, costPerUnit = 99.0, savedChemicalId = "chemical")

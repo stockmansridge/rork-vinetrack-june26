@@ -767,6 +767,7 @@ struct SprayRecordFormView: View {
             var tank = tank
             tank.chemicals = tank.chemicals.map { chemical in
                 var chemical = chemical
+                chemical.costPerUnit = 0
                 let resolution = ChemicalSnapshotCapture.captureForNewApplication(
                     savedChemicalId: chemical.savedChemicalId,
                     productName: chemical.name,
@@ -857,7 +858,20 @@ struct SprayRecordFormView: View {
         // its frozen snapshots verbatim: re-capturing on save would rewrite
         // history with today's Chemical Store every time someone corrected a
         // wind speed. This mirrors Android's `refreshSnapshots = !isEdit`.
-        let tanksToSave = existingRecord == nil ? tanksWithCapturedChemistry() : tanks
+        let tanksToSave: [SprayTank] = existingRecord == nil ? tanksWithCapturedChemistry() : tanks.map { tank in
+            var updated = tank
+            updated.chemicals = tank.chemicals.map { line in
+                var updatedLine = line
+                let original = existingRecord?.tanks.flatMap(\.chemicals).first { $0.id == line.id }
+                let unchanged = original.map {
+                    $0.savedChemicalId == line.savedChemicalId && $0.name == line.name && $0.unit == line.unit &&
+                    $0.ratePerHa == line.ratePerHa && $0.ratePer100L == line.ratePer100L && $0.volumePerTank == line.volumePerTank
+                } ?? false
+                updatedLine.costPerUnit = unchanged ? (original?.costPerUnit ?? 0) : 0
+                return updatedLine
+            }
+            return updated
+        }
         let record = SprayRecord(
             id: existingRecord?.id ?? UUID(),
             tripId: tripId,

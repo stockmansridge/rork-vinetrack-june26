@@ -174,12 +174,13 @@ object SprayProgramPdfExporter {
         logo: Bitmap? = null,
         canonicalReports: Map<String, SprayReportPayloadV1> = emptyMap(),
         exportFilename: String? = null,
+        chemicalPrices: com.rork.vinetrack.data.chemical.ChemicalSeasonPriceBatch? = null,
     ): Boolean {
         if (records.isEmpty()) return false
         return try {
             val doc = PdfDocument()
             val s = PageState(doc, BitmapFactory.decodeResource(context.resources, R.drawable.vinetrack_logo))
-            render(s, records, trips, vineyardName, canViewFinancials, machines, fuelPurchases, operatorCategories, paddocks, tankActuals, logo, canonicalReports)
+            render(s, records, trips, vineyardName, canViewFinancials, machines, fuelPurchases, operatorCategories, paddocks, tankActuals, logo, canonicalReports, chemicalPrices)
             s.finish()
 
             val dir = File(context.cacheDir, "exports").apply { mkdirs() }
@@ -222,6 +223,7 @@ object SprayProgramPdfExporter {
         tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual>,
         logo: Bitmap?,
         canonicalReports: Map<String, SprayReportPayloadV1>,
+        chemicalPrices: com.rork.vinetrack.data.chemical.ChemicalSeasonPriceBatch?,
     ) {
         // Header
         val textX = PdfHeaderUtil.drawLogo(s.canvas, logo, MARGIN, s.y)
@@ -268,7 +270,7 @@ object SprayProgramPdfExporter {
         drawTankFills(s, records, trips)
 
         if (canViewFinancials) {
-            drawCostSummary(s, records, trips, machines, fuelPurchases, operatorCategories, paddocks, tankActuals)
+            drawCostSummary(s, records, trips, machines, fuelPurchases, operatorCategories, paddocks, tankActuals, chemicalPrices)
         }
 
         // Footer
@@ -483,12 +485,15 @@ object SprayProgramPdfExporter {
         operatorCategories: List<OperatorCategory>,
         paddocks: List<Paddock>,
         tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual>,
+        chemicalPrices: com.rork.vinetrack.data.chemical.ChemicalSeasonPriceBatch?,
     ) {
         // Product rows and subtotal are accumulated from the same selected
         // all-actual or all-planned dataset for each record.
         val chemicalLineCosts = linkedMapOf<String, Pair<String, Double>>()
         var chemicalSubtotal = 0.0
         var allChemicalCostsActual = true
+        val pricingBases = linkedSetOf<String>()
+        var chemicalIncomplete = false
 
         // Aggregate fuel + labour from the estimator over linked records only.
         var fuelLitres = 0.0
@@ -503,12 +508,8 @@ object SprayProgramPdfExporter {
             val trip = resolveSprayTrip(record, trips)
             if (trip == null) {
                 allChemicalCostsActual = false
-                record.tanks.orEmpty().flatMap { it.chemicals }.filter { it.hasCost }.forEach { chemical ->
-                    val key = chemical.name.trim().lowercase(Locale.getDefault())
-                    val previous = chemicalLineCosts[key]?.second ?: 0.0
-                    chemicalLineCosts[key] = chemical.name to previous + chemical.costPerTank
-                    chemicalSubtotal += chemical.costPerTank
-                }
+                unavailable++
+                pricingBases.add("season_purchase_cost_unavailable")
                 return@forEach
             }
             linkedCount++
@@ -520,7 +521,10 @@ object SprayProgramPdfExporter {
                 fuelPurchases = fuelPurchases,
                 paddocks = paddocks,
                 tankActuals = tankActuals.filter { it.tripId == trip.id && it.sprayRecordId == record.id },
+                chemicalPrices = chemicalPrices,
             )
+            pricingBases.addAll(est.chemical?.pricingBases.orEmpty())
+            if (est.chemical == null || est.chemical.warning != null) chemicalIncomplete = true
             chemicalSubtotal += est.chemical?.cost ?: 0.0
             est.chemical?.lines.orEmpty().forEach { line ->
                 val key = line.name.trim().lowercase(Locale.getDefault())
@@ -546,7 +550,7 @@ object SprayProgramPdfExporter {
         val grandTotal = chemicalSubtotal + fuelCost + labourCost
 
         // Nothing meaningful to show.
-        if (chemCosts.isEmpty() && fuelCost <= 0 && labourCost <= 0) return
+        chemicalIncomplete = chemicalIncomplete || unavailable > 0 || chemicalPrices?.prices?.mapNotNull { it.currency }?.distinct()?.let { it.size > 1 } == true
 
         s.y += 8f
         s.ensure(40f)
@@ -565,7 +569,7 @@ object SprayProgramPdfExporter {
         if (chemCosts.isNotEmpty()) {
             s.ensure(14f)
             s.canvas.drawText(if (allChemicalCostsActual) "Chemical Subtotal — Actual" else "Chemical Subtotal — Estimated", MARGIN + 8f, s.y, bodyPaint)
-            s.canvas.drawText(formatCurrency(chemicalSubtotal), MARGIN + 200f, s.y, bodyBoldPaint)
+            s.canvas.drawText(if (chemicalIncomplete) "Unavailable / incomplete" else formatCurrency(chemicalSubtotal), MARGIN + 200f, s.y, bodyBoldPaint)
             s.y += 14f
         }
 
@@ -591,10 +595,17 @@ object SprayProgramPdfExporter {
         if (grandTotal > 0) {
             s.ensure(14f)
             s.canvas.drawText("Total Cost", MARGIN + 8f, s.y, bodyBoldPaint)
-            s.canvas.drawText(formatCurrency(grandTotal), MARGIN + 200f, s.y, bodyBoldPaint)
+            s.canvas.drawText(if (chemicalIncomplete) "Incomplete" else formatCurrency(grandTotal), MARGIN + 200f, s.y, bodyBoldPaint)
             s.y += 14f
         }
 
+        s.ensure(28f)
+        s.canvas.drawText("Chemical pricing: " + pricingBases.joinToString("; "), MARGIN + 8f, s.y, captionPaint)
+        s.y += 14f
+        if (chemicalIncomplete) {
+            s.canvas.drawText("Season purchase cost unavailable / incomplete", MARGIN + 8f, s.y, captionPaint)
+            s.y += 14f
+        }
         // Concise aggregate costing status for linked records.
         if (linkedCount > 0) {
             val statusParts = buildList {

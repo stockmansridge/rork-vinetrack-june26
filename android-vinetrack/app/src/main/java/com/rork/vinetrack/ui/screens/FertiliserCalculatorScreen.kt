@@ -264,7 +264,7 @@ private fun FertCalculatorTab(
         else -> null
     }
     val packSize = selectedProduct?.packSize ?: manualPackText.replace(',', '.').toDoubleOrNull()
-    val price = selectedProduct?.pricePerPack ?: manualPriceText.replace(',', '.').toDoubleOrNull()
+    val price: Double? = if (selectedProduct == null) manualPriceText.replace(',', '.').toDoubleOrNull() else null
     val packs = if (total != null && packSize != null) FertiliserCalc.packsRequired(total, packSize) else null
     val cost = if (total != null && packSize != null) FertiliserCalc.productCost(total, packSize, price) else null
     val labour = labourText.replace(',', '.').toDoubleOrNull()
@@ -421,7 +421,7 @@ private fun FertCalculatorTab(
                                 } else {
                                     add("No pack size saved")
                                 }
-                                selectedProduct.pricePerPack?.let { add("${money(it)}/pack") }
+                                add("Pricing: Chemical Purchase history")
                                 selectedProduct.analysisSummary?.let { add(it) }
                             }
                             Text(parts.joinToString(" · "), fontSize = 12.sp, color = vine.textSecondary)

@@ -261,17 +261,12 @@ object SprayProgramCsvImporter {
                 val key = name.trim().lowercase(Locale.getDefault())
                 val candidates = chemicalIndex[key].orEmpty()
                 var linkedId: String? = null
-                var resolvedCost = cost
+                val resolvedCost = 0.0
                 when {
                     candidates.size == 1 -> {
                         val saved = candidates.first()
                         linkedId = saved.id
                         matchedLines++
-                        // CSV cost wins when present; otherwise backfill from the
-                        // matched saved chemical (owner/manager only).
-                        if (allowCostPrefill && cost <= 0.0) {
-                            saved.costPerUnit?.takeIf { it > 0.0 }?.let { resolvedCost = it }
-                        }
                     }
                     candidates.size > 1 -> {
                         ambiguousLines++

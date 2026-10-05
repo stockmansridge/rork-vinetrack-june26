@@ -200,9 +200,7 @@ struct FertiliserCalculatorView: View {
                         } else {
                             Text("No pack size saved")
                         }
-                        if let price = product.pricePerPack {
-                            Text("$\(price.formatted(.number.precision(.fractionLength(2))))/pack")
-                        }
+                        Text("Pricing: Chemical Purchase history")
                         if let analysis = product.analysisSummary {
                             Text(analysis)
                         }
@@ -296,7 +294,7 @@ struct FertiliserCalculatorView: View {
         var remaining: Double?
         if let product = selectedProduct {
             packSize = product.packSize
-            price = product.pricePerPack
+            price = nil
             if let inventory = product.inventoryQuantity, let size = product.packSize, size > 0 {
                 remaining = inventory * size - total
             }

@@ -555,9 +555,18 @@ struct TripCostAllocationRecalculator {
                 seasonStartDay: startDay
             ) == season
         }
+        var calendar = Calendar.current
+        calendar.timeZone = store.settings.resolvedTimeZone
+        var batches: [Int: ChemicalSeasonPriceBatch] = [:]
+        var attempted: Set<Int> = []
         var processed = 0
         for trip in trips {
-            if await recalculate(trip: trip) { processed += 1 }
+            let vintage = VintageResolver.vintageYear(for: trip.startTime, seasonStartMonth: startMonth, seasonStartDay: startDay, calendar: calendar)
+            if !attempted.contains(vintage), trip.isActive, store.sprayRecords.contains(where: { $0.tripId == trip.id }) {
+                attempted.insert(vintage)
+                batches[vintage] = try? await CatalogueRepository().chemicalSeasonPrices(vineyardId: vineyardId, vintage: vintage)
+            }
+            if await recalculate(trip: trip, chemicalPrices: batches[vintage], pricingLookupAttempted: attempted.contains(vintage)) { processed += 1 }
         }
         return processed
     }
@@ -565,7 +574,7 @@ struct TripCostAllocationRecalculator {
     /// Rebuild allocation rows for a single trip. Soft-deletes any existing
     /// rows for the trip on Supabase and locally, then inserts a fresh set.
     @discardableResult
-    func recalculate(trip: Trip) async -> Bool {
+    func recalculate(trip: Trip, chemicalPrices: ChemicalSeasonPriceBatch? = nil, pricingLookupAttempted: Bool = false) async -> Bool {
         // Never delete a protected start marker or reprice completed saved costs
         // from today's mutable Worker Type catalogue.
         if !trip.isActive || TripLabourSnapshotJournal.shared.contains(tripId: trip.id) ||
@@ -601,6 +610,13 @@ struct TripCostAllocationRecalculator {
         }
         let paddockHectares = paddockAreasById.values.reduce(0, +)
 
+        var calendar = Calendar.current
+        calendar.timeZone = store.settings.resolvedTimeZone
+        let vintage = VintageResolver.vintageYear(for: trip.startTime, seasonStartMonth: store.settings.seasonStartMonth, seasonStartDay: store.settings.seasonStartDay, calendar: calendar)
+        var seasonalPrices: ChemicalSeasonPriceBatch? = chemicalPrices
+        if !pricingLookupAttempted && seasonalPrices == nil && sprayRecord != nil {
+            seasonalPrices = try? await CatalogueRepository().chemicalSeasonPrices(vineyardId: trip.vineyardId, vintage: vintage)
+        }
         let result = TripCostService.estimate(
             trip: trip,
             operatorCategory: operatorCategory,
@@ -613,7 +629,8 @@ struct TripCostAllocationRecalculator {
             savedInputs: store.savedInputs,
             paddockHectares: paddockHectares > 0 ? paddockHectares : nil,
             paddockAreasById: paddockAreasById,
-            historicalYieldRecords: store.historicalYieldRecords
+            historicalYieldRecords: store.historicalYieldRecords,
+            chemicalPrices: seasonalPrices
         )
 
         let rows = TripCostAllocationCalculator.makeAllocations(

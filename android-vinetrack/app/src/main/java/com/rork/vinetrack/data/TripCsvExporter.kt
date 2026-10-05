@@ -54,13 +54,14 @@ object TripCsvExporter {
         paddocks: List<Paddock>,
         yieldRecords: List<HistoricalYieldRecord> = emptyList(),
         savedInputs: List<SavedInput> = emptyList(),
+        chemicalPrices: com.rork.vinetrack.data.chemical.ChemicalSeasonPriceBatch? = null,
     ): Boolean {
         return try {
             val csv = buildCsv(
                 trip, vineyardName, blockLabel, operatorName, includeCostings,
                 linkedSpray, operatorCategories, machines, fuelPurchases,
                 paddocks, yieldRecords, savedInputs,
-                SprayTankActualStore(context).load().filter { it.tripId == trip.id },
+                SprayTankActualStore(context).load().filter { it.tripId == trip.id }, chemicalPrices,
             )
 
             val dir = File(context.cacheDir, "exports").apply { mkdirs() }
@@ -89,7 +90,7 @@ object TripCsvExporter {
         }
     }
 
-    private fun buildCsv(
+    internal fun buildCsv(
         trip: Trip,
         vineyardName: String,
         blockLabel: String,
@@ -103,6 +104,7 @@ object TripCsvExporter {
         yieldRecords: List<HistoricalYieldRecord>,
         savedInputs: List<SavedInput>,
         tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual>,
+        chemicalPrices: com.rork.vinetrack.data.chemical.ChemicalSeasonPriceBatch?,
     ): String {
         val dateFmt = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
         val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -124,7 +126,7 @@ object TripCsvExporter {
         if (includeCostings) {
             val est = TripCostEstimator.estimate(
                 trip, linkedSpray, operatorCategories, machines,
-                fuelPurchases, paddocks, yieldRecords, savedInputs, tankActuals,
+                fuelPurchases, paddocks, yieldRecords, savedInputs, tankActuals, chemicalPrices = chemicalPrices,
             )
             row.add(String.format(Locale.US, "%.2f", est.activeHours))
             row.add(if (est.labour.warning == null) String.format(Locale.US, "%.2f", est.labour.cost) else "")
@@ -136,7 +138,7 @@ object TripCsvExporter {
                     if (c.warning != null && c.cost <= 0.0) "" else String.format(Locale.US, "%.2f", c.cost)
                 } ?: ""
             )
-            row.add(est.chemical?.basis?.name?.lowercase(Locale.US) ?: "")
+            row.add(listOfNotNull(est.chemical?.basis?.name?.lowercase(Locale.US), est.chemical?.pricingBases?.joinToString("; ")).joinToString("; "))
             row.add(String.format(Locale.US, "%.2f", est.totalCost))
             row.add(est.completeness.name.lowercase(Locale.US))
             row.add(est.treatedAreaHa?.let { String.format(Locale.US, "%.2f", it) } ?: "")

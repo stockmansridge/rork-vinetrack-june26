@@ -788,20 +788,22 @@ struct SprayRecordDetailView: View {
         let operatorCost = operatorCostForTrip
         let operatorCatName = operatorCategoryNameForTrip
         let grandTotal = totalChemCost + fuelCost + operatorCost
-        let hasCosts = !chemCosts.isEmpty || fuelCost > 0 || operatorCost > 0
+        let chemicalComplete = chemicalCost != nil && chemicalCost?.warning == nil
+        let hasCosts = true
 
         return Group {
             if hasCosts {
                 cardContainer {
                     sectionHeader("Costs", systemImage: "dollarsign.circle.fill", color: .green)
                     VStack(spacing: 10) {
+                        Text(chemicalCost?.pricingBases.joined(separator: ", ") ?? "season_purchase_cost_unavailable").font(.caption).foregroundStyle(.secondary)
                         if let warning = chemicalCost?.warning { Text(warning).font(.caption).foregroundStyle(.orange) }
                         ForEach(chemCosts, id: \.0) { name, cost in
                             HStack {
                                 Text(name)
                                     .font(.subheadline)
                                 Spacer()
-                                Text(String(format: "$%.2f", cost))
+                                Text(chemicalComplete ? String(format: "$%.2f", cost) : "Unavailable / incomplete")
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                             }
@@ -812,7 +814,7 @@ struct SprayRecordDetailView: View {
                                 Label("Chemical", systemImage: "flask.fill")
                                     .font(.subheadline.weight(.medium))
                                 Spacer()
-                                Text(String(format: "$%.2f", totalChemCost))
+                                Text(chemicalComplete ? String(format: "$%.2f", totalChemCost) : "Unavailable / incomplete")
                                     .font(.subheadline.weight(.semibold))
                             }
                             Divider()
@@ -841,7 +843,7 @@ struct SprayRecordDetailView: View {
                             Text("Total Cost")
                                 .font(.subheadline.weight(.semibold))
                             Spacer()
-                            Text(String(format: "$%.2f", grandTotal))
+                            Text(chemicalComplete ? String(format: "$%.2f", grandTotal) : "Incomplete")
                                 .font(.headline)
                                 .foregroundStyle(VineyardTheme.leafGreen)
                         }

@@ -450,15 +450,16 @@ private fun SprayListView(
                     val reports = vm.canonicalSprayReports(records.mapNotNull { it.tripId })
                     val filename = "${vineyard.replace('/', '-')} - Vintage ${state.currentSeasonVintage} Spray Report.${if (pdf) "pdf" else "csv"}"
                     val financials = state.currentRole in setOf("owner", "manager")
+                    val exportChemicalPrices = loadTripChemicalPrices(context, state, records.firstOrNull()?.let { resolveSprayTrip(it, state.trips) })
                     if (pdf) SprayProgramPdfExporter.exportAndShare(context, records, state.trips, vineyard,
                         canViewFinancials = financials, machines = state.machines, fuelPurchases = state.fuelPurchases,
                         operatorCategories = state.operatorCategories, paddocks = state.paddocks,
                         tankActuals = records.flatMap { record -> record.tripId?.let { tripId -> record.tanks.orEmpty().mapNotNull { vm.actualTankUse(tripId, it.tankNumber) } }.orEmpty() },
-                        logo = state.selectedVineyardLogo, canonicalReports = reports, exportFilename = filename)
+                        logo = state.selectedVineyardLogo, canonicalReports = reports, exportFilename = filename, chemicalPrices = exportChemicalPrices)
                     else SprayProgramCsvExporter.exportAndShare(context, records, state.trips, vineyard,
                         canViewFinancials = financials, machines = state.machines, fuelPurchases = state.fuelPurchases,
                         operatorCategories = state.operatorCategories, paddocks = state.paddocks,
-                        canonicalReports = reports, exportFilename = filename)
+                        canonicalReports = reports, exportFilename = filename, chemicalPrices = exportChemicalPrices)
                 }
             } catch (_: Exception) { false } finally { exporting = false }
             if (!ok) Toast.makeText(context, "Unable to create the export. Please try again.", Toast.LENGTH_LONG).show()
@@ -1269,6 +1270,7 @@ private fun SprayDetailView(
             vineyardTimeZone = regionFormatter.settings.timezone ?: "UTC",
                             pinCount = state.pins.count { it.tripId == reportTrip.id },
                     preferredOfflinePayload = correctedDisplayReport,
+                    chemicalPrices = loadTripChemicalPrices(context, state, reportTrip),
                 )
             } finally {
                 exportingPdf = false
@@ -1516,30 +1518,7 @@ private fun SprayDetailView(
                                     }.joinToString(" · ")
                                     Column(horizontalAlignment = Alignment.End) {
                                         if (cdesc.isNotBlank()) Text(cdesc, color = vine.textSecondary, fontSize = 12.sp)
-                                        if (chem.hasCost) {
-                                            Text(
-                                                formatSprayCurrency(chem.costPerTank, state.regionFormatter),
-                                                color = VineColors.LeafGreen,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                            )
-                                        }
                                     }
-                                }
-                            }
-                            if (tank.hasCost) {
-                                DividerSP(vine.cardBorder)
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                ) {
-                                    Text("Tank cost", color = vine.textSecondary, fontSize = 13.sp)
-                                    Text(
-                                        formatSprayCurrency(tank.totalChemicalCost, state.regionFormatter),
-                                        color = vine.textPrimary,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
                                 }
                             }
                         }
@@ -1547,29 +1526,6 @@ private fun SprayDetailView(
                 }
             }
 
-            // Cost summary — only shown when chemical cost data is present.
-            if (record.hasCostData) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Costs", onLight = true)
-                    VineyardCard {
-                        DetailRowSP(
-                            Icons.Filled.Paid,
-                            "Total chemical cost",
-                            formatSprayCurrency(record.totalChemicalCost, state.regionFormatter),
-                            VineColors.LeafGreen,
-                        )
-                        record.costPerHectare?.let { perHa ->
-                            DividerSP(vine.cardBorder)
-                            DetailRowSP(
-                                Icons.Filled.Agriculture,
-                                "Cost / ${state.regionFormatter.areaUnitAbbreviation}",
-                                "${state.regionFormatter.formatCostPerArea(perHa)} · ${state.regionFormatter.formatAreaCompact(record.totalSprayArea)}",
-                                VineColors.LeafGreen,
-                            )
-                        }
-                    }
-                }
-            }
 
             // Links: resolved trip + work task derived through that trip (iOS pattern).
             if (record.tripId != null) {
@@ -1639,12 +1595,12 @@ private fun SprayDetailView(
                                 chemicalPrices = chemicalPrices,
                             )
                             val fuel = cost.fuel
-                            if (cost.totalCost > 0) {
+                            if (cost.totalCost >= 0) {
                                 DividerSP(vine.cardBorder)
                                 DetailRowSP(
                                     Icons.Filled.Paid,
                                     "Total cost",
-                                    formatSprayCurrency(cost.totalCost, state.regionFormatter),
+                                    if (cost.chemical?.warning != null) "Incomplete — chemical pricing unresolved" else formatSprayCurrency(cost.totalCost, state.regionFormatter),
                                     VineColors.DarkGreen,
                                 )
                                 if (cost.labour.cost > 0) {
@@ -1660,9 +1616,11 @@ private fun SprayDetailView(
                                         VineColors.Orange,
                                     )
                                 }
-                                cost.chemical?.takeIf { it.cost > 0 }?.let { chem ->
+                                cost.chemical?.let { chem ->
                                     DividerSP(vine.cardBorder)
-                                    DetailRowSP(Icons.Filled.Science, "Chemicals", formatSprayCurrency(chem.cost, state.regionFormatter), VineColors.LeafGreen)
+                                    DetailRowSP(Icons.Filled.Science, "Chemicals", if (chem.warning != null && chem.cost == 0.0) "Unavailable / incomplete" else formatSprayCurrency(chem.cost, state.regionFormatter), VineColors.LeafGreen)
+                                    Text(chem.pricingBases.joinToString(", "), fontSize = 12.sp, color = vine.textSecondary)
+                                    chem.warning?.let { Text(it, fontSize = 12.sp, color = vine.textSecondary) }
                                 }
                                 cost.costPerHa?.let { perHa ->
                                     DividerSP(vine.cardBorder)
@@ -1852,11 +1810,16 @@ private class ChemicalDraft(
     val loadedSnapshot: com.rork.vinetrack.data.chemical.ChemicalLineSnapshot? = null,
     /** The product this line was loaded against, to detect a re-pick. */
     val loadedSavedChemicalId: String? = savedChemicalId,
+    val quantityBasis: String? = null,
 ) {
     var name by mutableStateOf(name)
     var ratePerHa by mutableStateOf(ratePerHa)
     var volumePerTank by mutableStateOf(volumePerTank)
-    var costPerUnit by mutableStateOf(costPerUnit)
+    val historicalCostPerUnit: Double = costPerUnit.toDoubleSafe() ?: 0.0
+    val loadedName: String = name
+    val loadedUnit: String = unit
+    val loadedRate: String = ratePerHa
+    val loadedVolume: String = volumePerTank
     var unit by mutableStateOf(unit)
     var savedChemicalId by mutableStateOf(savedChemicalId)
 }
@@ -2449,7 +2412,6 @@ private fun ChemicalNameField(
                                     val region = LocalRegionFormatter.current
                                     add("${trimNum(region.sprayRateValue(savedPerHa))} ${saved.unit}/${region.sprayRateAreaAbbreviation}")
                                 }
-                                if (canEditCost) saved.costPerUnit?.takeIf { it > 0 }?.let { add("${formatSprayCurrency(it, fmt)}/${saved.unit}") }
                             }.joinToString(" · ")
                             Column {
                                 Text(saved.displayName)
@@ -2480,11 +2442,6 @@ private fun ChemicalNameField(
                             val savedPerHaRate = saved.ratePerHa
                             if (savedPerHaRate != null && savedPerHaRate > 0 && chem.ratePerHa.isBlank()) {
                                 chem.ratePerHa = trimNum(savedPerHaRate)
-                            }
-                            // Prefill cost only for owner/manager and only when
-                            // the user hasn't already entered one.
-                            if (canEditCost && chem.costPerUnit.isBlank()) {
-                                saved.costPerUnit?.takeIf { it > 0 }?.let { chem.costPerUnit = trimNum(it) }
                             }
                             open = false
                         },
@@ -2639,28 +2596,6 @@ private fun TankEditor(
                     modifier = Modifier.weight(1f),
                 )
             }
-            if (canEditCost) {
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = chem.costPerUnit,
-                    onValueChange = { chem.costPerUnit = it.numericFilter() },
-                    label = { Text("Cost per unit") },
-                    placeholder = { Text("0.00") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                val unitCost = chem.costPerUnit.toDoubleSafe() ?: 0.0
-                val vol = chem.volumePerTank.toDoubleSafe() ?: 0.0
-                if (unitCost > 0 && vol > 0) {
-                    Text(
-                        "Line cost: ${formatSprayCurrency(unitCost * vol, fmt)}",
-                        fontSize = 12.sp,
-                        color = vine.textSecondary,
-                        modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-                    )
-                }
-            }
         }
     }
 
@@ -2792,11 +2727,12 @@ private fun SprayChemical.toDraft(): ChemicalDraft = ChemicalDraft(
     ratePerHa = ratePerHa.takeIf { it > 0 }?.let { trimNum(it) } ?: "",
     volumePerTank = volumePerTank.takeIf { it > 0 }?.let { trimNum(it) } ?: "",
     ratePer100L = ratePer100L,
-    costPerUnit = costPerUnit.takeIf { it > 0 }?.let { trimNum(it) } ?: "",
+    costPerUnit = costPerUnit.toString(),
     unit = unit,
     savedChemicalId = savedChemicalId,
     loadedSnapshot = chemicalSnapshot,
     loadedSavedChemicalId = savedChemicalId,
+    quantityBasis = quantityBasis,
 )
 
 private fun TankDraft.toModel(
@@ -2859,7 +2795,13 @@ private fun ChemicalDraft.toModel(
         volumePerTank = volumePerTank.toDoubleSafe() ?: 0.0,
         ratePerHa = ratePerHa.toDoubleSafe() ?: 0.0,
         ratePer100L = ratePer100L,
-        costPerUnit = costPerUnit.toDoubleSafe() ?: 0.0,
+        costPerUnit = com.rork.vinetrack.data.chemical.SprayChemicalPricingPolicy.roundTripLegacyCost(
+            historicalCost = historicalCostPerUnit,
+            isNewApplication = refreshSnapshots,
+            productUnchanged = savedChemicalId == loadedSavedChemicalId && name == loadedName && unit == loadedUnit,
+            quantitiesUnchanged = ratePerHa == loadedRate && volumePerTank == loadedVolume,
+        ),
+        quantityBasis = quantityBasis,
         unit = unit,
         savedChemicalId = savedChemicalId,
         chemicalSnapshot = snapshot,

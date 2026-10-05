@@ -130,6 +130,7 @@ object TripPdfExporter {
         savedInputs: List<SavedInput> = emptyList(),
         logo: Bitmap? = null,
         regionFormatter: RegionFormatter = RegionFormatter(),
+        chemicalPrices: com.rork.vinetrack.data.chemical.ChemicalSeasonPriceBatch? = null,
     ): Boolean {
         return try {
             val doc = PdfDocument()
@@ -137,7 +138,7 @@ object TripPdfExporter {
             render(
                 s, trip, vineyardName, blockLabel, operatorName, pinCount,
                 includeCostings, linkedSpray, tankActuals, operatorCategories, machines,
-                fuelPurchases, paddocks, yieldRecords, savedInputs, logo, regionFormatter,
+                fuelPurchases, paddocks, yieldRecords, savedInputs, logo, regionFormatter, chemicalPrices,
             )
             s.finish()
 
@@ -186,6 +187,7 @@ object TripPdfExporter {
         savedInputs: List<SavedInput>,
         logo: Bitmap?,
         regionFormatter: RegionFormatter,
+        chemicalPrices: com.rork.vinetrack.data.chemical.ChemicalSeasonPriceBatch?,
     ) {
         // Header
         val textX = PdfHeaderUtil.drawLogo(s.canvas, logo, MARGIN, s.y)
@@ -320,9 +322,10 @@ object TripPdfExporter {
             val cost = TripCostEstimator.estimate(
                 trip, linkedSpray, operatorCategories, machines,
                 fuelPurchases, paddocks, yieldRecords, savedInputs,
-                tankActuals,
+                tankActuals, chemicalPrices = chemicalPrices,
             )
             sectionHeader(s, if (cost.chemical?.basis == TripCostEstimator.ChemicalCostBasis.Actual) "Trip Cost — Actual Chemicals" else "Estimated Trip Cost")
+            cost.chemical?.let { row(s, "Chemical pricing basis", it.pricingBases.joinToString("; ")) }
             val labour = cost.labour
             if (labour.warning != null && labour.cost <= 0) {
                 row(s, "Labour", "—")

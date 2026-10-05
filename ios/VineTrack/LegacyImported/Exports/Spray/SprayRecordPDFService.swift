@@ -360,22 +360,6 @@ struct SprayRecordPDFService {
                 }
             }
 
-            let costItems: [(String, Double)] = record.tanks.flatMap { tank in
-                tank.chemicals.compactMap { chemical -> (String, Double)? in
-                    let cost = chemical.costPerUnit * chemical.volumePerTank
-                    guard cost > 0 else { return nil }
-                    return (chemical.name.isEmpty ? "Unnamed" : chemical.name, cost)
-                }
-            }
-            let costGrouped = Dictionary(grouping: costItems, by: { $0.0.lowercased() })
-            let chemCosts = costGrouped.compactMap { (key, items) -> (String, Double)? in
-                guard !key.isEmpty else { return nil }
-                let displayName = items.first?.0 ?? key
-                let totalCost = items.reduce(0.0) { $0 + $1.1 }
-                return (displayName, totalCost)
-            }.sorted { $0.0.lowercased() < $1.0.lowercased() }
-            let totalSprayCost = chemCosts.reduce(0.0) { $0 + $1.1 }
-
             // Costing is gated entirely on `includeCostings` — the caller MUST
             // pass `false` for supervisors and operators so they never receive
             // pricing in exported spray PDFs.
@@ -386,14 +370,17 @@ struct SprayRecordPDFService {
                 drawRow(label: "Chemical cost", value: tripCostResult?.chemical.map { formatter.formatCurrency($0.cost) } ?? "Season purchase cost unavailable")
                 if let chemical = tripCostResult?.chemical {
                     drawRow(label: "Chemical quantity basis", value: chemical.basis.rawValue)
+                    drawRow(label: "Chemical pricing basis", value: chemical.pricingBases.joined(separator: ", "))
                     if let warning = chemical.warning { drawText(warning, font: captionFont, color: .darkGray) }
                 }
                 drawRow(label: "Labour cost", value: canonicalCost.labourCost.map { formatter.formatCurrency($0) } ?? "Not recorded")
-                let adjustedTotal = canonicalCost.totalCost.map { $0 - (canonicalCost.chemicalCost ?? 0) + (tripCostResult?.chemical?.cost ?? 0) }
+                let adjustedTotal: Double? = tripCostResult?.chemical.flatMap { chemical in
+                    guard chemical.warning == nil else { return nil }
+                    return canonicalCost.totalCost.map { $0 - (canonicalCost.chemicalCost ?? 0) + chemical.cost }
+                }
                 drawRow(label: "Total", value: adjustedTotal.map { formatter.formatCurrency($0) } ?? "Incomplete")
                 if !canonicalCost.isComplete { drawText(canonicalCost.basis, font: captionFont, color: .darkGray) }
-            }
-            if includeCostings, payload.cost == nil, let r = tripCostResult {
+            } else if includeCostings, let r = tripCostResult {
                 drawSectionHeader(r.chemical?.basis == .actual ? "Trip Cost — Actual Chemicals" : "Estimated Trip Cost")
 
                 if let w = r.labour.warning {
@@ -420,6 +407,7 @@ struct SprayRecordPDFService {
                 }
 
                 if let chem = r.chemical {
+                    drawRow(label: "Chemical pricing basis", value: chem.pricingBases.joined(separator: ", "))
                     if let w = chem.warning, chem.cost <= 0 {
                         drawRow(label: "Chemical/Input", value: "—")
                         drawRow(label: "  Note: \(w)", value: "", indent: 12)
@@ -482,27 +470,9 @@ struct SprayRecordPDFService {
                         drawRow(label: "  Note: \(w)", value: "", indent: 12)
                     }
                 }
-            } else {
-                let hasCosts = !chemCosts.isEmpty || fuelCost > 0 || operatorCost > 0
-                if hasCosts && includeCostings {
-                    drawSectionHeader("Costs")
-                    for (name, cost) in chemCosts {
-                        drawRow(label: name, value: formatter.formatCurrency(cost))
-                    }
-                    if !chemCosts.isEmpty {
-                        y += 4
-                        drawRow(label: "Chemical Subtotal", value: formatter.formatCurrency(totalSprayCost))
-                    }
-                    if fuelCost > 0 {
-                        drawRow(label: "Fuel Cost", value: formatter.formatCurrency(fuelCost))
-                    }
-                    if operatorCost > 0 {
-                        drawRow(label: operatorCategoryName ?? "Operator", value: formatter.formatCurrency(operatorCost))
-                    }
-                    y += 4
-                    let grandTotal = totalSprayCost + fuelCost + operatorCost
-                    drawRow(label: "Total Cost", value: formatter.formatCurrency(grandTotal))
-                }
+            } else if includeCostings {
+                drawSectionHeader("Costs")
+                drawRow(label: "Chemical cost", value: "Season purchase cost unavailable / incomplete")
             }
 
             if !payload.warnings.isEmpty {

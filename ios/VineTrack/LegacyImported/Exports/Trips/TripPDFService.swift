@@ -381,6 +381,7 @@ struct TripPDFService {
 
                 // Chemical
                 if let chem = r.chemical {
+                    drawRow(label: "Chemical pricing basis", value: chem.pricingBases.joined(separator: ", "))
                     if let w = chem.warning, chem.cost <= 0 {
                         drawRow(label: "Chemical/Input", value: "—")
                         drawWrappedRow(label: "  Note", value: w, indent: 12)
@@ -448,31 +449,9 @@ struct TripPDFService {
                         drawWrappedRow(label: "  Note", value: w, indent: 12)
                     }
                 }
-            } else {
-                // Legacy fallback: render a flat cost table from the explicit
-                // numeric parameters when no structured cost result was supplied.
-                let hasChemCosts = !chemicalCosts.isEmpty
-                let hasCosts = hasChemCosts || fuelCost > 0 || operatorCost > 0
-                if hasCosts && includeCostings {
-                    drawSectionHeader("Costs")
-                    let totalChemCost = chemicalCosts.reduce(0.0) { $0 + $1.1 }
-                    for (name, cost) in chemicalCosts {
-                        drawRow(label: name, value: formatter.formatCurrency(cost))
-                    }
-                    if hasChemCosts {
-                        y += 4
-                        drawRow(label: "Chemical Subtotal", value: formatter.formatCurrency(totalChemCost))
-                    }
-                    if fuelCost > 0 {
-                        drawRow(label: "Fuel Cost", value: formatter.formatCurrency(fuelCost))
-                    }
-                    if operatorCost > 0 {
-                        drawRow(label: operatorCategoryName ?? "Operator", value: formatter.formatCurrency(operatorCost))
-                    }
-                    y += 4
-                    let grandTotal = totalChemCost + fuelCost + operatorCost
-                    drawRow(label: "Total Cost", value: formatter.formatCurrency(grandTotal))
-                }
+            } else if includeCostings {
+                drawSectionHeader("Costs")
+                drawRow(label: "Chemical cost", value: "Season purchase cost unavailable / incomplete")
             }
 
             // ── Map ──────────────────────────────────────────────────────

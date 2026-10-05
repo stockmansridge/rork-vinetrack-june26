@@ -1071,6 +1071,7 @@ private fun TripDetailView(
                             }
                             val reportVineyard = state.vineyards.firstOrNull { it.id == trip.vineyardId }
                             exportScope.launch {
+                                val exportChemicalPrices = loadTripChemicalPrices(context, state, trip)
                                 val ok = if (isSpray) {
                                     SprayRecordPdfExporter.exportAndShare(
                                     context = context,
@@ -1089,6 +1090,7 @@ private fun TripDetailView(
                                     regionFormatter = regionFormatter,
                                     vineyardTimeZone = regionFormatter.settings.timezone ?: "UTC",
                                     pinCount = pinCount,
+                                    chemicalPrices = exportChemicalPrices,
                                 )
                             } else {
                                 TripPdfExporter.exportAndShare(
@@ -1109,12 +1111,15 @@ private fun TripDetailView(
                                     savedInputs = state.savedInputs,
                                     logo = state.selectedVineyardLogo,
                                     regionFormatter = regionFormatter,
+                                    chemicalPrices = exportChemicalPrices,
                                 )
                             }
                                 if (!ok) Toast.makeText(context, "Couldn't create the PDF. Please try again.", Toast.LENGTH_SHORT).show()
                             }
                         }
                         fun exportCsv() {
+                            exportScope.launch {
+                            val exportChemicalPrices = loadTripChemicalPrices(context, state, trip)
                             val ok = TripCsvExporter.exportAndShare(
                                 context = context,
                                 trip = trip,
@@ -1129,8 +1134,10 @@ private fun TripDetailView(
                                 paddocks = state.paddocks,
                                 yieldRecords = state.yieldRecords,
                                 savedInputs = state.savedInputs,
+                                chemicalPrices = exportChemicalPrices,
                             )
                             if (!ok) Toast.makeText(context, "Couldn't create the CSV. Please try again.", Toast.LENGTH_SHORT).show()
+                            }
                         }
                         IconButton(onClick = { exportMenuOpen = true }) {
                             Icon(Icons.Filled.IosShare, contentDescription = "Export trip")

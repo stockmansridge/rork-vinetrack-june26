@@ -1,9 +1,75 @@
 import Foundation
 import Testing
+import PDFKit
 @testable import VineTrack
 
 @MainActor
 struct ChemicalSeasonPricingTests {
+    @Test func sprayPDFUsesSuppliedSeasonalChemicalTotalAndLabelsLegacyOnly() throws {
+        let vineyard = UUID(), chemical = UUID()
+        let trip = Trip(vineyardId: vineyard)
+        let line = SprayChemical(name: "Product", volumePerTank: 1000, costPerUnit: 99, savedChemicalId: chemical)
+        let record = SprayRecord(tripId: trip.id, vineyardId: vineyard, tanks: [SprayTank(tankNumber: 1, chemicals: [line])])
+        let payload = SprayReportPayloadV1.offlineProjection(trip: trip, record: record, vineyardName: "Test", timeZone: TimeZone(secondsFromGMT: 0)!, paddocks: [], tractorName: "", sprayUnitName: "", tankActuals: [])
+        let price = ChemicalSeasonPrice(savedChemicalId: chemical, vintage: 2027, weightedCostPerBaseUnit: 0.006, baseUnit: "mL", currency: "AUD", purchaseCount: 2, totalQuantityBase: 30000, totalPurchaseCost: 180, pricingBasis: "season_weighted_purchase_average", warning: nil)
+        let result = TripCostService.estimate(trip: trip, operatorCategory: nil, tractor: nil, fuelPurchases: [], sprayRecord: record, chemicalPrices: .init(vineyardId: vineyard, vintage: 2027, prices: [price]))
+        #expect(result.chemical?.cost == 6)
+        let pdf = SprayRecordPDFService.generatePDF(payload: payload, record: record, trip: trip, vineyardName: "Test", paddockName: "", personName: "", includeCostings: true, tripCostResult: result)
+        let text = try #require(PDFDocument(data: pdf)?.string)
+        #expect(text.contains(RegionFormatter.australian.formatCurrency(6)))
+        #expect(text.replacingOccurrences(of: "\\s+", with: "", options: .regularExpression).contains("season_weighted_purchase_average"))
+        #expect(!text.contains(RegionFormatter.australian.formatCurrency(99000)))
+        #expect(!text.contains("Chemical Subtotal"))
+        let legacy = TripCostService.estimate(trip: trip, operatorCategory: nil, tractor: nil, fuelPurchases: [], sprayRecord: record)
+        let legacyPDF = SprayRecordPDFService.generatePDF(payload: payload, record: record, trip: trip, vineyardName: "Test", paddockName: "", personName: "", includeCostings: true, tripCostResult: legacy)
+        #expect(PDFDocument(data: legacyPDF)?.string?.replacingOccurrences(of: "\\s+", with: "", options: .regularExpression).contains("legacy_stored_spray_snapshot") == true)
+        let privatePDF = SprayRecordPDFService.generatePDF(payload: payload, record: record, trip: trip, vineyardName: "Test", paddockName: "", personName: "", includeCostings: false, tripCostResult: result)
+        #expect(PDFDocument(data: privatePDF)?.string?.contains("Chemical pricing basis") == false)
+    }
+
+    @Test func sprayPDFWithoutFinancialResultCannotInventEditorPricing() throws {
+        let trip = Trip(vineyardId: UUID())
+        let record = SprayRecord(tripId: trip.id, vineyardId: trip.vineyardId, tanks: [SprayTank(tankNumber: 1, chemicals: [SprayChemical(name: "Old", volumePerTank: 1000, costPerUnit: 99)])])
+        let payload = SprayReportPayloadV1.offlineProjection(trip: trip, record: record, vineyardName: "Test", timeZone: TimeZone(secondsFromGMT: 0)!, paddocks: [], tractorName: "", sprayUnitName: "", tankActuals: [])
+        let pdf = SprayRecordPDFService.generatePDF(payload: payload, record: record, trip: trip, vineyardName: "Test", paddockName: "", personName: "", includeCostings: true)
+        let text = try #require(PDFDocument(data: pdf)?.string)
+        #expect(text.contains("unavailable / incomplete"))
+        #expect(!text.contains(RegionFormatter.australian.formatCurrency(99000)))
+    }
+
+    @Test func programCSVUsesSeasonalPricingAndMissingDoesNotUseSavedPurchase() throws {
+        let vineyard = UUID()
+        let saved = SavedChemical(vineyardId: vineyard, name: "Product", purchase: ChemicalPurchase(costDollars: 999, containerSizeML: 1))
+        let trip = Trip(vineyardId: vineyard)
+        let line = SprayChemical(name: "Product", volumePerTank: 1000, costPerUnit: 99, savedChemicalId: saved.id)
+        let record = SprayRecord(tripId: trip.id, vineyardId: vineyard, tanks: [SprayTank(tankNumber: 1, chemicals: [line])])
+        let price = ChemicalSeasonPrice(savedChemicalId: saved.id, vintage: 2027, weightedCostPerBaseUnit: 0.006, baseUnit: "mL", currency: "AUD", purchaseCount: 2, totalQuantityBase: 30000, totalPurchaseCost: 180, pricingBasis: "season_weighted_purchase_average", warning: nil)
+        let url = SprayProgramCSVService.exportRecords(records: [record], trips: [trip], vineyardName: "Test", includeCostings: true, savedChemicals: [saved], chemicalPrices: .init(vineyardId: vineyard, vintage: 2027, prices: [price]))
+        let csv = try String(contentsOf: url, encoding: .utf8)
+        #expect(csv.contains("season_weighted_purchase_average"))
+        #expect(!csv.contains("Cost Per Unit"))
+        #expect(!csv.contains("99000.00"))
+        let rows = csv.split(separator: "\n").map { $0.split(separator: ",", omittingEmptySubsequences: false) }
+        let chemicalColumn = try #require(rows[0].firstIndex(of: "chemical_cost"))
+        #expect(rows[1][chemicalColumn] == "6.00")
+        let programPDF = SprayProgramExportService.generateProgramPDF(records: [record], trips: [trip], paddocks: [], vineyardName: "Test", includeCostings: true, chemicalPrices: .init(vineyardId: vineyard, vintage: 2027, prices: [price]))
+        let programText = try #require(PDFDocument(url: programPDF)?.string)
+        #expect(programText.contains(RegionFormatter.australian.formatCurrency(6)))
+        #expect(programText.replacingOccurrences(of: "\\s+", with: "", options: .regularExpression).contains("season_weighted_purchase_average"))
+        #expect(!programText.contains(RegionFormatter.australian.formatCurrency(99000)))
+        var missingRecord = record
+        missingRecord.tanks[0].chemicals[0].costPerUnit = 0
+        let missingURL = SprayProgramCSVService.exportRecords(records: [missingRecord], trips: [trip], vineyardName: "Test", includeCostings: true, savedChemicals: [saved])
+        let missingCSV = try String(contentsOf: missingURL, encoding: .utf8)
+        let missingRows = missingCSV.split(separator: "\n").map { $0.split(separator: ",", omittingEmptySubsequences: false) }
+        #expect(missingRows[1][chemicalColumn].isEmpty)
+        #expect(missingCSV.contains("season_purchase_cost_unavailable"))
+        #expect(!missingCSV.contains("999000.00"))
+        let complianceURL = SprayProgramCSVService.exportRecords(records: [record], trips: [trip], vineyardName: "Test", includeCostings: false)
+        let compliance = try String(contentsOf: complianceURL, encoding: .utf8)
+        #expect(!compliance.contains("Cost Per Unit") && !compliance.contains("chemical_cost"))
+    }
+
     @Test func canonicalPriceOverridesLegacyAndSupportsFreePurchases() throws {
         let vineyard = UUID(), chemical = UUID()
         let trip = Trip(vineyardId: vineyard)

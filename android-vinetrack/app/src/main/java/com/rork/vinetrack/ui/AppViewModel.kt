@@ -13428,7 +13428,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                 volumePerTank = chem.amountPerTank,
                                 ratePerHa = chem.ratePerHa,
                                 ratePer100L = chem.ratePer100L,
-                                costPerUnit = chem.costPerUnit,
+                                costPerUnit = 0.0,
                                 unit = chem.unit,
                                 savedChemicalId = resolution.savedChemicalId ?: chem.savedChemicalId,
                                 chemicalSnapshot = resolution.snapshot,

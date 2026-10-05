@@ -131,7 +131,7 @@ object SprayProgramCsvExporter {
     private fun exportHeaders(includeCostings: Boolean): List<String> = buildList {
         add(coreHeaders.first())
         add("Source")
-        addAll(coreHeaders.drop(1))
+        addAll(coreHeaders.drop(1).filterNot { it.endsWith("Cost Per Unit") })
         addAll(actualHeaders)
         if (includeCostings) addAll(summaryHeaders)
         addAll(blockAttributionHeaders)
@@ -244,6 +244,7 @@ object SprayProgramCsvExporter {
         paddocks: List<Paddock> = emptyList(),
         canonicalReports: Map<String, SprayReportPayloadV1> = emptyMap(),
         exportFilename: String? = null,
+        chemicalPrices: com.rork.vinetrack.data.chemical.ChemicalSeasonPriceBatch? = null,
     ): Boolean {
         return try {
             val csv = buildCsv(
@@ -256,6 +257,7 @@ object SprayProgramCsvExporter {
                 paddocks = paddocks,
                 actuals = SprayTankActualStore(context).load(),
                 canonicalReports = canonicalReports,
+                chemicalPrices = chemicalPrices,
             )
 
             val dir = File(context.cacheDir, "exports").apply { mkdirs() }
@@ -294,6 +296,7 @@ object SprayProgramCsvExporter {
         paddocks: List<Paddock>,
         actuals: List<com.rork.vinetrack.data.model.SprayTankActual>,
         canonicalReports: Map<String, SprayReportPayloadV1>,
+        chemicalPrices: com.rork.vinetrack.data.chemical.ChemicalSeasonPriceBatch?,
     ): String {
         val sb = StringBuilder()
         sb.append(exportHeaders(includeCostings).joinToString(",") { escape(it) }).append("\n")
@@ -345,9 +348,8 @@ object SprayProgramCsvExporter {
                     row.add(String.format(Locale.US, "%.2f", chem.ratePerHa))
                     row.add(if (chem.ratePer100L > 0) String.format(Locale.US, "%.2f", chem.ratePer100L) else "")
                     row.add(chem.unit)
-                    row.add(if (chem.costPerUnit > 0) String.format(Locale.US, "%.2f", chem.costPerUnit) else "")
                 } else {
-                    repeat(6) { row.add("") }
+                    repeat(5) { row.add("") }
                 }
             }
 
@@ -371,8 +373,12 @@ object SprayProgramCsvExporter {
             // Summary columns (financial) — owner/manager only; populated when
             // cost data is defensible.
             if (includeCostings) {
-                row.add(if (record.hasCostData) String.format(Locale.US, "%.2f", record.totalChemicalCost) else "")
-                row.add(record.costPerHectare?.let { String.format(Locale.US, "%.2f", it) } ?: "")
+                val summary = trip?.let {
+                    TripCostEstimator.estimate(it, record, operatorCategories, machines, fuelPurchases, paddocks,
+                        tankActuals = recordActuals, chemicalPrices = chemicalPrices)
+                }
+                row.add(summary?.chemical?.takeIf { it.warning == null }?.let { String.format(Locale.US, "%.2f", it.cost) } ?: "")
+                row.add(summary?.takeIf { it.chemical?.warning == null }?.costPerHa?.let { String.format(Locale.US, "%.2f", it) } ?: "")
             }
 
             // Block attribution. Read from the persisted snapshot only — never
@@ -419,6 +425,7 @@ object SprayProgramCsvExporter {
                         fuelPurchases = fuelPurchases,
                         paddocks = paddocks,
                         tankActuals = recordActuals,
+                        chemicalPrices = chemicalPrices,
                     )
                     // active_hours
                     row.add(String.format(Locale.US, "%.2f", est.activeHours))
@@ -433,7 +440,7 @@ object SprayProgramCsvExporter {
                             if (c.warning != null && c.cost <= 0.0) "" else String.format(Locale.US, "%.2f", c.cost)
                         } ?: ""
                     )
-                    row.add(est.chemical?.basis?.name?.lowercase(Locale.US) ?: "")
+                    row.add(listOfNotNull(est.chemical?.basis?.name?.lowercase(Locale.US), est.chemical?.pricingBases?.joinToString("; ")).joinToString("; "))
                     // total_estimated_cost
                     row.add(String.format(Locale.US, "%.2f", est.totalCost))
                     // costing_status (iOS rawValue: complete/partial/unavailable)

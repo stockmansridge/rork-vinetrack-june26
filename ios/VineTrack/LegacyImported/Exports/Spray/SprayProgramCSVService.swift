@@ -72,12 +72,13 @@ struct SprayProgramCSVService {
         tankActuals: [SprayTankActual] = [],
         paddocks: [Paddock] = [],
         historicalYieldRecords: [HistoricalYieldRecord] = [],
-        canonicalReports: [UUID: SprayReportPayloadV1] = [:]
+        canonicalReports: [UUID: SprayReportPayloadV1] = [:],
+        chemicalPrices: ChemicalSeasonPriceBatch? = nil
     ) -> URL {
         // Cost columns are only emitted when the caller explicitly opts in
         // (owner/manager). Supervisors and operators MUST receive
         // `includeCostings: false` so cost data never leaves the app for them.
-        var headers = templateHeaders
+        var headers = templateHeaders.filter { !$0.hasSuffix("Cost Per Unit") }
         headers.insert("Source", at: 1)
         // sql/195 block attribution. EXPORT-ONLY — deliberately not added to
         // `templateHeaders`, because the template is filled in by hand and no
@@ -163,9 +164,8 @@ struct SprayProgramCSVService {
                     row.append(String(format: "%.2f", chem.displayRate))
                     row.append(chem.ratePer100L > 0 ? String(format: "%.2f", chem.displayRatePer100L) : "")
                     row.append(chem.unit.rawValue)
-                    row.append(chem.costPerUnit > 0 ? String(format: "%.4f", chem.costPerUnit) : "")
                 } else {
-                    row.append(contentsOf: ["", "", "", "", "", ""])
+                    row.append(contentsOf: ["", "", "", "", ""])
                 }
             }
 
@@ -243,7 +243,8 @@ struct SprayProgramCSVService {
                         tankActuals: tankActuals.filter { $0.tripId == trip.id && $0.sprayRecordId == record.id },
                         savedChemicals: savedChemicals,
                         paddockAreasById: areasById,
-                        historicalYieldRecords: historicalYieldRecords
+                        historicalYieldRecords: historicalYieldRecords,
+                        chemicalPrices: chemicalPrices
                     )
                     row.append(String(format: "%.2f", r.activeHours))
                     row.append(r.labour.warning == nil ? String(format: "%.2f", r.labour.cost) : "")
@@ -254,7 +255,7 @@ struct SprayProgramCSVService {
                         if let w = c.warning, c.cost <= 0, !w.isEmpty { return "" }
                         return String(format: "%.2f", c.cost)
                     }())
-                    row.append(r.chemical?.basis.rawValue ?? "")
+                    row.append(escapeCSV(([r.chemical?.basis.rawValue].compactMap { $0 } + (r.chemical?.pricingBases ?? [])).joined(separator: "; ")))
                     row.append(String(format: "%.2f", r.totalCost))
                     row.append(r.completeness.rawValue)
                     row.append((r.treatedAreaHa.map { String(format: "%.2f", $0) }) ?? "")
@@ -602,7 +603,7 @@ struct SprayProgramCSVService {
                     volumePerTank: chem.unit.toBase(chem.amountPerTank),
                     ratePerHa: chem.unit.toBase(chem.ratePerHa),
                     ratePer100L: chem.unit.toBase(chem.ratePer100L),
-                    costPerUnit: chem.costPerUnit,
+                    costPerUnit: 0,
                     unit: chem.unit,
                     rateBasis: importedBasis,
                     savedChemicalId: resolution.savedChemicalId,

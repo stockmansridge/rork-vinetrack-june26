@@ -172,6 +172,7 @@ object SprayRecordPdfExporter {
         vineyardTimeZone: String = regionFormatter.settings.timezone ?: "UTC",
         pinCount: Int = 0,
         preferredOfflinePayload: SprayReportPayloadV1? = null,
+        chemicalPrices: com.rork.vinetrack.data.chemical.ChemicalSeasonPriceBatch? = null,
     ): Boolean {
         return try {
             require(trip != null) { "Spray record not available yet—sync and retry" }
@@ -229,7 +230,7 @@ object SprayRecordPdfExporter {
             render(
                 s, payload, record, vineyardName, machines, equipment, trip, workTask,
                 canViewFinancials, fuelPurchases, operatorCategories, paddocks, resolvedVineyardLogo,
-                actuals, regionFormatter, sharedRoute,
+                actuals, regionFormatter, sharedRoute, chemicalPrices,
             )
             s.finish()
 
@@ -277,6 +278,7 @@ object SprayRecordPdfExporter {
         actuals: List<com.rork.vinetrack.data.model.SprayTankActual>,
         regionFormatter: RegionFormatter,
         sharedRoute: Bitmap?,
+        chemicalPrices: com.rork.vinetrack.data.chemical.ChemicalSeasonPriceBatch?,
     ) {
         // Header
         val textX = PdfHeaderUtil.drawLogo(s.canvas, logo, MARGIN, s.y)
@@ -464,15 +466,25 @@ object SprayRecordPdfExporter {
         // Mirrors the on-screen cost card via the pure TripCostEstimator. The
         // whole section is omitted for non-financial roles or when no trip is
         // linked (chemical-only behaviour elsewhere is unchanged).
+        val resolvedCost = if (canViewFinancials && trip != null) TripCostEstimator.estimate(
+            trip, record, operatorCategories, machines, fuelPurchases, paddocks,
+            tankActuals = actuals, chemicalPrices = chemicalPrices,
+        ) else null
         if (canViewFinancials && payload.cost != null) {
-            val cost = payload.cost
+            val saved = payload.cost
+            val chemical = resolvedCost?.chemical
             sectionHeader(s, "Authorized Cost Summary")
-            row(s, "Fuel used", cost.fuelLitres?.let { regionFormatter.formatVolume(it) } ?: "Not recorded")
-            row(s, "Fuel cost", cost.fuelCost?.let(::money) ?: "Not recorded")
-            row(s, "Chemical cost", cost.chemicalCost?.let(::money) ?: "Not recorded")
-            row(s, "Labour cost", cost.labourCost?.let(::money) ?: "Not recorded")
-            row(s, "Total", cost.totalCost?.let(::money) ?: "Incomplete")
-            if (!cost.isComplete) text(s, cost.basis, captionPaint)
+            row(s, "Fuel used", saved.fuelLitres?.let { regionFormatter.formatVolume(it) } ?: "Not recorded")
+            row(s, "Fuel cost", saved.fuelCost?.let(::money) ?: "Not recorded")
+            row(s, "Labour cost", saved.labourCost?.let(::money) ?: "Not recorded")
+            row(s, "Chemical cost", chemical?.takeIf { it.warning == null }?.cost?.let(::money) ?: "Unavailable / incomplete")
+            row(s, "Chemical pricing basis", chemical?.pricingBases?.joinToString("; ") ?: "season_purchase_cost_unavailable")
+            chemical?.warning?.let { text(s, it, captionPaint) }
+            val total = if (chemical != null && chemical.warning == null && saved.chemicalCost != null) {
+                saved.totalCost?.let { it - saved.chemicalCost + chemical.cost }
+            } else null
+            row(s, "Total", total?.let(::money) ?: "Incomplete")
+            if (!saved.isComplete) text(s, saved.basis, captionPaint)
         } else if (canViewFinancials && trip != null) {
             val cost = TripCostEstimator.estimate(
                 trip = trip,
@@ -482,6 +494,7 @@ object SprayRecordPdfExporter {
                 fuelPurchases = fuelPurchases,
                 paddocks = paddocks,
                 tankActuals = actuals,
+                chemicalPrices = chemicalPrices,
             )
             val fuel = cost.fuel
             val hasAnyValue = cost.totalCost > 0 ||
@@ -489,15 +502,18 @@ object SprayRecordPdfExporter {
                 fuel.fuelCost != null ||
                 fuel.litres != null ||
                 (cost.chemical?.cost ?: 0.0) > 0
-            if (hasAnyValue) {
+            if (hasAnyValue || cost.chemical != null) {
                 sectionHeader(s, if (cost.chemical?.basis == TripCostEstimator.ChemicalCostBasis.Actual) "Cost Breakdown — Actual Chemicals" else "Cost Breakdown — Estimated Chemicals")
                 if (cost.labour.cost > 0) row(s, "Labour", money(cost.labour.cost))
                 fuel.fuelCost?.let { fc ->
                     val value = fuel.litres?.let { "${money(fc)} \u00B7 ${fmt(it)} L" } ?: money(fc)
                     row(s, "Fuel", value)
                 }
-                cost.chemical?.takeIf { it.cost > 0 }?.let { row(s, "Chemicals", money(it.cost)) }
-                if (cost.totalCost > 0) row(s, "Total Cost", money(cost.totalCost))
+                cost.chemical?.let {
+                    row(s, "Chemicals", if (it.warning != null && it.cost == 0.0) "Unavailable / incomplete" else money(it.cost))
+                    row(s, "Chemical pricing basis", it.pricingBases.joinToString("; "))
+                }
+                row(s, "Total Cost", if (cost.chemical?.warning != null) "Incomplete" else money(cost.totalCost))
                 cost.treatedAreaHa?.let { row(s, "Treated Area", "${fmt(it)} ha") }
                 cost.costPerHa?.let { row(s, "Cost / ha", money(it)) }
 

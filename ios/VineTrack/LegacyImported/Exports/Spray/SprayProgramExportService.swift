@@ -27,7 +27,8 @@ struct SprayProgramExportService {
         includeCostings: Bool = true,
         timeZone: TimeZone = .current,
         formatter: RegionFormatter = .australian,
-        canonicalReports: [UUID: SprayReportPayloadV1] = [:]
+        canonicalReports: [UUID: SprayReportPayloadV1] = [:],
+        chemicalPrices: ChemicalSeasonPriceBatch? = nil
     ) -> URL {
         // Prefer stable equipment links when present; fall back to text snapshots.
         // Routed through the shared `EquipmentResolver` so spray-equipment naming
@@ -257,32 +258,23 @@ struct SprayProgramExportService {
                     tripId: record.tripId
                 )
             }
-            let costItems: [(String, Double)] = records.flatMap { record in
-                record.tanks.flatMap { tank in
-                    tank.chemicals.compactMap { chemical -> (String, Double)? in
-                        let actual = resolveSprayTankActual(
-                            plannedTank: tank, actuals: tankActuals,
-                            vineyardId: record.vineyardId, sprayRecordId: record.id, tripId: record.tripId
-                        )
-                        let amount = allActualsComplete
-                            ? actual!.chemicals.first(where: {
-                                $0.plannedChemicalId == chemical.id ||
-                                    ($0.usageKind == "substitution" && $0.replacesPlannedChemicalId == chemical.id)
-                            })!.actualAmountBase
-                            : chemical.volumePerTank
-                        let cost = chemical.costPerUnit * amount
-                        guard cost > 0 else { return nil }
-                        return (chemical.name.isEmpty ? "Unnamed" : chemical.name, cost)
-                    }
+            let chemicalResults: [(String, TripCostService.ChemicalBreakdown?)] = includeCostings ? records.map { record in
+                guard let trip = trips.first(where: { $0.id == record.canonicalTripId }) else {
+                    return (record.sprayReference, nil)
                 }
+                let result = TripCostService.estimate(
+                    trip: trip, operatorCategory: nil, tractor: nil, fuelPurchases: [], sprayRecord: record,
+                    tankActuals: tankActuals.filter { $0.tripId == trip.id && $0.sprayRecordId == record.id },
+                    chemicalPrices: chemicalPrices
+                )
+                return (record.sprayReference, result.chemical)
+            } : []
+            let chemCosts: [(String, Double)] = chemicalResults.compactMap { name, chemical in
+                guard let chemical else { return nil }
+                return (name, chemical.cost)
             }
-            let costGrouped = Dictionary(grouping: costItems, by: { $0.0.lowercased() })
-            let chemCosts = costGrouped.compactMap { (key, items) -> (String, Double)? in
-                guard !key.isEmpty else { return nil }
-                let displayName = items.first?.0 ?? key
-                let totalCost = items.reduce(0.0) { $0 + $1.1 }
-                return (displayName, totalCost)
-            }.sorted { $0.0.lowercased() < $1.0.lowercased() }
+            let chemicalComplete = chemicalResults.allSatisfy { $0.1 != nil && $0.1?.warning == nil }
+                && Set(chemicalPrices?.prices.compactMap(\.currency) ?? []).count <= 1
             let totalChemCost = chemCosts.reduce(0.0) { $0 + $1.1 }
 
             var totalFuelCost: Double = 0
@@ -306,7 +298,7 @@ struct SprayProgramExportService {
                 }
             }
 
-            let hasCostData = !chemCosts.isEmpty || totalFuelCost > 0 || totalOperatorCost > 0
+            let hasCostData = !records.isEmpty
             if hasCostData && includeCostings {
                 y += 8
                 checkPageBreak(needed: 40)
@@ -317,16 +309,25 @@ struct SprayProgramExportService {
                 let nameAttrs: [NSAttributedString.Key: Any] = [.font: bodyFont, .foregroundColor: UIColor.black]
                 let valAttrs: [NSAttributedString.Key: Any] = [.font: bodyBoldFont, .foregroundColor: UIColor.black]
 
-                for (name, cost) in chemCosts {
-                    checkPageBreak(needed: 14)
-                    (name as NSString).draw(at: CGPoint(x: margin + 8, y: y), withAttributes: nameAttrs)
-                    (formatter.formatCurrency(cost) as NSString).draw(at: CGPoint(x: margin + 200, y: y), withAttributes: valAttrs)
+                for (name, chemical) in chemicalResults {
+                    checkPageBreak(needed: 44)
+                    (name as NSString).draw(in: CGRect(x: margin + 8, y: y, width: 180, height: 14), withAttributes: nameAttrs)
+                    let value = chemical.map { $0.warning == nil || $0.pricingBases == ["legacy_stored_spray_snapshot"] ? formatter.formatCurrency($0.cost) : "Unavailable / incomplete" } ?? "Unavailable / incomplete"
+                    (value as NSString).draw(at: CGPoint(x: margin + 200, y: y), withAttributes: valAttrs)
                     y += 14
+                    let basis = chemical?.pricingBases.joined(separator: ", ") ?? "season_purchase_cost_unavailable"
+                    (basis as NSString).draw(in: CGRect(x: margin + 8, y: y, width: pageWidth - margin * 2 - 16, height: 28), withAttributes: nameAttrs)
+                    y += 28
+                }
+                for (name, chemical) in chemicalResults where chemical == nil || chemical?.warning != nil {
+                    checkPageBreak(needed: 28)
+                    ((name + ": " + (chemical?.warning ?? "Season purchase cost unavailable / incomplete")) as NSString).draw(at: CGPoint(x: margin + 8, y: y), withAttributes: nameAttrs)
+                    y += 28
                 }
                 if !chemCosts.isEmpty {
                     checkPageBreak(needed: 14)
                     ("Chemical Subtotal" as NSString).draw(at: CGPoint(x: margin + 8, y: y), withAttributes: nameAttrs)
-                    (formatter.formatCurrency(totalChemCost) as NSString).draw(at: CGPoint(x: margin + 200, y: y), withAttributes: valAttrs)
+                    ((chemicalComplete ? formatter.formatCurrency(totalChemCost) : "Unavailable / incomplete") as NSString).draw(at: CGPoint(x: margin + 200, y: y), withAttributes: valAttrs)
                     y += 14
                 }
                 if totalFuelCost > 0 {
@@ -346,7 +347,7 @@ struct SprayProgramExportService {
                 let grandTotal = totalChemCost + totalFuelCost + totalOperatorCost
                 let totalAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9, weight: .bold), .foregroundColor: UIColor.black]
                 ("Total Cost" as NSString).draw(at: CGPoint(x: margin + 8, y: y), withAttributes: totalAttrs)
-                (formatter.formatCurrency(grandTotal) as NSString).draw(at: CGPoint(x: margin + 200, y: y), withAttributes: totalAttrs)
+                ((chemicalComplete ? formatter.formatCurrency(grandTotal) : "Incomplete — chemical pricing unresolved") as NSString).draw(at: CGPoint(x: margin + 200, y: y), withAttributes: totalAttrs)
                 y += 16
             }
 

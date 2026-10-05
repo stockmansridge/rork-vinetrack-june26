@@ -28,3 +28,15 @@ internal fun rememberTripChemicalPrices(state: AppUiState, trip: Trip?): Chemica
     }
     return batch
 }
+
+/** Bounded export lookup using the same vineyard season contract as detail costing. */
+internal suspend fun loadTripChemicalPrices(context: android.content.Context, state: AppUiState, trip: Trip?): ChemicalSeasonPriceBatch? {
+    if (trip == null || trip.vineyardId != state.selectedVineyardId || state.currentRole !in listOf("owner", "manager")) return null
+    val start = trip.startEpochMs ?: return null
+    val vintage = VintageResolver.vintageYearForEpochMs(start, state.seasonStartMonth, state.seasonStartDay, state.seasonZone)
+    return kotlinx.coroutines.withTimeoutOrNull(8_000) {
+        try { CatalogueRepository(context).chemicalSeasonPrices(trip.vineyardId, vintage) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { null }
+    }
+}

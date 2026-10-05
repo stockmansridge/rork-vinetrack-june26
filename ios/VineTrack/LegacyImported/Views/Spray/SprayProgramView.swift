@@ -776,6 +776,7 @@ struct SprayProgramView: View {
         let vineyardName = store.selectedVineyard?.name ?? "Vineyard"
         let includeCostings = accessControl?.canViewCosting ?? false
         Task {
+            let chemicalPrices = includeCostings ? try? await CatalogueRepository().chemicalSeasonPrices(vineyardId: records[0].vineyardId, vintage: store.settings.currentSeasonVintage) : nil
             let canonicalReports = await SprayReportRepository.shared.fetchAll(tripIds: records.compactMap(\.canonicalTripId))
             let url = SprayProgramCSVService.exportRecords(
                 records: records,
@@ -791,7 +792,8 @@ struct SprayProgramView: View {
                 tankActuals: includeCostings ? SprayTankActualStore.shared.records : [],
                 paddocks: store.paddocks,
                 historicalYieldRecords: includeCostings ? store.historicalYieldRecords : [],
-                canonicalReports: canonicalReports
+                canonicalReports: canonicalReports,
+                chemicalPrices: chemicalPrices
             )
             do { sharePDFURL = ShareURL(url: try namedVintageExport(url)) }
             catch { exportError = "Unable to prepare the export file. Please try again." }
@@ -833,6 +835,7 @@ struct SprayProgramView: View {
         let tankActuals = SprayTankActualStore.shared.records.filter { actual in records.contains { $0.id == actual.sprayRecordId } }
 
         Task {
+            let chemicalPrices = includeCostings ? try? await CatalogueRepository().chemicalSeasonPrices(vineyardId: records[0].vineyardId, vintage: store.settings.currentSeasonVintage) : nil
             let includedTripIds = records.compactMap(\.canonicalTripId)
             let canonicalReports = await SprayReportRepository.shared.fetchAll(tripIds: includedTripIds)
             let url = SprayProgramExportService.generateProgramPDF(
@@ -851,7 +854,8 @@ struct SprayProgramView: View {
                 includeCostings: includeCostings,
                 timeZone: exportTimeZone,
                 formatter: formatter,
-                canonicalReports: canonicalReports
+                canonicalReports: canonicalReports,
+                chemicalPrices: chemicalPrices
             )
             await MainActor.run {
                 do { sharePDFURL = ShareURL(url: try namedVintageExport(url)) }

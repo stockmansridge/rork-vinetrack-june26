@@ -80,7 +80,7 @@ struct TripCSVService {
             } else {
                 chemicalCost = ""
             }
-            let chemicalCostBasis = r.chemical?.basis.rawValue ?? ""
+            let chemicalCostBasis = ([r.chemical?.basis.rawValue].compactMap { $0 } + (r.chemical?.pricingBases ?? [])).joined(separator: "; ")
             let totalEstimatedCost = String(format: "%.2f", r.totalCost)
             let costingStatus = r.completeness.rawValue
             let treatedArea = r.treatedAreaHa.map { String(format: "%.2f", $0) } ?? ""
