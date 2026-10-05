@@ -204,6 +204,19 @@ kotlin {
     }
 }
 
+if (providers.gradleProperty("pinEvidenceFocusedTests").orNull == "true") {
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+        testLogging { events("passed", "failed", "skipped") }
+    }
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/PinCaptureEvidenceContractTest.kt", "**/PinAisleAttachmentTest.kt")
+            })
+        }
+    }
+}
+
 // The full legacy JVM source set currently contains two unrelated, stale tests
 // that do not compile. This opt-in keeps focused Optimal Ripeness certification
 // deterministic without weakening the normal test task.

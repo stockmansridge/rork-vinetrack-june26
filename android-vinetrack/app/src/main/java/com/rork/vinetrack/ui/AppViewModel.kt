@@ -2953,10 +2953,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val pending = pinEvidenceStore.pending()
         if (pending.isEmpty()) return
         viewModelScope.launch {
-            pending.forEach { evidence ->
-                runCatching { pinRepo.uploadCaptureEvidence(evidence) }
-                    .onSuccess { pinEvidenceStore.markUploaded(evidence.pinId, evidence.evidenceRevision) }
-            }
+            com.rork.vinetrack.data.replayPinCaptureEvidence(
+                pending, pinRepo::uploadCaptureEvidence, pinEvidenceStore::markUploaded,
+            )
         }
     }
 

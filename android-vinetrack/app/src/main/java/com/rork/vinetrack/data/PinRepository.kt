@@ -146,7 +146,7 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
     )
 
     @Serializable
-    private data class PinEvidenceUpload(
+    internal data class PinEvidenceUpload(
         @SerialName("pin_id") val pinId: String,
         @SerialName("vineyard_id") val vineyardId: String,
         @SerialName("evidence_revision") val evidenceRevision: Int,
@@ -215,10 +215,15 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
         }
     }
 
-    suspend fun uploadCaptureEvidence(evidence: PinCaptureEvidenceStore.Evidence): Unit = withContext(Dispatchers.IO) {
-        requireConfig()
-        val token = session.accessToken ?: throw BackendError.Unauthorized
-        val payload = PinEvidenceUpload(
+    companion object {
+        /** Normalize only evidence wire values; immutable local evidence and placement stay untouched. */
+        private fun evidenceSide(value: String?): String? = when {
+            value.equals("left", ignoreCase = true) -> "Left"
+            value.equals("right", ignoreCase = true) -> "Right"
+            else -> value
+        }
+
+        internal fun captureEvidencePayload(evidence: PinCaptureEvidenceStore.Evidence): PinEvidenceUpload = PinEvidenceUpload(
             pinId = evidence.pinId,
             vineyardId = evidence.vineyardId,
             evidenceRevision = evidence.evidenceRevision,
@@ -231,7 +236,7 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
             headingDegrees = evidence.headingDegrees,
             headingSource = evidence.headingSource,
             headingObservedAt = evidence.headingObservedAtIso,
-            pressedSide = evidence.side,
+            pressedSide = evidenceSide(evidence.side),
             tripId = evidence.tripId,
             captureUserId = evidence.captureUserId,
             captureButtonName = evidence.buttonName,
@@ -239,7 +244,7 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
             supportedPaddockId = evidence.paddockId,
             supportedDrivingRow = evidence.drivingRowNumber,
             supportedPinRow = evidence.pinRowNumber,
-            supportedPinSide = evidence.pinSide,
+            supportedPinSide = evidenceSide(evidence.pinSide),
             supportedSnappedLatitude = evidence.snappedLatitude,
             supportedSnappedLongitude = evidence.snappedLongitude,
             supportedAlongRowDistanceM = evidence.alongRowDistanceMetres,
@@ -249,6 +254,12 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
             geometryRevision = evidence.geometryRevision,
             geometryHash = evidence.geometryHash,
         )
+    }
+
+    suspend fun uploadCaptureEvidence(evidence: PinCaptureEvidenceStore.Evidence): Unit = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val payload = captureEvidencePayload(evidence)
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("insert_pin_capture_evidence")) {
             authHeaders(token)
             contentType(ContentType.Application.Json)
