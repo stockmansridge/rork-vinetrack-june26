@@ -1595,6 +1595,8 @@ data class SprayChemical(
     val ratePer100L: Double = 0.0,
     val costPerUnit: Double = 0.0,
     val unit: String = "Litres",
+    /** Explicit storage provenance for new Android display-unit quantities. */
+    val quantityBasis: String? = null,
     /**
      * Which area/volume this line's rate is quoted against (sql/191 per-product
      * rate basis), as a [SprayProductRateBasis] raw value.
@@ -2178,13 +2180,9 @@ data class SavedChemical(
         get() = rates.firstOrNull { it.basis == CHEMICAL_RATE_PER_100L }
             ?.let { chemicalUnitFromBase(unit, it.value) }
 
-    /**
-     * Cost per the chemical's own display [unit] (e.g. $/L, $/Kg), derived from
-     * the purchase container size + dollar cost. Null when no usable cost is
-     * stored — never invented. Owner/manager only at the UI layer.
-     */
+    /** Legacy call-site compatibility only. Use the seasonal purchase RPC for pricing. */
     val costPerUnit: Double?
-        get() = purchase?.costPerBaseUnit?.let { it * chemicalUnitToBase(unit, 1.0) }
+        get() = null
 
     // ---- Chemical Intelligence access ----
 

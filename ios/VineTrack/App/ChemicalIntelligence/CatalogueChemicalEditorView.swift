@@ -4,6 +4,9 @@ import SwiftUI
 struct CatalogueChemicalEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(MigratedDataStore.self) private var store
+    @Environment(\.accessControl) private var accessControl
+    @State private var showsInventory: Bool = false
+    @State private var showsPurchase: Bool = false
     let chemical: SavedChemical
     let onSaved: ((SavedChemical) -> Void)?
     @State private var notes: String
@@ -22,8 +25,12 @@ struct CatalogueChemicalEditorView: View {
                 Section("Product") { CatalogueSavedChemicalView(chemical: chemical, showsDetails: true) }
                 VineyardPreferredRateSection(chemical: chemical)
                 Section("Notes") { TextField("Vineyard notes (optional)", text: $notes, axis: .vertical).lineLimit(3...8) }
-                Section {
-                    Text("Stock and purchases are managed in Chemical Inventory. Existing spray-cost information is retained.").font(.caption).foregroundStyle(.secondary)
+                Section("Inventory & purchase") {
+                    Text("Stock and purchases are managed in Chemical Inventory.").font(.caption).foregroundStyle(.secondary)
+                    if accessControl?.inventoryVineyardId == chemical.vineyardId && store.selectedVineyardId == chemical.vineyardId && accessControl?.canViewInventory == true {
+                        Button("View Inventory") { showsInventory = true }
+                        if accessControl?.canRecordInventoryPurchase == true { Button("Record Purchase") { showsPurchase = true } }
+                    }
                 }
                 Section("Manage chemical") {
                     Button("Archive chemical") { deleteCoordinator.pending = chemical }.disabled(isSaving || deleteCoordinator.isWorking)
@@ -36,6 +43,8 @@ struct CatalogueChemicalEditorView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(isSaving) }
                 ToolbarItem(placement: .confirmationAction) { Button(isSaving ? "Saving…" : "Save") { Task { await save() } }.disabled(isSaving || deleteCoordinator.isWorking) }
             }
+            .sheet(isPresented: $showsInventory) { NavigationStack { ChemicalInventoryView() } }
+            .sheet(isPresented: $showsPurchase) { ChemicalInventoryActionsView(chemical: chemical, summary: nil, recordPurchase: true, refresh: {}) }
             .interactiveDismissDisabled(isSaving)
             .chemicalDeletionActions(coordinator: deleteCoordinator, store: store)
             .onChange(of: deleteCoordinator.didDeleteId) { _, id in if id != nil { dismiss() } }

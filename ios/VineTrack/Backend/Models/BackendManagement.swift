@@ -283,7 +283,7 @@ nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
     let productCategory: String
     let productForm: String
     let packSize: Double?
-    let packUnit: String
+    let packUnit: String?
     let pricePerPack: Double?
     let density: Double?
     let nitrogenPercent: Double?
@@ -425,15 +425,15 @@ extension BackendSavedChemical {
             problem: c.problem,
             activeIngredient: legacy.activeIngredient,
             rates: c.rates,
-            purchase: c.purchase,
+            purchase: nil,
             labelUrl: c.labelURL,
             productUrl: c.productURL,
             modeOfAction: c.modeOfAction,
             productCategory: c.productCategory,
             productForm: c.productForm,
-            packSize: c.packSize,
-            packUnit: c.packUnit,
-            pricePerPack: c.pricePerPack,
+            packSize: nil,
+            packUnit: nil,
+            pricePerPack: nil,
             density: c.density,
             nitrogenPercent: c.nitrogenPercent,
             phosphorusPercent: c.phosphorusPercent,

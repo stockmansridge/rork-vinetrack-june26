@@ -316,8 +316,8 @@ private fun recommendedRateDisplay(chem: SavedChemical, line: CalcChemLine): Dou
  * rule lives in the data layer where it can be asserted on directly, rather
  * than inside a Composable file no unit test can reach.
  */
-private fun lineCostPerUnit(chem: SavedChemical, rateUnit: String): Double? =
-    ChemicalSprayDefaultHandoff.costPerRateUnit(chem, rateUnit)
+private fun lineCostPerUnit(chem: SavedChemical, rateUnit: String, prices: List<com.rork.vinetrack.data.chemical.ChemicalSeasonPrice>): Double? =
+    ChemicalSprayDefaultHandoff.costPerRateUnit(chem, rateUnit, prices)
 
 /** Effective rate: manual override (when valid) else the recommended rate. */
 private fun effectiveRateDisplay(chem: SavedChemical, line: CalcChemLine): Double {
@@ -434,6 +434,18 @@ fun SprayCalculatorScreen(
     val canopyReferenceFiles by vm.canopyReferenceImageFiles.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.refreshCanopyReferenceImagesOncePerSession() }
     val canEditCost = state.currentRole == "owner" || state.currentRole == "manager"
+    var seasonPrices by remember(state.selectedVineyardId, state.currentRole) { mutableStateOf<List<com.rork.vinetrack.data.chemical.ChemicalSeasonPrice>>(emptyList()) }
+    LaunchedEffect(state.selectedVineyardId, state.currentRole, state.seasonStartMonth, state.seasonStartDay) {
+        seasonPrices = emptyList()
+        val vid = state.selectedVineyardId
+        if (canEditCost && vid != null) {
+            try {
+                val vintage = com.rork.vinetrack.data.VintageResolver.vintageYearForEpochMs(System.currentTimeMillis(), state.seasonStartMonth, state.seasonStartDay, state.seasonZone)
+                seasonPrices = com.rork.vinetrack.data.chemical.CatalogueRepository(context).chemicalSeasonPrices(vid, vintage, java.time.LocalDate.now(state.seasonZone).toString()).prices
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { seasonPrices = emptyList() }
+        }
+    }
 
     var sprayName by remember { mutableStateOf("") }
     var operationType by remember { mutableStateOf(sprayOperationTypes.first()) }
@@ -629,7 +641,7 @@ fun SprayCalculatorScreen(
             unit = rateUnit,
             basis = basis,
             rate = effectiveRateDisplay(chem, line),
-            costPerUnit = if (canEditCost) lineCostPerUnit(chem, rateUnit) else null,
+            costPerUnit = if (canEditCost) lineCostPerUnit(chem, rateUnit, seasonPrices) else null,
             // Explicit ONLY when the label itself decides (per-100 L) or the
             // operator answered the Whole Block / Treated Band question for
             // THIS line. A banded pass with an unanswered area-rated line is
@@ -964,7 +976,7 @@ fun SprayCalculatorScreen(
             unit = rateUnit,
             basis = line.basis,
             rate = effectiveRateDisplay(chem, line),
-            costPerUnit = if (canEditCost) lineCostPerUnit(chem, rateUnit) else null,
+            costPerUnit = if (canEditCost) lineCostPerUnit(chem, rateUnit, seasonPrices) else null,
         )
     }
 
@@ -2357,6 +2369,9 @@ fun SprayCalculatorScreen(
                 }
             }
 
+            if (canEditCost && chemLines.any { line -> seasonPrices.none { it.savedChemicalId == line.chemicalId && it.weightedCostPerBaseUnit != null } }) {
+                item { Text("Season purchase cost unavailable for some products. You can still plan and complete this spray.", color = VineColors.Warning, style = MaterialTheme.typography.bodySmall) }
+            }
             // Notes
             item { SectionHeader("Notes", onLight = true) }
             item {

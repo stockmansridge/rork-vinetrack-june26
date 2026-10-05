@@ -1095,8 +1095,6 @@ private struct ChemicalSearchV2ReviewView: View {
                             TextField("Pack size", text: $draft.manualDetails.packSize)
                                 .keyboardType(.decimalPad)
                             TextField("Pack unit", text: $draft.manualDetails.packUnit)
-                            TextField("Price per pack", text: $draft.manualDetails.pricePerPack)
-                                .keyboardType(.decimalPad)
                             TextField("Inventory quantity", text: $draft.manualDetails.inventoryQuantity)
                                 .keyboardType(.decimalPad)
                             TextField("Inventory unit", text: $draft.manualDetails.inventoryUnit)
@@ -1166,18 +1164,7 @@ private struct ChemicalSearchV2ReviewView: View {
         }
         let details = draft.manualDetails
         let packSize = parseOptional(details.packSize)
-        let pricePerPack = parseOptional(details.pricePerPack)
-        let purchase: ChemicalPurchase? = draft.isManual && (packSize != nil || pricePerPack != nil)
-            ? ChemicalPurchase(
-                brand: details.manufacturer,
-                activeIngredient: details.activeIngredient,
-                chemicalGroup: details.activityGroupCode,
-                labelURL: details.labelURL,
-                costDollars: pricePerPack ?? 0,
-                containerSizeML: packSize ?? 0,
-                containerUnit: draft.unit
-            )
-            : nil
+        let purchase: ChemicalPurchase? = nil
         let chemical = SavedChemical(
             vineyardId: vineyardId, name: draft.productName,
             ratePerHa: basis == .perHectare && rate.value != nil ? display : nil,
@@ -1193,7 +1180,7 @@ private struct ChemicalSearchV2ReviewView: View {
             productForm: details.productForm.isEmpty ? (draft.formType ?? "") : details.productForm,
             packSize: draft.isManual ? packSize : nil,
             packUnit: draft.isManual ? details.packUnit : "",
-            pricePerPack: draft.isManual ? pricePerPack : nil,
+            pricePerPack: nil,
             inventoryQuantity: draft.isManual ? parseOptional(details.inventoryQuantity) : nil,
             inventoryUnit: draft.isManual ? details.inventoryUnit : "",
             chemicalIntelligence: canonicalIntelligence,

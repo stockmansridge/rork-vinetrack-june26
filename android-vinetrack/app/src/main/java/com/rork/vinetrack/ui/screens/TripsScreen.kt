@@ -1536,7 +1536,8 @@ private fun TripDetailView(
             // cost/ha, yield, cost/tonne, then the costing-links editor.
             val canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager"
             if (canViewFinancials) {
-                val cost = remember(trip, linkedSpray, state.operatorCategories, state.machines, state.fuelPurchases, state.paddocks, state.yieldRecords, state.savedInputs, state.sprayTankActuals, state.tripCostAllocations) {
+                val chemicalPrices = rememberTripChemicalPrices(state, trip)
+                val cost = remember(chemicalPrices, trip, linkedSpray, state.operatorCategories, state.machines, state.fuelPurchases, state.paddocks, state.yieldRecords, state.savedInputs, state.sprayTankActuals, state.tripCostAllocations) {
                     TripCostEstimator.estimate(
                         trip,
                         linkedSpray,
@@ -1548,6 +1549,7 @@ private fun TripDetailView(
                         state.savedInputs,
                         state.sprayTankActuals.filter { it.tripId == trip.id },
                         state.tripCostAllocations,
+                        chemicalPrices = chemicalPrices,
                     )
                 }
                 val fuel = cost.fuel

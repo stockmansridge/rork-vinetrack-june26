@@ -286,24 +286,17 @@ object ChemicalSprayDefaultHandoff {
     /**
      * The product's cost per APPLICATION-RATE unit, or null when unknowable.
      *
-     * [SavedChemical.costPerUnit] is priced in the INVENTORY unit. When a line
-     * doses in a different unit of the same family the price is converted
-     * exactly - $20/kg becomes $0.02/g - using the app's own factors.
+     * The shared RPC is priced per mL/g. Convert only this preview price to
+     * the unchanged application-rate unit. SavedChemical.purchase is not read.
      *
      * Returns null rather than inventing a conversion when the families differ
      * or either unit is unrecognised. A missing line cost is visibly missing; a
      * fabricated one silently misprices the job, and multiplying a gram amount
      * by a per-kilogram price overstates cost a thousandfold.
      */
-    fun costPerRateUnit(chemical: SavedChemical, rateUnit: String): Double? {
-        val cost = chemical.costPerUnit ?: return null
-        val inventoryUnit = chemical.unit
-        if (inventoryUnit.trim().equals(rateUnit.trim(), ignoreCase = true)) return cost
-        val from = unitFamily(inventoryUnit) ?: return null
-        val to = unitFamily(rateUnit) ?: return null
-        if (from != to) return null
-        val basePerInventoryUnit = chemicalUnitToBase(inventoryUnit, 1.0)
-        if (basePerInventoryUnit <= 0) return null
-        return cost / basePerInventoryUnit * chemicalUnitToBase(rateUnit, 1.0)
+    fun costPerRateUnit(chemical: SavedChemical, rateUnit: String, prices: List<ChemicalSeasonPrice> = emptyList()): Double? {
+        val price = prices.firstOrNull { it.savedChemicalId == chemical.id }?.priceFor(rateUnit) ?: return null
+        val factor = when (canonicalUnit(rateUnit)) { "L", "kg" -> 1000.0; "mL", "g" -> 1.0; else -> return null }
+        return price * factor
     }
 }

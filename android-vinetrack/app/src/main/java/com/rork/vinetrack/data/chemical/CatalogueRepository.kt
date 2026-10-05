@@ -28,6 +28,15 @@ class CatalogueRepository(context: Context) {
         SupabaseClient.json.parseToJsonElement(response.bodyAsText())
     }
     fun rows(value: JsonElement): List<CatalogueRow> = (value as? JsonArray)?.mapNotNull { (it as? JsonObject)?.let(::CatalogueRow) }.orEmpty()
+    /** One financial batch per vineyard/vintage; backend enforces Owner/Manager access. */
+    suspend fun chemicalSeasonPrices(vineyardId: String, vintage: Int, asOf: String? = null): ChemicalSeasonPriceBatch {
+        val value = rpc("chemical_season_purchase_prices", buildJsonObject {
+            put("p_vineyard_id", vineyardId); put("p_vintage", vintage)
+            put("p_as_of", asOf?.let(::JsonPrimitive) ?: JsonNull)
+        })
+        val prices = SupabaseClient.json.decodeFromJsonElement<List<ChemicalSeasonPrice>>(value)
+        return ChemicalSeasonPriceBatch(vineyardId, vintage, prices)
+    }
     suspend fun search(query: String, country: String): List<CatalogueRow> = rows(rpc("search_chemical_v3_catalogue", buildJsonObject {
         put("p_query", query); put("p_country_code", country.takeIf { it.isNotBlank() }?.let(::JsonPrimitive) ?: JsonNull); put("p_limit", 20)
     }))

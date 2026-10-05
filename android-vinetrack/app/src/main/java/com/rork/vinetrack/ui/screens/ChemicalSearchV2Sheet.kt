@@ -879,18 +879,7 @@ private fun ChemicalReviewV2(
                 }
                 val details = draft.manualDetails
                 val packSize = details.packSize.toDoubleOrNull()
-                val pricePerPack = details.pricePerPack.toDoubleOrNull()
-                val purchase = if (draft.isManual && (packSize != null || pricePerPack != null)) {
-                    ChemicalPurchase(
-                        brand = details.manufacturer.trim(),
-                        activeIngredient = details.activeIngredient.trim(),
-                        chemicalGroup = details.activityGroupCode.trim(),
-                        labelUrl = details.labelUrl.trim(),
-                        costDollars = pricePerPack ?: 0.0,
-                        containerSizeML = packSize ?: 0.0,
-                        containerUnit = draft.unit,
-                    )
-                } else null
+                val purchase: ChemicalPurchase? = null
                 val input = SavedChemicalRepository.ChemicalInput(
                     name = draft.productName.trim(), unit = draft.unit,
                     ratePerHa = if (isArea && rate.value != null) display else null,
@@ -913,7 +902,7 @@ private fun ChemicalReviewV2(
                     productForm = details.productForm.ifBlank { draft.formType.orEmpty() },
                     packSize = if (draft.isManual) packSize else null,
                     packUnit = if (draft.isManual) details.packUnit else "",
-                    pricePerPack = if (draft.isManual) pricePerPack else null,
+                    pricePerPack = null,
                     inventoryQuantity = if (draft.isManual) details.inventoryQuantity.toDoubleOrNull() else null,
                     inventoryUnit = if (draft.isManual) details.inventoryUnit else "",
                     intelligence = canonicalIntelligence,
@@ -971,7 +960,6 @@ private fun ChemicalManualOptionalDetails(
     OutlinedTextField(details.notes, { onDetails(details.copy(notes = it)) }, label = { Text("Notes") }, modifier = Modifier.fillMaxWidth())
     OutlinedTextField(details.packSize, { onDetails(details.copy(packSize = it.filterRateChars())) }, label = { Text("Pack size") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
     OutlinedTextField(details.packUnit, { onDetails(details.copy(packUnit = it)) }, label = { Text("Pack unit") }, modifier = Modifier.fillMaxWidth())
-    OutlinedTextField(details.pricePerPack, { onDetails(details.copy(pricePerPack = it.filterRateChars())) }, label = { Text("Price per pack") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
     OutlinedTextField(details.inventoryQuantity, { onDetails(details.copy(inventoryQuantity = it.filterRateChars())) }, label = { Text("Inventory quantity") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
     OutlinedTextField(details.inventoryUnit, { onDetails(details.copy(inventoryUnit = it)) }, label = { Text("Inventory unit") }, modifier = Modifier.fillMaxWidth())
 }

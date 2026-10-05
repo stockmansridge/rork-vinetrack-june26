@@ -19,7 +19,7 @@ import android.app.DatePickerDialog
 
 /** Member-visible inventory; RPCs enforce role-specific mutations and cost redaction. */
 @Composable
-internal fun ChemicalInventoryScreen(state: AppUiState, onClose: () -> Unit, modifier: Modifier = Modifier, recordPurchase: Boolean = false) {
+internal fun ChemicalInventoryScreen(state: AppUiState, onClose: () -> Unit, modifier: Modifier = Modifier, recordPurchase: Boolean = false, initialChemicalId: String? = null) {
     if (!state.canViewInventory) return
     val context = LocalContext.current
     val repository = remember { CatalogueRepository(context) }
@@ -27,7 +27,7 @@ internal fun ChemicalInventoryScreen(state: AppUiState, onClose: () -> Unit, mod
     val vineyardChemicals = state.savedChemicals.filter { it.vineyardId == state.selectedVineyardId }
     var loading by remember(state.selectedVineyardId, state.currentRole) { mutableStateOf(false) }
     var summaries by remember(state.selectedVineyardId, state.currentRole) { mutableStateOf<Map<String, CatalogueRow>>(emptyMap()) }
-    var selected by remember(state.selectedVineyardId, state.currentRole) { mutableStateOf<SavedChemical?>(null) }
+    var selected by remember(state.selectedVineyardId, state.currentRole) { mutableStateOf<SavedChemical?>(vineyardChemicals.firstOrNull { it.id == initialChemicalId }) }
     var search by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf("All") }
     var error by remember { mutableStateOf<String?>(null) }

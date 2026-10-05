@@ -65,6 +65,7 @@ nonisolated enum TripCostService {
         let cost: Double
         let warning: String?
         let basis: ChemicalCostBasis
+        var pricingBases: [String] = []
     }
 
     nonisolated struct SeedingBreakdown: Sendable {
@@ -136,7 +137,8 @@ nonisolated enum TripCostService {
         paddockHectares: Double? = nil,
         paddockAreasById: [UUID: Double] = [:],
         historicalYieldRecords: [HistoricalYieldRecord] = [],
-        savedLabour: LabourBreakdown? = nil
+        savedLabour: LabourBreakdown? = nil,
+        chemicalPrices: ChemicalSeasonPriceBatch? = nil
     ) -> Result {
         let hours = max(0, trip.activeDuration / 3600.0)
 
@@ -282,12 +284,8 @@ nonisolated enum TripCostService {
         }
 
         // ---- Chemical -------------------------------------------------------
-        // Resolve cost per unit in priority order:
-        //   1. SprayChemical.costPerUnit snapshot stored on the record.
-        //   2. SavedChemical.purchase.costPerBaseUnit via savedChemicalId.
-        //   3. SavedChemical.purchase.costPerBaseUnit via case-insensitive name match.
-        // Step 1 is the canonical path going forward; steps 2/3 keep older
-        // records (created before snapshotting) costable.
+        // Seasonal purchase authority wins. Legacy stored line prices remain
+        // readable only when no canonical price resolves; never use editor pricing.
         let chemical: ChemicalBreakdown? = sprayRecord.map { record in
             let relevantActuals = tankActuals.filter { $0.tripId == trip.id && $0.sprayRecordId == record.id }
             let sessionIdsByTank = Dictionary(grouping: trip.tankSessions, by: \.tankNumber)
@@ -306,35 +304,57 @@ nonisolated enum TripCostService {
             var total: Double = 0
             var anyMissing = false
             var anyPriced = false
+            var legacyUsed = false
+            var pricingBases: Set<String> = []
+            var currencies: Set<String> = []
+            let prices = chemicalPrices?.vineyardId == trip.vineyardId ? chemicalPrices?.prices ?? [] : []
+            func add(amount: Double, id: UUID?, unit: ChemicalUnit, legacy: Double?, displayQuantity: Bool = false) {
+                guard amount > 0 else { return }
+                let price = prices.first { $0.savedChemicalId == id }
+                if let cpu = price?.price(for: unit) {
+                    total += cpu * (displayQuantity ? unit.toBase(amount) : amount)
+                    anyPriced = true
+                    pricingBases.insert("season_weighted_purchase_average")
+                    if let currency = price?.currency { currencies.insert(currency) }
+                } else if (price == nil || price?.pricingBasis == "season_purchase_cost_unavailable"),
+                          let cpu = legacy, cpu.isFinite, cpu > 0 {
+                    total += cpu * amount
+                    anyPriced = true
+                    legacyUsed = true
+                    pricingBases.insert("legacy_stored_spray_snapshot")
+                } else {
+                    anyMissing = true
+                    pricingBases.insert(price?.pricingBasis ?? "season_purchase_cost_unavailable")
+                }
+            }
             for tank in record.tanks {
-                for chem in tank.chemicals {
-                    let amount: Double
-                    if actualsComplete,
-                       let actual = actualByTank[tank.tankNumber]??.chemicals.first(where: {
-                           $0.plannedChemicalId == chem.id || ($0.usageKind == "substitution" && $0.replacesPlannedChemicalId == chem.id)
-                       }) {
-                        amount = actual.actualAmountBase
-                    } else {
-                        amount = chem.volumePerTank
+                if actualsComplete, let actual = actualByTank[tank.tankNumber] ?? nil {
+                    for line in actual.chemicals {
+                        // Additional/substitute lines MUST use their own Saved Chemical identity.
+                        let planned = tank.chemicals.first { $0.id == line.plannedChemicalId }
+                        let legacy = line.usageKind != "substitution" && line.usageKind != "additional"
+                            && line.savedChemicalId != nil && line.savedChemicalId == planned?.savedChemicalId
+                            ? planned?.costPerUnit : nil
+                        add(amount: line.actualAmountBase, id: line.savedChemicalId, unit: line.unit, legacy: legacy)
                     }
-                    let resolvedCostPerUnit = resolveCostPerUnit(chem, savedChemicals: savedChemicals)
-                    if let cpu = resolvedCostPerUnit, cpu > 0 {
-                        total += cpu * amount
-                        anyPriced = true
-                    } else if amount > 0 {
-                        anyMissing = true
+                } else {
+                    for line in tank.chemicals {
+                        add(amount: line.volumePerTank, id: line.savedChemicalId, unit: line.unit, legacy: line.costPerUnit, displayQuantity: line.quantityBasis == "display")
                     }
                 }
             }
+            if currencies.count > 1 {
+                return ChemicalBreakdown(cost: 0, warning: "Chemical cost incomplete — multiple currencies; no FX conversion applied.", basis: actualsComplete ? .actual : .estimated)
+            }
             let warning: String?
             if !anyPriced && anyMissing {
-                warning = "Chemical cost unavailable \u{2014} costs per unit not set on saved chemicals."
+                warning = "Season purchase cost unavailable or conflicted; chemical cost incomplete."
             } else if anyMissing {
-                warning = "Some chemicals are missing a cost per unit."
+                warning = "Some chemicals have no usable season purchase cost or Saved Chemical identity."
             } else {
                 warning = nil
             }
-            return ChemicalBreakdown(cost: total, warning: warning, basis: actualsComplete ? .actual : .estimated)
+            return ChemicalBreakdown(cost: total, warning: warning ?? (legacyUsed ? "Legacy stored spray pricing basis; seasonal purchase price unavailable." : nil), basis: actualsComplete ? .actual : .estimated, pricingBases: pricingBases.sorted())
         }
 
         // ---- Seeding / input -----------------------------------------------
@@ -581,26 +601,10 @@ nonisolated enum TripCostService {
 
     // MARK: - Helpers
 
-    /// Resolve `costPerUnit` for a spray chemical line. Prefers the snapshot
-    /// stored on the line, falls back to `SavedChemical.purchase` resolved by
-    /// `savedChemicalId` then by case-insensitive name. Returns `nil` when no
-    /// usable cost is available.
+    /// Backward-compatible stored spray snapshot only; current Chemical editor
+    /// purchase data and ambiguous name matches are never financial authority.
     static func resolveCostPerUnit(_ chem: SprayChemical, savedChemicals: [SavedChemical]) -> Double? {
-        if chem.costPerUnit > 0 { return chem.costPerUnit }
-        if let sid = chem.savedChemicalId,
-           let saved = savedChemicals.first(where: { $0.id == sid }),
-           let purchase = saved.purchase, purchase.costPerBaseUnit > 0 {
-            return purchase.costPerBaseUnit
-        }
-        let key = chem.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if !key.isEmpty,
-           let saved = savedChemicals.first(where: {
-               $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == key
-           }),
-           let purchase = saved.purchase, purchase.costPerBaseUnit > 0 {
-            return purchase.costPerBaseUnit
-        }
-        return nil
+        chem.costPerUnit.isFinite && chem.costPerUnit > 0 ? chem.costPerUnit : nil
     }
 
     /// Weighted average fuel cost per litre across all fuel purchases for a

@@ -73,6 +73,8 @@ struct SprayCalculatorView: View {
     @State private var sprayRateText: String = ""
     @State private var hasEditedSprayRate: Bool = false
     @State private var notes: String = ""
+    @State private var seasonPrices: ChemicalSeasonPriceBatch?
+    @State private var pricingWarning: String?
 
     // Trip setup
     @State private var numberOfFansJets: String = ""
@@ -523,7 +525,7 @@ struct SprayCalculatorView: View {
                 unit: line.operationalRateUnit ?? chemical.unit.rawValue,
                 basis: basis,
                 rate: rate,
-                costPerUnit: line.operationalRateUnit.map { VineyardPreferredRate(amount: 1, unit: $0, basis: line.basis).chemicalUnit.isDimensionallyCompatible(with: chemical.unit) } == false ? nil : chemical.purchase?.costPerBaseUnit,
+                costPerUnit: seasonPrices?.prices.first { $0.savedChemicalId == chemical.id }?.price(for: line.operationalRateUnit.map { VineyardPreferredRate(amount: 1, unit: $0, basis: line.basis).chemicalUnit } ?? chemical.unit),
                 // Whole block is what the screen SHOWS until the operator
                 // chooses, but on a banded pass it is not yet a decision. The
                 // flag keeps that distinction so the flow can insist on an
@@ -780,6 +782,12 @@ struct SprayCalculatorView: View {
                             reviewSection
                         }
 
+                        if accessControl.canViewFinancials {
+                            if let pricingWarning { Text(pricingWarning).font(.caption).foregroundStyle(.orange) }
+                            else if chemicalLines.contains(where: { line in
+                                seasonPrices?.prices.contains(where: { $0.savedChemicalId == line.chemicalId && $0.weightedCostPerBaseUnit != nil }) != true
+                            }) { Text("Season purchase cost unavailable for some products. You can still plan and complete this spray.").font(.caption).foregroundStyle(.orange) }
+                        }
                         notesSection
                         actionButtons
 
@@ -826,6 +834,22 @@ struct SprayCalculatorView: View {
                 }
             }
             .onAppear { seedOpenedStepIfNeeded() }
+            .task(id: "\(store.selectedVineyardId?.uuidString ?? ""):\(accessControl.canViewFinancials)") {
+                seasonPrices = nil
+                guard accessControl.canViewFinancials, let vid = store.selectedVineyardId else { return }
+                var calendar = Calendar.current
+                calendar.timeZone = TimeZone(identifier: store.settings.timezone) ?? .current
+                let now = Date()
+                let vintage = VintageResolver.vintageYear(for: now, seasonStartMonth: store.settings.seasonStartMonth, seasonStartDay: store.settings.seasonStartDay, calendar: calendar)
+                let parts = calendar.dateComponents([.year, .month, .day], from: now)
+                let asOf = String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 1, parts.day ?? 1)
+                do {
+                    seasonPrices = try await CatalogueRepository().chemicalSeasonPrices(vineyardId: vid, vintage: vintage, asOf: asOf)
+                    pricingWarning = nil
+                } catch {
+                    pricingWarning = "Season purchase cost unavailable. You can still plan and complete this spray."
+                }
+            }
             .scrollDismissesKeyboard(.interactively)
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Spray Calculator")
@@ -3955,7 +3979,8 @@ struct SprayCalculatorView: View {
             operationType: operationType,
             tractor: tractor,
             jobDurationHours: jobDurationHours,
-            fuelCostPerLitre: store.seasonFuelCostPerLitre
+            fuelCostPerLitre: store.seasonFuelCostPerLitre,
+            chemicalPrices: seasonPrices?.prices ?? []
         )
         withAnimation(.spring(duration: 0.4)) { showResults = true }
     }
@@ -4042,15 +4067,14 @@ struct SprayCalculatorView: View {
                 guard let perFullTank = planLine.quantityPerFullTank,
                       let inLastTank = planLine.quantityInLastTank else { return nil }
                 let amount = isLast ? inLastTank : perFullTank
-                // Snapshot the saved chemical's costPerBaseUnit (if any) so
-                // TripCostService can calculate chemical cost reliably without
-                // having to re-resolve the saved chemical later.
+                // Retain product identity, not a frozen seasonal financial price.
+                // Reporting resolves the latest purchase average for this vintage.
                 return SprayChemical(
                     name: planLine.name,
                     volumePerTank: amount,
                     ratePerHa: planLine.basis == .wholeBlockArea || planLine.basis == .treatedArea ? planLine.rate : 0,
                     ratePer100L: planLine.basis == .per100Litres ? planLine.rate : 0,
-                    costPerUnit: planLine.costPerUnit ?? 0,
+                    costPerUnit: 0,
                     unit: ChemicalUnit(rawValue: planLine.unit) ?? .litres,
                     // Snapshot the basis the operator actually chose for THIS
                     // line. Without it a banded treated-band quantity would

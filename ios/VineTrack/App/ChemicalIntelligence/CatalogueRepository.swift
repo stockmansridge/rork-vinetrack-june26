@@ -7,6 +7,14 @@ final class CatalogueRepository: CatalogueBackendProtocol {
     func rpc(_ name: String, _ params: [String: SprayReportPayloadV1.JSONValue]) async throws -> [CatalogueWire] {
         try await client.rpc(name, params: params).execute().value
     }
+    /// One authenticated batch call per vineyard/vintage, never one call per product.
+    func chemicalSeasonPrices(vineyardId: UUID, vintage: Int, asOf: String? = nil) async throws -> ChemicalSeasonPriceBatch {
+        let prices: [ChemicalSeasonPrice] = try await client.rpc("chemical_season_purchase_prices", params: [
+            "p_vineyard_id": SprayReportPayloadV1.JSONValue.string(vineyardId.uuidString),
+            "p_vintage": .number(Double(vintage)), "p_as_of": asOf.map { .string($0) } ?? .null
+        ]).execute().value
+        return ChemicalSeasonPriceBatch(vineyardId: vineyardId, vintage: vintage, prices: prices)
+    }
     func search(query: String, country: String) async throws -> [CatalogueWire] {
         try await rpc("search_chemical_v3_catalogue", ["p_query": .string(query), "p_country_code": country.isEmpty ? .null : .string(country), "p_limit": .number(20)])
     }

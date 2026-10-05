@@ -19,6 +19,7 @@ struct CostReportsView: View {
     @State private var showTreatedAreaInfo: Bool = false
     @State private var showUnassignedInfo: Bool = false
     @State private var groupByFunction: Bool = false
+    @State private var chemicalPrices: [Int: ChemicalSeasonPriceBatch] = [:]
 
     private var canViewCosting: Bool { accessControl.canViewCosting }
 
@@ -28,7 +29,34 @@ struct CostReportsView: View {
 
     private var allRows: [TripCostAllocation] {
         guard let vid = vineyardId else { return [] }
-        return store.tripCostAllocations.filter { $0.vineyardId == vid }
+        let saved = store.tripCostAllocations.filter { $0.vineyardId == vid }
+        let groups = Dictionary(grouping: saved.filter { $0.allocationBasis != .labourSnapshot }, by: \.tripId)
+        var costs: [UUID: TripCostService.ChemicalBreakdown] = [:]
+        for (tripId, rows) in groups {
+            guard let trip = store.trips.first(where: { $0.id == tripId }),
+                  let record = store.sprayRecords.first(where: { $0.tripId == tripId }) else { continue }
+            let season = rows.first?.seasonYear ?? 0
+            let result = TripCostService.estimate(trip: trip, operatorCategory: nil, tractor: nil,
+                fuelPurchases: [], sprayRecord: record,
+                tankActuals: SprayTankActualStore.shared.records.filter { $0.tripId == tripId },
+                chemicalPrices: chemicalPrices[season])
+            costs[tripId] = result.chemical
+        }
+        // Reporting-only chemical overlay; saved labour/fuel and historical records
+        // are never rewritten when a later purchase changes the seasonal average.
+        return saved.map { original in
+            guard original.allocationBasis != .labourSnapshot, let cost = costs[original.tripId],
+                  let siblings = groups[original.tripId] else { return original }
+            var row = original
+            let totalArea = siblings.reduce(0.0) { $0 + ($1.allocationAreaHa ?? 0) }
+            let share = totalArea > 0 ? (row.allocationAreaHa ?? 0) / totalArea : 1 / Double(siblings.count)
+            row.chemicalCost = cost.cost * share
+            row.totalCost = (original.totalCost ?? 0) - (original.chemicalCost ?? 0) + (row.chemicalCost ?? 0)
+            row.costPerHa = (row.allocationAreaHa ?? 0) > 0 ? (row.totalCost ?? 0) / (row.allocationAreaHa ?? 1) : nil
+            row.costPerTonne = (row.yieldTonnes ?? 0) > 0 ? (row.totalCost ?? 0) / (row.yieldTonnes ?? 1) : nil
+            if let warning = cost.warning { row.warnings.append(warning); row.costingStatus = .partial }
+            return row
+        }
     }
 
     private var seasons: [Int] {
@@ -94,11 +122,26 @@ struct CostReportsView: View {
                 selectedSeason = seasons.first
             }
         }
+        .task(id: "\(vineyardId?.uuidString ?? ""):\(canViewCosting)") { await loadChemicalPrices() }
         .refreshable {
             await allocationSync.syncForSelectedVineyard()
+            await loadChemicalPrices()
         }
         .sheet(isPresented: $showTreatedAreaInfo) { TreatedAreaInfoSheet() }
         .sheet(isPresented: $showUnassignedInfo) { UnassignedVarietyInfoSheet() }
+    }
+
+    private func loadChemicalPrices() async {
+        chemicalPrices = [:]
+        guard canViewCosting, let vid = vineyardId else { return }
+        let vintages = Set(store.tripCostAllocations.filter { $0.vineyardId == vid }.map(\.seasonYear))
+        for vintage in vintages {
+            do {
+                let batch = try await CatalogueRepository().chemicalSeasonPrices(vineyardId: vid, vintage: vintage)
+                guard vineyardId == vid, canViewCosting else { return }
+                chemicalPrices[vintage] = batch
+            } catch { recalcMessage = "Season purchase pricing unavailable; unresolved chemical costs are marked incomplete." }
+        }
     }
 
     // MARK: Filters

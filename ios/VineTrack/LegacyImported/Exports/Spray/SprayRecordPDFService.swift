@@ -383,9 +383,14 @@ struct SprayRecordPDFService {
                 drawSectionHeader("Authorized Cost Summary")
                 drawRow(label: "Fuel used", value: canonicalCost.fuelLitres.map { formatter.formatVolume(litres: $0) } ?? "Not recorded")
                 drawRow(label: "Fuel cost", value: canonicalCost.fuelCost.map { formatter.formatCurrency($0) } ?? "Not recorded")
-                drawRow(label: "Chemical cost", value: canonicalCost.chemicalCost.map { formatter.formatCurrency($0) } ?? "Not recorded")
+                drawRow(label: "Chemical cost", value: tripCostResult?.chemical.map { formatter.formatCurrency($0.cost) } ?? "Season purchase cost unavailable")
+                if let chemical = tripCostResult?.chemical {
+                    drawRow(label: "Chemical quantity basis", value: chemical.basis.rawValue)
+                    if let warning = chemical.warning { drawText(warning, font: captionFont, color: .darkGray) }
+                }
                 drawRow(label: "Labour cost", value: canonicalCost.labourCost.map { formatter.formatCurrency($0) } ?? "Not recorded")
-                drawRow(label: "Total", value: canonicalCost.totalCost.map { formatter.formatCurrency($0) } ?? "Incomplete")
+                let adjustedTotal = canonicalCost.totalCost.map { $0 - (canonicalCost.chemicalCost ?? 0) + (tripCostResult?.chemical?.cost ?? 0) }
+                drawRow(label: "Total", value: adjustedTotal.map { formatter.formatCurrency($0) } ?? "Incomplete")
                 if !canonicalCost.isComplete { drawText(canonicalCost.basis, font: captionFont, color: .darkGray) }
             }
             if includeCostings, payload.cost == nil, let r = tripCostResult {

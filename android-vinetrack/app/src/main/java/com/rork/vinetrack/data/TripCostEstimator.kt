@@ -57,6 +57,7 @@ object TripCostEstimator {
         val warning: String?,
         val basis: ChemicalCostBasis,
         val lines: List<ChemicalCostLine>,
+        val pricingBases: List<String> = emptyList(),
     )
 
     /**
@@ -123,6 +124,7 @@ object TripCostEstimator {
         savedInputs: List<SavedInput> = emptyList(),
         tankActuals: List<com.rork.vinetrack.data.model.SprayTankActual> = emptyList(),
         savedAllocations: List<TripCostAllocation> = emptyList(),
+        chemicalPrices: com.rork.vinetrack.data.chemical.ChemicalSeasonPriceBatch? = null,
     ): Estimate {
         val hours = (trip.activeDurationSeconds ?: 0L).coerceAtLeast(0L) / 3600.0
 
@@ -203,29 +205,49 @@ object TripCostEstimator {
             var anyPriced = false
             var anyMissing = false
             val lineCosts = linkedMapOf<String, ChemicalCostLine>()
+            var legacyUsed = false
+            val pricingBases = mutableSetOf<String>()
+            val currencies = mutableSetOf<String>()
+            val prices = chemicalPrices?.takeIf { it.vineyardId == trip.vineyardId }?.prices.orEmpty()
+            fun add(amount: Double, id: String?, unit: String, name: String, legacy: Double?, displayQuantity: Boolean = false) {
+                if (amount <= 0) return
+                val price = prices.firstOrNull { it.savedChemicalId == id }
+                val canonical = price?.priceFor(unit)
+                val cpu = canonical ?: legacy?.takeIf {
+                    (price == null || price.pricingBasis == "season_purchase_cost_unavailable") && it.isFinite() && it > 0
+                }
+                if (cpu == null) { anyMissing = true; pricingBases.add(price?.pricingBasis ?: "season_purchase_cost_unavailable"); return }
+                pricingBases.add(if (canonical != null) "season_weighted_purchase_average" else "legacy_stored_spray_snapshot")
+                if (canonical != null) price.currency?.let(currencies::add) else legacyUsed = true
+                val factor = if (canonical != null && displayQuantity && ChemicalSprayDefaultUnit.isLarge(unit)) 1000.0 else 1.0
+                val cost = amount * factor * cpu
+                total += cost
+                val key = id ?: name
+                lineCosts[key] = ChemicalCostLine(name, (lineCosts[key]?.cost ?: 0.0) + cost)
+                anyPriced = true
+            }
             tanks.forEach { tank ->
-                tank.chemicals.forEach { planned ->
-                    val amount = if (actualsComplete) {
-                        checkNotNull(actualByTank[tank.tankNumber]?.chemicals
-                            ?.firstOrNull {
-                                it.usageKind == "substitution" && it.replacesPlannedChemicalId == planned.id
-                            } ?: actualByTank[tank.tankNumber]?.chemicals
-                                ?.singleOrNull { (it.usageKind ?: "planned") == "planned" && it.plannedChemicalId == planned.id }
-                        ).actualAmountBase
-                    } else planned.volumePerTank
-                    if (planned.hasCost) {
-                        val lineCost = planned.costPerUnit * amount
-                        total += lineCost
-                        val key = planned.name.trim().lowercase()
-                        val existing = lineCosts[key]
-                        lineCosts[key] = ChemicalCostLine(planned.name, (existing?.cost ?: 0.0) + lineCost)
-                        anyPriced = true
-                    } else if (amount > 0.0) anyMissing = true
+                if (actualsComplete) {
+                    actualByTank[tank.tankNumber]?.chemicals.orEmpty().forEach { actual ->
+                        val planned = tank.chemicals.firstOrNull { it.id == actual.plannedChemicalId }
+                        val legacy = planned?.costPerUnit?.takeIf {
+                            actual.usageKind != "substitution" && actual.usageKind != "additional" &&
+                                actual.savedChemicalId != null && actual.savedChemicalId == planned.savedChemicalId
+                        }
+                        add(actual.actualAmountBase, actual.savedChemicalId, actual.unit, actual.name, legacy)
+                    }
+                } else tank.chemicals.forEach { planned ->
+                    add(planned.volumePerTank, planned.savedChemicalId, planned.unit, planned.name, planned.costPerUnit, planned.quantityBasis == "display")
                 }
             }
+            if (currencies.size > 1) {
+                total = 0.0; lineCosts.clear(); anyMissing = true; anyPriced = false
+            }
             val warning = when {
-                !anyPriced && anyMissing -> "Chemical cost unavailable — costs per unit not set on chemicals."
-                anyMissing -> "Some chemicals are missing a cost per unit."
+                currencies.size > 1 -> "Chemical cost incomplete — multiple currencies; no FX conversion applied."
+                !anyPriced && anyMissing -> "Season purchase cost unavailable or conflicted; chemical cost incomplete."
+                anyMissing -> "Some chemicals have no usable season purchase cost or Saved Chemical identity."
+                legacyUsed -> "Legacy stored spray pricing basis; seasonal purchase price unavailable."
                 else -> null
             }
             ChemicalBreakdown(
@@ -233,6 +255,7 @@ object TripCostEstimator {
                 warning,
                 if (actualsComplete) ChemicalCostBasis.Actual else ChemicalCostBasis.Estimated,
                 lineCosts.values.toList(),
+                pricingBases.sorted(),
             )
         }
 

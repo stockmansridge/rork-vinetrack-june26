@@ -123,7 +123,7 @@ object SprayCalculator {
         val costPerUnit: Double?,
     ) {
         /** Total cost across the whole job, when a per-unit cost is known. */
-        val totalCost: Double? get() = costPerUnit?.takeIf { it > 0 }?.let { totalAmount * it }
+        val totalCost: Double? get() = costPerUnit?.takeIf { it.isFinite() && it >= 0 }?.let { totalAmount * it }
     }
 
     /** Full calculation output. */
@@ -282,8 +282,9 @@ object SprayCalculator {
                     volumePerTank = amount,
                     ratePerHa = if (cr.basis == RateBasis.PER_HECTARE) cr.rate else 0.0,
                     ratePer100L = if (cr.basis == RateBasis.PER_100L) cr.rate else 0.0,
-                    costPerUnit = cr.costPerUnit ?: 0.0,
+                    costPerUnit = 0.0,
                     unit = cr.unit,
+                    quantityBasis = "display",
                     // Snapshot the basis this line was actually calculated on.
                     // Without it a banded treated-band quantity would reload as a
                     // whole-block one and silently restate itself.

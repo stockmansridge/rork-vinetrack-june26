@@ -63,6 +63,8 @@ object CostReportBuilder {
         seasonStartMonth: Int = 7,
         seasonStartDay: Int = 1,
         savedAllocations: List<TripCostAllocation> = emptyList(),
+        chemicalPricesByVintage: Map<Int, com.rork.vinetrack.data.chemical.ChemicalSeasonPriceBatch> = emptyMap(),
+        seasonZone: java.time.ZoneId = java.time.ZoneId.systemDefault(),
     ): List<CostAllocationRow> {
         val rows = mutableListOf<CostAllocationRow>()
 
@@ -76,7 +78,7 @@ object CostReportBuilder {
             // Costing groups by production VINTAGE (sql/119) — resolved from
             // the trip date + the vineyard's shared season-start setting, NOT
             // the calendar year. July 2026 work under a 1 July start → Vintage 2027.
-            val season = VintageResolver.vintageYearForEpochMs(start, seasonStartMonth, seasonStartDay)
+            val season = VintageResolver.vintageYearForEpochMs(start, seasonStartMonth, seasonStartDay, seasonZone)
 
             val sprayRecord = sprayRecords.firstOrNull { it.tripId == trip.id && it.deletedAt == null }
             val est = TripCostEstimator.estimate(
@@ -88,6 +90,7 @@ object CostReportBuilder {
                 paddocks = paddocks,
                 tankActuals = tankActuals.filter { it.tripId == trip.id },
                 savedAllocations = savedAllocations,
+                chemicalPrices = chemicalPricesByVintage[season]?.takeIf { it.vineyardId == trip.vineyardId && it.vintage == season },
             )
 
             val paddock = trip.paddockId?.let { id -> paddocks.firstOrNull { it.id == id } }

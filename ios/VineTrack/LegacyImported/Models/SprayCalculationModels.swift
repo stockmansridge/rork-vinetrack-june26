@@ -190,9 +190,8 @@ nonisolated struct ChemicalCalculationResult: Identifiable, Sendable {
     /// Source `SavedChemical.id` so downstream snapshots (e.g. `SprayChemical.savedChemicalId`)
     /// can be populated reliably without name-matching.
     let savedChemicalId: UUID?
-    /// Snapshot of `SavedChemical.purchase.costPerBaseUnit` at the time of
-    /// calculation. `nil` when the saved chemical has no purchase data so
-    /// downstream code can mark the cost as unavailable rather than zero.
+    /// Season-to-date purchase price for this preview only. Nil means unavailable;
+    /// zero is a legitimate free purchase. Never persisted as financial authority.
     let costPerBaseUnit: Double?
 }
 

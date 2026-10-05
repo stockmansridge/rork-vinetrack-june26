@@ -11,7 +11,8 @@ enum SprayCalculator {
         operationType: OperationType = .foliarSpray,
         tractor: Tractor? = nil,
         jobDurationHours: Double = 0,
-        fuelCostPerLitre: Double = 0
+        fuelCostPerLitre: Double = 0,
+        chemicalPrices: [ChemicalSeasonPrice] = []
     ) -> SprayCalculationResult {
         let totalArea = selectedPaddocks.reduce(0) { $0 + $1.areaHectares }
         let totalWaterLitres = totalArea * waterRateLitresPerHectare
@@ -80,10 +81,7 @@ enum SprayCalculator {
                 )
             }
 
-            let purchaseCostPerBaseUnit: Double? = {
-                guard let purchase = chemical.purchase, purchase.costPerBaseUnit > 0 else { return nil }
-                return purchase.costPerBaseUnit
-            }()
+            let purchaseCostPerBaseUnit = chemicalPrices.first { $0.savedChemicalId == chemical.id }?.price(for: chemical.unit)
 
             return ChemicalCalculationResult(
                 chemicalName: chemical.name,
@@ -100,17 +98,15 @@ enum SprayCalculator {
         }
 
         let chemicalCosts: [ChemicalCostResult] = chemicalResults.compactMap { result in
-            guard let chemical = chemicals.first(where: { $0.name == result.chemicalName }),
-                  let purchase = chemical.purchase,
-                  purchase.costPerBaseUnit > 0 else { return nil }
+            guard let cpu = result.costPerBaseUnit else { return nil }
 
-            let totalCost = result.totalAmountRequired * purchase.costPerBaseUnit
+            let totalCost = result.totalAmountRequired * cpu
             let costPerHa = totalArea > 0 ? totalCost / totalArea : 0
 
             return ChemicalCostResult(
                 chemicalName: result.chemicalName,
                 totalAmountBase: result.totalAmountRequired,
-                costPerBaseUnit: purchase.costPerBaseUnit,
+                costPerBaseUnit: cpu,
                 totalCost: totalCost,
                 costPerHectare: costPerHa,
                 unit: result.unit

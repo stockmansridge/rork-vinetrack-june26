@@ -1627,6 +1627,7 @@ private fun SprayDetailView(
                         // card: total + fuel + labour + chemicals.
                         val canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager"
                         if (canViewFinancials && linkedTrip != null) {
+                            val chemicalPrices = rememberTripChemicalPrices(state, linkedTrip)
                             val cost = TripCostEstimator.estimate(
                                 linkedTrip,
                                 record,
@@ -1635,6 +1636,7 @@ private fun SprayDetailView(
                                 state.fuelPurchases,
                                 state.paddocks,
                                 tankActuals = state.sprayTankActuals.filter { it.tripId == linkedTrip.id && it.sprayRecordId == record.id },
+                                chemicalPrices = chemicalPrices,
                             )
                             val fuel = cost.fuel
                             if (cost.totalCost > 0) {

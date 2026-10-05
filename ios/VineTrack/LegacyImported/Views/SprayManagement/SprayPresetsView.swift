@@ -283,8 +283,8 @@ struct EditSavedChemicalSheet: View {
     @State private var session: ChemicalReviewSession
     private let initialSession: ChemicalReviewSession
     @State private var showsOptionalDetails: Bool = false
-    @State private var showsCostingSnapshot: Bool = false
-    @State private var hasEditedCosting: Bool = false
+    @State private var showsInventory: Bool = false
+    @State private var showsPurchase: Bool = false
 
     @State private var activeSheet: ChemicalEditorSheet?
     @State private var linkAlertMessage: String?
@@ -460,9 +460,17 @@ struct EditSavedChemicalSheet: View {
                 if showsOptionalDetails && session.productCategory?.isFertiliser == true {
                     Section("Fertiliser calculation details (optional)") { fertiliserFields }
                 }
-                if canViewFinancials {
-                    Section { Toggle("Spray costing settings (optional)", isOn: $showsCostingSnapshot) }
-                    if showsCostingSnapshot { purchaseSection }
+                if let chemical, chemical.vineyardId == store.selectedVineyardId,
+                   accessControl?.inventoryVineyardId == store.selectedVineyardId,
+                   accessControl?.canViewInventory == true {
+                    Section("Inventory & purchase") {
+                        Text("Stock and purchases are managed in Chemical Inventory.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("View Inventory") { showsInventory = true }
+                        if accessControl?.canRecordInventoryPurchase == true {
+                            Button("Record Purchase") { showsPurchase = true }
+                        }
+                    }
                 }
                 // 7. Notes
                 notesSection
@@ -532,6 +540,14 @@ struct EditSavedChemicalSheet: View {
                 Button("OK", role: .cancel) {}
             } message: { msg in
                 Text(msg)
+            }
+            .sheet(isPresented: $showsInventory) {
+                NavigationStack { ChemicalInventoryView() }
+            }
+            .sheet(isPresented: $showsPurchase) {
+                if let chemical {
+                    ChemicalInventoryActionsView(chemical: chemical, summary: nil, recordPurchase: true, refresh: {})
+                }
             }
             .chemicalDeletionActions(coordinator: deleteCoordinator, store: store)
             .onChange(of: deleteCoordinator.didDeleteId) { _, newValue in
@@ -1394,49 +1410,6 @@ struct EditSavedChemicalSheet: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var purchaseSection: some View {
-        Section {
-            if canViewFinancials {
-                Toggle("Track Purchase Info", isOn: $session.trackPurchase.animation())
-            }
-            if canViewFinancials && session.trackPurchase {
-                HStack {
-                    Text("Container Size")
-                    Spacer()
-                    TextField("0", text: $session.containerSizeText)
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 90)
-                    Picker("Unit", selection: $session.containerUnit) {
-                        ForEach(session.formType.units, id: \.self) { u in
-                            Text(u.rawValue).tag(u)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                }
-                HStack {
-                    Text("Cost")
-                    Spacer()
-                    Text("$")
-                        .foregroundStyle(.secondary)
-                    TextField("0.00", text: $session.costText)
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 90)
-                }
-            }
-        } header: {
-            Text("Spray costing snapshot")
-        } footer: {
-            Text("Compatibility cost used by existing spray reports. Manage stock and purchase history in Chemical Inventory.")
-        }
-        .onChange(of: session.trackPurchase) { _, _ in hasEditedCosting = true }
-        .onChange(of: session.containerSizeText) { _, _ in hasEditedCosting = true }
-        .onChange(of: session.containerUnit) { _, _ in hasEditedCosting = true }
-        .onChange(of: session.costText) { _, _ in hasEditedCosting = true }
-    }
-
     private var sharingSection: some View {
         Section {
             HStack(spacing: 8) {
@@ -1528,27 +1501,8 @@ struct EditSavedChemicalSheet: View {
         let legacy = session.legacyProjection()
         let rates = legacy.rates
 
-        // Preserve existing purchase data when the editor cannot see/edit
-        // financials so that owners/managers don't lose cost values when a
-        // supervisor/operator edits the same chemical for other details.
-        var purchase: ChemicalPurchase? = chemical?.purchase
-        if canViewFinancials, hasEditedCosting { purchase = nil }
-        if canViewFinancials, hasEditedCosting, session.trackPurchase {
-            let containerSize = Double(session.containerSizeText) ?? 0
-            let cost = Double(session.costText) ?? 0
-            if containerSize > 0 || cost > 0 {
-                purchase = ChemicalPurchase(
-                    brand: legacy.manufacturer,
-                    activeIngredient: legacy.activeIngredient,
-                    chemicalGroup: legacy.chemicalGroup,
-                    labelURL: legacy.labelURL,
-                    costDollars: cost,
-
-                    containerSizeML: containerSize,
-                    containerUnit: session.containerUnit
-                )
-            }
-        }
+        // Compatibility data stays readable locally; sync omits legacy pricing.
+        let purchase: ChemicalPurchase? = chemical?.purchase
 
         let parseOptional: (String) -> Double? = { Double($0.replacingOccurrences(of: ",", with: ".")) }
         let productForm = session.formType == .liquid ? "liquid" : "solid"

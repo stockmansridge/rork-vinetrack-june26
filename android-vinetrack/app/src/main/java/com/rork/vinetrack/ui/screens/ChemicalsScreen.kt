@@ -884,10 +884,6 @@ internal fun ChemicalFormSheet(
     // would rewrite — or silently erase — a rate confirmation made on another
     // device.
     var defaultRatesEdited by remember(existing?.id) { mutableStateOf(false) }
-    var trackPurchase by remember { mutableStateOf(existing?.purchase != null) }
-    var containerSize by remember { mutableStateOf(existing?.purchase?.containerSizeML?.takeIf { it > 0 }?.let { formatRate(it) } ?: "") }
-    var containerUnit by remember { mutableStateOf(existing?.purchase?.containerUnit?.takeIf { it in chemicalUnits } ?: (existing?.unit ?: "Litres")) }
-    var cost by remember { mutableStateOf(existing?.purchase?.costDollars?.takeIf { it > 0 }?.let { formatRate(it) } ?: "") }
     // Unified product-library fields (sql/111). Fertiliser inputs only appear
     // when a fertiliser/nutrient category is selected.
     var category by remember { mutableStateOf(existing?.productCategory ?: "") }
@@ -906,8 +902,7 @@ internal fun ChemicalFormSheet(
     var containerUnitMenu by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var showsOptionalDetails by remember { mutableStateOf(false) }
-    var showsCostingSnapshot by remember { mutableStateOf(false) }
-    var hasEditedCosting by remember { mutableStateOf(false) }
+    var inventoryAction by remember { mutableStateOf<Boolean?>(null) }
     var confirmProposedUpdates by remember { mutableStateOf(false) }
     // The ONE research entry point this form offers: the same register search
     // and matching flow Add Chemical uses. There is no second lookup here.
@@ -962,7 +957,6 @@ internal fun ChemicalFormSheet(
         formType = newForm
         val units = unitsForForm(newForm)
         if (unit !in units) unit = units.first()
-        if (containerUnit !in units) containerUnit = units.first()
     }
 
     /**
@@ -994,7 +988,7 @@ internal fun ChemicalFormSheet(
         }
     }
 
-    fun editableDetailsSnapshot(): List<Any?> = listOf(name, formType, unit, activeIngredient, chemicalGroup, use, problem, manufacturer, modeOfAction, labelUrl, productUrl, ratePerHa, ratePer100L, defaultRatesDraft, trackPurchase, containerSize, containerUnit, cost, category, densityText, nText, pText, kText, oxideBasis, organicCertified, applicationNotes, chemistryDraft)
+    fun editableDetailsSnapshot(): List<Any?> = listOf(name, formType, unit, activeIngredient, chemicalGroup, use, problem, manufacturer, modeOfAction, labelUrl, productUrl, ratePerHa, ratePer100L, defaultRatesDraft, category, densityText, nText, pText, kText, oxideBasis, organicCertified, applicationNotes, chemistryDraft)
     val initialDetails = remember(existing?.id) { editableDetailsSnapshot() }
 
     fun save() {
@@ -1064,25 +1058,8 @@ internal fun ChemicalFormSheet(
                 ),
             )
         }
-        // Owners/managers author purchase data; others keep the existing snapshot
-        // so editing other details never clears pricing (mirrors iOS save()).
-        val purchase: ChemicalPurchase? = if (!canViewFinancials || !hasEditedCosting) {
-            existing?.purchase
-        } else if (trackPurchase) {
-            val cs = containerSize.toDoubleSafe() ?: 0.0
-            val costValue = cost.toDoubleSafe() ?: 0.0
-            if (cs > 0 || costValue > 0) {
-                ChemicalPurchase(
-                    brand = manufacturer.trim(),
-                    activeIngredient = activeIngredient.trim(),
-                    chemicalGroup = chemicalGroup.trim(),
-                    labelUrl = labelUrl.trim(),
-                    costDollars = costValue,
-                    containerSizeML = cs,
-                    containerUnit = containerUnit,
-                )
-            } else null
-        } else null
+        // Retain compatibility data locally; the repository omits it from writes.
+        val purchase: ChemicalPurchase? = existing?.purchase
         // Legacy scalars are now OUTPUTS of the structured record. They are
         // rewritten only when there is structured chemistry to derive them from, so
         // a record that has never been structured keeps its original text and is
@@ -1868,50 +1845,12 @@ internal fun ChemicalFormSheet(
                 }
                 OutlinedTextField(value = applicationNotes, onValueChange = { applicationNotes = it }, label = { Text("Application notes (optional)") }, modifier = Modifier.fillMaxWidth())
             }
-            if (canViewFinancials) {
-                TextButton(onClick = { showsCostingSnapshot = !showsCostingSnapshot }) { Text("Spray costing settings (optional)") }
-            }
-            if (canViewFinancials && showsCostingSnapshot) {
-                SectionLabel("Spray costing snapshot")
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text("Use purchase cost snapshot", fontSize = 15.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
-                    Switch(checked = trackPurchase, onCheckedChange = { trackPurchase = it; hasEditedCosting = true })
-                }
-                if (trackPurchase) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedTextField(
-                            value = containerSize,
-                            onValueChange = { containerSize = it.numericFilter(); hasEditedCosting = true },
-                            label = { Text("Container size") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f),
-                        )
-                        UnitDropdown(
-                            label = "Unit",
-                            value = containerUnit,
-                            options = unitsForForm(formType),
-                            expanded = containerUnitMenu,
-                            onExpandedChange = { containerUnitMenu = it },
-                            onSelect = { containerUnit = it; containerUnitMenu = false; hasEditedCosting = true },
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                    OutlinedTextField(
-                        value = cost,
-                        onValueChange = { cost = it.numericFilter(); hasEditedCosting = true },
-                        label = { Text("Cost") },
-                        placeholder = { Text("0.00") },
-                        prefix = { Text("$") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Text(
-                        "Compatibility cost used by existing spray reports. Manage stock and purchase history in Chemical Inventory.",
-                        fontSize = 11.sp,
-                        color = vine.textSecondary,
-                    )
+            if (existing != null && state?.canViewInventory == true && existing.vineyardId == state.selectedVineyardId) {
+                SectionLabel("Inventory & purchase")
+                Text("Stock and purchases are managed in Chemical Inventory.", color = vine.textSecondary)
+                TextButton(onClick = { inventoryAction = false }) { Text("View Inventory") }
+                if (state.canRecordInventoryPurchase) {
+                    TextButton(onClick = { inventoryAction = true }) { Text("Record Purchase") }
                 }
             }
 
@@ -1977,6 +1916,15 @@ internal fun ChemicalFormSheet(
         }
     }
 
+    inventoryAction?.let { purchaseMode ->
+        if (state != null && existing != null && state.canViewInventory) {
+            androidx.compose.ui.window.Dialog(onDismissRequest = { inventoryAction = null }, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+                androidx.compose.material3.Surface(Modifier.fillMaxSize()) {
+                    ChemicalInventoryScreen(state, onClose = { inventoryAction = null }, recordPurchase = purchaseMode, initialChemicalId = existing.id)
+                }
+            }
+        }
+    }
     if (confirmProposedUpdates) {
         AlertDialog(
             onDismissRequest = { confirmProposedUpdates = false },

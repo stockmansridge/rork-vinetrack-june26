@@ -193,7 +193,7 @@ nonisolated struct SprayProductLineResult: Sendable, Hashable {
     }
 
     var totalCost: Double? {
-        guard let total = totalQuantity, let cost = costPerUnit, cost > 0 else { return nil }
+        guard let total = totalQuantity, let cost = costPerUnit, cost.isFinite, cost >= 0 else { return nil }
         return total * cost
     }
 

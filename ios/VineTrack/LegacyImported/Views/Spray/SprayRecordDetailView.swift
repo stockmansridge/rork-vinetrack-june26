@@ -18,6 +18,7 @@ struct SprayRecordDetailView: View {
     @State private var displayTrailSegments: [TrailSegment] = []
     @State private var includeCostingsInExport: Bool = true
     @State private var canonicalReport: SprayReportPayloadV1?
+    @State private var chemicalPrices: ChemicalSeasonPriceBatch?
     @State private var showCorrectionEditor: Bool = false
     @State private var isLoadingCorrection: Bool = false
     @State private var correctionError: String?
@@ -184,6 +185,14 @@ struct SprayRecordDetailView: View {
 
     private var lifecycleContent: some View {
         deletionPresentationContent
+            .task(id: "\(record.id):\(canViewFinancials)") {
+                chemicalPrices = nil
+                guard canViewFinancials else { return }
+                var calendar = Calendar.current
+                calendar.timeZone = store.settings.resolvedTimeZone
+                let vintage = VintageResolver.vintageYear(for: tripForRecord?.startTime ?? record.date, seasonStartMonth: store.settings.seasonStartMonth, seasonStartDay: store.settings.seasonStartDay, calendar: calendar)
+                chemicalPrices = try? await CatalogueRepository().chemicalSeasonPrices(vineyardId: record.vineyardId, vintage: vintage)
+            }
             .onAppear {
                 includeCostingsInExport = canViewFinancials
                 refreshDisplayTrail()
@@ -761,13 +770,12 @@ struct SprayRecordDetailView: View {
     }
 
     private var sprayCostCard: some View {
-        let costItems: [(String, Double)] = record.tanks.flatMap { tank in
-            tank.chemicals.compactMap { chemical -> (String, Double)? in
-                let cost = chemical.costPerUnit * chemical.volumePerTank
-                guard cost > 0 else { return nil }
-                return (chemical.name.isEmpty ? "Unnamed" : chemical.name, cost)
-            }
-        }
+        let costingTrip = tripForRecord ?? Trip(id: record.tripId, vineyardId: record.vineyardId, startTime: record.date)
+        let chemicalCost = TripCostService.estimate(trip: costingTrip, operatorCategory: nil, tractor: nil,
+            fuelPurchases: [], sprayRecord: record,
+            tankActuals: SprayTankActualStore.shared.records.filter { $0.tripId == costingTrip.id },
+            chemicalPrices: chemicalPrices).chemical
+        let costItems: [(String, Double)] = [(chemicalCost?.basis == .actual ? "Actual chemicals" : "Planned chemicals", chemicalCost?.cost ?? 0)]
         let grouped = Dictionary(grouping: costItems, by: { $0.0.lowercased() })
         let chemCosts = grouped.compactMap { (key, items) -> (String, Double)? in
             guard !key.isEmpty else { return nil }
@@ -787,6 +795,7 @@ struct SprayRecordDetailView: View {
                 cardContainer {
                     sectionHeader("Costs", systemImage: "dollarsign.circle.fill", color: .green)
                     VStack(spacing: 10) {
+                        if let warning = chemicalCost?.warning { Text(warning).font(.caption).foregroundStyle(.orange) }
                         ForEach(chemCosts, id: \.0) { name, cost in
                             HStack {
                                 Text(name)
@@ -1075,7 +1084,8 @@ extension SprayRecordDetailView {
                 tankActuals: SprayTankActualStore.shared.records.filter { $0.tripId == trip.id && $0.sprayRecordId == recordCopy.id },
                 savedChemicals: store.savedChemicals,
                 paddockAreasById: areasById,
-                historicalYieldRecords: store.historicalYieldRecords
+                historicalYieldRecords: store.historicalYieldRecords,
+                chemicalPrices: chemicalPrices
             )
         }()
 

@@ -23,6 +23,7 @@ struct TripDetailView: View {
     @State private var showCostSection: Bool = true
     @State private var showEditCostingLinks: Bool = false
     @State private var vineyardMembers: [BackendVineyardMember] = []
+    @State private var chemicalPrices: ChemicalSeasonPriceBatch?
     private let teamRepository: any TeamRepositoryProtocol = SupabaseTeamRepository()
 
     private static let maxDisplayTrailPoints: Int = 500
@@ -405,7 +406,14 @@ struct TripDetailView: View {
         } message: {
             Text("Are you sure you want to delete this trip? This action cannot be undone.")
         }
-        .task {
+        .task(id: "\(trip.id):\(accessControl.canViewCosting)") {
+            chemicalPrices = nil
+            if accessControl.canViewCosting {
+                var calendar = Calendar.current
+                calendar.timeZone = store.settings.resolvedTimeZone
+                let vintage = VintageResolver.vintageYear(for: trip.startTime, seasonStartMonth: store.settings.seasonStartMonth, seasonStartDay: store.settings.seasonStartDay, calendar: calendar)
+                chemicalPrices = try? await CatalogueRepository().chemicalSeasonPrices(vineyardId: trip.vineyardId, vintage: vintage)
+            }
             if accessControl.canViewCosting, vineyardMembers.isEmpty {
                 if let members = try? await teamRepository.listMembers(vineyardId: trip.vineyardId) {
                     vineyardMembers = members
@@ -508,7 +516,8 @@ struct TripDetailView: View {
             paddockHectares: tripPaddockHectares,
             paddockAreasById: tripPaddockAreasById,
             historicalYieldRecords: store.historicalYieldRecords,
-            savedLabour: savedTripLabour
+            savedLabour: savedTripLabour,
+            chemicalPrices: chemicalPrices
         )
     }
 

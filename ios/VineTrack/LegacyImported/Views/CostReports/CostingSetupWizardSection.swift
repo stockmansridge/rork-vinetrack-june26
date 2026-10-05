@@ -79,24 +79,8 @@ struct CostingSetupAnalysis {
         }()
 
         // Chemicals
-        let chemsWithCost = chems.filter { ($0.purchase?.costPerBaseUnit ?? 0) > 0 }
-        let chemicalComplete: Bool = {
-            if chems.isEmpty { return false }
-            return chemsWithCost.count == chems.count
-        }()
-        let chemicalDetail: String = {
-            if chems.isEmpty {
-                return "Add purchase information to Saved Chemicals so spray costs can be calculated."
-            }
-            if chemsWithCost.isEmpty {
-                return "Saved chemicals are missing purchase costs. Open Saved Chemicals."
-            }
-            if chemsWithCost.count < chems.count {
-                let n = chems.count - chemsWithCost.count
-                return "\(n) saved chemical\(n == 1 ? "" : "s") missing purchase cost."
-            }
-            return "\(chemsWithCost.count) saved chemical\(chemsWithCost.count == 1 ? "" : "s") with purchase cost."
-        }()
+        let chemicalComplete = false
+        let chemicalDetail = "Record purchases in Chemical Inventory. Chemical cost is resolved per vintage from quantity-weighted purchase history, not Saved Chemical pricing."
 
         // Inputs
         let inputsWithCost = inputs.filter { ($0.costPerUnit ?? 0) > 0 }

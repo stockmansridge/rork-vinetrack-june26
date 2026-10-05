@@ -106,6 +106,23 @@ fun CostReportsScreen(
     val fmt = state.regionFormatter
     val canViewCosting = state.currentRole == "owner" || state.currentRole == "manager"
 
+    val pricingContext = androidx.compose.ui.platform.LocalContext.current
+    var chemicalPrices by remember(state.selectedVineyardId, state.currentRole) { mutableStateOf<Map<Int, com.rork.vinetrack.data.chemical.ChemicalSeasonPriceBatch>>(emptyMap()) }
+    androidx.compose.runtime.LaunchedEffect(state.selectedVineyardId, state.currentRole, state.trips, state.seasonStartMonth, state.seasonStartDay) {
+        chemicalPrices = emptyMap()
+        val vid = state.selectedVineyardId
+        if (canViewCosting && vid != null) {
+            val repository = com.rork.vinetrack.data.chemical.CatalogueRepository(pricingContext)
+            val vintages = state.trips.filter { it.vineyardId == vid }.mapNotNull { it.startEpochMs }.map {
+                com.rork.vinetrack.data.VintageResolver.vintageYearForEpochMs(it, state.seasonStartMonth, state.seasonStartDay, state.seasonZone)
+            }.distinct()
+            for (vintage in vintages) {
+                try { chemicalPrices = chemicalPrices + (vintage to repository.chemicalSeasonPrices(vid, vintage)) }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { /* Missing seasonal prices stay unavailable; legacy snapshots remain labelled. */ }
+            }
+        }
+    }
     val costingSetup = remember(
         state.operatorCategories, state.machines, state.fuelPurchases,
         state.savedChemicals, state.paddocks, state.trips, state.yieldRecords,
@@ -113,7 +130,7 @@ fun CostReportsScreen(
         if (!canViewCosting) null else buildCostingSetup(state)
     }
 
-    val allRows = remember(state.trips, state.sprayRecords, state.operatorCategories, state.machines, state.fuelPurchases, state.paddocks, state.sprayTankActuals, state.seasonStartMonth, state.seasonStartDay, state.tripCostAllocations) {
+    val allRows = remember(chemicalPrices, state.trips, state.sprayRecords, state.operatorCategories, state.machines, state.fuelPurchases, state.paddocks, state.sprayTankActuals, state.seasonStartMonth, state.seasonStartDay, state.tripCostAllocations) {
         if (!canViewCosting) emptyList()
         else CostReportBuilder.build(
             trips = state.trips,
@@ -126,6 +143,8 @@ fun CostReportsScreen(
             seasonStartMonth = state.seasonStartMonth,
             seasonStartDay = state.seasonStartDay,
             savedAllocations = state.tripCostAllocations,
+            chemicalPricesByVintage = chemicalPrices,
+            seasonZone = state.seasonZone,
         )
     }
 
@@ -601,17 +620,8 @@ private fun buildCostingSetup(state: AppUiState): CostingSetup {
     }
 
     // Chemicals
-    val chemsWithCost = chems.filter { (it.purchase?.costPerBaseUnit ?: 0.0) > 0.0 }
-    val chemicalComplete = chems.isNotEmpty() && chemsWithCost.size == chems.size
-    val chemicalDetail = when {
-        chems.isEmpty() -> "Add purchase information to Saved Chemicals so spray costs can be calculated."
-        chemsWithCost.isEmpty() -> "Saved chemicals are missing purchase costs. Open Spray Management."
-        chemsWithCost.size < chems.size -> {
-            val n = chems.size - chemsWithCost.size
-            "$n saved chemical${if (n == 1) "" else "s"} missing purchase cost."
-        }
-        else -> "${chemsWithCost.size} saved chemical${if (chemsWithCost.size == 1) "" else "s"} with purchase cost."
-    }
+    val chemicalComplete = false
+    val chemicalDetail = "Record purchases in Chemical Inventory. Chemical cost is resolved per vintage from quantity-weighted purchase history, not Saved Chemical pricing."
 
     // Area
     val paddocksWithGeometry = paddocks.filter { it.hasGeometry }

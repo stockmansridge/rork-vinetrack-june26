@@ -86,8 +86,9 @@ object SprayGuidedTankBuilder {
                     } else {
                         0.0
                     },
-                    costPerUnit = line.costPerUnit ?: 0.0,
+                    costPerUnit = 0.0,
                     unit = line.unit,
+                    quantityBasis = "display",
                     // THE basis this quantity was computed on. `treated_area`
                     // can only appear here when the plan multiplied by treated
                     // hectares, because the plan is the only thing that set it.

@@ -250,6 +250,7 @@ nonisolated struct SprayChemical: Codable, Identifiable, Sendable, Hashable {
     /// is unavailable — callers should treat zero as "missing" rather than
     /// silently zero-cost. Use `hasCost` to test for availability.
     var costPerUnit: Double
+    var quantityBasis: String? = nil
     var unit: ChemicalUnit
     /// Which area/volume this line's rate is quoted against, snapshotted so the
     /// amount stays explainable later (sql/191 per-product rate basis).
@@ -375,7 +376,7 @@ nonisolated struct SprayChemical: Codable, Identifiable, Sendable, Hashable {
 
     nonisolated enum CodingKeys: String, CodingKey {
         case id, name, volumePerTank, ratePerHa, ratePer100L, costPerUnit, unit, rateBasis, savedChemicalId
-        case chemicalSnapshot
+        case chemicalSnapshot, quantityBasis
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -386,6 +387,7 @@ nonisolated struct SprayChemical: Codable, Identifiable, Sendable, Hashable {
         ratePerHa = try container.decodeIfPresent(Double.self, forKey: .ratePerHa) ?? 0
         ratePer100L = try container.decodeIfPresent(Double.self, forKey: .ratePer100L) ?? 0
         costPerUnit = try container.decodeIfPresent(Double.self, forKey: .costPerUnit) ?? 0
+        quantityBasis = try container.decodeIfPresent(String.self, forKey: .quantityBasis)
         unit = try container.decodeIfPresent(ChemicalUnit.self, forKey: .unit) ?? .litres
         // Tolerant, and legacy-aware: an exact basis decodes directly, an older
         // spelling (`per_hectare`, `l/ha`, ...) is mapped deterministically by
