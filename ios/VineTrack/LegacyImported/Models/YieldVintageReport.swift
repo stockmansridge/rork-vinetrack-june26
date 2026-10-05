@@ -124,7 +124,7 @@ nonisolated enum YieldVintageReport {
         guard !recorded.isEmpty else { return nil }
         let avg = recorded.reduce(0.0) { $0 + ($1.bunchCountEntry?.bunchesPerVine ?? 0) } / Double(recorded.count)
         let avgRounded = (avg * 100).rounded() / 100
-        let totalBunches = Double(paddock.effectiveVineCount) * avgRounded
+        let totalBunches = Double(session.vineCount(for: paddock)) * avgRounded
         let yieldKg = totalBunches * session.bunchWeightKg(for: paddock.id)
         return (yieldKg / 1000.0, avgRounded, recorded.count, sites.count)
     }

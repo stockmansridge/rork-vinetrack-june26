@@ -713,7 +713,7 @@ struct RecordActualYieldSheet: View {
             yieldPerHectare: paddock.areaHectares > 0 ? yield / paddock.areaHectares : 0,
             averageBunchesPerVine: 0,
             averageBunchWeightGrams: 0,
-            totalVines: paddock.effectiveVineCount,
+            totalVines: paddock.authoritativeVineCount,
             samplesRecorded: 0,
             damageFactor: 1.0,
             actualYieldTonnes: yield,

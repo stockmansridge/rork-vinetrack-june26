@@ -57,11 +57,11 @@ private struct BunchWeightRow: View {
                         if paddock.areaHectares > 0 {
                             Text(fmt.formatArea(hectares: paddock.areaHectares))
                         }
-                        if paddock.effectiveVineCount > 0 {
+                        if paddock.authoritativeVineCount > 0 {
                             if paddock.areaHectares > 0 {
                                 Text("•")
                             }
-                            Text("\(paddock.effectiveVineCount) vines")
+                            Text("\(paddock.authoritativeVineCount) vines")
                         }
 
                     }

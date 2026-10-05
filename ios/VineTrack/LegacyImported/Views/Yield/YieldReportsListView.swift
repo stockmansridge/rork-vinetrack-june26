@@ -264,7 +264,7 @@ struct YieldReportsListView: View {
 
             let avgBunches = recorded.reduce(0.0) { $0 + ($1.bunchCountEntry?.bunchesPerVine ?? 0) } / Double(recorded.count)
             let avgBunchesRounded = (avgBunches * 100).rounded() / 100
-            let totalVines = paddock.effectiveVineCount
+            let totalVines = session.vineCount(for: paddock)
             let totalBunches = Double(totalVines) * avgBunchesRounded
             // Damage adjustment respects the trip's applyDamage flag; the
             // base bunch-count observation is never mutated. Damage is scoped
@@ -923,7 +923,7 @@ struct YieldReportsListView: View {
 
             let avgBunches = recordedSites.reduce(0.0) { $0 + ($1.bunchCountEntry?.bunchesPerVine ?? 0) } / Double(recordedSites.count)
             let avgBunchesRounded = (avgBunches * 100).rounded() / 100
-            let totalVines = paddock.effectiveVineCount
+            let totalVines = session.vineCount(for: paddock)
             let totalBunches = Double(totalVines) * avgBunchesRounded
             let sessionVintage = YieldVintageReport.sessionVintage(
                 session,

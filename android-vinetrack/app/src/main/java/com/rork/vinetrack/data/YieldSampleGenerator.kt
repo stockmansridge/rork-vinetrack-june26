@@ -104,7 +104,7 @@ object YieldSampleGenerator {
             val sitesInPaddock = session.sitesIn(paddock.id)
             val recorded = sitesInPaddock.filter { it.isRecorded }
             val remainingYieldMultiplier = remainingYieldMultiplierProvider(paddock.id)
-            val totalVines = paddock.effectiveVineCount
+            val totalVines = session.vineCount(paddock)
             val blockWeight = session.bunchWeightKg(paddock.id)
             if (recorded.isEmpty()) {
                 BlockYieldEstimate(

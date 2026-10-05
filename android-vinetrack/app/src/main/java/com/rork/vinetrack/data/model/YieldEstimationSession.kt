@@ -134,7 +134,13 @@ data class YieldEstimationSession(
      * freshly generated routes and all pre-187 sessions.
      */
     val routeSourceSessionId: String? = null,
+    /** Physical counts captured only for newly completed trips; old trips remain untouched. */
+    val blockVineCounts: Map<String, Int> = emptyMap(),
 ) {
+    fun vineCount(paddock: Paddock): Int = if (!isCompleted) paddock.authoritativeVineCount else
+        blockVineCounts.entries.firstOrNull { it.key.equals(paddock.id, ignoreCase = true) }?.value
+            ?: paddock.effectiveVineCount
+
     fun bunchWeightKg(paddockId: String): Double =
         blockBunchWeightsKg.entries.firstOrNull { it.key.equals(paddockId, ignoreCase = true) }?.value
             ?: 0.15

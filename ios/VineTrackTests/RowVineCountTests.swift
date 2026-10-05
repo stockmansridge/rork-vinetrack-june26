@@ -94,7 +94,7 @@ struct RowVineCountTests {
         #expect(paddock.summaryVineCount == 500)
         #expect(paddock.effectiveVineCount == 500)
         paddock.vineCountOverride = 0
-        #expect(paddock.summaryVineCount == 0)
+        #expect(paddock.summaryVineCount == 494)
     }
 
     @Test func summaryOneRowOverrideIncludesCalculatedUntouchedRows() {

@@ -59,7 +59,9 @@ struct YieldDeterminationCalculatorView: View {
     private var spursPerVine: Double { parse(spursPerVineText) }
     private var budsPerCane: Double { parse(budsPerCaneText) }
     private var canesPerVine: Double { parse(canesPerVineText) }
-    private var vinesPerHa: Double { parse(vinesPerHaText) }
+    private var vinesPerHa: Double {
+        selectedPaddock?.pruningYieldVinesPerHa(savedDensity: parse(vinesPerHaText)) ?? parse(vinesPerHaText)
+    }
     private var bunchWeightGrams: Double { parse(bunchWeightText) }
 
     private var budsPerVine: Double {
@@ -117,7 +119,7 @@ struct YieldDeterminationCalculatorView: View {
                                 .foregroundStyle(.secondary)
                         }
                         LabeledContent("Vines") {
-                            Text("\(paddock.effectiveVineCount)")
+                            Text("\(paddock.authoritativeVineCount)")
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -151,7 +153,16 @@ struct YieldDeterminationCalculatorView: View {
                     inputRow(label: "Canes / Vine", text: $canesPerVineText, field: .canesPerVine)
                 }
 
-                inputRow(label: "Vines / Ha", text: $vinesPerHaText, field: .vinesPerHa)
+                if selectedPaddock?.hasAuthoritativeVineOverride == true {
+                    LabeledContent("Vines / Ha") {
+                        Text(vinesPerHa, format: .number.precision(.fractionLength(0...2)))
+                    }
+                    Text("Derived from the block's manual vine count. Your saved Vines / Ha is retained and becomes active again when manual vine counts are removed.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    inputRow(label: "Vines / Ha", text: $vinesPerHaText, field: .vinesPerHa)
+                }
                 inputRow(label: "Bunch Weight (g)", text: $bunchWeightText, field: .bunchWeight)
             }
 
@@ -380,7 +391,7 @@ struct YieldDeterminationCalculatorView: View {
         vinesPerHaText = ""
         guard let paddockId, let paddock = store.paddocks.first(where: { $0.id == paddockId }) else { return }
         let area = paddock.areaHectares
-        let vines = Double(paddock.effectiveVineCount)
+        let vines = Double(paddock.authoritativeVineCount)
         if area > 0, vines > 0 {
             vinesPerHaText = String(format: "%.0f", vines / area)
         }

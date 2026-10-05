@@ -418,6 +418,18 @@ if (providers.gradleProperty("catalogueFrontLabelFocusedTests").orNull == "true"
     }
 }
 
+// Compile only Yield/vine-count tests; execution is narrowed further with --tests.
+if (providers.gradleProperty("yieldVineCountFocusedTests").orNull == "true") {
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach { testLogging { events("passed", "failed", "skipped") } }
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/YieldAuthoritativeVineCountTest.kt", "**/RowVineCountTest.kt")
+            })
+        }
+    }
+}
+
 // Compile only vine-count tests; execution is narrowed further with --tests.
 if (providers.gradleProperty("vineCountSummaryFocusedTests").orNull == "true") {
     tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach { testLogging { events("passed", "failed", "skipped") } }

@@ -244,6 +244,7 @@ internal fun seasonYieldSourceLabel(source: String): String = when (source) {
 
 internal fun seasonVineCountBasisLabel(basis: String?): String = when (basis) {
     "block_vine_count_override" -> "Block vine count override"
+    "row_effective_vine_count" -> "Row-effective vine count"
     "block_area_x_vines_per_ha" -> "Block area × vines/ha"
     null, "" -> "—"
     else -> basis.replace('_', ' ').replaceFirstChar { it.uppercase() }

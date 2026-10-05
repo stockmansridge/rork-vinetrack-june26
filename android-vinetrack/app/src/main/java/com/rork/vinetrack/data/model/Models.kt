@@ -336,16 +336,27 @@ data class Paddock(
     /** Vine count: explicit override if set, otherwise derived from rows × spacing. */
     val effectiveVineCount: Int get() = vineCountOverride ?: estimatedVineCount
 
-    /**
-     * Display-only vineyard/block total. Keeps stored block and row overrides
-     * independent and leaves [effectiveVineCount] calculation consumers unchanged.
-     */
-    val summaryVineCount: Int
+    /** Physical vine total for live Yield and overview displays; never persisted. */
+    val authoritativeVineCount: Int
         get() {
-            vineCountOverride?.takeIf { it >= 0 }?.let { return it }
-            if (hasRowVineCountOverrides) return rowsEffectiveVineCount
+            vineCountOverride?.takeIf { it > 0 }?.let { return it }
+            if (hasAuthoritativeVineOverride) return rowsEffectiveVineCount
             return estimatedVineCount
         }
+
+    /** Whether a valid physical manual count supersedes saved pruning density. */
+    val hasAuthoritativeVineOverride: Boolean
+        get() = (vineCountOverride ?: 0) > 0 || rows.orEmpty().any {
+            PaddockRowVineCount.sanitiseOverride(it.vineCountOverride) != null
+        }
+
+    val summaryVineCount: Int get() = authoritativeVineCount
+
+    /** Resolves pruning density without replacing the saved density. */
+    fun pruningYieldVinesPerHa(savedDensity: Double): Double =
+        if (!hasAuthoritativeVineOverride) savedDensity
+        else if (areaHectares > 0) authoritativeVineCount / areaHectares
+        else 0.0
 
     // ---- Per-row vine counts (sql/188) ----
 

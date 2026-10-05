@@ -155,7 +155,7 @@ private fun BunchWeightRow(
     ) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(paddock.name, color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-            val vines = paddock.effectiveVineCount
+            val vines = paddock.authoritativeVineCount
             val detail = buildList {
                 areaText?.let { add(it) }
                 if (vines > 0) add("$vines vines")

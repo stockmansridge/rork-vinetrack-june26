@@ -581,7 +581,7 @@ private fun TripSetupScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(block.name, color = vine.textPrimary, fontWeight = FontWeight.Medium)
                                 Text(
-                                    "${YieldVintageReport.varietyLabel(block)} · ${blockAreaFmt.formatArea(block.areaHectares)} · ${block.effectiveVineCount} vines",
+                                    "${YieldVintageReport.varietyLabel(block)} · ${blockAreaFmt.formatArea(block.areaHectares)} · ${block.authoritativeVineCount} vines",
                                     color = vine.textSecondary,
                                     fontSize = 12.sp,
                                 )
@@ -980,7 +980,12 @@ private fun TripCompletionScreen(
             text = { Text("This completes the trip as a dated observation. It becomes the latest estimate for its blocks; earlier trips stay in history. Counts and weights can no longer be edited.") },
             confirmButton = {
                 TextButton(onClick = {
-                    onApply(session.copy(isCompleted = true, completedAt = Instant.now().toString()))
+                    onApply(session.copy(
+                        isCompleted = true,
+                        completedAt = Instant.now().toString(),
+                        blockVineCounts = selectedBlocks
+                            .associate { it.id.lowercase() to it.authoritativeVineCount },
+                    ))
                     showSaveConfirm = false
                     onSaved()
                 }) { Text("Save Trip") }

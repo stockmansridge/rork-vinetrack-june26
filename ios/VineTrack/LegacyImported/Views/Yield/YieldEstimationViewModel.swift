@@ -15,6 +15,13 @@ class YieldEstimationViewModel {
     var sessionId: UUID?
     var isCompleted: Bool = false
     var completedAt: Date?
+    var blockVineCounts: [String: Int] = [:]
+
+    private func vineCount(for paddock: Paddock) -> Int {
+        guard isCompleted else { return paddock.authoritativeVineCount }
+        return blockVineCounts.first { $0.key.lowercased() == paddock.id.uuidString.lowercased() }?.value
+            ?? paddock.effectiveVineCount
+    }
     /// Original creation time of the loaded trip — preserved across saves so
     /// a resumed trip keeps its date identity.
     var sessionCreatedAt: Date?
@@ -313,7 +320,7 @@ class YieldEstimationViewModel {
                     paddockId: paddock.id,
                     paddockName: paddock.name,
                     areaHectares: paddock.areaHectares,
-                    totalVines: paddock.effectiveVineCount,
+                    totalVines: vineCount(for: paddock),
                     averageBunchesPerVine: 0,
                     totalBunches: 0,
                     averageBunchWeightKg: bunchWeightKg(for: paddock.id),
@@ -330,7 +337,7 @@ class YieldEstimationViewModel {
             let avgBunches = recordedSites.reduce(0.0) { $0 + ($1.bunchCountEntry?.bunchesPerVine ?? 0) } / Double(recordedSites.count)
             let avgBunchesRounded = (avgBunches * 100).rounded() / 100
 
-            let totalVines = paddock.effectiveVineCount
+            let totalVines = vineCount(for: paddock)
             let totalBunches = Double(totalVines) * avgBunchesRounded
             let blockWeight = bunchWeightKg(for: paddock.id)
             let yieldKg = totalBunches * blockWeight * remainingYieldMultiplier
@@ -375,6 +382,7 @@ class YieldEstimationViewModel {
         previousBunchWeights = session.previousBunchWeights
         isCompleted = session.isCompleted
         completedAt = session.completedAt
+        blockVineCounts = session.blockVineCounts
         sessionCreatedAt = session.createdAt
         applyDamage = session.applyDamage
         routeSourceSessionId = session.routeSourceSessionId
@@ -394,11 +402,16 @@ class YieldEstimationViewModel {
             isCompleted: isCompleted,
             completedAt: completedAt,
             applyDamage: applyDamage,
-            routeSourceSessionId: routeSourceSessionId
+            routeSourceSessionId: routeSourceSessionId,
+            blockVineCounts: blockVineCounts
         )
     }
 
-    func markCompleted() {
+    func markCompleted(paddocks: [Paddock]) {
+        guard !isCompleted else { return }
+        blockVineCounts = Dictionary(uniqueKeysWithValues: paddocks
+            .filter { selectedPaddockIds.contains($0.id) }
+            .map { ($0.id.uuidString.lowercased(), $0.authoritativeVineCount) })
         isCompleted = true
         completedAt = Date()
     }
@@ -414,6 +427,7 @@ class YieldEstimationViewModel {
         selectedSite = nil
         isCompleted = false
         completedAt = nil
+        blockVineCounts = [:]
         sessionCreatedAt = nil
         applyDamage = true
         routeSourceSessionId = nil

@@ -814,8 +814,8 @@ private fun YieldDeterminationView(
         canesPerVine = PruningYieldInputFormat.text(PruningYieldDefaults.CANES_PER_VINE)
         bunchWeight = PruningYieldInputFormat.text(PruningYieldDefaults.BUNCH_WEIGHT_GRAMS)
         val b = paddocks.firstOrNull { it.id == pid }
-        vinesPerHa = if (b != null && b.areaHectares > 0 && b.effectiveVineCount > 0) {
-            (b.effectiveVineCount / b.areaHectares).toInt().toString()
+        vinesPerHa = if (b != null && b.areaHectares > 0 && b.authoritativeVineCount > 0) {
+            (b.authoritativeVineCount / b.areaHectares).toInt().toString()
         } else ""
     }
 
@@ -887,7 +887,8 @@ private fun YieldDeterminationView(
         budsPerCane = d(budsPerCane),
         canesPerVine = d(canesPerVine),
     )
-    val bunchesPerHa = PruningYieldFormula.bunchesPerHectare(d(bunchesPerBud), budsPerVine, d(vinesPerHa))
+    val effectiveVinesPerHa = block?.pruningYieldVinesPerHa(d(vinesPerHa)) ?: d(vinesPerHa)
+    val bunchesPerHa = PruningYieldFormula.bunchesPerHectare(d(bunchesPerBud), budsPerVine, effectiveVinesPerHa)
     val yieldKgPerHa = PruningYieldFormula.yieldKgPerHectare(bunchesPerHa, d(bunchWeight))
     val yieldTonnesPerHa = PruningYieldFormula.yieldTonnesPerHectare(yieldKgPerHa)
     val totalYieldTonnes = block?.let { PruningYieldFormula.totalYieldTonnes(yieldTonnesPerHa, it.areaHectares) }
@@ -941,7 +942,7 @@ private fun YieldDeterminationView(
                         block?.let {
                             Spacer(Modifier.height(10.dp))
                             CalcLine("Area", state.regionFormatter.formatAreaCompact(it.areaHectares))
-                            CalcLine("Vines", it.effectiveVineCount.toString())
+                            CalcLine("Vines", it.authoritativeVineCount.toString())
                         }
                     }
                 }
@@ -991,7 +992,15 @@ private fun YieldDeterminationView(
                             CalcInput("Buds / Cane", budsPerCane) { budsPerCane = it; persist() }
                             CalcInput("Canes / Vine", canesPerVine) { canesPerVine = it; persist() }
                         }
-                        CalcInput("Vines / Ha", vinesPerHa) { vinesPerHa = it; persist() }
+                        if (block?.hasAuthoritativeVineOverride == true) {
+                            CalcLine("Vines / Ha", PruningYieldInputFormat.text(effectiveVinesPerHa))
+                            Text(
+                                "Derived from the block's manual vine count. Your saved Vines / Ha is retained and becomes active again when manual vine counts are removed.",
+                                color = vine.textSecondary, fontSize = 12.sp,
+                            )
+                        } else {
+                            CalcInput("Vines / Ha", vinesPerHa) { vinesPerHa = it; persist() }
+                        }
                         CalcInput("Bunch Weight (g)", bunchWeight) { bunchWeight = it; persist() }
                     }
                 }
@@ -1575,7 +1584,7 @@ private fun RecordYieldSheet(
                 paddockId = chosen.id,
                 paddockName = chosen.name,
                 areaHectares = chosen.areaHectares,
-                totalVines = chosen.effectiveVineCount,
+                totalVines = chosen.authoritativeVineCount,
                 variety = variety.trim().ifBlank { null },
                 actualYieldTonnes = t,
                 notes = notes.trim().ifBlank { null },
@@ -2171,7 +2180,7 @@ private fun EstimateYieldSheet(
     }
     var bunchesText by remember { mutableStateOf(existingBlock?.averageBunchesPerVine?.takeIf { it > 0 }?.let { formatPlain(it) } ?: "") }
     var bunchWeightText by remember { mutableStateOf(existingBlock?.averageBunchWeightGrams?.takeIf { it > 0 }?.let { formatPlain(it) } ?: "120") }
-    var vinesText by remember { mutableStateOf((existingBlock?.totalVines?.takeIf { it > 0 } ?: block?.effectiveVineCount ?: 0).toString()) }
+    var vinesText by remember { mutableStateOf((existingBlock?.totalVines ?: block?.authoritativeVineCount ?: 0).toString()) }
     var samplesText by remember { mutableStateOf(existingBlock?.samplesRecorded?.takeIf { it > 0 }?.toString() ?: "") }
     var viabilityText by remember { mutableStateOf(existingBlock?.damageFactor?.let { formatPlain(it * 100.0) } ?: "100") }
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
@@ -2203,7 +2212,7 @@ private fun EstimateYieldSheet(
             paddockId = chosen.id,
             paddockName = chosen.name,
             areaHectares = chosen.areaHectares,
-            totalVines = vines ?: chosen.effectiveVineCount,
+            totalVines = vines ?: chosen.authoritativeVineCount,
             averageBunchesPerVine = bunches ?: 0.0,
             averageBunchWeightGrams = bunchWeight ?: 0.0,
             damageFactor = damageFactor,
@@ -2258,7 +2267,7 @@ private fun EstimateYieldSheet(
                                     block = opt
                                     if (variety.isBlank()) variety = opt.primaryVarietyName ?: ""
                                     // Re-seed vine count from the newly chosen block when untouched/empty.
-                                    if (vinesText.isBlank() || vinesText.toIntOrNull() == 0) vinesText = opt.effectiveVineCount.toString()
+                                    if (vinesText.isBlank() || vinesText.toIntOrNull() == 0) vinesText = opt.authoritativeVineCount.toString()
                                     blockMenu = false
                                 },
                             )

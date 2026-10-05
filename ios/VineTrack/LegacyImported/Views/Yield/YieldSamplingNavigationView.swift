@@ -142,7 +142,7 @@ struct YieldSamplingNavigationView: View {
             titleVisibility: .visible
         ) {
             Button("Complete & Lock") {
-                viewModel.markCompleted()
+                viewModel.markCompleted(paddocks: paddocks)
                 saveSession()
                 showReport = true
             }

@@ -119,7 +119,7 @@ class RowVineCountTest {
         }
         assertEquals(500, paddock.summaryVineCount)
         assertEquals(500, paddock.effectiveVineCount)
-        assertEquals(0, paddock.copy(vineCountOverride = 0).summaryVineCount)
+        assertEquals(494, paddock.copy(vineCountOverride = 0).summaryVineCount)
     }
 
     @Test fun summaryOneRowOverrideIncludesCalculatedUntouchedRows() {

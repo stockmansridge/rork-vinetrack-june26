@@ -1028,7 +1028,7 @@ struct YieldEstimationView: View {
                 titleVisibility: .visible
             ) {
                 Button("Save Trip") {
-                    viewModel.markCompleted()
+                    viewModel.markCompleted(paddocks: paddocks)
                     saveSession()
                     withAnimation(.smooth(duration: 0.3)) { tripStarted = false }
                 }

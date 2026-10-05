@@ -68,6 +68,14 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
     var pathWaypoints: [CoordinatePoint]
     var isCompleted: Bool
     var completedAt: Date?
+    /// Physical counts captured only for newly completed trips; old trips remain untouched.
+    var blockVineCounts: [String: Int]
+
+    func vineCount(for paddock: Paddock) -> Int {
+        guard isCompleted else { return paddock.authoritativeVineCount }
+        return blockVineCounts.first { $0.key.lowercased() == paddock.id.uuidString.lowercased() }?.value
+            ?? paddock.effectiveVineCount
+    }
     /// Whether the CURRENT effective damage adjustment is applied to this
     /// trip's displayed Yield Estimate. Additive (post-sql/187 clients);
     /// defaults to true so historical sessions keep their damage-adjusted
@@ -102,7 +110,8 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
         isCompleted: Bool = false,
         completedAt: Date? = nil,
         applyDamage: Bool = true,
-        routeSourceSessionId: UUID? = nil
+        routeSourceSessionId: UUID? = nil,
+        blockVineCounts: [String: Int] = [:]
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -117,13 +126,14 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
         self.completedAt = completedAt
         self.applyDamage = applyDamage
         self.routeSourceSessionId = routeSourceSessionId
+        self.blockVineCounts = blockVineCounts
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
         case id, vineyardId, createdAt, selectedPaddockIds, samplesPerHectare
         case sampleSites, blockBunchWeightsKg, averageBunchWeightKg
         case previousBunchWeights, pathWaypoints, isCompleted, completedAt
-        case applyDamage, routeSourceSessionId
+        case applyDamage, routeSourceSessionId, blockVineCounts
     }
 
     init(from decoder: Decoder) throws {
@@ -140,6 +150,7 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
         completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
         applyDamage = try container.decodeIfPresent(Bool.self, forKey: .applyDamage) ?? true
         routeSourceSessionId = try container.decodeIfPresent(UUID.self, forKey: .routeSourceSessionId)
+        blockVineCounts = try container.decodeIfPresent([String: Int].self, forKey: .blockVineCounts) ?? [:]
 
         if let perBlock = try? container.decode([UUID: Double].self, forKey: .blockBunchWeightsKg) {
             blockBunchWeightsKg = perBlock
@@ -169,6 +180,7 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(completedAt, forKey: .completedAt)
         try container.encode(applyDamage, forKey: .applyDamage)
         try container.encodeIfPresent(routeSourceSessionId, forKey: .routeSourceSessionId)
+        if !blockVineCounts.isEmpty { try container.encode(blockVineCounts, forKey: .blockVineCounts) }
     }
 }
 

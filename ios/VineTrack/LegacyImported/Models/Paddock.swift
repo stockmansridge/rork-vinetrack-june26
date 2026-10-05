@@ -265,12 +265,29 @@ extension Paddock {
         vineCountOverride ?? estimatedVineCount
     }
 
-    /// Display-only vineyard/block total. Keeps stored block and row overrides
-    /// independent and leaves `effectiveVineCount` calculation consumers unchanged.
-    var summaryVineCount: Int {
-        if let override = vineCountOverride, override >= 0 { return override }
-        if hasRowVineCountOverrides { return rowsEffectiveVineCount }
+    /// Physical vine total for live Yield and overview displays. Legacy non-Yield
+    /// calculations continue to use `effectiveVineCount`; no stored value is changed.
+    var authoritativeVineCount: Int {
+        if let override = vineCountOverride, override > 0 { return override }
+        if hasAuthoritativeVineOverride { return rowsEffectiveVineCount }
         return estimatedVineCount
+    }
+
+    /// Whether a valid physical manual count supersedes saved pruning density.
+    var hasAuthoritativeVineOverride: Bool {
+        (vineCountOverride ?? 0) > 0 || rows.contains {
+            PaddockRowVineCount.sanitiseOverride($0.vineCountOverride) != nil
+        }
+    }
+
+    var summaryVineCount: Int { authoritativeVineCount }
+
+    /// Effective pruning density without mutating the saved density. Removing
+    /// physical overrides reactivates the grower's saved input.
+    func pruningYieldVinesPerHa(savedDensity: Double) -> Double {
+        guard hasAuthoritativeVineOverride else { return savedDensity }
+        guard areaHectares > 0 else { return 0 }
+        return Double(authoritativeVineCount) / areaHectares
     }
 
     // MARK: - Per-row vine counts (sql/188)
