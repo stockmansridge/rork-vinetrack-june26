@@ -60,7 +60,11 @@ struct YieldDeterminationCalculatorView: View {
     private var budsPerCane: Double { parse(budsPerCaneText) }
     private var canesPerVine: Double { parse(canesPerVineText) }
     private var vinesPerHa: Double {
-        selectedPaddock?.pruningYieldVinesPerHa(savedDensity: parse(vinesPerHaText)) ?? parse(vinesPerHaText)
+        selectedPaddock?.pruningYieldVinesPerHa(savedDensity: canonicalDensity ?? 0) ?? canonicalDensity ?? 0
+    }
+    private var canonicalDensity: Double? {
+        if let original = loadedSnapshot?.vinesPerHa, vinesPerHaText == String(fmt.perAreaValue(perHectare: original)) { return original }
+        return PruningYieldInputFormat.parseOptional(vinesPerHaText).map { fmt.perAreaToCanonical($0) }
     }
     private var bunchWeightGrams: Double { parse(bunchWeightText) }
 
@@ -91,9 +95,9 @@ struct YieldDeterminationCalculatorView: View {
     private var formulaText: String {
         switch pruneMethod {
         case .spur:
-            return "Yield / Ha = Bunches/Bud × Buds/Spur × Spurs/Vine × Vines/Ha × Bunch Weight"
+            return "Yield / \(fmt.areaUnitAbbreviation) = Bunches/Bud × Buds/Spur × Spurs/Vine × Vines/\(fmt.areaUnitAbbreviation) × Bunch Weight"
         case .cane:
-            return "Yield / Ha = Bunches/Bud × Buds/Cane × Canes/Vine × Vines/Ha × Bunch Weight"
+            return "Yield / \(fmt.areaUnitAbbreviation) = Bunches/Bud × Buds/Cane × Canes/Vine × Vines/\(fmt.areaUnitAbbreviation) × Bunch Weight"
         }
     }
 
@@ -154,14 +158,14 @@ struct YieldDeterminationCalculatorView: View {
                 }
 
                 if selectedPaddock?.hasAuthoritativeVineOverride == true {
-                    LabeledContent("Vines / Ha") {
-                        Text(vinesPerHa, format: .number.precision(.fractionLength(0...2)))
+                    LabeledContent("Vines / \(fmt.areaUnitAbbreviation)") {
+                        Text(fmt.perAreaValue(perHectare: vinesPerHa), format: .number.precision(.fractionLength(0...2)))
                     }
-                    Text("Derived from the block's manual vine count. Your saved Vines / Ha is retained and becomes active again when manual vine counts are removed.")
+                    Text("Derived from the block's manual vine count. Your saved vine density is retained and becomes active again when manual vine counts are removed.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    inputRow(label: "Vines / Ha", text: $vinesPerHaText, field: .vinesPerHa)
+                    inputRow(label: "Vines / \(fmt.areaUnitAbbreviation)", text: $vinesPerHaText, field: .vinesPerHa)
                 }
                 inputRow(label: "Bunch Weight (g)", text: $bunchWeightText, field: .bunchWeight)
             }
@@ -173,8 +177,8 @@ struct YieldDeterminationCalculatorView: View {
                         .monospacedDigit()
                 }
 
-                LabeledContent("Bunches / Ha") {
-                    Text(bunchesPerHa, format: .number.precision(.fractionLength(0)))
+                LabeledContent("Bunches / \(fmt.areaUnitAbbreviation)") {
+                    Text(fmt.perAreaValue(perHectare: bunchesPerHa), format: .number.precision(.fractionLength(0)))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
@@ -220,7 +224,7 @@ struct YieldDeterminationCalculatorView: View {
                 .disabled(yieldTonnesPerHa <= 0)
 
                 if let lastSavedAt {
-                    Text("Last saved \(lastSavedAt.formatted(date: .abbreviated, time: .shortened))")
+                    Text("Last saved \(fmt.formatDateTime(lastSavedAt))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -338,7 +342,7 @@ struct YieldDeterminationCalculatorView: View {
         spursPerVineText = PruningYieldInputFormat.text(settings.spursPerVine)
         budsPerCaneText = PruningYieldInputFormat.text(settings.budsPerCane)
         canesPerVineText = PruningYieldInputFormat.text(settings.canesPerVine)
-        vinesPerHaText = PruningYieldInputFormat.text(settings.vinesPerHa)
+        vinesPerHaText = settings.vinesPerHa.map { String(fmt.perAreaValue(perHectare: $0)) } ?? ""
         bunchWeightText = PruningYieldInputFormat.text(settings.bunchWeightGrams)
     }
 
@@ -356,7 +360,7 @@ struct YieldDeterminationCalculatorView: View {
             spursPerVine: spursPerVine,
             budsPerCane: budsPerCane,
             canesPerVine: canesPerVine,
-            vinesPerHa: PruningYieldInputFormat.parseOptional(vinesPerHaText),
+            vinesPerHa: canonicalDensity,
             bunchWeightGrams: bunchWeightGrams
         )
     }
@@ -393,7 +397,7 @@ struct YieldDeterminationCalculatorView: View {
         let area = paddock.areaHectares
         let vines = Double(paddock.authoritativeVineCount)
         if area > 0, vines > 0 {
-            vinesPerHaText = String(format: "%.0f", vines / area)
+            vinesPerHaText = String(fmt.perAreaValue(perHectare: vines / area))
         }
     }
 

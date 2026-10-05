@@ -156,7 +156,7 @@ extension BackendPaddock {
 
     /// Map a remote BackendPaddock into a local Paddock.
     func toPaddock() -> Paddock {
-        Paddock(
+        var paddock = Paddock(
             id: id,
             vineyardId: vineyardId,
             name: name,
@@ -181,5 +181,7 @@ extension BackendPaddock {
             calculationModeOverride: calculationModeOverride.flatMap { GDDCalculationMode(rawValue: $0) },
             resetModeOverride: resetModeOverride.flatMap { GDDResetMode(rawValue: $0) }
         )
+        paddock.vineSpacingIsKnown = vineSpacing != nil
+        return paddock
     }
 }

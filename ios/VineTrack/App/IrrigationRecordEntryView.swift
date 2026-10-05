@@ -147,15 +147,21 @@ struct IrrigationRecordEntryView: View {
         valves.filter { $0.isActive && ($0.irrigationSystemId == systemId || systemId == nil) }
     }
 
+    private func canonicalWater(_ text: String, original: Double?) -> Double? {
+        if let original, text == String(formatter.volumeValue(litres: original)) { return original }
+        guard let value = Double(text.replacingOccurrences(of: ",", with: ".")), value.isFinite else { return nil }
+        return formatter.volumeToCanonical(value)
+    }
+
     private var canPreview: Bool {
         guard valveId != nil, totalDurationMinutes > 0 else { return false }
         switch method {
         case .configuredFlow: return validation?.automaticFlowAvailable == true
-        case .sessionFlow: return Double(sessionFlow.replacingOccurrences(of: ",", with: ".")) ?? 0 > 0
-        case .totalVolume: return Double(totalVolume.replacingOccurrences(of: ",", with: ".")) ?? 0 > 0
+        case .sessionFlow: return canonicalWater(sessionFlow, original: (editingSession ?? duplicateFrom)?.flowLitresPerHour) ?? 0 > 0
+        case .totalVolume: return canonicalWater(totalVolume, original: (editingSession ?? duplicateFrom)?.totalVolumeLitres) ?? 0 > 0
         case .meterReadings:
-            let start = Double(meterStart.replacingOccurrences(of: ",", with: ".")) ?? 0
-            let finish = Double(meterFinish.replacingOccurrences(of: ",", with: ".")) ?? 0
+            let start = canonicalWater(meterStart, original: (editingSession ?? duplicateFrom)?.meterStartLitres) ?? 0
+            let finish = canonicalWater(meterFinish, original: (editingSession ?? duplicateFrom)?.meterFinishLitres) ?? 0
             return finish > start && finish > 0
         }
     }
@@ -360,24 +366,24 @@ struct IrrigationRecordEntryView: View {
                 }
             case .sessionFlow:
                 LabeledContent("Flow rate") {
-                    TextField("L/h", text: $sessionFlow)
+                    TextField("\(formatter.volumeUnitAbbreviation)/h", text: $sessionFlow)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                 }
             case .totalVolume:
                 LabeledContent("Total water") {
-                    TextField("Litres", text: $totalVolume)
+                    TextField(formatter.volumeUnitAbbreviation, text: $totalVolume)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                 }
             case .meterReadings:
                 LabeledContent("Meter start") {
-                    TextField("Litres", text: $meterStart)
+                    TextField(formatter.volumeUnitAbbreviation, text: $meterStart)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                 }
                 LabeledContent("Meter finish") {
-                    TextField("Litres", text: $meterFinish)
+                    TextField(formatter.volumeUnitAbbreviation, text: $meterFinish)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                 }
@@ -534,14 +540,14 @@ struct IrrigationRecordEntryView: View {
                 }
             }
             if method == .sessionFlow, let flow = source.flowLitresPerHour {
-                sessionFlow = String(format: "%g", flow)
+                sessionFlow = String(formatter.volumeValue(litres: flow))
             }
             if method == .totalVolume {
-                totalVolume = String(format: "%g", source.totalVolumeLitres)
+                totalVolume = String(formatter.volumeValue(litres: source.totalVolumeLitres))
             }
             if method == .meterReadings {
-                if let v = source.meterStartLitres { meterStart = String(format: "%g", v) }
-                if let v = source.meterFinishLitres { meterFinish = String(format: "%g", v) }
+                if let v = source.meterStartLitres { meterStart = String(formatter.volumeValue(litres: v)) }
+                if let v = source.meterFinishLitres { meterFinish = String(formatter.volumeValue(litres: v)) }
             }
             if editingSession != nil {
                 notes = source.notes ?? ""
@@ -586,10 +592,10 @@ struct IrrigationRecordEntryView: View {
             preview = try await repository.preview(
                 vineyardId: vineyardId, valveId: valveId, sessionDate: dateString,
                 durationMinutes: totalDurationMinutes, method: method,
-                flow: method == .sessionFlow ? Double(sessionFlow.replacingOccurrences(of: ",", with: ".")) : nil,
-                meterStart: Double(meterStart.replacingOccurrences(of: ",", with: ".")),
-                meterFinish: Double(meterFinish.replacingOccurrences(of: ",", with: ".")),
-                totalVolume: Double(totalVolume.replacingOccurrences(of: ",", with: ".")))
+                flow: method == .sessionFlow ? canonicalWater(sessionFlow, original: (editingSession ?? duplicateFrom)?.flowLitresPerHour) : nil,
+                meterStart: canonicalWater(meterStart, original: (editingSession ?? duplicateFrom)?.meterStartLitres),
+                meterFinish: canonicalWater(meterFinish, original: (editingSession ?? duplicateFrom)?.meterFinishLitres),
+                totalVolume: canonicalWater(totalVolume, original: (editingSession ?? duplicateFrom)?.totalVolumeLitres))
             localPreview = nil
         } catch {
             preview = nil
@@ -606,15 +612,15 @@ struct IrrigationRecordEntryView: View {
         do {
             let flow: Double? = switch method {
             case .configuredFlow: validation.flowForCalculation
-            case .sessionFlow: Double(sessionFlow.replacingOccurrences(of: ",", with: "."))
+            case .sessionFlow: canonicalWater(sessionFlow, original: (editingSession ?? duplicateFrom)?.flowLitresPerHour)
             default: nil
             }
             let total = try IrrigationLocalCalculator.totalVolume(
                 method: method, flowLitresPerHour: flow,
                 durationMinutes: totalDurationMinutes,
-                meterStartLitres: Double(meterStart.replacingOccurrences(of: ",", with: ".")),
-                meterFinishLitres: Double(meterFinish.replacingOccurrences(of: ",", with: ".")),
-                totalVolumeLitres: Double(totalVolume.replacingOccurrences(of: ",", with: ".")))
+                meterStartLitres: canonicalWater(meterStart, original: (editingSession ?? duplicateFrom)?.meterStartLitres),
+                meterFinishLitres: canonicalWater(meterFinish, original: (editingSession ?? duplicateFrom)?.meterFinishLitres),
+                totalVolumeLitres: canonicalWater(totalVolume, original: (editingSession ?? duplicateFrom)?.totalVolumeLitres))
             localPreview = IrrigationLocalCalculator.allocate(
                 totalVolumeLitres: total, allocations: validation.allocations)
             isOfflinePreview = true
@@ -633,13 +639,13 @@ struct IrrigationRecordEntryView: View {
 
         let dateString = IrrigationFormat.dateFormat.string(from: sessionDate)
         let flowValue = method == .sessionFlow
-            ? Double(sessionFlow.replacingOccurrences(of: ",", with: ".")) : nil
+            ? canonicalWater(sessionFlow, original: (editingSession ?? duplicateFrom)?.flowLitresPerHour) : nil
         let meterStartValue = method == .meterReadings
-            ? Double(meterStart.replacingOccurrences(of: ",", with: ".")) : nil
+            ? canonicalWater(meterStart, original: (editingSession ?? duplicateFrom)?.meterStartLitres) : nil
         let meterFinishValue = method == .meterReadings
-            ? Double(meterFinish.replacingOccurrences(of: ",", with: ".")) : nil
+            ? canonicalWater(meterFinish, original: (editingSession ?? duplicateFrom)?.meterFinishLitres) : nil
         let totalValue = method == .totalVolume
-            ? Double(totalVolume.replacingOccurrences(of: ",", with: ".")) : nil
+            ? canonicalWater(totalVolume, original: (editingSession ?? duplicateFrom)?.totalVolumeLitres) : nil
 
         let times = resolvedTimestamps()
 

@@ -9,6 +9,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.data.chemical.*
 import com.rork.vinetrack.data.model.SavedChemical
@@ -112,12 +113,13 @@ private fun InventoryActions(chemical: SavedChemical, summary: CatalogueRow?, ca
     var invoice by remember { mutableStateOf("") }
     var expiry by remember { mutableStateOf("") }
     var cost by remember { mutableStateOf("") }
-    var currency by remember { mutableStateOf("AUD") }
+    val region = LocalRegionFormatter.current
+    var currency by remember(chemical.id) { mutableStateOf(region.currencyCode) }
     var batch by remember { mutableStateOf("") }
     var batchDate by remember { mutableStateOf<String?>(null) }
     var serialNumber by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
-    var date by remember { mutableStateOf(LocalDate.now().toString()) }
+    var date by remember { mutableStateOf(region.todayIso()) }
     var warnings by remember { mutableStateOf(if (summary?.fields?.containsKey("warnings_enabled") == true) summary.bool("warnings_enabled") else true) }
     var history by remember { mutableStateOf<List<CatalogueRow>>(emptyList()) }
     var busy by remember { mutableStateOf(false) }

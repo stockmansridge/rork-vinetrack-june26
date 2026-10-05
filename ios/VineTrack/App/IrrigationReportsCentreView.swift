@@ -226,20 +226,20 @@ struct IrrigationReportsCentreView: View {
                 SwiftUI.Section("Coverage") {
                     metric("Systems / water sources", "\(o.systemsUsed ?? 0) / \(o.waterSourcesUsed ?? 0)")
                     metric("Valves / blocks / varieties", "\(o.valvesUsed ?? 0) / \(o.blocksIrrigated ?? 0) / \(o.varietiesIrrigated ?? 0)")
-                    metric("Serviced area", o.servicedAreaHectares.map { String(format: "%.2f ha", $0) } ?? "—")
+                    metric("Serviced area", o.servicedAreaHectares.map { formatter.formatArea(hectares: $0) } ?? "—")
                     metric("Serviced vines", o.servicedVines.map(String.init) ?? "—")
                 }
                 SwiftUI.Section("Normalised") {
-                    metric("Water per hectare", o.litresPerHectare.map { IrrigationFormat.volume($0, formatter: formatter) + "/ha" } ?? "—")
+                    metric("Water per \(formatter.areaUnitAbbreviation)", o.litresPerHectare.map { IrrigationFormat.perHectare($0, formatter: formatter) } ?? "—")
                     metric("Water per vine", o.litresPerVine.map { IrrigationFormat.volume($0, formatter: formatter) + "/vine" } ?? "—")
                     metric("Irrigation depth", o.irrigationDepthMm.map { IrrigationFormat.depth($0, formatter: formatter) } ?? "—")
                     metric("Effective depth", o.effectiveIrrigationDepthMm.map { IrrigationFormat.depth($0, formatter: formatter) } ?? "—")
                     metric("Rainfall (vintage)", o.rainfallMm.map { IrrigationFormat.depth($0, formatter: formatter) } ?? "—")
                 }
                 SwiftUI.Section("Timing") {
-                    metric("First / last irrigation", "\(o.firstIrrigationDate.map(IrrigationFormat.displayDate) ?? "—") / \(o.lastIrrigationDate.map(IrrigationFormat.displayDate) ?? "—")")
+                    metric("First / last irrigation", "\(o.firstIrrigationDate.map { formatter.formatDate($0) } ?? "—") / \(o.lastIrrigationDate.map { formatter.formatDate($0) } ?? "—")")
                     metric("Days since last", o.daysSinceLastIrrigation.map(String.init) ?? "—")
-                    metric("Highest-use day", o.highestUseDate.map { "\(IrrigationFormat.displayDate($0)) · \(IrrigationFormat.volume(o.highestUseDateLitres ?? 0, formatter: formatter))" } ?? "—")
+                    metric("Highest-use day", o.highestUseDate.map { "\(formatter.formatDate($0)) · \(IrrigationFormat.volume(o.highestUseDateLitres ?? 0, formatter: formatter))" } ?? "—")
                     metric("Highest-use month", o.highestUseMonth.map { "\($0) · \(IrrigationFormat.volume(o.highestUseMonthLitres ?? 0, formatter: formatter))" } ?? "—")
                 }
                 SwiftUI.Section("Previous vintage \(o.previousVintageYear.map(String.init) ?? "")") {
@@ -355,7 +355,7 @@ struct IrrigationReportsCentreView: View {
                             IrrigationFormat.duration(minutes: row.runtimeMinutes),
                             row.averageFlowLitresPerHour.map { IrrigationFormat.volume($0, formatter: formatter) + "/h avg" },
                             row.percentOfVineyardTotal.map { String(format: "%.1f%%", $0) },
-                            row.lastUse.map { "Last \(IrrigationFormat.displayDate($0))" },
+                            row.lastUse.map { "Last \(formatter.formatDate($0))" },
                         ])
                 }
                 .buttonStyle(.plain)

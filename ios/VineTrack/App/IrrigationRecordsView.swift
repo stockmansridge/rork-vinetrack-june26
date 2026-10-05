@@ -27,23 +27,11 @@ enum IrrigationFormat {
     }
 
     static func perHectare(_ litresPerHectare: Double, formatter: RegionFormatter) -> String {
-        switch (formatter.settings.volume, formatter.settings.area) {
-        case (.litres, .hectares):
-            return String(format: "%.0f L/ha", litresPerHectare)
-        default:
-            let galPerAcre = IrrigationLocalCalculator.litresPerHectareToGallonsPerAcre(
-                litresPerHectare, usGallon: formatter.settings.usesUSGallon)
-            return String(format: "%.0f gal/ac", galPerAcre)
-        }
+        formatter.formatVolumePerLandArea(litresPerHectare: litresPerHectare)
     }
 
     static func depth(_ mm: Double, formatter: RegionFormatter) -> String {
-        switch formatter.settings.area {
-        case .hectares:
-            return String(format: "%.2f mm", mm)
-        case .acres:
-            return String(format: "%.3f in", IrrigationLocalCalculator.millimetresToInches(mm))
-        }
+        formatter.formatRainfall(mm: mm, fractionDigits: formatter.settings.distance == .metric ? 2 : 3)
     }
 
     static func duration(minutes: Int) -> String {

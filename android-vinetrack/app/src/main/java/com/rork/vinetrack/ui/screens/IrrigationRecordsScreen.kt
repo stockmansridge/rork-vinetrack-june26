@@ -202,19 +202,10 @@ private object IrrigationUnits {
         "${fmt.formatVolume(litres, 2)}/vine"
 
     fun perHectare(litresPerHectare: Double, fmt: RegionFormatter): String =
-        if (VolumeUnit.from(fmt.settings.volumeUnit) == VolumeUnit.Litres &&
-            AreaUnit.from(fmt.settings.areaUnit) == AreaUnit.Hectares
-        ) {
-            String.format(Locale.US, "%.0f L/ha", litresPerHectare)
-        } else {
-            val galPerAcre = IrrigationLocalCalc.litresPerHectareToGallonsPerAcre(litresPerHectare, usesUSGallon(fmt))
-            String.format(Locale.US, "%.0f gal/ac", galPerAcre)
-        }
+        fmt.formatVolumePerLandArea(litresPerHectare)
 
-    fun depth(mm: Double, fmt: RegionFormatter): String = when (AreaUnit.from(fmt.settings.areaUnit)) {
-        AreaUnit.Hectares -> String.format(Locale.US, "%.2f mm", mm)
-        AreaUnit.Acres -> String.format(Locale.US, "%.3f in", mm / IrrigationLocalCalc.MM_PER_INCH)
-    }
+    fun depth(mm: Double, fmt: RegionFormatter): String =
+        fmt.formatRainfall(mm, if (fmt.settings.distanceUnit == "imperial") 3 else 2)
 }
 
 private fun formatMinutes(minutes: Int): String {
@@ -1802,12 +1793,16 @@ private fun RecordContent(
     }
     var method by remember { mutableStateOf(source?.calculationMethod ?: "configured_flow") }
     var sessionFlow by remember {
-        mutableStateOf(if (source?.calculationMethod == "session_flow") source.flowLph?.toString() ?: "" else "")
+        mutableStateOf(if (source?.calculationMethod == "session_flow") source.flowLph?.let { fmt.volumeValue(it).toString() } ?: "" else "")
     }
-    var meterStart by remember { mutableStateOf(source?.meterStartLitres?.toString() ?: "") }
-    var meterFinish by remember { mutableStateOf(source?.meterFinishLitres?.toString() ?: "") }
+    var meterStart by remember { mutableStateOf(source?.meterStartLitres?.let { fmt.volumeValue(it).toString() } ?: "") }
+    var meterFinish by remember { mutableStateOf(source?.meterFinishLitres?.let { fmt.volumeValue(it).toString() } ?: "") }
     var totalVolume by remember {
-        mutableStateOf(if (source?.calculationMethod == "total_volume") source.totalVolumeLitres.toString() else "")
+        mutableStateOf(if (source?.calculationMethod == "total_volume") fmt.volumeValue(source.totalVolumeLitres).toString() else "")
+    }
+    fun canonicalWater(text: String, original: Double?): Double? {
+        if (original != null && text == fmt.volumeValue(original).toString()) return original
+        return text.replace(",", ".").toDoubleOrNull()?.takeIf { it.isFinite() }?.let(fmt::volumeToCanonical)
     }
     var notes by remember { mutableStateOf(editSession?.notes ?: "") }
     var useCurrentConfig by remember { mutableStateOf(false) }
@@ -1854,11 +1849,11 @@ private fun RecordContent(
     val availableValves = valves.filter { it.isActive && (systemId == null || it.irrigationSystemId == systemId) }
     val canPreview = valveId != null && durationMinutes > 0 && when (method) {
         "configured_flow" -> validation?.automaticFlowAvailable == true
-        "session_flow" -> (sessionFlow.replace(",", ".").toDoubleOrNull() ?: 0.0) > 0
-        "total_volume" -> (totalVolume.replace(",", ".").toDoubleOrNull() ?: 0.0) > 0
+        "session_flow" -> (canonicalWater(sessionFlow, source?.flowLph) ?: 0.0) > 0
+        "total_volume" -> (canonicalWater(totalVolume, source?.totalVolumeLitres) ?: 0.0) > 0
         "meter_readings" -> {
-            val s = meterStart.replace(",", ".").toDoubleOrNull() ?: 0.0
-            val f = meterFinish.replace(",", ".").toDoubleOrNull() ?: 0.0
+            val s = canonicalWater(meterStart, source?.meterStartLitres) ?: 0.0
+            val f = canonicalWater(meterFinish, source?.meterFinishLitres) ?: 0.0
             f > s && f > 0
         }
         else -> false
@@ -1872,10 +1867,10 @@ private fun RecordContent(
             runCatching {
                 repo.preview(
                     vineyardId, vid, sessionDate, durationMinutes, method,
-                    flowLph = if (method == "session_flow") sessionFlow.replace(",", ".").toDoubleOrNull() else null,
-                    meterStart = meterStart.replace(",", ".").toDoubleOrNull(),
-                    meterFinish = meterFinish.replace(",", ".").toDoubleOrNull(),
-                    totalVolume = totalVolume.replace(",", ".").toDoubleOrNull(),
+                    flowLph = if (method == "session_flow") canonicalWater(sessionFlow, source?.flowLph) else null,
+                    meterStart = canonicalWater(meterStart, source?.meterStartLitres),
+                    meterFinish = canonicalWater(meterFinish, source?.meterFinishLitres),
+                    totalVolume = canonicalWater(totalVolume, source?.totalVolumeLitres),
                 )
             }.onSuccess {
                 preview = it
@@ -1887,14 +1882,14 @@ private fun RecordContent(
                     runCatching {
                         val flow = when (method) {
                             "configured_flow" -> v.flowForCalculation
-                            "session_flow" -> sessionFlow.replace(",", ".").toDoubleOrNull()
+                            "session_flow" -> canonicalWater(sessionFlow, source?.flowLph)
                             else -> null
                         }
                         val total = IrrigationLocalCalc.totalVolume(
                             method, flow, durationMinutes,
-                            meterStart.replace(",", ".").toDoubleOrNull(),
-                            meterFinish.replace(",", ".").toDoubleOrNull(),
-                            totalVolume.replace(",", ".").toDoubleOrNull(),
+                            canonicalWater(meterStart, source?.meterStartLitres),
+                            canonicalWater(meterFinish, source?.meterFinishLitres),
+                            canonicalWater(totalVolume, source?.totalVolumeLitres),
                         )
                         IrrigationLocalCalc.allocate(total, v.allocations)
                     }.onSuccess { result ->
@@ -1913,10 +1908,10 @@ private fun RecordContent(
         scope.launch {
             isSaving = true
             error = null
-            val flowValue = if (method == "session_flow") sessionFlow.replace(",", ".").toDoubleOrNull() else null
-            val meterStartValue = if (method == "meter_readings") meterStart.replace(",", ".").toDoubleOrNull() else null
-            val meterFinishValue = if (method == "meter_readings") meterFinish.replace(",", ".").toDoubleOrNull() else null
-            val totalValue = if (method == "total_volume") totalVolume.replace(",", ".").toDoubleOrNull() else null
+            val flowValue = if (method == "session_flow") canonicalWater(sessionFlow, source?.flowLph) else null
+            val meterStartValue = if (method == "meter_readings") canonicalWater(meterStart, source?.meterStartLitres) else null
+            val meterFinishValue = if (method == "meter_readings") canonicalWater(meterFinish, source?.meterFinishLitres) else null
+            val totalValue = if (method == "total_volume") canonicalWater(totalVolume, source?.totalVolumeLitres) else null
 
             val sMin = startMinutes
             val eMin = endMinutes
@@ -2189,15 +2184,15 @@ private fun RecordContent(
                 }
             }
             "session_flow" -> item {
-                OutlinedTextField(value = sessionFlow, onValueChange = { sessionFlow = it }, label = { Text("Flow rate (L/h)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = sessionFlow, onValueChange = { sessionFlow = it }, label = { Text("Flow rate (${fmt.volumeUnitAbbreviation}/h)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
             "total_volume" -> item {
-                OutlinedTextField(value = totalVolume, onValueChange = { totalVolume = it }, label = { Text("Total water (litres)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = totalVolume, onValueChange = { totalVolume = it }, label = { Text("Total water (${fmt.volumeUnitAbbreviation})") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
             "meter_readings" -> item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = meterStart, onValueChange = { meterStart = it }, label = { Text("Meter start (L)") }, singleLine = true, modifier = Modifier.weight(1f))
-                    OutlinedTextField(value = meterFinish, onValueChange = { meterFinish = it }, label = { Text("Meter finish (L)") }, singleLine = true, modifier = Modifier.weight(1f))
+                    OutlinedTextField(value = meterStart, onValueChange = { meterStart = it }, label = { Text("Meter start (${fmt.volumeUnitAbbreviation})") }, singleLine = true, modifier = Modifier.weight(1f))
+                    OutlinedTextField(value = meterFinish, onValueChange = { meterFinish = it }, label = { Text("Meter finish (${fmt.volumeUnitAbbreviation})") }, singleLine = true, modifier = Modifier.weight(1f))
                 }
             }
         }

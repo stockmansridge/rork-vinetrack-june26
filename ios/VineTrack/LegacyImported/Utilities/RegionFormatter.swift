@@ -52,6 +52,9 @@ nonisolated struct RegionFormatter: Sendable {
         return "\(Self.number(value, fractionDigits: fractionDigits)) \(areaUnitAbbreviation)"
     }
 
+    /// Display area back to canonical hectares.
+    func areaToCanonical(_ value: Double) -> Double { value / areaValue(hectares: 1) }
+
     // MARK: - Volume (input: litres)
 
     func volumeValue(litres: Double) -> Double {
@@ -72,6 +75,9 @@ nonisolated struct RegionFormatter: Sendable {
         let value = volumeValue(litres: litres)
         return "\(Self.number(value, fractionDigits: fractionDigits)) \(volumeUnitAbbreviation)"
     }
+
+    /// Display volume back to canonical litres.
+    func volumeToCanonical(_ value: Double) -> Double { value / volumeValue(litres: 1) }
 
     // MARK: - Fuel (input: litres)
 
@@ -113,6 +119,11 @@ nonisolated struct RegionFormatter: Sendable {
         settings.usesUSGallon ? Self.usGallonsPerLitre : Self.imperialGallonsPerLitre
     }
 
+    /// Display fuel back to canonical litres.
+    func fuelToCanonical(_ value: Double) -> Double { value / fuelValue(litres: 1) }
+    func fuelCostValue(perLitre: Double) -> Double { perLitre / fuelValue(litres: 1) }
+    func fuelCostToCanonical(_ value: Double) -> Double { value * fuelValue(litres: 1) }
+
     // MARK: - Rainfall (input: millimetres)
 
     /// Converts a canonical millimetre rainfall value into the configured
@@ -143,6 +154,17 @@ nonisolated struct RegionFormatter: Sendable {
         let digits = fractionDigits ?? (settings.rainfall == .inches ? 2 : 1)
         return "\(Self.number(rainfallValue(mm: mm), fractionDigits: digits)) \(rainfallUnitAbbreviation)"
     }
+
+    /// Dimension editors always use metres/feet, never kilometres/miles.
+    var lengthUnitAbbreviation: String { settings.distance == .metric ? "m" : "ft" }
+    func lengthValue(metres: Double) -> Double { settings.distance == .metric ? metres : metres * Self.feetPerMetre }
+    func lengthToCanonical(_ value: Double) -> Double { value / lengthValue(metres: 1) }
+    func formatLength(metres: Double, fractionDigits: Int = 2) -> String {
+        "\(Self.number(lengthValue(metres: metres), fractionDigits: fractionDigits)) \(lengthUnitAbbreviation)"
+    }
+    var smallLengthUnitAbbreviation: String { settings.distance == .metric ? "cm" : "in" }
+    func smallLengthValue(centimetres: Double) -> Double { settings.distance == .metric ? centimetres : centimetres / 2.54 }
+    func smallLengthToCanonical(_ value: Double) -> Double { value / smallLengthValue(centimetres: 1) }
 
     // MARK: - Distance (input: metres)
 
@@ -282,6 +304,13 @@ nonisolated struct RegionFormatter: Sendable {
     // MARK: - Currency
 
     var currencyCode: String { settings.currencyCode }
+    var currencySymbol: String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = currencyCode
+        formatter.locale = currencyLocale
+        return formatter.currencySymbol ?? currencyCode
+    }
 
     func formatCurrency(_ amount: Double) -> String {
         let f = NumberFormatter()
@@ -316,6 +345,16 @@ nonisolated struct RegionFormatter: Sendable {
         return "\(Self.number(value, fractionDigits: fractionDigits)) \(unitLabel)/\(sprayRateAreaAbbreviation)"
     }
 
+    func sprayRateToCanonical(_ value: Double) -> Double { value / sprayRateValue(perHectare: 1) }
+    var volumePerAreaUnit: String { "\(volumeUnitAbbreviation)/\(sprayRateAreaAbbreviation)" }
+    func volumePerAreaValue(litresPerHectare: Double) -> Double { sprayRateValue(perHectare: volumeValue(litres: litresPerHectare)) }
+    func volumePerAreaToCanonical(_ value: Double) -> Double { volumeToCanonical(sprayRateToCanonical(value)) }
+    func formatVolumePerArea(litresPerHectare: Double, fractionDigits: Int = 2) -> String {
+        "\(Self.number(volumePerAreaValue(litresPerHectare: litresPerHectare), fractionDigits: fractionDigits)) \(volumePerAreaUnit)"
+    }
+    func formatCostPerArea(_ perHectare: Double) -> String { "\(formatCurrency(perAreaValue(perHectare: perHectare)))/\(areaUnitAbbreviation)" }
+    func perAreaToCanonical(_ value: Double) -> Double { value / perAreaValue(perHectare: 1) }
+
     // MARK: - Yield per area (input: per hectare)
 
     /// Converts a per-hectare quantity into the configured display area unit.
@@ -337,6 +376,22 @@ nonisolated struct RegionFormatter: Sendable {
     /// The yield-per-area unit label only, e.g. "t/ha" (AU) or "t/ac" (US).
     func yieldPerAreaUnit(unitLabel: String = "t") -> String {
         "\(unitLabel)/\(areaUnitAbbreviation)"
+    }
+
+    /// Irrigation and land reports use the area preference, independent of spray-rate area.
+    func formatVolumePerLandArea(litresPerHectare: Double, fractionDigits: Int = 0) -> String {
+        "\(Self.number(perAreaValue(perHectare: volumeValue(litres: litresPerHectare)), fractionDigits: fractionDigits)) \(volumeUnitAbbreviation)/\(areaUnitAbbreviation)"
+    }
+
+    /// Formats an ISO calendar date without shifting its day across timezones.
+    func formatDate(_ isoDate: String) -> String {
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.timeZone = settings.resolvedTimeZone
+        parser.dateFormat = "yyyy-MM-dd"
+        parser.isLenient = false
+        guard let date = parser.date(from: isoDate) else { return isoDate }
+        return formatDate(date)
     }
 
     // MARK: - Date / DateTime

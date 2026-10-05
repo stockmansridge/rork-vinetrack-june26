@@ -208,6 +208,8 @@ nonisolated struct FertiliserRecord: Codable, Identifiable, Sendable, Hashable {
     /// Per-block breakdown for multi-block calculations.
     var allocations: [FertiliserAllocation]
     var createdAt: Date
+    /// Missing/NULL means legacy, never inferred from stored totals.
+    var vineCountBasis: String?
 
     init(
         id: UUID = UUID(),
@@ -229,7 +231,8 @@ nonisolated struct FertiliserRecord: Codable, Identifiable, Sendable, Hashable {
         labourMachineryCost: Double? = nil,
         notes: String = "",
         allocations: [FertiliserAllocation] = [],
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        vineCountBasis: String? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -251,6 +254,7 @@ nonisolated struct FertiliserRecord: Codable, Identifiable, Sendable, Hashable {
         self.notes = notes
         self.allocations = allocations
         self.createdAt = createdAt
+        self.vineCountBasis = vineCountBasis
     }
 
     var totalCost: Double? {

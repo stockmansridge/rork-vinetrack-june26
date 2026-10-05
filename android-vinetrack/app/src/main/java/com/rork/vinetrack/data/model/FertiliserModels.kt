@@ -118,6 +118,8 @@ data class FertiliserRecord(
     /** Per-block breakdown for multi-block calculations. */
     val allocations: List<FertiliserAllocation> = emptyList(),
     val createdAtMs: Long = 0L,
+    /** NULL/absent means legacy; never infer provenance from stored totals. */
+    val vineCountBasis: String? = null,
 ) {
     val isLiquid: Boolean get() = form == "liquid"
     val unit: String get() = if (isLiquid) "L" else "kg"

@@ -204,6 +204,19 @@ kotlin {
     }
 }
 
+if (providers.gradleProperty("regionUnitsFocusedTests").orNull == "true") {
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+        testLogging { events("passed", "failed", "skipped") }
+    }
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/FertiliserRegionParityTest.kt", "**/RegionFormatterTest.kt")
+            })
+        }
+    }
+}
+
 if (providers.gradleProperty("pinEvidenceFocusedTests").orNull == "true") {
     tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
         testLogging { events("passed", "failed", "skipped") }

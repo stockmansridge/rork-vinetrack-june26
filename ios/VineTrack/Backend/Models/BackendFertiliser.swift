@@ -18,6 +18,7 @@ nonisolated struct BackendFertiliserRecord: Codable, Sendable, Identifiable {
     let blockNames: [String]?
     let totalAreaHa: Double?
     let totalVines: Int?
+    var vineCountBasis: String? = nil
     let applicationRate: Double?
     let applicationRateUnit: String?
     let totalProductRequired: Double?
@@ -46,6 +47,7 @@ nonisolated struct BackendFertiliserRecord: Codable, Sendable, Identifiable {
         case blockNames = "block_names"
         case totalAreaHa = "total_area_ha"
         case totalVines = "total_vines"
+        case vineCountBasis = "vine_count_basis"
         case applicationRate = "application_rate"
         case applicationRateUnit = "application_rate_unit"
         case totalProductRequired = "total_product_required"
@@ -76,6 +78,7 @@ nonisolated struct BackendFertiliserRecordUpsert: Encodable, Sendable {
     let blockNames: [String]
     let totalAreaHa: Double
     let totalVines: Int
+    var vineCountBasis: String? = nil
     let applicationRate: Double
     let applicationRateUnit: String
     let totalProductRequired: Double
@@ -101,6 +104,7 @@ nonisolated struct BackendFertiliserRecordUpsert: Encodable, Sendable {
         case blockNames = "block_names"
         case totalAreaHa = "total_area_ha"
         case totalVines = "total_vines"
+        case vineCountBasis = "vine_count_basis"
         case applicationRate = "application_rate"
         case applicationRateUnit = "application_rate_unit"
         case totalProductRequired = "total_product_required"
@@ -130,6 +134,7 @@ extension BackendFertiliserRecord {
             blockNames: record.blockNames,
             totalAreaHa: record.areaHectares,
             totalVines: record.vineCount,
+            vineCountBasis: record.vineCountBasis.flatMap { $0.isEmpty ? nil : $0 },
             applicationRate: record.rate,
             applicationRateUnit: record.rateUnit,
             totalProductRequired: record.totalProduct,
@@ -168,7 +173,8 @@ extension BackendFertiliserRecord {
             labourMachineryCost: labourCost,
             notes: notes ?? "",
             allocations: allocations,
-            createdAt: createdAt ?? Date()
+            createdAt: createdAt ?? Date(),
+            vineCountBasis: vineCountBasis
         )
     }
 }

@@ -86,6 +86,7 @@ import com.rork.vinetrack.data.model.fuelRate
 import com.rork.vinetrack.data.model.resolveFuelLogMachineName
 import com.rork.vinetrack.data.model.weightedFuelCostPerLitre
 import com.rork.vinetrack.ui.AppUiState
+import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.EmptyState
@@ -494,14 +495,14 @@ private fun FuelPurchaseFormSheet(
 ) {
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
-    var volume by remember { mutableStateOf(existing?.volumeLitres?.takeIf { it > 0 }?.let { trimNum(it) } ?: "") }
+    var volume by remember { mutableStateOf(existing?.volumeLitres?.takeIf { it > 0 }?.let { fmt.fuelValue(it).toString() } ?: "") }
     var cost by remember {
         mutableStateOf(existing?.totalCost?.takeIf { it > 0 }?.let { String.format(Locale.US, "%.2f", it) } ?: "")
     }
     var pricePerLitre by remember {
         mutableStateOf(
             existing?.takeIf { it.volumeLitres > 0 && it.totalCost > 0 }
-                ?.let { formatFuelUnitPrice(it.totalCost / it.volumeLitres) } ?: ""
+                ?.let { formatFuelUnitPrice(fmt.fuelCostValue(it.totalCost / it.volumeLitres)) } ?: ""
         )
     }
     // Which cost field the user last edited manually; volume changes recalc
@@ -514,13 +515,14 @@ private fun FuelPurchaseFormSheet(
     var saving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
 
-    val vol = parseFuelDecimal(volume) ?: 0.0
+    val displayVol = parseFuelDecimal(volume) ?: 0.0
+    val vol = if (existing != null && volume == fmt.fuelValue(existing.volumeLitres).toString()) existing.volumeLitres else fmt.fuelToCanonical(displayVol)
     val enteredTotal = parseFuelDecimal(cost)?.takeIf { it >= 0 }
     val enteredPrice = parseFuelDecimal(pricePerLitre)?.takeIf { it >= 0 }
     // Full purchase amount to save: entered total, or litres × unit price.
     val resolvedTotal: Double? = when {
         enteredTotal != null -> enteredTotal
-        enteredPrice != null && vol > 0 -> Math.round(enteredPrice * vol * 100) / 100.0
+        enteredPrice != null && vol > 0 -> Math.round(enteredPrice * displayVol * 100) / 100.0
         else -> null
     }
     val canSave = vol > 0 && resolvedTotal != null && !saving
@@ -579,7 +581,7 @@ private fun FuelPurchaseFormSheet(
                     volume = it.filter { c -> c.isDigit() || c == '.' || c == ',' }
                     recalcDependent(lastEditedCostField)
                 },
-                label = { Text("Volume (L)") }, placeholder = { Text("e.g. 154") },
+                label = { Text("Volume (${fmt.fuelUnitAbbreviation})") }, placeholder = { Text("e.g. 154") },
                 singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -590,9 +592,9 @@ private fun FuelPurchaseFormSheet(
                     lastEditedCostField = FuelCostField.PRICE
                     recalcDependent(FuelCostField.PRICE)
                 },
-                label = { Text("Price per Litre (\$/L)") }, placeholder = { Text("e.g. 1.89") },
+                label = { Text("Price / ${fmt.fuelUnitAbbreviation} (${fmt.currencyCode})") }, placeholder = { Text("e.g. 1.89") },
                 singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                supportingText = { Text("Enter either the price per litre or the total purchase cost — the other is calculated from the volume.") },
+                supportingText = { Text("Enter either the price per fuel unit or the total purchase cost — the other is calculated from the volume.") },
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
@@ -602,9 +604,9 @@ private fun FuelPurchaseFormSheet(
                     lastEditedCostField = FuelCostField.TOTAL
                     recalcDependent(FuelCostField.TOTAL)
                 },
-                label = { Text("Total Purchase Cost (\$)") }, placeholder = { Text("e.g. 291.06") },
+                label = { Text("Total Purchase Cost (${fmt.currencyCode})") }, placeholder = { Text("e.g. 291.06") },
                 singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                supportingText = { Text("The full invoice amount, not the price of one litre.") },
+                supportingText = { Text("The full invoice amount, not the price of one fuel unit.") },
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) {
@@ -976,11 +978,12 @@ private fun FuelSheet(
     var machine by remember {
         mutableStateOf(existing?.let { e -> machines.firstOrNull { it.id == e.machineId || (e.tractorId != null && (it.id == e.tractorId || it.legacyTractorId == e.tractorId)) } })
     }
-    var litresText by remember { mutableStateOf(existing?.litresAdded?.takeIf { it > 0 }?.let { trimNum(it) } ?: "") }
+    val region = LocalRegionFormatter.current
+    var litresText by remember { mutableStateOf(existing?.litresAdded?.takeIf { it > 0 }?.let { region.fuelValue(it).toString() } ?: "") }
     var engineHoursText by remember { mutableStateOf(existing?.engineHours?.takeIf { it > 0 }?.let { trimNum(it) } ?: "") }
     var dateMs by remember { mutableStateOf(existing?.fillEpochMs ?: System.currentTimeMillis()) }
     var operatorName by remember { mutableStateOf(existing?.operatorName ?: "") }
-    var costPerLitreText by remember { mutableStateOf(existing?.costPerLitre?.takeIf { it > 0 }?.let { trimNum(it) } ?: "") }
+    var costPerLitreText by remember { mutableStateOf(existing?.costPerLitre?.takeIf { it > 0 }?.let { region.fuelCostValue(it).toString() } ?: "") }
     var totalCostText by remember { mutableStateOf(existing?.totalCost?.takeIf { it > 0 }?.let { trimNum(it) } ?: "") }
     var filledToFull by remember { mutableStateOf(existing?.filledToFull ?: true) }
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
@@ -993,7 +996,7 @@ private fun FuelSheet(
     var savedRate by remember { mutableStateOf<FuelRateResult?>(null) }
     var savedHoursDelta by remember { mutableStateOf<Double?>(null) }
 
-    val litres = litresText.replace(',', '.').toDoubleOrNull() ?: 0.0
+    val litres = if (existing != null && litresText == region.fuelValue(existing.litresAdded).toString()) existing.litresAdded else region.fuelToCanonical(litresText.replace(',', '.').toDoubleOrNull() ?: 0.0)
     val canSave = litres > 0 && !saving
 
     fun save() {
@@ -1024,7 +1027,7 @@ private fun FuelSheet(
             litresAdded = litres,
             engineHours = engineHoursText.replace(',', '.').toDoubleOrNull(),
             operatorName = operatorName.trim().ifBlank { null },
-            costPerLitre = costPerLitreText.replace(',', '.').toDoubleOrNull(),
+            costPerLitre = if (existing?.costPerLitre != null && costPerLitreText == region.fuelCostValue(existing.costPerLitre).toString()) existing.costPerLitre else costPerLitreText.replace(',', '.').toDoubleOrNull()?.let(region::fuelCostToCanonical),
             totalCost = totalCostText.replace(',', '.').toDoubleOrNull(),
             filledToFull = filledToFull,
             notes = notes.trim().ifBlank { null },
@@ -1083,7 +1086,7 @@ private fun FuelSheet(
                 OutlinedTextField(
                     value = litresText,
                     onValueChange = { litresText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                    label = { Text("Litres added") },
+                    label = { Text("Fuel added (${region.fuelUnitAbbreviation})") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
@@ -1123,7 +1126,7 @@ private fun FuelSheet(
                 OutlinedTextField(
                     value = costPerLitreText,
                     onValueChange = { costPerLitreText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                    label = { Text("Cost / litre") },
+                    label = { Text("Cost / ${region.fuelUnitAbbreviation} (${region.currencyCode})") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
@@ -1148,7 +1151,7 @@ private fun FuelSheet(
                 OutlinedButton(
                     onClick = {
                         val cpl = costPerLitreValue ?: return@OutlinedButton
-                        totalCostText = String.format(Locale.US, "%.2f", (litres * cpl).coerceAtLeast(0.0))
+                        totalCostText = String.format(Locale.US, "%.2f", (litres * region.fuelCostToCanonical(cpl)).coerceAtLeast(0.0))
                     },
                     enabled = canCalculateTotal,
                     modifier = Modifier.fillMaxWidth(),
@@ -1157,8 +1160,8 @@ private fun FuelSheet(
                     Text("  Calculate total")
                 }
                 Text(
-                    if (canCalculateTotal) "Total = litres × cost per litre. You can still edit the total after calculating."
-                    else "Enter litres and cost per litre to calculate the total.",
+                    if (canCalculateTotal) "Total = fuel volume × cost per fuel unit. You can still edit the total after calculating."
+                    else "Enter fuel volume and cost per fuel unit to calculate the total.",
                     color = vine.textSecondary,
                     fontSize = 12.sp,
                 )

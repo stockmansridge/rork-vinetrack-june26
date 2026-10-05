@@ -52,6 +52,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.model.FertiliserAllocation
+import com.rork.vinetrack.data.model.FertiliserVineCounts
 import com.rork.vinetrack.data.model.FertiliserCalc
 import com.rork.vinetrack.data.model.FertiliserRecord
 import com.rork.vinetrack.data.model.Paddock
@@ -135,7 +136,7 @@ fun FertiliserCalculatorScreen(
                 else -> FertRecordsTab(
                     records = records,
                     onMarkCompleted = { id ->
-                        vineyardId?.let { records = vm.completeFertiliserRecord(it, id, LocalDate.now().toString()) }
+                        vineyardId?.let { records = vm.completeFertiliserRecord(it, id, region.todayIso()) }
                     },
                     onDelete = { id ->
                         vineyardId?.let { records = vm.deleteFertiliserRecord(it, id) }
@@ -220,6 +221,7 @@ private fun FertCalculatorTab(
     val region = LocalRegionFormatter.current
 
     var mode by rememberSaveable { mutableStateOf("perHectare") }
+    var countBasis by rememberSaveable { mutableStateOf(FertiliserVineCounts.ACTUAL) }
     var selectedPaddockIds by remember { mutableStateOf(setOf<String>()) }
     var areaText by rememberSaveable { mutableStateOf("") }
     var vinesText by rememberSaveable { mutableStateOf("") }
@@ -248,17 +250,18 @@ private fun FertCalculatorTab(
         val selected = paddocks.filter { ids.contains(it.id) }
         if (selected.isEmpty()) return
         val area = selected.sumOf { it.areaHectares }
-        val vines = selected.sumOf { it.effectiveVineCount }
-        if (area > 0) areaText = fertFmt(area, 2)
-        if (vines > 0) vinesText = vines.toString()
+        if (area > 0) areaText = region.areaValue(area).toString()
     }
 
     // Calculation
-    val rate = rateText.replace(',', '.').toDoubleOrNull() ?: 0.0
-    val area = areaText.replace(',', '.').toDoubleOrNull() ?: 0.0
-    val vines = vinesText.toIntOrNull() ?: 0
+    val selectedBlocks = paddocks.filter { it.id in selectedPaddockIds }
+    val blockVines = FertiliserVineCounts.total(selectedBlocks, countBasis)
+    val displayRate = rateText.replace(',', '.').toDoubleOrNull() ?: 0.0
+    val rate = if (mode == "perVine") displayRate else if (isLiquid) region.volumePerAreaToCanonical(displayRate) else region.sprayRateToCanonical(displayRate)
+    val area = region.areaToCanonical(areaText.replace(',', '.').toDoubleOrNull() ?: 0.0)
+    val vines = if (selectedBlocks.isEmpty()) vinesText.toIntOrNull() ?: 0 else blockVines ?: 0
     val total: Double? = when {
-        rate <= 0 -> null
+        !rate.isFinite() || rate <= 0 -> null
         mode == "perHectare" && area > 0 -> FertiliserCalc.totalForPerHectare(area, rate)
         mode == "perVine" && vines > 0 -> FertiliserCalc.totalForPerVine(vines, rate)
         else -> null
@@ -290,7 +293,7 @@ private fun FertCalculatorTab(
                     .padding(3.dp),
                 horizontalArrangement = Arrangement.spacedBy(3.dp),
             ) {
-                listOf("perHectare" to "Per hectare", "perVine" to "Per vine").forEach { (key, label) ->
+                listOf("perHectare" to "Per ${region.sprayRateAreaAbbreviation}", "perVine" to "Per vine").forEach { (key, label) ->
                     val isOn = mode == key
                     Text(
                         label,
@@ -350,11 +353,30 @@ private fun FertCalculatorTab(
                         OutlinedTextField(
                             value = areaText,
                             onValueChange = { areaText = it },
-                            label = { Text("Treated area (ha)") },
+                            label = { Text("Treated area (${region.areaUnitAbbreviation})") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                         )
+                    } else if (selectedBlocks.isNotEmpty()) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(FertiliserVineCounts.ACTUAL, FertiliserVineCounts.ASSUMED_FULL).forEach { basis ->
+                                OutlinedButton(onClick = { countBasis = basis }, modifier = Modifier.weight(1f)) {
+                                    Text(FertiliserVineCounts.label(basis), fontWeight = if (countBasis == basis) FontWeight.Bold else FontWeight.Normal)
+                                }
+                            }
+                        }
+                        selectedBlocks.forEach { block ->
+                            val count = FertiliserVineCounts.count(block, countBasis)
+                            Text("${block.name}: ${count ?: "Unavailable"} · ${FertiliserVineCounts.label(countBasis)}", fontSize = 13.sp, color = vine.textSecondary)
+                            if (count == null) Text(
+                                if (countBasis == FertiliserVineCounts.ACTUAL) "Set a block vine count or complete row counts in Block Setup, or choose Assumed full."
+                                else "Enter usable total row length and vine spacing in Block Setup.",
+                                fontSize = 12.sp, color = VineColors.Warning,
+                            )
+                        }
+                        Text("Total vines: ${blockVines ?: "Unavailable"}", fontWeight = FontWeight.SemiBold)
+                        if (countBasis == FertiliserVineCounts.ASSUMED_FULL) Text("Theoretical full planting: total row length ÷ vine spacing; ignores vine-count overrides.", fontSize = 12.sp, color = vine.textSecondary)
                     } else {
                         OutlinedTextField(
                             value = vinesText,
@@ -450,7 +472,7 @@ private fun FertCalculatorTab(
                             OutlinedTextField(
                                 value = manualPriceText,
                                 onValueChange = { manualPriceText = it },
-                                label = { Text("Price per pack ($)") },
+                                label = { Text("Price per pack (${region.currencyCode})") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.weight(1f),
                                 singleLine = true,
@@ -469,7 +491,7 @@ private fun FertCalculatorTab(
                         OutlinedTextField(
                             value = rateText,
                             onValueChange = { rateText = it },
-                            label = { Text(if (mode == "perHectare") "Rate ($unit/ha)" else "Rate ($perVineUnit/vine)") },
+                            label = { Text(if (mode == "perHectare") "Rate (${if (isLiquid) region.volumePerAreaUnit else region.massPerAreaUnit()})" else "Rate ($perVineUnit/vine)") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.weight(1f),
                             singleLine = true,
@@ -477,7 +499,7 @@ private fun FertCalculatorTab(
                         OutlinedTextField(
                             value = labourText,
                             onValueChange = { labourText = it },
-                            label = { Text("Labour & machinery ($)") },
+                            label = { Text("Labour & machinery (${region.currencyCode})") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.weight(1f),
                             singleLine = true,
@@ -493,8 +515,8 @@ private fun FertCalculatorTab(
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Results", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(fertFmt(total, 1), fontSize = 32.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
-                            Text("$unit required", fontSize = 14.sp, color = vine.textSecondary, modifier = Modifier.padding(bottom = 5.dp))
+                            Text(fertFmt(if (isLiquid) region.volumeValue(total) else total, 1), fontSize = 32.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                            Text("${if (isLiquid) region.volumeUnitAbbreviation else unit} required", fontSize = 14.sp, color = vine.textSecondary, modifier = Modifier.padding(bottom = 5.dp))
                         }
                         if (packs != null && packSize != null) {
                             val wholePacks = packs.toInt()
@@ -543,24 +565,26 @@ private fun FertCalculatorTab(
                     val selected = paddocks.filter { selectedPaddockIds.contains(it.id) }
                     // Per-block allocations: weighted by vine count (per-vine
                     // mode) or area so block-level costing stays accurate.
-                    val weights = selected.map { if (mode == "perVine") it.effectiveVineCount.toDouble() else it.areaHectares }
-                    val totalWeight = weights.sum()
+                    val counts = selected.map { FertiliserVineCounts.count(it, countBasis) ?: 0 }
+                    val weights = selected.mapIndexed { index, block -> if (mode == "perVine") counts[index].toDouble() else block.areaHectares }
+                    val productShares = FertiliserVineCounts.shares(total, weights)
+                    val costShares = cost?.let { FertiliserVineCounts.shares(it, weights) }
+                    if (selected.isNotEmpty() && productShares.size != selected.size) return null
                     val allocations = selected.mapIndexed { index, paddock ->
-                        val share = if (totalWeight > 0) weights[index] / totalWeight else 1.0 / selected.size
                         FertiliserAllocation(
                             id = UUID.randomUUID().toString(),
                             paddockId = paddock.id,
                             areaHectares = paddock.areaHectares,
-                            vineCount = paddock.effectiveVineCount,
+                            vineCount = counts[index],
                             rate = rate,
-                            productRequired = total * share,
-                            allocatedCost = cost?.let { it * share },
+                            productRequired = productShares[index],
+                            allocatedCost = costShares?.get(index),
                         )
                     }
                     return FertiliserRecord(
                         id = UUID.randomUUID().toString(),
                         vineyardId = vid,
-                        date = LocalDate.now().toString(),
+                        date = region.todayIso(),
                         status = status,
                         mode = mode,
                         productId = selectedProduct?.id,
@@ -570,6 +594,7 @@ private fun FertCalculatorTab(
                         blockNames = selected.map { it.name },
                         areaHectares = area,
                         vineCount = vines,
+                        vineCountBasis = if (mode != "perVine") null else if (selected.isEmpty()) FertiliserVineCounts.MANUAL else countBasis,
                         rate = rate,
                         totalProduct = total,
                         packSize = packSize,
@@ -684,6 +709,7 @@ private fun FertRecordsTab(
     onDelete: (String) -> Unit,
 ) {
     val vine = LocalVineColors.current
+    val region = LocalRegionFormatter.current
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -733,9 +759,10 @@ private fun FertRecordsTab(
                         )
                     }
                     val detail = buildList {
-                        com.rork.vinetrack.data.model.PruningCalculator.parseDate(record.date)?.let { add(it.format(fertDisplayDate)) }
-                        add("${fertFmt(record.totalProduct, 1)} ${record.unit}")
-                        add("${fertFmt(record.rate, 1)} ${record.rateUnit}")
+                        add(region.formatDate(record.date))
+                        add(if (record.isLiquid) region.formatVolume(record.totalProduct) else "${fertFmt(record.totalProduct, 1)} kg")
+                        add(if (record.mode == "perVine") "${fertFmt(record.rate, 1)} ${record.rateUnit}" else if (record.isLiquid) region.formatVolumePerArea(record.rate, 1) else region.formatSprayRate(record.rate, "kg", 1))
+                        if (record.mode == "perVine") add("${record.vineCount} vines · ${FertiliserVineCounts.label(record.vineCountBasis)}")
                         record.totalCost?.let { add(money(it)) }
                     }.joinToString(" · ")
                     Text(detail, fontSize = 12.sp, color = vine.textSecondary)

@@ -172,6 +172,10 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
     fun formatFuelRatePerHour(litresPerHour: Double, fractionDigits: Int = 1): String =
         "${number(fuelValue(litresPerHour), fractionDigits)} $fuelUnitAbbreviation/hr"
 
+    /** Cost editor round trip; money is not exchanged between currencies. */
+    fun fuelCostValue(perLitre: Double): Double = perLitre / fuelValue(1.0)
+    fun fuelCostToCanonical(value: Double): Double = value * fuelValue(1.0)
+
     // MARK: - Rainfall (input: millimetres)
 
     /**
@@ -209,6 +213,16 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
         val digits = fractionDigits ?: if (rainfall == RainfallUnit.Inches) 2 else 1
         return "${number(rainfallValue(mm), digits)} $rainfallUnitAbbreviation"
     }
+
+    /** Vineyard dimensions use metres/feet, not kilometres/miles. */
+    val lengthUnitAbbreviation: String get() = if (distance == DistanceSystem.Metric) "m" else "ft"
+    fun lengthValue(metres: Double): Double = if (distance == DistanceSystem.Metric) metres else metres * FEET_PER_METRE
+    fun lengthToCanonical(value: Double): Double = value / lengthValue(1.0)
+    fun formatLength(metres: Double, fractionDigits: Int = 2): String =
+        "${number(lengthValue(metres), fractionDigits)} $lengthUnitAbbreviation"
+    val smallLengthUnitAbbreviation: String get() = if (distance == DistanceSystem.Metric) "cm" else "in"
+    fun smallLengthValue(centimetres: Double): Double = if (distance == DistanceSystem.Metric) centimetres else centimetres / 2.54
+    fun smallLengthToCanonical(value: Double): Double = value / smallLengthValue(1.0)
 
     // MARK: - Distance (input: metres)
 
@@ -330,6 +344,9 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
     fun formatVolumePerArea(litresPerHectare: Double, fractionDigits: Int = 0): String =
         "${number(sprayRateValue(volumeValue(litresPerHectare)), fractionDigits)} $volumePerAreaUnit"
 
+    fun volumePerAreaValue(litresPerHectare: Double): Double = sprayRateValue(volumeValue(litresPerHectare))
+    fun volumePerAreaToCanonical(value: Double): Double = volumeToCanonical(sprayRateToCanonical(value))
+
     /** As [formatVolumePerArea] but per hour, e.g. "1,200 L/ha/h" → "128 gal/ac/h". */
     fun formatVolumePerAreaPerHour(litresPerHectarePerHour: Double): String {
         val v = sprayRateValue(volumeValue(litresPerHectarePerHour))
@@ -355,6 +372,10 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
         AreaUnit.Hectares -> displayValue
         AreaUnit.Acres -> displayValue * ACRES_PER_HECTARE
     }
+
+    /** Irrigation/land reports use area, independently of the spray-rate denominator. */
+    fun formatVolumePerLandArea(litresPerHectare: Double, fractionDigits: Int = 0): String =
+        "${number(perAreaValue(volumeValue(litresPerHectare)), fractionDigits)} $volumeUnitAbbreviation/$areaUnitAbbreviation"
 
     // MARK: - Cost per unit
 
@@ -412,6 +433,14 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
      * vineyard set to MM/DD/YYYY never shows a day-first date.
      */
     fun formatDate(epochMs: Long): String = dateFormatter(dateTemplate).format(Date(epochMs))
+
+    /** Date-only values retain their calendar day in the vineyard timezone. */
+    fun formatDate(isoDate: String): String {
+        val parsed = runCatching { dateFormatter("yyyy-MM-dd").apply { isLenient = false }.parse(isoDate) }.getOrNull() ?: return isoDate
+        return dateFormatter(dateTemplate).format(parsed)
+    }
+
+    fun todayIso(epochMs: Long = System.currentTimeMillis()): String = dateFormatter("yyyy-MM-dd").format(Date(epochMs))
 
     /** Two-digit-year variant of [dateTemplate] — same field order, tighter. */
     private val shortDateTemplate: String

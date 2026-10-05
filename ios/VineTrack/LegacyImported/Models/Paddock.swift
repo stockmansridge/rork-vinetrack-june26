@@ -18,7 +18,11 @@ nonisolated struct Paddock: Codable, Identifiable, Sendable, Hashable {
     /// nominal fallback is harmless.
     var rowWidthRaw: Double?
     var rowOffset: Double
-    var vineSpacing: Double
+    var vineSpacing: Double {
+        didSet { vineSpacingIsKnown = vineSpacing.isFinite && vineSpacing > 0 }
+    }
+    /// Retains missing remote spacing without changing legacy display fallbacks.
+    var vineSpacingIsKnown: Bool? = nil
     var vineCountOverride: Int?
     var rowLengthOverride: Double?
     var flowPerEmitter: Double?
@@ -82,7 +86,7 @@ nonisolated struct Paddock: Codable, Identifiable, Sendable, Hashable {
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
-        case id, vineyardId, name, polygonPoints, rows, rowDirection, rowOffset, vineSpacing, vineCountOverride, rowLengthOverride, flowPerEmitter, emitterSpacing, intermediatePostSpacing, varietyAllocations, budburstDate, floweringDate, veraisonDate, harvestDate, plantingYear, calculationModeOverride, resetModeOverride
+        case id, vineyardId, name, polygonPoints, rows, rowDirection, rowOffset, vineSpacingIsKnown, vineSpacing, vineCountOverride, rowLengthOverride, flowPerEmitter, emitterSpacing, intermediatePostSpacing, varietyAllocations, budburstDate, floweringDate, veraisonDate, harvestDate, plantingYear, calculationModeOverride, resetModeOverride
         // Persisted under its historical key so stored JSON is unchanged.
         case rowWidthRaw = "rowWidth"
     }
@@ -99,7 +103,9 @@ nonisolated struct Paddock: Codable, Identifiable, Sendable, Hashable {
         // tell "never entered" from "deliberately 2.5 m".
         rowWidthRaw = try container.decodeIfPresent(Double.self, forKey: .rowWidthRaw)
         rowOffset = try container.decodeIfPresent(Double.self, forKey: .rowOffset) ?? 0
-        vineSpacing = try container.decodeIfPresent(Double.self, forKey: .vineSpacing) ?? 1.0
+        let storedSpacing = try container.decodeIfPresent(Double.self, forKey: .vineSpacing)
+        vineSpacing = storedSpacing ?? 1.0
+        vineSpacingIsKnown = try container.decodeIfPresent(Bool.self, forKey: .vineSpacingIsKnown) ?? (storedSpacing != nil)
         vineCountOverride = try container.decodeIfPresent(Int.self, forKey: .vineCountOverride)
         rowLengthOverride = try container.decodeIfPresent(Double.self, forKey: .rowLengthOverride)
         flowPerEmitter = try container.decodeIfPresent(Double.self, forKey: .flowPerEmitter)

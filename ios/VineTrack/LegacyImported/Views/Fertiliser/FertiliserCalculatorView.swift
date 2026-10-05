@@ -8,6 +8,11 @@ struct FertiliserCalculatorView: View {
     @Environment(FertiliserSyncService.self) private var fertiliserSync
     private var fertStore: FertiliserStore { .shared }
 
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+    @State private var countBasis: String = FertiliserVineCounts.actual
+    private var selectedBlocks: [Paddock] { paddocks.filter { selectedPaddockIds.contains($0.id) } }
+    private var blockVines: Int? { FertiliserVineCounts.total(selectedBlocks, basis: countBasis) }
+
     @State private var mode: FertiliserCalcMode = .perHectare
     @State private var selectedPaddockIds: Set<UUID> = []
     @State private var areaText: String = ""
@@ -110,7 +115,7 @@ struct FertiliserCalculatorView: View {
     private var modePicker: some View {
         Picker("Mode", selection: $mode) {
             ForEach(FertiliserCalcMode.allCases) { calcMode in
-                Text(calcMode.label).tag(calcMode)
+                Text(calcMode == .perHectare ? "Per \(fmt.sprayRateAreaAbbreviation)" : calcMode.label).tag(calcMode)
             }
         }
         .pickerStyle(.segmented)
@@ -134,9 +139,32 @@ struct FertiliserCalculatorView: View {
 
             HStack(spacing: 12) {
                 if mode == .perHectare {
-                    labelledField(label: "Treated area (ha)", text: $areaText, keyboard: .decimalPad)
-                } else {
+                    labelledField(label: "Treated area (\(fmt.areaUnitAbbreviation))", text: $areaText, keyboard: .decimalPad)
+                } else if selectedBlocks.isEmpty {
                     labelledField(label: "Number of vines", text: $vinesText, keyboard: .numberPad)
+                }
+            }
+            if mode == .perVine && !selectedBlocks.isEmpty {
+                Picker("Vine count basis", selection: $countBasis) {
+                    Text("Actual").tag(FertiliserVineCounts.actual)
+                    Text("Assumed full").tag(FertiliserVineCounts.assumedFull)
+                }
+                .pickerStyle(.segmented)
+                ForEach(selectedBlocks) { block in
+                    let count = FertiliserVineCounts.count(block, basis: countBasis)
+                    Text("\(block.name): \(count.map(String.init) ?? "Unavailable") · \(FertiliserVineCounts.label(countBasis))")
+                        .font(.footnote)
+                    if count == nil {
+                        Text(countBasis == FertiliserVineCounts.actual
+                             ? "Set a block vine count or complete row counts in Block Setup, or choose Assumed full."
+                             : "Enter usable total row length and vine spacing in Block Setup.")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                }
+                Text("Total vines: \(blockVines.map(String.init) ?? "Unavailable")").font(.subheadline.weight(.semibold))
+                if countBasis == FertiliserVineCounts.assumedFull {
+                    Text("Theoretical full planting: total row length ÷ vine spacing; ignores vine-count overrides.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
@@ -219,7 +247,7 @@ struct FertiliserCalculatorView: View {
                 .pickerStyle(.segmented)
                 HStack(spacing: 12) {
                     labelledField(label: "Pack size (\(manualForm.unit))", text: $manualPackSizeText, keyboard: .decimalPad)
-                    labelledField(label: "Price per pack ($)", text: $manualPriceText, keyboard: .decimalPad)
+                    labelledField(label: "Price per pack (\(fmt.currencyCode))", text: $manualPriceText, keyboard: .decimalPad)
                 }
             }
         }
@@ -243,12 +271,12 @@ struct FertiliserCalculatorView: View {
             HStack(spacing: 12) {
                 labelledField(
                     label: mode == .perHectare
-                        ? "Rate (\(activeForm.unit)/ha)"
+                        ? "Rate (\(activeForm == .liquid ? fmt.volumePerAreaUnit : "kg/\(fmt.sprayRateAreaAbbreviation)"))"
                         : "Rate (\(activeForm.perVineUnit)/vine)",
                     text: $rateText,
                     keyboard: .decimalPad
                 )
-                labelledField(label: "Labour & machinery ($, optional)", text: $labourCostText, keyboard: .decimalPad)
+                labelledField(label: "Labour & machinery (\(fmt.currencyCode), optional)", text: $labourCostText, keyboard: .decimalPad)
             }
         }
         .padding(14)
@@ -273,11 +301,12 @@ struct FertiliserCalculatorView: View {
     }
 
     private var calculation: CalcResult? {
-        let rate = Double(rateText.replacingOccurrences(of: ",", with: ".")) ?? 0
-        guard rate > 0 else { return nil }
+        let displayRate = Double(rateText.replacingOccurrences(of: ",", with: ".")) ?? 0
+        let rate = mode == .perVine ? displayRate : activeForm == .liquid ? fmt.volumePerAreaToCanonical(displayRate) : fmt.sprayRateToCanonical(displayRate)
+        guard rate.isFinite, rate > 0 else { return nil }
 
-        let area = Double(areaText.replacingOccurrences(of: ",", with: ".")) ?? 0
-        let vines = Int(vinesText) ?? 0
+        let area = fmt.areaToCanonical(Double(areaText.replacingOccurrences(of: ",", with: ".")) ?? 0)
+        let vines = selectedBlocks.isEmpty ? Int(vinesText) ?? 0 : blockVines ?? 0
 
         let total: Double
         switch mode {
@@ -326,10 +355,10 @@ struct FertiliserCalculatorView: View {
                 .font(.headline)
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(result.total.formatted(.number.precision(.fractionLength(0...1))))
+                Text((activeForm == .liquid ? fmt.volumeValue(litres: result.total) : result.total).formatted(.number.precision(.fractionLength(0...1))))
                     .font(.system(size: 34, weight: .bold, design: .rounded))
                     .monospacedDigit()
-                Text(activeForm.unit)
+                Text(activeForm == .liquid ? fmt.volumeUnitAbbreviation : activeForm.unit)
                     .font(.headline)
                     .foregroundStyle(.secondary)
                 Text("required")
@@ -352,7 +381,7 @@ struct FertiliserCalculatorView: View {
                 if let cost = result.productCost {
                     resultRow(label: "Product cost", value: currency(cost))
                     if result.area > 0 {
-                        resultRow(label: "Cost / ha", value: currency(cost / result.area))
+                        resultRow(label: "Cost / \(fmt.areaUnitAbbreviation)", value: fmt.formatCostPerArea(cost / result.area))
                     }
                     if result.vines > 0 {
                         resultRow(label: "Cost / vine", value: currency(cost / Double(result.vines)))
@@ -491,9 +520,10 @@ struct FertiliserCalculatorView: View {
     }
 
     private func recordDetail(_ record: FertiliserRecord) -> String {
-        var parts: [String] = [record.date.formatted(date: .abbreviated, time: .omitted)]
-        parts.append("\(record.totalProduct.formatted(.number.precision(.fractionLength(0...1)))) \(record.form.unit)")
-        parts.append("\(record.rate.formatted(.number.precision(.fractionLength(0...1)))) \(record.rateUnit)")
+        var parts: [String] = [fmt.formatDate(record.date)]
+        parts.append(record.form == .liquid ? fmt.formatVolume(litres: record.totalProduct) : "\(record.totalProduct.formatted(.number.precision(.fractionLength(0...1)))) kg")
+        parts.append(record.mode == .perVine ? "\(record.rate.formatted(.number.precision(.fractionLength(0...1)))) \(record.rateUnit)" : record.form == .liquid ? fmt.formatVolumePerArea(litresPerHectare: record.rate) : fmt.formatSprayRate(perHectare: record.rate, unitLabel: "kg"))
+        if record.mode == .perVine { parts.append("\(record.vineCount) vines · \(FertiliserVineCounts.label(record.vineCountBasis))") }
         if let cost = record.totalCost {
             parts.append(currency(cost))
         }
@@ -506,9 +536,7 @@ struct FertiliserCalculatorView: View {
         let selected = paddocks.filter { selectedPaddockIds.contains($0.id) }
         guard !selected.isEmpty else { return }
         let area = selected.reduce(0.0) { $0 + $1.areaHectares }
-        let vines = selected.reduce(0) { $0 + $1.effectiveVineCount }
-        areaText = area > 0 ? area.formatted(.number.precision(.fractionLength(0...2)).grouping(.never)) : areaText
-        vinesText = vines > 0 ? "\(vines)" : vinesText
+        areaText = area > 0 ? String(fmt.areaValue(hectares: area)) : areaText
     }
 
     private func save(_ result: CalcResult, status: FertiliserRecordStatus) {
@@ -531,7 +559,8 @@ struct FertiliserCalculatorView: View {
             productCost: result.productCost,
             labourMachineryCost: result.labourCost,
             notes: notes,
-            allocations: blockAllocations(for: selected, result: result)
+            allocations: blockAllocations(for: selected, result: result),
+            vineCountBasis: mode != .perVine ? nil : selected.isEmpty ? FertiliserVineCounts.manual : countBasis
         )
         fertStore.addRecord(record)
         savedBanner = status == .planned ? "Saved as planned task" : "Recorded"
@@ -548,25 +577,27 @@ struct FertiliserCalculatorView: View {
     /// costing stays accurate.
     private func blockAllocations(for selected: [Paddock], result: CalcResult) -> [FertiliserAllocation] {
         guard !selected.isEmpty else { return [] }
-        let weights: [Double] = selected.map { paddock in
-            mode == .perVine ? Double(paddock.effectiveVineCount) : paddock.areaHectares
+        let counts = selected.map { FertiliserVineCounts.count($0, basis: countBasis) ?? 0 }
+        let weights = selected.enumerated().map { index, block in
+            mode == .perVine ? Double(counts[index]) : block.areaHectares
         }
-        let totalWeight = weights.reduce(0, +)
+        let productShares = FertiliserVineCounts.shares(total: result.total, weights: weights)
+        let costShares = result.productCost.map { FertiliserVineCounts.shares(total: $0, weights: weights) }
+        guard productShares.count == selected.count else { return [] }
         return selected.enumerated().map { index, paddock in
-            let share = totalWeight > 0 ? weights[index] / totalWeight : 1.0 / Double(selected.count)
             return FertiliserAllocation(
                 paddockId: paddock.id,
                 areaHectares: paddock.areaHectares,
-                vineCount: paddock.effectiveVineCount,
+                vineCount: counts[index],
                 rate: result.rate,
-                productRequired: result.total * share,
-                allocatedCost: result.productCost.map { $0 * share }
+                productRequired: productShares[index],
+                allocatedCost: costShares?[index]
             )
         }
     }
 
     private func currency(_ value: Double) -> String {
-        "$\(value.formatted(.number.precision(.fractionLength(2))))"
+        fmt.formatCurrency(value)
     }
 
     private func labelledField(label: String, text: Binding<String>, keyboard: UIKeyboardType) -> some View {

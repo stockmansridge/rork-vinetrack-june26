@@ -280,6 +280,7 @@ object SprayRecordPdfExporter {
         sharedRoute: Bitmap?,
         chemicalPrices: com.rork.vinetrack.data.chemical.ChemicalSeasonPriceBatch?,
     ) {
+        fun money(value: Double): String = regionFormatter.formatCompactCurrency(value)
         // Header
         val textX = PdfHeaderUtil.drawLogo(s.canvas, logo, MARGIN, s.y)
         s.canvas.drawText(vineyardName.ifBlank { "Vineyard" }, textX, s.y + 18f, titlePaint)
@@ -391,7 +392,7 @@ object SprayRecordPdfExporter {
             payload.equipment.tractorGear?.takeIf { it.isNotBlank() }?.let { row(s, "Tractor Gear", it) }
             payload.equipment.numberOfFansJets?.takeIf { it.isNotBlank() }?.let { row(s, "No. Fans/Jets", it) }
             payload.equipment.averageSpeedKmh?.let { row(s, "Average Speed", regionFormatter.formatSpeed(it)) }
-            row(s, "Fuel consumption", payload.equipment.fuelConsumptionLPerHour?.let { "${fmt(it)} L/hr · ${payload.equipment.fuelConsumptionSource?.replace('_', ' ')}" } ?: "Not recorded")
+            row(s, "Fuel consumption", payload.equipment.fuelConsumptionLPerHour?.let { "${regionFormatter.formatFuelRatePerHour(it)} · ${payload.equipment.fuelConsumptionSource?.replace('_', ' ')}" } ?: "Not recorded")
         }
 
         payload.application?.let { application ->
@@ -474,7 +475,7 @@ object SprayRecordPdfExporter {
             val saved = payload.cost
             val chemical = resolvedCost?.chemical
             sectionHeader(s, "Authorized Cost Summary")
-            row(s, "Fuel used", saved.fuelLitres?.let { regionFormatter.formatVolume(it) } ?: "Not recorded")
+            row(s, "Fuel used", saved.fuelLitres?.let { regionFormatter.formatFuel(it) } ?: "Not recorded")
             row(s, "Fuel cost", saved.fuelCost?.let(::money) ?: "Not recorded")
             row(s, "Labour cost", saved.labourCost?.let(::money) ?: "Not recorded")
             row(s, "Chemical cost", chemical?.takeIf { it.warning == null }?.cost?.let(::money) ?: "Unavailable / incomplete")
@@ -506,7 +507,7 @@ object SprayRecordPdfExporter {
                 sectionHeader(s, if (cost.chemical?.basis == TripCostEstimator.ChemicalCostBasis.Actual) "Cost Breakdown — Actual Chemicals" else "Cost Breakdown — Estimated Chemicals")
                 if (cost.labour.cost > 0) row(s, "Labour", money(cost.labour.cost))
                 fuel.fuelCost?.let { fc ->
-                    val value = fuel.litres?.let { "${money(fc)} \u00B7 ${fmt(it)} L" } ?: money(fc)
+                    val value = fuel.litres?.let { "${money(fc)} \u00B7 ${regionFormatter.formatFuel(it)}" } ?: money(fc)
                     row(s, "Fuel", value)
                 }
                 cost.chemical?.let {
@@ -514,8 +515,8 @@ object SprayRecordPdfExporter {
                     row(s, "Chemical pricing basis", it.pricingBases.joinToString("; "))
                 }
                 row(s, "Total Cost", if (cost.chemical?.warning != null) "Incomplete" else money(cost.totalCost))
-                cost.treatedAreaHa?.let { row(s, "Treated Area", "${fmt(it)} ha") }
-                cost.costPerHa?.let { row(s, "Cost / ha", money(it)) }
+                cost.treatedAreaHa?.let { row(s, "Treated Area", regionFormatter.formatArea(it)) }
+                cost.costPerHa?.let { row(s, "Cost / ${regionFormatter.areaUnitAbbreviation}", regionFormatter.formatCostPerArea(it)) }
 
                 // Completeness + warnings in small caption text so the totals
                 // are never mistaken for final when inputs are missing.

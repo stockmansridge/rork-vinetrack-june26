@@ -31,7 +31,7 @@ struct FuelLogRow: View {
                     }
                 }
                 HStack(spacing: 10) {
-                    Label(log.fillDateTime.formatted(date: .abbreviated, time: .shortened), systemImage: "calendar")
+                    Label(fmt.formatDateTime(log.fillDateTime), systemImage: "calendar")
                     if let hours = log.engineHours {
                         Label("\(String(format: "%.1f", hours)) hrs", systemImage: "gauge.with.needle")
                     }
@@ -78,6 +78,8 @@ struct FuelFillFormSheet: View {
     @Environment(VineyardMachineSyncService.self) private var machineSync
 
     let log: TractorFuelLog?
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+    @State private var didLoadRegionalInputs: Bool = false
 
     @State private var machineId: UUID?
     @State private var litresText: String = ""
@@ -133,11 +135,17 @@ struct FuelFillFormSheet: View {
         return store.currentVineyardMachines.first { $0.id == mid }
     }
 
-    private var litres: Double { Double(litresText) ?? 0 }
+    private var litres: Double {
+        if let log, litresText == String(fmt.fuelValue(litres: log.litresAdded)) { return log.litresAdded }
+        return fmt.fuelToCanonical(Double(litresText.replacingOccurrences(of: ",", with: ".")) ?? 0)
+    }
     private var engineHours: Double? { engineHoursText.isEmpty ? nil : Double(engineHoursText) }
     private var isValid: Bool { litres > 0 }
 
-    private var costPerLitre: Double? { Double(costPerLitreText.replacingOccurrences(of: ",", with: ".")) }
+    private var costPerLitre: Double? {
+        if let original = log?.costPerLitre, costPerLitreText == String(fmt.fuelCostValue(perLitre: original)) { return original }
+        return Double(costPerLitreText.replacingOccurrences(of: ",", with: ".")).map { fmt.fuelCostToCanonical($0) }
+    }
     /// Auto-calc needs litres > 0 and a non-negative cost per litre. Zero cost
     /// is allowed (internal transfers / free fuel).
     private var canCalculateTotal: Bool {
@@ -172,6 +180,13 @@ struct FuelFillFormSheet: View {
                 }
             }
             .onAppear {
+                if !didLoadRegionalInputs {
+                    didLoadRegionalInputs = true
+                    if let log {
+                        litresText = String(fmt.fuelValue(litres: log.litresAdded))
+                        costPerLitreText = log.costPerLitre.map { String(fmt.fuelCostValue(perLitre: $0)) } ?? ""
+                    }
+                }
                 if log == nil, operatorName.isEmpty {
                     operatorName = auth.userName ?? ""
                 }
@@ -207,11 +222,11 @@ struct FuelFillFormSheet: View {
 
     private func confirmationMessage(for pending: PendingMachineDefault) -> String {
         let current = pending.currentRate > 0
-            ? "\(Self.rateText(pending.currentRate)) L/hr"
+            ? fmt.formatFuelRatePerHour(litresPerHour: pending.currentRate, fractionDigits: 2)
             : "not set"
         return """
         \(pending.machine.displayName)'s configured rate is \(current). \
-        This fill interval calculates \(Self.rateText(pending.proposedRate)) L/hr.
+        This fill interval calculates \(fmt.formatFuelRatePerHour(litresPerHour: pending.proposedRate, fractionDigits: 2)).
 
         Fill-to-fill figures can be unreliable if a fill was missed, the tank \
         was not filled to the same level both times, or an engine-hour reading \
@@ -250,10 +265,10 @@ struct FuelFillFormSheet: View {
             HStack {
                 TextField("e.g. 120", text: $litresText)
                     .keyboardType(.decimalPad)
-                Text("L").foregroundStyle(.secondary)
+                Text(fmt.fuelUnitAbbreviation).foregroundStyle(.secondary)
             }
         } header: {
-            Text("Litres Added")
+            Text("Fuel Added (\(fmt.fuelUnitAbbreviation))")
         }
 
         Section {
@@ -284,10 +299,10 @@ struct FuelFillFormSheet: View {
 
         Section {
             HStack {
-                Text("$").foregroundStyle(.secondary)
-                TextField("Cost per litre", text: $costPerLitreText)
+                Text(fmt.currencySymbol).foregroundStyle(.secondary)
+                TextField("Cost per \(fmt.fuelUnitAbbreviation)", text: $costPerLitreText)
                     .keyboardType(.decimalPad)
-                Text("/L").foregroundStyle(.secondary)
+                Text("/\(fmt.fuelUnitAbbreviation)").foregroundStyle(.secondary)
             }
             Button {
                 calculateTotal()
@@ -296,7 +311,7 @@ struct FuelFillFormSheet: View {
             }
             .disabled(!canCalculateTotal)
             HStack {
-                Text("$").foregroundStyle(.secondary)
+                Text(fmt.currencySymbol).foregroundStyle(.secondary)
                 TextField("Total cost", text: $totalCostText)
                     .keyboardType(.decimalPad)
             }
@@ -304,8 +319,8 @@ struct FuelFillFormSheet: View {
             Text("Cost (optional)")
         } footer: {
             Text(canCalculateTotal || !totalCostText.isEmpty
-                 ? "Total = litres × cost per litre. You can still edit the total after calculating."
-                 : "Enter litres and cost per litre to calculate the total.")
+                 ? "Total = fuel volume × cost per fuel unit. You can still edit the total after calculating."
+                 : "Enter fuel volume and cost per fuel unit to calculate the total.")
         }
 
         Section("Notes (optional)") {
@@ -321,7 +336,7 @@ struct FuelFillFormSheet: View {
                 HStack {
                     Text("Fuel rate")
                     Spacer()
-                    Text("\(String(format: "%.2f", lph)) L/hr")
+                    Text(fmt.formatFuelRatePerHour(litresPerHour: lph, fractionDigits: 2))
                         .font(.headline)
                         .foregroundStyle(result.reliability == .reliable ? VineyardTheme.olive : .orange)
                 }
@@ -361,16 +376,16 @@ struct FuelFillFormSheet: View {
             Section {
                 LabeledContent("Current default") {
                     Text(machine.hasFuelUsageRate
-                         ? "\(Self.rateText(machine.fuelUsageLPerHour)) L/hr"
+                         ? fmt.formatFuelRatePerHour(litresPerHour: machine.fuelUsageLPerHour, fractionDigits: 2)
                          : "Not set")
                         .foregroundStyle(.secondary)
                 }
                 LabeledContent("Calculated from this interval") {
-                    Text("\(Self.rateText(lph)) L/hr")
+                    Text(fmt.formatFuelRatePerHour(litresPerHour: lph, fractionDigits: 2))
                         .foregroundStyle(result.reliability == .reliable ? VineyardTheme.olive : .orange)
                 }
                 if didApplyDefault {
-                    Label("Updated \(machine.displayName) default to \(Self.rateText(lph)) L/hr", systemImage: "checkmark.circle.fill")
+                    Label("Updated \(machine.displayName) default to \(fmt.formatFuelRatePerHour(litresPerHour: lph, fractionDigits: 2))", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(VineyardTheme.olive)
                 } else {
                     Button {
@@ -425,7 +440,7 @@ struct FuelFillFormSheet: View {
     }
 
     private func save() {
-        let cpl = Double(costPerLitreText)
+        let cpl = costPerLitre
         let total = Double(totalCostText)
         let machine = selectedMachine
         // Prefer machine_id as the link. Populate legacy tractor_id only when

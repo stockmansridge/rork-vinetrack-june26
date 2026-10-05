@@ -165,7 +165,7 @@ struct IrrigationSessionDetailView: View {
     @ViewBuilder
     private func detailSections(_ session: IrrigationSession) -> some View {
         Section("Session") {
-            LabeledContent("Date", value: IrrigationFormat.displayDate(session.sessionDate))
+            LabeledContent("Date", value: formatter.formatDate(session.sessionDate))
             if let times = IrrigationFormat.timeRange(startedAt: session.startedAt, finishedAt: session.finishedAt) {
                 LabeledContent("Times", value: times)
             }
@@ -178,7 +178,7 @@ struct IrrigationSessionDetailView: View {
                 LabeledContent("Flow", value: IrrigationFormat.flow(flow, formatter: formatter))
             }
             if let start = session.meterStartLitres, let finish = session.meterFinishLitres {
-                LabeledContent("Meter", value: String(format: "%.0f → %.0f L", start, finish))
+                LabeledContent("Meter", value: "\(formatter.formatVolume(litres: start, fractionDigits: 0)) → \(formatter.formatVolume(litres: finish, fractionDigits: 0))")
             }
             LabeledContent("Status") {
                 Text(session.status.capitalized)

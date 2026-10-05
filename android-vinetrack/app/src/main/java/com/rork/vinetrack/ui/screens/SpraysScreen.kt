@@ -1418,13 +1418,13 @@ private fun SprayDetailView(
                 machineName?.let { add(Triple(Icons.Filled.Agriculture, "Machine", it)) }
                 if (hasCorrection) {
                     correctedDisplayReport?.trip?.operatorName?.let { add(Triple(Icons.Filled.Person, "Operator", it)) }
-                    correctedDisplayReport?.equipment?.fuelConsumptionLPerHour?.let { add(Triple(Icons.Filled.LocalGasStation, "Fuel use", "${trimNum(it)} L/hr")) }
+                    correctedDisplayReport?.equipment?.fuelConsumptionLPerHour?.let { add(Triple(Icons.Filled.LocalGasStation, "Fuel use", regionFormatter.formatFuelRatePerHour(it))) }
                     correctedDisplayReport?.equipment?.startEngineHours?.let { add(Triple(Icons.Filled.Schedule, "Start engine hours", trimNum(it))) }
                     correctedDisplayReport?.equipment?.endEngineHours?.let { add(Triple(Icons.Filled.Schedule, "End engine hours", trimNum(it))) }
                 }
                 record.tractorGear?.takeIf { it.isNotBlank() }?.let { add(Triple(Icons.Filled.Agriculture, "Tractor Gear", it)) }
                 record.numberOfFansJets?.takeIf { it.isNotBlank() }?.let { add(Triple(Icons.Filled.Air, "No. Fans/Jets", it)) }
-                record.averageSpeed?.let { add(Triple(Icons.Filled.Schedule, "Avg speed", "${trimNum(it)} km/h")) }
+                record.averageSpeed?.let { add(Triple(Icons.Filled.Schedule, "Avg speed", regionFormatter.formatSpeed(it))) }
             }
             if (equipParts.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1440,8 +1440,8 @@ private fun SprayDetailView(
 
             // Weather
             val weatherParts = buildList {
-                record.temperature?.let { add(Triple(Icons.Filled.Thermostat, "Temperature", "${trimNum(it)}°C")) }
-                record.windSpeed?.let { add(Triple(Icons.Filled.Air, "Wind Speed (10 min avg)", "${trimNum(it)} km/h")) }
+                record.temperature?.let { add(Triple(Icons.Filled.Thermostat, "Temperature", regionFormatter.formatTemperature(it))) }
+                record.windSpeed?.let { add(Triple(Icons.Filled.Air, "Wind Speed (10 min avg)", regionFormatter.formatSpeed(it))) }
                 record.windDirection?.takeIf { it.isNotBlank() }?.let { add(Triple(Icons.Filled.Air, "Wind Direction", it)) }
                 record.humidity?.let { add(Triple(Icons.Filled.Opacity, "Humidity", "${trimNum(it)}%")) }
             }
@@ -1844,11 +1844,12 @@ private fun SpraySheet(
     // Mirror iOS `canViewFinancials`: only owners/managers may see/edit costing.
     val canEditCost = state.currentRole == "owner" || state.currentRole == "manager"
 
+    val region = LocalRegionFormatter.current
     var reference by remember { mutableStateOf(existing?.sprayReference ?: "") }
     var operationType by remember { mutableStateOf(existing?.operationType ?: sprayOperationTypes.first()) }
     var dateMs by remember { mutableStateOf(existing?.dateEpochMs ?: System.currentTimeMillis()) }
-    var temperature by remember { mutableStateOf(existing?.temperature?.let { trimNum(it) } ?: "") }
-    var windSpeed by remember { mutableStateOf(existing?.windSpeed?.let { trimNum(it) } ?: "") }
+    var temperature by remember { mutableStateOf(existing?.temperature?.let { region.temperatureValue(it).toString() } ?: "") }
+    var windSpeed by remember { mutableStateOf(existing?.windSpeed?.let { region.speedValue(it).toString() } ?: "") }
     var windDirection by remember { mutableStateOf(existing?.windDirection ?: "") }
     var humidity by remember { mutableStateOf(existing?.humidity?.let { trimNum(it) } ?: "") }
     var equipmentType by remember { mutableStateOf(existing?.equipmentType ?: "") }
@@ -1858,7 +1859,7 @@ private fun SpraySheet(
     var sprayEquipmentId by remember { mutableStateOf(existing?.sprayEquipmentId) }
     var tractorGear by remember { mutableStateOf(existing?.tractorGear ?: "") }
     var fansJets by remember { mutableStateOf(existing?.numberOfFansJets ?: "") }
-    var avgSpeed by remember { mutableStateOf(existing?.averageSpeed?.let { trimNum(it) } ?: "") }
+    var avgSpeed by remember { mutableStateOf(existing?.averageSpeed?.let { region.speedValue(it).toString() } ?: "") }
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
     var tripId by remember { mutableStateOf(if (fromTemplate) null else existing?.tripId) }
 
@@ -1930,14 +1931,14 @@ private fun SpraySheet(
         return SprayRecordRepository.SprayInput(
             date = iso,
             startTime = if (isEdit) existing?.startTime ?: iso else iso,
-            temperature = temperature.toDoubleSafe(),
-            windSpeed = windSpeed.toDoubleSafe(),
+            temperature = if (existing?.temperature != null && temperature == region.temperatureValue(existing.temperature).toString()) existing.temperature else temperature.toDoubleSafe()?.let(region::celsius),
+            windSpeed = if (existing?.windSpeed != null && windSpeed == region.speedValue(existing.windSpeed).toString()) existing.windSpeed else windSpeed.toDoubleSafe()?.let(region::speedKmh),
             windDirection = windDirection.ifBlank { null },
             humidity = humidity.toDoubleSafe(),
             sprayReference = reference.trim().ifBlank { null },
             notes = notes.trim().ifBlank { null },
             numberOfFansJets = fansJets.trim().ifBlank { null },
-            averageSpeed = avgSpeed.toDoubleSafe(),
+            averageSpeed = if (existing?.averageSpeed != null && avgSpeed == region.speedValue(existing.averageSpeed).toString()) existing.averageSpeed else avgSpeed.toDoubleSafe()?.let(region::speedKmh),
             equipmentType = equipmentType.trim().ifBlank { null },
             tractor = tractorText.trim().ifBlank { null },
             tractorGear = tractorGear.trim().ifBlank { null },
@@ -2134,7 +2135,7 @@ private fun SpraySheet(
                 OutlinedTextField(
                     value = temperature,
                     onValueChange = { temperature = it.numericFilter() },
-                    label = { Text("Temp °C") },
+                    label = { Text("Temp ${region.temperatureUnitAbbreviation}") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
@@ -2152,7 +2153,7 @@ private fun SpraySheet(
                 OutlinedTextField(
                     value = windSpeed,
                     onValueChange = { windSpeed = it.numericFilter() },
-                    label = { Text("Wind km/h") },
+                    label = { Text("Wind ${region.speedUnitAbbreviation}") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
@@ -2286,7 +2287,7 @@ private fun SpraySheet(
             OutlinedTextField(
                 value = avgSpeed,
                 onValueChange = { avgSpeed = it.numericFilter() },
-                label = { Text("Average speed km/h (optional)") },
+                label = { Text("Average speed ${region.speedUnitAbbreviation} (optional)") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth(),

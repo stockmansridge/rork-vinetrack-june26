@@ -685,6 +685,8 @@ struct FuelPurchaseFormSheet: View {
     @Environment(\.accessControl) private var accessControl
 
     let purchase: FuelPurchase?
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+    @State private var didLoadRegionalInputs: Bool = false
 
     /// Which cost field the user last edited manually. Volume changes
     /// recalculate the *other* field from this one, never both at once.
@@ -733,7 +735,11 @@ struct FuelPurchaseFormSheet: View {
         return text
     }
 
-    private var litres: Double? { Self.parseDecimal(volumeText) }
+    private var displayVolume: Double? { Self.parseDecimal(volumeText) }
+    private var litres: Double? {
+        if let purchase, volumeText == String(fmt.fuelValue(litres: purchase.volumeLitres)) { return purchase.volumeLitres }
+        return displayVolume.map { fmt.fuelToCanonical($0) }
+    }
 
     /// Full purchase amount that would be saved: the entered total, or
     /// litres × price per litre when only the unit price was entered.
@@ -742,7 +748,7 @@ struct FuelPurchaseFormSheet: View {
             return total >= 0 ? total : nil
         }
         if let ppl = Self.parseDecimal(pricePerLitreText), ppl >= 0,
-           let vol = litres, vol > 0 {
+           let vol = displayVolume, vol > 0 {
             return (ppl * vol * 100).rounded() / 100
         }
         return nil
@@ -768,38 +774,38 @@ struct FuelPurchaseFormSheet: View {
                     HStack {
                         TextField("e.g. 154", text: $volumeText)
                             .keyboardType(.decimalPad)
-                        Text("L").foregroundStyle(.secondary)
+                        Text(fmt.fuelUnitAbbreviation).foregroundStyle(.secondary)
                     }
                 } header: {
-                    Text("Volume (L)")
+                    Text("Volume (\(fmt.fuelUnitAbbreviation))")
                 }
 
                 Section {
                     HStack {
-                        Text("$").foregroundStyle(.secondary)
+                        Text(fmt.currencySymbol).foregroundStyle(.secondary)
                         TextField("e.g. 1.89", text: $pricePerLitreText)
                             .keyboardType(.decimalPad)
-                        Text("/L").foregroundStyle(.secondary)
+                        Text("/\(fmt.fuelUnitAbbreviation)").foregroundStyle(.secondary)
                     }
                 } header: {
-                    Text("Price per Litre ($/L)")
+                    Text("Price / \(fmt.fuelUnitAbbreviation) (\(fmt.currencyCode))")
                 } footer: {
-                    Text("Enter either the price per litre or the total purchase cost — the other is calculated automatically from the volume.")
+                    Text("Enter either the price per fuel unit or the total purchase cost — the other is calculated automatically from the volume.")
                 }
 
                 Section {
                     HStack {
-                        Text("$").foregroundStyle(.secondary)
+                        Text(fmt.currencySymbol).foregroundStyle(.secondary)
                         TextField("e.g. 291.06", text: $costText)
                             .keyboardType(.decimalPad)
                     }
                 } header: {
-                    Text("Total Purchase Cost ($)")
+                    Text("Total Purchase Cost (\(fmt.currencyCode))")
                 } footer: {
                     if let note = suspiciousHistoricalNote {
                         Text(note).foregroundStyle(.orange)
                     } else {
-                        Text("The total purchase cost is the full invoice amount, not the price of one litre.")
+                        Text("The total purchase cost is the full invoice amount, not the price of one fuel unit.")
                     }
                 }
 
@@ -832,6 +838,16 @@ struct FuelPurchaseFormSheet: View {
             }
             .navigationTitle(purchase == nil ? "New Fuel Purchase" : "Edit Fuel Purchase")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                guard !didLoadRegionalInputs else { return }
+                didLoadRegionalInputs = true
+                if let purchase {
+                    volumeText = String(fmt.fuelValue(litres: purchase.volumeLitres))
+                    let price = purchase.volumeLitres > 0 ? String(fmt.fuelCostValue(perLitre: purchase.totalCost / purchase.volumeLitres)) : ""
+                    lastProgrammaticPrice = price
+                    pricePerLitreText = price
+                }
+            }
             .onChange(of: volumeText) { _, _ in
                 recalculateDependentField(from: lastEditedCostField)
             }
@@ -864,7 +880,7 @@ struct FuelPurchaseFormSheet: View {
     /// volume and the source value are both valid — so the field being typed
     /// in is never reformatted mid-entry and no recalculation loop can form.
     private func recalculateDependentField(from sourceField: CostField) {
-        guard let vol = litres, vol > 0 else { return }
+        guard let vol = displayVolume, vol > 0 else { return }
         switch sourceField {
         case .pricePerLitre:
             guard let ppl = Self.parseDecimal(pricePerLitreText), ppl >= 0 else { return }

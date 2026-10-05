@@ -161,9 +161,9 @@ struct SprayCalculationSummarySheet: View {
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                 overviewCell(label: "Total Area", value: fmt.formatArea(hectares: result.totalAreaHectares), icon: "square.dashed", color: VineyardTheme.olive)
-                overviewCell(label: "Total Water", value: "\(String(format: "%.0f", result.totalWaterLitres)) L", icon: "drop.fill", color: .blue)
+                overviewCell(label: "Total Water", value: fmt.formatVolume(litres: result.totalWaterLitres, fractionDigits: 0), icon: "drop.fill", color: .blue)
                 overviewCell(label: "Full Tanks", value: "\(result.fullTankCount)", icon: "fuelpump.fill", color: VineyardTheme.earthBrown)
-                overviewCell(label: "Last Tank", value: "\(String(format: "%.0f", result.lastTankLitres)) L", icon: "drop.halffull", color: .orange)
+                overviewCell(label: "Last Tank", value: fmt.formatVolume(litres: result.lastTankLitres, fractionDigits: 0), icon: "drop.halffull", color: .orange)
             }
         }
         .padding()

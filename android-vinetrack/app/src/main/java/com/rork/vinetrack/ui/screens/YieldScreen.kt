@@ -741,6 +741,7 @@ private fun YieldDeterminationView(
     val vine = LocalVineColors.current
     val context = LocalContext.current
     // Legacy pre-sql/181 store: one-time migration source + "Latest t/ha" hub detail.
+    val region = state.regionFormatter
     val legacyStore = remember { YieldDeterminationPrefsStore(context) }
     val paddocks = state.paddocks
     val vineyardId = state.selectedVineyardId
@@ -764,6 +765,12 @@ private fun YieldDeterminationView(
     var loadedRef by remember { mutableStateOf<PruningYieldSettings?>(null) }
     var dirtyTick by remember { mutableStateOf(0) }
 
+    fun canonicalDensity(): Double? {
+        val original = loadedRef?.vinesPerHa
+        if (original != null && vinesPerHa == region.perAreaValue(original).toString()) return original
+        return PruningYieldInputFormat.parseOptional(vinesPerHa)?.let(region::perAreaToCanonical)
+    }
+
     /** Current field values as a shared-contract record for the block. */
     fun buildSettings(paddockId: String?): PruningYieldSettings? {
         val pid = paddockId ?: return null
@@ -779,7 +786,7 @@ private fun YieldDeterminationView(
             spursPerVine = PruningYieldInputFormat.parse(spursPerVine),
             budsPerCane = PruningYieldInputFormat.parse(budsPerCane),
             canesPerVine = PruningYieldInputFormat.parse(canesPerVine),
-            vinesPerHa = PruningYieldInputFormat.parseOptional(vinesPerHa),
+            vinesPerHa = canonicalDensity(),
             bunchWeightGrams = PruningYieldInputFormat.parse(bunchWeight),
         )
     }
@@ -800,7 +807,7 @@ private fun YieldDeterminationView(
         spursPerVine = PruningYieldInputFormat.text(s.spursPerVine)
         budsPerCane = PruningYieldInputFormat.text(s.budsPerCane)
         canesPerVine = PruningYieldInputFormat.text(s.canesPerVine)
-        vinesPerHa = PruningYieldInputFormat.text(s.vinesPerHa)
+        vinesPerHa = s.vinesPerHa?.let { region.perAreaValue(it).toString() }.orEmpty()
         bunchWeight = PruningYieldInputFormat.text(s.bunchWeightGrams)
     }
 
@@ -815,7 +822,7 @@ private fun YieldDeterminationView(
         bunchWeight = PruningYieldInputFormat.text(PruningYieldDefaults.BUNCH_WEIGHT_GRAMS)
         val b = paddocks.firstOrNull { it.id == pid }
         vinesPerHa = if (b != null && b.areaHectares > 0 && b.authoritativeVineCount > 0) {
-            (b.authoritativeVineCount / b.areaHectares).toInt().toString()
+            region.perAreaValue(b.authoritativeVineCount / b.areaHectares).toString()
         } else ""
     }
 
@@ -887,7 +894,7 @@ private fun YieldDeterminationView(
         budsPerCane = d(budsPerCane),
         canesPerVine = d(canesPerVine),
     )
-    val effectiveVinesPerHa = block?.pruningYieldVinesPerHa(d(vinesPerHa)) ?: d(vinesPerHa)
+    val effectiveVinesPerHa = block?.pruningYieldVinesPerHa(canonicalDensity() ?: 0.0) ?: canonicalDensity() ?: 0.0
     val bunchesPerHa = PruningYieldFormula.bunchesPerHectare(d(bunchesPerBud), budsPerVine, effectiveVinesPerHa)
     val yieldKgPerHa = PruningYieldFormula.yieldKgPerHectare(bunchesPerHa, d(bunchWeight))
     val yieldTonnesPerHa = PruningYieldFormula.yieldTonnesPerHectare(yieldKgPerHa)
@@ -993,13 +1000,13 @@ private fun YieldDeterminationView(
                             CalcInput("Canes / Vine", canesPerVine) { canesPerVine = it; persist() }
                         }
                         if (block?.hasAuthoritativeVineOverride == true) {
-                            CalcLine("Vines / Ha", PruningYieldInputFormat.text(effectiveVinesPerHa))
+                            CalcLine("Vines / ${region.areaUnitAbbreviation}", PruningYieldInputFormat.text(region.perAreaValue(effectiveVinesPerHa)))
                             Text(
-                                "Derived from the block's manual vine count. Your saved Vines / Ha is retained and becomes active again when manual vine counts are removed.",
+                                "Derived from the block's manual vine count. Your saved vine density is retained and becomes active again when manual vine counts are removed.",
                                 color = vine.textSecondary, fontSize = 12.sp,
                             )
                         } else {
-                            CalcInput("Vines / Ha", vinesPerHa) { vinesPerHa = it; persist() }
+                            CalcInput("Vines / ${region.areaUnitAbbreviation}", vinesPerHa) { vinesPerHa = it; persist() }
                         }
                         CalcInput("Bunch Weight (g)", bunchWeight) { bunchWeight = it; persist() }
                     }
@@ -1010,12 +1017,12 @@ private fun YieldDeterminationView(
                 VineyardCard {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         CalcLine("Buds / Vine", String.format(Locale.US, "%.0f", budsPerVine))
-                        CalcLine("Bunches / Ha", String.format(Locale.US, "%.0f", bunchesPerHa))
-                        CalcLine("Yield / Ha (kg)", String.format(Locale.US, "%.1f", yieldKgPerHa))
+                        CalcLine("Bunches / ${region.areaUnitAbbreviation}", String.format(Locale.US, "%.0f", region.perAreaValue(bunchesPerHa)))
+                        CalcLine("Yield / ${region.areaUnitAbbreviation} (kg)", String.format(Locale.US, "%.1f", region.perAreaValue(yieldKgPerHa)))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Yield / Ha (t)", color = vine.textPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                            Text("Yield / ${region.areaUnitAbbreviation} (t)", color = vine.textPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
                             Text(
-                                "${formatTonnes(yieldTonnesPerHa)} t",
+                                "${formatTonnes(region.perAreaValue(yieldTonnesPerHa))} t",
                                 color = VineColors.LeafGreen, fontSize = 17.sp, fontWeight = FontWeight.Bold,
                             )
                         }
@@ -1033,8 +1040,8 @@ private fun YieldDeterminationView(
 
                 Text(
                     if (pruneMethod == "Spur")
-                        "Yield / Ha = Bunches/Bud \u00d7 Buds/Spur \u00d7 Spurs/Vine \u00d7 Vines/Ha \u00d7 Bunch Weight"
-                    else "Yield / Ha = Bunches/Bud \u00d7 Buds/Cane \u00d7 Canes/Vine \u00d7 Vines/Ha \u00d7 Bunch Weight",
+                        "Yield / ${region.areaUnitAbbreviation} = Bunches/Bud \u00d7 Buds/Spur \u00d7 Spurs/Vine \u00d7 Vines/${region.areaUnitAbbreviation} \u00d7 Bunch Weight"
+                    else "Yield / ${region.areaUnitAbbreviation} = Bunches/Bud \u00d7 Buds/Cane \u00d7 Canes/Vine \u00d7 Vines/${region.areaUnitAbbreviation} \u00d7 Bunch Weight",
                     color = vine.textSecondary, fontSize = 12.sp,
                 )
 

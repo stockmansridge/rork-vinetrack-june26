@@ -33,7 +33,7 @@ struct ChemicalInventoryActionsView: View {
     @State private var invoice: String = ""
     @State private var expiry: String = ""
     @State private var cost: String = ""
-    @State private var currency: String = "AUD"
+    @State private var currency: String = ""
     @State private var batch: String = ""
     @State private var batchDate: Date? = nil
     @State private var serialNumber: String = ""
@@ -145,6 +145,7 @@ struct ChemicalInventoryActionsView: View {
         .onChange(of: containerSize) { _, _ in updateOpeningQuantity() }
         .onChange(of: action) { _, value in if value == "Purchase history" { Task { await loadHistory() } } }
         .task {
+            if currency.isEmpty { currency = store.settings.regionFormatter.currencyCode }
             action = recordPurchase && canRecordInventoryPurchase ? "Record purchase" : (canManageInventory ? stockAction : "Purchase history")
             if action == "Purchase history" { await loadHistory() }
             warnings = summary?.fields["warnings_enabled"] == nil ? true : summary?.bool("warnings_enabled") == true
