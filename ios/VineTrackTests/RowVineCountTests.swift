@@ -75,6 +75,67 @@ struct RowVineCountTests {
         try #require(paddock.rows.first { $0.number == number })
     }
 
+    // MARK: - Overview-only vine totals
+
+    @Test func summaryWithoutOverridesUsesExistingBlockCalculation() {
+        var paddock = fixtureBlock()
+        for index in paddock.rows.indices { paddock.rows[index].vineCountOverride = nil }
+        paddock.rowLengthOverride = 900
+        #expect(paddock.summaryVineCount == 600)
+        #expect(paddock.summaryVineCount == paddock.effectiveVineCount)
+        #expect(paddock.rowsEffectiveVineCount == 495)
+        #expect(paddock.vineCountOverride == nil)
+    }
+
+    @Test func summaryBlockOverrideWins() {
+        var paddock = fixtureBlock()
+        for index in paddock.rows.indices { paddock.rows[index].vineCountOverride = nil }
+        paddock.vineCountOverride = 500
+        #expect(paddock.summaryVineCount == 500)
+        #expect(paddock.effectiveVineCount == 500)
+        paddock.vineCountOverride = 0
+        #expect(paddock.summaryVineCount == 0)
+    }
+
+    @Test func summaryOneRowOverrideIncludesCalculatedUntouchedRows() {
+        let paddock = fixtureBlock()
+        #expect(paddock.summaryVineCount == 158 + 168 + 167)
+        #expect(paddock.effectiveVineCount == 494)
+        #expect(paddock.vineCountOverride == nil)
+        #expect(paddock.rows[1].vineCountOverride == nil)
+        #expect(paddock.rows[2].vineCountOverride == nil)
+    }
+
+    @Test func summaryMultipleRowOverridesAreAllReflected() {
+        var paddock = fixtureBlock()
+        paddock.rows[1].vineCountOverride = 150
+        #expect(paddock.summaryVineCount == 158 + 150 + 167)
+        #expect(paddock.effectiveVineCount == 494)
+        #expect(paddock.vineCountOverride == nil)
+    }
+
+    @Test func summaryBlockOverrideWinsOverRowOverrides() {
+        var paddock = fixtureBlock()
+        paddock.rows[1].vineCountOverride = 150
+        paddock.vineCountOverride = 500
+        #expect(paddock.summaryVineCount == 500)
+        #expect(paddock.rowsEffectiveVineCount == 475)
+        #expect(paddock.effectiveVineCount == 500)
+        #expect(paddock.rows[0].vineCountOverride == 158)
+        #expect(paddock.rows[1].vineCountOverride == 150)
+    }
+
+    @Test func summaryClearingRowOverridesRestoresExistingBlockCalculation() {
+        var paddock = fixtureBlock()
+        paddock.rows[1].vineCountOverride = 150
+        #expect(paddock.summaryVineCount == 475)
+        for index in paddock.rows.indices { paddock.rows[index].vineCountOverride = nil }
+        #expect(paddock.summaryVineCount == 494)
+        #expect(paddock.summaryVineCount == paddock.effectiveVineCount)
+        #expect(paddock.rowsEffectiveVineCount == 495)
+        #expect(paddock.vineCountOverride == nil)
+    }
+
     // MARK: - 1. The calculation happens automatically
 
     @Test func aRowsVinesAreCalculatedFromItsOwnGeometryAndTheBlocksVineSpacing() throws {

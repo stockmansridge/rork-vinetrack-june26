@@ -956,7 +956,7 @@ private fun QuickActionCard(
 @Composable
 private fun OverviewSection(state: AppUiState, onOpenMap: () -> Unit) {
     val totalHectares = state.totalHectares
-    val totalVines = state.paddocks.sumOf { it.effectiveVineCount }
+    val totalVines = state.paddocks.sumOf { it.summaryVineCount }
     // Area is stored canonically in hectares and must be presented in the
     // selected vineyard's unit — this tile previously printed the raw canonical
     // number under a hardcoded "Hectares" caption, so an acres vineyard saw

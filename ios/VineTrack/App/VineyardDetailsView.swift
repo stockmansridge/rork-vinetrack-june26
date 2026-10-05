@@ -21,7 +21,7 @@ struct VineyardDetailsView: View {
     }
 
     private var totalVines: Int {
-        paddocks.reduce(0) { $0 + $1.effectiveVineCount }
+        paddocks.reduce(0) { $0 + $1.summaryVineCount }
     }
 
     private var totalTrellisLength: Double {
@@ -610,7 +610,7 @@ private struct BlockInfoCard: View {
                 GridItem(.flexible()),
                 GridItem(.flexible())
             ], spacing: 8) {
-                blockStat(label: "Vines", value: "\(paddock.effectiveVineCount)")
+                blockStat(label: "Vines", value: "\(paddock.summaryVineCount)")
                 blockStat(label: "Trellis", value: formatBlockDistance(paddock.effectiveTotalRowLength))
                 blockStat(label: "Rows", value: "\(paddock.rows.count)")
             }
@@ -774,7 +774,7 @@ private struct BlockDetailSheet: View {
             List {
                 Section("Overview") {
                     LabeledContent("Area", value: fmt.formatArea(hectares: paddock.areaHectares))
-                    LabeledContent("Vines", value: "\(paddock.effectiveVineCount)")
+                    LabeledContent("Vines", value: "\(paddock.summaryVineCount)")
                     LabeledContent("Trellis Length", value: String(format: "%.0f m", paddock.effectiveTotalRowLength))
                     LabeledContent("Rows", value: "\(paddock.rows.count)")
                     LabeledContent("Row Spacing", value: String(format: "%.1f m", paddock.rowWidth))

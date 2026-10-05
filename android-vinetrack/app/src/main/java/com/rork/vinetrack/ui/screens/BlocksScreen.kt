@@ -689,7 +689,7 @@ private fun sortPaddocks(
         compareByDescending<Paddock> { it.rowCount }.thenBy { it.name.lowercase() },
     )
     BlockSortOption.VineCount -> paddocks.sortedWith(
-        compareByDescending<Paddock> { it.effectiveVineCount }.thenBy { it.name.lowercase() },
+        compareByDescending<Paddock> { it.summaryVineCount }.thenBy { it.name.lowercase() },
     )
 }
 
@@ -784,7 +784,7 @@ private fun BlockSetupRow(
                 buildList {
                     add(rowRange(block))
                     add("${block.rowCount} rows")
-                    if (block.effectiveVineCount > 0) add("${"%,d".format(block.effectiveVineCount)} vines")
+                    if (block.summaryVineCount > 0) add("${"%,d".format(block.summaryVineCount)} vines")
                 }.joinToString("  \u2022  "),
                 fontSize = 13.sp,
                 color = VineColors.PrimaryAccent.copy(alpha = 0.75f),

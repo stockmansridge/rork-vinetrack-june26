@@ -1100,7 +1100,7 @@ private struct NewHomeTabView: View {
     private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var totalVines: Int {
-        store.paddocks.reduce(0) { $0 + $1.effectiveVineCount }
+        store.paddocks.reduce(0) { $0 + $1.summaryVineCount }
     }
 
     private var vineyardOverviewSection: some View {

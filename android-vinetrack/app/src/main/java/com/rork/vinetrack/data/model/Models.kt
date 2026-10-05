@@ -336,6 +336,17 @@ data class Paddock(
     /** Vine count: explicit override if set, otherwise derived from rows × spacing. */
     val effectiveVineCount: Int get() = vineCountOverride ?: estimatedVineCount
 
+    /**
+     * Display-only vineyard/block total. Keeps stored block and row overrides
+     * independent and leaves [effectiveVineCount] calculation consumers unchanged.
+     */
+    val summaryVineCount: Int
+        get() {
+            vineCountOverride?.takeIf { it >= 0 }?.let { return it }
+            if (hasRowVineCountOverrides) return rowsEffectiveVineCount
+            return estimatedVineCount
+        }
+
     // ---- Per-row vine counts (sql/188) ----
 
     /**

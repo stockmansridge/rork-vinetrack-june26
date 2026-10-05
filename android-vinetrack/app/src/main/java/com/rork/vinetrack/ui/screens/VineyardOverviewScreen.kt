@@ -134,7 +134,7 @@ fun VineyardOverviewScreen(
     }
 
     val totalAreaHa = remember(paddocks) { paddocks.sumOf { it.areaHectares } }
-    val totalVines = remember(paddocks) { paddocks.sumOf { it.effectiveVineCount } }
+    val totalVines = remember(paddocks) { paddocks.sumOf { it.summaryVineCount } }
     val totalTrellis = remember(paddocks) { paddocks.sumOf { it.effectiveTotalRowLength } }
     val totalRows = remember(paddocks) { paddocks.sumOf { it.rowCount } }
 
@@ -432,7 +432,7 @@ private fun BlockInfoCard(
         Box(Modifier.fillMaxWidth().height(0.5.dp).background(vine.cardBorder))
         Spacer(Modifier.height(10.dp))
         Row(modifier = Modifier.fillMaxWidth()) {
-            BlockStat("Vines", "${block.effectiveVineCount}", Modifier.weight(1f))
+            BlockStat("Vines", "${block.summaryVineCount}", Modifier.weight(1f))
             BlockStat("Trellis", formatBlockDistance(block.effectiveTotalRowLength), Modifier.weight(1f))
             BlockStat("Rows", "${block.rowCount}", Modifier.weight(1f))
         }
@@ -580,7 +580,7 @@ private fun BlockDetailSheetContent(block: Paddock, fmt: RegionFormatter, state:
 
         DetailSection("Overview") {
             DetailRow("Area", fmt.formatArea(block.areaHectares))
-            DetailRow("Vines", "${block.effectiveVineCount}")
+            DetailRow("Vines", "${block.summaryVineCount}")
             DetailRow("Trellis Length", "${"%,.0f".format(block.effectiveTotalRowLength)} m")
             DetailRow("Rows", "${block.rowCount}")
             block.rowWidth?.let { DetailRow("Row Spacing", "${"%.1f".format(it)} m") }

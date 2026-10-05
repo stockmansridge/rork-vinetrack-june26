@@ -217,7 +217,7 @@ private fun KeyStatsGrid(block: Paddock) {
     // configured unit — never a hardcoded "ha".
     val fmt = LocalRegionFormatter.current
     val ha = if (block.areaHectares > 0) fmt.formatArea(block.areaHectares) else "—"
-    val vines = if (block.effectiveVineCount > 0) "%,d".format(block.effectiveVineCount) else "—"
+    val vines = if (block.summaryVineCount > 0) "%,d".format(block.summaryVineCount) else "—"
     val cards = listOf(
         StatCard("Area", ha, Icons.Filled.Map, VineColors.LeafGreen),
         StatCard("Rows", if (block.rowCount > 0) block.rowCount.toString() else "—", Icons.Filled.Straighten, VineColors.Indigo),

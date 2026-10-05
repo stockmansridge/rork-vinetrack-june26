@@ -265,6 +265,14 @@ extension Paddock {
         vineCountOverride ?? estimatedVineCount
     }
 
+    /// Display-only vineyard/block total. Keeps stored block and row overrides
+    /// independent and leaves `effectiveVineCount` calculation consumers unchanged.
+    var summaryVineCount: Int {
+        if let override = vineCountOverride, override >= 0 { return override }
+        if hasRowVineCountOverrides { return rowsEffectiveVineCount }
+        return estimatedVineCount
+    }
+
     // MARK: - Per-row vine counts (sql/188)
 
     /// Length of ONE row in metres, using the same equirectangular

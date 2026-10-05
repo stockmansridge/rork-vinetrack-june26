@@ -93,8 +93,8 @@ struct VineyardSetupHubView: View {
             }
         case .vineCount:
             return base.sorted { lhs, rhs in
-                if lhs.effectiveVineCount != rhs.effectiveVineCount {
-                    return lhs.effectiveVineCount > rhs.effectiveVineCount
+                if lhs.summaryVineCount != rhs.summaryVineCount {
+                    return lhs.summaryVineCount > rhs.summaryVineCount
                 }
                 return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
             }
@@ -957,7 +957,7 @@ private struct BlockSummaryRow: View {
     }
 
     private var vinesText: String {
-        let count = paddock.effectiveVineCount
+        let count = paddock.summaryVineCount
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         return formatter.string(from: NSNumber(value: count)) ?? "\(count)"

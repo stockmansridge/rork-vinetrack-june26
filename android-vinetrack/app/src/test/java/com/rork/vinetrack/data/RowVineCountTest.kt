@@ -101,6 +101,68 @@ class RowVineCountTest {
     private fun Paddock.rowNumbered(number: Int): PaddockRow =
         rows.orEmpty().first { it.number == number }
 
+    // ---- Overview-only vine totals ----
+
+    @Test fun summaryWithoutOverridesUsesExistingBlockCalculation() {
+        val paddock = fixtureBlock().let { block ->
+            block.copy(rows = block.rows.orEmpty().map { it.copy(vineCountOverride = null) }, rowLengthOverride = 900.0)
+        }
+        assertEquals(600, paddock.summaryVineCount)
+        assertEquals(paddock.effectiveVineCount, paddock.summaryVineCount)
+        assertEquals(495, paddock.rowsEffectiveVineCount)
+        assertNull(paddock.vineCountOverride)
+    }
+
+    @Test fun summaryBlockOverrideWins() {
+        val paddock = fixtureBlock().let { block ->
+            block.copy(rows = block.rows.orEmpty().map { it.copy(vineCountOverride = null) }, vineCountOverride = 500)
+        }
+        assertEquals(500, paddock.summaryVineCount)
+        assertEquals(500, paddock.effectiveVineCount)
+        assertEquals(0, paddock.copy(vineCountOverride = 0).summaryVineCount)
+    }
+
+    @Test fun summaryOneRowOverrideIncludesCalculatedUntouchedRows() {
+        val paddock = fixtureBlock()
+        assertEquals(158 + 168 + 167, paddock.summaryVineCount)
+        assertEquals(494, paddock.effectiveVineCount)
+        assertNull(paddock.vineCountOverride)
+        assertNull(paddock.rowNumbered(43).vineCountOverride)
+        assertNull(paddock.rowNumbered(44).vineCountOverride)
+    }
+
+    @Test fun summaryMultipleRowOverridesAreAllReflected() {
+        val paddock = fixtureBlock().let { block ->
+            block.copy(rows = block.rows.orEmpty().map { if (it.number == 43) it.copy(vineCountOverride = 150) else it })
+        }
+        assertEquals(158 + 150 + 167, paddock.summaryVineCount)
+        assertEquals(494, paddock.effectiveVineCount)
+        assertNull(paddock.vineCountOverride)
+    }
+
+    @Test fun summaryBlockOverrideWinsOverRowOverrides() {
+        val paddock = fixtureBlock().let { block ->
+            block.copy(rows = block.rows.orEmpty().map { if (it.number == 43) it.copy(vineCountOverride = 150) else it }, vineCountOverride = 500)
+        }
+        assertEquals(500, paddock.summaryVineCount)
+        assertEquals(475, paddock.rowsEffectiveVineCount)
+        assertEquals(500, paddock.effectiveVineCount)
+        assertEquals(158, paddock.rowNumbered(42).vineCountOverride)
+        assertEquals(150, paddock.rowNumbered(43).vineCountOverride)
+    }
+
+    @Test fun summaryClearingRowOverridesRestoresExistingBlockCalculation() {
+        val paddock = fixtureBlock().let { block ->
+            block.copy(rows = block.rows.orEmpty().map { if (it.number == 43) it.copy(vineCountOverride = 150) else it })
+        }
+        assertEquals(475, paddock.summaryVineCount)
+        val cleared = paddock.copy(rows = paddock.rows.orEmpty().map { it.copy(vineCountOverride = null) })
+        assertEquals(494, cleared.summaryVineCount)
+        assertEquals(cleared.effectiveVineCount, cleared.summaryVineCount)
+        assertEquals(495, cleared.rowsEffectiveVineCount)
+        assertNull(cleared.vineCountOverride)
+    }
+
     // ---- 1. The calculation happens automatically ----
 
     @Test
