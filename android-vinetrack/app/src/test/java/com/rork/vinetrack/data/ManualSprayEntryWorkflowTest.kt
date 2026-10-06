@@ -20,6 +20,26 @@ import org.junit.Test
 import java.util.UUID
 
 class ManualSprayEntryWorkflowTest {
+    @Test fun localWaterAndWeatherReturnToCanonicalBeforeQueueAndRpc() {
+        val base = fixture().copy(manualWeather = com.rork.vinetrack.data.model.ManualSprayWeather("2026-09-08T23:45:00Z", "Operator observation", temperatureC = 20.0, windSpeedKmh = 16.09344, windGustKmh = 32.18688, rainMm = 25.4))
+        for (country in listOf("US", "GB")) {
+            val fmt = RegionFormatter(RegionSettings(countryCode = country, volumeUnit = "gallons", distanceUnit = "imperial"))
+            val draft = ManualSprayFormDraft(base,
+                waterInputs = base.tanks.associate { it.id to fmt.volumeValue(it.waterVolumeLitres).toString() },
+                temperatureInput = fmt.temperatureValue(20.0).toString(), windInput = fmt.speedValue(16.09344).toString(),
+                gustInput = fmt.speedValue(32.18688).toString(), rainInput = fmt.rainfallValue(25.4).toString(),
+                inputCountry = country, inputVolumeUnit = "gallons", inputDistanceUnit = "imperial")
+            val restored = Json.decodeFromString(ManualSprayFormDraft.serializer(), Json.encodeToString(ManualSprayFormDraft.serializer(), draft))
+            assertEquals(base, restored.validatedPayload())
+            val changed = restored.copy(waterInputs = base.tanks.associate { it.id to "10" }, temperatureInput = "86", rainInput = "2")
+            val payload = changed.validatedPayload()
+            assertEquals(fmt.volumeToCanonical(10.0), payload.tanks.first().waterVolumeLitres, 1e-9)
+            assertEquals(30.0, payload.manualWeather?.temperatureC ?: 0.0, 1e-9)
+            assertEquals(50.8, payload.manualWeather?.rainMm ?: 0.0, 1e-9)
+            assertEquals(base.tanks.first().chemicals, payload.tanks.first().chemicals)
+        }
+    }
+
     @Test fun supervisorAllowedOperatorRejected() {
         assertTrue(canManageManualSprays("supervisor"))
         assertFalse(canManageManualSprays("operator"))

@@ -897,7 +897,7 @@ struct TripDetailView: View {
                 statRow("Mix", value: mix, icon: "text.alignleft")
             }
             if let rate = box.ratePerHa {
-                statRow("Rate/ha", value: "\(formatNumber(rate)) kg/ha", icon: "speedometer")
+                statRow("Rate/\(fmt.areaUnitAbbreviation)", value: fmt.formatYieldPerArea(perHectare: rate, unitLabel: "kg"), icon: "speedometer")
             }
             if let s = box.shutterSlide, !s.isEmpty {
                 statRow("Shutter", value: s, icon: "slider.horizontal.3")
@@ -932,7 +932,7 @@ struct TripDetailView: View {
                 statRow("Seed box", value: box, icon: "shippingbox")
             }
             if let kg = line.kgPerHa {
-                statRow("Kg/ha", value: "\(formatNumber(kg)) kg/ha", icon: "scalemass")
+                statRow("kg/\(fmt.areaUnitAbbreviation)", value: fmt.formatYieldPerArea(perHectare: kg, unitLabel: "kg"), icon: "scalemass")
             }
             if let supplier = line.supplierManufacturer, !supplier.isEmpty {
                 statRow("Supplier", value: supplier, icon: "building.2")
@@ -967,10 +967,7 @@ struct TripDetailView: View {
     }
 
     private func formatDistance(_ meters: Double) -> String {
-        if meters < 1000 {
-            return "\(Int(meters))m"
-        }
-        return String(format: "%.1fkm", meters / 1000)
+        fmt.formatShortDistance(metres: meters)
     }
 
     private func resolvedTripFunctionLabel() -> String? {

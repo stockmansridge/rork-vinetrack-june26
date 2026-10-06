@@ -9,6 +9,7 @@ import SwiftUI
 /// An incomplete estimate shows "—", never `0 t`, and names the blocks that
 /// still need configuring.
 struct SeasonYieldOverviewView: View {
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
     @Environment(MigratedDataStore.self) private var store
     @Environment(SeasonYieldEstimateService.self) private var seasonYield
 
@@ -299,7 +300,7 @@ struct SeasonYieldOverviewView: View {
             }
 
             HStack(spacing: 10) {
-                Text(SeasonYieldFormat.hectares(block.areaHectares))
+                Text(fmt.formatArea(hectares: block.areaHectares))
                 Text("·")
                 Text(SeasonYieldFormat.sourceLabel(block.estimateSource))
                 if damageApplied, block.damage.damageLossFraction > 0 {
@@ -369,6 +370,8 @@ struct SeasonYieldOverviewView: View {
 /// was calculated, the exact pruning inputs the server used, the damage
 /// adjustment and every warning.
 struct SeasonYieldBlockInfoView: View {
+    @Environment(MigratedDataStore.self) private var store
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
     let block: SeasonYieldProjection.BlockRow
     let damageApplied: Bool
 
@@ -379,7 +382,7 @@ struct SeasonYieldBlockInfoView: View {
             Section("Estimate") {
                 infoRow("Source", SeasonYieldFormat.sourceLabel(block.estimateSource))
                 infoRow("Calculated", SeasonYieldFormat.calculatedAt(block.calculatedAt))
-                infoRow("Block area", SeasonYieldFormat.hectares(block.areaHectares))
+                infoRow("Block area", fmt.formatArea(hectares: block.areaHectares))
                 infoRow("Base estimate", SeasonYieldFormat.tonnes(block.baseTonnes))
                 if block.baseTonnes == nil {
                     infoRow("Known so far", SeasonYieldFormat.tonnes(block.knownBaseTonnes))
@@ -398,8 +401,8 @@ struct SeasonYieldBlockInfoView: View {
                 if block.damage.excludedRecordCount > 0 {
                     infoRow("Excluded (no valid area)", "\(block.damage.excludedRecordCount)")
                 }
-                infoRow("Damaged area", SeasonYieldFormat.hectares(block.damage.mappedAreaHectares))
-                infoRow("Effective loss area", SeasonYieldFormat.hectares(block.damage.effectiveLossHectares))
+                infoRow("Damaged area", fmt.formatArea(hectares: block.damage.mappedAreaHectares))
+                infoRow("Effective loss area", fmt.formatArea(hectares: block.damage.effectiveLossHectares))
                 infoRow("Loss fraction", SeasonYieldFormat.percent(fraction: block.damage.damageLossFraction))
                 infoRow("Remaining yield", SeasonYieldFormat.percent(fraction: block.damage.remainingYieldMultiplier))
                 if damageApplied {
@@ -423,7 +426,7 @@ struct SeasonYieldBlockInfoView: View {
                     infoRow("Buds per vine", SeasonYieldFormat.number(inputs.budsPerVine, fractionDigits: 2))
                     infoRow("Bunches per bud", SeasonYieldFormat.number(inputs.bunchesPerBud, fractionDigits: 2))
                     infoRow("Bunch weight", inputs.bunchWeightGrams.map { String(format: "%.0f g", $0) } ?? "—")
-                    infoRow("Vines per ha", SeasonYieldFormat.number(inputs.vinesPerHa))
+                    infoRow("Vines per \(fmt.areaUnitAbbreviation)", inputs.vinesPerHa.map { SeasonYieldFormat.number(fmt.perAreaValue(perHectare: $0)) } ?? "—")
                     infoRow("Vine count", SeasonYieldFormat.number(inputs.vineCount))
                     infoRow("Vine count basis", SeasonYieldFormat.vineCountBasisLabel(inputs.vineCountBasis))
                     if let formula = inputs.formula {

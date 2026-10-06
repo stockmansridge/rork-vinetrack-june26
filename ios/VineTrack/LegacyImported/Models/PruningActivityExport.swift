@@ -510,7 +510,8 @@ nonisolated enum PruningActivityExport {
         includeCost: Bool,
         canonicalRows: [PruningActivityRow]? = nil,
         canonicalParents: [UUID: PruningActivityParentSource] = [:],
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        formatter: RegionFormatter? = nil
     ) -> String {
         let exported = rows(
             reportRows,
@@ -519,9 +520,14 @@ nonisolated enum PruningActivityExport {
             canonicalParents: canonicalParents,
             calendar: calendar
         )
-        var lines: [String] = [headers(includeCost: includeCost).map(escape).joined(separator: ",")]
+        let titles = headers(includeCost: includeCost).map { title in
+            formatter.map { title.lowercased().contains("cost") ? "\(title) (\($0.currencyCode))" : title } ?? title
+        }
+        var lines: [String] = [titles.map(escape).joined(separator: ",")]
         for row in exported {
-            lines.append(cells(row, includeCost: includeCost).map(escape).joined(separator: ","))
+            var values = cells(row, includeCost: includeCost)
+            if let formatter { values[1] = formatter.formatDate(row.dateIso) }
+            lines.append(values.map(escape).joined(separator: ","))
         }
         return lines.joined(separator: "\r\n") + "\r\n"
     }

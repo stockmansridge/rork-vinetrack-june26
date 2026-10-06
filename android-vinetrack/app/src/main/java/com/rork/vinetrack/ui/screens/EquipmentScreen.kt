@@ -1,5 +1,7 @@
 package com.rork.vinetrack.ui.screens
 
+import com.rork.vinetrack.ui.LocalRegionFormatter
+
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -405,6 +407,7 @@ private fun MachineFormSheet(
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
+    val fmt = LocalRegionFormatter.current
     val aiSuggestionsEnabled = remember { AppPreferencesStore(context).load().aiSuggestionsEnabled }
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     var name by remember { mutableStateOf(existing?.name ?: "") }
@@ -412,7 +415,7 @@ private fun MachineFormSheet(
     var typeMenu by remember { mutableStateOf(false) }
     var fuelTracking by remember { mutableStateOf(existing?.fuelTrackingEnabled ?: true) }
     var jobCosting by remember { mutableStateOf(existing?.availableForJobCosting ?: false) }
-    var fuelRate by remember { mutableStateOf(existing?.fuelUsageLPerHour?.takeIf { it > 0 }?.let { trimNum(it) } ?: "") }
+    var fuelRate by remember { mutableStateOf(existing?.fuelUsageLPerHour?.takeIf { it > 0 }?.let { fmt.fuelValue(it).toString() } ?: "") }
     var serial by remember { mutableStateOf(existing?.serialNumber ?: "") }
     var vin by remember { mutableStateOf(existing?.vinNumber ?: "") }
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
@@ -427,7 +430,7 @@ private fun MachineFormSheet(
             machineType = type,
             fuelTrackingEnabled = fuelTracking,
             availableForJobCosting = jobCosting,
-            fuelUsageLPerHour = fuelRate.replace(',', '.').toDoubleOrNull() ?: 0.0,
+            fuelUsageLPerHour = if (existing != null && fuelRate == existing.fuelUsageLPerHour?.takeIf { it > 0 }?.let { fmt.fuelValue(it).toString() }) existing.fuelUsageLPerHour ?: 0.0 else fmt.fuelToCanonical(fuelRate.replace(',', '.').toDoubleOrNull() ?: 0.0),
             notes = notes.trim().takeIf { it.isNotEmpty() },
             serialNumber = serial.trim().takeIf { it.isNotEmpty() },
             vinNumber = vin.trim().takeIf { it.isNotEmpty() },
@@ -469,7 +472,7 @@ private fun MachineFormSheet(
             ToggleLine("Available for job costing", jobCosting) { jobCosting = it }
             OutlinedTextField(
                 value = fuelRate, onValueChange = { fuelRate = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                label = { Text("Default fuel usage (L/hr)") }, placeholder = { Text("Optional — e.g. 6.5") },
+                label = { Text("Default fuel usage (${fmt.fuelUnitAbbreviation}/hr)") }, placeholder = { Text("Optional — e.g. 6.5") },
                 singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 supportingText = {
                     Text(
@@ -482,7 +485,7 @@ private fun MachineFormSheet(
             if (type == "tractor" && aiSuggestionsEnabled) {
                 TractorAiFuelLookup(
                     machineName = name,
-                    onApply = { lph -> fuelRate = trimNum(lph) },
+                    onApply = { lph -> fuelRate = fmt.fuelValue(lph).toString() },
                 )
             }
             OutlinedTextField(

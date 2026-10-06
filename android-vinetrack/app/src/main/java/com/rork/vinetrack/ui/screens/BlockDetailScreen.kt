@@ -222,7 +222,7 @@ private fun KeyStatsGrid(block: Paddock) {
         StatCard("Area", ha, Icons.Filled.Map, VineColors.LeafGreen),
         StatCard("Rows", if (block.rowCount > 0) block.rowCount.toString() else "—", Icons.Filled.Straighten, VineColors.Indigo),
         StatCard("Vines", vines, Icons.Filled.Grass, VineColors.DarkGreen),
-        StatCard("Row spacing", block.rowWidth?.let { "%.1f m".format(it) } ?: "—", Icons.Filled.Highlight, VineColors.Orange),
+        StatCard("Row spacing", block.rowWidth?.let { fmt.formatLength(it, 1) } ?: "—", Icons.Filled.Highlight, VineColors.Orange),
     )
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         cards.chunked(2).forEach { rowCards ->
@@ -420,6 +420,7 @@ private fun ActivitySection(block: Paddock, state: AppUiState) {
 
 @Composable
 private fun GeometrySection(block: Paddock) {
+    val fmt = LocalRegionFormatter.current
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SectionHeader("Geometry & Row Setup", onLight = true)
         VineyardCard {
@@ -432,15 +433,15 @@ private fun GeometrySection(block: Paddock) {
             }
             if (block.totalRowLengthMetres > 0 || block.rowLengthOverride != null) {
                 DividerLine()
-                DetailRow("Total row length", "${"%.0f".format(block.effectiveTotalRowLength)} m")
+                DetailRow("Total row length", fmt.formatLength(block.effectiveTotalRowLength, 0))
             }
             block.vineSpacing?.let {
                 DividerLine()
-                DetailRow("Vine spacing", "%.2f m".format(it))
+                DetailRow("Vine spacing", fmt.formatLength(it))
             }
             block.rowWidth?.let {
                 DividerLine()
-                DetailRow("Row width", "%.2f m".format(it))
+                DetailRow("Row width", fmt.formatLength(it))
             }
             block.rowDirection?.takeIf { it != 0.0 }?.let {
                 DividerLine()
@@ -464,11 +465,11 @@ private fun IrrigationSection(block: Paddock) {
                 }
             } else {
                 block.flowPerEmitter?.let {
-                    DetailRow("Flow per emitter", "%.1f L/h".format(it))
+                    DetailRow("Flow per emitter", "${fmt.formatVolume(it)}/h")
                     DividerLine()
                 }
                 block.emitterSpacing?.let {
-                    DetailRow("Emitter spacing", "%.2f m".format(it))
+                    DetailRow("Emitter spacing", fmt.formatLength(it))
                 }
                 block.litresPerHaPerHour?.let {
                     DividerLine()
@@ -476,7 +477,7 @@ private fun IrrigationSection(block: Paddock) {
                 }
                 block.mmPerHour?.let {
                     DividerLine()
-                    DetailRow("Rate", "%.2f mm/h".format(it))
+                    DetailRow("Rate", "${fmt.formatRainfall(it)}/h")
                 }
             }
         }

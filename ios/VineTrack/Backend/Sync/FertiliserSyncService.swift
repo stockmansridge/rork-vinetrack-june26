@@ -182,7 +182,7 @@ final class FertiliserSyncService {
                 if pendingAt > remoteAt { continue }
             }
             let attached = (allocationsByRecord[item.id] ?? []).map { $0.toFertiliserAllocation() }
-            fertStore.applyRemoteRecordUpsert(item.toFertiliserRecord(allocations: attached))
+            fertStore.applyRemoteRecordUpsert(item.toFertiliserRecord(allocations: attached, timeZone: store?.settings.regionFormatter.settings.resolvedTimeZone ?? .current))
             recordMetadata.clearDirty([item.id])
         }
     }

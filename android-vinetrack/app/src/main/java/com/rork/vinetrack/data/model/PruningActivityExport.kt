@@ -499,13 +499,16 @@ object PruningActivityExport {
         includeCost: Boolean,
         canonicalRows: List<PruningActivityRow> = reportRows,
         canonicalParents: Map<String, PruningActivityParentSource> = emptyMap(),
+        formatter: com.rork.vinetrack.data.RegionFormatter? = null,
     ): String {
         val exported = rows(reportRows, includeCost, canonicalRows, canonicalParents)
         val builder = StringBuilder()
-        builder.append(headers(includeCost).joinToString(",") { escape(it) })
+        builder.append(headers(includeCost).joinToString(",") { escape(if (formatter != null && it.contains("cost", ignoreCase = true)) "$it (${formatter.settings.currencyCode})" else it) })
         builder.append("\r\n")
         for (row in exported) {
-            builder.append(cells(row, includeCost).joinToString(",") { escape(it) })
+            val values = cells(row, includeCost).toMutableList()
+            if (formatter != null) values[1] = formatter.formatDate(row.dateIso)
+            builder.append(values.joinToString(",") { escape(it) })
             builder.append("\r\n")
         }
         return builder.toString()

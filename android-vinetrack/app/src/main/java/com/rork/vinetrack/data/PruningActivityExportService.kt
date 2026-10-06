@@ -64,10 +64,11 @@ object PruningActivityExportService {
         includeCost: Boolean,
         canonicalRows: List<PruningActivityRow> = rows,
         canonicalParents: Map<String, PruningActivityParentSource> = emptyMap(),
+        formatter: RegionFormatter = RegionFormatter(),
     ): Boolean = try {
         val model = PruningActivityAllocationModel.build(canonicalRows, includeCost, canonicalParents)
         logConflicts(model)
-        val csv = PruningActivityExport.csv(rows, includeCost, canonicalRows)
+        val csv = PruningActivityExport.csv(rows, includeCost, canonicalRows, canonicalParents, formatter)
         val file = write(context, fileName(vineyardName, seasonLabel, "csv"), csv)
         share(context, file, "text/csv", "Export pruning activity report")
         true
@@ -90,6 +91,7 @@ object PruningActivityExportService {
         canonicalRows: List<PruningActivityRow> = rows,
         canonicalParents: Map<String, PruningActivityParentSource> = emptyMap(),
         includeTechnicalReferences: Boolean = false,
+        formatter: RegionFormatter = RegionFormatter(),
     ): Boolean = try {
         val file = File(File(context.cacheDir, "exports").apply { mkdirs() }, fileName(vineyardName, seasonLabel, "pdf"))
         val document = PdfDocument()
@@ -103,6 +105,7 @@ object PruningActivityExportService {
                 canonicalRows = canonicalRows,
                 canonicalParents = canonicalParents,
                 includeTechnicalReferences = includeTechnicalReferences,
+                formatter = formatter,
             )
             file.outputStream().use { document.writeTo(it) }
         } finally {
@@ -176,6 +179,7 @@ object PruningActivityExportService {
         canonicalRows: List<PruningActivityRow>,
         canonicalParents: Map<String, PruningActivityParentSource>,
         includeTechnicalReferences: Boolean,
+        formatter: RegionFormatter,
     ) {
         val model = PruningActivityAllocationModel.build(canonicalRows, includeCost, canonicalParents)
         logConflicts(model)
@@ -240,7 +244,7 @@ object PruningActivityExportService {
             // The activity's NAME is the label. The eight-character reference
             // sits after it in small grey type; the full UUID never appears in
             // the body of the document.
-            val headingText = "${group.activityLabel} — ${group.dateDisplay}"
+            val headingText = "${group.activityLabel} — ${formatter.formatDate(group.dateIso)}"
             state.canvas.drawText(headingText, MARGIN, state.y, heading)
             var trailing = MARGIN + heading.measureText(headingText) + 8f
             PruningActivityExport.referenceLine(group, includeShortReferences = true)?.let { ref ->
@@ -273,7 +277,7 @@ object PruningActivityExportService {
             }
 
             // Whole-activity values, stated exactly once.
-            for (line in activityLines(group, includeCost)) {
+            for (line in activityLines(group, includeCost, formatter)) {
                 state.ensure(13f)
                 state.canvas.drawText(line, MARGIN + 6f, state.y, detail)
                 state.y += 13f
@@ -305,7 +309,7 @@ object PruningActivityExportService {
                 state.y += 13f
                 // This block's proportional slice, on its own indented line so it
                 // is never confused with the whole-activity totals above.
-                allocatedLine(allocation, includeCost)?.let { line ->
+                allocatedLine(allocation, includeCost, formatter)?.let { line ->
                     state.ensure(12f)
                     state.canvas.drawText(line, MARGIN + 26f, state.y, detailMuted)
                     state.y += 12f
@@ -313,7 +317,7 @@ object PruningActivityExportService {
             }
 
             if (group.isPartialActivity) {
-                allocatedSubtotal(group, includeCost)?.let { line ->
+                allocatedSubtotal(group, includeCost, formatter)?.let { line ->
                     state.ensure(13f)
                     state.canvas.drawText(line, MARGIN + 14f, state.y, paint(10f, bold = true))
                     state.y += 13f
@@ -365,7 +369,7 @@ object PruningActivityExportService {
      * On a partial activity these are explicitly labelled "whole activity", so
      * a reader can never take them for the filtered block's cost.
      */
-    private fun activityLines(group: PruningActivityExport.Group, includeCost: Boolean): List<String> {
+    private fun activityLines(group: PruningActivityExport.Group, includeCost: Boolean, formatter: RegionFormatter): List<String> {
         val scope = if (group.isPartialActivity) "Whole activity " else ""
         val lines = mutableListOf<String>()
         group.worker?.let { lines.add("Worker: $it") }
@@ -378,7 +382,7 @@ object PruningActivityExportService {
         }
         if (includeCost) {
             group.activityLabourCost?.let {
-                lines.add("${scope}labour cost: ${'$'}${PruningActivityExport.number(it, 2)}".replaceFirstChar(Char::uppercase))
+                lines.add("${scope}labour cost: ${formatter.formatCurrency(it)}".replaceFirstChar(Char::uppercase))
             }
         }
         group.workTaskTitle?.let { title ->
@@ -396,22 +400,22 @@ object PruningActivityExportService {
     }
 
     /** "20.0% of the activity · 2.60 person-hours · $91.00". */
-    private fun allocatedLine(row: PruningActivityExport.Row, includeCost: Boolean): String? {
+    private fun allocatedLine(row: PruningActivityExport.Row, includeCost: Boolean, formatter: RegionFormatter): String? {
         val parts = mutableListOf<String>()
         row.allocationShare?.let { parts.add("${PruningActivityExport.number(it * 100.0, 1)}% of the activity") }
         row.allocatedPersonHours?.let { parts.add("${trim(it)} person-hours") }
         if (includeCost) {
-            row.allocatedLabourCost?.let { parts.add("${'$'}${PruningActivityExport.number(it, 2)}") }
+            row.allocatedLabourCost?.let { parts.add("${formatter.formatCurrency(it)}") }
         }
         return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
     }
 
     /** The shown blocks' combined slice, printed only when blocks are missing. */
-    private fun allocatedSubtotal(group: PruningActivityExport.Group, includeCost: Boolean): String? {
+    private fun allocatedSubtotal(group: PruningActivityExport.Group, includeCost: Boolean, formatter: RegionFormatter): String? {
         val parts = mutableListOf<String>()
         group.allocatedPersonHours?.let { parts.add("${trim(it)} person-hours") }
         if (includeCost) {
-            group.allocatedLabourCost?.let { parts.add("${'$'}${PruningActivityExport.number(it, 2)}") }
+            group.allocatedLabourCost?.let { parts.add("${formatter.formatCurrency(it)}") }
         }
         return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")?.let { "Allocated to shown blocks: $it" }
     }

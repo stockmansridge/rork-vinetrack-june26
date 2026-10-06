@@ -5,6 +5,7 @@ struct IrrigationRecommendationView: View {
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(SystemAdminService.self) private var systemAdmin
 
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
     @State private var selectedPaddockId: UUID?
     /// When true the advisor treats the calculation as "Whole Vineyard"
     /// (no specific block selected). Soil profile is averaged across
@@ -850,12 +851,12 @@ struct IrrigationRecommendationView: View {
                            let r = resolvedAppRateAndSource
                            let label = r.source.label
                            return label.isEmpty
-                               ? String(format: "%.2f mm/hr", r.rate)
-                               : String(format: "%.2f mm/hr — %@", r.rate, label)
+                               ? "\(fmt.formatRainfall(mm: r.rate))/hr"
+                               : "\(fmt.formatRainfall(mm: r.rate))/hr — \(label)"
                        }()
                        : (useWholeVineyard
                           ? "Set irrigation application rate in block settings or add a vineyard default."
-                          : "Enter mm/hr below in Settings."),
+                          : "Enter \(fmt.rainfallUnitAbbreviation)/hr below in Settings."),
                        isComplete: appRateOK),
             WizardItem(id: "soil", title: "Soil profile / buffer",
                        detail: soilOK
@@ -1299,7 +1300,7 @@ struct IrrigationRecommendationView: View {
         }
         let mm = r.dailyMm.values.reduce(0, +)
         let label = recentRainDays == 1 ? "24h" : (recentRainDays == 2 ? "48h" : "\(recentRainDays) days")
-        return String(format: "Recent rainfall: %.1f mm over last \(label)", mm)
+        return "Recent rainfall: \(fmt.formatRainfall(mm: mm)) over last \(label)"
     }
 
     private var recentRainSourceLabel: String {
@@ -1433,7 +1434,7 @@ struct IrrigationRecommendationView: View {
                             .font(.title2.weight(.semibold))
                             .foregroundStyle(.primary)
                             .monospacedDigit()
-                        Text(String(format: "Equivalent to %.1f mm over the next %d days", result.grossIrrigationMm, result.dailyBreakdown.count))
+                        Text("Equivalent to \(fmt.formatRainfall(mm: result.grossIrrigationMm)) over the next \(result.dailyBreakdown.count) days")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -1451,12 +1452,12 @@ struct IrrigationRecommendationView: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                 if useWholeVineyard {
-                    Text(String(format: "Apply approximately %.1f mm. Runtime is estimated per block using the vineyard average rate. Select an individual block for a more accurate runtime.", result.grossIrrigationMm))
+                    Text("Apply approximately \(fmt.formatRainfall(mm: result.grossIrrigationMm)). Runtime is estimated per block using the vineyard average rate. Select an individual block for a more accurate runtime.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    Text(String(format: "Apply %.1f mm over the next %d days", result.grossIrrigationMm, result.dailyBreakdown.count))
+                    Text("Apply \(fmt.formatRainfall(mm: result.grossIrrigationMm)) over the next \(result.dailyBreakdown.count) days")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1469,15 +1470,13 @@ struct IrrigationRecommendationView: View {
             Divider()
 
             HStack(spacing: 14) {
-                summaryStat("Crop use", String(format: "%.1f mm", result.forecastCropUseMm), info: .eto)
-                summaryStat("Eff. rain", String(format: "%.1f mm", result.forecastEffectiveRainMm), info: .rainfallEffectiveness)
-                summaryStat("Net deficit", String(format: "%.1f mm", result.netDeficitMm), info: nil)
+                summaryStat("Crop use", fmt.formatRainfall(mm: result.forecastCropUseMm), info: .eto)
+                summaryStat("Eff. rain", fmt.formatRainfall(mm: result.forecastEffectiveRainMm), info: .rainfallEffectiveness)
+                summaryStat("Net deficit", fmt.formatRainfall(mm: result.netDeficitMm), info: nil)
             }
 
             if result.recentActualRainMm > 0 {
-                Text(String(format: "Includes %.1f mm recent actual rain from %@.",
-                            result.recentActualRainMm,
-                            actualRainShortSource))
+                Text("Includes \(fmt.formatRainfall(mm: result.recentActualRainMm)) recent actual rain from \(actualRainShortSource).")
                     .font(.caption2)
                     .foregroundStyle(VineyardTheme.leafGreen)
             }
@@ -1486,7 +1485,7 @@ struct IrrigationRecommendationView: View {
                let lPerHaHr = paddock.litresPerHaPerHour,
                let mmHr = paddock.mmPerHour, mmHr > 0, needsIrrigation {
                 let totalLitres = (result.grossIrrigationMm / mmHr) * lPerHaHr * paddock.areaHectares
-                Text(String(format: "≈ %.0f L total for %@", totalLitres, paddock.name))
+                Text("≈ \(fmt.formatVolume(litres: totalLitres, fractionDigits: 0)) total for \(paddock.name)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1527,20 +1526,20 @@ struct IrrigationRecommendationView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 if let raw = result?.readilyAvailableWaterMm, raw > 0 {
-                    Text(String(format: "RAW: %.0f mm", raw))
+                    Text("RAW: \(fmt.formatRainfall(mm: raw))")
                         .font(.caption).foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
                 if let rzc = result?.rootZoneCapacityMm, rzc > 0 {
-                    Text(String(format: "Root-zone capacity: %.0f mm", rzc))
+                    Text("Root-zone capacity: \(fmt.formatRainfall(mm: rzc))")
                         .font(.caption).foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
-                Text(String(format: "Base demand: %.1f mm", v2.baseGrossIrrigationMm))
+                Text("Base demand: \(fmt.formatRainfall(mm: v2.baseGrossIrrigationMm))")
                     .font(.caption).foregroundStyle(.secondary)
                     .monospacedDigit()
                 if v2.soilAdjusted {
-                    Text(String(format: "Soil-adjusted event: %.1f mm", v2.soilAdjustedGrossMm))
+                    Text("Soil-adjusted event: \(fmt.formatRainfall(mm: v2.soilAdjustedGrossMm))")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.primary)
                         .monospacedDigit()
@@ -1667,12 +1666,12 @@ struct IrrigationRecommendationView: View {
 
                 if let paddock = selectedPaddock {
                     LabeledContent("Area") {
-                        Text(String(format: "%.2f ha", paddock.areaHectares))
+                        Text(fmt.formatArea(hectares: paddock.areaHectares))
                             .foregroundStyle(.secondary)
                     }
                     if let mmHr = paddock.mmPerHour {
                         LabeledContent("System rate") {
-                            Text(String(format: "%.2f mm/hr", mmHr))
+                            Text("\(fmt.formatRainfall(mm: mmHr))/hr")
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -1758,7 +1757,7 @@ struct IrrigationRecommendationView: View {
                                 Text(day.date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)))
                                     .font(.subheadline.weight(.semibold))
                                 Spacer()
-                                Text(String(format: "%.1f mm deficit", day.dailyDeficitMm))
+                                Text("\(fmt.formatRainfall(mm: day.dailyDeficitMm)) deficit")
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(day.dailyDeficitMm > 0 ? VineyardTheme.vineRed : VineyardTheme.leafGreen)
                                     .monospacedDigit()
@@ -1766,19 +1765,19 @@ struct IrrigationRecommendationView: View {
 
                             if useManualInputs {
                                 HStack(spacing: 8) {
-                                    manualField(label: "ETo", value: day.forecastEToMm, field: .manualEto(day.date), binding: etoBinding(for: day.date))
-                                    manualField(label: "Rain", value: day.forecastRainMm, field: .manualRain(day.date), binding: rainBinding(for: day.date))
+                                    manualField(label: "ETo (\(fmt.rainfallUnitAbbreviation))", value: fmt.rainfallValue(mm: day.forecastEToMm), field: .manualEto(day.date), binding: depthInput(etoBinding(for: day.date)))
+                                    manualField(label: "Rain (\(fmt.rainfallUnitAbbreviation))", value: fmt.rainfallValue(mm: day.forecastRainMm), field: .manualRain(day.date), binding: depthInput(rainBinding(for: day.date)))
                                 }
                             } else {
                                 HStack {
-                                    metric("ETo", String(format: "%.1f", day.forecastEToMm), suffix: "mm")
+                                    metric("ETo", String(format: "%.2f", fmt.rainfallValue(mm: day.forecastEToMm)), suffix: fmt.rainfallUnitAbbreviation)
                                     Divider().frame(height: 20)
-                                    metric("Rain", String(format: "%.1f", day.forecastRainMm), suffix: "mm",
+                                    metric("Rain", String(format: "%.2f", fmt.rainfallValue(mm: day.forecastRainMm)), suffix: fmt.rainfallUnitAbbreviation,
                                            highlight: day.forecastRainMm > 0 ? .blue : nil)
                                     Divider().frame(height: 20)
-                                    metric("Crop use", String(format: "%.1f", day.cropUseMm), suffix: "mm")
+                                    metric("Crop use", String(format: "%.2f", fmt.rainfallValue(mm: day.cropUseMm)), suffix: fmt.rainfallUnitAbbreviation)
                                     Divider().frame(height: 20)
-                                    metric("Eff. rain", String(format: "%.1f", day.effectiveRainMm), suffix: "mm",
+                                    metric("Eff. rain", String(format: "%.2f", fmt.rainfallValue(mm: day.effectiveRainMm)), suffix: fmt.rainfallUnitAbbreviation,
                                            highlight: day.effectiveRainMm > 0 ? .blue : nil)
                                 }
                             }
@@ -1975,9 +1974,9 @@ struct IrrigationRecommendationView: View {
         case .paddockSystemRate:
             return "Pre-filled from this paddock's system rate."
         case .vineyardDefault:
-            return String(format: "Using vineyard default rate (%.2f mm/hr).", resolved.rate)
+            return "Using vineyard default rate (\(fmt.formatRainfall(mm: resolved.rate))/hr)."
         case .areaWeightedAverage, .simpleAverage:
-            return String(format: "%.2f mm/hr — %@.", resolved.rate, resolved.source.label)
+            return "\(fmt.formatRainfall(mm: resolved.rate))/hr — \(resolved.source.label)."
         }
     }
 
@@ -1986,13 +1985,13 @@ struct IrrigationRecommendationView: View {
             DisclosureGroup("Calculation assumptions & block settings") {
                 settingRow(
                     label: useWholeVineyard
-                           ? "Vineyard application rate (mm/hr)"
-                           : "Application rate (mm/hr)",
-                    text: $applicationRateText,
+                           ? "Vineyard application rate (\(fmt.rainfallUnitAbbreviation)/hr)"
+                           : "Application rate (\(fmt.rainfallUnitAbbreviation)/hr)",
+                    text: depthInput($applicationRateText),
                     field: .appRate,
                     help: useWholeVineyard
-                          ? "Default mm/hr used for Whole Vineyard recommendations when no block is selected. Stored as a vineyard-level default."
-                          : "How many millimetres of water your irrigation system applies to this block in one hour.",
+                          ? "Default water depth per hour used for Whole Vineyard recommendations when no block is selected. Stored as a vineyard-level default."
+                          : "Water depth your irrigation system applies to this block in one hour.",
                     isSiteData: appRateIsSiteData,
                     siteDataNote: appRateSiteDataNote,
                     info: .applicationRate
@@ -2034,8 +2033,8 @@ struct IrrigationRecommendationView: View {
                     info: .replacement
                 )
                 settingRow(
-                    label: "Soil buffer (mm)",
-                    text: $bufferText,
+                    label: "Soil buffer (\(fmt.rainfallUnitAbbreviation))",
+                    text: depthInput($bufferText),
                     field: .buffer,
                     help: "Extra water already stored in the soil. Subtracted from the deficit.",
                     isSiteData: false,
@@ -2046,6 +2045,19 @@ struct IrrigationRecommendationView: View {
         } footer: {
             Text("Fields marked \u{2728} are pre-filled with site-specific data from the selected block.")
         }
+    }
+
+    private func depthInput(_ canonical: Binding<String>) -> Binding<String> {
+        Binding(get: {
+            guard let value = Double(canonical.wrappedValue) else { return canonical.wrappedValue }
+            return String(fmt.rainfallValue(mm: value))
+        }, set: { text in
+            if let value = Double(text) {
+                if Double(canonical.wrappedValue).map({ fmt.rainfallValue(mm: $0) }) != value {
+                    canonical.wrappedValue = String(fmt.rainfallMm(fromDisplay: value))
+                }
+            } else { canonical.wrappedValue = text }
+        })
     }
 
     private func settingRow(
@@ -2330,11 +2342,11 @@ struct IrrigationRecommendationView: View {
             }
             HStack(spacing: 14) {
                 soilStat("AWC", soil.availableWaterCapacityMmPerM.map { String(format: "%.0f mm/m", $0) } ?? "—")
-                soilStat("Root depth", soil.effectiveRootDepthM.map { String(format: "%.2f m", $0) } ?? "—")
+                soilStat("Root depth", soil.effectiveRootDepthM.map { fmt.formatLength(metres: $0) } ?? "—")
                 soilStat("Depletion", soil.managementAllowedDepletionPercent.map { String(format: "%.0f%%", $0) } ?? "—")
             }
             if let rzc = soil.rootZoneCapacityMm, let raw = soil.readilyAvailableWaterMm {
-                Text(String(format: "Root-zone capacity %.0f mm • Readily available %.0f mm", rzc, raw))
+                Text("Root-zone capacity \(fmt.formatRainfall(mm: rzc)) • Readily available \(fmt.formatRainfall(mm: raw))")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

@@ -39,6 +39,20 @@ import org.junit.Test
  *        and $91.00 — never the whole $455.
  */
 class PruningActivityExportTest {
+    @Test fun customerCsvUsesVineyardDatesAndCurrencyWithoutChangingShares() {
+        val canonical = canonicalE()
+        val fmt = RegionFormatter(RegionSettings(countryCode = "US", currencyCode = "USD", timezone = "UTC", dateFormat = "MM/DD/YYYY"))
+        val csv = PruningActivityExport.csv(canonical, true, formatter = fmt)
+        assertTrue(csv.contains("(USD)"))
+        for (row in PruningActivityExport.rows(canonical, true)) {
+            assertTrue(csv.contains("${row.dateIso},${fmt.formatDate(row.dateIso)},"))
+        }
+        assertTrue(csv.contains("91.00"))
+        val hidden = PruningActivityExport.csv(canonical, false, formatter = fmt)
+        assertFalse(hidden.contains("(USD)"))
+        assertFalse(hidden.contains("91.00"))
+    }
+
 
     private val blockPinot = "block-pinot"
     private val blockCab = "block-cab"

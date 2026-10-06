@@ -188,6 +188,8 @@ nonisolated struct FertiliserRecord: Codable, Identifiable, Sendable, Hashable {
     let id: UUID
     var vineyardId: UUID
     var date: Date
+    /// Exact SQL calendar date captured on creation/pull; nil preserves legacy behaviour.
+    var applicationDateSnapshot: String?
     var status: FertiliserRecordStatus
     var mode: FertiliserCalcMode
     var productId: UUID?
@@ -232,11 +234,13 @@ nonisolated struct FertiliserRecord: Codable, Identifiable, Sendable, Hashable {
         notes: String = "",
         allocations: [FertiliserAllocation] = [],
         createdAt: Date = Date(),
-        vineCountBasis: String? = nil
+        vineCountBasis: String? = nil,
+        applicationDateSnapshot: String? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
         self.date = date
+        self.applicationDateSnapshot = applicationDateSnapshot
         self.status = status
         self.mode = mode
         self.productId = productId

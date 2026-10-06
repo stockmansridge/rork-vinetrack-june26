@@ -106,6 +106,11 @@ fun ManualSprayEntrySheet(
             loadedEditRetry = editRetry
         }.onFailure { editLoadFailure = it.message ?: "The saved evidence could not be loaded." }
     }
+    val fmt = state.regionFormatter
+    val previousFmt = storedDraft?.inputFormatter ?: com.rork.vinetrack.data.RegionFormatter()
+    fun localInput(raw: String?, canonical: Double?, display: (Double) -> Double, previousInverse: (Double) -> Double): String =
+        if (raw != null) raw.toDoubleOrNull()?.let { display(previousInverse(it)).toString() } ?: raw
+        else canonical?.let { display(it).toString() }.orEmpty()
     val seed = loadedEditSeed ?: storedDraft?.base
     if (existing != null && loadedEditSeed == null) {
         AlertDialog(
@@ -137,17 +142,17 @@ fun ManualSprayEntrySheet(
     var expectedVersion by remember { mutableStateOf(existing?.syncVersion?.toInt() ?: 0) }
     val blockIds = remember { mutableStateListOf<String>().apply { addAll(seed?.blocks?.map { it.blockId }.orEmpty()) } }
     val tanks = remember { mutableStateListOf<ManualSprayTank>().apply { addAll(seed?.tanks ?: listOf(ManualSprayTank(tankNumber = 1, waterVolumeLitres = 0.0, chemicals = emptyList()))) } }
-    val waterInputs = remember { mutableStateMapOf<String, String>().apply { putAll(storedDraft?.waterInputs ?: seed?.tanks?.associate { it.id to it.waterVolumeLitres.toString() }.orEmpty()) } }
+    val waterInputs = remember { mutableStateMapOf<String, String>().apply { putAll(seed?.tanks?.associate { it.id to localInput(storedDraft?.waterInputs?.get(it.id), it.waterVolumeLitres, fmt::volumeValue, previousFmt::volumeToCanonical) }.orEmpty()) } }
     val chemicalInputs = remember { mutableStateMapOf<String, String>().apply { putAll(storedDraft?.chemicalInputs ?: seed?.tanks?.flatMap { it.chemicals }?.associate { it.id to displayManualAmount(it.actualAmountBase, it.unit).toString() }.orEmpty()) } }
     var hasManualWeather by remember { mutableStateOf(storedDraft?.hasManualWeather ?: (seed?.manualWeather != null)) }
     var weatherObservedAt by remember { mutableStateOf(storedDraft?.weatherObservedAt ?: seed?.manualWeather?.observedAt) }
     var weatherSource by remember { mutableStateOf(storedDraft?.weatherSource ?: seed?.manualWeather?.source) }
-    var temperature by remember { mutableStateOf(storedDraft?.temperatureInput ?: seed?.manualWeather?.temperatureC?.toString().orEmpty()) }
+    var temperature by remember { mutableStateOf(localInput(storedDraft?.temperatureInput, seed?.manualWeather?.temperatureC, fmt::temperatureValue, previousFmt::celsius)) }
     var humidity by remember { mutableStateOf(storedDraft?.humidityInput ?: seed?.manualWeather?.humidityPct?.toString().orEmpty()) }
-    var wind by remember { mutableStateOf(storedDraft?.windInput ?: seed?.manualWeather?.windSpeedKmh?.toString().orEmpty()) }
-    var gust by remember { mutableStateOf(storedDraft?.gustInput ?: seed?.manualWeather?.windGustKmh?.toString().orEmpty()) }
+    var wind by remember { mutableStateOf(localInput(storedDraft?.windInput, seed?.manualWeather?.windSpeedKmh, fmt::speedValue, previousFmt::speedKmh)) }
+    var gust by remember { mutableStateOf(localInput(storedDraft?.gustInput, seed?.manualWeather?.windGustKmh, fmt::speedValue, previousFmt::speedKmh)) }
     var direction by remember { mutableStateOf(storedDraft?.directionInput ?: seed?.manualWeather?.windDirectionDeg?.toString().orEmpty()) }
-    var rain by remember { mutableStateOf(storedDraft?.rainInput ?: seed?.manualWeather?.rainMm?.toString().orEmpty()) }
+    var rain by remember { mutableStateOf(localInput(storedDraft?.rainInput, seed?.manualWeather?.rainMm, fmt::rainfallValue, previousFmt::rainfallMm)) }
 
     fun basePayload(): ManualSprayPayload = ManualSprayPayload(
         vineyardId = vineyardId, manualEntryId = identities.first, sprayRecordId = identities.second, tripId = identities.third,
@@ -165,6 +170,7 @@ fun ManualSprayEntrySheet(
         weatherObservedAt = weatherObservedAt, weatherSource = weatherSource,
         temperatureInput = temperature, humidityInput = humidity, windInput = wind, gustInput = gust,
         directionInput = direction, rainInput = rain,
+        inputCountry = fmt.settings.countryCode, inputVolumeUnit = fmt.settings.volumeUnit, inputDistanceUnit = fmt.settings.distanceUnit,
     )
 
     val currentDraft = formDraft()
@@ -189,7 +195,7 @@ fun ManualSprayEntrySheet(
                 state.paddocks.forEach { block -> Row { Checkbox(block.id in blockIds, { checked -> if (checked) blockIds.add(block.id) else blockIds.remove(block.id) }); Text(block.name) } }
                 tanks.toList().forEachIndexed { index, tank ->
                     Text("Tank ${tank.tankNumber}")
-                    OutlinedTextField(waterInputs[tank.id].orEmpty(), { value -> waterInputs[tank.id] = value }, label = { Text("Actual water (L)") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(waterInputs[tank.id].orEmpty(), { value -> waterInputs[tank.id] = value }, label = { Text("Actual water (${fmt.volumeUnitAbbreviation})") }, modifier = Modifier.fillMaxWidth())
                     tank.chemicals.forEachIndexed { chemicalIndex, chemical ->
                         Text("${chemical.name} · ${chemical.productCategory} · ${chemical.physicalForm.name}")
                         OutlinedTextField(chemicalInputs[chemical.id].orEmpty(), { value -> chemicalInputs[chemical.id] = value }, label = { Text("Actual amount (${chemical.unit})") }, modifier = Modifier.fillMaxWidth())
@@ -224,14 +230,14 @@ fun ManualSprayEntrySheet(
                     if (enabled && weatherSource == null) weatherSource = "Operator observation"
                 }); Text("Enter weather manually") }
                 if (hasManualWeather) {
-                    WeatherField("Temperature °C", temperature) { temperature = it }; WeatherField("Humidity %", humidity) { humidity = it }
-                    WeatherField("Wind km/h", wind) { wind = it }; WeatherField("Gust km/h", gust) { gust = it }
-                    WeatherField("Direction °", direction) { direction = it }; WeatherField("Rain mm", rain) { rain = it }
+                    WeatherField("Temperature ${fmt.temperatureUnitAbbreviation}", temperature) { temperature = it }; WeatherField("Humidity %", humidity) { humidity = it }
+                    WeatherField("Wind ${fmt.speedUnitAbbreviation}", wind) { wind = it }; WeatherField("Gust ${fmt.speedUnitAbbreviation}", gust) { gust = it }
+                    WeatherField("Direction °", direction) { direction = it }; WeatherField("Rain ${fmt.rainfallUnitAbbreviation}", rain) { rain = it }
                 }
                 Text("Manual weather is optional and remains authoritative. Station availability never blocks saving.")
             } else {
                 Text("Completed · Manual entry")
-                Text("$reference\n${formatLocal(startInstant, zone)} — ${formatLocal(endInstant, zone)}\n${blockIds.size} blocks · ${reviewPayload?.tanks?.size ?: 0} tanks · ${reviewPayload?.tanks?.sumOf { it.waterVolumeLitres } ?: 0.0} L")
+                Text("$reference\n${formatLocal(startInstant, zone)} — ${formatLocal(endInstant, zone)}\n${blockIds.size} blocks · ${reviewPayload?.tanks?.size ?: 0} tanks · ${fmt.formatVolume(reviewPayload?.tanks?.sumOf { it.waterVolumeLitres } ?: 0.0)}")
                 savedTripId?.let { tripId ->
                     Button(onClick = { scope.launch {
                         val result = runCatching { SprayReportRepository(session).recoverWeather(tripId, endInstant) }.getOrNull()

@@ -1,5 +1,7 @@
 package com.rork.vinetrack.ui.screens
 
+import com.rork.vinetrack.ui.LocalRegionFormatter
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -71,6 +73,7 @@ private val EquipmentTint: Color = VineColors.EarthBrown
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SprayEquipmentScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
+    val fmt = LocalRegionFormatter.current
     val vine = LocalVineColors.current
     val canManage = state.currentRole == "owner" || state.currentRole == "manager"
 
@@ -182,6 +185,7 @@ private fun SprayEquipmentRow(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val fmt = LocalRegionFormatter.current
     val vine = LocalVineColors.current
     VineyardCard(modifier = if (canManage) Modifier.clickable { onEdit() } else Modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -191,7 +195,7 @@ private fun SprayEquipmentRow(
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Icon(Icons.Filled.WaterDrop, contentDescription = null, tint = EquipmentTint, modifier = Modifier.size(13.dp))
                     Text(
-                        if (capacity != null && capacity > 0) "${trimCapacity(capacity)} L tank" else "No tank capacity set",
+                        if (capacity != null && capacity > 0) "${fmt.formatVolume(capacity)} tank" else "No tank capacity set",
                         fontSize = 13.sp,
                         color = if (capacity != null && capacity > 0) EquipmentTint else vine.textSecondary,
                         fontWeight = FontWeight.Medium,
@@ -224,13 +228,14 @@ internal fun SprayEquipmentFormSheet(
     existing: SprayEquipment?,
     onDismiss: () -> Unit,
 ) {
+    val fmt = LocalRegionFormatter.current
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val isEdit = existing != null
 
     var name by remember { mutableStateOf(existing?.name ?: "") }
     var capacity by remember {
-        mutableStateOf(existing?.tankCapacityLitres?.takeIf { it > 0 }?.let { trimCapacity(it) } ?: "")
+        mutableStateOf(existing?.tankCapacityLitres?.takeIf { it > 0 }?.let { fmt.volumeValue(it).toString() } ?: "")
     }
     var serial by remember { mutableStateOf(existing?.serialNumber ?: "") }
     var vin by remember { mutableStateOf(existing?.vinNumber ?: "") }
@@ -243,7 +248,7 @@ internal fun SprayEquipmentFormSheet(
         saving = true
         val input = SprayEquipmentRepository.EquipmentInput(
             name = trimmedName,
-            tankCapacityLitres = capacity.toCapacityDouble() ?: 0.0,
+            tankCapacityLitres = if (existing != null && capacity == existing.tankCapacityLitres?.takeIf { it > 0 }?.let { fmt.volumeValue(it).toString() }) existing.tankCapacityLitres ?: 0.0 else fmt.volumeToCanonical(capacity.toCapacityDouble() ?: 0.0),
             serialNumber = serial.trim().takeIf { it.isNotEmpty() },
             vinNumber = vin.trim().takeIf { it.isNotEmpty() },
         )
@@ -273,7 +278,7 @@ internal fun SprayEquipmentFormSheet(
             OutlinedTextField(
                 value = capacity,
                 onValueChange = { capacity = it.numericFilterCapacity() },
-                label = { Text("Tank capacity (litres, optional)") },
+                label = { Text("Tank capacity (${fmt.volumeUnitAbbreviation}, optional)") },
                 placeholder = { Text("e.g. 400") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),

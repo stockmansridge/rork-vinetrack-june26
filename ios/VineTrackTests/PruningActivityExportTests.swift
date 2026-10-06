@@ -322,6 +322,21 @@ struct PruningActivityExportTests {
         rows(sorted(entries), includeCost: includeCost)
     }
 
+    @Test func customerCsvUsesVineyardDatesAndCurrencyWithoutChangingShares() {
+        let canonical = Self.canonicalE()
+        let formatter = RegionFormatter(settings: OrganizationRegionSettings(countryCode: "US", currencyCode: "USD", timezone: "UTC", dateFormat: "MM/DD/YYYY"))
+        let csv = PruningActivityExport.csv(canonical, includeCost: true, calendar: Self.calendar, formatter: formatter)
+        let rows = Self.rows(canonical)
+        #expect(csv.contains("(USD)"))
+        for row in rows {
+            #expect(csv.contains("\(row.dateIso),\(formatter.formatDate(row.dateIso)),"))
+        }
+        #expect(csv.contains("91.00"))
+        let hidden = PruningActivityExport.csv(canonical, includeCost: false, calendar: Self.calendar, formatter: formatter)
+        #expect(!hidden.contains("(USD)"))
+        #expect(!hidden.contains("91.00"))
+    }
+
     // MARK: 1. Two-block activity filtered to the PRIMARY block
 
     @Test("A two-block activity filtered to the primary block reports a partial activity")

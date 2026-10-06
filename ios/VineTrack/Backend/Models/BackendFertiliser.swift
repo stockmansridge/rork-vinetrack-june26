@@ -130,7 +130,7 @@ extension BackendFertiliserRecord {
             form: record.form.rawValue,
             calculationMode: record.mode.rawValue,
             recordStatus: record.status.rawValue,
-            applicationDate: PruningSyncDate.ymd(from: record.date),
+            applicationDate: record.applicationDateSnapshot ?? PruningSyncDate.ymd(from: record.date),
             blockNames: record.blockNames,
             totalAreaHa: record.areaHectares,
             totalVines: record.vineCount,
@@ -152,11 +152,11 @@ extension BackendFertiliserRecord {
         )
     }
 
-    func toFertiliserRecord(allocations: [FertiliserAllocation]) -> FertiliserRecord {
+    func toFertiliserRecord(allocations: [FertiliserAllocation], timeZone: TimeZone = .current) -> FertiliserRecord {
         FertiliserRecord(
             id: id,
             vineyardId: vineyardId,
-            date: PruningSyncDate.date(fromYmd: applicationDate) ?? createdAt ?? Date(),
+            date: FertiliserApplicationDate.date(applicationDate, timeZone: timeZone) ?? createdAt ?? Date(),
             status: FertiliserRecordStatus(rawValue: recordStatus ?? "") ?? .planned,
             mode: FertiliserCalcMode(rawValue: calculationMode ?? "") ?? .perHectare,
             productId: productId,
@@ -174,7 +174,8 @@ extension BackendFertiliserRecord {
             notes: notes ?? "",
             allocations: allocations,
             createdAt: createdAt ?? Date(),
-            vineCountBasis: vineCountBasis
+            vineCountBasis: vineCountBasis,
+            applicationDateSnapshot: applicationDate
         )
     }
 }

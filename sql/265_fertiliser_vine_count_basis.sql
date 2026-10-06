@@ -1,5 +1,5 @@
--- DRAFT ONLY — NOT APPLIED. Deploy separately before releasing basis-aware sync.
--- Live schema inspected 2026-10-05: fertiliser_records has no count-basis field.
+-- Applied to the live database by the project owner, confirmed 2026-10-06.
+-- Nullable record-level provenance; existing records remain NULL (legacy).
 -- Record-level provenance is sufficient: all allocations use the same basis.
 -- No default, backfill, record rewrite, or allocation schema change.
 BEGIN;

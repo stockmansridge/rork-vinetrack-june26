@@ -43,10 +43,11 @@ final class FertiliserStore {
     }
 
     /// Converts a planned task into a completed application record.
-    func markCompleted(id: UUID, on date: Date = Date()) {
+    func markCompleted(id: UUID, on date: Date = Date(), timeZone: TimeZone = .current) {
         guard let index = records.firstIndex(where: { $0.id == id }) else { return }
         records[index].status = .completed
         records[index].date = date
+        records[index].applicationDateSnapshot = FertiliserApplicationDate.snapshot(date, timeZone: timeZone)
         persistRecords()
         onRecordChanged?(id)
     }

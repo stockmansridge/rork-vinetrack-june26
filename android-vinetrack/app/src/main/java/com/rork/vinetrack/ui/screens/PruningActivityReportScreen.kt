@@ -1,5 +1,7 @@
 package com.rork.vinetrack.ui.screens
 
+import com.rork.vinetrack.ui.LocalRegionFormatter
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -139,6 +141,7 @@ fun PruningActivityReportScreen(
 ) {
     val vine = LocalVineColors.current
 
+    val fmt = LocalRegionFormatter.current
     // Block context resolved ONCE per block (name, variety, rows) — the report
     // never looks an entity up per record.
     val blockContexts = remember(paddocks, setups) {
@@ -319,6 +322,7 @@ fun PruningActivityReportScreen(
                                         seasonLabel = season.takeIf { it > 0 }?.toString().orEmpty(),
                                         includeCost = canViewCosting,
                                         canonicalRows = allRows,
+                                        formatter = fmt,
                                     )
                                 },
                             )
@@ -333,6 +337,7 @@ fun PruningActivityReportScreen(
                                         seasonLabel = season.takeIf { it > 0 }?.toString().orEmpty(),
                                         includeCost = canViewCosting,
                                         canonicalRows = allRows,
+                                        formatter = fmt,
                                         includeTechnicalReferences = includeTechnicalReferences,
                                     )
                                 },
@@ -553,7 +558,7 @@ private fun SummaryStrip(summary: PruningActivitySummary, canViewCosting: Boolea
         SummaryChip("${fmtDecimal(summary.labourHours, 1)} h", "Labour hours")
         SummaryChip(summary.averageVinesPerHour?.let { fmtWhole(it) } ?: "—", "Avg vines / hr")
         if (canViewCosting) {
-            SummaryChip(summary.labourCost?.let { "$" + fmtDecimal(it, 2) } ?: "—", "Labour cost")
+            SummaryChip(summary.labourCost?.let { LocalRegionFormatter.current.formatCurrency(it) } ?: "—", "Labour cost")
         }
         SummaryChip("${summary.activeRecords}", "Active")
         SummaryChip("${summary.reversedRecords}", "Reversed", muted = true)
@@ -806,7 +811,7 @@ private fun PruningActivityDetailSheet(
             DetailLine("Duration", row.durationHours?.let { "${fmtDecimal(it, 1)} h" })
             DetailLine("Vines per hour", row.vinesPerHour?.let { fmtWhole(it) })
             if (canViewCosting) {
-                DetailLine("Labour cost", row.labourCost?.let { "$" + fmtDecimal(it, 2) })
+                DetailLine("Labour cost", row.labourCost?.let { LocalRegionFormatter.current.formatCurrency(it) })
             }
 
             Spacer(Modifier.height(6.dp))
@@ -1093,8 +1098,9 @@ private fun columnWidth(column: PruningActivityColumn): Dp = when (column) {
     PruningActivityColumn.Status -> 92.dp
 }
 
+@Composable
 private fun cellValue(row: PruningActivityRow, column: PruningActivityColumn): String = when (column) {
-    PruningActivityColumn.Date -> row.date?.format(reportDate) ?: row.dateIso
+    PruningActivityColumn.Date -> LocalRegionFormatter.current.formatDate(row.dateIso)
     PruningActivityColumn.Worker -> row.worker ?: "—"
     PruningActivityColumn.Block -> row.blockName
     PruningActivityColumn.Variety -> row.variety ?: "—"
@@ -1106,12 +1112,12 @@ private fun cellValue(row: PruningActivityRow, column: PruningActivityColumn): S
     PruningActivityColumn.Finish -> row.finishTime ?: "—"
     PruningActivityColumn.Duration -> row.durationHours?.let { "${fmtDecimal(it, 1)} h" } ?: "—"
     PruningActivityColumn.VinesPerHour -> row.vinesPerHour?.let { fmtWhole(it) } ?: "—"
-    PruningActivityColumn.LabourCost -> row.labourCost?.let { "$" + fmtDecimal(it, 2) } ?: "—"
+    PruningActivityColumn.LabourCost -> row.labourCost?.let { LocalRegionFormatter.current.formatCurrency(it) } ?: "—"
     PruningActivityColumn.WorkTask -> row.workTaskTitle ?: "—"
     PruningActivityColumn.Notes -> row.notes ?: "—"
     PruningActivityColumn.EnteredBy -> row.enteredBy ?: "—"
-    PruningActivityColumn.Created -> row.createdAtMs?.let { fmtStamp(it) } ?: "—"
-    PruningActivityColumn.Updated -> row.updatedAtMs?.let { fmtStamp(it) } ?: "—"
+    PruningActivityColumn.Created -> row.createdAtMs?.let { LocalRegionFormatter.current.formatDateTime(it) } ?: "—"
+    PruningActivityColumn.Updated -> row.updatedAtMs?.let { LocalRegionFormatter.current.formatDateTime(it) } ?: "—"
     PruningActivityColumn.Status -> row.status.label
 }
 

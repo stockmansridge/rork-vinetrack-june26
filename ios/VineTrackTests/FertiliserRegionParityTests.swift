@@ -104,6 +104,27 @@ struct FertiliserRegionParityTests {
         #expect(hectaresGallons.formatDate("2026-10-05") == "05/10/2026")
     }
 
+    @Test func applicationDaySurvivesCacheAndReplayAcrossTimezones() throws {
+        let instant = try #require(ISO8601DateFormatter().date(from: "2026-10-05T01:00:00Z"))
+        let zone = try #require(TimeZone(identifier: "America/Los_Angeles"))
+        let day = FertiliserApplicationDate.snapshot(instant, timeZone: zone)
+        #expect(day == "2026-10-04")
+        var record = FertiliserRecord(vineyardId: UUID(), date: instant, status: .planned, mode: .perVine, productName: "Snapshot", form: .solid, paddockIds: [], blockNames: [], areaHectares: 0, vineCount: 7800, rate: 10, totalProduct: 78, applicationDateSnapshot: day)
+        record = try JSONDecoder().decode(FertiliserRecord.self, from: JSONEncoder().encode(record))
+        let upsert = BackendFertiliserRecord.upsert(from: record, createdBy: nil, clientUpdatedAt: instant)
+        #expect(upsert.applicationDate == day)
+        let remote = try JSONDecoder().decode(BackendFertiliserRecord.self, from: JSONEncoder().encode(upsert))
+        for name in ["America/Los_Angeles", "Australia/Sydney", "Pacific/Auckland", "UTC"] {
+            let replayZone = try #require(TimeZone(identifier: name))
+            let pulled = remote.toFertiliserRecord(allocations: [], timeZone: replayZone)
+            #expect(pulled.applicationDateSnapshot == day)
+            #expect(FertiliserApplicationDate.snapshot(pulled.date, timeZone: replayZone) == day)
+            #expect(BackendFertiliserRecord.upsert(from: pulled, createdBy: nil, clientUpdatedAt: instant).applicationDate == day)
+            #expect(pulled.vineCount == 7800 && pulled.totalProduct == 78)
+        }
+        #expect(FertiliserApplicationDate.date("2026-02-30", timeZone: zone) == nil)
+    }
+
     @Test func vineyardTimezoneBoundary() throws {
         let us = RegionFormatter(settings: OrganizationRegionSettings(countryCode: "US", currencyCode: "USD", timezone: "America/Los_Angeles", dateFormat: "MM/DD/YYYY"))
         let date = try #require(ISO8601DateFormatter().date(from: "2026-10-05T01:00:00Z"))

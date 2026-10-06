@@ -62,7 +62,8 @@ nonisolated enum PruningActivityExportService {
         includeCost: Bool,
         canonicalRows: [PruningActivityRow]? = nil,
         canonicalParents: [UUID: PruningActivityParentSource] = [:],
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        formatter: RegionFormatter = .australian
     ) throws -> URL {
         logConflicts(
             PruningActivityAllocationModel.build(
@@ -75,7 +76,8 @@ nonisolated enum PruningActivityExportService {
             rows,
             includeCost: includeCost,
             canonicalRows: canonicalRows,
-            calendar: calendar
+            calendar: calendar,
+            formatter: formatter
         )
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(fileName(vineyardName: vineyardName, seasonLabel: seasonLabel, extension: "csv"))
@@ -97,7 +99,8 @@ nonisolated enum PruningActivityExportService {
         canonicalRows: [PruningActivityRow]? = nil,
         canonicalParents: [UUID: PruningActivityParentSource] = [:],
         includeTechnicalReferences: Bool = false,
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        formatter: RegionFormatter = .australian
     ) throws -> URL {
         let model = PruningActivityAllocationModel.build(
             canonicalRows ?? rows,
@@ -189,7 +192,7 @@ nonisolated enum PruningActivityExportService {
                 // The activity's NAME is the label. The eight-character
                 // reference follows it in small grey type; the full UUID never
                 // appears in the body of the document.
-                let heading = "\(group.activityLabel) — \(group.dateDisplay)"
+                let heading = "\(group.activityLabel) — \(formatter.formatDate(group.dateIso))"
                     + (group.isReversed ? "   REVERSED" : "")
                 cursor += draw(
                     heading,
@@ -232,7 +235,7 @@ nonisolated enum PruningActivityExportService {
                 }
 
                 // Whole-activity values, stated exactly once.
-                for line in activityLines(group, includeCost: includeCost) {
+                for line in activityLines(group, includeCost: includeCost, formatter: formatter) {
                     ensure(14)
                     cursor += draw(line, x: margin + 6, font: .systemFont(ofSize: 10.5)) + 2
                 }
@@ -258,7 +261,7 @@ nonisolated enum PruningActivityExportService {
                     ) + 2
                     // This block's proportional slice, on its own indented line so
                     // it is never confused with the whole-activity totals above.
-                    if let allocated = allocatedLine(allocation, includeCost: includeCost) {
+                    if let allocated = allocatedLine(allocation, includeCost: includeCost, formatter: formatter) {
                         ensure(13)
                         cursor += draw(
                             allocated,
@@ -269,7 +272,7 @@ nonisolated enum PruningActivityExportService {
                     }
                 }
 
-                if group.isPartialActivity, let subtotal = allocatedSubtotal(group, includeCost: includeCost) {
+                if group.isPartialActivity, let subtotal = allocatedSubtotal(group, includeCost: includeCost, formatter: formatter) {
                     ensure(14)
                     cursor += draw(subtotal, x: margin + 14, font: .boldSystemFont(ofSize: 10)) + 2
                 }
@@ -316,7 +319,7 @@ nonisolated enum PruningActivityExportService {
     ///
     /// On a partial activity these are explicitly labelled "Whole activity", so
     /// a reader can never take them for the filtered block's cost.
-    private static func activityLines(_ group: PruningActivityExport.Group, includeCost: Bool) -> [String] {
+    private static func activityLines(_ group: PruningActivityExport.Group, includeCost: Bool, formatter: RegionFormatter) -> [String] {
         let partial = group.isPartialActivity
         var lines: [String] = []
         if let worker = group.worker { lines.append("Worker: \(worker)") }
@@ -330,8 +333,8 @@ nonisolated enum PruningActivityExportService {
                                  : "Person-hours: \(trim(personHours))")
         }
         if includeCost, let cost = group.activityLabourCost {
-            let amount = PruningActivityExport.number(cost, decimals: 2)
-            lines.append(partial ? "Whole activity labour cost: $\(amount)" : "Labour cost: $\(amount)")
+            let amount = formatter.formatCurrency(cost)
+            lines.append(partial ? "Whole activity labour cost: \(amount)" : "Labour cost: \(amount)")
         }
         if let title = group.workTaskTitle {
             let status = group.workTaskStatus.map { " (\($0))" } ?? ""
@@ -346,24 +349,24 @@ nonisolated enum PruningActivityExportService {
     }
 
     /// "20.0% of the activity · 2.6 person-hours · $91.00".
-    private static func allocatedLine(_ row: PruningActivityExport.Row, includeCost: Bool) -> String? {
+    private static func allocatedLine(_ row: PruningActivityExport.Row, includeCost: Bool, formatter: RegionFormatter) -> String? {
         var parts: [String] = []
         if let share = row.allocationShare {
             parts.append("\(PruningActivityExport.number(share * 100, decimals: 1))% of the activity")
         }
         if let hours = row.allocatedPersonHours { parts.append("\(trim(hours)) person-hours") }
         if includeCost, let cost = row.allocatedLabourCost {
-            parts.append("$\(PruningActivityExport.number(cost, decimals: 2))")
+            parts.append(formatter.formatCurrency(cost))
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     /// The shown blocks' combined slice, printed only when blocks are missing.
-    private static func allocatedSubtotal(_ group: PruningActivityExport.Group, includeCost: Bool) -> String? {
+    private static func allocatedSubtotal(_ group: PruningActivityExport.Group, includeCost: Bool, formatter: RegionFormatter) -> String? {
         var parts: [String] = []
         if let hours = group.allocatedPersonHours { parts.append("\(trim(hours)) person-hours") }
         if includeCost, let cost = group.allocatedLabourCost {
-            parts.append("$\(PruningActivityExport.number(cost, decimals: 2))")
+            parts.append(formatter.formatCurrency(cost))
         }
         return parts.isEmpty ? nil : "Allocated to shown blocks: \(parts.joined(separator: " · "))"
     }

@@ -166,7 +166,7 @@ These temporary logs may not survive workspace cleanup. The important findings, 
 5. **Cold builds:** the bundle run reused release tasks. It proves packaging in this workspace, not repeatability on an empty-cache export worker.
 6. **Structural compile cost:** AppViewModel.kt is roughly 16,700 lines and several Compose screens are very large. That is a compile-memory risk worth profiling, but no production refactor was made solely on that inference.
 7. **Non-blocking notices:** the managed check reports two legacy image storage URLs in SprayManagementScreen.kt and TripsScreen.kt. They still work and were left unchanged because they are not build blockers.
-8. **Feature readiness is separate:** remaining Region & Units scope and the unapplied Fertiliser basis SQL dependency are not Android build failures. No migration was applied and the broader feature plan was not marked complete.
+8. **Feature readiness is separate:** remaining Region & Units scope is not an Android build failure. At this build-audit checkpoint migration 265 was unapplied; the owner subsequently confirmed applying it on 2026-10-06, and live read-only schema inspection confirms the nullable basis field has no default. The dependency is now unblocked. The agent did not apply it or backfill records; the broader feature plan remains incomplete.
 
 ## Bottom line
 

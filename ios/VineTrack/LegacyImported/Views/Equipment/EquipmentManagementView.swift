@@ -258,6 +258,8 @@ struct FuelPurchaseRow: View {
 }
 
 struct EquipmentFormSheet: View {
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+    @State private var didLoadUnits: Bool = false
     @Environment(\.dismiss) private var dismiss
     @Environment(MigratedDataStore.self) private var store
 
@@ -297,7 +299,7 @@ struct EquipmentFormSheet: View {
                     TextField("e.g. 400", text: $tankCapacity)
                         .keyboardType(.decimalPad)
                 } header: {
-                    Text("Tank Capacity (litres)")
+                    Text("Tank Capacity (\(fmt.volumeUnitAbbreviation))")
                 }
 
                 Section("Identification (optional)") {
@@ -307,6 +309,11 @@ struct EquipmentFormSheet: View {
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.characters)
                 }
+            }
+            .onAppear {
+                guard !didLoadUnits else { return }
+                didLoadUnits = true
+                if let equipment { tankCapacity = String(fmt.volumeValue(litres: equipment.tankCapacityLitres)) }
             }
             .navigationTitle(equipment == nil ? "New Equipment" : "Edit Equipment")
             .navigationBarTitleDisplayMode(.inline)
@@ -326,7 +333,7 @@ struct EquipmentFormSheet: View {
     }
 
     private func save() {
-        let capacity = Double(tankCapacity) ?? 0
+        let capacity = equipment.flatMap { tankCapacity == String(fmt.volumeValue(litres: $0.tankCapacityLitres)) ? $0.tankCapacityLitres : nil } ?? fmt.volumeToCanonical(Double(tankCapacity) ?? 0)
         let trimmedSerial = serialNumber.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedVin = vinNumber.trimmingCharacters(in: .whitespacesAndNewlines)
         if var existing = equipment {
@@ -347,6 +354,8 @@ struct EquipmentFormSheet: View {
 }
 
 struct TractorFormSheet: View {
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+    @State private var didLoadUnits: Bool = false
     @Environment(\.dismiss) private var dismiss
     @Environment(MigratedDataStore.self) private var store
     @Environment(TractorSyncService.self) private var tractorSync
@@ -405,7 +414,10 @@ struct TractorFormSheet: View {
         return !tractor.hasFuelUsageRate
     }
 
-    private var enteredFuelUsage: Double { Double(fuelUsage.trimmingCharacters(in: .whitespaces)) ?? 0 }
+    private var enteredFuelUsage: Double {
+        if let tractor, fuelUsage == String(fmt.fuelValue(litres: tractor.fuelUsageLPerHour)) { return tractor.fuelUsageLPerHour }
+        return fmt.fuelToCanonical(Double(fuelUsage.trimmingCharacters(in: .whitespaces)) ?? 0)
+    }
 
     private var isValid: Bool {
         guard !brand.isEmpty, !model.isEmpty else { return false }
@@ -443,7 +455,7 @@ struct TractorFormSheet: View {
                         .disabled(fuelLookupLoading || brand.trimmingCharacters(in: .whitespaces).isEmpty || model.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                 } header: {
-                    Text("Fuel Usage (L/hr)")
+                    Text("Fuel Usage (\(fmt.fuelUnitAbbreviation)/hr)")
                 } footer: {
                     if allowsUnknownFuelRate && enteredFuelUsage <= 0 {
                         Text("This tractor has no fuel rate recorded yet. You can leave it blank and still save — fuel costing simply won't estimate fuel for it until a rate is entered. Don't guess a figure to get past this screen.")
@@ -463,6 +475,11 @@ struct TractorFormSheet: View {
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.characters)
                 }
+            }
+            .onAppear {
+                guard !didLoadUnits else { return }
+                didLoadUnits = true
+                if let tractor, tractor.hasFuelUsageRate { fuelUsage = String(fmt.fuelValue(litres: tractor.fuelUsageLPerHour)) }
             }
             .navigationTitle(tractor == nil ? "New Tractor" : "Edit Tractor")
             .navigationBarTitleDisplayMode(.inline)
@@ -551,7 +568,7 @@ struct TractorFormSheet: View {
                         .padding(.top, 2)
                 }
                 Button {
-                    fuelUsage = String(format: "%.1f", result.fuelUsageLPerHour)
+                    fuelUsage = String(fmt.fuelValue(litres: result.fuelUsageLPerHour))
                     lookupOutcome = nil
                 } label: {
                     Label("Use this match", systemImage: "checkmark.circle.fill")
@@ -590,7 +607,7 @@ struct TractorFormSheet: View {
                 }
                 if result.fuelUsageLPerHour > 0 {
                     Button {
-                        fuelUsage = String(format: "%.1f", result.fuelUsageLPerHour)
+                        fuelUsage = String(fmt.fuelValue(litres: result.fuelUsageLPerHour))
                         lookupOutcome = nil
                     } label: {
                         Label("Use closest guess", systemImage: "sparkles")

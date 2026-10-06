@@ -2,6 +2,7 @@ import SwiftUI
 import MapKit
 
 struct SprayRecordDetailView: View {
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
     let record: SprayRecord
     @Environment(MigratedDataStore.self) private var store
     @Environment(SprayRecordSyncService.self) private var sprayRecordSync
@@ -472,7 +473,7 @@ struct SprayRecordDetailView: View {
                 }
                 if hasCorrection, let fuelRate = canonicalReport?.equipment.fuelConsumptionLPerHour {
                     Divider()
-                    detailRow("Fuel use", value: "\(fuelRate.formatted(.number.precision(.fractionLength(0...2)))) L/hr")
+                    detailRow("Fuel use", value: fmt.formatFuelRatePerHour(litresPerHour: fuelRate))
                 }
                 if hasCorrection, let startHours = canonicalReport?.equipment.startEngineHours {
                     Divider()
@@ -562,11 +563,11 @@ struct SprayRecordDetailView: View {
             if hasWeather {
                 VStack(spacing: 10) {
                     if let temp = record.temperature {
-                        detailRow("Temperature", value: String(format: "%.1f°C", temp))
+                        detailRow("Temperature", value: fmt.formatTemperature(celsius: temp))
                         Divider()
                     }
                     if let wind = record.windSpeed {
-                        detailRow("Wind Speed (10 min avg)", value: String(format: "%.1f km/h", wind))
+                        detailRow("Wind Speed (10 min avg)", value: fmt.formatSpeed(kmh: wind))
                         Divider()
                     }
                     if !record.windDirection.isEmpty {
@@ -578,7 +579,7 @@ struct SprayRecordDetailView: View {
                         Divider()
                     }
                     if let avgSpeed = record.averageSpeed {
-                        detailRow("Average Speed", value: String(format: "%.1f km/h", avgSpeed))
+                        detailRow("Average Speed", value: fmt.formatSpeed(kmh: avgSpeed))
                     }
                 }
             } else {
@@ -600,7 +601,7 @@ struct SprayRecordDetailView: View {
                     ForEach(actuals) { actual in
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Tank \(actual.tankNumber)").font(.title3.bold())
-                            detailRow("Actual water", value: String(format: "%.0f L", actual.waterVolumeL ?? 0))
+                            detailRow("Actual water", value: fmt.formatVolume(litres: actual.waterVolumeL ?? 0))
                             ForEach(actual.chemicals) { chemical in
                                 detailRow(chemical.name, value: String(format: "%.2f %@", chemical.displayAmount, chemical.unit.rawValue))
                             }
@@ -620,15 +621,15 @@ struct SprayRecordDetailView: View {
                     .font(.title3.bold())
                 Spacer()
                 if tank.areaPerTank > 0 {
-                    Text(String(format: "%.2f Ha/tank", tank.areaPerTank))
+                    Text("\(fmt.formatArea(hectares: tank.areaPerTank))/tank")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(VineyardTheme.leafGreen)
                 }
             }
 
             HStack(alignment: .top, spacing: 0) {
-                tankMetric(label: "Water", value: String(format: "%.0f L", tank.waterVolume))
-                tankMetric(label: "Rate", value: String(format: "%.0f L/Ha", tank.sprayRatePerHa))
+                tankMetric(label: "Water", value: fmt.formatVolume(litres: tank.waterVolume))
+                tankMetric(label: "Rate", value: fmt.formatVolumePerArea(litresPerHectare: tank.sprayRatePerHa))
                 tankMetric(label: "CF", value: String(format: "%.2f", tank.effectiveConcentrationFactor))
             }
 

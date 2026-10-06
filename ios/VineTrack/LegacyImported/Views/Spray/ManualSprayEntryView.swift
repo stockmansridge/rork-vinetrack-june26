@@ -5,6 +5,7 @@ struct ManualSprayEntryView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
 
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
     private let vineyardId: UUID
     private let timeZone: TimeZone
     private let teamRepository: any TeamRepositoryProtocol
@@ -110,7 +111,7 @@ struct ManualSprayEntryView: View {
         }
         ForEach($draft.tanks) { $tank in
             Section("Tank \(tank.tankNumber)") {
-                TextField("Actual water (L)", value: $tank.waterVolumeLitres, format: .number).keyboardType(.decimalPad)
+                TextField("Actual water (\(fmt.volumeUnitAbbreviation))", value: Binding(get: { fmt.volumeValue(litres: tank.waterVolumeLitres) }, set: { tank.waterVolumeLitres = fmt.volumeToCanonical($0) }), format: .number).keyboardType(.decimalPad)
                 ForEach($tank.chemicals) { $chemical in
                     VStack(alignment: .leading, spacing: 8) {
                         Text(chemical.name).font(.headline)
@@ -141,20 +142,20 @@ struct ManualSprayEntryView: View {
             Text("Station weather can be retrieved after saving. Manual values remain authoritative and are never overwritten by a late station result.").font(.caption).foregroundStyle(.secondary)
             Toggle("Enter weather manually", isOn: Binding(get: { draft.manualWeather != nil }, set: { enabled in draft.manualWeather = enabled ? ManualSprayWeather(observedAt: draft.startUtc, source: "Operator observation", temperatureC: nil, humidityPct: nil, windSpeedKmh: nil, windGustKmh: nil, windDirectionDeg: nil, rainMm: nil) : nil }))
             if draft.manualWeather != nil {
-                TextField("Temperature °C", value: weatherBinding(\.temperatureC), format: .number).keyboardType(.decimalPad)
+                TextField("Temperature \(fmt.temperatureUnitAbbreviation)", value: weatherBinding(\.temperatureC, display: fmt.temperatureValue(celsius:), canonical: fmt.celsius(fromDisplay:)), format: .number).keyboardType(.decimalPad)
                 TextField("Humidity %", value: weatherBinding(\.humidityPct), format: .number).keyboardType(.decimalPad)
-                TextField("Wind km/h", value: weatherBinding(\.windSpeedKmh), format: .number).keyboardType(.decimalPad)
-                TextField("Gust km/h", value: weatherBinding(\.windGustKmh), format: .number).keyboardType(.decimalPad)
+                TextField("Wind \(fmt.speedUnitAbbreviation)", value: weatherBinding(\.windSpeedKmh, display: fmt.speedValue(kmh:), canonical: fmt.speedKmh(fromDisplay:)), format: .number).keyboardType(.decimalPad)
+                TextField("Gust \(fmt.speedUnitAbbreviation)", value: weatherBinding(\.windGustKmh, display: fmt.speedValue(kmh:), canonical: fmt.speedKmh(fromDisplay:)), format: .number).keyboardType(.decimalPad)
                 TextField("Direction °", value: weatherBinding(\.windDirectionDeg), format: .number).keyboardType(.decimalPad)
-                TextField("Rain mm", value: weatherBinding(\.rainMm), format: .number).keyboardType(.decimalPad)
+                TextField("Rain \(fmt.rainfallUnitAbbreviation)", value: weatherBinding(\.rainMm, display: fmt.rainfallValue(mm:), canonical: fmt.rainfallMm(fromDisplay:)), format: .number).keyboardType(.decimalPad)
             }
         }
     }
 
     @ViewBuilder private var reviewSections: some View {
         Section { Label("Manual entry", systemImage: "pencil").foregroundStyle(.purple); LabeledContent("Status", value: "Completed") }
-        Section("Application") { LabeledContent("Reference", value: draft.reference); LabeledContent("Start", value: draft.startUtc.formatted()); LabeledContent("End", value: draft.endUtc.formatted()); LabeledContent("Timezone", value: draft.vineyardTimeZone) }
-        Section("Summary") { LabeledContent("Blocks", value: "\(draft.blocks.count)"); LabeledContent("Tanks", value: "\(draft.tanks.count)"); LabeledContent("Actual water", value: "\(draft.tanks.reduce(0) { $0 + $1.waterVolumeLitres }.formatted()) L") }
+        Section("Application") { LabeledContent("Reference", value: draft.reference); LabeledContent("Start", value: fmt.formatDateTime(draft.startUtc)); LabeledContent("End", value: fmt.formatDateTime(draft.endUtc)); LabeledContent("Timezone", value: draft.vineyardTimeZone) }
+        Section("Summary") { LabeledContent("Blocks", value: "\(draft.blocks.count)"); LabeledContent("Tanks", value: "\(draft.tanks.count)"); LabeledContent("Actual water", value: fmt.formatVolume(litres: draft.tanks.reduce(0) { $0 + $1.waterVolumeLitres })) }
         if let savedResponse {
             Section("Weather station") {
                 Button("Retrieve historical station weather", systemImage: "cloud.sun") { Task { await recoverWeather(savedResponse) } }
@@ -183,8 +184,8 @@ struct ManualSprayEntryView: View {
         for index in draft.tanks.indices { draft.tanks[index].tankNumber = index + 1 }
     }
 
-    private func weatherBinding(_ keyPath: WritableKeyPath<ManualSprayWeather, Double?>) -> Binding<Double?> {
-        Binding(get: { draft.manualWeather?[keyPath: keyPath] }, set: { draft.manualWeather?[keyPath: keyPath] = $0 })
+    private func weatherBinding(_ keyPath: WritableKeyPath<ManualSprayWeather, Double?>, display: @escaping (Double) -> Double = { $0 }, canonical: @escaping (Double) -> Double = { $0 }) -> Binding<Double?> {
+        Binding(get: { draft.manualWeather?[keyPath: keyPath].map(display) }, set: { draft.manualWeather?[keyPath: keyPath] = $0.map(canonical) })
     }
 
     @MainActor

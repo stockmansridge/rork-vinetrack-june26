@@ -500,7 +500,7 @@ struct FertiliserCalculatorView: View {
                 HStack(spacing: 10) {
                     if record.status == .planned {
                         Button {
-                            fertStore.markCompleted(id: record.id)
+                            fertStore.markCompleted(id: record.id, timeZone: fmt.settings.resolvedTimeZone)
                         } label: {
                             Image(systemName: "checkmark.circle")
                                 .font(.subheadline)
@@ -520,7 +520,7 @@ struct FertiliserCalculatorView: View {
     }
 
     private func recordDetail(_ record: FertiliserRecord) -> String {
-        var parts: [String] = [fmt.formatDate(record.date)]
+        var parts: [String] = [record.applicationDateSnapshot.map { fmt.formatDate($0) } ?? fmt.formatDate(record.date)]
         parts.append(record.form == .liquid ? fmt.formatVolume(litres: record.totalProduct) : "\(record.totalProduct.formatted(.number.precision(.fractionLength(0...1)))) kg")
         parts.append(record.mode == .perVine ? "\(record.rate.formatted(.number.precision(.fractionLength(0...1)))) \(record.rateUnit)" : record.form == .liquid ? fmt.formatVolumePerArea(litresPerHectare: record.rate) : fmt.formatSprayRate(perHectare: record.rate, unitLabel: "kg"))
         if record.mode == .perVine { parts.append("\(record.vineCount) vines · \(FertiliserVineCounts.label(record.vineCountBasis))") }
@@ -560,7 +560,8 @@ struct FertiliserCalculatorView: View {
             labourMachineryCost: result.labourCost,
             notes: notes,
             allocations: blockAllocations(for: selected, result: result),
-            vineCountBasis: mode != .perVine ? nil : selected.isEmpty ? FertiliserVineCounts.manual : countBasis
+            vineCountBasis: mode != .perVine ? nil : selected.isEmpty ? FertiliserVineCounts.manual : countBasis,
+            applicationDateSnapshot: FertiliserApplicationDate.snapshot(Date(), timeZone: fmt.settings.resolvedTimeZone)
         )
         fertStore.addRecord(record)
         savedBanner = status == .planned ? "Saved as planned task" : "Recorded"

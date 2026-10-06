@@ -23,7 +23,12 @@ data class ManualSprayFormDraft(
     val gustInput: String = base.manualWeather?.windGustKmh?.toString().orEmpty(),
     val directionInput: String = base.manualWeather?.windDirectionDeg?.toString().orEmpty(),
     val rainInput: String = base.manualWeather?.rainMm?.toString().orEmpty(),
+    val inputCountry: String = "AU",
+    val inputVolumeUnit: String = "litres",
+    val inputDistanceUnit: String = "metric",
 ) {
+    val inputFormatter: RegionFormatter get() = RegionFormatter(RegionSettings(countryCode = inputCountry, volumeUnit = inputVolumeUnit, distanceUnit = inputDistanceUnit))
+
     /** Creates the only payload eligible for validation, queue persistence, and RPC encoding. */
     fun validatedPayload(): ManualSprayPayload {
         fun optionalNumber(raw: String, label: String): Double? {
@@ -35,9 +40,15 @@ data class ManualSprayFormDraft(
             raw?.takeIf { it.isNotBlank() }?.toDoubleOrNull()?.takeIf(Double::isFinite)
                 ?: throw IllegalArgumentException("$label is invalid.")
 
+        val fmt = inputFormatter
+        fun canonical(raw: String, original: Double?, display: (Double) -> Double, inverse: (Double) -> Double): Double? {
+            val entered = optionalNumber(raw, "Observation") ?: return null
+            return if (original != null && entered == display(original)) original else inverse(entered)
+        }
         val tanks = base.tanks.map { tank ->
             tank.copy(
-                waterVolumeLitres = requiredNumber(waterInputs[tank.id], "Tank ${tank.tankNumber} water amount"),
+                waterVolumeLitres = canonical(waterInputs[tank.id].orEmpty(), tank.waterVolumeLitres, fmt::volumeValue, fmt::volumeToCanonical)
+                    ?: throw IllegalArgumentException("Tank ${tank.tankNumber} water amount is invalid."),
                 chemicals = tank.chemicals.map { chemical ->
                     chemical.copy(
                         actualAmountBase = toManualBase(
@@ -52,12 +63,12 @@ data class ManualSprayFormDraft(
             ManualSprayWeather(
                 observedAt = weatherObservedAt ?: base.startUtc,
                 source = weatherSource ?: "Operator observation",
-                temperatureC = optionalNumber(temperatureInput, "Temperature"),
+                temperatureC = canonical(temperatureInput, base.manualWeather?.temperatureC, fmt::temperatureValue, fmt::celsius),
                 humidityPct = optionalNumber(humidityInput, "Humidity"),
-                windSpeedKmh = optionalNumber(windInput, "Wind speed"),
-                windGustKmh = optionalNumber(gustInput, "Wind gust"),
+                windSpeedKmh = canonical(windInput, base.manualWeather?.windSpeedKmh, fmt::speedValue, fmt::speedKmh),
+                windGustKmh = canonical(gustInput, base.manualWeather?.windGustKmh, fmt::speedValue, fmt::speedKmh),
                 windDirectionDeg = optionalNumber(directionInput, "Wind direction"),
-                rainMm = optionalNumber(rainInput, "Rain"),
+                rainMm = canonical(rainInput, base.manualWeather?.rainMm, fmt::rainfallValue, fmt::rainfallMm),
             )
         } else null
         val payload = base.copy(

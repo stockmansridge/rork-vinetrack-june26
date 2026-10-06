@@ -10,6 +10,7 @@ import SwiftUI
 /// through the shared `PruningActivityReport` contract, which Android mirrors
 /// field for field.
 struct PruningActivityReportView: View {
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
     @Environment(MigratedDataStore.self) private var store
     @Environment(PruningSyncService.self) private var pruningSync
     @Environment(\.accessControl) private var accessControl
@@ -255,7 +256,8 @@ struct PruningActivityReportView: View {
                     vineyardName: exportVineyardName,
                     seasonLabel: seasonLabel,
                     includeCost: canViewCosting,
-                    canonicalRows: allRows
+                    canonicalRows: allRows,
+                    formatter: fmt
                 )
             case .pdf:
                 url = try PruningActivityExportService.pdfURL(
@@ -264,7 +266,8 @@ struct PruningActivityReportView: View {
                     seasonLabel: seasonLabel,
                     includeCost: canViewCosting,
                     canonicalRows: allRows,
-                    includeTechnicalReferences: includeTechnicalReferences
+                    includeTechnicalReferences: includeTechnicalReferences,
+                    formatter: fmt
                 )
             }
             present(url)
@@ -402,7 +405,7 @@ struct PruningActivityReportView: View {
                 )
                 if canViewCosting {
                     summaryChip(
-                        value: totals.labourCost.map { "$" + $0.formatted(.number.precision(.fractionLength(2))) } ?? "—",
+                        value: totals.labourCost.map { fmt.formatCurrency($0) } ?? "—",
                         label: "Labour cost"
                     )
                 }
@@ -620,12 +623,12 @@ struct PruningActivityReportView: View {
         case .finish: return row.finishTime.map { Self.timeFormatter.string(from: $0) } ?? "—"
         case .duration: return row.durationHours.map { $0.formatted(.number.precision(.fractionLength(0...1))) + " h" } ?? "—"
         case .vinesPerHour: return row.vinesPerHour.map { $0.formatted(.number.precision(.fractionLength(0))) } ?? "—"
-        case .labourCost: return row.labourCost.map { "$" + $0.formatted(.number.precision(.fractionLength(2))) } ?? "—"
+        case .labourCost: return row.labourCost.map { fmt.formatCurrency($0) } ?? "—"
         case .workTask: return row.workTaskTitle ?? "—"
         case .notes: return row.notes ?? "—"
         case .enteredBy: return row.enteredBy ?? "—"
-        case .created: return row.createdAt.map { Self.stampFormatter.string(from: $0) } ?? "—"
-        case .updated: return row.updatedAt.map { Self.stampFormatter.string(from: $0) } ?? "—"
+        case .created: return row.createdAt.map { fmt.formatDateTime($0) } ?? "—"
+        case .updated: return row.updatedAt.map { fmt.formatDateTime($0) } ?? "—"
         case .status: return row.status.label
         }
     }
@@ -783,6 +786,8 @@ struct PruningReportEditTarget: Identifiable, Hashable {
 // MARK: - Detail sheet
 
 private struct PruningActivityDetailSheet: View {
+    @Environment(MigratedDataStore.self) private var store
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
     @Environment(\.dismiss) private var dismiss
     let row: PruningActivityRow
     let canViewCosting: Bool
@@ -800,7 +805,7 @@ private struct PruningActivityDetailSheet: View {
                             .foregroundStyle(.secondary)
                     }
                     detail("Status", row.status.label)
-                    detail("Date", PruningActivityReportView.dayFormatter.string(from: row.date))
+                    detail("Date", fmt.formatDate(row.date))
                     detail("Worker or crew", row.worker)
                     detail("Block", row.blockName)
                     detail("Variety", row.variety)
@@ -818,7 +823,7 @@ private struct PruningActivityDetailSheet: View {
                     detail("Duration", row.durationHours.map { $0.formatted(.number.precision(.fractionLength(0...1))) + " h" })
                     detail("Vines per hour", row.vinesPerHour.map { $0.formatted(.number.precision(.fractionLength(0))) })
                     if canViewCosting {
-                        detail("Labour cost", row.labourCost.map { "$" + $0.formatted(.number.precision(.fractionLength(2))) })
+                        detail("Labour cost", row.labourCost.map { fmt.formatCurrency($0) })
                     }
                 }
 
@@ -826,8 +831,8 @@ private struct PruningActivityDetailSheet: View {
                     detail("Work Task", row.hasWorkTask ? (row.workTaskTitle ?? "Work Task") : nil)
                     detail("Notes", row.notes)
                     detail("Entered by", row.enteredBy)
-                    detail("Created", row.createdAt.map { PruningActivityReportView.stampFormatter.string(from: $0) })
-                    detail("Last updated", row.updatedAt.map { PruningActivityReportView.stampFormatter.string(from: $0) })
+                    detail("Created", row.createdAt.map { fmt.formatDateTime($0) })
+                    detail("Last updated", row.updatedAt.map { fmt.formatDateTime($0) })
                 }
 
                 Section {

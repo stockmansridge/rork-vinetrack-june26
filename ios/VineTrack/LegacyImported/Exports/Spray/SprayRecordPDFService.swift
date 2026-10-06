@@ -130,7 +130,7 @@ struct SprayRecordPDFService {
                     drawDivider()
                 }
                 header()
-                tableRow(item: "Water", planned: tank.plannedWaterLitres.map { formatter.formatVolume(litres: $0) } ?? "Not planned", actual: tank.actualWaterLitres.map { $0 == 0 ? "0 L" : formatter.formatVolume(litres: $0) } ?? "Not recorded")
+                tableRow(item: "Water", planned: tank.plannedWaterLitres.map { formatter.formatVolume(litres: $0) } ?? "Not planned", actual: tank.actualWaterLitres.map { formatter.formatVolume(litres: $0) } ?? "Not recorded")
                 for chemical in tank.chemicals {
                     let unit = ChemicalUnit(rawValue: chemical.unit) ?? .litres
                     let planned = chemical.plannedAmountBase.map { String(format: "%.3f %@", unit.fromBase($0), unit.rawValue) } ?? "—"
