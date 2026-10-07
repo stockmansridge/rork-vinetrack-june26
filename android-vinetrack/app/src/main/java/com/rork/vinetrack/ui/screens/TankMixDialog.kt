@@ -330,6 +330,7 @@ private fun TankMixContent(
     actual: com.rork.vinetrack.data.model.SprayTankActual?,
 ) {
     val vine = LocalVineColors.current
+    val formatter = com.rork.vinetrack.data.SprayReportRegionalFormat(LocalRegionFormatter.current)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -383,14 +384,14 @@ private fun TankMixContent(
             tonalElevation = 1.dp,
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp)) {
-                PlannedDetailRow("Planned water", "${tankMixNumber(selectedTank.waterVolume)} L")
+                PlannedDetailRow("Planned water", formatter.water(selectedTank.waterVolume))
                 HorizontalDivider(color = vine.cardBorder)
-                PlannedDetailRow("Actual water", actual?.waterVolumeL?.let { "${tankMixNumber(it)} L" } ?: "Not recorded")
+                PlannedDetailRow("Actual water", actual?.waterVolumeL?.let(formatter::water) ?: "Not recorded")
                 actual?.waterVolumeL?.let { actualWater ->
                     val difference = actualWater - selectedTank.waterVolume
                     if (abs(difference) > 0.000001) {
                         Text(
-                            "Difference: ${signedTankMixNumber(difference)} L",
+                            "Difference: ${formatter.difference(difference)}",
                             modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
                             color = vine.textSecondary,
                             fontSize = 12.sp,
@@ -399,9 +400,9 @@ private fun TankMixContent(
                     }
                 }
                 HorizontalDivider(color = vine.cardBorder)
-                PlannedDetailRow("Planned area", "${tankMixNumber(selectedTank.areaPerTank)} ha")
+                PlannedDetailRow("Planned area", formatter.area(selectedTank.areaPerTank))
                 HorizontalDivider(color = vine.cardBorder)
-                PlannedDetailRow("Spray rate", "${tankMixNumber(selectedTank.sprayRatePerHa)} L/ha")
+                PlannedDetailRow("Spray rate", formatter.carrier(selectedTank.sprayRatePerHa))
                 val factor = if (selectedTank.concentrationFactor > 0) selectedTank.concentrationFactor else 1.0
                 if (kotlin.math.abs(factor - 1.0) > 0.000001) {
                     HorizontalDivider(color = vine.cardBorder)

@@ -1087,7 +1087,7 @@ private struct PruningEntrySheet: View {
     }
 
     private func currencyLabel(_ value: Double) -> String {
-        "$" + value.formatted(.number.precision(.fractionLength(2)))
+        dataStore.settings.regionFormatter.formatCurrency(value)
     }
 
     private var recordButtonTitle: String {
@@ -1552,7 +1552,7 @@ private struct PruningEntrySheet: View {
                 // The hourly rate IS the costing input — on a piece-rate job it
                 // would be a second, contradictory cost, so it is hidden.
                 if !isPieceRate {
-                    TextField("Rate $/h", text: line.rateText)
+                    TextField("Rate \(dataStore.settings.regionFormatter.currencySymbol)/h", text: line.rateText)
                         .keyboardType(.decimalPad)
                 }
             }
@@ -1599,7 +1599,7 @@ private struct PruningEntrySheet: View {
             HStack {
                 Text("Rate / vine")
                 Spacer()
-                Text("$")
+                Text(dataStore.settings.regionFormatter.currencySymbol)
                     .foregroundStyle(.secondary)
                 TextField("0.00", text: $pieceRateText)
                     .keyboardType(.decimalPad)
@@ -1625,12 +1625,12 @@ private struct PruningEntrySheet: View {
                 Text("Estimated cost")
                     .font(.headline)
                 Spacer()
-                Text(pieceRateCost.map { PieceRateCosting.currencyLabel($0) } ?? "\u{2014}")
+                Text(pieceRateCost.map { dataStore.settings.regionFormatter.formatCurrency($0) } ?? "\u{2014}")
                     .font(.system(.title3, design: .monospaced).weight(.bold))
                     .foregroundStyle(VineyardTheme.earthBrown)
             }
             if let perHa = pieceRateCostPerHa {
-                LabeledContent("Cost / ha", value: PieceRateCosting.currencyLabel(perHa))
+                LabeledContent("Cost / \(dataStore.settings.regionFormatter.areaUnitAbbreviation)", value: dataStore.settings.regionFormatter.formatCostPerArea(perHa))
             }
         } header: {
             Text("Piece Rate")

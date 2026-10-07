@@ -71,8 +71,8 @@ fun SeasonYieldBlockInfoDialog(
 private fun EstimateSection(block: SeasonYieldProjection.BlockRow) {
     SeasonInfoHeading("Estimate")
     SeasonInfoRow("Source", seasonYieldSourceLabel(block.estimateSource))
-    SeasonInfoRow("Calculated", block.calculatedAt?.take(16)?.replace('T', ' ') ?: "Never")
-    SeasonInfoRow("Block area", seasonHectaresText(block.areaHectares))
+    SeasonInfoRow("Calculated", com.rork.vinetrack.data.model.parseIsoToEpochMs(block.calculatedAt)?.let(com.rork.vinetrack.ui.LocalRegionFormatter.current::formatDateTime) ?: "Never")
+    SeasonInfoRow("Block area", seasonHectaresText(block.areaHectares, com.rork.vinetrack.ui.LocalRegionFormatter.current))
     SeasonInfoRow("Base estimate", seasonTonnesText(block.baseTonnes))
     if (block.baseTonnes == null) {
         SeasonInfoRow("Known so far", seasonTonnesText(block.knownBaseTonnes))
@@ -97,8 +97,8 @@ private fun DamageSection(block: SeasonYieldProjection.BlockRow, damageApplied: 
     if (damage.excludedRecordCount > 0) {
         SeasonInfoRow("Excluded (no valid area)", damage.excludedRecordCount.toString())
     }
-    SeasonInfoRow("Damaged area", seasonHectaresText(damage.mappedAreaHectares))
-    SeasonInfoRow("Effective loss area", seasonHectaresText(damage.effectiveLossHectares))
+    SeasonInfoRow("Damaged area", seasonHectaresText(damage.mappedAreaHectares, com.rork.vinetrack.ui.LocalRegionFormatter.current))
+    SeasonInfoRow("Effective loss area", seasonHectaresText(damage.effectiveLossHectares, com.rork.vinetrack.ui.LocalRegionFormatter.current))
     SeasonInfoRow("Loss fraction", seasonPercentText(damage.damageLossFraction))
     SeasonInfoRow("Remaining yield", seasonPercentText(damage.remainingYieldMultiplier))
     if (damageApplied) {
@@ -129,9 +129,10 @@ private fun PruningInputsSection(inputs: SeasonYieldSourceInputs) {
         "Bunch weight",
         inputs.bunchWeightGrams?.let { String.format(Locale.getDefault(), "%.0f g", it) } ?: "—",
     )
-    SeasonInfoRow("Vines per ha", seasonNumberText(inputs.vinesPerHa, 0))
+    val formatter = com.rork.vinetrack.ui.LocalRegionFormatter.current
+    SeasonInfoRow("Vines per ${formatter.areaUnitAbbreviation}", seasonNumberText(inputs.vinesPerHa?.let(formatter::perAreaValue), 0))
     SeasonInfoRow("Vine count", seasonNumberText(inputs.vineCount, 0))
-    SeasonInfoRow("Vine count basis", seasonVineCountBasisLabel(inputs.vineCountBasis))
+    SeasonInfoRow("Vine count basis", seasonVineCountBasisLabel(inputs.vineCountBasis, formatter))
     inputs.formula?.let { Text(it, color = vine.textSecondary, fontSize = 11.sp) }
 
     val groupCount = inputs.allocationGroupCount ?: 0
@@ -216,8 +217,8 @@ private fun SeasonInfoRow(label: String, value: String) {
 internal fun seasonTonnesText(value: Double?): String =
     if (value == null || !value.isFinite()) "—" else String.format(Locale.getDefault(), "%.2f t", value)
 
-internal fun seasonHectaresText(value: Double?): String =
-    if (value == null || !value.isFinite()) "—" else String.format(Locale.getDefault(), "%.2f ha", value)
+internal fun seasonHectaresText(value: Double?, formatter: com.rork.vinetrack.data.RegionFormatter = com.rork.vinetrack.data.RegionFormatter()): String =
+    if (value == null || !value.isFinite()) "—" else formatter.formatArea(value)
 
 internal fun seasonPercentText(fraction: Double?): String =
     if (fraction == null || !fraction.isFinite()) {
@@ -242,10 +243,10 @@ internal fun seasonYieldSourceLabel(source: String): String = when (source) {
     else -> source.replace('_', ' ').replaceFirstChar { it.uppercase() }
 }
 
-internal fun seasonVineCountBasisLabel(basis: String?): String = when (basis) {
+internal fun seasonVineCountBasisLabel(basis: String?, formatter: com.rork.vinetrack.data.RegionFormatter = com.rork.vinetrack.data.RegionFormatter()): String = when (basis) {
     "block_vine_count_override" -> "Block vine count override"
     "row_effective_vine_count" -> "Row-effective vine count"
-    "block_area_x_vines_per_ha" -> "Block area × vines/ha"
+    "block_area_x_vines_per_ha" -> "Block area × vines/${formatter.areaUnitAbbreviation}"
     null, "" -> "—"
     else -> basis.replace('_', ' ').replaceFirstChar { it.uppercase() }
 }

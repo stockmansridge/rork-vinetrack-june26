@@ -35,6 +35,7 @@ struct PruningActivityEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(MigratedDataStore.self) private var store
     private var pruningStore: PruningStore { .shared }
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     @State private var draft: PruningActivityDraft
     @State private var showBlockPicker: Bool = false
@@ -456,7 +457,7 @@ struct PruningActivityEditorView: View {
                 .font(.subheadline.weight(.semibold))
             Text(
                 [
-                    task.date.formatted(date: .abbreviated, time: .omitted),
+                    fmt.formatDate(task.date),
                     task.paddockName.isEmpty ? nil : task.paddockName,
                     task.isFinalized ? "Completed" : "To do"
                 ]
@@ -1047,6 +1048,8 @@ struct PruningWorkTaskPicker: View {
     let tasks: [WorkTask]
     let linkedId: UUID?
     let onSelect: (WorkTask) -> Void
+    @Environment(MigratedDataStore.self) private var store
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     @Environment(\.dismiss) private var dismiss
     @State private var search: String = ""
@@ -1081,7 +1084,7 @@ struct PruningWorkTaskPicker: View {
                                         .foregroundStyle(.primary)
                                     Text(
                                         [
-                                            task.date.formatted(date: .abbreviated, time: .omitted),
+                                            fmt.formatDate(task.date),
                                             task.paddockName.isEmpty ? nil : task.paddockName,
                                             task.durationHours
                                                 .formatted(.number.precision(.fractionLength(0...1))) + " h"
@@ -1175,7 +1178,7 @@ struct PruningWorkTaskCreateSheet: View {
     /// What the created task will record — all of it taken from the activity, so
     /// the shared labour is stored once and never apportioned per block.
     private var activitySummary: String {
-        let dateText = activity.date.formatted(date: .abbreviated, time: .omitted)
+        let dateText = fmt.formatDate(activity.date)
         let blocks: String = activity.blockSummary.isEmpty ? "no blocks yet" : activity.blockSummary
         let head = "One task for this whole activity: \(dateText) · \(blocks)."
         return head + " Linked to this activity with a stable id, so an offline retry can never create a second task."
@@ -1315,7 +1318,7 @@ struct PruningWorkTaskCreateSheet: View {
             HStack {
                 Text("Rate per vine")
                 Spacer()
-                Text("$").foregroundStyle(.secondary)
+                Text(fmt.currencySymbol).foregroundStyle(.secondary)
                 TextField("0.00", text: $ratePerVineText)
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
@@ -1352,7 +1355,7 @@ struct PruningWorkTaskCreateSheet: View {
         Section {
             if task.isPieceRate {
                 LabeledContent("Calculation") {
-                    Text("\(PieceRateCosting.vineCountLabel(task.vineCount)) × \(PieceRateCosting.rateLabel(task.ratePerVine ?? 0))")
+                    Text("\(PieceRateCosting.vineCountLabel(task.vineCount)) × \(fmt.formatCurrency(task.ratePerVine ?? 0))/vine")
                         .monospacedDigit()
                 }
             } else {
@@ -1368,8 +1371,8 @@ struct PruningWorkTaskCreateSheet: View {
                     .foregroundStyle(task.estimatedCost == nil ? Color.secondary : VineyardTheme.leafGreen)
             }
             if let perHectare = costPerHectare {
-                LabeledContent("Cost per hectare") {
-                    Text(fmt.formatCurrency(perHectare) + "/ha")
+                LabeledContent("Cost per \(fmt.areaUnitAbbreviation)") {
+                    Text(fmt.formatCostPerArea(perHectare))
                         .monospacedDigit()
                 }
             }

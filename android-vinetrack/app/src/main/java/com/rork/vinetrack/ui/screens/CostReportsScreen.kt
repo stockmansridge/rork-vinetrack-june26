@@ -125,7 +125,7 @@ fun CostReportsScreen(
     }
     val costingSetup = remember(
         state.operatorCategories, state.machines, state.fuelPurchases,
-        state.savedChemicals, state.paddocks, state.trips, state.yieldRecords,
+        state.savedChemicals, state.paddocks, state.trips, state.yieldRecords, fmt,
     ) {
         if (!canViewCosting) null else buildCostingSetup(state)
     }
@@ -612,8 +612,8 @@ private fun buildCostingSetup(state: AppUiState): CostingSetup {
     val fuelComplete = tractors.isNotEmpty() && tractorsWithUsage.isNotEmpty() &&
         state.fuelPurchases.isNotEmpty() && tripsWithoutTractor == 0
     val fuelDetail = when {
-        tractors.isEmpty() -> "Select tractors on trips, set fuel use in L/hr, and add fuel purchases."
-        tractorsWithUsage.isEmpty() -> "Tractors are missing fuel use (L/hr). Open Equipment to set."
+        tractors.isEmpty() -> "Select tractors on trips, set fuel use in ${state.regionFormatter.fuelUnitAbbreviation}/hr, and add fuel purchases."
+        tractorsWithUsage.isEmpty() -> "Tractors are missing fuel use (${state.regionFormatter.fuelUnitAbbreviation}/hr). Open Equipment to set."
         state.fuelPurchases.isEmpty() -> "No fuel purchases recorded yet. Add one to enable fuel cost."
         tripsWithoutTractor > 0 -> "$tripsWithoutTractor trip${if (tripsWithoutTractor == 1) "" else "s"} missing a tractor link."
         else -> "Tractors, fuel use and purchases configured."
@@ -628,7 +628,7 @@ private fun buildCostingSetup(state: AppUiState): CostingSetup {
     val tripsWithoutPaddock = trips.count { it.paddockId == null }
     val areaComplete = paddocksWithGeometry.isNotEmpty() && tripsWithoutPaddock == 0
     val areaDetail = when {
-        paddocksWithGeometry.isEmpty() -> "Link trips to mapped blocks so treated area and cost/ha can be calculated."
+        paddocksWithGeometry.isEmpty() -> "Link trips to mapped blocks so treated area and cost/${state.regionFormatter.areaUnitAbbreviation} can be calculated."
         tripsWithoutPaddock > 0 -> "$tripsWithoutPaddock trip${if (tripsWithoutPaddock == 1) "" else "s"} not linked to a block."
         else -> "${paddocksWithGeometry.size} block${if (paddocksWithGeometry.size == 1) "" else "s"} mapped."
     }
@@ -703,7 +703,7 @@ private fun CostingSetupWizardSection(
             }
             if (expanded) {
                 Text(
-                    "Complete these setup items so VineTrack can calculate cost by block, variety, hectare and tonne.",
+                    "Complete these setup items so VineTrack can calculate cost by block, variety, unit of area and tonne.",
                     color = vine.textSecondary, fontSize = 12.sp,
                     modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
                 )

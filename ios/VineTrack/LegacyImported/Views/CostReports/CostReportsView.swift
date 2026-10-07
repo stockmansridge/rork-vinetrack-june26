@@ -669,12 +669,12 @@ struct TreatedAreaInfoSheet: View {
                         .font(.subheadline)
                 }
                 Section("Example") {
-                    Text("If Block A is 2 ha and has 3 spray trips this season, treated area contributes 6 ha across those jobs.")
+                    Text("If a block has 3 spray trips this season, its mapped area contributes 3 times across those jobs.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
                 Section("Why this matters") {
-                    Label("Cost / ha = total estimated cost ÷ treated area.", systemImage: "divide.circle")
+                    Label("Cost per unit of area = total estimated cost ÷ treated area.", systemImage: "divide.circle")
                         .font(.footnote)
                     Label("Treated area is not the same as the vineyard's total area — it reflects work done.", systemImage: "square.grid.2x2")
                         .font(.footnote)

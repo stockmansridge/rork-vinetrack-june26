@@ -171,6 +171,7 @@ object IrrigationCalculator {
         soil: SoilProfileInputs = SoilProfileInputs.empty,
         /** Enables the soil-aware v2 recommendation (RAW caps, urgency, splits). */
         soilAwareV2Enabled: Boolean = false,
+        formatter: com.rork.vinetrack.data.RegionFormatter = com.rork.vinetrack.data.RegionFormatter(),
     ): IrrigationRecommendationResult? {
         if (forecastDays.isEmpty()) return null
         if (settings.irrigationApplicationRateMmPerHour <= 0) return null
@@ -219,8 +220,8 @@ object IrrigationCalculator {
         // Derive soil-aware advice (descriptive in v1; the v2 block applies the
         // soil-driven adjustments to the recommended depth).
         val advice = soilAdvice(soil)
-        val adviceText = adviceCopy(advice, soil, grossIrrigationMm)
-        val cautionText = cautionCopy(advice, soil, forecastDays)
+        val adviceText = adviceCopy(advice, soil, grossIrrigationMm, formatter)
+        val cautionText = cautionCopy(advice, soil, forecastDays, formatter)
 
         val v2: SoilAwareV2Result? = if (soilAwareV2Enabled) {
             computeV2(
@@ -229,6 +230,7 @@ object IrrigationCalculator {
                 forecastDays = forecastDays,
                 baseGrossMm = grossIrrigationMm,
                 adjustedNetDeficitMm = adjustedNetDeficitMm,
+                formatter = formatter,
             )
         } else null
 
@@ -264,6 +266,7 @@ object IrrigationCalculator {
         forecastDays: List<ForecastDay>,
         baseGrossMm: Double,
         adjustedNetDeficitMm: Double,
+        formatter: com.rork.vinetrack.data.RegionFormatter,
     ): SoilAwareV2Result {
         val raw = soil.readilyAvailableWaterMm
         val forecastRain = forecastDays.sumOf { it.forecastRainMm }
@@ -280,11 +283,7 @@ object IrrigationCalculator {
             soilAdjustedGrossMm = raw
             splitSuggested = true
             val descriptor = if (advice == IrrigationSoilAdvice.Shallow) "shallow soil" else "sandy soil"
-            adjustmentReason = String.format(
-                java.util.Locale.US,
-                "RAW limit for %s: capping single event at %.0f mm. Split remainder into a follow-up irrigation.",
-                descriptor, raw,
-            )
+            adjustmentReason = "RAW limit for $descriptor: capping single event at ${formatter.formatRainfall(raw)}. Split remainder into a follow-up irrigation."
         }
 
         val splitCount = if (splitSuggested) {
@@ -315,29 +314,17 @@ object IrrigationCalculator {
         val cautions = mutableListOf<String>()
         if (advice == IrrigationSoilAdvice.ClayCaution && forecastRain >= 10) {
             cautions.add(
-                String.format(
-                    java.util.Locale.US,
-                    "Heavy clay soil with %.0f mm forecast rain — risk of waterlogging. Consider delaying or reducing irrigation.",
-                    forecastRain,
-                )
+                "Heavy clay soil with ${formatter.formatRainfall(forecastRain)} forecast rain — risk of waterlogging. Consider delaying or reducing irrigation."
             )
         }
         if (advice == IrrigationSoilAdvice.SandyFrequent && raw != null && raw > 0 && baseGrossMm > raw) {
             cautions.add(
-                String.format(
-                    java.util.Locale.US,
-                    "Applying more than ~%.0f mm at once on sandy soils may drain below the root zone.",
-                    raw,
-                )
+                "Applying more than ~${formatter.formatRainfall(raw)} at once on sandy soils may drain below the root zone."
             )
         }
         if (advice == IrrigationSoilAdvice.Shallow && raw != null && raw > 0) {
             cautions.add(
-                String.format(
-                    java.util.Locale.US,
-                    "Shallow root zone — keep individual events under ~%.0f mm to avoid runoff.",
-                    raw,
-                )
+                "Shallow root zone — keep individual events under ~${formatter.formatRainfall(raw)} to avoid runoff."
             )
         }
         if (soil.availableWaterCapacityMmPerM == null || soil.effectiveRootDepthM == null) {
@@ -374,13 +361,14 @@ object IrrigationCalculator {
         advice: IrrigationSoilAdvice?,
         soil: SoilProfileInputs,
         grossIrrigationMm: Double,
+        formatter: com.rork.vinetrack.data.RegionFormatter,
     ): String? {
         if (advice == null) return null
         val raw = soil.readilyAvailableWaterMm
         return when (advice) {
             IrrigationSoilAdvice.SandyFrequent ->
                 if (raw != null && raw > 0 && grossIrrigationMm > raw) {
-                    String.format(java.util.Locale.US, "Sandy soils drain quickly. Consider splitting this into smaller irrigations of about %.0f mm each.", raw)
+                    "Sandy soils drain quickly. Consider splitting this into smaller irrigations of about ${formatter.formatRainfall(raw)} each."
                 } else {
                     "Sandy soils drain quickly. Prefer smaller, more frequent irrigations to limit drainage below the root zone."
                 }
@@ -399,6 +387,7 @@ object IrrigationCalculator {
         advice: IrrigationSoilAdvice?,
         soil: SoilProfileInputs,
         forecastDays: List<ForecastDay>,
+        formatter: com.rork.vinetrack.data.RegionFormatter,
     ): String? {
         if (advice == null) return null
         val forecastRain = forecastDays.sumOf { it.forecastRainMm }
@@ -407,7 +396,7 @@ object IrrigationCalculator {
                 if (forecastRain >= 10) "Significant rain forecast on heavy clay — risk of waterlogging or slow drainage." else null
             IrrigationSoilAdvice.SandyFrequent -> {
                 val raw = soil.readilyAvailableWaterMm
-                if (raw != null && raw > 0) String.format(java.util.Locale.US, "Applying more than ~%.0f mm at once may drain below the root zone.", raw) else null
+                if (raw != null && raw > 0) "Applying more than ~${formatter.formatRainfall(raw)} at once may drain below the root zone." else null
             }
             else -> null
         }

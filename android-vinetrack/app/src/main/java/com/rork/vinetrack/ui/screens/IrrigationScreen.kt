@@ -301,6 +301,7 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
             recentActualRainMm = recentRain?.totalMm ?: 0.0,
             soil = soilInputs,
             soilAwareV2Enabled = soilAwareV2Enabled,
+            formatter = formatter,
         )
     }
 

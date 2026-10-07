@@ -360,6 +360,17 @@ nonisolated struct RegionFormatter: Sendable {
     func formatVolumePerArea(litresPerHectare: Double, fractionDigits: Int = 2) -> String {
         "\(Self.number(volumePerAreaValue(litresPerHectare: litresPerHectare), fractionDigits: fractionDigits)) \(volumePerAreaUnit)"
     }
+    /// Carrier-only rate: converts both volume and the 100-metre length denominator.
+    var volumePer100LengthUnit: String { "\(volumeUnitAbbreviation)/100 \(lengthUnitAbbreviation)" }
+    func volumePer100LengthValue(_ litresPer100Metres: Double) -> Double {
+        volumeValue(litres: litresPer100Metres) / lengthValue(metres: 1)
+    }
+    func volumePer100LengthToCanonical(_ value: Double) -> Double {
+        volumeToCanonical(value * lengthValue(metres: 1))
+    }
+    func formatVolumePer100Length(_ litresPer100Metres: Double, fractionDigits: Int = 2) -> String {
+        "\(Self.number(volumePer100LengthValue(litresPer100Metres), fractionDigits: fractionDigits)) \(volumePer100LengthUnit)"
+    }
     func formatCostPerArea(_ perHectare: Double) -> String { "\(formatCurrency(perAreaValue(perHectare: perHectare)))/\(areaUnitAbbreviation)" }
     func perAreaToCanonical(_ value: Double) -> Double { value / perAreaValue(perHectare: 1) }
 

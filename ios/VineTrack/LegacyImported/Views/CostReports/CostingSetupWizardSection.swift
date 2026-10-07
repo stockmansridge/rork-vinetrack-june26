@@ -64,10 +64,10 @@ struct CostingSetupAnalysis {
             && tripsWithoutTractor == 0
         let fuelDetail: String = {
             if tractors.isEmpty {
-                return "Select tractors on trips, set fuel use in L/hr, and add fuel purchases."
+                return "Select tractors on trips, set fuel use in \(store.settings.regionFormatter.fuelUnitAbbreviation)/hr, and add fuel purchases."
             }
             if tractorsWithUsage.isEmpty {
-                return "Tractors are missing fuel use (L/hr). Open Equipment to set."
+                return "Tractors are missing fuel use (\(store.settings.regionFormatter.fuelUnitAbbreviation)/hr). Open Equipment to set."
             }
             if fuelPurchases.isEmpty {
                 return "No fuel purchases recorded yet. Add one to enable fuel cost."
@@ -107,7 +107,7 @@ struct CostingSetupAnalysis {
         let areaComplete = !paddocksWithGeometry.isEmpty && tripsWithoutPaddock == 0
         let areaDetail: String = {
             if paddocksWithGeometry.isEmpty {
-                return "Link trips to mapped blocks so treated area and cost/ha can be calculated."
+                return "Link trips to mapped blocks so treated area and cost/\(store.settings.regionFormatter.areaUnitAbbreviation) can be calculated."
             }
             if tripsWithoutPaddock > 0 {
                 return "\(tripsWithoutPaddock) trip\(tripsWithoutPaddock == 1 ? "" : "s") not linked to a block."
@@ -160,7 +160,7 @@ struct CostingSetupWizardSection: View {
         Section {
             DisclosureGroup(isExpanded: $expanded) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Complete these setup items so VineTrack can calculate cost by block, variety, hectare and tonne.")
+                    Text("Complete these setup items so VineTrack can calculate cost by block, variety, unit of area and tonne.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .padding(.top, 4)

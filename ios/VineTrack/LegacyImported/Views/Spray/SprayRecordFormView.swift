@@ -19,6 +19,10 @@ struct SprayRecordFormView: View {
     @State private var date: Date
     @State private var startTime: Date
     @State private var sprayReference: String
+    @State private var inputFormatter: RegionFormatter?
+    @State private var temperatureSeed: RegionalInput?
+    @State private var windSeed: RegionalInput?
+    @State private var speedSeed: RegionalInput?
     @State private var temperatureText: String
     @State private var windSpeedText: String
     @State private var windDirection: String
@@ -189,6 +193,18 @@ struct SprayRecordFormView: View {
             }
         }
         .onAppear {
+            if inputFormatter == nil {
+                inputFormatter = fmt
+                let temperature = RegionalInput(canonical: existingRecord?.temperature, forward: fmt.temperatureValue)
+                let wind = RegionalInput(canonical: existingRecord?.windSpeed, forward: fmt.speedValue)
+                let speed = RegionalInput(canonical: existingRecord?.averageSpeed, forward: fmt.speedValue)
+                temperatureSeed = temperature
+                windSeed = wind
+                speedSeed = speed
+                temperatureText = temperature.text
+                windSpeedText = wind.text
+                averageSpeedText = speed.text
+            }
             if expandedTankId == nil, let first = tanks.first {
                 expandedTankId = first.id
             }
@@ -330,12 +346,12 @@ struct SprayRecordFormView: View {
             DatePicker("Date", selection: $date, displayedComponents: .date)
             DatePicker("Start Time", selection: $startTime, displayedComponents: .hourAndMinute)
             LabeledContent {
-                TextField("°C", text: $temperatureText)
+                TextField(weatherFormatter.temperatureUnitAbbreviation, text: $temperatureText)
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
             } label: { Label("Temperature", systemImage: "thermometer") }
             LabeledContent {
-                TextField("km/h", text: $windSpeedText)
+                TextField(weatherFormatter.speedUnitAbbreviation, text: $windSpeedText)
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
             } label: { Label("Wind Speed", systemImage: "wind") }
@@ -385,7 +401,7 @@ struct SprayRecordFormView: View {
                         .foregroundStyle(.primary)
                     Spacer()
                     if tank.areaPerTank > 0 {
-                        Text(String(format: "%.2f Ha/tank", tank.areaPerTank))
+                        Text("\(fmt.formatArea(hectares: tank.areaPerTank))/tank")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -403,6 +419,7 @@ struct SprayRecordFormView: View {
     }
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
+    private var weatherFormatter: RegionFormatter { inputFormatter ?? fmt }
 
     private func doubleBinding(_ keyPath: WritableKeyPath<SprayTank, Double>, tIdx: Int, forward: @escaping (Double) -> Double = { $0 }, inverse: @escaping (Double) -> Double = { $0 }) -> Binding<String> {
         Binding<String>(
@@ -736,7 +753,7 @@ struct SprayRecordFormView: View {
                 TextField("Count", text: $numberOfFansJets).multilineTextAlignment(.trailing)
             } label: { Label("No. Fans/Jets", systemImage: "wind") }
             LabeledContent {
-                TextField("km/h", text: $averageSpeedText)
+                TextField(weatherFormatter.speedUnitAbbreviation, text: $averageSpeedText)
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
             } label: { Label("Average Speed", systemImage: "speedometer") }
@@ -881,15 +898,15 @@ struct SprayRecordFormView: View {
             date: date,
             startTime: startTime,
             endTime: existingRecord?.endTime,
-            temperature: Double(temperatureText),
-            windSpeed: Double(windSpeedText),
+            temperature: temperatureSeed?.resolve(temperatureText, inverse: weatherFormatter.celsius),
+            windSpeed: windSeed?.resolve(windSpeedText, inverse: weatherFormatter.speedKmh),
             windDirection: windDirection,
             humidity: Double(humidityText),
             sprayReference: sprayReference,
             tanks: tanksToSave,
             notes: notes,
             numberOfFansJets: numberOfFansJets,
-            averageSpeed: Double(averageSpeedText),
+            averageSpeed: speedSeed?.resolve(averageSpeedText, inverse: weatherFormatter.speedKmh),
             equipmentType: equipmentType,
             tractor: tractor,
             tractorGear: tractorGear,

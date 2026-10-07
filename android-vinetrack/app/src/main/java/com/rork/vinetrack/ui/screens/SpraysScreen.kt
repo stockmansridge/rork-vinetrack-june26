@@ -455,7 +455,7 @@ private fun SprayListView(
                         canViewFinancials = financials, machines = state.machines, fuelPurchases = state.fuelPurchases,
                         operatorCategories = state.operatorCategories, paddocks = state.paddocks,
                         tankActuals = records.flatMap { record -> record.tripId?.let { tripId -> record.tanks.orEmpty().mapNotNull { vm.actualTankUse(tripId, it.tankNumber) } }.orEmpty() },
-                        logo = state.selectedVineyardLogo, canonicalReports = reports, exportFilename = filename, chemicalPrices = exportChemicalPrices)
+                        logo = state.selectedVineyardLogo, canonicalReports = reports, exportFilename = filename, chemicalPrices = exportChemicalPrices, formatter = state.regionFormatter)
                     else SprayProgramCsvExporter.exportAndShare(context, records, state.trips, vineyard,
                         canViewFinancials = financials, machines = state.machines, fuelPurchases = state.fuelPurchases,
                         operatorCategories = state.operatorCategories, paddocks = state.paddocks,
@@ -2483,10 +2483,17 @@ private fun TankEditor(
     var presetMenu by remember { mutableStateOf(false) }
     var pendingPreset by remember { mutableStateOf<com.rork.vinetrack.data.model.SavedSprayPreset?>(null) }
 
+    val waterSeed = com.rork.vinetrack.data.RegionalInput.seed(tank.waterVolume.toDoubleSafe(), fmt::volumeValue)
+    val rateSeed = com.rork.vinetrack.data.RegionalInput.seed(tank.sprayRate.toDoubleSafe(), fmt::volumePerAreaValue)
+    var waterEdit by remember(tank.id, fmt.settings) { mutableStateOf<Pair<String, String>?>(null) }
+    var rateEdit by remember(tank.id, fmt.settings) { mutableStateOf<Pair<String, String>?>(null) }
+
     // Apply a preset's dosing values to this tank, overwriting the tank fields.
     fun applyPreset(preset: com.rork.vinetrack.data.model.SavedSprayPreset) {
-        tank.waterVolume = preset.waterVolume.takeIf { it > 0 }?.let { trimNum(it) } ?: ""
-        tank.sprayRate = preset.sprayRatePerHa.takeIf { it > 0 }?.let { trimNum(it) } ?: ""
+        tank.waterVolume = preset.waterVolume.takeIf { it > 0 }?.toString() ?: ""
+        waterEdit = null
+        tank.sprayRate = preset.sprayRatePerHa.takeIf { it > 0 }?.toString() ?: ""
+        rateEdit = null
         tank.concentration = preset.concentrationFactor.takeIf { it > 0 }?.let { trimNum(it) } ?: ""
     }
 
@@ -2533,17 +2540,25 @@ private fun TankEditor(
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(
-                value = tank.waterVolume,
-                onValueChange = { tank.waterVolume = it.numericFilter() },
-                label = { Text("Water L") },
+                value = waterEdit?.takeIf { it.first == tank.waterVolume }?.second ?: waterSeed.text,
+                onValueChange = { text ->
+                    val edited = text.numericFilter()
+                    tank.waterVolume = waterSeed.resolve(edited, fmt::volumeToCanonical)?.toString().orEmpty()
+                    waterEdit = tank.waterVolume to edited
+                },
+                label = { Text("Water ${fmt.volumeUnitAbbreviation}") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.weight(1f),
             )
             OutlinedTextField(
-                value = tank.sprayRate,
-                onValueChange = { tank.sprayRate = it.numericFilter() },
-                label = { Text("L/ha") },
+                value = rateEdit?.takeIf { it.first == tank.sprayRate }?.second ?: rateSeed.text,
+                onValueChange = { text ->
+                    val edited = text.numericFilter()
+                    tank.sprayRate = rateSeed.resolve(edited, fmt::volumePerAreaToCanonical)?.toString().orEmpty()
+                    rateEdit = tank.sprayRate to edited
+                },
+                label = { Text(fmt.volumePerAreaUnit) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.weight(1f),
@@ -2715,8 +2730,8 @@ private fun DividerSP(color: Color) {
 private fun SprayTank.toDraft(): TankDraft = TankDraft(
     id = id,
     tankNumber = tankNumber,
-    waterVolume = waterVolume.takeIf { it > 0 }?.let { trimNum(it) } ?: "",
-    sprayRate = sprayRatePerHa.takeIf { it > 0 }?.let { trimNum(it) } ?: "",
+    waterVolume = waterVolume.takeIf { it > 0 }?.toString() ?: "",
+    sprayRate = sprayRatePerHa.takeIf { it > 0 }?.toString() ?: "",
     concentration = concentrationFactor.takeIf { it > 0 }?.let { trimNum(it) } ?: "",
     chemicals = chemicals.map { it.toDraft() },
     rowApplications = rowApplications,

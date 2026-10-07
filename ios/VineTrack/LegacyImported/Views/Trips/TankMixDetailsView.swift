@@ -204,22 +204,23 @@ struct TankMixDetailsView: View {
 
     private func plannedSummary(_ tank: SprayTank) -> some View {
         let actual = resolvedActual(for: tank)
+        let fmt = store.settings.regionFormatter
         return VStack(spacing: 0) {
-            detailRow("Planned water", value: "\(Self.number(tank.waterVolume)) L")
+            detailRow("Planned water", value: fmt.formatVolume(litres: tank.waterVolume))
             Divider()
-            detailRow("Actual water", value: actual?.waterVolumeL.map { "\(Self.number($0)) L" } ?? "Not recorded")
+            detailRow("Actual water", value: actual?.waterVolumeL.map { fmt.formatVolume(litres: $0) } ?? "Not recorded")
             if let actualWater = actual?.waterVolumeL, abs(actualWater - tank.waterVolume) > 0.000_000_1 {
                 Divider()
-                detailRow("Difference", value: "\(actualWater > tank.waterVolume ? "+" : "")\(Self.number(actualWater - tank.waterVolume)) L")
+                detailRow("Difference", value: "\(actualWater > tank.waterVolume ? "+" : "")\(fmt.formatVolume(litres: actualWater - tank.waterVolume))")
             }
             if let actual {
                 Divider()
-                detailRow("Confirmed", value: actual.confirmedAt.formatted(date: .abbreviated, time: .shortened))
+                detailRow("Confirmed", value: fmt.formatDateTime(actual.confirmedAt))
             }
             Divider()
-            detailRow("Planned area", value: "\(Self.number(tank.areaPerTank)) ha")
+            detailRow("Planned area", value: fmt.formatArea(hectares: tank.areaPerTank))
             Divider()
-            detailRow("Spray rate", value: "\(Self.number(tank.sprayRatePerHa)) L/ha")
+            detailRow("Spray rate", value: fmt.formatVolumePerArea(litresPerHectare: tank.sprayRatePerHa))
             if abs(tank.effectiveConcentrationFactor - 1) > 0.000_001 {
                 Divider()
                 detailRow("Concentration", value: "\(Self.number(tank.effectiveConcentrationFactor))×")

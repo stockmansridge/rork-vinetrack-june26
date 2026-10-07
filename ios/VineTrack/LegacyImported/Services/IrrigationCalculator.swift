@@ -190,7 +190,8 @@ nonisolated enum IrrigationCalculator {
         settings: IrrigationSettings,
         recentActualRainMm: Double = 0,
         soil: SoilProfileInputs = .empty,
-        soilAwareV2Enabled: Bool = false
+        soilAwareV2Enabled: Bool = false,
+        formatter: RegionFormatter = .australian
     ) -> IrrigationRecommendationResult? {
         guard !forecastDays.isEmpty else { return nil }
         guard settings.irrigationApplicationRateMmPerHour > 0 else { return nil }
@@ -239,8 +240,8 @@ nonisolated enum IrrigationCalculator {
         // does not alter the recommended depth so users can build trust
         // before deeper soil-driven decision rules are layered in.
         let advice = soilAdvice(for: soil)
-        let adviceText = adviceCopy(for: advice, soil: soil, grossIrrigationMm: grossIrrigationMm)
-        let cautionText = cautionCopy(for: advice, soil: soil, forecastDays: forecastDays)
+        let adviceText = adviceCopy(for: advice, soil: soil, grossIrrigationMm: grossIrrigationMm, formatter: formatter)
+        let cautionText = cautionCopy(for: advice, soil: soil, forecastDays: forecastDays, formatter: formatter)
 
         let v2: SoilAwareV2Result? = soilAwareV2Enabled
             ? computeV2(
@@ -248,7 +249,8 @@ nonisolated enum IrrigationCalculator {
                 soil: soil,
                 forecastDays: forecastDays,
                 baseGrossMm: grossIrrigationMm,
-                adjustedNetDeficitMm: adjustedNetDeficitMm
+                adjustedNetDeficitMm: adjustedNetDeficitMm,
+                formatter: formatter
             )
             : nil
 
@@ -281,7 +283,8 @@ nonisolated enum IrrigationCalculator {
         soil: SoilProfileInputs,
         forecastDays: [ForecastDay],
         baseGrossMm: Double,
-        adjustedNetDeficitMm: Double
+        adjustedNetDeficitMm: Double,
+        formatter: RegionFormatter
     ) -> SoilAwareV2Result {
         let raw = soil.readilyAvailableWaterMm
         let forecastRain = forecastDays.reduce(0) { $0 + $1.forecastRainMm }
@@ -302,10 +305,7 @@ nonisolated enum IrrigationCalculator {
             soilAdjustedGrossMm = raw
             splitSuggested = true
             let descriptor = advice == .shallow ? "shallow soil" : "sandy soil"
-            adjustmentReason = String(
-                format: "RAW limit for %@: capping single event at %.0f mm. Split remainder into a follow-up irrigation.",
-                descriptor, raw
-            )
+            adjustmentReason = "RAW limit for \(descriptor): capping single event at \(formatter.formatRainfall(mm: raw)). Split remainder into a follow-up irrigation."
         }
 
         let splitCount = splitSuggested
@@ -344,22 +344,13 @@ nonisolated enum IrrigationCalculator {
         // 3. Cautions.
         var cautions: [String] = []
         if advice == .clayCaution, forecastRain >= 10 {
-            cautions.append(String(
-                format: "Heavy clay soil with %.0f mm forecast rain — risk of waterlogging. Consider delaying or reducing irrigation.",
-                forecastRain
-            ))
+            cautions.append("Heavy clay soil with \(formatter.formatRainfall(mm: forecastRain)) forecast rain — risk of waterlogging. Consider delaying or reducing irrigation.")
         }
         if advice == .sandyFrequent, let raw, raw > 0, baseGrossMm > raw {
-            cautions.append(String(
-                format: "Applying more than ~%.0f mm at once on sandy soils may drain below the root zone.",
-                raw
-            ))
+            cautions.append("Applying more than ~\(formatter.formatRainfall(mm: raw)) at once on sandy soils may drain below the root zone.")
         }
         if advice == .shallow, let raw, raw > 0 {
-            cautions.append(String(
-                format: "Shallow root zone — keep individual events under ~%.0f mm to avoid runoff.",
-                raw
-            ))
+            cautions.append("Shallow root zone — keep individual events under ~\(formatter.formatRainfall(mm: raw)) to avoid runoff.")
         }
         if soil.availableWaterCapacityMmPerM == nil || soil.effectiveRootDepthM == nil {
             cautions.append("Soil profile incomplete — soil-aware adjustments limited. Add AWC and effective root depth for a full v2 recommendation.")
@@ -400,14 +391,15 @@ nonisolated enum IrrigationCalculator {
     private static func adviceCopy(
         for advice: IrrigationSoilAdvice?,
         soil: SoilProfileInputs,
-        grossIrrigationMm: Double
+        grossIrrigationMm: Double,
+        formatter: RegionFormatter
     ) -> String? {
         guard let advice else { return nil }
         let raw = soil.readilyAvailableWaterMm
         switch advice {
         case .sandyFrequent:
             if let raw, raw > 0, grossIrrigationMm > raw {
-                return String(format: "Sandy soils drain quickly. Consider splitting this into smaller irrigations of about %.0f mm each.", raw)
+                return "Sandy soils drain quickly. Consider splitting this into smaller irrigations of about \(formatter.formatRainfall(mm: raw)) each."
             }
             return "Sandy soils drain quickly. Prefer smaller, more frequent irrigations to limit drainage below the root zone."
         case .loamNormal:
@@ -424,7 +416,8 @@ nonisolated enum IrrigationCalculator {
     private static func cautionCopy(
         for advice: IrrigationSoilAdvice?,
         soil: SoilProfileInputs,
-        forecastDays: [ForecastDay]
+        forecastDays: [ForecastDay],
+        formatter: RegionFormatter
     ) -> String? {
         guard let advice else { return nil }
         let forecastRain = forecastDays.reduce(0) { $0 + $1.forecastRainMm }
@@ -436,7 +429,7 @@ nonisolated enum IrrigationCalculator {
             return nil
         case .sandyFrequent:
             if let raw = soil.readilyAvailableWaterMm, raw > 0 {
-                return String(format: "Applying more than ~%.0f mm at once may drain below the root zone.", raw)
+                return "Applying more than ~\(formatter.formatRainfall(mm: raw)) at once may drain below the root zone."
             }
             return nil
         default:

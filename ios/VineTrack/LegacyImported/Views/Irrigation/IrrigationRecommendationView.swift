@@ -356,7 +356,8 @@ struct IrrigationRecommendationView: View {
             settings: settings,
             recentActualRainMm: recentActualRainOffsetMm,
             soil: soilInputs,
-            soilAwareV2Enabled: soilAwareV2Enabled
+            soilAwareV2Enabled: soilAwareV2Enabled,
+            formatter: fmt
         )
     }
 

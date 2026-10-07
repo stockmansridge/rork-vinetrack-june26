@@ -191,10 +191,28 @@ struct SprayCalculatorView: View {
             _notes = State(initialValue: r.notes)
             _numberOfFansJets = State(initialValue: r.numberOfFansJets)
             if let firstTank = r.tanks.first, firstTank.sprayRatePerHa > 0 {
-                _sprayRateText = State(initialValue: String(format: "%.0f", firstTank.sprayRatePerHa))
+                _sprayRateText = State(initialValue: String(firstTank.sprayRatePerHa))
                 _hasEditedSprayRate = State(initialValue: true)
             }
         }
+    }
+
+    @State private var carrierInputText: [String: (canonical: String, display: String)] = [:]
+    private var region: RegionFormatter { store.settings.regionFormatter }
+    private var guidedFormat: SprayGuidedFormat { SprayGuidedFormat(formatter: region) }
+
+    /// Keep engine state canonical, while retaining partial local-unit typing in the editor.
+    private func carrierBinding(_ key: String, _ canonical: Binding<String>, forward: @escaping (Double) -> Double, inverse: @escaping (Double) -> Double) -> Binding<String> {
+        Binding(get: {
+            if let cached = carrierInputText[key], cached.canonical == canonical.wrappedValue { return cached.display }
+            return Double(canonical.wrappedValue).map { String(forward($0)) } ?? canonical.wrappedValue
+        }, set: { text in
+            let seed = RegionalInput(canonical: Double(canonical.wrappedValue), forward: forward)
+            if text == seed.text { return }
+            let raw = seed.resolve(text, inverse: inverse).map { String($0) } ?? ""
+            canonical.wrappedValue = raw
+            carrierInputText[key] = (raw, text)
+        })
     }
 
     // MARK: - Computed
@@ -1323,7 +1341,7 @@ struct SprayCalculatorView: View {
     private var collapsedPaddockSummary: String {
         var parts: [String] = []
         parts.append("\(selectedPaddockIds.count) paddock\(selectedPaddockIds.count == 1 ? "" : "s")")
-        parts.append(String(format: "%.2f ha", totalAreaHectares))
+        parts.append(region.formatArea(hectares: totalAreaHectares))
         parts.append("\(totalRowsAcrossSelection) row\(totalRowsAcrossSelection == 1 ? "" : "s")")
         parts.append(selectedRowRangeSummary)
         return parts.joined(separator: " · ")
@@ -1656,7 +1674,7 @@ struct SprayCalculatorView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         if let perHa = waterRateEntry?.litresPerHa {
-                            Text("\(String(format: "%.0f", perHa)) L/ha")
+                            Text(guidedFormat.litresPerHectare(perHa))
                                 .font(.title3.bold())
                                 .foregroundStyle(VineyardTheme.olive)
                         } else {
@@ -1685,8 +1703,8 @@ struct SprayCalculatorView: View {
                 } else {
                     Label(
                         selectedPaddocks.count > 1
-                            ? "Selected blocks have missing or differing row spacing — set a matching row spacing in block details to calculate L/ha."
-                            : "Set row spacing in block details to calculate L/ha.",
+                            ? "Selected blocks have missing or differing row spacing — set a matching row spacing in block details to calculate \(region.volumePerAreaUnit)."
+                            : "Set row spacing in block details to calculate \(region.volumePerAreaUnit).",
                         systemImage: "exclamationmark.triangle.fill"
                     )
                     .font(.caption)
@@ -1701,10 +1719,10 @@ struct SprayCalculatorView: View {
                             .foregroundStyle(.secondary)
                         HStack(spacing: 12) {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Chosen Spray Rate (L/ha)")
+                                Text("Chosen Spray Rate (\(region.volumePerAreaUnit))")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                                TextField("L/ha", text: $sprayRateText)
+                                TextField(region.volumePerAreaUnit, text: carrierBinding("areaRate", $sprayRateText, forward: region.volumePerAreaValue, inverse: region.volumePerAreaToCanonical))
                                     .keyboardType(.decimalPad)
                                     .font(.body.weight(.medium))
                                     .padding(.horizontal, 10)
@@ -2207,13 +2225,13 @@ struct SprayCalculatorView: View {
             ) {
                 mixStatTile(
                     label: "Total Area",
-                    value: SprayGuidedFormat.hectares(plan.grossAreaHectares),
+                    value: guidedFormat.hectares(plan.grossAreaHectares),
                     icon: "square.dashed",
                     color: VineyardTheme.olive
                 )
                 mixStatTile(
                     label: "Total Water",
-                    value: SprayGuidedFormat.litres(plan.totalCarrierLitres),
+                    value: guidedFormat.litres(plan.totalCarrierLitres),
                     icon: "drop.fill",
                     color: .blue
                 )
@@ -2225,7 +2243,7 @@ struct SprayCalculatorView: View {
                 )
                 mixStatTile(
                     label: "Last Tank",
-                    value: SprayGuidedFormat.litres(plan.tankSplit.lastTankLitres),
+                    value: guidedFormat.litres(plan.tankSplit.lastTankLitres),
                     icon: "drop.halffull",
                     color: .orange
                 )
@@ -2319,13 +2337,13 @@ struct SprayCalculatorView: View {
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(VineyardTheme.olive)
                 Spacer()
-                Text(SprayGuidedFormat.litres(waterLitres))
+                Text(guidedFormat.litres(waterLitres))
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
 
             Divider()
-            mixTankQuantityRow(name: "Water", amount: SprayGuidedFormat.litres(waterLitres))
+            mixTankQuantityRow(name: "Water", amount: guidedFormat.litres(waterLitres))
 
             ForEach(lines, id: \.chemicalLine.id) { entry in
                 let quantity = isPartialLastTank
@@ -2402,7 +2420,7 @@ struct SprayCalculatorView: View {
                             Text(tractor.displayName).foregroundStyle(.primary)
                             Spacer()
                             if tractor.fuelUsageLPerHour > 0 {
-                                Text("\(String(format: "%.1f", tractor.fuelUsageLPerHour)) L/hr")
+                                Text(region.formatFuelRatePerHour(litresPerHour: tractor.fuelUsageLPerHour))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -2826,7 +2844,7 @@ struct SprayCalculatorView: View {
     private var blocksSummary: String {
         guard !selectedPaddocks.isEmpty else { return "No blocks selected" }
         let names = selectedPaddocks.map(\.name).joined(separator: ", ")
-        return "\(names) — \(SprayGuidedFormat.hectares(flow.plan.grossAreaHectares)) gross"
+        return "\(names) — \(guidedFormat.hectares(flow.plan.grossAreaHectares)) gross"
     }
 
     private var targetSummary: String {
@@ -2837,7 +2855,7 @@ struct SprayCalculatorView: View {
             .joined(separator: ", ")
         if operationType == .bandedSpray, let treated = flow.plan.treatedAreaHectares {
             let location = groundTarget.map { " — \($0.label)" } ?? ""
-            return "\(names)\(location) — \(SprayGuidedFormat.hectares(treated)) treated"
+            return "\(names)\(location) — \(guidedFormat.hectares(treated)) treated"
         }
         if let head = sprayHeadTarget {
             return "\(names) — \(head.label)"
@@ -2916,14 +2934,14 @@ struct SprayCalculatorView: View {
         let carrier = flow.plan.carrier
         switch carrier.basis {
         case .litresPerHectare:
-            return "\(SprayGuidedFormat.litresPerHectare(carrier.litresPerHectare)) — \(SprayGuidedFormat.litres(carrier.totalLitres)) total"
+            return "\(guidedFormat.litresPerHectare(carrier.litresPerHectare)) — \(guidedFormat.litres(carrier.totalLitres)) total"
         case .litresPer100Metres:
-            return "\(SprayGuidedFormat.litresPer100m(carrier.appliedLitresPer100Metres)) — \(SprayGuidedFormat.litres(carrier.totalLitres)) total"
+            return "\(guidedFormat.litresPer100m(carrier.appliedLitresPer100Metres)) — \(guidedFormat.litres(carrier.totalLitres)) total"
         case .manualTotalVolume:
             // No rate to quote — the operator gave the total directly, and
             // restating it as an implied L/ha would put a number on the summary
             // line that nobody entered.
-            return "Manual — \(SprayGuidedFormat.litres(carrier.totalLitres)) total"
+            return "Manual — \(guidedFormat.litres(carrier.totalLitres)) total"
         }
     }
 
@@ -2953,20 +2971,20 @@ struct SprayCalculatorView: View {
                 VStack(spacing: 8) {
                     GuidedCalculatedRow(
                         label: "Gross area",
-                        value: SprayGuidedFormat.hectares(plan.grossAreaHectares),
+                        value: guidedFormat.hectares(plan.grossAreaHectares),
                         emphasis: true
                     )
                     if let metres = geometry.totalRowLengthMetres {
                         GuidedCalculatedRow(
                             label: "Total row / trellis length",
-                            value: SprayGuidedFormat.metres(metres),
+                            value: guidedFormat.metres(metres),
                             caption: SprayGuidedFormat.geometrySourceLabel(geometry.source)
                         )
                     }
                     if let spacing = geometry.uniformRowSpacingMetres {
                         GuidedCalculatedRow(
                             label: "Row spacing",
-                            value: SprayGuidedFormat.metres(spacing, decimals: 1)
+                            value: guidedFormat.metres(spacing, decimals: 1)
                         )
                     } else if selectedPaddocks.count > 1 {
                         GuidedCalculatedRow(label: "Row spacing", value: "Mixed across blocks")
@@ -3047,14 +3065,14 @@ struct SprayCalculatorView: View {
                     Text("Treated band width per row")
                         .font(.subheadline.weight(.semibold))
                     HStack(spacing: 8) {
-                        TextField("0.80", text: $bandWidthText)
+                        TextField("0.80", text: carrierBinding("band", $bandWidthText, forward: region.lengthValue, inverse: region.lengthToCanonical))
                             .keyboardType(.decimalPad)
                             .font(.body.weight(.medium))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
                             .background(Color(.tertiarySystemGroupedBackground))
                             .clipShape(.rect(cornerRadius: 8))
-                        Text("m")
+                        Text(region.lengthUnitAbbreviation)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.secondary)
                     }
@@ -3069,11 +3087,11 @@ struct SprayCalculatorView: View {
                             VStack(spacing: 8) {
                                 GuidedCalculatedRow(
                                     label: "Gross area",
-                                    value: SprayGuidedFormat.hectares(flow.plan.grossAreaHectares)
+                                    value: guidedFormat.hectares(flow.plan.grossAreaHectares)
                                 )
                                 GuidedCalculatedRow(
                                     label: "Treated area",
-                                    value: SprayGuidedFormat.hectares(flow.plan.treatedAreaHectares),
+                                    value: guidedFormat.hectares(flow.plan.treatedAreaHectares),
                                     emphasis: true
                                 )
                             }
@@ -3122,7 +3140,7 @@ struct SprayCalculatorView: View {
                 if !flow.requiresBandWidth {
                     Picker("Spray volume basis", selection: $carrierBasisChoice) {
                         ForEach(availableCarrierBases, id: \.self) { basis in
-                            Text(SprayGuidedFormat.volumeSourceLabel(basis)).tag(basis)
+                            Text(guidedFormat.volumeSourceLabel(basis)).tag(basis)
                         }
                     }
                     .pickerStyle(.segmented)
@@ -3138,14 +3156,14 @@ struct SprayCalculatorView: View {
                 }
                 if flow.requiresBandWidth {
                     Picker("Spray volume", selection: $carrierBasisChoice) {
-                        Text("L/ha").tag(SprayCarrierBasis.litresPerHectare)
+                        Text(region.volumePerAreaUnit).tag(SprayCarrierBasis.litresPerHectare)
                         Text("Manual total water").tag(SprayCarrierBasis.manualTotalVolume)
                     }
                     .pickerStyle(.segmented)
                 } else if flow.isCarrierBasisLocked {
                     Label(
                         "This vineyard records calibrated spray volume in "
-                            + "\(SprayGuidedFormat.carrierBasisLabel(flow.profile.defaultCarrierBasis)).",
+                            + "\(guidedFormat.carrierBasisLabel(flow.profile.defaultCarrierBasis)).",
                         systemImage: "lock.fill"
                     )
                     .font(.caption2)
@@ -3231,7 +3249,7 @@ struct SprayCalculatorView: View {
                         message: SprayVolumeHelp.recommendedVolume
                     )
                     Spacer(minLength: 8)
-                    Text(SprayGuidedFormat.litresPer100m(recommendation.diluteLitresPer100Metres))
+                    Text(guidedFormat.litresPer100m(recommendation.diluteLitresPer100Metres))
                         .font(.headline.weight(.bold))
                         .foregroundStyle(VineyardTheme.olive)
                         .monospacedDigit()
@@ -3240,9 +3258,8 @@ struct SprayCalculatorView: View {
                    let spacing = recommendation.rowSpacingMetres {
                     GuidedCalculatedRow(
                         label: "Equivalent",
-                        value: SprayGuidedFormat.litresPerHectare(perHectare),
-                        caption: "\(SprayGuidedFormat.number(recommendation.diluteLitresPer100Metres)) "
-                            + "L/100 m × 100 ÷ \(String(format: "%.1f", spacing)) m row spacing"
+                        value: guidedFormat.litresPerHectare(perHectare),
+                        caption: "Derived from \(guidedFormat.litresPer100m(recommendation.diluteLitresPer100Metres)) and \(guidedFormat.metres(spacing, decimals: 1)) row spacing"
                     )
                 } else {
                     GuidedCalculatedRow(
@@ -3265,12 +3282,12 @@ struct SprayCalculatorView: View {
             guard let per100m = decision.actualLitresPer100Metres else {
                 return "Equivalent per 100 m needs one matching row spacing."
             }
-            return "Equivalent: \(SprayGuidedFormat.litresPer100m(per100m))"
+            return "Equivalent: \(guidedFormat.litresPer100m(per100m))"
         }
         guard let perHa = decision.actualLitresPerHectare else {
-            return "Equivalent per hectare needs one matching row spacing."
+            return "Equivalent per-area rate needs one matching row spacing."
         }
-        return "Equivalent: \(SprayGuidedFormat.litresPerHectare(perHa))"
+        return "Equivalent: \(guidedFormat.litresPerHectare(perHa))"
     }
 
     /// "Spray at the recommended volume?" — exactly two answers, neither
@@ -3319,13 +3336,13 @@ struct SprayCalculatorView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     HStack(spacing: 8) {
-                        TextField(isPerHectare ? "600" : "16.8", text: $customSprayerRateText)
+                        TextField(isPerHectare ? "600" : "16.8", text: carrierBinding("custom-\(customSprayerInputBasis.rawValue)", $customSprayerRateText, forward: { customSprayerInputBasis == .litresPerHectare ? region.volumePerAreaValue(litresPerHectare: $0) : region.volumePer100LengthValue($0) }, inverse: { customSprayerInputBasis == .litresPerHectare ? region.volumePerAreaToCanonical($0) : region.volumePer100LengthToCanonical($0) }))
                             .keyboardType(.decimalPad)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
                             .background(Color(.tertiarySystemGroupedBackground))
                             .clipShape(.rect(cornerRadius: 8))
-                        Text(SprayGuidedFormat.carrierBasisLabel(customSprayerInputBasis))
+                        Text(guidedFormat.carrierBasisLabel(customSprayerInputBasis))
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                     }
@@ -3349,7 +3366,7 @@ struct SprayCalculatorView: View {
                 if let actual = decision.actualLitresPerHectare {
                     GuidedCalculatedRow(
                         label: "Actual sprayer output",
-                        value: SprayGuidedFormat.litresPerHectare(actual),
+                        value: guidedFormat.litresPerHectare(actual),
                         caption: decision.choice == .useRecommended
                             ? "Following the canopy recommendation"
                             : "Your sprayer's calibrated rate"
@@ -3372,7 +3389,7 @@ struct SprayCalculatorView: View {
                 if flow.isCarrierResolved {
                     GuidedCalculatedRow(
                         label: "Total water",
-                        value: SprayGuidedFormat.litres(flow.plan.carrier.totalLitres),
+                        value: guidedFormat.litres(flow.plan.carrier.totalLitres),
                         emphasis: true
                     )
                 }
@@ -3422,14 +3439,14 @@ struct SprayCalculatorView: View {
                 Text("Application rate")
                     .font(.subheadline.weight(.semibold))
                 HStack(spacing: 8) {
-                    TextField("200", text: $sprayRateText)
+                    TextField("200", text: carrierBinding("areaRate", $sprayRateText, forward: region.volumePerAreaValue, inverse: region.volumePerAreaToCanonical))
                         .keyboardType(.decimalPad)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
                         .background(Color(.tertiarySystemGroupedBackground))
                         .clipShape(.rect(cornerRadius: 8))
                         .onChange(of: sprayRateText) { _, _ in hasEditedSprayRate = true }
-                    Text("L/\(areaLabel) ha")
+                    Text("\(region.volumePerAreaUnit) (\(areaLabel))")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
@@ -3446,15 +3463,15 @@ struct SprayCalculatorView: View {
                     VStack(spacing: 8) {
                         GuidedCalculatedRow(
                             label: "Application rate",
-                            value: "\(SprayGuidedFormat.number(carrier.litresPerHectare ?? 0, decimals: 2)) L/\(areaLabel) ha"
+                            value: "\(guidedFormat.litresPerHectare(carrier.litresPerHectare)) (\(areaLabel))"
                         )
                         GuidedCalculatedRow(
                             label: "Calculation area",
-                            value: SprayGuidedFormat.hectares(carrier.areaHectaresUsed)
+                            value: guidedFormat.hectares(carrier.areaHectaresUsed)
                         )
                         GuidedCalculatedRow(
                             label: "Total spray water",
-                            value: SprayGuidedFormat.litres(carrier.totalLitres),
+                            value: guidedFormat.litres(carrier.totalLitres),
                             emphasis: true
                         )
                         GuidedCalculatedRow(label: "Concentration factor", value: "Not used")
@@ -3485,13 +3502,13 @@ struct SprayCalculatorView: View {
                     Spacer(minLength: 0)
                 }
                 HStack(spacing: 8) {
-                    TextField("400", text: $manualTotalLitresText)
+                    TextField("400", text: carrierBinding("manual", $manualTotalLitresText, forward: region.volumeValue, inverse: region.volumeToCanonical))
                         .keyboardType(.decimalPad)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
                         .background(Color(.tertiarySystemGroupedBackground))
                         .clipShape(.rect(cornerRadius: 8))
-                    Text("L")
+                    Text(region.volumeUnitAbbreviation)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
@@ -3508,7 +3525,7 @@ struct SprayCalculatorView: View {
                     VStack(spacing: 8) {
                         GuidedCalculatedRow(
                             label: "Total spray water",
-                            value: SprayGuidedFormat.litres(carrier.totalLitres),
+                            value: guidedFormat.litres(carrier.totalLitres),
                             emphasis: true,
                             caption: "As entered — not calculated"
                         )
@@ -3520,8 +3537,8 @@ struct SprayCalculatorView: View {
                             GuidedCalculatedRow(
                                 label: flow.requiresBandWidth ? "Sprayer application rate" : "Works out to",
                                 value: flow.requiresBandWidth && carrierAreaBasis == .treatedArea
-                                    ? "\(SprayGuidedFormat.number(perHectare)) L/treated ha"
-                                    : SprayGuidedFormat.litresPerHectare(perHectare),
+                                    ? "\(guidedFormat.litresPerHectare(perHectare)) (treated)"
+                                    : guidedFormat.litresPerHectare(perHectare),
                                 caption: flow.requiresBandWidth && carrierAreaBasis == .treatedArea
                                     ? "Derived from treated band area"
                                     : "Across the selected blocks — for reference"
@@ -3530,7 +3547,7 @@ struct SprayCalculatorView: View {
                         if let per100m = carrier.appliedLitresPer100Metres {
                             GuidedCalculatedRow(
                                 label: "Works out to",
-                                value: SprayGuidedFormat.litresPer100m(per100m),
+                                value: guidedFormat.litresPer100m(per100m),
                                 caption: "Across the selected rows — for reference"
                             )
                         }
@@ -3588,7 +3605,7 @@ struct SprayCalculatorView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()
-                        Text("\(String(format: "%.0f", canopyRate)) L/100 m")
+                        Text(guidedFormat.litresPer100m(canopyRate))
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(isOverridden ? .secondary : VineyardTheme.olive)
                             .monospacedDigit()
@@ -3600,15 +3617,15 @@ struct SprayCalculatorView: View {
 
                 HStack(spacing: 8) {
                     TextField(
-                        supportsCanopy ? String(format: "%.0f", canopyRate) : "40",
-                        text: $diluteLitresPer100mText
+                        supportsCanopy ? String(region.volumePer100LengthValue(canopyRate)) : String(region.volumePer100LengthValue(40)),
+                        text: carrierBinding("dilute", $diluteLitresPer100mText, forward: region.volumePer100LengthValue, inverse: region.volumePer100LengthToCanonical)
                     )
                     .keyboardType(.decimalPad)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                     .background(Color(.tertiarySystemGroupedBackground))
                     .clipShape(.rect(cornerRadius: 8))
-                    Text("L/100 m").font(.caption).foregroundStyle(.secondary)
+                    Text(region.volumePer100LengthUnit).font(.caption).foregroundStyle(.secondary)
                 }
 
                 if supportsCanopy {
@@ -3624,13 +3641,13 @@ struct SprayCalculatorView: View {
                 Text("Actual Applied Volume")
                     .font(.subheadline.weight(.medium))
                 HStack(spacing: 8) {
-                    TextField("20", text: $appliedLitresPer100mText)
+                    TextField("20", text: carrierBinding("applied", $appliedLitresPer100mText, forward: region.volumePer100LengthValue, inverse: region.volumePer100LengthToCanonical))
                         .keyboardType(.decimalPad)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
                         .background(Color(.tertiarySystemGroupedBackground))
                         .clipShape(.rect(cornerRadius: 8))
-                    Text("L/100 m").font(.caption).foregroundStyle(.secondary)
+                    Text(region.volumePer100LengthUnit).font(.caption).foregroundStyle(.secondary)
                 }
             }
 
@@ -3646,13 +3663,13 @@ struct SprayCalculatorView: View {
                         )
                         GuidedCalculatedRow(
                             label: "Total carrier",
-                            value: SprayGuidedFormat.litres(carrier.totalLitres),
+                            value: guidedFormat.litres(carrier.totalLitres),
                             emphasis: true
                         )
                         if let perHa = carrier.litresPerHectare {
                             GuidedCalculatedRow(
                                 label: "Equivalent applied volume",
-                                value: SprayGuidedFormat.litresPerHectare(perHa),
+                                value: guidedFormat.litresPerHectare(perHa),
                                 caption: "Derived from row spacing — not entered"
                             )
                         } else {
@@ -3695,12 +3712,12 @@ struct SprayCalculatorView: View {
                     )
                     GuidedReviewRow(
                         label: "Gross area",
-                        value: SprayGuidedFormat.hectares(plan.grossAreaHectares)
+                        value: guidedFormat.hectares(plan.grossAreaHectares)
                     )
                     if let metres = plan.geometry.totalRowLengthMetres {
                         GuidedReviewRow(
                             label: "Canonical row length",
-                            value: SprayGuidedFormat.metres(metres)
+                            value: guidedFormat.metres(metres)
                         )
                     }
                 }
@@ -3721,14 +3738,14 @@ struct SprayCalculatorView: View {
                     if flow.requiresBandWidth {
                         GuidedReviewRow(
                             label: "Band width",
-                            value: SprayGuidedFormat.metres(
+                            value: guidedFormat.metres(
                                 plan.treatedArea.bandWidth?.totalMetres,
                                 decimals: 2
                             )
                         )
                         GuidedReviewRow(
                             label: "Treated area",
-                            value: SprayGuidedFormat.hectares(plan.treatedAreaHectares)
+                            value: guidedFormat.hectares(plan.treatedAreaHectares)
                         )
                     }
                 }
@@ -3754,16 +3771,16 @@ struct SprayCalculatorView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     GuidedReviewRow(
                         label: "Basis",
-                        value: SprayGuidedFormat.carrierBasisLabel(carrier.basis)
+                        value: guidedFormat.carrierBasisLabel(carrier.basis)
                     )
                     if carrier.basis == .litresPer100Metres {
                         GuidedReviewRow(
                             label: "Dilute / runoff",
-                            value: SprayGuidedFormat.litresPer100m(carrier.diluteLitresPer100Metres)
+                            value: guidedFormat.litresPer100m(carrier.diluteLitresPer100Metres)
                         )
                         GuidedReviewRow(
                             label: "Actual applied",
-                            value: SprayGuidedFormat.litresPer100m(carrier.appliedLitresPer100Metres)
+                            value: guidedFormat.litresPer100m(carrier.appliedLitresPer100Metres)
                         )
                     }
                     GuidedReviewRow(
@@ -3772,15 +3789,15 @@ struct SprayCalculatorView: View {
                     )
                     GuidedReviewRow(
                         label: "Total carrier",
-                        value: SprayGuidedFormat.litres(carrier.totalLitres)
+                        value: guidedFormat.litres(carrier.totalLitres)
                     )
                     GuidedReviewRow(
-                        label: "Equivalent L/ha",
-                        value: SprayGuidedFormat.litresPerHectare(carrier.litresPerHectare)
+                        label: "Equivalent \(region.volumePerAreaUnit)",
+                        value: guidedFormat.litresPerHectare(carrier.litresPerHectare)
                     )
                     GuidedReviewRow(
                         label: "Tanks",
-                        value: "\(plan.tankSplit.totalTanks) × \(SprayGuidedFormat.litres(plan.tankSplit.tankCapacityLitres))"
+                        value: "\(plan.tankSplit.totalTanks) × \(guidedFormat.litres(plan.tankSplit.tankCapacityLitres))"
                     )
                 }
             }

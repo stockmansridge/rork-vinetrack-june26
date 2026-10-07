@@ -414,30 +414,32 @@ struct GuidedReviewGroup<Content: View>: View {
 
 /// Formatting helpers so both the live sections and Review render engine values
 /// identically. Pure presentation — no arithmetic beyond rounding.
-enum SprayGuidedFormat {
-    static func hectares(_ value: Double?) -> String {
+struct SprayGuidedFormat {
+    let formatter: RegionFormatter
+
+    func hectares(_ value: Double?) -> String {
         guard let value, value.isFinite else { return "—" }
-        return String(format: "%.2f ha", value)
+        return formatter.formatArea(hectares: value)
     }
 
-    static func metres(_ value: Double?, decimals: Int = 0) -> String {
+    func metres(_ value: Double?, decimals: Int = 0) -> String {
         guard let value, value.isFinite else { return "—" }
-        return "\(number(value, decimals: decimals)) m"
+        return formatter.formatLength(metres: value, fractionDigits: decimals)
     }
 
-    static func litres(_ value: Double?) -> String {
+    func litres(_ value: Double?) -> String {
         guard let value, value.isFinite else { return "—" }
-        return "\(number(value, decimals: 0)) L"
+        return formatter.formatVolume(litres: value, fractionDigits: 1)
     }
 
-    static func litresPerHectare(_ value: Double?) -> String {
+    func litresPerHectare(_ value: Double?) -> String {
         guard let value, value.isFinite else { return "—" }
-        return "\(number(value, decimals: 0)) L/ha"
+        return formatter.formatVolumePerArea(litresPerHectare: value)
     }
 
-    static func litresPer100m(_ value: Double?) -> String {
+    func litresPer100m(_ value: Double?) -> String {
         guard let value, value.isFinite else { return "—" }
-        return "\(number(value, decimals: value < 10 ? 1 : 0)) L/100 m"
+        return formatter.formatVolumePer100Length(value)
     }
 
     static func factor(_ value: Double?) -> String {
@@ -462,19 +464,19 @@ enum SprayGuidedFormat {
         return "\(number(value, decimals: decimals)) \(unit)"
     }
 
-    static func carrierBasisLabel(_ basis: SprayCarrierBasis) -> String {
+    func carrierBasisLabel(_ basis: SprayCarrierBasis) -> String {
         switch basis {
-        case .litresPerHectare: return "L/ha"
-        case .litresPer100Metres: return "L/100 m"
-        case .manualTotalVolume: return "L"
+        case .litresPerHectare: return formatter.volumePerAreaUnit
+        case .litresPer100Metres: return formatter.volumePer100LengthUnit
+        case .manualTotalVolume: return formatter.volumeUnitAbbreviation
         }
     }
 
     /// The picker's own wording for a spray-volume path.
-    static func volumeSourceLabel(_ basis: SprayCarrierBasis) -> String {
+    func volumeSourceLabel(_ basis: SprayCarrierBasis) -> String {
         switch basis {
-        case .litresPerHectare: return "L/ha"
-        case .litresPer100Metres: return "L/100 m"
+        case .litresPerHectare: return formatter.volumePerAreaUnit
+        case .litresPer100Metres: return formatter.volumePer100LengthUnit
         case .manualTotalVolume: return "Manual"
         }
     }
