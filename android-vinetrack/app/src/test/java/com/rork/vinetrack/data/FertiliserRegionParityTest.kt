@@ -8,6 +8,37 @@ import org.junit.Test
 import java.time.Instant
 
 class FertiliserRegionParityTest {
+    @Test fun portalRowLengthPrecedenceAndActualIsolation() {
+        val rows = listOf(100.0, 120.0, 110.0).mapIndexed { index, length ->
+            PaddockRow(number = index + 1, startPoint = CoordinatePoint(0.0, 0.0), endPoint = CoordinatePoint(length / 111320, 0.0))
+        }
+        val block = Paddock(id = "b", vineyardId = "v", name = "Portal fixture", rows = rows, vineSpacing = 1.2, rowLengthOverride = 315.0, rowLengthOverrides = Json.parseToJsonElement("""{"1":95,"3":108}"""))
+        assertEquals(323.0, FertiliserVineCounts.assumedFullRowLength(block)!!, 1e-9)
+        assertEquals(269, FertiliserVineCounts.count(block, "assumed_full"))
+        assertNull(FertiliserVineCounts.count(block, "actual"))
+        assertEquals(999, FertiliserVineCounts.count(block.copy(vineCountOverride = 999), "actual"))
+        assertEquals(269, FertiliserVineCounts.count(block.copy(vineCountOverride = 999), "assumed_full"))
+        val physical = block.copy(rows = listOf(rows[0].copy(vineCountOverride = 42)) + rows.drop(1))
+        assertEquals(FertiliserVineCounts.count(physical, "actual"), FertiliserVineCounts.count(physical.copy(rowLengthOverrides = null), "actual"))
+        assertEquals(262, FertiliserVineCounts.count(block.copy(rowLengthOverrides = null), "assumed_full"))
+        assertEquals(262, FertiliserVineCounts.count(block.copy(rowLengthOverrides = Json.parseToJsonElement("""{"99":500}""")), "assumed_full"))
+        assertEquals(275, FertiliserVineCounts.count(block.copy(rowLengthOverrides = null, rowLengthOverride = -1.0), "assumed_full"))
+        assertNull(FertiliserVineCounts.count(block.copy(rows = listOf(rows[0], rows[1].copy(endPoint = null), rows[2])), "assumed_full"))
+    }
+
+    @Test fun tolerantPluralMappingAndDecimalRowRoundTrip() {
+        val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+        val block = json.decodeFromString<Paddock>("""{"id":"b","vineyard_id":"v","name":"Decimal","vine_spacing":1.2,"row_length_overrides":{"3.5":244.2,"1":95,"2":-4,"bad":44,"4":null,"5":"junk","6":{},"7":true},"rows":[{"number":3.5,"startPoint":{"latitude":0,"longitude":0},"endPoint":{"latitude":0.001,"longitude":0}}]}""")
+        assertEquals(3.5, block.rows!![0].calculationRowNumber, 0.0)
+        assertEquals(203, FertiliserVineCounts.count(block, "assumed_full"))
+        val cached = json.decodeFromString<Paddock>(json.encodeToString(block))
+        assertEquals(block, cached)
+        assertEquals(block.rows[0].stableId, cached.rows!![0].stableId)
+        for (raw in listOf("[]", "false", "\"junk\"", "{}", "null", """{"3.5":-1,"1":true,"2":"95","9":500}""")) {
+            assertEquals(262, FertiliserVineCounts.count(block.copy(rowLengthOverride = 315.0, rowLengthOverrides = Json.parseToJsonElement(raw)), "assumed_full"))
+        }
+    }
+
     @Test fun actualAndAssumedMultiBlockTotals() {
         val a = Paddock(id = "a", vineyardId = "v", name = "A", vineCountOverride = 4200, rowLengthOverride = 10000.0, vineSpacing = 2.0)
         val b = Paddock(id = "b", vineyardId = "v", name = "B", vineCountOverride = 3600, rowLengthOverride = 8000.0, vineSpacing = 2.0)

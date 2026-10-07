@@ -10,6 +10,7 @@ nonisolated struct BackendPaddock: Codable, Sendable, Identifiable {
     let vineSpacing: Double?
     let vineCountOverride: Int?
     let rowLengthOverride: Double?
+    var rowLengthOverrides: RowLengthOverrides? = nil
     let flowPerEmitter: Double?
     let emitterSpacing: Double?
     let intermediatePostSpacing: Double?
@@ -41,6 +42,7 @@ nonisolated struct BackendPaddock: Codable, Sendable, Identifiable {
         case vineSpacing = "vine_spacing"
         case vineCountOverride = "vine_count_override"
         case rowLengthOverride = "row_length_override"
+        case rowLengthOverrides = "row_length_overrides"
         case flowPerEmitter = "flow_per_emitter"
         case emitterSpacing = "emitter_spacing"
         case intermediatePostSpacing = "intermediate_post_spacing"
@@ -77,6 +79,7 @@ nonisolated struct BackendPaddockUpsert: Encodable, Sendable {
     let vineSpacing: Double?
     let vineCountOverride: Int?
     let rowLengthOverride: Double?
+    var rowLengthOverrides: RowLengthOverrides? = nil
     let flowPerEmitter: Double?
     let emitterSpacing: Double?
     let intermediatePostSpacing: Double?
@@ -103,6 +106,7 @@ nonisolated struct BackendPaddockUpsert: Encodable, Sendable {
         case vineSpacing = "vine_spacing"
         case vineCountOverride = "vine_count_override"
         case rowLengthOverride = "row_length_override"
+        case rowLengthOverrides = "row_length_overrides"
         case flowPerEmitter = "flow_per_emitter"
         case emitterSpacing = "emitter_spacing"
         case intermediatePostSpacing = "intermediate_post_spacing"
@@ -136,6 +140,7 @@ extension BackendPaddock {
             vineSpacing: paddock.vineSpacing,
             vineCountOverride: paddock.vineCountOverride,
             rowLengthOverride: paddock.rowLengthOverride,
+            rowLengthOverrides: paddock.rowLengthOverrides,
             flowPerEmitter: paddock.flowPerEmitter,
             emitterSpacing: paddock.emitterSpacing,
             intermediatePostSpacing: paddock.intermediatePostSpacing,
@@ -169,6 +174,7 @@ extension BackendPaddock {
             vineSpacing: vineSpacing ?? 1.0,
             vineCountOverride: vineCountOverride,
             rowLengthOverride: rowLengthOverride,
+            rowLengthOverrides: rowLengthOverrides,
             flowPerEmitter: flowPerEmitter,
             emitterSpacing: emitterSpacing,
             intermediatePostSpacing: intermediatePostSpacing,

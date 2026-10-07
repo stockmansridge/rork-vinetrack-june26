@@ -131,6 +131,7 @@ class PaddockRepository(private val session: SessionStore) {
                 put("vine_spacing", paddock.vineSpacing.toJson())
                 put("vine_count_override", paddock.vineCountOverride.toJson())
                 put("row_length_override", paddock.rowLengthOverride.toJson())
+                paddock.rowLengthOverrides?.let { put("row_length_overrides", it) }
                 put("flow_per_emitter", paddock.flowPerEmitter.toJson())
                 put("emitter_spacing", paddock.emitterSpacing.toJson())
                 put("intermediate_post_spacing", paddock.intermediatePostSpacing.toJson())
@@ -242,7 +243,7 @@ class PaddockRepository(private val session: SessionStore) {
                 // Legacy rows without one get the deterministic fallback id
                 // (identical on iOS), so the identity persists from now on.
                 put("id", JsonPrimitive(row.stableId))
-                put("number", JsonPrimitive(row.number))
+                put("number", row.decimalNumber?.let { JsonPrimitive(it) } ?: JsonPrimitive(row.number))
                 put("startPoint", coordinateObject(row.startPoint))
                 put("endPoint", coordinateObject(row.endPoint))
                 // sql/188: the OPTIONAL manual per-row vine count. Written only

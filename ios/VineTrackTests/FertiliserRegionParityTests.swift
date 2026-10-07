@@ -4,6 +4,55 @@ import Testing
 
 @MainActor
 struct FertiliserRegionParityTests {
+    @Test func portalRowLengthPrecedenceAndActualIsolation() throws {
+        let rows = zip([1, 2, 3], [100.0, 120.0, 110.0]).map { number, length in
+            PaddockRow(number: number, startPoint: CoordinatePoint(latitude: 0, longitude: 0), endPoint: CoordinatePoint(latitude: length / 111320, longitude: 0))
+        }
+        var block = Paddock(name: "Portal fixture", rows: rows, vineSpacing: 1.2, rowLengthOverride: 315, rowLengthOverrides: RowLengthOverrides(["1": 95, "3": 108]))
+        #expect(FertiliserVineCounts.assumedFullRowLength(block) == 323)
+        #expect(FertiliserVineCounts.count(block, basis: "assumed_full") == 269)
+        #expect(FertiliserVineCounts.count(block, basis: "actual") == nil)
+        block.vineCountOverride = 999
+        #expect(FertiliserVineCounts.count(block, basis: "actual") == 999)
+        #expect(FertiliserVineCounts.count(block, basis: "assumed_full") == 269)
+        block.vineCountOverride = nil
+        block.rows[0].vineCountOverride = 42
+        let physical = FertiliserVineCounts.count(block, basis: "actual")
+        block.rowLengthOverrides = nil
+        #expect(FertiliserVineCounts.count(block, basis: "actual") == physical)
+        #expect(FertiliserVineCounts.assumedFullRowLength(block) == 315)
+        #expect(FertiliserVineCounts.count(block, basis: "assumed_full") == 262)
+        block.rowLengthOverrides = RowLengthOverrides(["99": 500])
+        #expect(FertiliserVineCounts.count(block, basis: "assumed_full") == 262)
+        block.rowLengthOverride = -1
+        #expect(FertiliserVineCounts.count(block, basis: "assumed_full") == 275)
+        block.rowLengthOverrides = RowLengthOverrides(["1": 95])
+        block.rows[1].endPoint = block.rows[1].startPoint
+        #expect(FertiliserVineCounts.count(block, basis: "assumed_full") == nil)
+    }
+
+    @Test func tolerantPluralMappingAndDecimalRowRoundTrip() throws {
+        let remoteJson = """
+        {"id":"00000000-0000-0000-0000-000000000001","vineyard_id":"00000000-0000-0000-0000-000000000002","name":"Decimal","vine_spacing":1.2,"row_length_overrides":{"3.5":244.2,"1":95,"2":-4,"bad":44,"4":null,"5":"junk","6":{},"7":true},"rows":[{"number":3.5,"startPoint":{"latitude":0,"longitude":0},"endPoint":{"latitude":0.001,"longitude":0}}]}
+        """
+        let remote = try JSONDecoder().decode(BackendPaddock.self, from: Data(remoteJson.utf8))
+        let block = remote.toPaddock()
+        #expect(block.rows[0].calculationRowNumber == 3.5)
+        #expect(block.rowLengthOverrides?.values.count == 2)
+        #expect(FertiliserVineCounts.count(block, basis: "assumed_full") == 203)
+        let cached = try JSONDecoder().decode(Paddock.self, from: JSONEncoder().encode(block))
+        #expect(cached == block)
+        let payload = BackendPaddock.upsert(from: cached, createdBy: nil, clientUpdatedAt: Date())
+        let pulled = try JSONDecoder().decode(BackendPaddock.self, from: JSONEncoder().encode(payload)).toPaddock()
+        #expect(pulled.rowLengthOverrides == block.rowLengthOverrides)
+        #expect(pulled.rows[0].calculationRowNumber == 3.5)
+        #expect(pulled.rows[0].id == block.rows[0].id)
+        for raw in ["[]", "false", "\"junk\"", "{}"] {
+            #expect(try JSONDecoder().decode(RowLengthOverrides.self, from: Data(raw.utf8)).values.isEmpty)
+        }
+        #expect(RowLengthOverrides(["1": .infinity, "2": .nan, "3": 0]).values.isEmpty)
+    }
+
     @Test func actualAndAssumedMultiBlockTotals() {
         let a = Paddock(name: "A", vineSpacing: 2, vineCountOverride: 4200, rowLengthOverride: 10000)
         let b = Paddock(name: "B", vineSpacing: 2, vineCountOverride: 3600, rowLengthOverride: 8000)

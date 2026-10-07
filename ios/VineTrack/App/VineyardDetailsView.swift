@@ -621,7 +621,7 @@ private struct BlockInfoCard: View {
                     GridItem(.flexible())
                 ], spacing: 8) {
                     if let lph = paddock.litresPerHour {
-                        blockStat(label: "Block Flow", value: "\(formatLitres(lph)) L/Hr")
+                        blockStat(label: "Block Flow", value: "\(fmt.formatVolume(litres: lph))/hr")
                     }
                     if let posts = paddock.intermediatePostCount {
                         blockStat(label: "Int. Posts", value: "\(formatIntegerCount(posts))")
@@ -672,10 +672,7 @@ private struct BlockInfoCard: View {
     }
 
     private func formatBlockDistance(_ meters: Double) -> String {
-        if meters >= 1000 {
-            return String(format: "%.1fkm", meters / 1000)
-        }
-        return String(format: "%.0fm", meters)
+        fmt.formatLength(metres: meters, fractionDigits: 0)
     }
 
     private func formatLitres(_ value: Double) -> String {
@@ -775,16 +772,16 @@ private struct BlockDetailSheet: View {
                 Section("Overview") {
                     LabeledContent("Area", value: fmt.formatArea(hectares: paddock.areaHectares))
                     LabeledContent("Vines", value: "\(paddock.summaryVineCount)")
-                    LabeledContent("Trellis Length", value: String(format: "%.0f m", paddock.effectiveTotalRowLength))
+                    LabeledContent("Trellis Length", value: fmt.formatLength(metres: paddock.effectiveTotalRowLength))
                     LabeledContent("Rows", value: "\(paddock.rows.count)")
-                    LabeledContent("Row Spacing", value: String(format: "%.1f m", paddock.rowWidth))
-                    LabeledContent("Vine Spacing", value: String(format: "%.1f m", paddock.vineSpacing))
+                    LabeledContent("Row Spacing", value: fmt.formatLength(metres: paddock.rowWidth))
+                    LabeledContent("Vine Spacing", value: fmt.formatLength(metres: paddock.vineSpacing))
                 }
 
                 if paddock.intermediatePostSpacing != nil || paddock.intermediatePostCount != nil {
                     Section("Trellis") {
                         if let spacing = paddock.intermediatePostSpacing {
-                            LabeledContent("Intermediate Post Spacing", value: String(format: "%.1f m", spacing))
+                            LabeledContent("Intermediate Post Spacing", value: fmt.formatLength(metres: spacing))
                         }
                         if let posts = paddock.intermediatePostCount {
                             LabeledContent("Intermediate Posts", value: "\(posts)")
@@ -795,22 +792,22 @@ private struct BlockDetailSheet: View {
                 if paddock.flowPerEmitter != nil || paddock.emitterSpacing != nil {
                     Section("Irrigation") {
                         if let flow = paddock.flowPerEmitter {
-                            LabeledContent("Emitter Rate", value: String(format: "%.1f L/hr", flow))
+                            LabeledContent("Emitter Rate", value: "\(fmt.formatVolume(litres: flow, fractionDigits: 2))/hr")
                         }
                         if let spacing = paddock.emitterSpacing {
-                            LabeledContent("Emitter Spacing", value: String(format: "%.1f m", spacing))
+                            LabeledContent("Emitter Spacing", value: fmt.formatLength(metres: spacing))
                         }
                         if let totalEmitters = paddock.totalEmitters {
                             LabeledContent("Emitters", value: "\(totalEmitters)")
                         }
                         if let lVineHr = paddock.litresPerVinePerHour {
-                            LabeledContent("L/Vine/Hr", value: String(format: "%.1f", lVineHr))
+                            LabeledContent("Volume/Vine/Hr", value: "\(fmt.formatVolume(litres: lVineHr, fractionDigits: 2))/vine/hr")
                         }
                         if let lph = paddock.litresPerHour {
-                            LabeledContent("Block L/hr", value: String(format: "%.0f", lph))
+                            LabeledContent("Block Flow", value: "\(fmt.formatVolume(litres: lph))/hr")
                         }
                         if let lphha = paddock.litresPerHaPerHour {
-                            LabeledContent("L/ha/hr", value: String(format: "%.0f", lphha))
+                            LabeledContent("Flow per Area", value: "\(fmt.formatVolumePerLandArea(litresPerHectare: lphha))/hr")
                         }
                     }
                 }

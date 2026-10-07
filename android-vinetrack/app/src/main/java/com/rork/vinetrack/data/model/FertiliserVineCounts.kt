@@ -1,5 +1,9 @@
 package com.rork.vinetrack.data.model
 
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.doubleOrNull
+
 /** Explicit planning basis; absent saved values remain legacy snapshots. */
 object FertiliserVineCounts {
     const val ACTUAL = "actual"
@@ -18,12 +22,34 @@ object FertiliserVineCounts {
         ACTUAL -> block.vineCountOverride?.takeIf { it > 0 } ?: actualRows(block)
         ASSUMED_FULL -> {
             val spacing = block.vineSpacing
-            val length = block.effectiveTotalRowLength
-            val completeGeometry = block.rowLengthOverride != null || (block.rows.orEmpty().isNotEmpty() && block.rows.orEmpty().all { block.rowLengthMetres(it).let { value -> value.isFinite() && value > 0 } })
-            if (!completeGeometry || spacing == null || !spacing.isFinite() || spacing <= 0 || !length.isFinite() || length <= 0) null
+            val length = assumedFullRowLength(block)
+            if (length == null || spacing == null || !spacing.isFinite() || spacing <= 0) null
             else (length / spacing).takeIf { it.isFinite() && it >= 1 && it < Int.MAX_VALUE.toDouble() }?.toInt()
         }
         else -> null
+    }
+
+    /** Matching plural overrides replace row geometry; singular remains a block total. */
+    fun assumedFullRowLength(block: Paddock): Double? {
+        val entries = (block.rowLengthOverrides as? JsonObject).orEmpty().toSortedMap()
+        val rows = block.rows.orEmpty()
+        val overrides = rows.map { row ->
+            entries.entries.firstNotNullOfOrNull { (key, raw) ->
+                val value = raw as? JsonPrimitive
+                if (key.toDoubleOrNull() == row.calculationRowNumber && value?.isString == false)
+                    value.doubleOrNull?.takeIf { it.isFinite() && it > 0 }
+                else null
+            }
+        }
+        if (overrides.none { it != null }) block.rowLengthOverride?.takeIf { it.isFinite() && it > 0 }?.let { return it }
+        if (rows.isEmpty()) return null
+        var total = 0.0
+        rows.zip(overrides).forEach { (row, override) ->
+            val length = override ?: block.rowLengthMetres(row)
+            if (!length.isFinite() || length <= 0) return null
+            total += length
+        }
+        return total.takeIf { it.isFinite() && it > 0 }
     }
 
     private fun actualRows(block: Paddock): Int? {

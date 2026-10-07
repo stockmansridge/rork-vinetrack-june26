@@ -25,6 +25,7 @@ nonisolated struct Paddock: Codable, Identifiable, Sendable, Hashable {
     var vineSpacingIsKnown: Bool? = nil
     var vineCountOverride: Int?
     var rowLengthOverride: Double?
+    var rowLengthOverrides: RowLengthOverrides?
     var flowPerEmitter: Double?
     var emitterSpacing: Double?
     var intermediatePostSpacing: Double?
@@ -49,6 +50,7 @@ nonisolated struct Paddock: Codable, Identifiable, Sendable, Hashable {
         vineSpacing: Double = 1.0,
         vineCountOverride: Int? = nil,
         rowLengthOverride: Double? = nil,
+        rowLengthOverrides: RowLengthOverrides? = nil,
         flowPerEmitter: Double? = nil,
         emitterSpacing: Double? = nil,
         intermediatePostSpacing: Double? = nil,
@@ -72,6 +74,7 @@ nonisolated struct Paddock: Codable, Identifiable, Sendable, Hashable {
         self.vineSpacing = vineSpacing
         self.vineCountOverride = vineCountOverride
         self.rowLengthOverride = rowLengthOverride
+        self.rowLengthOverrides = rowLengthOverrides
         self.flowPerEmitter = flowPerEmitter
         self.emitterSpacing = emitterSpacing
         self.intermediatePostSpacing = intermediatePostSpacing
@@ -86,7 +89,7 @@ nonisolated struct Paddock: Codable, Identifiable, Sendable, Hashable {
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
-        case id, vineyardId, name, polygonPoints, rows, rowDirection, rowOffset, vineSpacingIsKnown, vineSpacing, vineCountOverride, rowLengthOverride, flowPerEmitter, emitterSpacing, intermediatePostSpacing, varietyAllocations, budburstDate, floweringDate, veraisonDate, harvestDate, plantingYear, calculationModeOverride, resetModeOverride
+        case id, vineyardId, name, polygonPoints, rows, rowDirection, rowOffset, vineSpacingIsKnown, vineSpacing, vineCountOverride, rowLengthOverride, rowLengthOverrides, flowPerEmitter, emitterSpacing, intermediatePostSpacing, varietyAllocations, budburstDate, floweringDate, veraisonDate, harvestDate, plantingYear, calculationModeOverride, resetModeOverride
         // Persisted under its historical key so stored JSON is unchanged.
         case rowWidthRaw = "rowWidth"
     }
@@ -108,6 +111,7 @@ nonisolated struct Paddock: Codable, Identifiable, Sendable, Hashable {
         vineSpacingIsKnown = try container.decodeIfPresent(Bool.self, forKey: .vineSpacingIsKnown) ?? (storedSpacing != nil)
         vineCountOverride = try container.decodeIfPresent(Int.self, forKey: .vineCountOverride)
         rowLengthOverride = try container.decodeIfPresent(Double.self, forKey: .rowLengthOverride)
+        rowLengthOverrides = try container.decodeIfPresent(RowLengthOverrides.self, forKey: .rowLengthOverrides)
         flowPerEmitter = try container.decodeIfPresent(Double.self, forKey: .flowPerEmitter)
         emitterSpacing = try container.decodeIfPresent(Double.self, forKey: .emitterSpacing)
         intermediatePostSpacing = try container.decodeIfPresent(Double.self, forKey: .intermediatePostSpacing)
@@ -413,7 +417,10 @@ extension Paddock {
 
 nonisolated struct PaddockRow: Codable, Identifiable, Sendable, Hashable {
     let id: UUID
-    var number: Int
+    var number: Int { didSet { decimalNumber = nil } }
+    /// Preserves Portal decimal row numbers without changing integer-only row editors.
+    var decimalNumber: Double? = nil
+    var calculationRowNumber: Double { decimalNumber ?? Double(number) }
     var startPoint: CoordinatePoint
     var endPoint: CoordinatePoint
     /// MANUAL vine count for THIS row (sql/188). Optional by contract: rows
@@ -443,7 +450,12 @@ nonisolated struct PaddockRow: Codable, Identifiable, Sendable, Hashable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        number = try c.decode(Int.self, forKey: .number)
+        let rawNumber = try c.decode(Double.self, forKey: .number)
+        guard rawNumber.isFinite, rawNumber > Double(Int.min), rawNumber < Double(Int.max) else {
+            throw DecodingError.dataCorruptedError(forKey: .number, in: c, debugDescription: "Invalid row number")
+        }
+        number = Int(rawNumber)
+        decimalNumber = rawNumber == Double(number) ? nil : rawNumber
         startPoint = try c.decode(CoordinatePoint.self, forKey: .startPoint)
         endPoint = try c.decode(CoordinatePoint.self, forKey: .endPoint)
         // Tolerate rows written without an `id` (older Android builds and
@@ -451,7 +463,7 @@ nonisolated struct PaddockRow: Codable, Identifiable, Sendable, Hashable {
         // the row's content, so every device derives the identical id and
         // pruning progress keyed on it stays consistent across platforms.
         id = (try? c.decodeIfPresent(UUID.self, forKey: .id))
-            ?? PaddockRowIdentity.derive(number: number, startPoint: startPoint, endPoint: endPoint)
+            ?? PaddockRowIdentity.derive(number: number, startPoint: startPoint, endPoint: endPoint, decimalNumber: decimalNumber)
         // Only a whole POSITIVE count is a real override — 0, negatives and
         // junk decode as "no override" rather than poisoning the estimate.
         vineCountOverride = PaddockRowVineCount.sanitiseOverride(
@@ -464,7 +476,8 @@ nonisolated struct PaddockRow: Codable, Identifiable, Sendable, Hashable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
-        try c.encode(number, forKey: .number)
+        if let decimalNumber { try c.encode(decimalNumber, forKey: .number) }
+        else { try c.encode(number, forKey: .number) }
         try c.encode(startPoint, forKey: .startPoint)
         try c.encode(endPoint, forKey: .endPoint)
         try c.encodeIfPresent(vineCountOverride, forKey: .vineCountOverride)
@@ -475,12 +488,13 @@ nonisolated struct PaddockRow: Codable, Identifiable, Sendable, Hashable {
 /// Matches Java's `UUID.nameUUIDFromBytes` (MD5, version 3) so the Kotlin app
 /// derives byte-identical ids from the same row content.
 nonisolated enum PaddockRowIdentity {
-    static func derive(number: Int, startPoint: CoordinatePoint?, endPoint: CoordinatePoint?) -> UUID {
+    static func derive(number: Int, startPoint: CoordinatePoint?, endPoint: CoordinatePoint?, decimalNumber: Double? = nil) -> UUID {
         func fmt(_ value: Double?) -> String {
             guard let value else { return "" }
             return String(format: "%.6f", locale: Locale(identifier: "en_US_POSIX"), value)
         }
-        let name = "vinetrack-paddock-row|\(number)|\(fmt(startPoint?.latitude))|\(fmt(startPoint?.longitude))|\(fmt(endPoint?.latitude))|\(fmt(endPoint?.longitude))"
+        let rowNumber = decimalNumber.map { String($0) } ?? String(number)
+        let name = "vinetrack-paddock-row|\(rowNumber)|\(fmt(startPoint?.latitude))|\(fmt(startPoint?.longitude))|\(fmt(endPoint?.latitude))|\(fmt(endPoint?.longitude))"
         var bytes = Array(Insecure.MD5.hash(data: Data(name.utf8)))
         bytes[6] = (bytes[6] & 0x0F) | 0x30
         bytes[8] = (bytes[8] & 0x3F) | 0x80

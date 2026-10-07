@@ -203,12 +203,12 @@ struct TripPDFService {
                 if frontUsed, let front = details.frontBox {
                     y += 4
                     drawSubHeader("Front Box")
-                    drawSeedingBox(front, drawRow: drawRow)
+                    drawSeedingBox(front, formatter: formatter, drawRow: drawRow)
                 }
                 if backUsed, let back = details.backBox {
                     y += 4
                     drawSubHeader("Rear Box")
-                    drawSeedingBox(back, drawRow: drawRow)
+                    drawSeedingBox(back, formatter: formatter, drawRow: drawRow)
                 }
                 if let lines = details.mixLines?.filter({ $0.hasAnyValue }), !lines.isEmpty {
                     y += 4
@@ -228,7 +228,7 @@ struct TripPDFService {
                             drawRow(label: "  Seed box", value: box, indent: 12)
                         }
                         if let kg = line.kgPerHa {
-                            drawRow(label: "  Kg/ha", value: "\(formatNumber(kg)) kg/ha", indent: 12)
+                            drawRow(label: "  Seed rate", value: formatter.formatYieldPerArea(perHectare: kg, unitLabel: "kg"), indent: 12)
                         }
                         if let supplier = line.supplierManufacturer?.trimmingCharacters(in: .whitespacesAndNewlines), !supplier.isEmpty {
                             drawRow(label: "  Supplier", value: supplier, indent: 12)
@@ -374,7 +374,7 @@ struct TripPDFService {
                 } else {
                     drawRow(label: "Fuel used (est.)", value: formatter.formatFuel(litres: r.fuel.litres))
                     if let perL = r.fuel.costPerLitre {
-                        drawRow(label: "Fuel cost per \(formatter.fuelUnitAbbreviation)", value: "\(formatter.formatCurrency(perL))/\(formatter.fuelUnitAbbreviation)")
+                        drawRow(label: "Fuel cost per \(formatter.fuelUnitAbbreviation)", value: "\(formatter.formatCurrency(formatter.fuelCostValue(perLitre: perL)))/\(formatter.fuelUnitAbbreviation)")
                     }
                     drawRow(label: "Fuel cost", value: formatter.formatCurrency(r.fuel.cost))
                 }
@@ -506,12 +506,12 @@ struct TripPDFService {
         return nil
     }
 
-    private static func drawSeedingBox(_ box: SeedingBox, drawRow: (String, String, CGFloat) -> Void) {
+    private static func drawSeedingBox(_ box: SeedingBox, formatter: RegionFormatter, drawRow: (String, String, CGFloat) -> Void) {
         if let mix = box.mixName, !mix.isEmpty {
             drawRow("  Mix", mix, 12)
         }
         if let rate = box.ratePerHa {
-            drawRow("  Rate/ha", "\(formatNumber(rate)) kg/ha", 12)
+            drawRow("  Seed rate", formatter.formatYieldPerArea(perHectare: rate, unitLabel: "kg"), 12)
         }
         if let s = box.shutterSlide, !s.isEmpty {
             drawRow("  Shutter slide", s, 12)

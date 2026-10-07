@@ -33,19 +33,28 @@ nonisolated enum FertiliserVineCounts {
             return total > 0 ? total : nil
         case assumedFull:
             let spacing = block.vineSpacing
-            let length = block.effectiveTotalRowLength
+            guard let length = assumedFullRowLength(block) else { return nil }
             guard block.vineSpacingIsKnown != false, spacing.isFinite, spacing > 0, length.isFinite, length > 0 else { return nil }
-            if block.rowLengthOverride == nil {
-                guard !block.rows.isEmpty, block.rows.allSatisfy({
-                    let length = block.rowLengthMetres($0)
-                    return length.isFinite && length > 0
-                }) else { return nil }
-            }
             let count = length / spacing
             guard count.isFinite, count >= 1, count < Double(Int32.max) else { return nil }
             return Int(count)
         default: return nil
         }
+    }
+
+    /// Plural matching overrides win per row; singular is a block TOTAL only when none apply.
+    static func assumedFullRowLength(_ block: Paddock) -> Double? {
+        let overrides = block.rows.map { block.rowLengthOverrides?.length(for: $0.calculationRowNumber) }
+        if !overrides.contains(where: { $0 != nil }),
+           let total = block.rowLengthOverride, total.isFinite, total > 0 { return total }
+        guard !block.rows.isEmpty else { return nil }
+        var total = 0.0
+        for (row, override) in zip(block.rows, overrides) {
+            let length = override ?? block.rowLengthMetres(row)
+            guard length.isFinite, length > 0 else { return nil }
+            total += length
+        }
+        return total.isFinite && total > 0 ? total : nil
     }
 
     /// Every selected block must resolve; partial totals are never presented.

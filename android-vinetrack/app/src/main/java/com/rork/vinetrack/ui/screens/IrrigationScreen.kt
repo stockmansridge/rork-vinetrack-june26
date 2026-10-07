@@ -76,6 +76,7 @@ import com.rork.vinetrack.data.model.IrrigationUrgency
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.SoilAwareV2Result
 import com.rork.vinetrack.data.model.SoilProfileInputs
+import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.EmptyState
@@ -84,8 +85,6 @@ import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 /**
@@ -99,6 +98,7 @@ import java.util.Locale
 @Composable
 fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
     val vine = LocalVineColors.current
+    val formatter = LocalRegionFormatter.current
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val forecastRepo = remember { IrrigationForecastRepository() }
@@ -127,7 +127,9 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
     var efficiencyText by remember { mutableStateOf(numText(savedDefaults.irrigationEfficiencyPercent)) }
     var rainEffText by remember { mutableStateOf(numText(savedDefaults.rainfallEffectivenessPercent)) }
     var replacementText by remember { mutableStateOf(numText(savedDefaults.replacementPercent)) }
-    var bufferText by remember { mutableStateOf(numText(savedDefaults.soilMoistureBufferMm)) }
+    var bufferCanonicalSeed by remember { mutableStateOf(savedDefaults.soilMoistureBufferMm) }
+    var bufferText by remember(formatter) { mutableStateOf(numText(formatter.rainfallValue(bufferCanonicalSeed))) }
+    var rateCanonicalSeed by remember { mutableStateOf<Double?>(null) }
     var savedConfirmation by remember { mutableStateOf<String?>(null) }
 
     var forecast by remember { mutableStateOf<IrrigationForecast?>(null) }
@@ -230,7 +232,7 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
     // Pre-fill the application rate. For a single block use its drip system rate;
     // for Whole Vineyard use an area-weighted average of the blocks' system rates
     // (mirrors the iOS resolver).
-    LaunchedEffect(useWholeVineyard, selectedPaddockId) {
+    LaunchedEffect(useWholeVineyard, selectedPaddockId, formatter) {
         if (useWholeVineyard) {
             val withRate = paddocks.filter { (it.mmPerHour ?: 0.0) > 0 }
             val weight = withRate.sumOf { it.areaHectares }
@@ -239,22 +241,26 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
                 weight > 0 -> withRate.sumOf { (it.mmPerHour ?: 0.0) * it.areaHectares } / weight
                 else -> withRate.mapNotNull { it.mmPerHour }.let { if (it.isEmpty()) 0.0 else it.sum() / it.size }
             }
-            if (rate > 0) appRateText = String.format(Locale.US, "%.2f", rate)
+            if (rate > 0) {
+                rateCanonicalSeed = rate
+                appRateText = numText(formatter.rainfallValue(rate))
+            }
         } else {
             val mmHr = selectedPaddock?.mmPerHour
             if (mmHr != null && mmHr > 0) {
-                appRateText = String.format(Locale.US, "%.2f", mmHr)
+                rateCanonicalSeed = mmHr
+                appRateText = numText(formatter.rainfallValue(mmHr))
             }
         }
     }
 
     val settings = IrrigationSettings(
-        irrigationApplicationRateMmPerHour = parse(appRateText),
+        irrigationApplicationRateMmPerHour = rateCanonicalSeed?.takeIf { appRateText == numText(formatter.rainfallValue(it)) } ?: formatter.rainfallMm(parse(appRateText)),
         cropCoefficientKc = parse(kcText, 0.65),
         irrigationEfficiencyPercent = parse(efficiencyText, 90.0),
         rainfallEffectivenessPercent = parse(rainEffText, 80.0),
         replacementPercent = parse(replacementText, 100.0),
-        soilMoistureBufferMm = parse(bufferText),
+        soilMoistureBufferMm = if (bufferText == numText(formatter.rainfallValue(bufferCanonicalSeed))) bufferCanonicalSeed else formatter.rainfallMm(parse(bufferText)),
     )
 
     // Substitute any manual overrides into the forecast days before the
@@ -326,7 +332,7 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
     val wizardItems = listOf(
         "Block or Whole Vineyard" to (useWholeVineyard || selectedPaddockId != null),
         "Weather source / location" to (location != null),
-        "Irrigation application rate (mm/hr)" to (settings.irrigationApplicationRateMmPerHour > 0),
+        "Irrigation application rate (${formatter.rainfallUnitAbbreviation}/hr)" to (settings.irrigationApplicationRateMmPerHour > 0),
         "Crop coefficient (Kc)" to (settings.cropCoefficientKc > 0),
         "Rainfall & irrigation efficiency" to (settings.irrigationEfficiencyPercent > 0 && settings.rainfallEffectivenessPercent > 0),
     )
@@ -428,10 +434,10 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
                         val totalArea = paddocks.sumOf { it.areaHectares }
                         String.format(
                             Locale.US,
-                            "%d block%s \u2022 %.2f ha \u2022 conservative average",
+                            "%d block%s \u2022 %s \u2022 conservative average",
                             paddocks.size,
                             if (paddocks.size == 1) "" else "s",
-                            totalArea,
+                            formatter.formatArea(totalArea),
                         )
                     } else {
                         val p = selectedPaddock
@@ -439,14 +445,14 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
                             p == null -> "Select a block to calculate."
                             (p.mmPerHour ?: 0.0) > 0 -> String.format(
                                 Locale.US,
-                                "%.2f ha \u2022 system rate %.2f mm/hr",
-                                p.areaHectares,
-                                p.mmPerHour ?: 0.0,
+                                "%s \u2022 system rate %s/hr",
+                                formatter.formatArea(p.areaHectares),
+                                formatter.formatRainfall(p.mmPerHour ?: 0.0),
                             )
                             else -> String.format(
                                 Locale.US,
-                                "%.2f ha \u2022 no system rate — set a rate in Calculation Assumptions",
-                                p.areaHectares,
+                                "%s \u2022 no system rate — set a rate in Calculation Assumptions",
+                                formatter.formatArea(p.areaHectares),
                             )
                         }
                     }
@@ -475,9 +481,9 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
                         title = "Daily Breakdown",
                         summary = String.format(
                             Locale.US,
-                            "%d days \u2022 net deficit %.1f mm",
+                            "%d days \u2022 net deficit %s",
                             breakdownResult.dailyBreakdown.size,
-                            breakdownResult.netDeficitMm,
+                            formatter.formatRainfall(breakdownResult.netDeficitMm),
                         ),
                         expanded = showBreakdown,
                         onToggle = { showBreakdown = !showBreakdown },
@@ -500,8 +506,8 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
                         isLoadingRecentRain && recentRain == null -> "Loading\u2026"
                         recentRain != null -> String.format(
                             Locale.US,
-                            "%.1f mm in the last %d days",
-                            recentRain?.totalMm ?: 0.0,
+                            "%s in the last %d days",
+                            formatter.formatRainfall(recentRain?.totalMm ?: 0.0),
                             recentRainDays,
                         )
                         else -> "Unavailable — set a vineyard location"
@@ -550,7 +556,7 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
                     title = "Calculation Assumptions",
                     summary = String.format(
                         Locale.US,
-                        "Rate %s mm/hr \u2022 Kc %s \u2022 Eff %s%%",
+                        "Rate %s ${formatter.rainfallUnitAbbreviation}/hr \u2022 Kc %s \u2022 Eff %s%%",
                         if (appRateText.isBlank()) "—" else appRateText,
                         kcText.ifBlank { "0.65" },
                         efficiencyText.ifBlank { "90" },
@@ -560,10 +566,10 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
                 ) {
                     val siteRate = (selectedPaddock?.mmPerHour ?: 0.0) > 0
                     SettingField(
-                        label = "Application Rate (mm/hr)",
+                        label = "Application Rate (${formatter.rainfallUnitAbbreviation}/hr)",
                         value = appRateText,
                         onValueChange = { appRateText = it },
-                        help = "Millimetres of water your system applies per hour of running.",
+                        help = "Depth of water your system applies per hour of running.",
                         siteNote = if (siteRate) "Pre-filled from this block's system rate." else null,
                     )
                     SettingField(
@@ -591,7 +597,7 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
                         help = "How much of vine water use to replace. 100% = full replacement.",
                     )
                     SettingField(
-                        label = "Soil Buffer (mm)",
+                        label = "Soil Buffer (${formatter.rainfallUnitAbbreviation})",
                         value = bufferText,
                         onValueChange = { bufferText = it },
                         help = "Water already stored in the soil, subtracted from the deficit.",
@@ -610,7 +616,7 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
                                         irrigationEfficiencyPercent = parse(efficiencyText, 90.0),
                                         rainfallEffectivenessPercent = parse(rainEffText, 80.0),
                                         replacementPercent = parse(replacementText, 100.0),
-                                        soilMoistureBufferMm = parse(bufferText),
+                                        soilMoistureBufferMm = if (bufferText == numText(formatter.rainfallValue(bufferCanonicalSeed))) bufferCanonicalSeed else formatter.rainfallMm(parse(bufferText)),
                                     )
                                 )
                                 savedConfirmation = "Saved as defaults"
@@ -628,7 +634,8 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
                                 efficiencyText = numText(d.irrigationEfficiencyPercent)
                                 rainEffText = numText(d.rainfallEffectivenessPercent)
                                 replacementText = numText(d.replacementPercent)
-                                bufferText = numText(d.soilMoistureBufferMm)
+                                bufferCanonicalSeed = d.soilMoistureBufferMm
+                                bufferText = numText(formatter.rainfallValue(d.soilMoistureBufferMm))
                                 prefsStore.reset()
                                 savedConfirmation = "Reset to defaults"
                             },
@@ -754,6 +761,7 @@ private fun RecommendationCard(
     onRefresh: () -> Unit,
 ) {
     val vine = LocalVineColors.current
+    val formatter = LocalRegionFormatter.current
     VineyardCard {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -793,7 +801,7 @@ private fun RecommendationCard(
                 }
             }
             forecast != null && rate <= 0 -> Text(
-                "Enter an application rate greater than 0 mm/hr in Calculation Assumptions.",
+                "Enter an application rate greater than 0 ${formatter.rainfallUnitAbbreviation}/hr in Calculation Assumptions.",
                 fontSize = 13.sp,
                 color = VineColors.Warning,
             )
@@ -814,6 +822,7 @@ private fun RecommendationResultBody(
     forecast: IrrigationForecast?,
 ) {
     val vine = LocalVineColors.current
+    val formatter = LocalRegionFormatter.current
     val needsIrrigation = result.netDeficitMm > 0
     val dayCount = result.dailyBreakdown.size
 
@@ -854,16 +863,16 @@ private fun RecommendationResultBody(
     HorizontalDivider(color = vine.cardBorder)
     Box(Modifier.height(8.dp))
     Row(modifier = Modifier.fillMaxWidth()) {
-        Metric("Crop use", String.format(Locale.US, "%.1f", result.forecastCropUseMm), modifier = Modifier.weight(1f))
-        Metric("Eff. rain", String.format(Locale.US, "%.1f", result.forecastEffectiveRainMm), modifier = Modifier.weight(1f))
-        Metric("Net deficit", String.format(Locale.US, "%.1f", result.netDeficitMm), modifier = Modifier.weight(1f))
-        Metric("To apply", String.format(Locale.US, "%.1f", result.grossIrrigationMm), modifier = Modifier.weight(1f))
+        Metric("Crop use", formatter.formatRainfall(result.forecastCropUseMm), modifier = Modifier.weight(1f))
+        Metric("Eff. rain", formatter.formatRainfall(result.forecastEffectiveRainMm), modifier = Modifier.weight(1f))
+        Metric("Net deficit", formatter.formatRainfall(result.netDeficitMm), modifier = Modifier.weight(1f))
+        Metric("To apply", formatter.formatRainfall(result.grossIrrigationMm), modifier = Modifier.weight(1f))
     }
 
     if (result.recentActualRainMm > 0.0) {
         Box(Modifier.height(6.dp))
         Text(
-            String.format(Locale.US, "Includes %.1f mm recent measured rain.", result.recentActualRainMm),
+            "Includes ${formatter.formatRainfall(result.recentActualRainMm)} recent measured rain.",
             fontSize = 11.sp,
             color = VineColors.LeafGreen,
         )
@@ -876,9 +885,9 @@ private fun RecommendationResultBody(
             Text(
                 String.format(
                     Locale.US,
-                    "Base demand %.0f mm \u2192 soil-adjusted %.0f mm",
-                    v2.baseGrossIrrigationMm,
-                    v2.soilAdjustedGrossMm,
+                    "Base demand %s \u2192 soil-adjusted %s",
+                    formatter.formatRainfall(v2.baseGrossIrrigationMm),
+                    formatter.formatRainfall(v2.soilAdjustedGrossMm),
                 ),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -918,10 +927,10 @@ private fun RecommendationResultBody(
     Text(
         String.format(
             Locale.US,
-            "Forecast: %s \u2022 %d days \u2022 rate %.2f mm/hr",
+            "Forecast: %s \u2022 %d days \u2022 rate %s/hr",
             forecast?.source ?: "—",
             dayCount,
-            rate,
+            formatter.formatRainfall(rate),
         ),
         fontSize = 11.sp,
         color = vine.textSecondary,
@@ -931,6 +940,7 @@ private fun RecommendationResultBody(
 @Composable
 private fun UrgencyBanner(v2: SoilAwareV2Result) {
     val vine = LocalVineColors.current
+    val formatter = LocalRegionFormatter.current
     val (urgencyColor, urgencyIcon) = when (v2.urgency) {
         IrrigationUrgency.IrrigateNow -> VineColors.VineRed to Icons.Filled.WaterDrop
         IrrigationUrgency.IrrigateSoon -> VineColors.Warning to Icons.Filled.WaterDrop
@@ -955,9 +965,9 @@ private fun UrgencyBanner(v2: SoilAwareV2Result) {
         Column(modifier = Modifier.weight(1f)) {
             Text(v2.urgency.displayLabel, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = urgencyColor)
             val depthLabel = if (v2.splitSuggested) {
-                String.format(Locale.US, "%.0f mm now \u00d7 %d events", v2.soilAdjustedGrossMm, v2.splitCount)
+                "${formatter.formatRainfall(v2.soilAdjustedGrossMm)} now × ${v2.splitCount} events"
             } else {
-                String.format(Locale.US, "Apply ~%.0f mm", v2.soilAdjustedGrossMm)
+                "Apply ~${formatter.formatRainfall(v2.soilAdjustedGrossMm)}"
             }
             Text(depthLabel, fontSize = 12.sp, color = vine.textSecondary)
         }
@@ -972,7 +982,7 @@ private fun DailyBreakdownContent(
     onEditDay: (Long) -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val dayFmt = remember { SimpleDateFormat("EEE d MMM", Locale.getDefault()) }
+    val formatter = LocalRegionFormatter.current
     Column {
         Text("Tap a day to override its forecast values.", fontSize = 11.sp, color = vine.textSecondary)
         result.dailyBreakdown.forEachIndexed { index, day ->
@@ -993,7 +1003,7 @@ private fun DailyBreakdownContent(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        dayFmt.format(Date(day.dateEpochMs)),
+                        formatter.formatDate(day.dateEpochMs),
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = vine.textPrimary,
@@ -1009,7 +1019,7 @@ private fun DailyBreakdownContent(
                     }
                     Box(Modifier.weight(1f))
                     Text(
-                        String.format(Locale.US, "%.1f mm deficit", day.dailyDeficitMm),
+                        "${formatter.formatRainfall(day.dailyDeficitMm)} deficit",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = if (day.dailyDeficitMm > 0) VineColors.VineRed else VineColors.LeafGreen,
@@ -1017,10 +1027,10 @@ private fun DailyBreakdownContent(
                 }
                 Box(Modifier.height(4.dp))
                 Row(modifier = Modifier.fillMaxWidth()) {
-                    Metric("ETo", String.format(Locale.US, "%.1f", day.forecastEToMm), highlight = etoOverridden, modifier = Modifier.weight(1f))
-                    Metric("Rain", String.format(Locale.US, "%.1f", day.forecastRainMm), highlight = rainOverridden, modifier = Modifier.weight(1f))
-                    Metric("Crop use", String.format(Locale.US, "%.1f", day.cropUseMm), modifier = Modifier.weight(1f))
-                    Metric("Eff. rain", String.format(Locale.US, "%.1f", day.effectiveRainMm), modifier = Modifier.weight(1f))
+                    Metric("ETo", formatter.formatRainfall(day.forecastEToMm), highlight = etoOverridden, modifier = Modifier.weight(1f))
+                    Metric("Rain", formatter.formatRainfall(day.forecastRainMm), highlight = rainOverridden, modifier = Modifier.weight(1f))
+                    Metric("Crop use", formatter.formatRainfall(day.cropUseMm), modifier = Modifier.weight(1f))
+                    Metric("Eff. rain", formatter.formatRainfall(day.effectiveRainMm), modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -1034,6 +1044,7 @@ private fun RecentRainfallContent(
     windowDays: Int,
 ) {
     val vine = LocalVineColors.current
+    val formatter = LocalRegionFormatter.current
     Column {
         when {
             isLoading && summary == null -> Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1046,7 +1057,7 @@ private fun RecentRainfallContent(
                     Icon(Icons.Filled.WaterDrop, contentDescription = null, tint = VineColors.Info, modifier = Modifier.size(18.dp))
                     Box(Modifier.size(6.dp))
                     Text(
-                        String.format(Locale.US, "%.1f mm", summary.totalMm),
+                        formatter.formatRainfall(summary.totalMm),
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
                         color = vine.textPrimary,
@@ -1135,6 +1146,7 @@ private fun SoilProfileContent(
 @Composable
 private fun SoilProfileSummary(soil: BackendSoilProfile) {
     val vine = LocalVineColors.current
+    val formatter = LocalRegionFormatter.current
     val className = soil.typedSoilClass?.fallbackLabel
         ?: soil.irrigationSoilClass?.replace("_", " ")?.replaceFirstChar { it.uppercase() }
         ?: "Unspecified soil class"
@@ -1151,7 +1163,7 @@ private fun SoilProfileSummary(soil: BackendSoilProfile) {
     Box(Modifier.height(8.dp))
     Row(modifier = Modifier.fillMaxWidth()) {
         SoilStat("AWC", soil.availableWaterCapacityMmPerM?.let { String.format(Locale.US, "%.0f mm/m", it) } ?: "—", Modifier.weight(1f))
-        SoilStat("Root depth", soil.effectiveRootDepthM?.let { String.format(Locale.US, "%.2f m", it) } ?: "—", Modifier.weight(1f))
+        SoilStat("Root depth", soil.effectiveRootDepthM?.let { formatter.formatLength(it) } ?: "—", Modifier.weight(1f))
         SoilStat("Depletion", soil.managementAllowedDepletionPercent?.let { String.format(Locale.US, "%.0f%%", it) } ?: "—", Modifier.weight(1f))
     }
     val rzc = soil.rootZoneCapacityMm
@@ -1159,7 +1171,7 @@ private fun SoilProfileSummary(soil: BackendSoilProfile) {
     if (rzc != null && raw != null) {
         Box(Modifier.height(6.dp))
         Text(
-            String.format(Locale.US, "Root-zone capacity %.0f mm \u2022 Readily available %.0f mm", rzc, raw),
+            "Root-zone capacity ${formatter.formatRainfall(rzc)} • Readily available ${formatter.formatRainfall(raw)}",
             fontSize = 11.sp,
             color = LocalVineColors.current.textSecondary,
         )
@@ -1188,14 +1200,16 @@ private fun DayOverrideDialog(
     onReset: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val dayFmt = remember { SimpleDateFormat("EEE d MMM", Locale.getDefault()) }
-    var etoText by remember { mutableStateOf(etoOverride?.let { String.format(Locale.US, "%.1f", it) } ?: "") }
-    var rainText by remember { mutableStateOf(rainOverride?.let { String.format(Locale.US, "%.1f", it) } ?: "") }
+    val formatter = LocalRegionFormatter.current
+    val etoSeed = etoOverride?.let { numText(formatter.rainfallValue(it)) } ?: ""
+    var etoText by remember(dateEpochMs, formatter) { mutableStateOf(etoSeed) }
+    val rainSeed = rainOverride?.let { numText(formatter.rainfallValue(it)) } ?: ""
+    var rainText by remember(dateEpochMs, formatter) { mutableStateOf(rainSeed) }
     val hasOverride = etoOverride != null || rainOverride != null
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Override ${dayFmt.format(Date(dateEpochMs))}") },
+        title = { Text("Override ${formatter.formatDate(dateEpochMs)}") },
         text = {
             Column {
                 Text(
@@ -1207,14 +1221,14 @@ private fun DayOverrideDialog(
                 OutlinedTextField(
                     value = etoText,
                     onValueChange = { etoText = it },
-                    label = { Text("ETo (mm)") },
-                    placeholder = { Text(String.format(Locale.US, "%.1f", forecastEToMm)) },
+                    label = { Text("ETo (${formatter.rainfallUnitAbbreviation})") },
+                    placeholder = { Text(numText(formatter.rainfallValue(forecastEToMm))) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    String.format(Locale.US, "Forecast: %.1f mm", forecastEToMm),
+                    "Forecast: ${formatter.formatRainfall(forecastEToMm)}",
                     fontSize = 11.sp,
                     color = vine.textSecondary,
                 )
@@ -1222,14 +1236,14 @@ private fun DayOverrideDialog(
                 OutlinedTextField(
                     value = rainText,
                     onValueChange = { rainText = it },
-                    label = { Text("Rain (mm)") },
-                    placeholder = { Text(String.format(Locale.US, "%.1f", forecastRainMm)) },
+                    label = { Text("Rain (${formatter.rainfallUnitAbbreviation})") },
+                    placeholder = { Text(numText(formatter.rainfallValue(forecastRainMm))) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    String.format(Locale.US, "Forecast: %.1f mm", forecastRainMm),
+                    "Forecast: ${formatter.formatRainfall(forecastRainMm)}",
                     fontSize = 11.sp,
                     color = vine.textSecondary,
                 )
@@ -1239,7 +1253,10 @@ private fun DayOverrideDialog(
             TextButton(onClick = {
                 val eto = etoText.replace(",", ".").trim().toDoubleOrNull()
                 val rain = rainText.replace(",", ".").trim().toDoubleOrNull()
-                onSave(eto, rain)
+                onSave(
+                    if (etoText == etoSeed) etoOverride else eto?.takeIf { it.isFinite() && it >= 0 }?.let { formatter.rainfallMm(it) },
+                    if (rainText == rainSeed) rainOverride else rain?.takeIf { it.isFinite() && it >= 0 }?.let { formatter.rainfallMm(it) },
+                )
             }) { Text("Save") }
         },
         dismissButton = {
@@ -1260,7 +1277,7 @@ private fun Metric(label: String, value: String, highlight: Boolean = false, mod
     Column(modifier = modifier) {
         Text(label, fontSize = 11.sp, color = vine.textSecondary, maxLines = 1)
         Text(
-            "$value mm",
+            value,
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             color = if (highlight) VineColors.LeafGreen else vine.textPrimary,

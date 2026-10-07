@@ -126,11 +126,12 @@ data class LauncherButton(
     @SerialName("isGrowthStageButton") val isGrowthStageButton: Boolean = false,
 )
 
-@Serializable
+@Serializable(with = PaddockRowSerializer::class)
 data class PaddockRow(
     /** Stable row id written by iOS/portal; may be absent on legacy rows. */
     val id: String? = null,
     val number: Int = 0,
+    val decimalNumber: Double? = null,
     val startPoint: CoordinatePoint? = null,
     val endPoint: CoordinatePoint? = null,
     /**
@@ -150,14 +151,17 @@ data class PaddockRow(
      * `PaddockRowIdentity.derive` (MD5 v3, `UUID.nameUUIDFromBytes`) so every
      * device converges on the identical id for legacy rows saved without one.
      */
+    val calculationRowNumber: Double get() = decimalNumber ?: number.toDouble()
+
     val stableId: String
-        get() = id ?: deriveId(number, startPoint, endPoint)
+        get() = id ?: deriveId(number, startPoint, endPoint, decimalNumber)
 
     companion object {
-        fun deriveId(number: Int, start: CoordinatePoint?, end: CoordinatePoint?): String {
+        fun deriveId(number: Int, start: CoordinatePoint?, end: CoordinatePoint?, decimalNumber: Double? = null): String {
             fun fmt(value: Double?): String =
                 value?.let { String.format(java.util.Locale.US, "%.6f", it) } ?: ""
-            val name = "vinetrack-paddock-row|$number|${fmt(start?.latitude)}|${fmt(start?.longitude)}|${fmt(end?.latitude)}|${fmt(end?.longitude)}"
+            val rowNumber = decimalNumber?.toString() ?: number.toString()
+            val name = "vinetrack-paddock-row|$rowNumber|${fmt(start?.latitude)}|${fmt(start?.longitude)}|${fmt(end?.latitude)}|${fmt(end?.longitude)}"
             return java.util.UUID.nameUUIDFromBytes(name.toByteArray(Charsets.UTF_8)).toString()
         }
     }
@@ -227,6 +231,7 @@ data class Paddock(
     @SerialName("vine_spacing") val vineSpacing: Double? = null,
     @SerialName("vine_count_override") val vineCountOverride: Int? = null,
     @SerialName("row_length_override") val rowLengthOverride: Double? = null,
+    @SerialName("row_length_overrides") val rowLengthOverrides: kotlinx.serialization.json.JsonElement? = null,
     @SerialName("flow_per_emitter") val flowPerEmitter: Double? = null,
     @SerialName("emitter_spacing") val emitterSpacing: Double? = null,
     @SerialName("intermediate_post_spacing") val intermediatePostSpacing: Double? = null,

@@ -263,6 +263,7 @@ private fun VineyardSetupHub(
     onOpenRegionUnits: () -> Unit,
 ) {
     val vine = LocalVineColors.current
+    val formatter = com.rork.vinetrack.ui.LocalRegionFormatter.current
     val context = LocalContext.current
 
     var sortOption by remember { mutableStateOf(BlockSortOption.RowNumber) }
@@ -455,7 +456,7 @@ private fun VineyardSetupHub(
                                 RowDivider(vine.cardBorder)
                                 SetupValueRow("Longitude", state.selectedVineyard?.longitude?.let { String.format(Locale.US, "%.5f°", it) } ?: "Not set", onOpenLocation)
                                 RowDivider(vine.cardBorder)
-                                SetupValueRow("Elevation", state.selectedVineyard?.elevationMetres?.let { String.format(Locale.US, "%.0f m", it) } ?: "Not set", onOpenLocation)
+                                SetupValueRow("Elevation", state.selectedVineyard?.elevationMetres?.let { formatter.formatLength(it) } ?: "Not set", onOpenLocation)
                                 RowDivider(vine.cardBorder)
                                 SetupValueRow("Calculation", gddSettings.calculationMode.shortName, onOpenLocation)
                                 RowDivider(vine.cardBorder)
@@ -772,6 +773,7 @@ private fun BlockSetupRow(
     onClick: () -> Unit,
 ) {
     val vine = LocalVineColors.current
+    val formatter = com.rork.vinetrack.ui.LocalRegionFormatter.current
     Row(
         modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -790,7 +792,7 @@ private fun BlockSetupRow(
                 color = VineColors.PrimaryAccent.copy(alpha = 0.75f),
             )
 
-            irrigationSummary(block)?.let {
+            irrigationSummary(block, formatter)?.let {
                 Text(it, fontSize = 13.sp, color = VineColors.PrimaryAccent.copy(alpha = 0.75f))
             }
 
@@ -831,10 +833,10 @@ private fun blockVarietiesCompleteness(block: Paddock, state: AppUiState): Boole
     return if (state.grapeVarietyReferenceLoading || state.grapeVarietyReferenceError != null) null else false
 }
 
-private fun irrigationSummary(block: Paddock): String? {
+private fun irrigationSummary(block: Paddock, formatter: com.rork.vinetrack.data.RegionFormatter): String? {
     val parts = mutableListOf<String>()
-    block.flowPerEmitter?.takeIf { it > 0 }?.let { parts.add(String.format(Locale.US, "%.1f L/hr", it)) }
-    block.mmPerHour?.takeIf { it > 0 }?.let { parts.add(String.format(Locale.US, "%.2f mm/hr", it)) }
+    block.flowPerEmitter?.takeIf { it > 0 }?.let { parts.add("${formatter.formatVolume(it, 2)}/hr") }
+    block.mmPerHour?.takeIf { it > 0 }?.let { parts.add("${formatter.formatRainfall(it, 2)}/hr") }
     return parts.joinToString("  \u2022  ").takeIf { it.isNotBlank() }
 }
 
