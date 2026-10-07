@@ -12,6 +12,18 @@ struct IrrigationRecordEntryView: View {
     /// a brand-new session with a fresh UUID.
     var duplicateFrom: IrrigationSession?
     var onSaved: () -> Void = {}
+    var fertigationStepId: UUID? = nil
+    @Environment(SystemAdminService.self) private var systemAdmin
+    @Environment(NewBackendAuthService.self) private var auth
+    @State private var linkedSessionId: UUID = UUID()
+    @State private var applicationId: UUID = UUID()
+    @State private var fertigationSteps: [FertigationDomain.ProgramStep] = []
+    @State private var selectedFertigationId: UUID? = nil
+    @State private var fertigationProducts: [FertigationDomain.DraftProduct] = []
+    @State private var fertigationNotes: String = ""
+    @State private var fertigationWarning: String? = nil
+    @State private var linkedStatus: String? = nil
+    @State private var linkedEntries: [FertigationLinkedOutbox.Entry] = []
 
     @State private var systems: [IrrigationSystem] = []
     @State private var valves: [IrrigationValve] = []
@@ -196,6 +208,10 @@ struct IrrigationRecordEntryView: View {
             }
 
             previewSection
+            if systemAdmin.isSystemAdmin && !isEditing { fertigationSection }
+            if !systemAdmin.isSystemAdmin, fertigationStepId != nil {
+                Section { Text("Fertigation is unavailable. You can still record ordinary irrigation.").foregroundStyle(.orange) }
+            }
 
             if let errorMessage {
                 Section {
@@ -223,7 +239,7 @@ struct IrrigationRecordEntryView: View {
         }
         .navigationTitle(isEditing ? "Edit Irrigation" : "Record Irrigation")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await load() }
+        .task { await load(); await loadFertigation() }
         .onChange(of: valveId) { _, newValue in
             preview = nil
             localPreview = nil
@@ -243,6 +259,62 @@ struct IrrigationRecordEntryView: View {
         } message: {
             Text(saveMessage ?? "")
         }
+    }
+
+    private var fertigationSection: some View {
+        Section("Fertigation") {
+            Picker("Program Step", selection: $selectedFertigationId) {
+                Text("No Fertigation").tag(UUID?.none)
+                ForEach(fertigationSteps) { step in Text(step.name ?? "Program Step").tag(step.id) }
+            }.onChange(of: selectedFertigationId) { _, id in
+                fertigationProducts = fertigationSteps.first(where: { $0.id == id })?.lines.map { .init(line: $0) } ?? []
+            }
+            if let fertigationWarning { Text(fertigationWarning).foregroundStyle(.orange) }
+            let totals = FertigationDomain.Totals(allocations: preview?.blocks.map { .init(areaM2: $0.servicedAreaM2, vines: $0.servicedVineCount.map(Double.init)) } ?? [])
+            ForEach($fertigationProducts) { $product in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(FertigationDomain.string(product.line, "name") ?? "Product").font(.headline)
+                    Text(FertigationDomain.rateText(line: product.line)).font(.subheadline)
+                    let planned = FertigationDomain.plannedQuantity(line: product.line, totals: totals)
+                    Text(planned.quantity.map { "Planned: \($0) \(planned.unit ?? "")" } ?? "Unable to calculate planned quantity").font(.caption)
+                    TextField("Actual not entered", text: $product.actual).keyboardType(.decimalPad)
+                }
+            }
+            if selectedFertigationId != nil { TextField("Fertigation notes", text: $fertigationNotes, axis: .vertical) }
+            if let linkedStatus { Text(linkedStatus).font(.caption) }
+            ForEach(linkedEntries.filter { $0.phase != .acknowledged }) { entry in
+                Text("\(entry.step.name ?? "Program Step"): \(entry.message)").font(.caption)
+                Button("Retry \(entry.phase == .irrigationPending ? "linked save" : "Fertigation only")") {
+                    Task {
+                        do {
+                            try repository.fertigationOutbox.retry(id: entry.id)
+                            if let vineyardId { try await repository.flushFertigation(vineyardId: vineyardId) }
+                            try refreshLinkedEntries()
+                        } catch { fertigationWarning = "Unable to sync. Check your connection and retry." }
+                    }
+                }
+            }
+        }
+    }
+
+    private func refreshLinkedEntries() throws {
+        linkedEntries = try repository.fertigationOutbox.entries().filter { $0.ownerId == auth.userId && $0.irrigation.vineyardId == vineyardId }
+    }
+
+    private func loadFertigation() async {
+        guard !isEditing, systemAdmin.isSystemAdmin, let vineyardId else {
+            if fertigationStepId != nil { fertigationWarning = "Fertigation is unavailable. You can still record ordinary irrigation." }
+            return
+        }
+        do {
+            try refreshLinkedEntries()
+            fertigationSteps = try await SupabaseFertigationRepository().programSteps(vineyardId: vineyardId)
+            if let requested = fertigationStepId {
+                guard fertigationSteps.contains(where: { $0.id == requested }) else { throw FertigationDomain.Failure.invalidStep }
+                selectedFertigationId = requested
+                fertigationProducts = fertigationSteps.first(where: { $0.id == requested })?.lines.map { .init(line: $0) } ?? []
+            }
+        } catch { fertigationWarning = "Fertigation Program Step unavailable or invalid. You can still record ordinary irrigation." }
     }
 
     // MARK: Sections
@@ -636,6 +708,15 @@ struct IrrigationRecordEntryView: View {
         isSaving = true
         errorMessage = nil
         defer { isSaving = false }
+        do {
+            if let retained = try repository.fertigationOutbox.entries().first(where: { $0.id == applicationId && $0.ownerId == auth.userId }) {
+                try repository.fertigationOutbox.retry(id: retained.id)
+                try await repository.flushFertigation(vineyardId: retained.irrigation.vineyardId)
+                try refreshLinkedEntries()
+                saveMessage = try repository.fertigationOutbox.entries().first(where: { $0.id == retained.id })?.message
+                return
+            }
+        } catch { errorMessage = "Linked sync data needs attention. Do not create a replacement irrigation."; return }
 
         let dateString = IrrigationFormat.dateFormat.string(from: sessionDate)
         let flowValue = method == .sessionFlow
@@ -676,7 +757,7 @@ struct IrrigationRecordEntryView: View {
         }
 
         let pending = IrrigationPendingSession(
-            id: UUID(),
+            id: linkedSessionId,
             vineyardId: vineyardId,
             irrigationSystemId: systemIdValue,
             valveId: valveId,
@@ -694,6 +775,17 @@ struct IrrigationRecordEntryView: View {
             localTotalVolumeLitres: localPreview?.totalVolumeLitres ?? preview?.totalVolumeLitres,
             createdAt: Date())
 
+        if let selectedFertigationId, systemAdmin.isSystemAdmin {
+            do {
+                guard let ownerId = auth.userId, let step = fertigationSteps.first(where: { $0.id == selectedFertigationId }), step.isSelectable(vineyardId: vineyardId, isSystemAdmin: true) else { throw FertigationDomain.Failure.invalidStep }
+                _ = try fertigationProducts.map { try $0.payload(totals: .init(allocations: []), step: step) }
+                try repository.fertigationOutbox.enqueue(.init(id: applicationId, ownerId: ownerId, irrigation: pending, step: step, products: fertigationProducts, notes: fertigationNotes.isEmpty ? nil : fertigationNotes))
+                try await repository.flushFertigation(vineyardId: vineyardId)
+                linkedStatus = try repository.fertigationOutbox.entries().first(where: { $0.id == applicationId })?.message
+                saveMessage = linkedStatus
+            } catch { errorMessage = "Could not save linked work on this device. Please retry." }
+            return
+        }
         do {
             let saved = try await repository.recordSession(pending)
             if saved.duplicate == true {

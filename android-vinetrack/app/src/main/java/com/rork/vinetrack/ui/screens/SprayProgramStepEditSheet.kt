@@ -149,6 +149,7 @@ fun SprayProgramStepEditSheet(
 
     fun save() {
         val d = draft ?: return
+        if (d.operationType == "Fertigation" && !(state.isSystemAdmin && isPortal)) { saveError = "System Admin required."; return }
         d.validationError?.let { saveError = it; return }
         if (requiresConnection) {
             saveError = SprayProgramStepWriteMessages.OFFLINE
@@ -277,6 +278,7 @@ fun SprayProgramStepEditSheet(
                     )
                 }
 
+                if (current.operationType != "Fertigation") {
                 // MARK: Targets
                 SectionLabelSPE("Targets")
                 if (current.normalisedTargets.isEmpty()) {
@@ -302,6 +304,7 @@ fun SprayProgramStepEditSheet(
                     color = vine.textSecondary,
                 )
 
+                }
                 // MARK: Products
                 SectionLabelSPE("Products")
                 if (current.products.isEmpty()) {
@@ -350,7 +353,17 @@ fun SprayProgramStepEditSheet(
                                 )
                             }
                         }
-                        ProgramPlannedRateEditor(product, vineyardName = state.vineyards.firstOrNull { it.id == state.selectedVineyardId }?.name ?: "Vineyard", enabled = state.canManageSprayProgram, chemical = state.savedChemicals.firstOrNull { it.id == product.savedChemicalId }) { updated ->
+                        if (current.operationType == "Fertigation") {
+                            OutlinedTextField(value = if (product.rate > 0) product.rate.toString() else "", onValueChange = { text ->
+                                draft = current.copy(products = current.products.map { if (it.lineKey == product.lineKey) it.copy(rate = if (text.isBlank()) 0.0 else text.toDoubleOrNull() ?: Double.NaN) else it })
+                            }, label = { Text("Planned rate") }, modifier = Modifier.fillMaxWidth())
+                            SimpleDropdown(label = "Fertigation rate basis", value = com.rork.vinetrack.data.FertigationDomain.Basis.entries.firstOrNull { it.raw == product.fertigationRateBasis }?.label ?: "Choose basis", options = com.rork.vinetrack.data.FertigationDomain.Basis.entries.toList(), optionLabel = { it.label }, onSelect = { basis ->
+                                draft = current.copy(products = current.products.map { if (it.lineKey == product.lineKey) it.copy(fertigationRateBasis = basis.raw, fertigationRateUnit = null) else it })
+                            })
+                            SimpleDropdown(label = "Fertigation unit", value = product.fertigationRateUnit ?: "Choose unit", options = com.rork.vinetrack.data.FertigationDomain.Basis.entries.firstOrNull { it.raw == product.fertigationRateBasis }?.units.orEmpty(), optionLabel = { it }, onSelect = { unit ->
+                                draft = current.copy(products = current.products.map { if (it.lineKey == product.lineKey) it.copy(fertigationRateUnit = unit) else it })
+                            })
+                        } else ProgramPlannedRateEditor(product, vineyardName = state.vineyards.firstOrNull { it.id == state.selectedVineyardId }?.name ?: "Vineyard", enabled = state.canManageSprayProgram, chemical = state.savedChemicals.firstOrNull { it.id == product.savedChemicalId }) { updated ->
                             draft = current.copy(products = current.products.map { if (it.lineKey == product.lineKey) updated else it })
                         }
                     }
@@ -374,10 +387,11 @@ fun SprayProgramStepEditSheet(
                 SimpleDropdown(
                     label = "Method",
                     value = current.operationType ?: "Not set",
-                    options = sprayOperationTypes,
+                    options = com.rork.vinetrack.data.spray.SprayProgramLanding.programMethods(state.isSystemAdmin, isPortal && record.isTemplate),
                     optionLabel = { it },
-                    onSelect = { draft = current.copy(operationType = it) },
+                    onSelect = { method -> draft = if (method == "Fertigation") current.copy(operationType = method, targets = emptyList(), equipmentId = null, tractorId = null, groundTarget = null, carrierAreaBasis = null, products = current.products.map { it.copy(rate = 0.0, waterRate = null, fertigationRateBasis = null, fertigationRateUnit = null) }) else current.copy(operationType = method) },
                 )
+                if (current.operationType != "Fertigation") {
                 SimpleDropdown(
                     label = "Spray unit",
                     value = state.sprayEquipment.firstOrNull { it.id == current.equipmentId }?.name ?: "Not set",
@@ -407,6 +421,7 @@ fun SprayProgramStepEditSheet(
                     )
                 }
 
+                }
                 // MARK: Notes
                 SectionLabelSPE("Notes")
                 OutlinedTextField(
@@ -480,7 +495,7 @@ fun SprayProgramStepEditSheet(
                 onPick = { chemical ->
                     draft = current.copy(
                         products = current.products.map {
-                            if (it.lineKey == lineKey) it.replacedWith(chemical) else it
+                            if (it.lineKey == lineKey) (if (current.operationType == "Fertigation") it.replacedFertigationWith(chemical) else it.replacedWith(chemical)) else it
                         },
                     )
                     replacingLineKey = null

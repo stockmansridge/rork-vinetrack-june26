@@ -213,6 +213,11 @@ fun SpraysScreen(
     var editing by remember { mutableStateOf<SprayRecord?>(null) }
     // A Program Step being edited in the configuration editor (record, isPortal).
     var editingProgramStep by remember { mutableStateOf<Pair<SprayRecord, Boolean>?>(null) }
+    var irrigationStepId by remember { mutableStateOf<String?>(null) }
+    if (irrigationStepId != null) {
+        IrrigationRecordsScreen(vm, state, modifier = modifier, onBack = { irrigationStepId = null }, fertigationStepId = irrigationStepId)
+        return
+    }
     // A template selected to seed a brand-new operational record (job -> record).
     var prefillFromTemplate by remember { mutableStateOf<SprayRecord?>(null) }
 
@@ -248,7 +253,7 @@ fun SpraysScreen(
                 onAdd = { if (com.rork.vinetrack.data.model.canManageManualSprays(state.currentRole)) creating = true },
                 onAddTemplate = { creatingTemplate = true },
                 onOpenCalculator = { calculatorPrefillId = null; calculating = true },
-                onPlanFromProgram = { step -> calculatorPrefillId = step.id; calculating = true },
+                onPlanFromProgram = { step -> if (SprayProgramLanding.canPlanSpray(step.operationType)) { calculatorPrefillId = step.id; calculating = true } },
             )
         } else if (record.isTemplate) {
             val isPortal = state.sprayRecords.none { it.id == record.id } &&
@@ -260,7 +265,8 @@ fun SpraysScreen(
                 onBack = { selectedId = null },
                 onEdit = { editingProgramStep = record to isPortal },
                 onDelete = { vm.deleteSprayRecord(record.id) { ok -> if (ok) selectedId = null } },
-                onPlanSpray = { calculatorPrefillId = record.id; calculating = true },
+                onPlanSpray = { if (SprayProgramLanding.canPlanSpray(record.operationType)) { calculatorPrefillId = record.id; calculating = true } },
+                onApplyIrrigation = { id -> if (state.isSystemAdmin && isPortal) irrigationStepId = id },
             )
         } else {
             SprayDetailView(
@@ -393,8 +399,8 @@ private fun SprayListView(
     val all = remember(state.sprayRecords, pendingManualDeleteIds) { state.sprayRecords.filterNot { it.id in pendingManualDeleteIds } }
     // Program Steps merge two sources: local steps stored in spray_records and
     // shared portal steps from spray_jobs, deduped by id (local wins).
-    val allTemplates = remember(state.sprayRecords, state.sprayJobTemplates) {
-        SprayProgramLanding.mergedProgramSteps(state.sprayRecords, state.sprayJobTemplates)
+    val allTemplates = remember(state.sprayRecords, state.sprayJobTemplates, state.isSystemAdmin) {
+        SprayProgramLanding.mergedProgramSteps(state.sprayRecords, state.sprayJobTemplates).filter { it.operationType != "Fertigation" || state.isSystemAdmin }
     }
     val targetLabels = remember(state.sprayTargetLibrary, state.selectedVineyardId) {
         SprayTargetLibrary.labels(state.sprayTargetLibrary, state.selectedVineyardId)
@@ -416,7 +422,7 @@ private fun SprayListView(
         all, state.trips, state.selectedVineyardId,
         com.rork.vinetrack.data.SeasonWindow.forVintage(state.currentSeasonVintage, state.seasonStartMonth, state.seasonStartDay), state.seasonZone,
     )
-    val nextProgramSteps = com.rork.vinetrack.data.spray.SprayProgramProgression.remaining(allTemplates, vintageRecords)
+    val nextProgramSteps = com.rork.vinetrack.data.spray.SprayProgramProgression.remaining(allTemplates.filter { SprayProgramLanding.canPlanSpray(it.operationType) }, vintageRecords)
         .filter { query.isEmpty() || SprayProgramLanding.programStepMatches(it, query, targetLabels) }
     val filtered = remember(operational, filter, state.trips) {
         when (filter) {
@@ -832,7 +838,7 @@ private fun SprayListView(
     // order a spray program is read in. Selecting a row runs the SAME
     // Program → Calculator prefill route the Program tab uses.
     if (showProgramPicker) {
-        val pickerSteps = SprayProgramLanding.sort(allTemplates, SprayProgramSort.EL_ASC)
+        val pickerSteps = SprayProgramLanding.sort(allTemplates.filter { SprayProgramLanding.canPlanSpray(it.operationType) }, SprayProgramSort.EL_ASC)
         ModalBottomSheet(
             onDismissRequest = { showProgramPicker = false },
             sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true),

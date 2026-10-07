@@ -5061,6 +5061,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * its queue is empty, so this is cheap to call on app resume.
      */
     private fun replayAllPendingWrites() {
+        if (session.accessToken != null && _ui.value.isOnline) {
+            viewModelScope.launch {
+                _ui.value.selectedVineyardId?.let { vineyard ->
+                    runCatching { irrigationRepository.flushFertigation(vineyard) }
+                        .onFailure { android.util.Log.w("FertigationSync", "Linked write retained; open Record Irrigation to retry.") }
+                }
+            }
+        }
         replayPendingPinCreates()
         replayPendingCustomPins()
         replayPendingPinCompletions()

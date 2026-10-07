@@ -42,7 +42,7 @@ nonisolated enum FertigationDomain {
         let vines: Double?
     }
 
-    struct Totals: Sendable {
+    struct Totals: Codable, Sendable {
         let areaHa: Double?
         let vines: Double?
         init(allocations: [Allocation]) {

@@ -291,6 +291,8 @@ data class IrrigationPreviewResult(
 
 @Serializable
 data class IrrigationSessionBlockRow(
+    @SerialName("serviced_area_m2") val servicedAreaM2: Double? = null,
+    @SerialName("serviced_vine_count") val servicedVineCount: Int? = null,
     val id: String,
     @SerialName("block_id") val blockId: String,
     @SerialName("block_name") val blockName: String? = null,
@@ -1152,6 +1154,18 @@ class IrrigationRepository(private val session: SessionStore, context: Context) 
     private val prefs = context.applicationContext
         .getSharedPreferences("vinetrack_irrigation", Context.MODE_PRIVATE)
     private val pendingSerializer = ListSerializer(PendingIrrigationSession.serializer())
+    val fertigationRepository = FertigationRepository(session)
+    val fertigationOutbox = FertigationLinkedOutbox(
+        load = { prefs.getString("fertigation_linked_outbox", null) },
+        store = { raw -> check(prefs.edit().putString("fertigation_linked_outbox", raw).commit()) { "Could not persist Fertigation. Please try again." } },
+    )
+    suspend fun flushFertigation(vineyardId: String) {
+        val owner = session.userId ?: return
+        if (fertigationOutbox.entries().none { it.ownerId == owner && it.irrigation.vineyardId == vineyardId && it.phase != FertigationLinkedOutbox.Phase.ACKNOWLEDGED }) return
+        fertigationOutbox.flush(vineyardId, owner, record = { recordSession(it) }, upsert = { entry, products ->
+            fertigationRepository.upsert(entry.id, vineyardId, entry.irrigation.id, checkNotNull(FertigationDomain.string(entry.step, "id")), FertigationDomain.string(entry.step, "name"), FertigationDomain.string(entry.step, "growth_stage_code"), entry.notes, products)
+        }, permanent = { it is FertigationPermanentFailure || (it is IllegalStateException && it.message == "System Admin required.") })
+    }
 
     // MARK: Feature gate
 
@@ -1581,6 +1595,7 @@ class IrrigationRepository(private val session: SessionStore, context: Context) 
                     flushed += 1
                 }
         }
+        flushFertigation(vineyardId)
         return flushed
     }
 

@@ -99,6 +99,8 @@ data class SprayProgramProductDraft(
      * draft does not model (`chemical_snapshot` above all). Null for new lines
      * and for lines whose product was replaced. */
     val rawLine: JsonObject? = null,
+    val fertigationRateBasis: String? = null,
+    val fertigationRateUnit: String? = null,
 ) {
     /** The rate in BASE units (mL or g) — the form both storage contracts use. */
     val baseRate: Double get() = chemicalUnitToBase(unitRaw, rate)
@@ -167,7 +169,7 @@ data class SprayProgramProductDraft(
     }
 
     /** The portal `chemical_lines` element, in the shape the portal already writes. */
-    fun toWireLine(): JsonObject = buildJsonObject {
+    fun toWireLine(isFertigation: Boolean = false): JsonObject = buildJsonObject {
         // Opaque round trip first: every key this draft does not model —
         // `chemical_snapshot` above all — survives verbatim. The keys the
         // draft owns are then written over the top.
@@ -185,10 +187,22 @@ data class SprayProgramProductDraft(
                 ),
             ),
         )
-        put("water_rate", waterRate?.let(::JsonPrimitive) ?: JsonNull)
+        if (isFertigation) {
+            put("unit", JsonNull)
+            put("rate_basis", JsonNull)
+            put("water_rate", JsonNull)
+        } else put("water_rate", waterRate?.let(::JsonPrimitive) ?: JsonNull)
+        if (isFertigation || fertigationRateBasis != null || rawLine?.containsKey("fertigation_rate_basis") == true) put("fertigation_rate_basis", fertigationRateBasis?.let(::JsonPrimitive) ?: JsonNull)
+        if (isFertigation || fertigationRateUnit != null || rawLine?.containsKey("fertigation_rate_unit") == true) put("fertigation_rate_unit", fertigationRateUnit?.let(::JsonPrimitive) ?: JsonNull)
         put("notes", lineNotes?.trim()?.takeIf { it.isNotEmpty() }?.let(::JsonPrimitive) ?: JsonNull)
         if (rawLine?.containsKey("chemical_snapshot") != true) put("chemical_snapshot", JsonNull)
     }
+
+    fun replacedFertigationWith(chemical: SavedChemical): SprayProgramProductDraft = copy(
+        savedChemicalId = chemical.id, name = chemical.name, activeIngredient = chemical.activeIngredient,
+        rate = 0.0, fertigationRateBasis = null, fertigationRateUnit = null, rawLine = null,
+        chemicalSnapshot = null, costPerUnit = 0.0,
+    )
 
     companion object {
         /** Parse one raw portal `chemical_lines` element into an editable draft. */
@@ -215,6 +229,8 @@ data class SprayProgramProductDraft(
                 waterRate = num("water_rate", "waterRate"),
                 lineNotes = str("notes"),
                 rawLine = element,
+                fertigationRateBasis = str("fertigation_rate_basis"),
+                fertigationRateUnit = str("fertigation_rate_unit"),
             )
         }
     }
@@ -270,6 +286,14 @@ data class SprayProgramStepDraft(
             if (trimmedName.isEmpty()) return "Give the Program Step a name."
             if (products.any { it.trimmedName.isEmpty() }) return "Every product needs a name."
             if (products.any { !it.rate.isFinite() || it.rate < 0 }) return "A product rate cannot be negative."
+            if (operationType == "Fertigation") {
+                if (!isPortalManaged) return "Fertigation requires a shared reusable Program Step."
+                if (products.isEmpty() || products.any { product ->
+                    product.savedChemicalId == null || product.rate <= 0 ||
+                        com.rork.vinetrack.data.FertigationDomain.Basis.entries.firstOrNull { it.raw == product.fertigationRateBasis }?.units?.contains(product.fertigationRateUnit) != true
+                }) return "Select Saved Chemicals and explicitly choose each Fertigation rate, basis and unit."
+                return null
+            }
             if (isPortalManaged) {
                 // `spray_jobs.chemical_lines` unit strings can only express /ha
                 // and /100 L. Rather than write "/ha" over a treated-area rate
@@ -320,10 +344,14 @@ data class SprayProgramStepDraft(
         put("carrier_area_basis", carrierAreaBasis?.raw?.let(::JsonPrimitive) ?: JsonNull)
         // The signed-in user, for the row's audit column. Never `created_by`.
         put("updated_by", updatedById?.let(::JsonPrimitive) ?: JsonNull)
+        if (operationType == "Fertigation") {
+            put("targets", JsonArray(emptyList()))
+            listOf("target", "equipment_id", "tractor_id", "ground_application_target", "carrier_area_basis", "water_volume", "spray_rate_per_ha", "concentration_factor", "canopy_size", "canopy_density").forEach { put(it, JsonNull) }
+        }
     }
 
     fun chemicalLines(): JsonArray = buildJsonArray {
-        products.forEach { add(it.toWireLine()) }
+        products.forEach { add(it.toWireLine(operationType == "Fertigation")) }
     }
 
     // MARK: - Local write

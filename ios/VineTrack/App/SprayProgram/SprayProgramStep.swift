@@ -111,6 +111,7 @@ nonisolated struct SprayProgramStep: Identifiable, Sendable, Hashable {
     /// names targets VineTrack has no typed case for, and dropping those would
     /// silently narrow what the step says it is for.
     let targetRaw: String?
+    let portalChemicalLines: [SprayJobChemicalLine]?
 
     nonisolated var id: UUID { record.id }
 
@@ -118,10 +119,12 @@ nonisolated struct SprayProgramStep: Identifiable, Sendable, Hashable {
         record: SprayRecord,
         source: SprayProgramStepSource,
         growthStageCode: String? = nil,
-        targetRaw: String? = nil
+        targetRaw: String? = nil,
+        portalChemicalLines: [SprayJobChemicalLine]? = nil
     ) {
         self.record = record
         self.source = source
+        self.portalChemicalLines = portalChemicalLines
         let code = growthStageCode?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.growthStageCode = (code?.isEmpty ?? true) ? nil : code
         let target = targetRaw?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -383,11 +386,15 @@ nonisolated enum SprayProgramCatalog {
                     record: record,
                     source: .portal,
                     growthStageCode: row?.growthStageCode,
-                    targetRaw: row?.target
+                    targetRaw: row?.target,
+                    portalChemicalLines: row?.chemicalLines
                 )
             }
 
-        return local.map { SprayProgramStep(record: $0, source: .local) } + portal
+        let nonSpray = portalRows.filter { !$0.canPlanSpray && !localIds.contains($0.id) && !seenPortal.contains($0.id) }.map { row in
+            SprayProgramStep(record: row.toSprayRecord(), source: .portal, growthStageCode: row.growthStageCode, targetRaw: row.target, portalChemicalLines: row.chemicalLines)
+        }
+        return local.map { SprayProgramStep(record: $0, source: .local) } + portal + nonSpray
     }
 
     /// Apply the Program sort. Steps with no resolvable E-L stage always sink

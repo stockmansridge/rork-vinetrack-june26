@@ -861,6 +861,7 @@ fun SprayCalculatorScreen(
     var prefillApplied by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(prefillRecord) {
         val r = prefillRecord ?: return@LaunchedEffect
+        if (!com.rork.vinetrack.data.spray.SprayProgramLanding.canPlanSpray(r.operationType)) return@LaunchedEffect
         if (prefillApplied) return@LaunchedEffect
         prefillApplied = true
         val base = r.sprayReference.orEmpty()

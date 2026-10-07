@@ -84,10 +84,14 @@ internal fun SprayProgramStepDetailScreen(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onPlanSpray: () -> Unit,
+    onApplyIrrigation: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val vine = LocalVineColors.current
-    val canEdit = SprayProgramStepPermissions.canEdit(isPortalManaged, state.canManageSprayProgram, canEditRecords = true)
+    val isFertigation = record.operationType == "Fertigation"
+    val canPlan = SprayProgramLanding.canPlanSpray(record.operationType)
+    val canApply = isFertigation && state.isSystemAdmin && isPortalManaged && record.isTemplate
+    val canEdit = (!isFertigation || state.isSystemAdmin) && (canPlan || canApply) && SprayProgramStepPermissions.canEdit(isPortalManaged, state.canManageSprayProgram, canEditRecords = true)
     val canDelete = SprayProgramStepPermissions.canDelete(isPortalManaged, canDeleteRecords = true)
     var menuExpanded by remember(record.id) { mutableStateOf(false) }
     var confirmDelete by remember(record.id) { mutableStateOf(false) }
@@ -153,14 +157,15 @@ internal fun SprayProgramStepDetailScreen(
         bottomBar = {
             Column(Modifier.fillMaxWidth().background(vine.cardBackground).navigationBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp)) {
                 Button(
-                    onClick = onPlanSpray,
+                    onClick = { if (canApply) onApplyIrrigation(record.id) else if (canPlan) onPlanSpray() },
+                    enabled = canPlan || canApply,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
                     contentPadding = PaddingValues(vertical = 14.dp, horizontal = 16.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen, contentColor = Color.White),
                 ) {
                     Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Text(SprayProgramTerminology.PLAN_SPRAY, modifier = Modifier.padding(start = 8.dp), fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    Text(if (isFertigation) "Apply via Irrigation" else SprayProgramTerminology.PLAN_SPRAY, modifier = Modifier.padding(start = 8.dp), fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         },
@@ -186,7 +191,7 @@ internal fun SprayProgramStepDetailScreen(
                     Text(SprayProgramTerminology.SYNCED_WITH_ADMIN_PORTAL, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = vine.textSecondary)
                 }
             }
-            if (targets.isNotEmpty()) {
+            if (!isFertigation && targets.isNotEmpty()) {
                 ProgramStepSection("Targets", Icons.Filled.GpsFixed) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         targets.forEach { tag ->
@@ -196,7 +201,14 @@ internal fun SprayProgramStepDetailScreen(
                     }
                 }
             }
-            if (products.isNotEmpty()) {
+            if (isFertigation) {
+                ProgramStepSection("Products & Rates", Icons.Filled.Science) {
+                    record.templateChemicalLines.orEmpty().forEach { element ->
+                        val line = element as? kotlinx.serialization.json.JsonObject
+                        if (line != null) Text("${com.rork.vinetrack.data.FertigationDomain.string(line, "name").orEmpty()} · ${com.rork.vinetrack.data.FertigationDomain.rateText(line)}")
+                    }
+                }
+            } else if (products.isNotEmpty()) {
                 ProgramStepSection("Products & Rates", Icons.Filled.Science) {
                     products.forEach { product ->
                         val stored = SprayProgramStepPresentation.rate(product)
@@ -215,10 +227,12 @@ internal fun SprayProgramStepDetailScreen(
             ProgramStepSection("Application", Icons.Filled.Settings) {
                 record.operationType?.takeIf { it.isNotBlank() }?.let { ProgramStepDetailLine("Method", it) }
                 stageLabel?.let { ProgramStepDetailLine("Growth stage", if (stage == null) it else "$it — ${stage.description}") }
-                equipment?.let { ProgramStepDetailLine("Spray unit", it) }
-                tractor?.let { ProgramStepDetailLine("Tractor", it) }
+                if (!isFertigation) {
+                    equipment?.let { ProgramStepDetailLine("Spray unit", it) }
+                    tractor?.let { ProgramStepDetailLine("Tractor", it) }
+                }
             }
-            if (chemistry.isNotEmpty()) {
+            if (!isFertigation && chemistry.isNotEmpty()) {
                 ProgramStepSection("Chemical Information", Icons.Filled.Info) {
                     chemistry.forEach { (product, saved) ->
                         if (saved == null) {
@@ -246,7 +260,7 @@ internal fun SprayProgramStepDetailScreen(
                     Text(notes, fontSize = 15.sp, color = vine.textSecondary)
                 }
             }
-            Text("Blocks, carrier volume and quantities are set when you plan the spray.", fontSize = 12.sp, color = vine.textSecondary.copy(alpha = 0.75f))
+            Text(if (isFertigation) "Water, allocation and actual product use are recorded through Irrigation." else "Blocks, carrier volume and quantities are set when you plan the spray.", fontSize = 12.sp, color = vine.textSecondary.copy(alpha = 0.75f))
         }
     }
     if (confirmDelete && canDelete) {

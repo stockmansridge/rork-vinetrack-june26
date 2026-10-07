@@ -13,6 +13,7 @@ object FertigationDomain {
         PER_CYCLE("per_irrigation_cycle", "Per irrigation cycle", listOf("kg", "L")),
     }
     data class Allocation(val areaM2: Double?, val vines: Double?)
+    @kotlinx.serialization.Serializable
     data class Totals(val areaHa: Double?, val vines: Double?) {
         companion object {
             fun from(allocations: List<Allocation>): Totals {

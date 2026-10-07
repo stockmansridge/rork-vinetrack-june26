@@ -200,6 +200,9 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
     ): SprayRecord =
         withContext(Dispatchers.IO) {
             requireConfig()
+            if ((payload["operation_type"] as? JsonPrimitive)?.contentOrNull == "Fertigation") {
+                check(SystemAdminRepository(session).isSystemAdmin()) { "System Admin required." }
+            }
             val token = session.accessToken ?: throw BackendError.Unauthorized
             val response = SupabaseClient.http.patch(
                 SupabaseClient.restUrl(templateFilterPath(id, vineyardId)),
@@ -310,6 +313,7 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
             carrierAreaBasis = carrierAreaBasis,
             createdAt = createdAt,
             templateGrowthStageCode = growthStageCode?.trim()?.takeIf { it.isNotEmpty() },
+            templateChemicalLines = chemicalLines,
             prefillCanopy = prefillCanopy,
         )
     }

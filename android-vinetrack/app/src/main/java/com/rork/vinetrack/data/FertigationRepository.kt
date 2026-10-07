@@ -12,6 +12,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 
+class FertigationPermanentFailure : Exception("Fertigation was rejected. Check vineyard access and the Program Step, then retry.")
+
 /** Canonical SQL 266 RPC boundary, gated before every Fertigation request. */
 class FertigationRepository(
     private val adminCheck: suspend () -> Boolean,
@@ -31,7 +33,7 @@ class FertigationRepository(
                 when {
                     response.status.isSuccess() -> response.bodyAsText()
                     response.status.value == 401 -> throw BackendError.Unauthorized
-                    response.status.value == 403 -> throw IllegalStateException("System Admin and vineyard access required.")
+                    response.status.value in listOf(400, 403, 404, 409, 422) -> throw FertigationPermanentFailure()
                     else -> throw IllegalStateException("Couldn't complete Fertigation. Please try again.")
                 }
             }

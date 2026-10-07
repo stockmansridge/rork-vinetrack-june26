@@ -136,7 +136,7 @@ final class SprayJobTemplateService {
 
     private func apply(_ rows: [BackendSprayJobTemplate], vineyardId: UUID) {
         templates = rows
-        templateRecords = rows.map { $0.toSprayRecord() }
+        templateRecords = rows.filter(\.canPlanSpray).map { $0.toSprayRecord() }
         hydratedVineyardId = vineyardId
     }
 

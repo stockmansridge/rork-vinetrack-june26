@@ -142,12 +142,14 @@ struct SprayProgramView: View {
     /// read-only portal steps (`spray_jobs`), deduped by id — the same merged
     /// source the existing pickers use. Portal records are never copied into
     /// the local collection.
+    @Environment(SystemAdminService.self) private var systemAdmin
+
     private var allProgramSteps: [SprayProgramStep] {
         SprayProgramCatalog.steps(
             localRecords: store.sprayRecords,
             portalRecords: portalTemplates.templateRecords,
             portalRows: portalTemplates.templates
-        )
+        ).filter { $0.operationType != .fertigation || systemAdmin.isSystemAdmin }
     }
 
     private var programSteps: [SprayProgramStep] {
@@ -226,7 +228,7 @@ struct SprayProgramView: View {
 
     private var nextProgramSteps: [SprayProgramStep] {
         SprayProgramCatalog.filtered(
-            SprayProgramProgression.remaining(steps: allProgramSteps, completed: vintageRecords), query: searchText)
+            SprayProgramProgression.remaining(steps: allProgramSteps.filter { $0.operationType.canPlanSpray }, completed: vintageRecords), query: searchText)
     }
 
     private var filteredSprays: [SprayRecord] {
@@ -343,7 +345,7 @@ struct SprayProgramView: View {
                         selectedStep = nil
                         // Let the detail sheet finish dismissing before the
                         // calculator is presented.
-                        DispatchQueue.main.async { planningStep = chosen }
+                        DispatchQueue.main.async { if chosen.operationType.canPlanSpray { planningStep = chosen } }
                     }
                 }
             }
@@ -381,8 +383,8 @@ struct SprayProgramView: View {
                 }
             }
             .sheet(isPresented: $showProgramPicker) {
-                SprayProgramStepPickerSheet(steps: allProgramSteps) { chosen in
-                    DispatchQueue.main.async { planningStep = chosen }
+                SprayProgramStepPickerSheet(steps: allProgramSteps.filter { $0.operationType.canPlanSpray }) { chosen in
+                    DispatchQueue.main.async { if chosen.operationType.canPlanSpray { planningStep = chosen } }
                 }
             }
             .confirmationDialog("Export as", isPresented: $isChoosingExportFormat, titleVisibility: .visible) {

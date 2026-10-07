@@ -387,6 +387,10 @@ struct NewMainTabView: View {
             return
         }
 
+        if let vineyardId = store.selectedVineyardId {
+            do { try await SupabaseIrrigationRepository.shared.flushFertigation(vineyardId: vineyardId) }
+            catch { print("[FertigationSync] Linked write retained; open Record Irrigation to retry.") }
+        }
         syncStatusCenter.syncDidStart()
         if let sweepVineyardId {
             VineyardSelectionDiagnostics.intervalStage(

@@ -61,6 +61,9 @@ final class SupabaseSprayJobTemplateRepository {
         payload: BackendSprayJobTemplateUpdate
     ) async throws -> BackendSprayJobTemplate {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        if payload.operationType == "Fertigation" {
+            guard try await SupabaseSystemAdminRepository().isSystemAdmin() else { throw FertigationDomain.Failure.systemAdminRequired }
+        }
         let rows: [BackendSprayJobTemplate] = try await provider.client
             .from("spray_jobs")
             .update(payload)

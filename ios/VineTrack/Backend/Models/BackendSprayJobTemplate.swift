@@ -143,7 +143,7 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
 /// One line of the `spray_jobs.chemical_lines` JSONB array. The portal and
 /// Excel import write snake_case keys (`chemical_id`, `rate`, `unit`,
 /// `water_rate`) but the decoder also accepts camelCase variants defensively.
-nonisolated struct SprayJobChemicalLine: Codable, Sendable, Equatable {
+nonisolated struct SprayJobChemicalLine: Codable, Sendable, Hashable {
     let chemicalId: UUID?
     let name: String
     let activeIngredient: String?
@@ -164,6 +164,9 @@ nonisolated struct SprayJobChemicalLine: Codable, Sendable, Equatable {
     /// Nil is legitimate: a position planned as a bare group has no product to
     /// freeze, and inventing one would be worse than the absence.
     let chemicalSnapshot: ChemicalLineSnapshot?
+    let fertigationRateBasis: String?
+    let fertigationRateUnit: String?
+    let rawLine: FertigationDomain.Object
 
     enum CodingKeys: String, CodingKey {
         case chemicalId = "chemical_id"
@@ -194,7 +197,10 @@ nonisolated struct SprayJobChemicalLine: Codable, Sendable, Equatable {
         unit: String? = nil,
         waterRate: Double? = nil,
         notes: String? = nil,
-        chemicalSnapshot: ChemicalLineSnapshot? = nil
+        chemicalSnapshot: ChemicalLineSnapshot? = nil,
+        fertigationRateBasis: String? = nil,
+        fertigationRateUnit: String? = nil,
+        rawLine: FertigationDomain.Object = [:]
     ) {
         self.chemicalId = chemicalId
         self.name = name
@@ -204,6 +210,9 @@ nonisolated struct SprayJobChemicalLine: Codable, Sendable, Equatable {
         self.waterRate = waterRate
         self.notes = notes
         self.chemicalSnapshot = chemicalSnapshot
+        self.fertigationRateBasis = fertigationRateBasis
+        self.fertigationRateUnit = fertigationRateUnit
+        self.rawLine = rawLine
     }
 
     init(from decoder: Decoder) throws {
@@ -234,6 +243,9 @@ nonisolated struct SprayJobChemicalLine: Codable, Sendable, Equatable {
             return nil
         }
 
+        rawLine = try FertigationDomain.Object(from: decoder)
+        fertigationRateBasis = string(["fertigation_rate_basis"])
+        fertigationRateUnit = string(["fertigation_rate_unit"])
         chemicalId = string(["chemical_id", "chemicalId", "saved_chemical_id", "savedChemicalId"])
             .flatMap(UUID.init(uuidString:))
         name = string(["name", "product_name", "productName", "product", "chemical_name", "chemicalName"]) ?? ""
@@ -249,6 +261,29 @@ nonisolated struct SprayJobChemicalLine: Codable, Sendable, Equatable {
             (try? container.decodeIfPresent(ChemicalLineSnapshot.self, forKey: key)) ?? nil
         }
     }
+
+    func encode(to encoder: Encoder) throws {
+        var object = rawLine
+        object["chemical_id"] = chemicalId.map { .string($0.uuidString) } ?? .null
+        object["name"] = .string(name)
+        object["active_ingredient"] = activeIngredient.map { .string($0) } ?? .null
+        object["rate"] = rate.map { .number($0) } ?? .null
+        object["unit"] = unit.map { .string($0) } ?? .null
+        object["water_rate"] = waterRate.map { .number($0) } ?? .null
+        object["notes"] = notes.map { .string($0) } ?? .null
+        if fertigationRateBasis != nil || object["fertigation_rate_basis"] != nil {
+            object["fertigation_rate_basis"] = fertigationRateBasis.map { .string($0) } ?? .null
+        }
+        if fertigationRateUnit != nil || object["fertigation_rate_unit"] != nil {
+            object["fertigation_rate_unit"] = fertigationRateUnit.map { .string($0) } ?? .null
+        }
+        if object["chemical_snapshot"] == nil {
+            object["chemical_snapshot"] = try chemicalSnapshot.map {
+                try JSONDecoder().decode(FertigationDomain.JSON.self, from: JSONEncoder().encode($0))
+            } ?? .null
+        }
+        try object.encode(to: encoder)
+    }
 }
 
 /// Lossy per-line wrapper: a malformed chemical line is skipped instead of
@@ -261,6 +296,12 @@ nonisolated private struct LossyChemicalLine: Decodable, Sendable {
 }
 
 extension BackendSprayJobTemplate {
+    /// No future operation may silently become a spray method.
+    nonisolated var resolvedOperation: OperationType {
+        operationType.flatMap(OperationType.init(rawValue:)) ?? .unsupported
+    }
+    nonisolated var canPlanSpray: Bool { resolvedOperation.canPlanSpray }
+
     /// Parse a free-text chemical line unit ("L/ha", "mL/100L", "kg/ha", "g")
     /// into the strict `ChemicalUnit` enum plus a per-100L basis flag.
     nonisolated static func parseLineUnit(_ raw: String?) -> (unit: ChemicalUnit, per100L: Bool) {
@@ -284,7 +325,7 @@ extension BackendSprayJobTemplate {
     /// unchanged. The result is NEVER stored in `MigratedDataStore` — it is a
     /// read-only view that the prefill flow deep-copies into a brand-new
     /// spray record.
-    func toSprayRecord() -> SprayRecord {
+    nonisolated func toSprayRecord() -> SprayRecord {
         let chemicals: [SprayChemical] = chemicalLines.map { line in
             let parsed = Self.parseLineUnit(line.unit)
             let baseRate = parsed.unit.toBase(line.rate ?? 0)
@@ -343,7 +384,7 @@ extension BackendSprayJobTemplate {
             tractorId: tractorId,
             sprayEquipmentId: equipmentId,
             isTemplate: true,
-            operationType: operationType.flatMap { OperationType(rawValue: $0) } ?? .foliarSpray,
+            operationType: resolvedOperation,
             // Targets only — a template has no geometry, and this snapshot
             // never reaches history. `blocks` stays nil, which reads as
             // "blocks not recorded", because a reusable step does not know

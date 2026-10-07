@@ -38,14 +38,20 @@ struct SprayProgramStepRow: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
 
-                if let target = step.targetDisplay {
+                if step.operationType != .fertigation, let target = step.targetDisplay {
                     Text(target)
                         .font(.caption)
                         .foregroundStyle(VineyardTheme.info)
                         .lineLimit(2)
                 }
 
-                if !productLines.isEmpty {
+                if step.operationType == .fertigation {
+                    let lines = SprayProgramStepDraft(step: step).chemicalLines()
+                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                        Text("\(line.name) · \(line.rate.map { String($0) } ?? "Not set") \(line.fertigationRateUnit ?? "Choose unit")")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                } else if !productLines.isEmpty {
                     VStack(alignment: .leading, spacing: 2) {
                         ForEach(productLines) { product in
                             Text(productSummary(product))

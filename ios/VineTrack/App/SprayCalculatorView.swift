@@ -180,7 +180,7 @@ struct SprayCalculatorView: View {
         self.originSprayJobId = originSprayJobId
         self.prefillPaddockIds = prefillPaddockIds
         self.prefillProgram = prefillProgram
-        if let r = prefillRecord {
+        if let r = prefillRecord, r.operationType.canPlanSpray {
             let baseName = r.sprayReference.isEmpty ? "" : r.sprayReference
             let prefilledName: String = {
                 if r.isTemplate { return baseName }
@@ -978,7 +978,7 @@ struct SprayCalculatorView: View {
     }
 
     private func applyPrefillIfNeeded() {
-        guard let r = prefillRecord, !prefillApplied else { return }
+        guard let r = prefillRecord, r.operationType.canPlanSpray, !prefillApplied else { return }
         prefillApplied = true
 
         // Equipment and tractor by IDENTITY first, display name only as the

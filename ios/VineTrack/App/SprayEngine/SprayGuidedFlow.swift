@@ -321,6 +321,7 @@ nonisolated struct SprayGuidedFlow: Sendable {
         switch inputs.operationType {
         case .bandedSpray: return .banded
         case .foliarSpray, .spreader: return .wholeBlock
+        case .fertigation, .unsupported: return .wholeBlock
         }
     }
 

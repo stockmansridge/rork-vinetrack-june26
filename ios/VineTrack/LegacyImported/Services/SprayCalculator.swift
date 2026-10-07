@@ -54,6 +54,8 @@ enum SprayCalculator {
                 }
             case .bandedSpray, .spreader:
                 totalAmountRequired = selectedRate * totalArea
+            case .fertigation, .unsupported:
+                return nil
             }
 
             let amountPerFullTank: Double

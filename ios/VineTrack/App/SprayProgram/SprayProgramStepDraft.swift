@@ -101,6 +101,9 @@ nonisolated struct SprayProgramProductDraft: Identifiable, Sendable, Hashable {
     /// today's Chemical Store by design, and freezing is what the job and the
     /// completed record do.
     var chemicalSnapshot: ChemicalLineSnapshot?
+    var fertigationRateBasis: String? = nil
+    var fertigationRateUnit: String? = nil
+    var rawLine: FertigationDomain.Object = [:]
 
     init(
         id: UUID = UUID(),
@@ -152,6 +155,7 @@ nonisolated struct SprayProgramProductDraft: Identifiable, Sendable, Hashable {
         name = chemical.name
         activeIngredient = chemical.activeIngredient.isEmpty ? nil : chemical.activeIngredient
         chemicalSnapshot = nil
+        rawLine = [:]
         costPerUnit = 0
 
         if let resolved = OperationalRateResolver.resolve(chemical: chemical) {
@@ -265,6 +269,16 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
                 )
             }
         }
+        if let portalLines = step.portalChemicalLines {
+            lines = portalLines.map { line in
+                let parsed = BackendSprayJobTemplate.parseLineUnit(line.unit)
+                var product = SprayProgramProductDraft(savedChemicalId: line.chemicalId, name: line.name, activeIngredient: line.activeIngredient, rate: line.rate ?? 0, unit: parsed.unit, basis: parsed.per100L ? .per100Litres : .wholeBlockArea, waterRate: line.waterRate, notes: line.notes, chemicalSnapshot: line.chemicalSnapshot)
+                product.fertigationRateBasis = line.fertigationRateBasis
+                product.fertigationRateUnit = line.fertigationRateUnit
+                product.rawLine = line.rawLine
+                return product
+            }
+        }
         products = lines
     }
 
@@ -312,6 +326,14 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
         // A shared Program Step is stored as `spray_jobs.chemical_lines`, whose
         // unit string can only express /ha and /100 L. Rather than write "/ha"
         // over a treated-area rate and silently restate it, refuse.
+        if operationType == .unsupported { return "This operation is not supported on mobile." }
+        if operationType == .fertigation {
+            guard source == .portal else { return "Fertigation requires a shared reusable Program Step." }
+            if products.isEmpty || products.contains(where: { $0.savedChemicalId == nil || $0.rate <= 0 || !$0.hasValidFertigationRate }) {
+                return "Select Saved Chemicals and explicitly choose each Fertigation rate, basis and unit."
+            }
+            return nil
+        }
         if source == .portal,
            let odd = products.first(where: { $0.basis != .wholeBlockArea && $0.basis != .per100Litres }) {
             return "\(odd.name) uses \(odd.basis.label), which the shared program can't store. Choose per hectare or per 100 L."
@@ -333,15 +355,20 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
     /// portal reads, so it is composed rather than invented.
     func chemicalLines() -> [SprayJobChemicalLine] {
         products.map { product in
-            SprayJobChemicalLine(
+            var raw = product.rawLine
+            if operationType == .fertigation { raw["rate_basis"] = .null }
+            return SprayJobChemicalLine(
                 chemicalId: product.savedChemicalId,
                 name: product.name.trimmingCharacters(in: .whitespacesAndNewlines),
                 activeIngredient: product.activeIngredient,
                 rate: product.rate,
-                unit: BackendSprayJobTemplate.composeLineUnit(product.unit, basis: product.basis),
-                waterRate: product.waterRate,
+                unit: operationType == .fertigation ? nil : BackendSprayJobTemplate.composeLineUnit(product.unit, basis: product.basis),
+                waterRate: operationType == .fertigation ? nil : product.waterRate,
                 notes: product.notes,
-                chemicalSnapshot: product.chemicalSnapshot
+                chemicalSnapshot: product.chemicalSnapshot,
+                fertigationRateBasis: product.fertigationRateBasis,
+                fertigationRateUnit: product.fertigationRateUnit,
+                rawLine: raw
             )
         }
     }
@@ -355,14 +382,14 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
             // Structured identifiers are the source of truth; the wording line
             // is written alongside as a compatibility projection for readers
             // that still consume it. Both go, so neither side has to guess.
-            targets: SprayTargetVocabulary.identifiers(targets),
-            target: targetDisplay,
+            targets: operationType == .fertigation ? [] : SprayTargetVocabulary.identifiers(targets),
+            target: operationType == .fertigation ? nil : targetDisplay,
             notes: trimmedNotes.isEmpty ? nil : trimmedNotes,
             growthStageCode: growthStageCode,
-            equipmentId: equipmentId,
-            tractorId: tractorId,
-            groundApplicationTarget: groundTarget?.rawValue,
-            carrierAreaBasis: carrierAreaBasis?.rawValue,
+            equipmentId: operationType == .fertigation ? nil : equipmentId,
+            tractorId: operationType == .fertigation ? nil : tractorId,
+            groundApplicationTarget: operationType == .fertigation ? nil : groundTarget?.rawValue,
+            carrierAreaBasis: operationType == .fertigation ? nil : carrierAreaBasis?.rawValue,
             updatedBy: updatedBy
         )
     }
@@ -428,6 +455,23 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
 }
 
 extension SprayProgramProductDraft {
+    nonisolated var hasValidFertigationRate: Bool {
+        guard let basis = fertigationRateBasis.flatMap(FertigationDomain.Basis.init(rawValue:)), let unit = fertigationRateUnit else { return false }
+        return basis.units.contains(unit)
+    }
+
+    mutating func replaceFertigationProduct(with chemical: SavedChemical) {
+        savedChemicalId = chemical.id
+        name = chemical.name
+        activeIngredient = chemical.activeIngredient
+        rate = 0
+        fertigationRateBasis = nil
+        fertigationRateUnit = nil
+        chemicalSnapshot = nil
+        rawLine = [:]
+        costPerUnit = 0
+    }
+
     /// The local `tanks` JSONB representation.
     ///
     /// Mirrors `BackendSprayJobTemplate.toSprayRecord`: the rate goes into the

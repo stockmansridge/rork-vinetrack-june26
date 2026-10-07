@@ -15,6 +15,8 @@ import SwiftUI
 /// nothing on reusable configuration and persist it as a local spray record.
 /// Nothing here creates a second copy of anything.
 struct SprayProgramStepEditView: View {
+    @Environment(SavedChemicalSyncService.self) private var savedChemicalSync
+    @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(MigratedDataStore.self) private var store
     @Environment(SprayJobTemplateService.self) private var portalTemplates
     @Environment(SprayTargetLibraryService.self) private var targetLibrary
@@ -98,7 +100,7 @@ struct SprayProgramStepEditView: View {
 
             identitySection
             growthStageSection
-            targetSection
+            if draft.operationType != .fertigation { targetSection }
             productsSection
             applicationSection
 
@@ -362,7 +364,11 @@ struct SprayProgramStepEditView: View {
                 .foregroundStyle(VineyardTheme.warning)
             }
 
-            plannedRateEditor(product, chemical: saved)
+            if draft.operationType == .fertigation {
+                fertigationRateEditor(product)
+            } else {
+                plannedRateEditor(product, chemical: saved)
+            }
             if resolved, let saved {
                 Text("Saved as \(saved.name)")
                     .font(.caption2)
@@ -370,6 +376,24 @@ struct SprayProgramStepEditView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private func fertigationRateEditor(_ product: Binding<SprayProgramProductDraft>) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Planned rate", value: product.rate, format: .number).keyboardType(.decimalPad)
+            Picker("Fertigation rate basis", selection: product.fertigationRateBasis) {
+                Text("Choose basis").tag(String?.none)
+                ForEach(FertigationDomain.Basis.allCases, id: \.self) { basis in
+                    Text(basis.label).tag(String?.some(basis.rawValue))
+                }
+            }.onChange(of: product.wrappedValue.fertigationRateBasis) { _, _ in product.wrappedValue.fertigationRateUnit = nil }
+            Picker("Fertigation unit", selection: product.fertigationRateUnit) {
+                Text("Choose unit").tag(String?.none)
+                ForEach(product.wrappedValue.fertigationRateBasis.flatMap(FertigationDomain.Basis.init(rawValue:))?.units ?? [], id: \.self) { unit in
+                    Text(unit).tag(String?.some(unit))
+                }
+            }
+        }
     }
 
     private func plannedRateEditor(_ product: Binding<SprayProgramProductDraft>, chemical: SavedChemical?) -> some View {
@@ -430,8 +454,13 @@ struct SprayProgramStepEditView: View {
         // outgoing product happened to use. A 100 m runoff vineyard swapping in
         // a product with a per-100 L label rate gets that rate.
         let choices = SprayRegisteredUseRates.vineyardRates(for: chemical).filter { $0.isSelectable && $0.preset == nil }
-        draft.products[index].replaceProduct(with: chemical, seedRate: choices.count == 1 ? choices.first : nil)
+        if draft.operationType == .fertigation {
+            draft.products[index].replaceFertigationProduct(with: chemical)
+        } else {
+            draft.products[index].replaceProduct(with: chemical, seedRate: choices.count == 1 ? choices.first : nil)
+        }
         plannedRateTexts.removeValue(forKey: targetId)
+        if draft.operationType == .fertigation { Task { await savedChemicalSync.syncForSelectedVineyard() } }
     }
 
     // MARK: - Application
@@ -439,11 +468,12 @@ struct SprayProgramStepEditView: View {
     private var applicationSection: some View {
         Section("Application") {
             Picker("Method", selection: $draft.operationType) {
-                ForEach(OperationType.allCases, id: \.self) { type in
+                ForEach(OperationType.programMethods(isSystemAdmin: systemAdmin.isSystemAdmin, isPortalTemplate: step.isPortalManaged && step.record.isTemplate), id: \.self) { type in
                     Text(type.rawValue).tag(type)
                 }
             }
 
+            if draft.operationType != .fertigation {
             Picker("Spray unit", selection: $draft.equipmentId) {
                 Text("Not set").tag(UUID?.none)
                 ForEach(availableEquipment) { item in
@@ -456,6 +486,19 @@ struct SprayProgramStepEditView: View {
                 ForEach(availableTractors) { item in
                     Text(item.displayName).tag(UUID?.some(item.id))
                 }
+            }
+            }
+        }.onChange(of: draft.operationType) { _, method in
+            if method == .fertigation {
+                draft.targets = []; draft.equipmentId = nil; draft.tractorId = nil
+                draft.groundTarget = nil; draft.carrierAreaBasis = nil
+                for index in draft.products.indices {
+                    draft.products[index].rate = 0
+                    draft.products[index].waterRate = nil
+                    draft.products[index].fertigationRateBasis = nil
+                    draft.products[index].fertigationRateUnit = nil
+                }
+                plannedRateTexts = [:]
             }
         }
     }
@@ -487,6 +530,9 @@ struct SprayProgramStepEditView: View {
     // MARK: - Save
 
     private func save() {
+        guard draft.operationType != .fertigation || (systemAdmin.isSystemAdmin && step.isPortalManaged && step.record.isTemplate) else {
+            saveError = "System Admin required."; return
+        }
         guard let error = draft.validationError else {
             step.isPortalManaged ? savePortal() : saveLocal()
             return
@@ -523,7 +569,8 @@ struct SprayProgramStepEditView: View {
                         record: saved.toSprayRecord(),
                         source: .portal,
                         growthStageCode: saved.growthStageCode,
-                        targetRaw: saved.target
+                        targetRaw: saved.target,
+                        portalChemicalLines: saved.chemicalLines
                     )
                 )
                 dismiss()

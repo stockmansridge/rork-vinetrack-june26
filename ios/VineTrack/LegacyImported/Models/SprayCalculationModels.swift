@@ -6,19 +6,30 @@ nonisolated enum OperationType: String, CaseIterable, Sendable, Codable {
     case foliarSpray = "Foliar Spray"
     case bandedSpray = "Banded Spray"
     case spreader = "Spreader"
+    case fertigation = "Fertigation"
+    case unsupported = "Unsupported operation"
+
+    /// Normal spray pickers intentionally exclude irrigation and future methods.
+    static let allCases: [OperationType] = [.foliarSpray, .bandedSpray, .spreader]
+    var canPlanSpray: Bool { Self.allCases.contains(self) }
+    static func programMethods(isSystemAdmin: Bool, isPortalTemplate: Bool) -> [OperationType] {
+        allCases + (isSystemAdmin && isPortalTemplate ? [.fertigation] : [])
+    }
 
     var iconName: String {
         switch self {
         case .foliarSpray: return "leaf.arrow.circlepath"
         case .bandedSpray: return "line.3.horizontal"
         case .spreader: return "square.3.layers.3d"
+        case .fertigation: return "drop.fill"
+        case .unsupported: return "questionmark.circle"
         }
     }
 
     var useConcentrationFactor: Bool {
         switch self {
         case .foliarSpray: return true
-        case .bandedSpray, .spreader: return false
+        case .bandedSpray, .spreader, .fertigation, .unsupported: return false
         }
     }
 }

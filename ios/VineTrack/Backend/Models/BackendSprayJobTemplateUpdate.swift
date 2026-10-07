@@ -82,6 +82,11 @@ nonisolated struct BackendSprayJobTemplateUpdate: Encodable, Sendable, Equatable
         case groundApplicationTarget = "ground_application_target"
         case carrierAreaBasis = "carrier_area_basis"
         case updatedBy = "updated_by"
+        case waterVolume = "water_volume"
+        case sprayRatePerHa = "spray_rate_per_ha"
+        case concentrationFactor = "concentration_factor"
+        case canopySize = "canopy_size"
+        case canopyDensity = "canopy_density"
     }
 
     /// Explicit, because the nullable columns must encode as JSON `null` rather
@@ -104,6 +109,13 @@ nonisolated struct BackendSprayJobTemplateUpdate: Encodable, Sendable, Equatable
         try container.encode(groundApplicationTarget, forKey: .groundApplicationTarget)
         try container.encode(carrierAreaBasis, forKey: .carrierAreaBasis)
         try container.encode(updatedBy, forKey: .updatedBy)
+        if operationType == "Fertigation" {
+            try container.encodeNil(forKey: .waterVolume)
+            try container.encodeNil(forKey: .sprayRatePerHa)
+            try container.encodeNil(forKey: .concentrationFactor)
+            try container.encodeNil(forKey: .canopySize)
+            try container.encodeNil(forKey: .canopyDensity)
+        }
     }
 }
 
@@ -139,9 +151,9 @@ extension BackendSprayJobTemplate {
             status: status,
             plannedDate: plannedDate,
             chemicalLines: update.chemicalLines,
-            waterVolume: waterVolume,
-            sprayRatePerHa: sprayRatePerHa,
-            concentrationFactor: concentrationFactor,
+            waterVolume: update.operationType == "Fertigation" ? nil : waterVolume,
+            sprayRatePerHa: update.operationType == "Fertigation" ? nil : sprayRatePerHa,
+            concentrationFactor: update.operationType == "Fertigation" ? nil : concentrationFactor,
             operationType: update.operationType,
             target: update.target,
             targets: update.targets,

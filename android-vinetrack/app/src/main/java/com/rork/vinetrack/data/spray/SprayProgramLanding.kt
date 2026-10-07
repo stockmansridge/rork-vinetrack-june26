@@ -38,6 +38,11 @@ data class SprayResumeSection(
 }
 
 object SprayProgramLanding {
+    /** Closed allow-list: unknown future methods never enter spray execution. */
+    fun canPlanSpray(operation: String?): Boolean = operation in listOf("Foliar Spray", "Banded Spray", "Spreader")
+    fun programMethods(isSystemAdmin: Boolean, isPortalTemplate: Boolean): List<String> =
+        listOf("Foliar Spray", "Banded Spray", "Spreader") + if (isSystemAdmin && isPortalTemplate) listOf("Fertigation") else emptyList()
+
 
     /** Presentation-boundary repair for duplicate cache snapshots; newest wins. */
     fun uniqueOperational(records: List<SprayRecord>): List<SprayRecord> = records
@@ -147,6 +152,7 @@ object SprayProgramLanding {
 
         val steps = sort(
             mergedProgramSteps(localRecords, portalTemplates)
+                .filter { canPlanSpray(it.operationType) }
                 .filter { trimmedQuery.isEmpty() || programStepMatches(it, trimmedQuery, labels) },
             SprayProgramSort.EL_ASC,
         )

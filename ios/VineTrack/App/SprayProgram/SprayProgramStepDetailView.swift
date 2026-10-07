@@ -10,6 +10,7 @@ import SwiftUI
 /// This screen answers only: which stage, what for, with what, applied how —
 /// and then gets out of the way behind one action, Plan Spray.
 struct SprayProgramStepDetailView: View {
+    @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(MigratedDataStore.self) private var store
     @Environment(SprayTargetLibraryService.self) private var targetLibrary
     @Environment(\.accessControl) private var accessControl
@@ -20,6 +21,7 @@ struct SprayProgramStepDetailView: View {
     /// parent so the Program tab and the + menu share ONE route.
     let onPlanSpray: (SprayProgramStep) -> Void
 
+    @State private var showIrrigationSheet: Bool = false
     @State private var showEditSheet: Bool = false
     @State private var showDeleteConfirmation: Bool = false
     /// The step as it reads after an edit made on this screen.
@@ -42,7 +44,7 @@ struct SprayProgramStepDetailView: View {
     /// Editing follows the rule the DATABASE already enforces: owner/manager for
     /// the shared portal row, and the existing rule for a local step.
     private var canEdit: Bool {
-        SprayProgramStepPermissions.canEdit(
+        (currentStep.operationType != .fertigation || systemAdmin.isSystemAdmin) && currentStep.operationType != .unsupported && SprayProgramStepPermissions.canEdit(
             step: currentStep,
             canManageSprayProgram: accessControl?.canManageSprayProgram ?? false,
             canEditRecords: accessControl?.canEditRecords ?? false
@@ -71,7 +73,7 @@ struct SprayProgramStepDetailView: View {
                 let targetTags = currentStep.targetTags(
                     labels: targetLibrary.labels(vineyardId: store.selectedVineyardId)
                 )
-                if !targetTags.isEmpty {
+                if currentStep.operationType != .fertigation && !targetTags.isEmpty {
                     section("Targets", icon: "scope") {
                         // Read-only chips, so the step reads the same way it is
                         // edited: one target per tag, whether or not VineTrack
@@ -81,7 +83,18 @@ struct SprayProgramStepDetailView: View {
                     }
                 }
 
-                if !productLines.isEmpty {
+                if currentStep.operationType == .fertigation {
+                    section("Products & Rates", icon: "drop.fill") {
+                        let lines = SprayProgramStepDraft(step: currentStep).chemicalLines()
+                        ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                            HStack {
+                                Text(line.name)
+                                Spacer()
+                                Text(FertigationDomain.rateText(line: ["rate": line.rate.map { .number($0) } ?? .null, "fertigation_rate_basis": line.fertigationRateBasis.map { .string($0) } ?? .null, "fertigation_rate_unit": line.fertigationRateUnit.map { .string($0) } ?? .null]))
+                            }
+                        }
+                    }
+                } else if !productLines.isEmpty {
                     section("Products & Rates", icon: "flask.fill") {
                         VStack(alignment: .leading, spacing: 10) {
                             ForEach(productLines) { product in
@@ -97,16 +110,16 @@ struct SprayProgramStepDetailView: View {
                         if let stage = currentStep.elStageLabel {
                             detailLine("Growth stage", currentStep.growthStageDescription.map { "\(stage) — \($0)" } ?? stage)
                         }
-                        if let equipment = equipmentName {
+                        if currentStep.operationType != .fertigation, let equipment = equipmentName {
                             detailLine("Spray unit", equipment)
                         }
-                        if let tractor = tractorName {
+                        if currentStep.operationType != .fertigation, let tractor = tractorName {
                             detailLine("Tractor", tractor)
                         }
                     }
                 }
 
-                chemistrySection
+                if currentStep.operationType != .fertigation { chemistrySection }
 
                 if !currentStep.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     section("Notes", icon: "note.text") {
@@ -120,7 +133,7 @@ struct SprayProgramStepDetailView: View {
                 // Blocks, carrier volume and every quantity are deliberately
                 // absent: a Program Step does not know where it is going, and
                 // the guided calculator owns all of that arithmetic.
-                Text("Blocks, carrier volume and quantities are set when you plan the spray.")
+                Text(currentStep.operationType == .fertigation ? "Water, allocation and actual product use are recorded through Irrigation." : "Blocks, carrier volume and quantities are set when you plan the spray.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -132,15 +145,20 @@ struct SprayProgramStepDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) {
             Button {
+                guard currentStep.operationType.canPlanSpray else {
+                    if systemAdmin.isSystemAdmin && currentStep.isPortalManaged && currentStep.operationType == .fertigation { showIrrigationSheet = true }
+                    return
+                }
                 onPlanSpray(currentStep)
             } label: {
-                Label("Plan Spray", systemImage: "arrow.right.circle.fill")
+                Label(currentStep.operationType == .fertigation ? "Apply via Irrigation" : "Plan Spray", systemImage: "arrow.right.circle.fill")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
                     .background(VineyardTheme.leafGreen, in: RoundedRectangle(cornerRadius: 14))
                     .foregroundStyle(.white)
             }
+            .disabled(!currentStep.operationType.canPlanSpray && !(systemAdmin.isSystemAdmin && currentStep.isPortalManaged && currentStep.operationType == .fertigation))
             .buttonStyle(.plain)
             .padding(.horizontal)
             .padding(.vertical, 10)
@@ -172,6 +190,9 @@ struct SprayProgramStepDetailView: View {
                     }
                 }
             }
+        }
+        .sheet(isPresented: $showIrrigationSheet) {
+            NavigationStack { IrrigationRecordEntryView(fertigationStepId: currentStep.id) }
         }
         .sheet(isPresented: $showEditSheet) {
             NavigationStack {

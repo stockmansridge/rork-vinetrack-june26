@@ -1801,6 +1801,7 @@ data class SprayRecord(
      * the Spray Program can sort templates by their actual stage value.
      */
     @Transient val templateGrowthStageCode: String? = null,
+    @Transient val templateChemicalLines: kotlinx.serialization.json.JsonArray? = null,
     /** Client-side handoff when a Program Step or repeated job explicitly carries canopy values. */
     @Transient val prefillCanopy: SprayCanopySelection? = null,
 ) {

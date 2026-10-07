@@ -227,12 +227,13 @@ fun IrrigationRecordsScreen(
     state: AppUiState,
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
+    fertigationStepId: String? = null,
 ) {
     val repo = vm.irrigationRepository
     val vineyardId = state.selectedVineyardId
     val scope = rememberCoroutineScope()
 
-    var nav by remember { mutableStateOf(IrrigationNav.Landing) }
+    var nav by remember { mutableStateOf(if (fertigationStepId != null) IrrigationNav.Record else IrrigationNav.Landing) }
     var status by remember { mutableStateOf<IrrigationSetupStatus?>(null) }
     var summary by remember { mutableStateOf<IrrigationVintageSummary?>(null) }
     var recent by remember { mutableStateOf<List<IrrigationSessionRow>>(emptyList()) }
@@ -372,6 +373,7 @@ fun IrrigationRecordsScreen(
                         state = state,
                         editSession = editSession,
                         duplicateFrom = duplicateSession,
+                        fertigationStepId = fertigationStepId,
                         onDone = {
                             editSession = null
                             duplicateSession = null
@@ -1771,6 +1773,7 @@ private fun RecordContent(
     state: AppUiState,
     editSession: IrrigationSessionRow?,
     duplicateFrom: IrrigationSessionRow?,
+    fertigationStepId: String? = null,
     onDone: () -> Unit,
 ) {
     val vineyardId = state.selectedVineyardId ?: return
@@ -1820,6 +1823,27 @@ private fun RecordContent(
     var error by remember { mutableStateOf<String?>(null) }
     var isSaving by remember { mutableStateOf(false) }
     var savedMessage by remember { mutableStateOf<String?>(null) }
+    val linkedSessionId = rememberSaveable { UUID.randomUUID().toString() }
+    val applicationId = rememberSaveable { UUID.randomUUID().toString() }
+    var fertigationSteps by remember { mutableStateOf<List<kotlinx.serialization.json.JsonObject>>(emptyList()) }
+    var selectedFertigation by remember { mutableStateOf<kotlinx.serialization.json.JsonObject?>(null) }
+    var fertigationProducts by remember { mutableStateOf<List<com.rork.vinetrack.data.FertigationLinkedOutbox.Product>>(emptyList()) }
+    var fertigationNotes by remember { mutableStateOf<String>("") }
+    var fertigationWarning by remember { mutableStateOf<String?>(null) }
+    var linkedEntries by remember { mutableStateOf<List<com.rork.vinetrack.data.FertigationLinkedOutbox.Entry>>(emptyList()) }
+    LaunchedEffect(vineyardId, state.isSystemAdmin) {
+        if (editSession == null && state.isSystemAdmin) {
+            runCatching { repo.fertigationOutbox.entries().filter { it.ownerId == state.currentUserId && it.irrigation.vineyardId == vineyardId } }.onSuccess { linkedEntries = it }.onFailure { fertigationWarning = "Linked sync data needs attention. Do not create a replacement irrigation." }
+            runCatching { repo.fertigationRepository.programSteps(vineyardId) }.onSuccess { steps ->
+                fertigationSteps = steps
+                if (fertigationStepId != null) {
+                    selectedFertigation = steps.firstOrNull { com.rork.vinetrack.data.FertigationDomain.string(it, "id").equals(fertigationStepId, true) }
+                    if (selectedFertigation == null) fertigationWarning = "Fertigation Program Step invalid or unavailable. You can still record ordinary irrigation."
+                    fertigationProducts = (selectedFertigation?.get("chemical_lines") as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { (it as? kotlinx.serialization.json.JsonObject)?.let { line -> com.rork.vinetrack.data.FertigationLinkedOutbox.Product(UUID.randomUUID().toString(), line, "") } }
+                }
+            }.onFailure { fertigationWarning = "Fertigation unavailable. You can still record ordinary irrigation." }
+        }
+    }
 
     // When both times are set their difference is authoritative (read-only
     // duration); equal times are invalid and block saving.
@@ -1913,6 +1937,20 @@ private fun RecordContent(
         scope.launch {
             isSaving = true
             error = null
+            try {
+                val retained = repo.fertigationOutbox.entries().firstOrNull { it.id == applicationId && it.ownerId == state.currentUserId }
+                if (retained != null) {
+                    repo.fertigationOutbox.retry(retained.id)
+                    repo.flushFertigation(retained.irrigation.vineyardId)
+                    savedMessage = repo.fertigationOutbox.entries().firstOrNull { it.id == retained.id }?.message
+                    isSaving = false
+                    return@launch
+                }
+            } catch (e: Exception) {
+                error = "Linked sync data needs attention. Do not create a replacement irrigation."
+                isSaving = false
+                return@launch
+            }
             val flowValue = if (method == "session_flow") canonicalWater(sessionFlow, source?.flowLph) else null
             val meterStartValue = if (method == "meter_readings") canonicalWater(meterStart, source?.meterStartLitres) else null
             val meterFinishValue = if (method == "meter_readings") canonicalWater(meterFinish, source?.meterFinishLitres) else null
@@ -1952,7 +1990,7 @@ private fun RecordContent(
             val vid = valveId ?: return@launch
             val sysId = systemId ?: valves.firstOrNull { it.id == vid }?.irrigationSystemId ?: return@launch
             val pending = PendingIrrigationSession(
-                id = UUID.randomUUID().toString(),
+                id = linkedSessionId,
                 vineyardId = vineyardId,
                 irrigationSystemId = sysId,
                 valveId = vid,
@@ -1969,6 +2007,19 @@ private fun RecordContent(
                 notes = notes.ifEmpty { null },
                 localTotalVolumeLitres = localPreview?.totalVolumeLitres ?: preview?.totalVolumeLitres,
             )
+            val selectedStep = selectedFertigation
+            if (selectedStep != null && state.isSystemAdmin) {
+                runCatching {
+                    check(com.rork.vinetrack.data.FertigationDomain.isSelectable(selectedStep, vineyardId, state.isSystemAdmin))
+                    val owner = checkNotNull(state.currentUserId)
+                    fertigationProducts.forEach { it.payload(com.rork.vinetrack.data.FertigationDomain.Totals(null, null), selectedStep) }
+                    repo.fertigationOutbox.enqueue(com.rork.vinetrack.data.FertigationLinkedOutbox.Entry(applicationId, owner, pending, selectedStep, fertigationProducts, fertigationNotes.ifBlank { null }))
+                    repo.flushFertigation(vineyardId)
+                    savedMessage = repo.fertigationOutbox.entries().firstOrNull { it.id == applicationId }?.message
+                }.onFailure { error = "Could not persist linked work. Please retry." }
+                isSaving = false
+                return@launch
+            }
             runCatching { repo.recordSession(pending) }
                 .onSuccess { saved ->
                     savedMessage = if (saved.duplicate == true) {
@@ -1993,6 +2044,38 @@ private fun RecordContent(
     }
 
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (state.isSystemAdmin && editSession == null) {
+            item {
+                Text("Fertigation", style = MaterialTheme.typography.titleMedium)
+                FilterChip(selected = selectedFertigation == null, onClick = { selectedFertigation = null; fertigationProducts = emptyList() }, label = { Text("No Fertigation") })
+                fertigationSteps.forEach { step ->
+                    FilterChip(selected = selectedFertigation == step, onClick = {
+                        selectedFertigation = step
+                        fertigationProducts = (step["chemical_lines"] as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { (it as? kotlinx.serialization.json.JsonObject)?.let { line -> com.rork.vinetrack.data.FertigationLinkedOutbox.Product(UUID.randomUUID().toString(), line, "") } }
+                    }, label = { Text(com.rork.vinetrack.data.FertigationDomain.string(step, "name") ?: "Program Step") })
+                }
+                fertigationWarning?.let { Text(it, color = VineColors.Warning) }
+                linkedEntries.filter { it.phase != com.rork.vinetrack.data.FertigationLinkedOutbox.Phase.ACKNOWLEDGED }.forEach { entry ->
+                    Text(entry.message, style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { scope.launch {
+                        runCatching {
+                            repo.fertigationOutbox.retry(entry.id)
+                            repo.flushFertigation(vineyardId)
+                            linkedEntries = repo.fertigationOutbox.entries().filter { it.ownerId == state.currentUserId && it.irrigation.vineyardId == vineyardId }
+                        }.onFailure { fertigationWarning = "Unable to sync. Check your connection and retry." }
+                    } }) { Text(if (entry.phase == com.rork.vinetrack.data.FertigationLinkedOutbox.Phase.IRRIGATION_PENDING) "Retry linked save" else "Retry Fertigation only") }
+                }
+                val totals = com.rork.vinetrack.data.FertigationDomain.Totals.from(preview?.blocks.orEmpty().map { com.rork.vinetrack.data.FertigationDomain.Allocation(it.servicedAreaM2, it.servicedVineCount?.toDouble()) })
+                fertigationProducts.forEach { product ->
+                    Text(com.rork.vinetrack.data.FertigationDomain.string(product.line, "name").orEmpty())
+                    Text(com.rork.vinetrack.data.FertigationDomain.rateText(product.line))
+                    val planned = com.rork.vinetrack.data.FertigationDomain.plannedQuantity(product.line, totals)
+                    Text(planned.quantity?.let { "Planned: $it ${planned.unit.orEmpty()}" } ?: "Unable to calculate planned quantity")
+                    OutlinedTextField(value = product.actual, onValueChange = { text -> fertigationProducts = fertigationProducts.map { if (it.id == product.id) it.copy(actual = text) else it } }, label = { Text("Actual used (${planned.unit.orEmpty()})") }, placeholder = { Text("Actual not entered") }, modifier = Modifier.fillMaxWidth())
+                }
+                if (selectedFertigation != null) OutlinedTextField(value = fertigationNotes, onValueChange = { fertigationNotes = it }, label = { Text("Fertigation notes") }, modifier = Modifier.fillMaxWidth())
+            }
+        }
         if (editSession == null) {
             item {
                 Text("Irrigation system", style = MaterialTheme.typography.labelMedium)
