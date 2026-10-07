@@ -14,7 +14,7 @@ struct RegionalInputTests {
             #expect(abs(edited - 2000) < 1e-9)
             let rate = RegionalInput(canonical: 750.123456789, forward: fmt.volumePerAreaValue)
             #expect(rate.resolve(rate.text, inverse: fmt.volumePerAreaToCanonical) == 750.123456789)
-            #expect(abs((rate.resolve(String(fmt.volumePerAreaValue(500)), inverse: fmt.volumePerAreaToCanonical) ?? 0) - 500) < 1e-9)
+            #expect(abs((rate.resolve(String(fmt.volumePerAreaValue(litresPerHectare: 500)), inverse: fmt.volumePerAreaToCanonical) ?? 0) - 500) < 1e-9)
         }
     }
 
@@ -36,7 +36,7 @@ struct RegionalInputTests {
         let water = RegionalInput(canonical: 1500.123456, forward: { fmt.volumeValue(litres: $0) })
         let rate = RegionalInput(canonical: 750.123456, forward: fmt.volumePerAreaValue)
         let preset = SavedSprayPreset(name: "Test", waterVolume: water.resolve(water.text, inverse: fmt.volumeToCanonical) ?? 0,
-            sprayRatePerHa: rate.resolve(String(fmt.volumePerAreaValue(500)), inverse: fmt.volumePerAreaToCanonical) ?? 0, concentrationFactor: 2.5)
+            sprayRatePerHa: rate.resolve(String(fmt.volumePerAreaValue(litresPerHectare: 500)), inverse: fmt.volumePerAreaToCanonical) ?? 0, concentrationFactor: 2.5)
         let replay = try JSONDecoder().decode(SavedSprayPreset.self, from: JSONEncoder().encode(preset))
         #expect(replay.waterVolume == 1500.123456)
         #expect(abs(replay.sprayRatePerHa - 500) < 1e-9)
