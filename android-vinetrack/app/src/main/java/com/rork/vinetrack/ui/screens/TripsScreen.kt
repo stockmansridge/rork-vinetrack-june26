@@ -1513,7 +1513,7 @@ private fun TripDetailView(
                             )
                         } else {
                             details.sowingDepthCm?.let { depth ->
-                                DetailRow(Icons.Filled.Straighten, "Sowing depth", "${formatLitres(depth)} cm", VineColors.EarthBrown)
+                                DetailRow(Icons.Filled.Straighten, "Sowing depth", "${formatLitres(regionFormatter.smallLengthValue(depth))} ${regionFormatter.smallLengthUnitAbbreviation}", VineColors.EarthBrown)
                             }
                             lines.forEachIndexed { index, line ->
                                 if (index > 0 || details.sowingDepthCm != null) Divider(vine.cardBorder)
@@ -1522,7 +1522,7 @@ private fun TripDetailView(
                                     line.kgPerHa?.let {
                                         // Seed/fertiliser mass stays canonical (no mass unit in the
                                         // contract); only the area denominator converts.
-                                        add("${formatLitres(region.sprayRateValue(it))} ${region.massPerAreaUnit()}")
+                                        add(region.formatYieldPerArea(it, "kg"))
                                     }
                                     line.seedBox?.takeIf { it.isNotBlank() }?.let { add(it) }
                                 }.joinToString(" \u00b7 ")
@@ -1833,6 +1833,7 @@ private fun ActiveTripHud(
     onGoHome: () -> Unit = {},
 ) {
     val vine = LocalVineColors.current
+    val formatter = LocalRegionFormatter.current
     val sourcePath = trip.pathPoints.orEmpty()
     val pathSegments = remember(trip.pathPoints) {
         TripPathDisplayProcessor.displaySegments(sourcePath)
@@ -2135,8 +2136,8 @@ private fun ActiveTripHud(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 HudStat(Icons.Filled.Schedule, clockDuration(durationSeconds), "Time", Modifier.weight(1f))
-                HudStat(Icons.Filled.Straighten, formatDistance(trip.totalDistance) ?: "0 m", "Distance", Modifier.weight(1f))
-                HudStat(Icons.Filled.Speed, speedKmh?.let { "%.0f".format(it) } ?: "\u2014", "km/h", Modifier.weight(1f))
+                HudStat(Icons.Filled.Straighten, formatter.formatShortDistance(trip.totalDistance ?: 0.0), "Distance", Modifier.weight(1f))
+                HudStat(Icons.Filled.Speed, speedKmh?.let { "%.0f".format(formatter.speedValue(it)) } ?: "\u2014", formatter.speedUnitAbbreviation, Modifier.weight(1f))
             }
             HudGpsPill(accuracy)
             // Repairs / Growth quick-pin actions (iOS tripInfoBar parity).
@@ -2425,6 +2426,7 @@ private fun HudStat(icon: ImageVector, value: String, caption: String, modifier:
 /** GPS-quality pill driven by the latest horizontal accuracy (metres). */
 @Composable
 private fun HudGpsPill(accuracyMetres: Double?) {
+    val formatter = LocalRegionFormatter.current
     val (label, color) = when {
         accuracyMetres == null -> "GPS searching" to VineColors.Orange
         accuracyMetres <= 8 -> "GPS strong" to VineColors.Success
@@ -2442,7 +2444,7 @@ private fun HudGpsPill(accuracyMetres: Double?) {
         Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(color))
         Text(label, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
         accuracyMetres?.let {
-            Text("\u00b1${it.roundToInt()} m", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+            Text("\u00b1${formatter.formatLength(it, 0)}", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
         }
     }
 }
@@ -2971,6 +2973,11 @@ private fun StartTripSheet(
     // Seeding Details (iOS `StartTripSheet` parity — only used when the
     // selected trip function is Seeding). Box pickers default to the iOS
     // defaults: Front 3/4-1-N, Rear Full-3-F.
+    val currentSeedFormatter = LocalRegionFormatter.current
+    val seedFormatter = remember { currentSeedFormatter }
+    var frontRateSeed by remember { mutableStateOf(com.rork.vinetrack.data.RegionalInput(null, "")) }
+    var backRateSeed by remember { mutableStateOf(com.rork.vinetrack.data.RegionalInput(null, "")) }
+    var depthSeed by remember { mutableStateOf(com.rork.vinetrack.data.RegionalInput(null, "")) }
     var seedingExpanded by remember { mutableStateOf(false) }
     var useFrontBox by remember { mutableStateOf(true) }
     var useBackBox by remember { mutableStateOf(true) }
@@ -3054,7 +3061,7 @@ private fun StartTripSheet(
         val front = if (useFrontBox) {
             SeedingBox(
                 mixName = trimmedOrNull(seedFrontMix),
-                ratePerHa = parseSeedingNumber(seedFrontRate),
+                ratePerHa = frontRateSeed.resolve(seedFrontRate, seedFormatter::perAreaToCanonical),
                 shutterSlide = trimmedOrNull(seedFrontShutter),
                 bottomFlap = trimmedOrNull(seedFrontFlap),
                 meteringWheel = trimmedOrNull(seedFrontWheel),
@@ -3067,7 +3074,7 @@ private fun StartTripSheet(
         val back = if (useBackBox) {
             SeedingBox(
                 mixName = trimmedOrNull(seedBackMix),
-                ratePerHa = parseSeedingNumber(seedBackRate),
+                ratePerHa = backRateSeed.resolve(seedBackRate, seedFormatter::perAreaToCanonical),
                 shutterSlide = trimmedOrNull(seedBackShutter),
                 bottomFlap = trimmedOrNull(seedBackFlap),
                 meteringWheel = trimmedOrNull(seedBackWheel),
@@ -3081,7 +3088,7 @@ private fun StartTripSheet(
         return SeedingDetails(
             frontBox = front,
             backBox = back,
-            sowingDepthCm = parseSeedingNumber(sowingDepth),
+            sowingDepthCm = depthSeed.resolve(sowingDepth, seedFormatter::smallLengthToCanonical),
             mixLines = lines.ifEmpty { null },
         )
     }
@@ -3120,7 +3127,8 @@ private fun StartTripSheet(
         if (front != null) {
             useFrontBox = true
             seedFrontMix = front.mixName ?: ""
-            seedFrontRate = front.ratePerHa?.let(::seedTrimNum) ?: ""
+            frontRateSeed = com.rork.vinetrack.data.RegionalInput.seed(front.ratePerHa, seedFormatter::perAreaValue)
+            seedFrontRate = frontRateSeed.text
             front.shutterSlide?.takeIf { it.isNotEmpty() }?.let { seedFrontShutter = it }
             front.bottomFlap?.takeIf { it.isNotEmpty() }?.let { seedFrontFlap = it }
             front.meteringWheel?.takeIf { it.isNotEmpty() }?.let { seedFrontWheel = it }
@@ -3133,7 +3141,8 @@ private fun StartTripSheet(
         if (back != null) {
             useBackBox = true
             seedBackMix = back.mixName ?: ""
-            seedBackRate = back.ratePerHa?.let(::seedTrimNum) ?: ""
+            backRateSeed = com.rork.vinetrack.data.RegionalInput.seed(back.ratePerHa, seedFormatter::perAreaValue)
+            seedBackRate = backRateSeed.text
             back.shutterSlide?.takeIf { it.isNotEmpty() }?.let { seedBackShutter = it }
             back.bottomFlap?.takeIf { it.isNotEmpty() }?.let { seedBackFlap = it }
             back.meteringWheel?.takeIf { it.isNotEmpty() }?.let { seedBackWheel = it }
@@ -3145,7 +3154,8 @@ private fun StartTripSheet(
         // Very early seeding records may have no boxes at all — keep the form
         // usable by defaulting Front Box on after copy (iOS parity).
         if (details.frontBox == null && details.backBox == null) useFrontBox = true
-        sowingDepth = details.sowingDepthCm?.let(::seedTrimNum) ?: ""
+        depthSeed = com.rork.vinetrack.data.RegionalInput.seed(details.sowingDepthCm, seedFormatter::smallLengthValue)
+        sowingDepth = depthSeed.text
         // Re-id copied mix lines so edits don't bleed into the source trip.
         seedMixLines = details.mixLines.orEmpty().map { line ->
             SeedingMixLine(
@@ -3516,13 +3526,13 @@ private fun StartTripSheet(
                                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                     if (useFrontBox) {
                                         StartTripSeedingFieldRow("Seed/Fert mix — Front Box", seedFrontMix, { seedFrontMix = it }, "e.g. Ryecorn + Vetch", fieldBg = vine.appBackground)
-                                        StartTripSeedingFieldRow("Rate/ha — Front Box", seedFrontRate, { seedFrontRate = it }, "0", numeric = true, suffix = "kg/ha", fieldBg = vine.appBackground)
+                                        StartTripSeedingFieldRow("Rate/${seedFormatter.areaUnitAbbreviation} — Front Box", seedFrontRate, { seedFrontRate = it }, "0", numeric = true, suffix = seedFormatter.yieldPerAreaUnit("kg"), fieldBg = vine.appBackground)
                                     }
                                     if (useBackBox) {
                                         StartTripSeedingFieldRow("Seed/Fert mix — Rear Box", seedBackMix, { seedBackMix = it }, "e.g. Tic Beans", fieldBg = vine.appBackground)
-                                        StartTripSeedingFieldRow("Rate/ha — Rear Box", seedBackRate, { seedBackRate = it }, "0", numeric = true, suffix = "kg/ha", fieldBg = vine.appBackground)
+                                        StartTripSeedingFieldRow("Rate/${seedFormatter.areaUnitAbbreviation} — Rear Box", seedBackRate, { seedBackRate = it }, "0", numeric = true, suffix = seedFormatter.yieldPerAreaUnit("kg"), fieldBg = vine.appBackground)
                                     }
-                                    StartTripSeedingFieldRow("Sowing depth", sowingDepth, { sowingDepth = it }, "0", numeric = true, suffix = "cm", fieldBg = vine.appBackground)
+                                    StartTripSeedingFieldRow("Sowing depth", sowingDepth, { sowingDepth = it }, "0", numeric = true, suffix = seedFormatter.smallLengthUnitAbbreviation, fieldBg = vine.appBackground)
                                 }
 
                                 if (useFrontBox) {
@@ -4290,7 +4300,9 @@ private fun StartTripSeedingMixLineCard(
     val vine = LocalVineColors.current
     var inputMenu by remember { mutableStateOf(false) }
     var percentText by remember(line.id) { mutableStateOf(line.percentOfMix?.let(::seedTrimNum) ?: "") }
-    var kgText by remember(line.id) { mutableStateOf(line.kgPerHa?.let(::seedTrimNum) ?: "") }
+    val currentFormatter = LocalRegionFormatter.current
+    val formatter = remember(line.id) { currentFormatter }
+    var kgText by remember(line.id) { mutableStateOf(line.kgPerHa?.let { seedTrimNum(formatter.perAreaValue(it)) } ?: "") }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -4383,9 +4395,9 @@ private fun StartTripSeedingMixLineCard(
             onChange(line.copy(seedBox = it))
         }
         StartTripSeedingFieldRow(
-            "Kg/ha", kgText,
-            { kgText = it; onChange(line.copy(kgPerHa = parseSeedingNumber(it))) },
-            "0", numeric = true, suffix = "kg/ha", fieldBg = vine.appBackground,
+            formatter.yieldPerAreaUnit("kg"), kgText,
+            { kgText = it; onChange(line.copy(kgPerHa = parseSeedingNumber(it)?.let(formatter::perAreaToCanonical))) },
+            "0", numeric = true, suffix = formatter.yieldPerAreaUnit("kg"), fieldBg = vine.appBackground,
         )
         StartTripSeedingFieldRow("Supplier", line.supplierManufacturer ?: "", { onChange(line.copy(supplierManufacturer = it.ifBlank { null })) }, "Manufacturer", fieldBg = vine.appBackground)
     }
@@ -4950,13 +4962,18 @@ private fun SeedingDetailsSheet(
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val existing = trip.seedingDetails
 
-    var sowingDepth by remember { mutableStateOf(existing?.sowingDepthCm?.let { seedTrimNum(it) } ?: "") }
+    val currentFormatter = LocalRegionFormatter.current
+    val formatter = remember { currentFormatter }
+    val depthSeed = remember { com.rork.vinetrack.data.RegionalInput.seed(existing?.sowingDepthCm, formatter::smallLengthValue) }
+    val frontSeed = remember { com.rork.vinetrack.data.RegionalInput.seed(existing?.frontBox?.ratePerHa, formatter::perAreaValue) }
+    val rearSeed = remember { com.rork.vinetrack.data.RegionalInput.seed(existing?.backBox?.ratePerHa, formatter::perAreaValue) }
+    var sowingDepth by remember { mutableStateOf(depthSeed.text) }
     var useFront by remember { mutableStateOf(existing?.frontBox?.hasAnyValue == true) }
     var useRear by remember { mutableStateOf(existing?.backBox?.hasAnyValue == true) }
     var frontMix by remember { mutableStateOf(existing?.frontBox?.mixName ?: "") }
-    var frontRate by remember { mutableStateOf(existing?.frontBox?.ratePerHa?.let { seedTrimNum(it) } ?: "") }
+    var frontRate by remember { mutableStateOf(frontSeed.text) }
     var rearMix by remember { mutableStateOf(existing?.backBox?.mixName ?: "") }
-    var rearRate by remember { mutableStateOf(existing?.backBox?.ratePerHa?.let { seedTrimNum(it) } ?: "") }
+    var rearRate by remember { mutableStateOf(rearSeed.text) }
     var lines by remember {
         mutableStateOf(existing?.mixLines.orEmpty().ifEmpty {
             listOf(SeedingMixLine(id = java.util.UUID.randomUUID().toString()))
@@ -4969,13 +4986,13 @@ private fun SeedingDetailsSheet(
         return SeedingDetails(
             frontBox = if (useFront) SeedingBox(
                 mixName = frontMix.trim().ifBlank { null },
-                ratePerHa = frontRate.seedDouble(),
+                ratePerHa = frontSeed.resolve(frontRate, formatter::perAreaToCanonical),
             ).takeIf { it.hasAnyValue } else null,
             backBox = if (useRear) SeedingBox(
                 mixName = rearMix.trim().ifBlank { null },
-                ratePerHa = rearRate.seedDouble(),
+                ratePerHa = rearSeed.resolve(rearRate, formatter::perAreaToCanonical),
             ).takeIf { it.hasAnyValue } else null,
-            sowingDepthCm = sowingDepth.seedDouble(),
+            sowingDepthCm = depthSeed.resolve(sowingDepth, formatter::smallLengthToCanonical),
             mixLines = cleanLines,
         )
     }
@@ -4999,7 +5016,7 @@ private fun SeedingDetailsSheet(
             OutlinedTextField(
                 value = sowingDepth,
                 onValueChange = { sowingDepth = it.seedNumericFilter() },
-                label = { Text("Sowing depth (cm, optional)") },
+                label = { Text("Sowing depth (${formatter.smallLengthUnitAbbreviation}, optional)") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth(),
@@ -5071,6 +5088,7 @@ private fun SeedingBoxEditor(
     onRate: (String) -> Unit,
 ) {
     val vine = LocalVineColors.current
+    val formatter = LocalRegionFormatter.current
     VineyardCard {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -5088,7 +5106,7 @@ private fun SeedingBoxEditor(
                 OutlinedTextField(
                     value = rate,
                     onValueChange = onRate,
-                    label = { Text("Rate / ha (optional)") },
+                    label = { Text("Rate (${formatter.yieldPerAreaUnit("kg")}, optional)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
@@ -5109,6 +5127,7 @@ private fun SeedingMixLineEditor(
 ) {
     val vine = LocalVineColors.current
     var inputMenu by remember { mutableStateOf(false) }
+    val formatter = LocalRegionFormatter.current
     var boxMenu by remember { mutableStateOf(false) }
     VineyardCard {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -5191,9 +5210,9 @@ private fun SeedingMixLineEditor(
                     }
                 }
                 OutlinedTextField(
-                    value = line.kgPerHa?.let { seedTrimNum(it) } ?: "",
-                    onValueChange = { onChange(line.copy(kgPerHa = it.seedNumericFilter().seedDouble())) },
-                    label = { Text("kg/ha") },
+                    value = line.kgPerHa?.let { seedTrimNum(formatter.perAreaValue(it)) } ?: "",
+                    onValueChange = { onChange(line.copy(kgPerHa = it.seedNumericFilter().seedDouble()?.let(formatter::perAreaToCanonical))) },
+                    label = { Text(formatter.yieldPerAreaUnit("kg")) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),

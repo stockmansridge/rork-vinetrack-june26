@@ -180,6 +180,7 @@ struct EquipmentRow: View {
 }
 
 struct TractorRow: View {
+    @Environment(MigratedDataStore.self) private var store
     let tractor: Tractor
 
     private var identifier: String? {
@@ -196,7 +197,7 @@ struct TractorRow: View {
                 // presenting a fabricated 0.0 L/hr as configured data.
                 Label(
                     tractor.hasFuelUsageRate
-                        ? "\(String(format: "%.1f", tractor.fuelUsageLPerHour)) L/hr fuel usage"
+                        ? "\(store.settings.regionFormatter.formatFuelRatePerHour(litresPerHour: tractor.fuelUsageLPerHour)) fuel usage"
                         : "Fuel usage not set",
                     systemImage: "fuelpump.fill"
                 )
@@ -550,7 +551,7 @@ struct TractorFormSheet: View {
                         .foregroundStyle(VineyardTheme.olive)
                     Text(matchedTractorLabel(result))
                         .font(.body.weight(.medium))
-                    Text("Estimated fuel use: \(String(format: "%.1f", result.fuelUsageLPerHour)) L/hr")
+                    Text("Estimated fuel use: \(fmt.formatFuelRatePerHour(litresPerHour: result.fuelUsageLPerHour))")
                         .font(.subheadline)
                     if let conf = result.confidence, !conf.isEmpty {
                         Text("Confidence: \(conf.capitalized)")
@@ -596,7 +597,7 @@ struct TractorFormSheet: View {
                         Text("Closest guess: \(matchedTractorLabel(result))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text("Approx. \(String(format: "%.1f", result.fuelUsageLPerHour)) L/hr")
+                        Text("Approx. \(fmt.formatFuelRatePerHour(litresPerHour: result.fuelUsageLPerHour))")
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
                     }

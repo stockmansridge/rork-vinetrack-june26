@@ -584,7 +584,7 @@ enum SprayGuidedFormat {
 
     static func geometrySourceLabel(_ source: SprayGeometrySource) -> String {
         switch source {
-        case .operatorOverride: return "Manual row-length override"
+        case .operatorOverride: return "Total row length override"
         case .mappedRows, .storedRowLength: return "Mapped rows"
         case .derivedFromAreaAndSpacing: return "Derived from area & row spacing"
         case .unavailable: return "Unavailable"

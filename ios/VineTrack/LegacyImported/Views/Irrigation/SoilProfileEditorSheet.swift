@@ -34,6 +34,12 @@ struct SoilProfileEditorSheet: View {
     @State private var selectedClass: IrrigationSoilClass = .unknown
     @State private var awcText: String = ""
     @State private var rootDepthText: String = ""
+    @State private var inputFormatter: RegionFormatter?
+    @State private var awcSeed: RegionalInput?
+    @State private var depthSeed: RegionalInput?
+    private var fmt: RegionFormatter { inputFormatter ?? store.settings.regionFormatter }
+    private var canonicalAwc: Double? { awcSeed?.resolve(awcText, inverse: fmt.soilWaterCapacityToCanonical) }
+    private var canonicalDepth: Double? { depthSeed?.resolve(rootDepthText, inverse: fmt.lengthToCanonical) }
     @State private var allowedDepletionText: String = ""
     @State private var notes: String = ""
 
@@ -68,7 +74,7 @@ struct SoilProfileEditorSheet: View {
     }
 
     private var rootZoneCapacityMm: Double? {
-        guard let awc = Double(awcText), let depth = Double(rootDepthText), awc > 0, depth > 0 else { return nil }
+        guard let awc = canonicalAwc, let depth = canonicalDepth, awc > 0, depth > 0 else { return nil }
         return awc * depth
     }
 
@@ -404,8 +410,8 @@ struct SoilProfileEditorSheet: View {
             paddockId: paddockId,
             vineyardId: paddockId == nil ? vineyardId : nil,
             irrigationSoilClass: selectedClass.rawValue,
-            availableWaterCapacityMmPerM: Double(awcText),
-            effectiveRootDepthM: Double(rootDepthText),
+            availableWaterCapacityMmPerM: canonicalAwc,
+            effectiveRootDepthM: canonicalDepth,
             managementAllowedDepletionPercent: Double(allowedDepletionText),
             soilLandscape: s.soilLandscape,
             soilLandscapeCode: s.soilLandscapeCode ?? s.sourceFeatureId,
@@ -474,9 +480,9 @@ struct SoilProfileEditorSheet: View {
     private var valuesSection: some View {
         Section {
             HStack {
-                Text("Available water (mm/m)")
+                Text("Available water (\(fmt.soilWaterCapacityUnit))")
                 Spacer()
-                TextField("e.g. 150", text: $awcText)
+                TextField(String(format: "%.2f", fmt.soilWaterCapacityValue(150)), text: $awcText)
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
                     .frame(maxWidth: 120)
@@ -486,9 +492,9 @@ struct SoilProfileEditorSheet: View {
                     }
             }
             HStack {
-                Text("Effective root depth (m)")
+                Text("Effective root depth (\(fmt.lengthUnitAbbreviation))")
                 Spacer()
-                TextField("e.g. 0.6", text: $rootDepthText)
+                TextField(String(format: "%.2f", fmt.lengthValue(metres: 0.6)), text: $rootDepthText)
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
                     .frame(maxWidth: 120)
@@ -522,12 +528,12 @@ struct SoilProfileEditorSheet: View {
             Section("Derived") {
                 if let rzc = rootZoneCapacityMm {
                     LabeledContent("Root-zone capacity") {
-                        Text(String(format: "%.0f mm", rzc)).foregroundStyle(.secondary)
+                        Text(fmt.formatRainfall(mm: rzc)).foregroundStyle(.secondary)
                     }
                 }
                 if let raw = readilyAvailableMm {
                     LabeledContent("Readily available water") {
-                        Text(String(format: "%.0f mm", raw)).foregroundStyle(.secondary)
+                        Text(fmt.formatRainfall(mm: raw)).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -590,6 +596,7 @@ struct SoilProfileEditorSheet: View {
     }
 
     private func applyExistingOrDefaults() {
+        if inputFormatter == nil { inputFormatter = store.settings.regionFormatter }
         if let existing {
             if let raw = existing.irrigationSoilClass,
                let cls = IrrigationSoilClass(rawValue: raw) {
@@ -597,8 +604,12 @@ struct SoilProfileEditorSheet: View {
             } else {
                 selectedClass = .unknown
             }
-            awcText = existing.availableWaterCapacityMmPerM.map { String(format: "%.0f", $0) } ?? ""
-            rootDepthText = existing.effectiveRootDepthM.map { String(format: "%.2f", $0) } ?? ""
+            let awc = RegionalInput(canonical: existing.availableWaterCapacityMmPerM, forward: fmt.soilWaterCapacityValue)
+            let depth = RegionalInput(canonical: existing.effectiveRootDepthM, forward: { fmt.lengthValue(metres: $0) })
+            awcSeed = awc
+            depthSeed = depth
+            awcText = awc.text
+            rootDepthText = depth.text
             allowedDepletionText = existing.managementAllowedDepletionPercent.map { String(format: "%.0f", $0) } ?? ""
             notes = existing.manualNotes ?? ""
             if awcText.isEmpty || rootDepthText.isEmpty || allowedDepletionText.isEmpty {
@@ -613,10 +624,14 @@ struct SoilProfileEditorSheet: View {
     private func applyDefaultsForSelectedClass(fillEmptyOnly: Bool = false) {
         guard let def = currentDefault else { return }
         if !fillEmptyOnly || awcText.isEmpty {
-            awcText = String(format: "%.0f", def.defaultAwcMmPerM)
+            let seed = RegionalInput(canonical: def.defaultAwcMmPerM, forward: fmt.soilWaterCapacityValue)
+            awcSeed = seed
+            awcText = seed.text
         }
         if !fillEmptyOnly || rootDepthText.isEmpty {
-            rootDepthText = String(format: "%.2f", def.defaultRootDepthM)
+            let seed = RegionalInput(canonical: def.defaultRootDepthM, forward: { fmt.lengthValue(metres: $0) })
+            depthSeed = seed
+            rootDepthText = seed.text
         }
         if !fillEmptyOnly || allowedDepletionText.isEmpty {
             allowedDepletionText = String(format: "%.0f", def.defaultAllowedDepletionPercent)
@@ -640,8 +655,8 @@ struct SoilProfileEditorSheet: View {
             paddockId: paddockId,
             vineyardId: paddockId == nil ? vineyardId : nil,
             irrigationSoilClass: selectedClass.rawValue,
-            availableWaterCapacityMmPerM: Double(awcText),
-            effectiveRootDepthM: Double(rootDepthText),
+            availableWaterCapacityMmPerM: canonicalAwc,
+            effectiveRootDepthM: canonicalDepth,
             managementAllowedDepletionPercent: Double(allowedDepletionText),
             confidence: "manual",
             isManualOverride: true,
@@ -683,10 +698,10 @@ struct SoilProfileEditorSheet: View {
             return "Block not found."
         }
         if raw.contains("invalid_awc") {
-            return "Available water capacity must be between 0 and 400 mm/m."
+            return "Available water capacity must be between 0 and \(fmt.formatSoilWaterCapacity(400))."
         }
         if raw.contains("invalid_root_depth") {
-            return "Effective root depth must be between 0 and 5 m."
+            return "Effective root depth must be between 0 and \(fmt.formatLength(metres: 5))."
         }
         if raw.contains("invalid_allowed_depletion") {
             return "Allowed depletion must be between 0 and 100%."

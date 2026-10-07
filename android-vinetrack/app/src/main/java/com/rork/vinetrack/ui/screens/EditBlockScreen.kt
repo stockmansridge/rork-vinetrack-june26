@@ -170,8 +170,12 @@ fun EditBlockScreen(
     var rowAscending by remember { mutableStateOf(savedNumbering.ascending) }
     var vineSpacing by remember { mutableStateOf(existing?.vineSpacing ?: 1.0) }
     var postSpacing by remember { mutableStateOf(existing?.intermediatePostSpacing?.let { formatNum(it) } ?: "") }
-    var flowPerEmitter by remember { mutableStateOf(existing?.flowPerEmitter?.let { formatNum(it) } ?: "") }
-    var emitterSpacing by remember { mutableStateOf(existing?.emitterSpacing?.let { formatNum(it) } ?: "") }
+    val currentInputFormatter = com.rork.vinetrack.ui.LocalRegionFormatter.current
+    val inputFormatter = remember { currentInputFormatter }
+    val flowSeed = remember { com.rork.vinetrack.data.RegionalInput.seed(existing?.flowPerEmitter, inputFormatter::volumeValue) }
+    val emitterSeed = remember { com.rork.vinetrack.data.RegionalInput.seed(existing?.emitterSpacing, inputFormatter::lengthValue) }
+    var flowPerEmitter by remember { mutableStateOf(flowSeed.text) }
+    var emitterSpacing by remember { mutableStateOf(emitterSeed.text) }
     var vineCountOverride by remember { mutableStateOf(existing?.vineCountOverride?.toString() ?: "") }
     var rowLengthOverride by remember { mutableStateOf(existing?.rowLengthOverride?.let { formatNum(it) } ?: "") }
     // MANUAL per-row vine counts (sql/188), keyed by ROW NUMBER — the one
@@ -319,8 +323,8 @@ fun EditBlockScreen(
                                 rowNumberAscending = rowAscending,
                                 vineSpacing = vineSpacing,
                                 intermediatePostSpacing = postSpacing.toDoubleOrNull(),
-                                flowPerEmitter = flowPerEmitter.toDoubleOrNull(),
-                                emitterSpacing = emitterSpacing.toDoubleOrNull(),
+                                flowPerEmitter = flowSeed.resolve(flowPerEmitter, inputFormatter::volumeToCanonical),
+                                emitterSpacing = emitterSeed.resolve(emitterSpacing, inputFormatter::lengthToCanonical),
                                 vineCountOverride = vineCountOverride.toIntOrNull(),
                                 rowLengthOverride = rowLengthOverride.toDoubleOrNull(),
                                 plantingYear = plantingYear.filter { it.isDigit() }.toIntOrNull(),
@@ -1173,8 +1177,10 @@ private fun IrrigationSection(
     rowWidth: Double,
 ) {
     val vine = LocalVineColors.current
-    val flow = flowPerEmitter.toDoubleOrNull()?.takeIf { it > 0 }
-    val spacing = emitterSpacing.toDoubleOrNull()?.takeIf { it > 0 }
+    val currentFormatter = com.rork.vinetrack.ui.LocalRegionFormatter.current
+    val formatter = remember { currentFormatter }
+    val flow = flowPerEmitter.toDoubleOrNull()?.let(formatter::volumeToCanonical)?.takeIf { it > 0 }
+    val spacing = emitterSpacing.toDoubleOrNull()?.let(formatter::lengthToCanonical)?.takeIf { it > 0 }
     val rate = irrigationApplicationRate(flow, spacing, rowWidth)
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SectionHeader("Irrigation", onLight = true)
@@ -1183,7 +1189,7 @@ private fun IrrigationSection(
                 label = "Flow per Emitter",
                 value = flowPerEmitter,
                 placeholder = "0.0",
-                unit = "L/hr",
+                unit = "${formatter.volumeUnitAbbreviation}/hr",
                 keyboard = KeyboardType.Decimal,
                 onChange = onFlowPerEmitter,
             )
@@ -1192,28 +1198,27 @@ private fun IrrigationSection(
                 label = "Emitter Spacing",
                 value = emitterSpacing,
                 placeholder = "0.00",
-                unit = "m",
+                unit = formatter.lengthUnitAbbreviation,
                 keyboard = KeyboardType.Decimal,
                 onChange = onEmitterSpacing,
             )
             Spacer(Modifier.height(10.dp))
             if (rowWidth > 0) {
-                ValueRow("Row Spacing", "%.2f m".format(rowWidth))
+                ValueRow("Row Spacing", formatter.formatLength(rowWidth))
             } else {
                 ValueRow("Row Spacing", "Not set", emphasis = vine.textSecondary, italic = true)
             }
             HorizontalDivider(Modifier.padding(vertical = 10.dp), color = vine.cardBorder)
             if (rate != null) {
-                ValueRow("Application Rate", "%.2f mm/hr".format(rate.mmPerHour), emphasis = IrrigationTeal)
+                ValueRow("Application Rate", "${formatter.formatRainfall(rate.mmPerHour)}/hr", emphasis = IrrigationTeal)
                 Spacer(Modifier.height(6.dp))
-                ValueRow("ML/ha/hr", "%.4f".format(rate.megalitresPerHaPerHour), emphasis = VineColors.Info)
+                ValueRow("${formatter.volumeUnitAbbreviation}/${formatter.areaUnitAbbreviation}/hr", formatter.formatVolumePerLandArea(rate.megalitresPerHaPerHour * 1_000_000.0) + "/hr", emphasis = VineColors.Info)
             } else {
                 ValueRow("Application Rate", "Not calculable", emphasis = vine.textSecondary, italic = true)
             }
         }
         Text(
-            "ML/ha/hr = (emitters per ha × flow) ÷ 1,000,000. mm/hr = ML/ha/hr × 100. " +
-                "Row spacing (%.1f m) is used for the calculation.".format(rowWidth),
+            "Application rate uses emitter flow, emitter spacing and row spacing (${formatter.formatLength(rowWidth)}).",
             color = vine.textSecondary,
             fontSize = 12.sp,
         )
@@ -2228,7 +2233,7 @@ private fun BlockSummaryCard(
                     color = vine.textSecondary, fontSize = 12.sp,
                 )
                 TrailingNumberRow(
-                    label = "Row Length",
+                    label = "Total row length override",
                     value = rowLengthOverride,
                     placeholder = "%.0f".format(calculatedRowLengthM),
                     unit = "m",
@@ -2236,6 +2241,7 @@ private fun BlockSummaryCard(
                     onChange = onRowLengthOverride,
                     fieldWidth = 104.dp,
                 )
+                Text("Optional. Overrides the calculated total length of all rows in this block.", color = vine.textSecondary, fontSize = 12.sp)
                 TrailingNumberRow(
                     label = "Vine Count",
                     value = vineCountOverride,

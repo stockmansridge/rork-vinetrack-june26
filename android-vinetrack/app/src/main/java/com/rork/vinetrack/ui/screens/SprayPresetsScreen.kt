@@ -211,12 +211,12 @@ private fun SprayPresetFormSheet(
     val isEdit = existing != null
 
     var name by remember { mutableStateOf(existing?.name ?: "") }
-    var water by remember {
-        mutableStateOf(existing?.waterVolume?.takeIf { it > 0 }?.let { trimPreset(it) } ?: "")
-    }
-    var rate by remember {
-        mutableStateOf(existing?.sprayRatePerHa?.takeIf { it > 0 }?.let { trimPreset(it) } ?: "")
-    }
+    val currentFormatter = LocalRegionFormatter.current
+    val inputFormatter = remember { currentFormatter }
+    val waterSeed = remember { com.rork.vinetrack.data.RegionalInput.seed(existing?.waterVolume, inputFormatter::volumeValue) }
+    val rateSeed = remember { com.rork.vinetrack.data.RegionalInput.seed(existing?.sprayRatePerHa, inputFormatter::volumePerAreaValue) }
+    var water by remember { mutableStateOf(waterSeed.text) }
+    var rate by remember { mutableStateOf(rateSeed.text) }
     var concentration by remember {
         mutableStateOf(existing?.concentrationFactor?.takeIf { it > 0 }?.let { trimPreset(it) } ?: "1")
     }
@@ -229,8 +229,8 @@ private fun SprayPresetFormSheet(
         saving = true
         val input = SavedSprayPresetRepository.PresetInput(
             name = trimmedName,
-            waterVolume = water.toPresetDouble() ?: 0.0,
-            sprayRatePerHa = rate.toPresetDouble() ?: 0.0,
+            waterVolume = waterSeed.resolve(water, inputFormatter::volumeToCanonical) ?: 0.0,
+            sprayRatePerHa = rateSeed.resolve(rate, inputFormatter::volumePerAreaToCanonical) ?: 0.0,
             concentrationFactor = concentration.toPresetDouble()?.takeIf { it > 0 } ?: 1.0,
         )
         val cb: (Boolean) -> Unit = { ok -> saving = false; if (ok) onDismiss() }
@@ -260,8 +260,8 @@ private fun SprayPresetFormSheet(
                 OutlinedTextField(
                     value = water,
                     onValueChange = { water = it.numericFilterPreset() },
-                    label = { Text("Water L") },
-                    placeholder = { Text("1500") },
+                    label = { Text("Water ${inputFormatter.volumeUnitAbbreviation}") },
+                    placeholder = { Text(inputFormatter.volumeValue(1500.0).toString()) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
@@ -269,8 +269,8 @@ private fun SprayPresetFormSheet(
                 OutlinedTextField(
                     value = rate,
                     onValueChange = { rate = it.numericFilterPreset() },
-                    label = { Text("L/ha") },
-                    placeholder = { Text("750") },
+                    label = { Text(inputFormatter.volumePerAreaUnit) },
+                    placeholder = { Text(inputFormatter.volumePerAreaValue(750.0).toString()) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),

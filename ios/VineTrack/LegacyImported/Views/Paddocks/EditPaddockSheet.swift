@@ -499,17 +499,17 @@ struct EditPaddockSheet: View {
                 }
             }
             if let awc = soil.availableWaterCapacityMmPerM, awc > 0 {
-                LabeledContent("AWC") { Text(String(format: "%.0f mm/m", awc)) }
+                LabeledContent("AWC") { Text(store.settings.regionFormatter.formatSoilWaterCapacity(awc)) }
             }
             if let depth = soil.effectiveRootDepthM, depth > 0 {
-                LabeledContent("Effective root depth") { Text(String(format: "%.2f m", depth)) }
+                LabeledContent("Effective root depth") { Text(store.settings.regionFormatter.formatLength(metres: depth)) }
             }
             if let depl = soil.managementAllowedDepletionPercent, depl > 0 {
                 LabeledContent("Allowed depletion") { Text(String(format: "%.0f%%", depl)) }
             }
             if let rzc = soil.rootZoneCapacityMm {
                 LabeledContent("Root-zone capacity") {
-                    Text(String(format: "%.0f mm", rzc)).foregroundStyle(.secondary)
+                    Text(store.settings.regionFormatter.formatRainfall(mm: rzc)).foregroundStyle(.secondary)
                 }
             }
             if let raw = soil.readilyAvailableWaterMm {
@@ -1581,7 +1581,7 @@ struct EditPaddockSheet: View {
                     .foregroundStyle(.secondary)
 
                 HStack {
-                    Text("Row Length")
+                    Text("Total row length override")
                         .font(.subheadline)
                     Spacer()
                     TextField("\(String(format: "%.0f", totalLength))", text: $rowLengthOverride)
@@ -1593,6 +1593,10 @@ struct EditPaddockSheet: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                Text("Optional. Overrides the calculated total length of all rows in this block.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 HStack {
                     Text("Vine Count")

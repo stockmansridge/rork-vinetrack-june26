@@ -2341,7 +2341,7 @@ struct IrrigationRecommendationView: View {
                     .foregroundStyle(.secondary)
             }
             HStack(spacing: 14) {
-                soilStat("AWC", soil.availableWaterCapacityMmPerM.map { String(format: "%.0f mm/m", $0) } ?? "—")
+                soilStat("AWC", soil.availableWaterCapacityMmPerM.map { fmt.formatSoilWaterCapacity($0) } ?? "—")
                 soilStat("Root depth", soil.effectiveRootDepthM.map { fmt.formatLength(metres: $0) } ?? "—")
                 soilStat("Depletion", soil.managementAllowedDepletionPercent.map { String(format: "%.0f%%", $0) } ?? "—")
             }

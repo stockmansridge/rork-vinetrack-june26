@@ -601,7 +601,7 @@ object SprayGuidedFormat {
     }
 
     fun geometrySourceLabel(source: SprayGeometrySource): String = when (source) {
-        SprayGeometrySource.OPERATOR_OVERRIDE -> "Manual row-length override"
+        SprayGeometrySource.OPERATOR_OVERRIDE -> "Total row length override"
         SprayGeometrySource.MAPPED_ROWS, SprayGeometrySource.STORED_ROW_LENGTH -> "Mapped rows"
         SprayGeometrySource.DERIVED_FROM_AREA_AND_SPACING -> "Derived from area & row spacing"
         SprayGeometrySource.UNAVAILABLE -> "Unavailable"

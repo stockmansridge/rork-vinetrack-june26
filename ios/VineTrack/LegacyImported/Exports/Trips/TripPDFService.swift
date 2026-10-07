@@ -193,7 +193,7 @@ struct TripPDFService {
                details.hasAnyValue {
                 drawSectionHeader("Seeding Details")
                 if let depth = details.sowingDepthCm {
-                    drawRow(label: "Sowing depth", value: "\(formatNumber(depth)) cm")
+                    drawRow(label: "Sowing depth", value: "\(formatNumber(formatter.smallLengthValue(centimetres: depth))) \(formatter.smallLengthUnitAbbreviation)")
                 }
                 let frontUsed = details.frontBox?.hasAnyValue == true
                 let backUsed = details.backBox?.hasAnyValue == true

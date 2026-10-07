@@ -138,7 +138,10 @@ internal fun ConfirmActualTankMixDialog(
     onConfirm: (Double, Map<String, Double>) -> Boolean,
 ) {
     val formatter = remember { NumberFormat.getNumberInstance(Locale.getDefault()) }
-    var waterText by remember(tank.id) { mutableStateOf(formatter.format(tank.waterVolume)) }
+    val currentRegion = com.rork.vinetrack.ui.LocalRegionFormatter.current
+    val region = remember(tank.id) { currentRegion }
+    val waterSeed = remember(tank.id) { formatter.format(region.volumeValue(tank.waterVolume)) }
+    var waterText by remember(tank.id) { mutableStateOf(waterSeed) }
     val chemicalTexts = remember(tank.id) { mutableStateMapOf<String, String>().apply {
         tank.chemicals.forEach { put(it.id, formatter.format(chemicalUnitFromBase(it.unit, it.volumePerTank))) }
     } }
@@ -163,14 +166,14 @@ internal fun ConfirmActualTankMixDialog(
                 ) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("Tank ${tank.tankNumber} of ${record.tanks.orEmpty().size}", fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                        PlannedTankAmountRow("${tankMixNumber(tank.waterVolume)} L")
+                        PlannedTankAmountRow(region.formatVolume(tank.waterVolume))
                         ActualTankAmountRow(
                             value = waterText,
                             onValueChange = { waterText = it },
-                            unit = "L",
+                            unit = region.volumeUnitAbbreviation,
                         )
-                        actualPlannedDifference(parse(waterText), tank.waterVolume)?.let { difference ->
-                            LiveDifferenceRow(difference, "L")
+                        actualPlannedDifference(parse(waterText), region.volumeValue(tank.waterVolume))?.let { difference ->
+                            LiveDifferenceRow(difference, region.volumeUnitAbbreviation)
                         }
                     }
                 }
@@ -208,7 +211,8 @@ internal fun ConfirmActualTankMixDialog(
         },
         confirmButton = {
             TextButton(enabled = valid && !saving, onClick = {
-                val water = parse(waterText) ?: return@TextButton
+                val displayWater = parse(waterText) ?: return@TextButton
+                val water = if (waterText == waterSeed) tank.waterVolume else region.volumeToCanonical(displayWater)
                 saving = true
                 val amounts = tank.chemicals.associate { chemical ->
                     chemical.id to com.rork.vinetrack.data.model.chemicalUnitToBase(

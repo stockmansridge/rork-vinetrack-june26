@@ -224,6 +224,13 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
     fun smallLengthValue(centimetres: Double): Double = if (distance == DistanceSystem.Metric) centimetres else centimetres / 2.54
     fun smallLengthToCanonical(value: Double): Double = value / smallLengthValue(1.0)
 
+    /** Soil AWC converts both independent dimensions: canonical mm/m → regional depth/length. */
+    val soilWaterCapacityUnit: String get() = "$rainfallUnitAbbreviation/$lengthUnitAbbreviation"
+    fun soilWaterCapacityValue(mmPerMetre: Double): Double = rainfallValue(mmPerMetre) / lengthValue(1.0)
+    fun soilWaterCapacityToCanonical(value: Double): Double = rainfallMm(value * lengthValue(1.0))
+    fun formatSoilWaterCapacity(mmPerMetre: Double): String =
+        "${number(soilWaterCapacityValue(mmPerMetre), 2)} $soilWaterCapacityUnit"
+
     // MARK: - Distance (input: metres)
 
     fun formatDistance(metres: Double, fractionDigits: Int = 2): String = when (distance) {

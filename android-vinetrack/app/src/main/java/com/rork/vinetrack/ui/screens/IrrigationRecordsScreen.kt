@@ -1165,8 +1165,12 @@ private fun ValveFormDialog(
     var systemId by remember { mutableStateOf(valve?.irrigationSystemId ?: systems.firstOrNull()?.id ?: "") }
     var name by remember { mutableStateOf(valve?.name ?: "") }
     var number by remember { mutableStateOf(valve?.valveNumber ?: "") }
-    var configured by remember { mutableStateOf(valve?.configuredFlowLph?.toString() ?: "") }
-    var measured by remember { mutableStateOf(valve?.measuredFlowLph?.toString() ?: "") }
+    val currentFormatter = com.rork.vinetrack.ui.LocalRegionFormatter.current
+    val inputFormatter = remember { currentFormatter }
+    val configuredSeed = remember { com.rork.vinetrack.data.RegionalInput.seed(valve?.configuredFlowLph, inputFormatter::volumeValue) }
+    val measuredSeed = remember { com.rork.vinetrack.data.RegionalInput.seed(valve?.measuredFlowLph, inputFormatter::volumeValue) }
+    var configured by remember { mutableStateOf(configuredSeed.text) }
+    var measured by remember { mutableStateOf(measuredSeed.text) }
     var notes by remember { mutableStateOf(valve?.notes ?: "") }
     var isActive by remember { mutableStateOf(valve?.isActive ?: true) }
 
@@ -1189,8 +1193,8 @@ private fun ValveFormDialog(
                 }
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Valve name") }, singleLine = true)
                 OutlinedTextField(value = number, onValueChange = { number = it }, label = { Text("Valve number (optional)") }, singleLine = true)
-                OutlinedTextField(value = configured, onValueChange = { configured = it }, label = { Text("Configured flow (L/h)") }, singleLine = true)
-                OutlinedTextField(value = measured, onValueChange = { measured = it }, label = { Text("Measured flow (L/h, optional)") }, singleLine = true)
+                OutlinedTextField(value = configured, onValueChange = { configured = it }, label = { Text("Configured flow (${inputFormatter.volumeUnitAbbreviation}/h)") }, singleLine = true)
+                OutlinedTextField(value = measured, onValueChange = { measured = it }, label = { Text("Measured flow (${inputFormatter.volumeUnitAbbreviation}/h, optional)") }, singleLine = true)
                 Text(
                     "The configured flow is used for duration-based calculations. Measured flow is informational until saved as configured.",
                     style = MaterialTheme.typography.bodySmall,
@@ -1210,8 +1214,8 @@ private fun ValveFormDialog(
                 onClick = {
                     onSave(
                         systemId, name.trim(), number.trim().ifEmpty { null },
-                        configured.replace(",", ".").toDoubleOrNull(),
-                        measured.replace(",", ".").toDoubleOrNull(),
+                        configuredSeed.resolve(configured, inputFormatter::volumeToCanonical),
+                        measuredSeed.resolve(measured, inputFormatter::volumeToCanonical),
                         notes.trim().ifEmpty { null },
                         if (valve != null) isActive else null,
                     )

@@ -402,10 +402,12 @@ struct SprayRecordFormView: View {
         }
     }
 
-    private func doubleBinding(_ keyPath: WritableKeyPath<SprayTank, Double>, tIdx: Int) -> Binding<String> {
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+
+    private func doubleBinding(_ keyPath: WritableKeyPath<SprayTank, Double>, tIdx: Int, forward: @escaping (Double) -> Double = { $0 }, inverse: @escaping (Double) -> Double = { $0 }) -> Binding<String> {
         Binding<String>(
             get: {
-                let v = tanks[tIdx][keyPath: keyPath]
+                let v = forward(tanks[tIdx][keyPath: keyPath])
                 if v == 0 { return "" }
                 if v == v.rounded() { return String(format: "%.0f", v) }
                 return String(format: "%g", v)
@@ -415,7 +417,7 @@ struct SprayRecordFormView: View {
                 if trimmed.isEmpty {
                     tanks[tIdx][keyPath: keyPath] = 0
                 } else if let parsed = Double(trimmed) {
-                    tanks[tIdx][keyPath: keyPath] = parsed
+                    tanks[tIdx][keyPath: keyPath] = inverse(parsed)
                 }
             }
         )
@@ -424,17 +426,17 @@ struct SprayRecordFormView: View {
     @ViewBuilder
     private func tankFields(tIdx: Int) -> some View {
         LabeledContent {
-            TextField("1500", text: doubleBinding(\.waterVolume, tIdx: tIdx))
+            TextField("0", text: doubleBinding(\.waterVolume, tIdx: tIdx, forward: { fmt.volumeValue(litres: $0) }, inverse: fmt.volumeToCanonical))
                 .keyboardType(.decimalPad)
                 .multilineTextAlignment(.trailing)
                 .frame(maxWidth: 100)
-        } label: { Text("Water Volume (L)").font(.subheadline) }
+        } label: { Text("Water Volume (\(fmt.volumeUnitAbbreviation))").font(.subheadline) }
         LabeledContent {
-            TextField("750", text: doubleBinding(\.sprayRatePerHa, tIdx: tIdx))
+            TextField("0", text: doubleBinding(\.sprayRatePerHa, tIdx: tIdx, forward: fmt.volumePerAreaValue, inverse: fmt.volumePerAreaToCanonical))
                 .keyboardType(.decimalPad)
                 .multilineTextAlignment(.trailing)
                 .frame(maxWidth: 100)
-        } label: { Text("Spray Rate (L/Ha)").font(.subheadline) }
+        } label: { Text("Spray Rate (\(fmt.volumePerAreaUnit))").font(.subheadline) }
         LabeledContent {
             TextField("1.0", text: doubleBinding(\.concentrationFactor, tIdx: tIdx))
                 .keyboardType(.decimalPad)

@@ -81,6 +81,8 @@ fun SoilProfileEditorSheet(
     onDismiss: () -> Unit,
 ) {
     val vine = LocalVineColors.current
+    val formatter = com.rork.vinetrack.ui.LocalRegionFormatter.current
+    val inputFormatter = remember { formatter }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val repo = remember { SoilProfileRepository(SessionStore(context)) }
@@ -111,6 +113,8 @@ fun SoilProfileEditorSheet(
     var existing by remember { mutableStateOf<BackendSoilProfile?>(null) }
 
     var selectedClass by remember { mutableStateOf(IrrigationSoilClass.Unknown) }
+    var awcSeed by remember { mutableStateOf(com.rork.vinetrack.data.RegionalInput(null, "")) }
+    var depthSeed by remember { mutableStateOf(com.rork.vinetrack.data.RegionalInput(null, "")) }
     var awcText by remember { mutableStateOf("") }
     var rootDepthText by remember { mutableStateOf("") }
     var depletionText by remember { mutableStateOf("") }
@@ -141,8 +145,14 @@ fun SoilProfileEditorSheet(
 
     fun applyDefaultsForClass(fillEmptyOnly: Boolean = false) {
         val def = currentDefault() ?: return
-        if (!fillEmptyOnly || awcText.isBlank()) awcText = fmt0(def.defaultAwcMmPerM)
-        if (!fillEmptyOnly || rootDepthText.isBlank()) rootDepthText = fmt2(def.defaultRootDepthM)
+        if (!fillEmptyOnly || awcText.isBlank()) {
+            awcSeed = com.rork.vinetrack.data.RegionalInput.seed(def.defaultAwcMmPerM, inputFormatter::soilWaterCapacityValue)
+            awcText = awcSeed.text
+        }
+        if (!fillEmptyOnly || rootDepthText.isBlank()) {
+            depthSeed = com.rork.vinetrack.data.RegionalInput.seed(def.defaultRootDepthM, inputFormatter::lengthValue)
+            rootDepthText = depthSeed.text
+        }
         if (!fillEmptyOnly || depletionText.isBlank()) depletionText = fmt0(def.defaultAllowedDepletionPercent)
     }
 
@@ -150,8 +160,10 @@ fun SoilProfileEditorSheet(
         val e = existing
         if (e != null) {
             selectedClass = e.typedSoilClass ?: IrrigationSoilClass.Unknown
-            awcText = e.availableWaterCapacityMmPerM?.let { fmt0(it) } ?: ""
-            rootDepthText = e.effectiveRootDepthM?.let { fmt2(it) } ?: ""
+            awcSeed = com.rork.vinetrack.data.RegionalInput.seed(e.availableWaterCapacityMmPerM, inputFormatter::soilWaterCapacityValue)
+            depthSeed = com.rork.vinetrack.data.RegionalInput.seed(e.effectiveRootDepthM, inputFormatter::lengthValue)
+            awcText = awcSeed.text
+            rootDepthText = depthSeed.text
             depletionText = e.managementAllowedDepletionPercent?.let { fmt0(it) } ?: ""
             notes = e.manualNotes ?: ""
             if (awcText.isBlank() || rootDepthText.isBlank() || depletionText.isBlank()) {
@@ -181,9 +193,12 @@ fun SoilProfileEditorSheet(
         }
     }
 
+    fun canonicalAwc(): Double? = awcSeed.resolve(awcText, inputFormatter::soilWaterCapacityToCanonical)
+    fun canonicalDepth(): Double? = depthSeed.resolve(rootDepthText, inputFormatter::lengthToCanonical)
+
     val rootZoneCapacity: Double? = run {
-        val awc = parseOrNull(awcText)
-        val depth = parseOrNull(rootDepthText)
+        val awc = canonicalAwc()
+        val depth = canonicalDepth()
         if (awc != null && depth != null && awc > 0 && depth > 0) awc * depth else null
     }
     val readilyAvailable: Double? = run {
@@ -199,8 +214,8 @@ fun SoilProfileEditorSheet(
                 paddockId = paddockId,
                 vineyardId = if (paddockId == null) vineyardId else null,
                 irrigationSoilClass = selectedClass.raw,
-                availableWaterCapacityMmPerM = parseOrNull(awcText),
-                effectiveRootDepthM = parseOrNull(rootDepthText),
+                availableWaterCapacityMmPerM = canonicalAwc(),
+                effectiveRootDepthM = canonicalDepth(),
                 managementAllowedDepletionPercent = parseOrNull(depletionText),
                 soilLandscape = s.soilLandscape,
                 soilLandscapeCode = s.soilLandscapeCode ?: s.sourceFeatureId,
@@ -226,8 +241,8 @@ fun SoilProfileEditorSheet(
                 paddockId = paddockId,
                 vineyardId = if (paddockId == null) vineyardId else null,
                 irrigationSoilClass = selectedClass.raw,
-                availableWaterCapacityMmPerM = parseOrNull(awcText),
-                effectiveRootDepthM = parseOrNull(rootDepthText),
+                availableWaterCapacityMmPerM = canonicalAwc(),
+                effectiveRootDepthM = canonicalDepth(),
                 managementAllowedDepletionPercent = parseOrNull(depletionText),
                 confidence = "manual",
                 isManualOverride = true,
@@ -381,11 +396,11 @@ fun SoilProfileEditorSheet(
 
                 // Soil water values
                 SectionLabel("Soil water values")
-                ValueField("Available water (mm/m)", awcText, canEdit, "e.g. 150") {
+                ValueField("Available water (${inputFormatter.soilWaterCapacityUnit})", awcText, canEdit, inputFormatter.soilWaterCapacityValue(150.0).toString()) {
                     if (appliedSeed != null) manualEditsSinceSeed = true
                     awcText = it
                 }
-                ValueField("Effective root depth (m)", rootDepthText, canEdit, "e.g. 0.6") {
+                ValueField("Effective root depth (${inputFormatter.lengthUnitAbbreviation})", rootDepthText, canEdit, inputFormatter.lengthValue(0.6).toString()) {
                     if (appliedSeed != null) manualEditsSinceSeed = true
                     rootDepthText = it
                 }
@@ -402,8 +417,8 @@ fun SoilProfileEditorSheet(
                 // Derived
                 if (rootZoneCapacity != null || readilyAvailable != null) {
                     SectionLabel("Derived")
-                    rootZoneCapacity?.let { DerivedRow("Root-zone capacity", fmt0(it) + " mm") }
-                    readilyAvailable?.let { DerivedRow("Readily available water", fmt0(it) + " mm") }
+                    rootZoneCapacity?.let { DerivedRow("Root-zone capacity", formatter.formatRainfall(it)) }
+                    readilyAvailable?.let { DerivedRow("Readily available water", formatter.formatRainfall(it)) }
                 }
 
                 // Notes

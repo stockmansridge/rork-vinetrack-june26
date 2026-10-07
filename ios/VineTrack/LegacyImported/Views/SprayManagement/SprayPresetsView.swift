@@ -1663,6 +1663,10 @@ struct EditSavedSprayPresetSheet: View {
     @State private var waterVolumeText: String = ""
     @State private var sprayRateText: String = ""
     @State private var concentrationText: String = "1.0"
+    @State private var inputFormatter: RegionFormatter?
+    @State private var waterSeed: RegionalInput?
+    @State private var rateSeed: RegionalInput?
+    private var fmt: RegionFormatter { inputFormatter ?? store.settings.regionFormatter }
 
     init(preset: SavedSprayPreset?) {
         self.preset = preset
@@ -1692,7 +1696,7 @@ struct EditSavedSprayPresetSheet: View {
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
                             .frame(width: 80)
-                        Text("L")
+                        Text(fmt.volumeUnitAbbreviation)
                             .foregroundStyle(.secondary)
                     }
                     HStack {
@@ -1702,7 +1706,7 @@ struct EditSavedSprayPresetSheet: View {
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
                             .frame(width: 80)
-                        Text("L/Ha")
+                        Text(fmt.volumePerAreaUnit)
                             .foregroundStyle(.secondary)
                     }
                     HStack {
@@ -1714,6 +1718,17 @@ struct EditSavedSprayPresetSheet: View {
                             .frame(width: 80)
                     }
                 }
+            }
+            .onAppear {
+                guard inputFormatter == nil else { return }
+                let formatter = store.settings.regionFormatter
+                inputFormatter = formatter
+                let water = RegionalInput(canonical: preset?.waterVolume, forward: { formatter.volumeValue(litres: $0) })
+                let rate = RegionalInput(canonical: preset?.sprayRatePerHa, forward: formatter.volumePerAreaValue)
+                waterSeed = water
+                rateSeed = rate
+                waterVolumeText = water.text
+                sprayRateText = rate.text
             }
             .navigationTitle(preset == nil ? "New Preset" : "Edit Preset")
             .navigationBarTitleDisplayMode(.inline)
@@ -1733,8 +1748,8 @@ struct EditSavedSprayPresetSheet: View {
     }
 
     private func save() {
-        let water = Double(waterVolumeText) ?? 0
-        let rate = Double(sprayRateText) ?? 0
+        let water = waterSeed?.resolve(waterVolumeText, inverse: fmt.volumeToCanonical) ?? 0
+        let rate = rateSeed?.resolve(sprayRateText, inverse: fmt.volumePerAreaToCanonical) ?? 0
         let cf = Double(concentrationText) ?? 1.0
         if var existing = preset {
             existing.name = name

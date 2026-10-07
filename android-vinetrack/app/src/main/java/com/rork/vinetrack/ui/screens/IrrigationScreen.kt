@@ -1162,7 +1162,7 @@ private fun SoilProfileSummary(soil: BackendSoilProfile) {
     }
     Box(Modifier.height(8.dp))
     Row(modifier = Modifier.fillMaxWidth()) {
-        SoilStat("AWC", soil.availableWaterCapacityMmPerM?.let { String.format(Locale.US, "%.0f mm/m", it) } ?: "—", Modifier.weight(1f))
+        SoilStat("AWC", soil.availableWaterCapacityMmPerM?.let { formatter.formatSoilWaterCapacity(it) } ?: "—", Modifier.weight(1f))
         SoilStat("Root depth", soil.effectiveRootDepthM?.let { formatter.formatLength(it) } ?: "—", Modifier.weight(1f))
         SoilStat("Depletion", soil.managementAllowedDepletionPercent?.let { String.format(Locale.US, "%.0f%%", it) } ?: "—", Modifier.weight(1f))
     }

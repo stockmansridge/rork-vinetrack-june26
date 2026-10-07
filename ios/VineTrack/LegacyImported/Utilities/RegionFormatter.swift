@@ -166,6 +166,14 @@ nonisolated struct RegionFormatter: Sendable {
     func smallLengthValue(centimetres: Double) -> Double { settings.distance == .metric ? centimetres : centimetres / 2.54 }
     func smallLengthToCanonical(_ value: Double) -> Double { value / smallLengthValue(centimetres: 1) }
 
+    /// Soil AWC converts both independently configured dimensions, never just its label.
+    var soilWaterCapacityUnit: String { "\(rainfallUnitAbbreviation)/\(lengthUnitAbbreviation)" }
+    func soilWaterCapacityValue(_ mmPerMetre: Double) -> Double { rainfallValue(mm: mmPerMetre) / lengthValue(metres: 1) }
+    func soilWaterCapacityToCanonical(_ value: Double) -> Double { rainfallMm(fromDisplay: value * lengthValue(metres: 1)) }
+    func formatSoilWaterCapacity(_ mmPerMetre: Double) -> String {
+        "\(Self.number(soilWaterCapacityValue(mmPerMetre), fractionDigits: 2)) \(soilWaterCapacityUnit)"
+    }
+
     // MARK: - Distance (input: metres)
 
     /// Short distances (e.g. < 1 unit) stay in metres/feet; longer ones use

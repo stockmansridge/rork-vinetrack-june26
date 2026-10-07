@@ -7,6 +7,10 @@ struct ConfirmActualTankMixView: View {
     let onConfirm: (Double, [UUID: Double]) -> Bool
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(MigratedDataStore.self) private var store
+    @State private var inputFormatter: RegionFormatter?
+    @State private var waterSeed: String = ""
+    private var fmt: RegionFormatter { inputFormatter ?? store.settings.regionFormatter }
     @State private var waterText: String
     @State private var chemicalTexts: [UUID: String]
     @State private var isSaving: Bool = false
@@ -30,9 +34,9 @@ struct ConfirmActualTankMixView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Tank \(tank.tankNumber) of \(tankCount)")
                             .font(.headline)
-                        LabeledContent("Planned", value: "\(TankMixDetailsView.number(tank.waterVolume)) L")
-                        actualInputRow(text: $waterText, unit: "L", accessibilityName: "Actual water")
-                        difference(planned: tank.waterVolume, actual: parsed(waterText), unit: "L")
+                        LabeledContent("Planned", value: fmt.formatVolume(litres: tank.waterVolume))
+                        actualInputRow(text: $waterText, unit: fmt.volumeUnitAbbreviation, accessibilityName: "Actual water")
+                        difference(planned: fmt.volumeValue(litres: tank.waterVolume), actual: parsed(waterText), unit: fmt.volumeUnitAbbreviation)
                     }
                     .padding(.vertical, 4)
                 } header: { Text("Water — Planned and Actual") }
@@ -72,6 +76,13 @@ struct ConfirmActualTankMixView: View {
                 }
             }
         }
+        .onAppear {
+            guard inputFormatter == nil else { return }
+            let formatter = store.settings.regionFormatter
+            inputFormatter = formatter
+            waterSeed = Self.input(formatter.volumeValue(litres: tank.waterVolume))
+            waterText = waterSeed
+        }
         .interactiveDismissDisabled(isSaving)
     }
 
@@ -84,7 +95,8 @@ struct ConfirmActualTankMixView: View {
     }
 
     private func confirm() {
-        guard let water = parsed(waterText), isValid else { return }
+        guard let displayWater = parsed(waterText), isValid else { return }
+        let water = waterText == waterSeed ? tank.waterVolume : fmt.volumeToCanonical(displayWater)
         isSaving = true
         let amounts = Dictionary(uniqueKeysWithValues: tank.chemicals.compactMap { chemical -> (UUID, Double)? in
             guard let display = parsed(chemicalTexts[chemical.id] ?? "") else { return nil }
